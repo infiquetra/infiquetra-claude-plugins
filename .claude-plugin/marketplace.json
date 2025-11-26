@@ -1,0 +1,42 @@
+{
+  "name": "infiquetra-plugins",
+  "owner": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for Infiquetra development workflows",
+    "version": "1.0.0",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "parallel-test-runner",
+      "version": "1.0.0",
+      "description": "Parallel test runner for comprehensive Python quality checks (pytest, ruff, mypy, bandit) with 4x faster execution",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "source": "./plugins/parallel-test-runner",
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": ["testing", "pytest", "quality", "python", "parallel"],
+      "category": "development"
+    },
+    {
+      "name": "docs-generator",
+      "version": "1.0.0",
+      "description": "Automated documentation generation including README, API specs, and architecture documentation",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "source": "./plugins/docs-generator",
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": ["documentation", "readme", "api", "architecture", "automation"],
+      "category": "development"
+    }
+  ]
+}

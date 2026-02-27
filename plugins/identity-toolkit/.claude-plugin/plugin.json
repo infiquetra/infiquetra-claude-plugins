@@ -1,0 +1,11 @@
+{
+  "name": "identity-toolkit",
+  "version": "1.0.0",
+  "description": "Digital identity architecture and wallet design guidance for Infiquetra projects",
+  "author": {
+    "name": "Infiquetra Team",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": ["identity", "wallet", "credentials", "architecture", "design"]
+}

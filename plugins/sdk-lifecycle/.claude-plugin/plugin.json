@@ -1,4 +1,5 @@
 {
+  "id": "sdk-lifecycle",
   "name": "sdk-lifecycle",
   "version": "2.0.0",
   "description": "SDK development lifecycle management for multi-language projects",

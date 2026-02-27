@@ -1,4 +1,5 @@
 {
+  "id": "identity-toolkit",
   "name": "identity-toolkit",
   "version": "1.0.0",
   "description": "Digital identity architecture and wallet design guidance for Infiquetra projects",

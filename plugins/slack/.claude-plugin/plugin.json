@@ -1,4 +1,5 @@
 {
+  "id": "slack",
   "name": "slack",
   "version": "1.0.0",
   "description": "Slack messaging and channel management for Infiquetra team communication and incident notifications",

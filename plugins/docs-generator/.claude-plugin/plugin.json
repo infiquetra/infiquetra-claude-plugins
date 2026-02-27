@@ -1,4 +1,5 @@
 {
+  "id": "docs-generator",
   "name": "docs-generator",
   "version": "2.0.0",
   "description": "Automated documentation generation for Infiquetra services",

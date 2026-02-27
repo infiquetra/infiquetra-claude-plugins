@@ -1,4 +1,5 @@
 {
+  "id": "pagerduty",
   "name": "pagerduty",
   "version": "1.0.0",
   "description": "PagerDuty incident management, service CRUD, team management, and on-call orchestration for Infiquetra operations",

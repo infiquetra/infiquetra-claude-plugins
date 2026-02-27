@@ -1,4 +1,5 @@
 {
+  "id": "splunk",
   "name": "splunk",
   "version": "1.0.0",
   "description": "Splunk log search and analysis for Infiquetra operations with natural language query building",

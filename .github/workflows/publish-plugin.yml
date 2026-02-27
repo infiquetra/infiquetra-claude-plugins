@@ -1,0 +1,143 @@
+name: Publish Plugin Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'plugins/*/v*.*.*'
+
+jobs:
+  publish:
+    name: Publish Plugin
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Extract release information
+        id: release
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "tag=$REF_NAME" >> $GITHUB_OUTPUT
+
+          # Determine if this is a specific plugin release or full marketplace release
+          if [[ "$REF_NAME" == plugins/* ]]; then
+            PLUGIN=$(echo "$REF_NAME" | cut -d'/' -f2)
+            VERSION=$(echo "$REF_NAME" | cut -d'/' -f3)
+            echo "plugin=$PLUGIN" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "type=plugin" >> $GITHUB_OUTPUT
+            echo "Plugin release: $PLUGIN $VERSION"
+          else
+            VERSION="$REF_NAME"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "type=marketplace" >> $GITHUB_OUTPUT
+            echo "Marketplace release: $VERSION"
+          fi
+
+      - name: Validate plugin before release
+        if: steps.release.outputs.type == 'plugin'
+        run: |
+          pip install jsonschema pyyaml
+          python3 marketplace/validator/validate.py
+
+      - name: Extract changelog
+        id: changelog
+        if: steps.release.outputs.type == 'plugin'
+        env:
+          PLUGIN_NAME: ${{ steps.release.outputs.plugin }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if [ -f "plugins/$PLUGIN_NAME/CHANGELOG.md" ]; then
+            # Extract changelog section for this version
+            CHANGELOG=$(sed -n "/## \[$RELEASE_VERSION\]/,/## \[/p" "plugins/$PLUGIN_NAME/CHANGELOG.md" | sed '$ d')
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGELOG" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "changelog=No changelog available" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ steps.release.outputs.type == 'plugin' && format('{0} {1}', steps.release.outputs.plugin, steps.release.outputs.version) || format('Marketplace {0}', steps.release.outputs.version) }}
+          body: |
+            ${{ steps.release.outputs.type == 'plugin' && format('## {0} {1}', steps.release.outputs.plugin, steps.release.outputs.version) || format('## Infiquetra Plugin Marketplace {0}', steps.release.outputs.version) }}
+
+            ${{ steps.changelog.outputs.changelog || 'See CHANGELOG.md for details.' }}
+
+            ---
+
+            ### Installation
+
+            ```bash
+            # Install from marketplace
+            /plugin install ${{ steps.release.outputs.plugin }}
+            ```
+
+            ### Documentation
+            - [Plugin README](https://github.com/infiquetra/infiquetra-claude-plugins/tree/main/plugins/${{ steps.release.outputs.plugin }})
+            - [Marketplace Guide](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/docs/MARKETPLACE_GUIDE.md)
+          draft: false
+          prerelease: ${{ contains(steps.release.outputs.version, 'alpha') || contains(steps.release.outputs.version, 'beta') || contains(steps.release.outputs.version, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Slack
+        if: success()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          RELEASE_TYPE: ${{ steps.release.outputs.type }}
+          PLUGIN_NAME: ${{ steps.release.outputs.plugin }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK" ]; then
+            if [ "$RELEASE_TYPE" == "plugin" ]; then
+              MESSAGE="🚀 New plugin release: $PLUGIN_NAME $RELEASE_VERSION"
+            else
+              MESSAGE="🚀 New marketplace release: $RELEASE_VERSION"
+            fi
+
+            curl -X POST "$SLACK_WEBHOOK" \
+              -H 'Content-Type: application/json' \
+              -d "{
+                \"channel\": \"\",
+                \"text\": \"$MESSAGE\",
+                \"attachments\": [{
+                  \"color\": \"good\",
+                  \"fields\": [{
+                    \"title\": \"Release\",
+                    \"value\": \"$REF_NAME\",
+                    \"short\": true
+                  }, {
+                    \"title\": \"Repository\",
+                    \"value\": \"claude-plugins\",
+                    \"short\": true
+                  }]
+                }]
+              }"
+          else
+            echo "SLACK_WEBHOOK not configured, skipping notification"
+          fi
+
+      - name: Update marketplace index
+        if: steps.release.outputs.type == 'plugin'
+        env:
+          PLUGIN_NAME: ${{ steps.release.outputs.plugin }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          echo "Marketplace index update would happen here"
+          echo "Plugin: $PLUGIN_NAME"
+          echo "Version: $RELEASE_VERSION"
+          # TODO: Implement automatic marketplace.json update

@@ -41,16 +41,17 @@ except ImportError:
 class PagerDutyClient:
     """Wrapper for PagerDuty API operations with JSON output."""
 
-    # Defaults loaded from environment variables
-    DEFAULT_TEAM_ID = os.environ.get("PAGERDUTY_DEFAULT_TEAM_ID", "")
-    DEFAULT_ESCALATION_POLICY_ID = os.environ.get("PAGERDUTY_DEFAULT_ESCALATION_POLICY_ID", "")
-
     def __init__(self, token: str | None = None):
         """Initialize the PagerDuty client.
 
         Args:
             token: PagerDuty API token (defaults to PAGERDUTY_API_KEY env var)
         """
+        # Read defaults from environment at instantiation time (not import time)
+        self.DEFAULT_TEAM_ID = os.environ.get("PAGERDUTY_DEFAULT_TEAM_ID", "")
+        self.DEFAULT_ESCALATION_POLICY_ID = os.environ.get(
+            "PAGERDUTY_DEFAULT_ESCALATION_POLICY_ID", ""
+        )
         self.token = token or os.getenv("PAGERDUTY_API_KEY")
         if not self.token:
             self._error("PAGERDUTY_API_KEY environment variable not set")

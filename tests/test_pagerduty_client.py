@@ -384,7 +384,7 @@ class TestPagerDutyClient:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "teams": [{"id": "PIZE7QW", "name": "Infiquetra", "description": "Infiquetra team"}],
+            "teams": [{"id": "YOUR_TEAM_ID", "name": "Infiquetra", "description": "Infiquetra team"}],
             "more": False,
         }
         mock_request.return_value = mock_response
@@ -396,7 +396,7 @@ class TestPagerDutyClient:
         output = json.loads(captured.out)
         assert output["success"] is True
         assert len(output["data"]) == 1
-        assert output["data"][0]["id"] == "PIZE7QW"
+        assert output["data"][0]["id"] == "YOUR_TEAM_ID"
 
     @patch("pagerduty_client.requests.request")
     def test_teams_create(self, mock_request, monkeypatch, capsys):
@@ -429,7 +429,7 @@ class TestPagerDutyClient:
         mock_request.return_value = mock_response
 
         client = PagerDutyClient()
-        client.teams_members_add("PIZE7QW", "UXXXXX", role="responder")
+        client.teams_members_add("YOUR_TEAM_ID", "UXXXXX", role="responder")
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -445,7 +445,7 @@ class TestPagerDutyClient:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "escalation_policies": [
-                {"id": "P0G40L2", "name": "Infiquetra Production", "escalation_rules": []}
+                {"id": "YOUR_POLICY_ID", "name": "Infiquetra Production", "escalation_rules": []}
             ],
             "more": False,
         }
@@ -458,7 +458,7 @@ class TestPagerDutyClient:
         output = json.loads(captured.out)
         assert output["success"] is True
         assert len(output["data"]) == 1
-        assert output["data"][0]["id"] == "P0G40L2"
+        assert output["data"][0]["id"] == "YOUR_POLICY_ID"
 
     @patch("pagerduty_client.requests.request")
     def test_oncall_list(self, mock_request, monkeypatch, capsys):
@@ -517,8 +517,10 @@ class TestPagerDutyClient:
 
     @patch("pagerduty_client.requests.request")
     def test_vecu_defaults(self, mock_request, monkeypatch, capsys):
-        """Test Infiquetra default team ID is used when not specified."""
+        """Test default team ID is loaded from environment variable."""
         monkeypatch.setenv("PAGERDUTY_API_KEY", "test-token")
+        monkeypatch.setenv("PAGERDUTY_DEFAULT_TEAM_ID", "TEST_TEAM_ID")
+        monkeypatch.setenv("PAGERDUTY_DEFAULT_ESCALATION_POLICY_ID", "TEST_POLICY_ID")
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -526,8 +528,8 @@ class TestPagerDutyClient:
         mock_request.return_value = mock_response
 
         client = PagerDutyClient()
-        assert client.DEFAULT_TEAM_ID == "PIZE7QW"
-        assert client.DEFAULT_ESCALATION_POLICY_ID == "P0G40L2"
+        assert client.DEFAULT_TEAM_ID == "TEST_TEAM_ID"
+        assert client.DEFAULT_ESCALATION_POLICY_ID == "TEST_POLICY_ID"
 
         # Call incidents_list without team_id - should use default
         client.incidents_list()

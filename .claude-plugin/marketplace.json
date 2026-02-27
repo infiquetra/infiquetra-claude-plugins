@@ -7,7 +7,8 @@
   "metadata": {
     "description": "Claude Code plugins for Infiquetra development workflows",
     "version": "2.0.0",
-    "pluginRoot": "./plugins"
+    "pluginRoot": "./plugins",
+    "version_field": "2.0.0"
   },
   "plugins": [
     {
@@ -18,11 +19,20 @@
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/todoist-manager",
+      "source": {
+        "type": "git",
+        "path": "./plugins/todoist-manager"
+      },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["todoist", "tasks", "productivity", "project-management"],
-      "category": "productivity"
+      "keywords": [
+        "todoist",
+        "tasks",
+        "productivity",
+        "project-management"
+      ],
+      "category": "productivity",
+      "id": "todoist-manager"
     },
     {
       "name": "pagerduty",
@@ -32,11 +42,22 @@
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/pagerduty",
+      "source": {
+        "type": "git",
+        "path": "./plugins/pagerduty"
+      },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["pagerduty", "incident-management", "on-call", "alerting", "operations", "sre"],
-      "category": "operations"
+      "keywords": [
+        "pagerduty",
+        "incident-management",
+        "on-call",
+        "alerting",
+        "operations",
+        "sre"
+      ],
+      "category": "operations",
+      "id": "pagerduty"
     },
     {
       "name": "slack",
@@ -46,11 +67,21 @@
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/slack",
+      "source": {
+        "type": "git",
+        "path": "./plugins/slack"
+      },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["slack", "messaging", "channels", "notifications", "communication"],
-      "category": "communication"
+      "keywords": [
+        "slack",
+        "messaging",
+        "channels",
+        "notifications",
+        "communication"
+      ],
+      "category": "communication",
+      "id": "slack"
     },
     {
       "name": "splunk",
@@ -60,11 +91,21 @@
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/splunk",
+      "source": {
+        "type": "git",
+        "path": "./plugins/splunk"
+      },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["splunk", "logs", "search", "observability", "debugging"],
-      "category": "operations"
+      "keywords": [
+        "splunk",
+        "logs",
+        "search",
+        "observability",
+        "debugging"
+      ],
+      "category": "operations",
+      "id": "splunk"
     },
     {
       "name": "identity-toolkit",
@@ -74,11 +115,21 @@
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/identity-toolkit",
+      "source": {
+        "type": "git",
+        "path": "./plugins/identity-toolkit"
+      },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["identity", "digital-identity", "nist", "verifiable-credentials", "security"],
-      "category": "security"
+      "keywords": [
+        "identity",
+        "digital-identity",
+        "nist",
+        "verifiable-credentials",
+        "security"
+      ],
+      "category": "security",
+      "id": "identity-toolkit"
     },
     {
       "name": "test-suite",
@@ -88,11 +139,24 @@
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/test-suite",
+      "source": {
+        "type": "git",
+        "path": "./plugins/test-suite"
+      },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["testing", "pytest", "quality", "python", "parallel", "ruff", "mypy", "bandit"],
-      "category": "development"
+      "keywords": [
+        "testing",
+        "pytest",
+        "quality",
+        "python",
+        "parallel",
+        "ruff",
+        "mypy",
+        "bandit"
+      ],
+      "category": "development",
+      "id": "test-suite"
     },
     {
       "name": "docs-generator",
@@ -102,11 +166,21 @@
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/docs-generator",
+      "source": {
+        "type": "git",
+        "path": "./plugins/docs-generator"
+      },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["documentation", "readme", "api", "architecture", "automation"],
-      "category": "development"
+      "keywords": [
+        "documentation",
+        "readme",
+        "api",
+        "architecture",
+        "automation"
+      ],
+      "category": "development",
+      "id": "docs-generator"
     },
     {
       "name": "python-toolkit",
@@ -116,11 +190,22 @@
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/python-toolkit",
+      "source": {
+        "type": "git",
+        "path": "./plugins/python-toolkit"
+      },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["python", "lambda", "powertools", "dynamodb", "aws", "serverless"],
-      "category": "development"
+      "keywords": [
+        "python",
+        "lambda",
+        "powertools",
+        "dynamodb",
+        "aws",
+        "serverless"
+      ],
+      "category": "development",
+      "id": "python-toolkit"
     },
     {
       "name": "sdk-lifecycle",
@@ -130,11 +215,23 @@
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/sdk-lifecycle",
+      "source": {
+        "type": "git",
+        "path": "./plugins/sdk-lifecycle"
+      },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["sdk", "library", "packaging", "publishing", "documentation", "security"],
-      "category": "development"
+      "keywords": [
+        "sdk",
+        "library",
+        "packaging",
+        "publishing",
+        "documentation",
+        "security"
+      ],
+      "category": "development",
+      "id": "sdk-lifecycle"
     }
-  ]
+  ],
+  "version": "2.0.0"
 }

@@ -6,6 +6,17 @@
     "name": "Infiquetra Team",
     "email": "hello@infiquetra.com"
   },
-  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-  "keywords": ["pagerduty", "incident-management", "on-call", "alerting", "operations", "sre"]
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/infiquetra/infiquetra-claude-plugins"
+  },
+  "keywords": [
+    "pagerduty",
+    "incident-management",
+    "on-call",
+    "alerting",
+    "operations",
+    "sre"
+  ],
+  "id": "pagerduty"
 }

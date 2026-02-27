@@ -1,0 +1,21 @@
+{
+  "name": "python-toolkit",
+  "version": "1.0.0",
+  "description": "Python development toolkit for Infiquetra projects (project setup, testing, Cox patterns)",
+  "author": {
+    "name": "Infiquetra Team",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/infiquetra/infiquetra-claude-plugins"
+  },
+  "keywords": [
+    "python",
+    "testing",
+    "development",
+    "cox",
+    "patterns"
+  ],
+  "id": "python-toolkit"
+}

@@ -1,20 +1,20 @@
 {
   "name": "docs-generator",
-  "version": "1.0.0",
-  "description": "Automated documentation generation including README, API specs, and architecture diagrams",
+  "version": "2.0.0",
+  "description": "Automated documentation generation for Infiquetra services",
   "author": {
-    "name": "Infiquetra",
-    "email": "hello@infiquetra.com",
+    "name": "Infiquetra Team",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": {
+    "type": "git",
     "url": "https://github.com/infiquetra/infiquetra-claude-plugins"
   },
-  "homepage": "https://github.com/infiquetra/infiquetra-claude-plugins",
-  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins.git",
-  "license": "MIT",
   "keywords": [
     "documentation",
-    "readme",
-    "api",
-    "architecture",
+    "openapi",
+    "diagrams",
     "automation"
-  ]
+  ],
+  "id": "docs-generator"
 }

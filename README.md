@@ -6,8 +6,15 @@ Claude Code plugins for Infiquetra development workflows.
 
 | Plugin | Description | Category |
 |--------|-------------|----------|
-| [parallel-test-runner](plugins/parallel-test-runner/) | Run pytest, ruff, mypy, bandit in parallel (4x faster) | Development |
-| [docs-generator](plugins/docs-generator/) | Generate README, API specs, architecture docs | Development |
+| [todoist-manager](plugins/todoist-manager/) | Full-featured Todoist integration for task and project management | Productivity |
+| [pagerduty](plugins/pagerduty/) | PagerDuty incident management, on-call orchestration, and service CRUD | Operations |
+| [slack](plugins/slack/) | Slack messaging and channel management | Communication |
+| [splunk](plugins/splunk/) | Splunk log search and operational analysis | Operations |
+| [identity-toolkit](plugins/identity-toolkit/) | Digital identity architecture (NIST 800-63, W3C VCs, custodial wallets) | Security |
+| [test-suite](plugins/test-suite/) | Parallel Python quality checks: pytest, ruff, mypy, bandit | Development |
+| [docs-generator](plugins/docs-generator/) | Automated README, API spec, and architecture documentation generation | Development |
+| [python-toolkit](plugins/python-toolkit/) | Python patterns for serverless apps: Lambda Powertools, DynamoDB, error handling | Development |
+| [sdk-lifecycle](plugins/sdk-lifecycle/) | SDK scaffolding, documentation, security review, and registry publishing | Development |
 
 ## Installation
 
@@ -34,28 +41,62 @@ Add to `~/.claude/settings.json`:
 ln -s /path/to/infiquetra-claude-plugins/plugins ~/.claude/plugins/infiquetra
 ```
 
-## Usage
+## Usage Examples
 
-### Parallel Test Runner
+### Todoist Manager
+```bash
+# Manage tasks via CLI
+python3 plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py tasks list
+python3 plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py tasks add "Review PR" --project "Work"
+```
+
+### PagerDuty
+Set environment variables first:
+```bash
+export PAGERDUTY_API_KEY="your-api-key"
+export PAGERDUTY_DEFAULT_TEAM_ID="YOUR_TEAM_ID"
+export PAGERDUTY_DEFAULT_ESCALATION_POLICY_ID="YOUR_POLICY_ID"
+```
+
+```bash
+# List active incidents
+python3 plugins/pagerduty/skills/pagerduty-incidents/scripts/pagerduty_client.py incidents list --status triggered
+
+# Acknowledge an incident
+python3 plugins/pagerduty/skills/pagerduty-incidents/scripts/pagerduty_client.py incidents acknowledge --id PXXXXX
+```
+
+### Test Suite
 ```bash
 # Run all quality checks in parallel
-python3 ~/.claude/plugins/infiquetra/parallel-test-runner/src/test_runner.py
-
-# With options
-python3 ~/.claude/plugins/infiquetra/parallel-test-runner/src/test_runner.py \
+python3 plugins/test-suite/skills/run-quality-checks/scripts/test_runner.py \
     --coverage 80 \
     --source-dir src \
-    --test-dir tests \
-    --verbose
+    --test-dir tests
 ```
 
 ### Docs Generator
 ```bash
 # Generate all documentation
-python3 ~/.claude/plugins/infiquetra/docs-generator/src/docs_generator.py generate --all --service my-service
+python3 plugins/docs-generator/skills/generate-docs/scripts/docs_generator.py generate --all --service my-service
+```
 
-# Generate specific doc type
-python3 ~/.claude/plugins/infiquetra/docs-generator/src/docs_generator.py generate --type readme --service my-service
+### Splunk
+```bash
+export SPLUNK_HOST="your-splunk-host"
+export SPLUNK_TOKEN="your-token"
+
+python3 plugins/splunk/skills/splunk-search/scripts/splunk_client.py search \
+    "index=main level=ERROR earliest=-1h"
+```
+
+### Slack
+```bash
+export SLACK_BOT_TOKEN="xoxb-your-token"
+
+python3 plugins/slack/skills/slack-messaging/scripts/slack_client.py message \
+    --channel "#general" \
+    --text "Deployment complete"
 ```
 
 ## Development
@@ -66,7 +107,6 @@ python3 ~/.claude/plugins/infiquetra/docs-generator/src/docs_generator.py genera
 
 ### Setup
 ```bash
-# Clone repository
 git clone git@github.com:infiquetra/infiquetra-claude-plugins.git
 cd infiquetra-claude-plugins
 
@@ -75,10 +115,42 @@ uv pip install -e ".[dev]"
 
 # Run tests
 pytest
+
+# Run linting
+ruff check .
+
+# Run type checking
+mypy plugins/
 ```
 
 ### Adding a New Plugin
-See [docs/PLUGIN_SPEC.md](docs/PLUGIN_SPEC.md) for plugin development guidelines.
+```bash
+# Use the scaffolding tool
+./tools/create-plugin.sh my-new-plugin
+```
+
+See [docs/PLUGIN_SPEC.md](docs/PLUGIN_SPEC.md) for full plugin development guidelines.
+
+## Plugin Structure
+
+Plugins follow the Claude Code native plugin format:
+
+```
+plugin-name/
+├── .claude-plugin/
+│   └── plugin.json         # Plugin manifest
+├── agents/                 # Agent definitions (optional)
+│   └── agent-name.md
+├── skills/                 # Skills (optional)
+│   └── skill-name/
+│       ├── SKILL.md        # Skill definition
+│       ├── references/     # Reference documents
+│       └── scripts/        # Implementation scripts
+├── commands/               # Commands (optional)
+│   └── command.md
+├── README.md
+└── CHANGELOG.md
+```
 
 ## License
 

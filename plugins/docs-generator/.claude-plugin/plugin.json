@@ -6,15 +6,11 @@
     "name": "Infiquetra Team",
     "email": "hello@infiquetra.com"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/infiquetra/infiquetra-claude-plugins"
-  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
   "keywords": [
     "documentation",
     "openapi",
     "diagrams",
     "automation"
-  ],
-  "id": "docs-generator"
+  ]
 }

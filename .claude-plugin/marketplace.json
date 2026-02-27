@@ -6,22 +6,92 @@
   },
   "metadata": {
     "description": "Claude Code plugins for Infiquetra development workflows",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "pluginRoot": "./plugins"
   },
   "plugins": [
     {
-      "name": "parallel-test-runner",
+      "name": "todoist-manager",
       "version": "1.0.0",
-      "description": "Parallel test runner for comprehensive Python quality checks (pytest, ruff, mypy, bandit) with 4x faster execution",
+      "description": "Full-featured Todoist integration for task management, project organization, and productivity workflows",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
       },
-      "source": "./plugins/parallel-test-runner",
+      "source": "./plugins/todoist-manager",
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["testing", "pytest", "quality", "python", "parallel"],
+      "keywords": ["todoist", "tasks", "productivity", "project-management"],
+      "category": "productivity"
+    },
+    {
+      "name": "pagerduty",
+      "version": "1.0.0",
+      "description": "PagerDuty incident management, service CRUD, team management, and on-call orchestration",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "source": "./plugins/pagerduty",
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": ["pagerduty", "incident-management", "on-call", "alerting", "operations", "sre"],
+      "category": "operations"
+    },
+    {
+      "name": "slack",
+      "version": "1.0.0",
+      "description": "Slack messaging and channel management for team communication workflows",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "source": "./plugins/slack",
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": ["slack", "messaging", "channels", "notifications", "communication"],
+      "category": "communication"
+    },
+    {
+      "name": "splunk",
+      "version": "1.0.0",
+      "description": "Splunk log search and analysis for operational visibility and debugging",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "source": "./plugins/splunk",
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": ["splunk", "logs", "search", "observability", "debugging"],
+      "category": "operations"
+    },
+    {
+      "name": "identity-toolkit",
+      "version": "1.0.0",
+      "description": "Digital identity architecture design using NIST 800-63 guidelines, custodial/non-custodial wallet patterns, and W3C Verifiable Credentials",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "source": "./plugins/identity-toolkit",
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": ["identity", "digital-identity", "nist", "verifiable-credentials", "security"],
+      "category": "security"
+    },
+    {
+      "name": "test-suite",
+      "version": "1.0.0",
+      "description": "Parallel test runner for comprehensive Python quality checks (pytest, ruff, mypy, bandit) with faster execution",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "source": "./plugins/test-suite",
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": ["testing", "pytest", "quality", "python", "parallel", "ruff", "mypy", "bandit"],
       "category": "development"
     },
     {
@@ -36,6 +106,34 @@
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
       "keywords": ["documentation", "readme", "api", "architecture", "automation"],
+      "category": "development"
+    },
+    {
+      "name": "python-toolkit",
+      "version": "1.0.0",
+      "description": "Python patterns for serverless applications including Lambda Powertools, DynamoDB single-table design, error handling, and project scaffolding",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "source": "./plugins/python-toolkit",
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": ["python", "lambda", "powertools", "dynamodb", "aws", "serverless"],
+      "category": "development"
+    },
+    {
+      "name": "sdk-lifecycle",
+      "version": "1.0.0",
+      "description": "Complete SDK lifecycle management: scaffolding, documentation generation, security review, and registry publishing",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "source": "./plugins/sdk-lifecycle",
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": ["sdk", "library", "packaging", "publishing", "documentation", "security"],
       "category": "development"
     }
   ]

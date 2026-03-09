@@ -200,22 +200,52 @@ class TodoistClient:
     # TASKS
     # ===========================
 
+    def _get_descendant_project_ids(self, parent_id: str) -> list[str]:
+        """Return all descendant project IDs for the given parent (BFS)."""
+        all_projects = self._collect(self.api.get_projects())
+        children_map: dict[str, list[str]] = {}
+        for project in all_projects:
+            pid = getattr(project, "parent_id", None)
+            if pid:
+                children_map.setdefault(pid, []).append(project.id)
+
+        descendants: list[str] = []
+        queue = [parent_id]
+        while queue:
+            current = queue.pop(0)
+            for child_id in children_map.get(current, []):
+                descendants.append(child_id)
+                queue.append(child_id)
+        return descendants
+
     def tasks_list(self, project_id: Optional[str] = None, section_id: Optional[str] = None,
-                   label: Optional[str] = None, ids: Optional[List[str]] = None) -> None:
+                   label: Optional[str] = None, ids: Optional[List[str]] = None,
+                   include_child_projects: bool = False) -> None:
         """List tasks with optional filters."""
         try:
-            kwargs = {}
-            if project_id:
-                kwargs["project_id"] = project_id
-            if section_id:
-                kwargs["section_id"] = section_id
-            if label:
-                kwargs["label"] = label
-            if ids:
-                kwargs["ids"] = ids
+            if include_child_projects and project_id:
+                descendant_ids = self._get_descendant_project_ids(project_id)
+                all_project_ids = [project_id] + descendant_ids
+                tasks: list[Any] = []
+                for pid in all_project_ids:
+                    kwargs: dict[str, Any] = {"project_id": pid}
+                    if section_id:
+                        kwargs["section_id"] = section_id
+                    if label:
+                        kwargs["label"] = label
+                    tasks.extend(self._collect(self.api.get_tasks(**kwargs)))
+            else:
+                kwargs = {}
+                if project_id:
+                    kwargs["project_id"] = project_id
+                if section_id:
+                    kwargs["section_id"] = section_id
+                if label:
+                    kwargs["label"] = label
+                if ids:
+                    kwargs["ids"] = ids
+                tasks = self._collect(self.api.get_tasks(**kwargs))
 
-            tasks_paginator = self.api.get_tasks(**kwargs)
-            tasks = self._collect(tasks_paginator)
             tasks_data = [self._task_to_dict(task) for task in tasks]
             self._success(tasks_data, count=len(tasks_data))
         except Exception as e:
@@ -824,6 +854,10 @@ def main():
     tasks_list_parser.add_argument("--section-id", help="Filter by section ID")
     tasks_list_parser.add_argument("--label", help="Filter by label name")
     tasks_list_parser.add_argument("--ids", nargs="+", help="Specific task IDs")
+    tasks_list_parser.add_argument(
+        "--include-child-projects", action="store_true",
+        help="Include tasks from all child projects (requires --project-id)"
+    )
 
     # tasks filter
     tasks_filter_parser = tasks_subparsers.add_parser("filter", help="Filter tasks with query")
@@ -1038,6 +1072,7 @@ def main():
                 section_id=args.section_id,
                 label=args.label,
                 ids=args.ids,
+                include_child_projects=args.include_child_projects,
             )
         elif args.action == "filter":
             client.tasks_filter(query=args.query)

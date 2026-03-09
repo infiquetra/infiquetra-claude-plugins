@@ -121,6 +121,7 @@ python3 todoist_client.py tasks list
 - `--section-id 67890` - Filter by section
 - `--label urgent` - Filter by label name
 - `--ids 111 222 333` - Specific task IDs
+- `--include-child-projects` - Include tasks from all child/descendant projects (requires `--project-id`)
 
 ### Filter Tasks with Queries
 

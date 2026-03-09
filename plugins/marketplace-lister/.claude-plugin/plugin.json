@@ -1,0 +1,11 @@
+{
+  "name": "marketplace-lister",
+  "version": "1.0.0",
+  "description": "Identify items from photos and generate Facebook Marketplace listings with pricing research",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": ["marketplace", "selling", "photos", "listings", "facebook"]
+}

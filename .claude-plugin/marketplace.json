@@ -199,5 +199,27 @@
       "category": "development"
     }
   ],
+    {
+      "name": "marketplace-lister",
+      "source": "./plugins/marketplace-lister",
+      "version": "1.0.0",
+      "description": "Identify items from photos and generate Facebook Marketplace listings with pricing research and sales strategy",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "marketplace",
+        "facebook-marketplace",
+        "selling",
+        "photos",
+        "listings",
+        "pricing"
+      ],
+      "category": "automation"
+    }
+  ],
   "version": "2.0.0"
 }

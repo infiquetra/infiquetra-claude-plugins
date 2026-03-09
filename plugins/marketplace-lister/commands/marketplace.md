@@ -1,6 +1,6 @@
-# /marketplace - Facebook Marketplace Listing Tool
+# /marketplace - Multi-Platform Marketplace Listing Tool
 
-Identify items from photos, research pricing, and generate ready-to-post Facebook Marketplace listings.
+Identify items from photos, research pricing, and generate ready-to-post listings for Facebook Marketplace and Mercari.
 
 ## Usage
 
@@ -14,12 +14,14 @@ Identify items from photos, research pricing, and generate ready-to-post Faceboo
 
 The `/marketplace` command activates the **marketplace-list** skill which:
 
-1. **Scans inbox** — Checks iCloud Drive Marketplace/inbox for items to process
+1. **Triages inbox** — Groups loose photos into items automatically (no manual subfolders needed)
 2. **Identifies items** — Uses Claude's vision to identify brand, model, condition
 3. **Researches pricing** — WebSearch for eBay sold comps and local FB prices
-4. **Generates listing** — Writes FB-ready title, description, and pricing strategy
-5. **Organizes files** — Moves folder to dated location, writes listing.md
-6. **Copies to clipboard** — Listing text ready to paste into Facebook
+4. **Selects platforms** — Recommends FB Marketplace and/or Mercari based on item size, weight, and price
+5. **Generates listings** — Platform-optimized copy for each selected platform
+6. **Reviews & improves** — Suggests photo/title/description improvements before saving
+7. **Organizes files** — Moves folder to dated location, writes listing.md + post.md
+8. **Copies to clipboard** — Platform-specific listing text ready to paste
 
 ## Quick Actions
 
@@ -29,8 +31,9 @@ The `/marketplace` command activates the **marketplace-list** skill which:
 /marketplace status                   # See all organized listings
 ```
 
-Or just say naturally:
+Or say naturally:
 - "list on marketplace"
+- "list on mercari"
 - "create marketplace listing"
 - "process marketplace inbox"
 - "check marketplace inbox"
@@ -47,22 +50,24 @@ python3 plugins/marketplace-lister/skills/marketplace-list/scripts/marketplace_c
 This creates:
 ```
 ~/Library/Mobile Documents/com~apple~CloudDocs/Marketplace/
-├── inbox/          ← Drop item photo folders here
+├── inbox/          ← Drop photos here (subfolders or loose)
 └── unidentified/   ← Items Claude couldn't identify
 ```
 
 ### 2. Add Items to Inbox
 
-**From iPhone:**
-1. Photograph the item
-2. Open Files app → iCloud Drive → Marketplace → inbox
-3. Create a new folder (item name or number)
-4. Move/save photos into that folder
+**New in v2 — Just dump photos directly:**
+- Drop all photos into `inbox/` directly (no subfolders needed)
+- Claude will group them into items automatically based on photo sequence
 
-**From Mac:**
-- Open Finder → iCloud Drive → Marketplace → inbox
-- Create a subfolder for each item
+**Or use subfolders (still works):**
+- Create a subfolder in inbox/ for each item
 - Drag photos in
+
+**From iPhone:**
+1. Photograph items
+2. Open Files app → iCloud Drive → Marketplace → inbox
+3. Drop photos in (Claude handles grouping)
 
 **Direct in conversation:**
 - Paste photos directly into Claude Code chat
@@ -75,97 +80,105 @@ You: /marketplace
 
 Claude: Scanning inbox...
 
-Found 2 items ready to process:
+Found 14 loose photos. Grouping by sequence...
 
-📁 cooler (3 photos)
-📁 monitor-stand (2 photos)
+Proposed groups:
+📁 Group 1 (IMG_2670–2672): 3 photos — appears to be a network switch
+📁 Group 2 (IMG_2673–2676): 4 photos — appears to be server rack rails
+📁 Group 3 (IMG_2677–2683): 7 photos — looks like 2 items (different objects)
 
-Which would you like to start with?
+Does this look right? I can split Group 3 if needed.
 
-You: cooler
+You: Group 3 is a drill and a level, split them at IMG_2680
+
+Claude: Got it. Creating 4 item folders...
+✅ group-1 (3 photos)
+✅ group-2 (4 photos)
+✅ group-3a (3 photos) ← drill
+✅ group-3b (4 photos) ← level
+
+Which item do you want to start with?
+
+You: the switch
 
 Claude: Let me look at the photos...
 
-[Views all 3 photos]
-
-I see a **YETI Tundra 45 Cooler** in **Good** condition.
-- Color: White
-- Size: 45 qt
-- Visible wear: Minor scuffs on exterior, drain plug present
-- No cracks or damage to interior
+I see a **Cisco SG300-28 28-Port Gigabit Managed Switch** in **Good** condition.
+- 28 × Gigabit ports
+- Rack mountable, ears included
+- Minor cosmetic wear on top, no damage
+- Estimated weight: ~5 lbs
 
 Is that correct?
 
-You: Yes, that's right
+You: Yes
 
 Claude: Researching prices...
 
-[WebSearch results]
+Pricing for Cisco SG300-28 (Good condition):
+- eBay sold: $65-95
+- Local FB comps: $55-80
 
-Pricing for YETI Tundra 45 (Good condition):
-- eBay sold: $180-240
-- Local FB comps: $160-220
-
-**4-Tier Pricing:**
+4-Tier Pricing:
 | Tier | Price | Timeline |
 |------|-------|----------|
-| Quick Sale | $150 | 24-48 hours |
-| Fair Market | $195 | 3-7 days ← Recommended |
-| Above Market | $220 | 1-2 weeks |
-| Maximum | $240 | Perfect condition premium |
+| Quick Sale | $55 | 24-48 hours |
+| Fair Market | $70 | 3-7 days ← Recommended |
+| Above Market | $80 | 1-2 weeks |
+| Maximum | $95 | Perfect condition |
 
-Prices based on eBay sold comps and Indianapolis FB listings. YETI holds value well.
+Platform recommendation:
+- ✅ Facebook Marketplace ($70) — local pickup, free
+- ✅ Mercari ($78) — nationwide home lab buyers, 10% fee
+- 📦 Shipping: ~5 lbs → USPS Ground Advantage via Pirate Ship (~$9-11)
 
-Does this pricing look right, or would you like to adjust?
+Does this pricing and platform recommendation work?
 
-You: Looks good, go with $195
+You: Yes, looks good
 
-Claude: Generating listing...
+Claude: Generating listings...
 
-─────────────────────────────────
-TITLE: YETI Tundra 45 Cooler White - Good Condition
-PRICE: $195
-CATEGORY: Sporting Goods > Outdoor & Camping
-CONDITION: Good
-LOCATION: Indianapolis, IN
+[Shows FB listing and Mercari listing side by side]
 
-DESCRIPTION:
-YETI Tundra 45 hard-sided cooler in white. These hold ice for 5+ days and
-are built to last — a $350 cooler available for a fraction of the price.
+Suggested improvements:
+📸 Photos: Add a photo with LEDs lit (shows it powers on)
+✏️ Mercari title: Add "home lab" — that community searches for it
 
-Capacity: 45 quarts (holds ~28 cans with ice)
-Color: White
-Condition: Good — minor exterior scuffs from normal use. Interior is clean
-with no cracks or odors. Drain plug included.
+Apply these? [Yes, all / Skip]
 
-Cash or Venmo. Pickup in Indianapolis. No holds without deposit.
-─────────────────────────────────
+You: Yes
 
-Sales Tips:
-- List Thursday for weekend traffic — coolers move fast in summer
-- Bundle with fishing gear if you have any — outdoors buyers often want both
-- Mention ice retention time in title if you test it
+Claude: Organizing and saving...
+✅ Listing saved: ~/iCloud Drive/Marketplace/2026-03-09-cisco-sg300-switch/listing.md
+✅ FB listing copied to clipboard — paste into Facebook Marketplace
+💡 For Mercari: run `copy --platform mercari` when ready to post there
+```
 
-Photo Coaching:
-- Add a photo with the lid open showing the clean interior
-- Include something for scale (water bottle works well)
+## Copying Platform-Specific Listings
 
-Organizing and saving...
-✅ Listing saved: ~/iCloud Drive/Marketplace/2026-03-09-yeti-tundra-45/listing.md
-✅ Copied to clipboard — ready to paste into Facebook Marketplace
+After organizing, copy each platform's listing separately:
 
-Want me to create a Todoist task to track posting this?
+```bash
+# Copy FB description
+python3 marketplace_client.py copy --folder <path> --field description --platform fb | pbcopy
+
+# Copy Mercari description
+python3 marketplace_client.py copy --folder <path> --field description --platform mercari | pbcopy
+
+# Copy Mercari title
+python3 marketplace_client.py copy --folder <path> --field title --platform mercari | pbcopy
 ```
 
 ## Complex Workflows
 
-For batch processing multiple items or extended sales coaching, the **marketplace-lister agent** will be used automatically.
+For batch processing multiple items, the **marketplace-lister agent** will be used automatically.
 
 **Triggers for agent:**
 - "Process everything in my inbox"
 - "What should I bundle together?"
 - "Help me figure out why things aren't selling"
 - "Do a full inbox audit"
+- "List all my items on both FB and Mercari"
 
 ## Troubleshooting
 
@@ -179,20 +192,13 @@ python3 plugins/marketplace-lister/skills/marketplace-list/scripts/marketplace_c
 
 Enable iCloud Drive in System Settings → Apple ID → iCloud → iCloud Drive.
 
-### Photos not showing in inbox
+### Photos not grouping correctly
 
-Ensure photos are in a **subfolder** inside inbox, not directly in the inbox folder:
-```
-inbox/
-├── my-drill/        ← Correct: subfolder with photos
-│   ├── photo1.jpg
-│   └── photo2.jpg
-└── photo.jpg        ← Wrong: photo directly in inbox
-```
+The grouping algorithm uses filename sequence gaps (IMG_XXXX numbering). If photos group incorrectly, you can manually adjust after Claude presents the grouping — or create subfolders manually as in v1.
 
 ## Related
 
-- **Skill:** `marketplace-list` — core pipeline (identify → price → list)
+- **Skill:** `marketplace-list` — core pipeline (triage → identify → price → platform select → list → improve → organize)
 - **Agent:** `marketplace-lister` — batch processing and sales coaching
 - **Script:** `plugins/marketplace-lister/skills/marketplace-list/scripts/marketplace_client.py`
-- **References:** `fb-marketplace-fields.md`, `pricing-framework.md`
+- **References:** `fb-marketplace-fields.md`, `mercari-fields.md`, `platform-selection.md`, `shipping-guide.md`, `pricing-framework.md`

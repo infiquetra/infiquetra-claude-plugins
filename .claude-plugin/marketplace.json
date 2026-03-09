@@ -201,8 +201,8 @@
     {
       "name": "marketplace-lister",
       "source": "./plugins/marketplace-lister",
-      "version": "1.0.0",
-      "description": "Identify items from photos and generate Facebook Marketplace listings with pricing research and sales strategy",
+      "version": "2.0.0",
+      "description": "Identify items from photos and generate multi-platform listings for Facebook Marketplace and Mercari, with smart inbox grouping, shipping guidance, and listing improvement suggestions",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -212,10 +212,12 @@
       "keywords": [
         "marketplace",
         "facebook-marketplace",
+        "mercari",
         "selling",
         "photos",
         "listings",
-        "pricing"
+        "pricing",
+        "shipping"
       ],
       "category": "automation"
     }

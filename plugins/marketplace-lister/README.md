@@ -1,6 +1,6 @@
 # marketplace-lister
 
-Claude Code plugin for turning item photos into Facebook Marketplace listings. Claude identifies items using native vision, researches pricing with WebSearch, and generates clipboard-ready listings with sales strategy.
+Claude Code plugin for turning item photos into multi-platform marketplace listings. Claude identifies items using native vision, researches pricing with WebSearch, selects platforms automatically, and generates clipboard-ready listings for Facebook Marketplace and Mercari with sales strategy and shipping guidance.
 
 ## Why This Plugin
 
@@ -14,15 +14,17 @@ This plugin solves all four by running interactively in Claude Code: Claude's vi
 
 ## Features
 
+- **Smart inbox grouping** — Dump all photos in inbox; Claude groups them into items automatically by filename sequence
 - **Item identification** — Claude views photos and identifies brand, model, condition, specs
 - **4-tier pricing** — Quick Sale, Fair Market, Above Market, Maximum Realistic
 - **WebSearch pricing research** — eBay sold comps, local FB listings
-- **Ready-to-post format** — Title, price, category, description all formatted for FB
+- **Multi-platform listings** — Optimized copy for Facebook Marketplace and Mercari (with platform selection logic)
+- **Shipping guidance** — Carrier recommendations, Pirate Ship setup, cost estimates, packaging tips
+- **Listing improvement suggestions** — Photo, title, and description suggestions before saving (with approval)
 - **Sales strategy** — Bundle suggestions, timing tips, negotiation guidance
-- **Photo coaching** — Specific improvement suggestions based on photos seen
 - **iCloud integration** — Organizes photos in dated folders on iCloud Drive
 - **listing.md** — Rich markdown file saved alongside photos
-- **Clipboard copy** — Listing text ready to paste into Facebook
+- **Clipboard copy** — Platform-specific listing text ready to paste
 - **Todoist integration** — Optional task creation to track posting
 
 ## Quick Start
@@ -37,7 +39,18 @@ Creates `~/Library/Mobile Documents/com~apple~CloudDocs/Marketplace/{inbox,unide
 
 ### 2. Add Photos
 
-Drop item photos into a subfolder in `iCloud Drive/Marketplace/inbox/`:
+**New in v2 — just dump all photos into inbox directly:**
+```
+inbox/
+├── IMG_2670.heic   ← item 1
+├── IMG_2671.heic   ← item 1
+├── IMG_2672.heic   ← item 1
+├── IMG_2680.heic   ← item 2 (gap in sequence → new item)
+└── IMG_2681.heic   ← item 2
+```
+Claude groups them into items automatically based on filename sequence gaps.
+
+Or use subfolders (still works):
 ```
 inbox/
 └── my-item/
@@ -70,7 +83,11 @@ marketplace-lister/
 │       │   └── marketplace_client.py  # Filesystem CLI
 │       └── references/
 │           ├── fb-marketplace-fields.md
-│           └── pricing-framework.md
+│           ├── mercari-fields.md
+│           ├── platform-selection.md
+│           ├── pricing-framework.md
+│           ├── shipping-guide.md
+│           └── listing-improvement-checklist.md
 ├── commands/
 │   └── marketplace.md                 # /marketplace slash command
 ├── README.md
@@ -82,33 +99,42 @@ marketplace-lister/
 ```bash
 python3 marketplace_client.py init
 python3 marketplace_client.py scan [--path <dir>]
+python3 marketplace_client.py group [--path <dir>]
+python3 marketplace_client.py create-folder --name <slug> --photos IMG_001.JPG,IMG_002.JPG
 python3 marketplace_client.py photos --folder <path>
 python3 marketplace_client.py organize --source <path> --name <slug>
 python3 marketplace_client.py unidentified --source <path>
 echo '<json>' | python3 marketplace_client.py listing --folder <path>
+python3 marketplace_client.py copy --folder <path> [--field title|description] [--platform fb|mercari]
 python3 marketplace_client.py status
 ```
 
-All commands output JSON.
+All commands output JSON (except `copy`, which outputs plain text for piping to `pbcopy`).
 
 ## Pipeline
 
 ```
-Photos in iCloud inbox
+Photos in iCloud inbox (loose or in subfolders)
+        ↓
+   group → propose item groupings → user confirms → create-folder
         ↓
    scan → user selects item
         ↓
    Read photos (Claude vision)
         ↓
-   Identify → user confirms
+   Identify → user confirms (with weight estimate)
         ↓
    WebSearch pricing → user reviews
         ↓
-   Generate listing → user reviews
+   Platform selection (FB/Mercari/both, ship vs. local) → user confirms
         ↓
-   organize + listing.md + pbcopy
+   Generate listings (per-platform optimized)
         ↓
-   [Optional] Todoist task
+   Review & improve → suggestions → user approves
+        ↓
+   organize + listing.md + post.md + pbcopy (platform-specific)
+        ↓
+   [Optional] Todoist tasks
 ```
 
 ## Testing

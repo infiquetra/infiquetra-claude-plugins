@@ -197,8 +197,7 @@
         "security"
       ],
       "category": "development"
-    }
-  ],
+    },
     {
       "name": "marketplace-lister",
       "source": "./plugins/marketplace-lister",

@@ -41,16 +41,30 @@ Use for **focused reviews of 1-3 tasks** when the user wants:
 
 ## Review Process
 
-### Step 1: Fetch Task Details
+### Step 1: Resolve Input to Task(s)
 
+The input can be a task ID, task content, or a project name. Resolve in this order:
+
+**1a. Task ID provided** — fetch directly:
 ```bash
 python3 <script_path> tasks get --task-id <ID>
 ```
 
-If user provided task content instead of ID, search first:
+**1b. Looks like a project name** — check projects list first, then use `##` to fetch all tasks including sub-projects:
+```bash
+# List projects to find a name match
+python3 <script_path> projects list
+
+# If matched, fetch all tasks in project + sub-projects
+python3 <script_path> tasks filter --query "##<Project Name>"
+```
+
+**1c. Task content provided** — fall back to text search:
 ```bash
 python3 <script_path> tasks filter --query "search: <task content>"
 ```
+
+**Resolution priority:** task ID > project name match > text search. Always prefer project-based lookup when the input matches a project name, because text search only finds tasks where the search string appears in the task title.
 
 ### Step 2: Score the Task
 

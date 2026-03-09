@@ -208,7 +208,7 @@ class PluginValidator:
                 errors.append(f"Schema validation failed: {e.message}")
 
         # Validate required fields manually
-        required_fields = ["id", "version", "name", "description", "author"]
+        required_fields = ["version", "name", "description", "author"]
         for field in required_fields:
             if field not in manifest:
                 errors.append(f"Missing required field: {field}")
@@ -242,24 +242,21 @@ class PluginValidator:
     def _validate_marketplace_entry(self, entry: Dict, index: int) -> List[str]:
         """Validate a marketplace plugin entry."""
         errors = []
-        required = ["id", "name", "version", "source"]
+        required = ["name", "version", "source"]
 
         for field in required:
             if field not in entry:
                 errors.append(f"Plugin entry {index}: missing {field}")
 
-        # Validate source
+        # Validate source is a string path
         if "source" in entry:
             source = entry["source"]
-            if "type" not in source:
-                errors.append(f"Plugin {entry.get('id', 'unknown')}: source missing type")
-            elif source["type"] == "local":
-                if "path" not in source:
-                    errors.append(f"Plugin {entry['id']}: local source missing path")
-                else:
-                    plugin_path = self.repo_root / source["path"]
-                    if not plugin_path.exists():
-                        errors.append(f"Plugin {entry['id']}: path not found: {source['path']}")
+            if not isinstance(source, str):
+                errors.append(f"Plugin {entry.get('name', 'unknown')}: source must be a string path")
+            else:
+                plugin_path = self.repo_root / source
+                if not plugin_path.exists():
+                    errors.append(f"Plugin {entry.get('name', 'unknown')}: path not found: {source}")
 
         return errors
 

@@ -3,15 +3,8 @@
   "title": "Claude Plugin Manifest",
   "description": "Schema for Claude Code plugin.json manifest files",
   "type": "object",
-  "required": ["id", "version", "name", "description", "author"],
+  "required": ["version", "name", "description", "author"],
   "properties": {
-    "id": {
-      "type": "string",
-      "pattern": "^[a-z0-9-]+$",
-      "description": "Unique plugin identifier (kebab-case)",
-      "minLength": 3,
-      "maxLength": 50
-    },
     "version": {
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9]+)?$",
@@ -69,20 +62,9 @@
       "description": "Plugin homepage URL"
     },
     "repository": {
-      "type": "object",
-      "required": ["type", "url"],
-      "properties": {
-        "type": {
-          "type": "string",
-          "enum": ["git"],
-          "description": "Repository type"
-        },
-        "url": {
-          "type": "string",
-          "format": "uri",
-          "description": "Repository URL"
-        }
-      }
+      "type": "string",
+      "format": "uri",
+      "description": "Repository URL"
     },
     "bugs": {
       "type": "object",

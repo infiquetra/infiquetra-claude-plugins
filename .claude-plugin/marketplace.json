@@ -12,6 +12,7 @@
   "plugins": [
     {
       "name": "todoist-manager",
+      "source": "./plugins/todoist-manager",
       "version": "2.1.0",
       "description": "Full-featured Todoist integration for task management, task readiness review, project organization, and productivity workflows",
       "author": {
@@ -33,6 +34,7 @@
     },
     {
       "name": "pagerduty",
+      "source": "./plugins/pagerduty",
       "version": "1.0.0",
       "description": "PagerDuty incident management, service CRUD, team management, and on-call orchestration",
       "author": {
@@ -53,6 +55,7 @@
     },
     {
       "name": "slack",
+      "source": "./plugins/slack",
       "version": "1.0.0",
       "description": "Slack messaging and channel management for team communication workflows",
       "author": {
@@ -72,6 +75,7 @@
     },
     {
       "name": "splunk",
+      "source": "./plugins/splunk",
       "version": "1.0.0",
       "description": "Splunk log search and analysis for operational visibility and debugging",
       "author": {
@@ -91,6 +95,7 @@
     },
     {
       "name": "identity-toolkit",
+      "source": "./plugins/identity-toolkit",
       "version": "1.0.0",
       "description": "Digital identity architecture design using NIST 800-63 guidelines, custodial/non-custodial wallet patterns, and W3C Verifiable Credentials",
       "author": {
@@ -110,6 +115,7 @@
     },
     {
       "name": "test-suite",
+      "source": "./plugins/test-suite",
       "version": "1.0.0",
       "description": "Parallel test runner for comprehensive Python quality checks (pytest, ruff, mypy, bandit) with faster execution",
       "author": {
@@ -132,6 +138,7 @@
     },
     {
       "name": "docs-generator",
+      "source": "./plugins/docs-generator",
       "version": "2.0.0",
       "description": "Automated documentation generation including README, API specs, and architecture documentation",
       "author": {
@@ -151,6 +158,7 @@
     },
     {
       "name": "python-toolkit",
+      "source": "./plugins/python-toolkit",
       "version": "1.0.0",
       "description": "Python patterns for serverless applications including Lambda Powertools, DynamoDB single-table design, error handling, and project scaffolding",
       "author": {
@@ -171,6 +179,7 @@
     },
     {
       "name": "sdk-lifecycle",
+      "source": "./plugins/sdk-lifecycle",
       "version": "2.0.0",
       "description": "Complete SDK lifecycle management: scaffolding, documentation generation, security review, and registry publishing",
       "author": {

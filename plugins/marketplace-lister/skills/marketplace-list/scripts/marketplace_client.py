@@ -9,7 +9,8 @@ Commands:
   photos       List image files in folder → JSON array of paths
   organize     Move folder to Marketplace/YYYY-MM-DD-<slug>/
   unidentified Move folder to Marketplace/unidentified/
-  listing      Write listing.md from structured JSON (read from stdin)
+  listing      Write listing.md + post.md from structured JSON (read from stdin)
+  copy         Print title or description from post.md to stdout (pipe to pbcopy)
   status       List all organized items with listing status
 """
 
@@ -238,11 +239,60 @@ def cmd_listing(args: list[str]) -> None:
 
     listing_path = folder / "listing.md"
     listing_path.write_text("\n".join(lines))
+
+    # Write post.md — minimal copy-paste file for FB Marketplace posting
+    title = data.get("title", "")
+    price = pricing.get("fair_market", "")
+    description = data.get("description", "")
+    post_lines = [
+        f"TITLE: {title}",
+        f"PRICE: ${price}",
+        "",
+        "─" * 60,
+        "DESCRIPTION:",
+        "─" * 60,
+        "",
+        description,
+    ]
+    post_path = folder / "post.md"
+    post_path.write_text("\n".join(post_lines))
+
     _success({
         "success": True,
         "path": str(listing_path),
-        "title": data.get("title"),
+        "post_path": str(post_path),
+        "title": title,
     })
+
+
+def cmd_copy(args: list[str]) -> None:
+    """Print title or description from post.md to stdout for piping to pbcopy."""
+    if "--folder" not in args:
+        _error("Usage: marketplace_client.py copy --folder <path> --field title|description")
+        return
+    folder = Path(args[args.index("--folder") + 1])
+    field = args[args.index("--field") + 1] if "--field" in args else "description"
+    post_path = folder / "post.md"
+    if not post_path.exists():
+        _error(f"post.md not found in {folder}. Run 'listing' command first.")
+        return
+    content = post_path.read_text()
+    if field == "title":
+        for line in content.splitlines():
+            if line.startswith("TITLE: "):
+                print(line[len("TITLE: "):].strip())
+                return
+        _error("Title not found in post.md")
+    elif field == "description":
+        # Everything after the second ─── separator (after "DESCRIPTION:")
+        lines = content.splitlines()
+        separators = [i for i, l in enumerate(lines) if l.startswith("─")]
+        if len(separators) < 2:
+            _error("Description not found in post.md")
+            return
+        print("\n".join(lines[separators[1] + 1:]).strip())
+    else:
+        _error(f"Unknown field '{field}'. Use: title, description")
 
 
 def cmd_status(_args: list[str]) -> None:
@@ -273,6 +323,7 @@ COMMANDS = {
     "organize": cmd_organize,
     "unidentified": cmd_unidentified,
     "listing": cmd_listing,
+    "copy": cmd_copy,
     "status": cmd_status,
 }
 

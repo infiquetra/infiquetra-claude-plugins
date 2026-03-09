@@ -1,5 +1,4 @@
 {
-  "id": "pagerduty",
   "name": "pagerduty",
   "version": "1.0.0",
   "description": "PagerDuty incident management, service CRUD, team management, and on-call orchestration for Infiquetra operations",
@@ -7,10 +6,7 @@
     "name": "Infiquetra Team",
     "email": "hello@infiquetra.com"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/infiquetra/infiquetra-claude-plugins"
-  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
   "keywords": [
     "pagerduty",
     "incident-management",

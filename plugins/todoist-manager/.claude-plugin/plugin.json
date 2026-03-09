@@ -1,5 +1,4 @@
 {
-  "id": "todoist-manager",
   "name": "todoist-manager",
   "version": "2.1.0",
   "description": "Full Todoist integration for natural-language task management, task readiness review, daily planning workflows, and productivity coaching through Claude Code conversations",
@@ -7,10 +6,7 @@
     "name": "Jeff Cox",
     "email": "hello@infiquetra.com"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/infiquetra/infiquetra-claude-plugins"
-  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
   "keywords": [
     "todoist",
     "task-management",

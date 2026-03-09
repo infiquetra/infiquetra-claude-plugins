@@ -1,5 +1,4 @@
 {
-  "id": "splunk",
   "name": "splunk",
   "version": "1.0.0",
   "description": "Splunk log search and analysis for Infiquetra operations with natural language query building",
@@ -7,10 +6,7 @@
     "name": "Infiquetra Team",
     "email": "hello@infiquetra.com"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/infiquetra/infiquetra-claude-plugins"
-  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
   "keywords": [
     "splunk",
     "logs",

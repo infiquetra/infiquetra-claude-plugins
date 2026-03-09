@@ -1,5 +1,4 @@
 {
-  "id": "slack",
   "name": "slack",
   "version": "1.0.0",
   "description": "Slack messaging and channel management for Infiquetra team communication and incident notifications",
@@ -7,10 +6,7 @@
     "name": "Infiquetra Team",
     "email": "hello@infiquetra.com"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/infiquetra/infiquetra-claude-plugins"
-  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
   "keywords": [
     "slack",
     "messaging",

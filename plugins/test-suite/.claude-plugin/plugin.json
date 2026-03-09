@@ -1,5 +1,4 @@
 {
-  "id": "test-suite",
   "name": "test-suite",
   "version": "2.0.0",
   "description": "Parallel Python quality checks (pytest, ruff, mypy, bandit)",
@@ -7,10 +6,7 @@
     "name": "Infiquetra Team",
     "email": "hello@infiquetra.com"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/infiquetra/infiquetra-claude-plugins"
-  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
   "keywords": [
     "testing",
     "pytest",

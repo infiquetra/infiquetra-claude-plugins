@@ -1,8 +1,8 @@
 {
   "id": "todoist-manager",
   "name": "todoist-manager",
-  "version": "1.0.0",
-  "description": "Full Todoist integration for natural-language task management, daily planning workflows, and productivity coaching through Claude Code conversations",
+  "version": "2.1.0",
+  "description": "Full Todoist integration for natural-language task management, task readiness review, daily planning workflows, and productivity coaching through Claude Code conversations",
   "author": {
     "name": "Jeff Cox",
     "email": "hello@infiquetra.com"
@@ -17,6 +17,9 @@
     "productivity",
     "planning",
     "gtd",
-    "personal"
+    "personal",
+    "task-review",
+    "readiness",
+    "plan-task"
   ]
 }

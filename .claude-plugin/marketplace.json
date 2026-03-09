@@ -13,8 +13,8 @@
     {
       "id": "todoist-manager",
       "name": "todoist-manager",
-      "version": "1.0.0",
-      "description": "Full-featured Todoist integration for task management, project organization, and productivity workflows",
+      "version": "2.1.0",
+      "description": "Full-featured Todoist integration for task management, task readiness review, project organization, and productivity workflows",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -32,7 +32,10 @@
         "todoist",
         "tasks",
         "productivity",
-        "project-management"
+        "project-management",
+        "task-review",
+        "readiness",
+        "plan-task"
       ],
       "category": "development"
     },

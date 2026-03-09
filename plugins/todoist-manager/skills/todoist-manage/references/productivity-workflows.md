@@ -9,7 +9,7 @@ Strategic frameworks for daily planning, task management, and productivity coach
 ### 1. Fetch Overview
 
 ```bash
-python todoist_client.py overview
+python3 todoist_client.py overview
 ```
 
 **What to present:**
@@ -52,7 +52,7 @@ Ask the user to guide focus selection:
 
 ```bash
 # Based on user's selections
-python todoist_client.py tasks filter --query "(p1 & today) | @focus"
+python3 todoist_client.py tasks filter --query "(p1 & today) | @focus"
 ```
 
 **Present as time-blocked schedule:**
@@ -86,7 +86,7 @@ Based on patterns:
 ### 1. Fetch Daily Summary
 
 ```bash
-python todoist_client.py daily-summary
+python3 todoist_client.py daily-summary
 ```
 
 **Present:**
@@ -122,7 +122,7 @@ For each incomplete task:
 **Generate tomorrow's overview:**
 
 ```bash
-python todoist_client.py tasks filter --query "tomorrow"
+python3 todoist_client.py tasks filter --query "tomorrow"
 ```
 
 **Questions:**
@@ -151,12 +151,12 @@ Track and flag:
 **Completed this week:**
 ```bash
 # Approximate with date range
-python todoist_client.py tasks filter --query "completed this week"
+python3 todoist_client.py tasks filter --query "completed this week"
 ```
 
 **Upcoming next week:**
 ```bash
-python todoist_client.py tasks filter --query "next 7 days"
+python3 todoist_client.py tasks filter --query "next 7 days"
 ```
 
 ### 2. Present Weekly Metrics
@@ -275,10 +275,10 @@ Trigger breakdown when:
 **API calls:**
 ```bash
 # Add parent task
-python todoist_client.py tasks add --content "Write quarterly report" --project-id 12345 --due-string "Friday"
+python3 todoist_client.py tasks add --content "Write quarterly report" --project-id 12345 --due-string "Friday"
 
 # Add subtasks
-python todoist_client.py tasks add --content "Research last quarter's data" --parent-id [parent_id] --duration 30 --duration-unit minute --labels computer
+python3 todoist_client.py tasks add --content "Research last quarter's data" --parent-id [parent_id] --duration 30 --duration-unit minute --labels computer
 
 # Repeat for each subtask
 ```
@@ -309,7 +309,7 @@ Example:
 ### 2. Fetch Tasks with Durations
 
 ```bash
-python todoist_client.py tasks filter --query "today & !no duration"
+python3 todoist_client.py tasks filter --query "today & !no duration"
 ```
 
 ### 3. Prioritize and Fit
@@ -370,13 +370,13 @@ Buffer: 54 minutes ✅
 **Match tasks to energy:**
 ```bash
 # Morning focus tasks
-python todoist_client.py tasks filter --query "today & @focus & duration > 60"
+python3 todoist_client.py tasks filter --query "today & @focus & duration > 60"
 
 # Afternoon collaboration
-python todoist_client.py tasks filter --query "today & @collaborate"
+python3 todoist_client.py tasks filter --query "today & @collaborate"
 
 # Evening admin
-python todoist_client.py tasks filter --query "today & @quick & duration < 30"
+python3 todoist_client.py tasks filter --query "today & @quick & duration < 30"
 ```
 
 ## Pattern Recognition & Signals

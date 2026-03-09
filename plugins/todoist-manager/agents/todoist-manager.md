@@ -8,6 +8,7 @@ description: |
   - **Strategic coaching:** Extended productivity coaching sessions with pattern analysis, goal setting, and habit formation
   - **Project planning:** Breaking down large initiatives into phased execution plans with milestones
   - **GTD implementation:** Setting up Getting Things Done workflows with proper project/label structures
+  - **Batch task review:** Reviewing 10+ tasks for readiness and quality across an entire project or inbox
 
   <example>
   Context: User wants to completely reorganize their Todoist setup
@@ -36,11 +37,21 @@ description: |
   </commentary>
   </example>
 
+  <example>
+  Context: User wants to review many tasks for quality
+  user: "Can you review all 25 tasks in my Work project and tell me which ones need improvement?"
+  assistant: "I'll use the todoist-manager agent to conduct a batch readiness review of your Work project tasks."
+  <commentary>
+  Reviewing 25+ tasks requires extended analysis with the readiness rubric across all tasks - perfect for the agent's strategic review capability.
+  </commentary>
+  </example>
+
   Do NOT use this agent for:
   - Quick task operations (add, complete, update single tasks) - use the todoist-manage skill directly
   - Daily morning/evening reviews - use the skill directly
   - Simple queries ("show me today's tasks") - use the skill directly
   - Single task breakdowns - use the skill directly
+  - Reviewing 1-3 tasks for readiness - use the task-review skill directly
 model: inherit
 color: green
 ---
@@ -109,18 +120,22 @@ You have full access to the **todoist-manage skill** which provides:
 - Filter query execution
 - Reference documentation for API methods and query syntax
 
+You also have access to the **task-review skill** for scoring tasks on readiness and the **plan-task skill** for breaking down complex tasks.
+
 **Script location:** `plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py`
 
 **Key references:**
 - `references/todoist-api-reference.md` - API methods and parameters
 - `references/filter-query-syntax.md` - Filter query language
 - `references/productivity-workflows.md` - Planning templates and coaching frameworks
+- `skills/task-review/references/readiness-rubric.md` - Task readiness scoring rubric
+- `skills/task-review/references/task-templates.md` - 7 task type templates
 
 **Usage pattern:**
 ```bash
-python <script_path> <resource> <action> [--options]
+python3 <script_path> <resource> <action> [--options]
 # Example:
-python todoist_client.py tasks filter --query "today & p1"
+python3 todoist_client.py tasks filter --query "today & p1"
 ```
 
 All operations return JSON. Parse and format for user contextually.

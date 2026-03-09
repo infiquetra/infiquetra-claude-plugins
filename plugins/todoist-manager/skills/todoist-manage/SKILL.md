@@ -73,7 +73,7 @@ uv pip install 'todoist-api-python>=3.1.0,<4.0.0'
 
 **Test:**
 ```bash
-python plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py overview
+python3 plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py overview
 ```
 
 **Expected:** JSON output with overview data
@@ -85,7 +85,7 @@ All operations use the `todoist_client.py` script with JSON output.
 ### General Pattern
 
 ```bash
-python <script_path> <resource> <action> [--options]
+python3 <script_path> <resource> <action> [--options]
 ```
 
 **Resources:** `tasks`, `projects`, `sections`, `labels`, `comments`, `overview`, `daily-summary`
@@ -113,7 +113,7 @@ Or for errors:
 ### List All Tasks
 
 ```bash
-python todoist_client.py tasks list
+python3 todoist_client.py tasks list
 ```
 
 **Options:**
@@ -125,7 +125,7 @@ python todoist_client.py tasks list
 ### Filter Tasks with Queries
 
 ```bash
-python todoist_client.py tasks filter --query "today & p1"
+python3 todoist_client.py tasks filter --query "today & p1"
 ```
 
 **Common queries:**
@@ -143,14 +143,14 @@ python todoist_client.py tasks filter --query "today & p1"
 ### Get Single Task
 
 ```bash
-python todoist_client.py tasks get --task-id 12345
+python3 todoist_client.py tasks get --task-id 12345
 ```
 
 ### Add Task
 
 **Full form:**
 ```bash
-python todoist_client.py tasks add \
+python3 todoist_client.py tasks add \
   --content "Task title" \
   --description "Additional details" \
   --project-id 12345 \
@@ -164,7 +164,7 @@ python todoist_client.py tasks add \
 
 **Minimal:**
 ```bash
-python todoist_client.py tasks add --content "Buy milk"
+python3 todoist_client.py tasks add --content "Buy milk"
 ```
 
 **Priority values:**
@@ -185,7 +185,7 @@ python todoist_client.py tasks add --content "Buy milk"
 ### Quick Add Task
 
 ```bash
-python todoist_client.py tasks quick-add --text "Buy milk tomorrow @shopping p1"
+python3 todoist_client.py tasks quick-add --text "Buy milk tomorrow @shopping p1"
 ```
 
 **Quick-add syntax:**
@@ -206,7 +206,7 @@ python todoist_client.py tasks quick-add --text "Buy milk tomorrow @shopping p1"
 ### Update Task
 
 ```bash
-python todoist_client.py tasks update \
+python3 todoist_client.py tasks update \
   --task-id 12345 \
   --content "Updated title" \
   --priority 4 \
@@ -218,19 +218,19 @@ python todoist_client.py tasks update \
 ### Complete Task
 
 ```bash
-python todoist_client.py tasks complete --task-id 12345
+python3 todoist_client.py tasks complete --task-id 12345
 ```
 
 ### Uncomplete Task (Reopen)
 
 ```bash
-python todoist_client.py tasks uncomplete --task-id 12345
+python3 todoist_client.py tasks uncomplete --task-id 12345
 ```
 
 ### Delete Task
 
 ```bash
-python todoist_client.py tasks delete --task-id 12345
+python3 todoist_client.py tasks delete --task-id 12345
 ```
 
 **⚠️ Confirm before deleting** unless clearly temporary or user explicitly requested deletion.
@@ -242,7 +242,7 @@ For multiple tasks, use parallel bash calls or loop:
 ```bash
 # Complete multiple tasks
 for task_id in 111 222 333; do
-  python todoist_client.py tasks complete --task-id $task_id
+  python3 todoist_client.py tasks complete --task-id $task_id
 done
 ```
 
@@ -260,17 +260,17 @@ done
 
 **List all:**
 ```bash
-python todoist_client.py projects list
+python3 todoist_client.py projects list
 ```
 
 **Get one:**
 ```bash
-python todoist_client.py projects get --project-id 12345
+python3 todoist_client.py projects get --project-id 12345
 ```
 
 **Add project:**
 ```bash
-python todoist_client.py projects add \
+python3 todoist_client.py projects add \
   --name "New Project" \
   --color "blue" \
   --is-favorite \
@@ -281,12 +281,12 @@ python todoist_client.py projects add \
 
 **Update:**
 ```bash
-python todoist_client.py projects update --project-id 12345 --name "Renamed Project"
+python3 todoist_client.py projects update --project-id 12345 --name "Renamed Project"
 ```
 
 **Delete:**
 ```bash
-python todoist_client.py projects delete --project-id 12345
+python3 todoist_client.py projects delete --project-id 12345
 ```
 
 **⚠️ Confirm before deleting projects** - this deletes all contained tasks.
@@ -295,35 +295,35 @@ python todoist_client.py projects delete --project-id 12345
 
 **List (all or by project):**
 ```bash
-python todoist_client.py sections list
-python todoist_client.py sections list --project-id 12345
+python3 todoist_client.py sections list
+python3 todoist_client.py sections list --project-id 12345
 ```
 
 **Add section:**
 ```bash
-python todoist_client.py sections add --name "In Progress" --project-id 12345 --order 1
+python3 todoist_client.py sections add --name "In Progress" --project-id 12345 --order 1
 ```
 
 **Update:**
 ```bash
-python todoist_client.py sections update --section-id 67890 --name "Completed"
+python3 todoist_client.py sections update --section-id 67890 --name "Completed"
 ```
 
 **Delete:**
 ```bash
-python todoist_client.py sections delete --section-id 67890
+python3 todoist_client.py sections delete --section-id 67890
 ```
 
 ### Labels
 
 **List all:**
 ```bash
-python todoist_client.py labels list
+python3 todoist_client.py labels list
 ```
 
 **Add label:**
 ```bash
-python todoist_client.py labels add \
+python3 todoist_client.py labels add \
   --name "urgent" \
   --color "red" \
   --is-favorite
@@ -331,35 +331,35 @@ python todoist_client.py labels add \
 
 **Update:**
 ```bash
-python todoist_client.py labels update --label-id 54321 --name "super-urgent" --color "berry_red"
+python3 todoist_client.py labels update --label-id 54321 --name "super-urgent" --color "berry_red"
 ```
 
 **Delete:**
 ```bash
-python todoist_client.py labels delete --label-id 54321
+python3 todoist_client.py labels delete --label-id 54321
 ```
 
 ### Comments
 
 **List (for task or project):**
 ```bash
-python todoist_client.py comments list --task-id 12345
-python todoist_client.py comments list --project-id 67890
+python3 todoist_client.py comments list --task-id 12345
+python3 todoist_client.py comments list --project-id 67890
 ```
 
 **Add comment:**
 ```bash
-python todoist_client.py comments add --content "Progress update: 50% complete" --task-id 12345
+python3 todoist_client.py comments add --content "Progress update: 50% complete" --task-id 12345
 ```
 
 **Update:**
 ```bash
-python todoist_client.py comments update --comment-id 99999 --content "Updated progress: 75% complete"
+python3 todoist_client.py comments update --comment-id 99999 --content "Updated progress: 75% complete"
 ```
 
 **Delete:**
 ```bash
-python todoist_client.py comments delete --comment-id 99999
+python3 todoist_client.py comments delete --comment-id 99999
 ```
 
 **Use comments for:**
@@ -376,7 +376,7 @@ python todoist_client.py comments delete --comment-id 99999
 
 **1. Fetch overview:**
 ```bash
-python todoist_client.py overview
+python3 todoist_client.py overview
 ```
 
 **Output structure:**
@@ -476,14 +476,14 @@ Based on user selections and task durations:
 
 ```bash
 # Save user's focus selections as custom filter
-python todoist_client.py tasks filter --query "(id:111 | id:222 | id:333 | id:444 | id:555)"
+python3 todoist_client.py tasks filter --query "(id:111 | id:222 | id:333 | id:444 | id:555)"
 ```
 
 **Or create a label:**
 ```bash
-python todoist_client.py labels add --name "today-focus"
+python3 todoist_client.py labels add --name "today-focus"
 # Then add label to selected tasks
-python todoist_client.py tasks update --task-id 111 --labels today-focus work
+python3 todoist_client.py tasks update --task-id 111 --labels today-focus work
 ```
 
 **6. Proactive suggestions:**
@@ -501,7 +501,7 @@ python todoist_client.py tasks update --task-id 111 --labels today-focus work
 
 **1. Fetch daily summary:**
 ```bash
-python todoist_client.py daily-summary
+python3 todoist_client.py daily-summary
 ```
 
 **Output:**
@@ -565,15 +565,15 @@ What you accomplished:
 - "Should we break this down?"
 
 **Actions:**
-- Reschedule: `python todoist_client.py tasks update --task-id 123 --due-string "tomorrow"`
+- Reschedule: `python3 todoist_client.py tasks update --task-id 123 --due-string "tomorrow"`
 - Defer: `--due-string "next week"` or remove due date
-- Delete: `python todoist_client.py tasks delete --task-id 123`
+- Delete: `python3 todoist_client.py tasks delete --task-id 123`
 - Break down: Create subtasks
 
 **4. Prep for tomorrow:**
 
 ```bash
-python todoist_client.py tasks filter --query "tomorrow"
+python3 todoist_client.py tasks filter --query "tomorrow"
 ```
 
 Present tomorrow's overview:
@@ -604,9 +604,9 @@ Looks manageable! Get good rest. 😴
 
 ```bash
 # Approximate with filters
-python todoist_client.py tasks filter --query "completed this week"
-python todoist_client.py tasks filter --query "next 7 days"
-python todoist_client.py tasks filter --query "overdue"
+python3 todoist_client.py tasks filter --query "completed this week"
+python3 todoist_client.py tasks filter --query "next 7 days"
+python3 todoist_client.py tasks filter --query "overdue"
 ```
 
 **2. Present weekly dashboard:**
@@ -699,13 +699,13 @@ For each project:
 
 ```bash
 # Add parent task if needed
-python todoist_client.py tasks add \
+python3 todoist_client.py tasks add \
   --content "Write quarterly report" \
   --project-id 12345 \
   --due-string "Friday"
 
 # Get task ID from response, then add subtasks
-python todoist_client.py tasks add \
+python3 todoist_client.py tasks add \
   --content "Research last quarter's data" \
   --parent-id [parent_task_id] \
   --duration 30 \
@@ -713,7 +713,7 @@ python todoist_client.py tasks add \
   --labels computer \
   --priority 2
 
-python todoist_client.py tasks add \
+python3 todoist_client.py tasks add \
   --content "Draft executive summary" \
   --parent-id [parent_task_id] \
   --duration 45 \
@@ -781,7 +781,7 @@ Example:
 **2. Fetch tasks with durations:**
 
 ```bash
-python todoist_client.py tasks filter --query "today & !no duration"
+python3 todoist_client.py tasks filter --query "today & !no duration"
 ```
 
 **3. Prioritize and fit:**
@@ -838,10 +838,10 @@ Buffer: 54 minutes ✅
 
 ```bash
 # Morning focus tasks
-python todoist_client.py tasks filter --query "today & @focus & duration > 60"
+python3 todoist_client.py tasks filter --query "today & @focus & duration > 60"
 
 # Evening quick tasks
-python todoist_client.py tasks filter --query "today & @quick & duration < 30"
+python3 todoist_client.py tasks filter --query "today & @quick & duration < 30"
 ```
 
 **See:** `references/productivity-workflows.md` for complete time-boxing framework
@@ -1132,7 +1132,7 @@ When unclear, err on side of confirmation for user peace of mind.
 **User:** "Good morning, let's plan my day"
 
 **Claude:**
-1. Runs `python todoist_client.py overview`
+1. Runs `python3 todoist_client.py overview`
 2. Parses JSON output
 3. Presents with priority grouping:
    ```
@@ -1201,7 +1201,7 @@ When unclear, err on side of confirmation for user peace of mind.
 **User:** "Let's review my day"
 
 **Claude:**
-1. Runs `python todoist_client.py daily-summary`
+1. Runs `python3 todoist_client.py daily-summary`
 2. Parses output
 3. Celebrates wins:
    ```
@@ -1249,31 +1249,31 @@ When unclear, err on side of confirmation for user peace of mind.
 
 ```bash
 # Morning overview
-python todoist_client.py overview
+python3 todoist_client.py overview
 
 # Today's tasks
-python todoist_client.py tasks filter --query "today"
+python3 todoist_client.py tasks filter --query "today"
 
 # Add task
-python todoist_client.py tasks add --content "Task name" --due-string "tomorrow"
+python3 todoist_client.py tasks add --content "Task name" --due-string "tomorrow"
 
 # Quick add (natural language)
-python todoist_client.py tasks quick-add --text "Buy milk tomorrow @shopping p1"
+python3 todoist_client.py tasks quick-add --text "Buy milk tomorrow @shopping p1"
 
 # Complete task
-python todoist_client.py tasks complete --task-id 12345
+python3 todoist_client.py tasks complete --task-id 12345
 
 # Filter (custom query)
-python todoist_client.py tasks filter --query "today & p1"
+python3 todoist_client.py tasks filter --query "today & p1"
 
 # Daily summary
-python todoist_client.py daily-summary
+python3 todoist_client.py daily-summary
 
 # List projects
-python todoist_client.py projects list
+python3 todoist_client.py projects list
 
 # List labels
-python todoist_client.py labels list
+python3 todoist_client.py labels list
 ```
 
 **Script path:** `plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py`

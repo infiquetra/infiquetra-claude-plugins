@@ -1,6 +1,6 @@
 # Todoist Manager Plugin
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](./CHANGELOG.md)
 [![Python](https://img.shields.io/badge/python-3.12+-brightgreen.svg)](https://www.python.org)
 [![SDK](https://img.shields.io/badge/todoist--api--python-3.1.0-orange.svg)](https://todoist-python.readthedocs.io)
 
@@ -15,6 +15,7 @@ Transform your productivity with AI-powered task management. This plugin brings 
 - 📊 **Strategic weekly reviews** - Project health monitoring, completion metrics, pattern recognition
 - 🧠 **AI productivity coaching** - Task breakdown, prioritization guidance, proactive suggestions
 - 🔄 **Complete workflow automation** - From quick task adds to multi-day project planning
+- ✅ **Task Readiness Review** - Score tasks on 5 dimensions before execution, get specific improvement recommendations
 
 **No rigid commands. Just conversation.**
 
@@ -75,6 +76,15 @@ Transform your productivity with AI-powered task management. This plugin brings 
 - **Proactive Suggestions:** Context-aware recommendations for better task management
 - **Habit Formation:** Recurring reviews, time-blocking, planning rituals
 
+### ✅ Task Readiness Review
+
+Score tasks before starting them using the `/task-review` command:
+- 5-dimension scoring rubric (Clarity, Actionability, Scope, Context, Outcome)
+- Specific improvement recommendations with revised task suggestions
+- Apply fixes directly from the review (update content, add labels, break into subtasks)
+
+Use `/plan-task` to break down complex tasks into structured subtasks with time estimates.
+
 ### 🤖 AI Agent for Complex Workflows
 
 For extended multi-turn sessions, the **todoist-manager agent** provides:
@@ -83,6 +93,7 @@ For extended multi-turn sessions, the **todoist-manager agent** provides:
 - Strategic productivity coaching with pattern analysis
 - GTD (Getting Things Done) implementation
 - Project planning with phases and milestones
+- Batch task readiness reviews across entire projects
 
 ## Installation
 
@@ -136,7 +147,7 @@ uv pip install 'todoist-api-python>=3.1.0,<4.0.0'
 ### 5. Verify Installation
 
 ```bash
-python ~/.claude/plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py overview
+python3 ~/.claude/plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py overview
 ```
 
 Expected: JSON output with your Todoist data
@@ -288,18 +299,27 @@ Let's start by understanding your current pain points...
 ├── .claude-plugin/
 │   └── plugin.json
 ├── skills/
-│   └── todoist-manage/
-│       ├── SKILL.md                          # Main skill instructions
-│       ├── scripts/
-│       │   └── todoist_client.py             # Python CLI
-│       └── references/
-│           ├── todoist-api-reference.md       # API method reference
-│           ├── filter-query-syntax.md         # Query language guide
-│           └── productivity-workflows.md      # Planning templates
+│   ├── todoist-manage/
+│   │   ├── SKILL.md                          # Main skill instructions
+│   │   ├── scripts/
+│   │   │   └── todoist_client.py             # Python CLI
+│   │   └── references/
+│   │       ├── todoist-api-reference.md       # API method reference
+│   │       ├── filter-query-syntax.md         # Query language guide
+│   │       └── productivity-workflows.md      # Planning templates
+│   ├── task-review/
+│   │   ├── SKILL.md                          # Task readiness review skill
+│   │   └── references/
+│   │       ├── readiness-rubric.md            # 5-dimension scoring rubric
+│   │       └── task-templates.md              # 7 task type templates
+│   └── plan-task/
+│       └── SKILL.md                          # Task breakdown skill
 ├── agents/
 │   └── todoist-manager.md                     # Agent for complex workflows
 ├── commands/
-│   └── todoist.md                             # /todoist command docs
+│   ├── todoist.md                             # /todoist command docs
+│   ├── task-review.md                         # /task-review command docs
+│   └── plan-task.md                           # /plan-task command docs
 └── README.md
 ```
 
@@ -343,22 +363,22 @@ For automation or scripting:
 SCRIPT="$HOME/.claude/plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py"
 
 # Overview dashboard
-python $SCRIPT overview
+python3 $SCRIPT overview
 
 # Today's tasks
-python $SCRIPT tasks filter --query "today"
+python3 $SCRIPT tasks filter --query "today"
 
 # Add task
-python $SCRIPT tasks add --content "Task name" --due-string "tomorrow" --priority 4
+python3 $SCRIPT tasks add --content "Task name" --due-string "tomorrow" --priority 4
 
 # Complete task
-python $SCRIPT tasks complete --task-id 12345
+python3 $SCRIPT tasks complete --task-id 12345
 
 # List projects
-python $SCRIPT projects list
+python3 $SCRIPT projects list
 
 # Weekly summary (approximate)
-python $SCRIPT tasks filter --query "7 days"
+python3 $SCRIPT tasks filter --query "7 days"
 ```
 
 All commands output JSON for programmatic parsing.
@@ -368,18 +388,18 @@ All commands output JSON for programmatic parsing.
 **Git hooks:**
 ```bash
 # .git/hooks/post-commit
-python $SCRIPT tasks add --content "Review PR for $(git rev-parse --short HEAD)" --project-id $WORK_PROJECT_ID
+python3 $SCRIPT tasks add --content "Review PR for $(git rev-parse --short HEAD)" --project-id $WORK_PROJECT_ID
 ```
 
 **Cron jobs:**
 ```bash
 # Daily morning reminder
-0 8 * * * python $SCRIPT overview | mail -s "Today's Tasks" user@example.com
+0 8 * * * python3 $SCRIPT overview | mail -s "Today's Tasks" user@example.com
 ```
 
 **Shell aliases:**
 ```bash
-alias tasks="python $SCRIPT tasks filter --query"
+alias tasks="python3 $SCRIPT tasks filter --query"
 alias tasks-today="tasks 'today'"
 alias tasks-urgent="tasks 'p1 | p2'"
 ```
@@ -441,7 +461,7 @@ pip install 'todoist-api-python>=3.1.0,<4.0.0'
 
 **Debug mode:**
 ```bash
-python -u $SCRIPT overview 2>&1 | tee debug.log
+python3 -u $SCRIPT overview 2>&1 | tee debug.log
 ```
 
 **Verify token:**
@@ -451,7 +471,7 @@ echo $TODOIST_TOKEN | wc -c  # Should be ~40 characters
 
 **Test SDK:**
 ```bash
-python -c "from todoist_api_python.api import TodoistAPI; print('OK')"
+python3 -c "from todoist_api_python.api import TodoistAPI; print('OK')"
 ```
 
 ## API Reference
@@ -470,17 +490,17 @@ python -c "from todoist_api_python.api import TodoistAPI; print('OK')"
 
 **List tasks:**
 ```bash
-python $SCRIPT tasks list [--project-id ID] [--section-id ID] [--label NAME]
+python3 $SCRIPT tasks list [--project-id ID] [--section-id ID] [--label NAME]
 ```
 
 **Filter tasks:**
 ```bash
-python $SCRIPT tasks filter --query "today & p1"
+python3 $SCRIPT tasks filter --query "today & p1"
 ```
 
 **Add task:**
 ```bash
-python $SCRIPT tasks add \
+python3 $SCRIPT tasks add \
   --content "Task title" \
   --due-string "tomorrow at 3pm" \
   --priority 4 \
@@ -490,12 +510,12 @@ python $SCRIPT tasks add \
 
 **Quick add:**
 ```bash
-python $SCRIPT tasks quick-add --text "Buy milk tomorrow @shopping p1"
+python3 $SCRIPT tasks quick-add --text "Buy milk tomorrow @shopping p1"
 ```
 
 **Update task:**
 ```bash
-python $SCRIPT tasks update \
+python3 $SCRIPT tasks update \
   --task-id 12345 \
   --content "Updated title" \
   --due-string "friday"
@@ -503,7 +523,7 @@ python $SCRIPT tasks update \
 
 **Complete task:**
 ```bash
-python $SCRIPT tasks complete --task-id 12345
+python3 $SCRIPT tasks complete --task-id 12345
 ```
 
 See `references/todoist-api-reference.md` for complete API documentation.

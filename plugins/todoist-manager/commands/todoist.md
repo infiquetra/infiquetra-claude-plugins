@@ -119,7 +119,7 @@ uv pip install 'todoist-api-python>=3.1.0,<4.0.0'
 Test the configuration:
 
 ```bash
-python plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py overview
+python3 plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py overview
 ```
 
 Expected: JSON output with your Todoist data

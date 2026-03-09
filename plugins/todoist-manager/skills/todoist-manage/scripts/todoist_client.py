@@ -9,21 +9,21 @@ Environment Variables:
     TODOIST_TOKEN: Personal API token from Todoist (required)
 
 Usage:
-    python todoist_client.py overview
-    python todoist_client.py tasks list
-    python todoist_client.py tasks filter --query "today & p1"
-    python todoist_client.py tasks add --content "Task name" --project-id 12345
-    python todoist_client.py projects list
+    python3 todoist_client.py overview
+    python3 todoist_client.py tasks list
+    python3 todoist_client.py tasks filter --query "today & p1"
+    python3 todoist_client.py tasks add --content "Task name" --project-id 12345
+    python3 todoist_client.py projects list
 """
 
 import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Iterator
 
-# Try to import the SDK
+# Try to import the SDK; auto-install if missing
 try:
     from todoist_api_python.api import TodoistAPI
     from todoist_api_python.models import (
@@ -36,16 +36,22 @@ try:
         Duration,
     )
 except ImportError:
-    print(
-        json.dumps(
-            {
-                "error": "todoist-api-python not installed",
-                "message": "Install with: pip install todoist-api-python",
-                "install_command": "pip install 'todoist-api-python>=3.1.0,<4.0.0'",
-            }
-        )
+    import subprocess
+    print(json.dumps({"info": "Installing todoist-api-python SDK..."}), flush=True)
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "todoist-api-python>=3.1.0,<4.0.0"],
+        stdout=subprocess.DEVNULL,
     )
-    sys.exit(1)
+    from todoist_api_python.api import TodoistAPI
+    from todoist_api_python.models import (
+        Task,
+        Project,
+        Section,
+        Label,
+        Comment,
+        Due,
+        Duration,
+    )
 
 
 class TodoistClient:
@@ -284,7 +290,7 @@ class TodoistClient:
     def tasks_quick_add(self, text: str) -> None:
         """Add a task using Todoist quick-add syntax."""
         try:
-            task = self.api.quick_add_task(text=text)
+            task = self.api.add_task_quick(text=text)
             self._success(self._task_to_dict(task))
         except Exception as e:
             self._error(f"Failed to quick-add task: {str(e)}", text=text)
@@ -370,6 +376,16 @@ class TodoistClient:
                 sys.exit(1)
         except Exception as e:
             self._error(f"Failed to delete task: {str(e)}", task_id=task_id)
+            sys.exit(1)
+
+    def tasks_subtasks(self, parent_id: str) -> None:
+        """Fetch subtasks for a given parent task ID."""
+        try:
+            tasks_iterator = self.api.get_tasks(parent_id=parent_id)
+            tasks = self._collect(tasks_iterator)
+            self._success([self._task_to_dict(task) for task in tasks], count=len(tasks))
+        except Exception as e:
+            self._error(f"Failed to get subtasks: {str(e)}", parent_id=parent_id)
             sys.exit(1)
 
     # ===========================
@@ -740,7 +756,7 @@ class TodoistClient:
         """Generate daily summary: completed today + remaining today."""
         try:
             # Get today's date range
-            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = today_start + timedelta(days=1)
 
             # Fetch completed tasks for today
@@ -748,7 +764,7 @@ class TodoistClient:
             # Assuming we need to get recent completions and filter
             try:
                 # Try to get completed tasks by completion date
-                completed_iterator = self.api.get_completed_tasks()
+                completed_iterator = self.api.get_completed_tasks_by_completion_date()
                 completed_today = []
                 for page in completed_iterator:
                     for task in page:
@@ -865,6 +881,10 @@ def main():
     # tasks delete
     tasks_delete_parser = tasks_subparsers.add_parser("delete", help="Delete a task")
     tasks_delete_parser.add_argument("--task-id", required=True, help="Task ID")
+
+    # tasks subtasks
+    tasks_subtasks_parser = tasks_subparsers.add_parser("subtasks", help="Get subtasks for a parent task")
+    tasks_subtasks_parser.add_argument("--parent-id", required=True, help="Parent task ID")
 
     # ===========================
     # PROJECTS
@@ -1064,6 +1084,8 @@ def main():
             client.tasks_uncomplete(task_id=args.task_id)
         elif args.action == "delete":
             client.tasks_delete(task_id=args.task_id)
+        elif args.action == "subtasks":
+            client.tasks_subtasks(parent_id=args.parent_id)
 
     elif args.resource == "projects":
         if not args.action:

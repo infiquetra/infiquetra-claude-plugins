@@ -5,6 +5,61 @@ All notable changes to the Todoist Manager plugin will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-03-08
+
+### Added
+
+#### New Skills
+- **`task-review` skill** — Score 1-3 tasks on 5 dimensions (Clarity, Actionability, Scope, Context, Outcome) with specific improvement recommendations and direct apply capability
+- **`plan-task` skill** — Break down complex tasks into structured subtasks with time estimates, sequencing, and session grouping
+
+#### New Commands
+- **`/task-review`** — Review tasks for readiness before execution; auto-triggers on "review task", "is this ready?", "prepare task"
+- **`/plan-task`** — Create a subtask breakdown for complex tasks; auto-triggers on "break this down", "I don't know where to start"
+
+#### New Reference Documents
+- **`readiness-rubric.md`** — 5-dimension scoring rubric with examples for each score level (0-2 per dimension, 10 total)
+- **`task-templates.md`** — 7 task type templates: Research, Writing, Coding, Meeting, Admin, Communication, Planning
+
+#### Python Script (`todoist_client.py`)
+- Added `tasks_subtasks` method to fetch subtasks by parent task ID
+- Added `tasks subtasks --parent-id` argparse subcommand
+
+### Fixed
+
+#### Python Script (`todoist_client.py`)
+- Auto-install `todoist-api-python` SDK on import failure instead of exiting with error
+- Fixed `quick_add_task` → `add_task_quick` (correct SDK v3.x method name)
+- Fixed `get_completed_tasks` → `get_completed_tasks_by_completion_date` (correct SDK method)
+- Fixed naive `datetime.now()` → `datetime.now(timezone.utc)` in `daily_summary` to avoid timezone warnings
+- Added `timezone` to datetime imports
+
+#### Documentation
+- `python` → `python3` throughout all skill, command, and reference documents
+- Updated agent description to include batch task-review capability
+- Updated agent Tools & Access section with task-review references
+
+### Changed
+
+- Agent: Added task-review as 5th core capability (batch reviews of 10+ tasks)
+- Agent: Added "Reviewing 1-3 tasks for readiness" to "Do NOT use" list (use task-review skill directly)
+- Plugin version: `1.0.0` → `2.1.0`
+
+---
+
+## [2.0.0] - 2026-02-15
+
+### Added
+
+- Initial groundwork for task quality review (internal)
+- Planning framework research
+
+### Changed
+
+- Internal refactoring of skill organization
+
+---
+
 ## [1.0.0] - 2025-02-23
 
 ### Added

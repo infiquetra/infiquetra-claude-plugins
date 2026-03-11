@@ -201,8 +201,8 @@
     {
       "name": "marketplace-lister",
       "source": "./plugins/marketplace-lister",
-      "version": "2.0.0",
-      "description": "Identify items from photos and generate multi-platform listings for Facebook Marketplace and Mercari, with smart inbox grouping, shipping guidance, and listing improvement suggestions",
+      "version": "3.0.0",
+      "description": "Identify items from photos and generate multi-platform listings for Facebook Marketplace, Mercari, and eBay — with full eBay API integration for programmatic publish, status checks, fulfillment, and monthly limit tracking",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -213,11 +213,13 @@
         "marketplace",
         "facebook-marketplace",
         "mercari",
+        "ebay",
         "selling",
         "photos",
         "listings",
         "pricing",
-        "shipping"
+        "shipping",
+        "api"
       ],
       "category": "automation"
     }

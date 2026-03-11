@@ -111,3 +111,52 @@ Ask these questions:
 If all three: **ship**. Otherwise: **local pickup only**.
 
 At $25 sale price with $7 shipping, you net $18 before fees. That's still fine for something that might not sell locally. At $15 sale price with $7 shipping, you net $8 — probably not worth it.
+
+## eBay Shipping
+
+eBay offers three shipping models. Choose based on item weight and simplicity preference.
+
+### Calculated Shipping (recommended for 3+ lbs)
+
+- Buyer's zip code + your package dimensions → eBay calculates real carrier rates
+- Buyer pays actual cost; you enter weight/dimensions in the listing
+- Best for: items where shipping varies significantly by buyer location
+- Setup: enter package weight + length/width/height when creating the listing
+
+### Flat Rate Shipping
+
+- Fixed amount you set, regardless of buyer location
+- Simple; good for lightweight items where rates don't vary much
+- Risk: overcharge nearby buyers; undercharge coastal buyers
+- Use for: items under 2 lbs where variance is minimal
+
+### Free Shipping (baked into price)
+
+- Listing shows "Free shipping" — builds buyer confidence
+- You've already added shipping cost to the item price (eBay price formula `FB ÷ 0.87` assumes buyer pays shipping; if you want free shipping, increase eBay price by expected average shipping cost)
+- Slight search ranking boost
+- Best for: items under 1 lb where shipping is $4-6
+
+### eBay Carrier Options
+
+eBay integrates with USPS, UPS, and FedEx. Rate-shop in Pirate Ship first, then enter the carrier you'll use in eBay's listing setup.
+
+**Carrier preference (general):**
+- **UPS** — Best for 3–70 lbs via Pirate Ship; reliable tracking
+- **USPS Ground Advantage** — Best for under 3 lbs or Flat Rate boxes
+- **FedEx** — Competitive on heavy items in some zones; check Pirate Ship
+
+### Global Shipping Program
+
+eBay's Global Shipping Program (GSP) lets you ship to international buyers without dealing with customs directly. You ship to an eBay US hub; they handle the rest.
+
+- **Opt in** if you're open to international buyers — it expands your audience with minimal extra work
+- You only ship domestically to the eBay hub
+- International buyers pay customs/import fees separately (not your problem)
+
+### eBay-Specific Packaging Notes
+
+- **Print eBay label through Pirate Ship** for best rates, then add tracking number to eBay order manually (or use eBay's label printing — rates are similar)
+- **Ship within 1 business day** to qualify for eBay Guaranteed Delivery badge (improves visibility)
+- For items > $100: add insurance. Pirate Ship makes this $1-2 extra.
+- Mark packages with eBay order number on the outside (helps with disputes)

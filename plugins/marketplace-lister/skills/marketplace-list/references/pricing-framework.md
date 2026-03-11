@@ -15,6 +15,25 @@ Every listing gets four prices. This gives the seller flexibility based on how q
 
 **Starting recommendation:** Always suggest Fair Market as the listing price. If no bites in 3-4 days, drop to Quick Sale. Never start at Maximum — you lose the first-48-hours traffic surge.
 
+## Platform Price Tiers
+
+When listing on multiple platforms, all prices are derived from the FB Fair Market price:
+
+| Platform | Formula | Purpose |
+|----------|---------|---------|
+| **FB Marketplace** | Fair Market price | Base — no fees for local sales |
+| **Mercari** | FB ÷ 0.90 | Covers 10% selling fee |
+| **eBay** | FB ÷ 0.87 | Covers ~13.25% FVF + $0.30/order |
+
+**eBay fee detail:**
+- Final Value Fee: 13.25% of total sale (item + shipping) for most categories
+- Per-order fee: $0.30 deducted from payout
+- Formula `FB ÷ 0.87` is a conservative approximation that slightly over-recovers fees — that's intentional
+
+**Example at FB $70:**
+- Mercari: $70 ÷ 0.90 = $78 → net ~$70.20 after 10% fee
+- eBay: $70 ÷ 0.87 = $80 → net ~$69.10 after 13.25% FVF + $0.30
+
 ## WebSearch Research Queries
 
 Use these exact queries for consistent results:

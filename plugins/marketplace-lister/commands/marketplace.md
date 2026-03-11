@@ -1,6 +1,6 @@
 # /marketplace - Multi-Platform Marketplace Listing Tool
 
-Identify items from photos, research pricing, and generate ready-to-post listings for Facebook Marketplace and Mercari.
+Identify items from photos, research pricing, and generate ready-to-post listings for Facebook Marketplace, Mercari, and eBay. eBay listings can be published programmatically via the eBay API.
 
 ## Usage
 
@@ -17,11 +17,12 @@ The `/marketplace` command activates the **marketplace-list** skill which:
 1. **Triages inbox** — Groups loose photos into items automatically (no manual subfolders needed)
 2. **Identifies items** — Uses Claude's vision to identify brand, model, condition
 3. **Researches pricing** — WebSearch for eBay sold comps and local FB prices
-4. **Selects platforms** — Recommends FB Marketplace and/or Mercari based on item size, weight, and price
-5. **Generates listings** — Platform-optimized copy for each selected platform
+4. **Selects platforms** — Recommends FB Marketplace, Mercari, and/or eBay based on item and price
+5. **Generates listings** — Platform-optimized copy for each selected platform (HTML for eBay)
 6. **Reviews & improves** — Suggests photo/title/description improvements before saving
 7. **Organizes files** — Moves folder to dated location, writes listing.md + post.md
 8. **Copies to clipboard** — Platform-specific listing text ready to paste
+9. **eBay API publish** — Interactive review → programmatic publish via eBay REST API
 
 ## Quick Actions
 
@@ -34,6 +35,8 @@ The `/marketplace` command activates the **marketplace-list** skill which:
 Or say naturally:
 - "list on marketplace"
 - "list on mercari"
+- "list on ebay"
+- "publish to ebay"
 - "create marketplace listing"
 - "process marketplace inbox"
 - "check marketplace inbox"
@@ -167,6 +170,35 @@ python3 marketplace_client.py copy --folder <path> --field description --platfor
 
 # Copy Mercari title
 python3 marketplace_client.py copy --folder <path> --field title --platform mercari | pbcopy
+
+# Copy eBay description (HTML — for manual posting)
+python3 marketplace_client.py copy --folder <path> --field description --platform ebay | pbcopy
+```
+
+## eBay API Publishing
+
+For eBay, Claude walks you through an interactive review then publishes via API:
+
+```bash
+# Step 1: Prepare (queries eBay for category suggestions + shows limits)
+python3 ebay_client.py publish --folder <path>
+
+# Step 2: After interactive review, execute publish
+echo '<confirmed-json>' | python3 ebay_client.py publish-confirm --folder <path>
+
+# Post-publish management
+python3 ebay_client.py status --folder <path>          # Check views/watchers
+python3 ebay_client.py ship --folder <path> --tracking 1Z... --carrier UPS
+python3 ebay_client.py limits                           # Monthly limit usage
+python3 ebay_client.py messages                         # Buyer messages
+```
+
+**Required environment variables for eBay API:**
+```bash
+export EBAY_CLIENT_ID=your-app-id
+export EBAY_CLIENT_SECRET=your-cert-id
+export EBAY_REFRESH_TOKEN=your-user-token
+export EBAY_SANDBOX=true  # Optional: use sandbox for testing
 ```
 
 ## Complex Workflows

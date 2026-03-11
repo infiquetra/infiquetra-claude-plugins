@@ -14,6 +14,8 @@ Commands:
   listing        Write listing.md + post.md from structured JSON (read from stdin)
   copy           Print title or description from post.md to stdout (pipe to pbcopy)
   status         List all organized items with listing status
+
+eBay API operations are handled by ebay_client.py (publish, status, ship, etc.).
 """
 
 import json
@@ -290,10 +292,21 @@ def cmd_listing(args: list[str]) -> None:
     title = data.get("title", "")
     description = data.get("description", "")
     price = pricing.get("fair_market", "")
+
+    # Mercari fields
     mercari_title = data.get("mercari_title", title)
     mercari_description = data.get("mercari_description", description)
     mercari_price = pricing.get("mercari_price", "")
     mercari_shipping_cost = shipping.get("estimated_cost", "")
+
+    # eBay fields
+    ebay_title = data.get("ebay_title", title)
+    ebay_description = data.get("ebay_description", description)
+    ebay_price = pricing.get("ebay_price", "")
+    ebay_category = data.get("ebay_category", data.get("category", ""))
+    condition_code = data.get("condition_code", 5000)
+    listing_format = data.get("listing_format", "fixed_price")
+    item_specifics = data.get("item_specifics", {})
 
     # ── listing.md ────────────────────────────────────────────────────────────
 
@@ -342,6 +355,31 @@ def cmd_listing(args: list[str]) -> None:
             "",
         ]
 
+    if "ebay" in platforms:
+        format_label = listing_format.replace("_", " ").title()
+        lines += [
+            "## eBay Listing",
+            "",
+            "```",
+            f"TITLE: {ebay_title}",
+            f"PRICE: ${ebay_price or price}",
+            f"CATEGORY: {ebay_category}",
+            f"CONDITION CODE: {condition_code}",
+            f"FORMAT: {format_label}",
+        ]
+        if item_specifics:
+            lines.append("")
+            lines.append("ITEM SPECIFICS:")
+            for k, v in item_specifics.items():
+                lines.append(f"  {k}: {v}")
+        lines += [
+            "",
+            "DESCRIPTION (HTML):",
+            ebay_description,
+            "```",
+            "",
+        ]
+
     lines += [
         "---",
         "",
@@ -382,6 +420,8 @@ def cmd_listing(args: list[str]) -> None:
         ]
         if "mercari" in platforms and mercari_price:
             lines.append(f"| Mercari Price | ${mercari_price} | Includes 10% fee buffer |")
+        if "ebay" in platforms and ebay_price:
+            lines.append(f"| eBay Price | ${ebay_price} | Covers 13.25% FVF + $0.30 |")
         lines.append("")
         if pricing.get("reasoning"):
             lines += [f"**Pricing Basis:** {pricing['reasoning']}", ""]
@@ -407,7 +447,7 @@ def cmd_listing(args: list[str]) -> None:
     sep_thin = "─" * 60
     post_lines: list[str] = []
 
-    if "mercari" in platforms:
+    if len(platforms) > 1:
         # Multi-platform format with clear section headers
         post_lines += [
             sep_thick,
@@ -422,22 +462,40 @@ def cmd_listing(args: list[str]) -> None:
             "",
             description,
             "",
-            sep_thick,
-            "MERCARI",
-            sep_thick,
-            f"TITLE: {mercari_title}",
-            f"PRICE: ${mercari_price or price}",
         ]
-        if mercari_shipping_cost:
-            post_lines.append(f"SHIPPING: Prepaid label — {mercari_shipping_cost}")
-        post_lines += [
-            "",
-            sep_thin,
-            "DESCRIPTION:",
-            sep_thin,
-            "",
-            mercari_description,
-        ]
+        if "mercari" in platforms:
+            post_lines += [
+                sep_thick,
+                "MERCARI",
+                sep_thick,
+                f"TITLE: {mercari_title}",
+                f"PRICE: ${mercari_price or price}",
+            ]
+            if mercari_shipping_cost:
+                post_lines.append(f"SHIPPING: Prepaid label — {mercari_shipping_cost}")
+            post_lines += [
+                "",
+                sep_thin,
+                "DESCRIPTION:",
+                sep_thin,
+                "",
+                mercari_description,
+                "",
+            ]
+        if "ebay" in platforms:
+            post_lines += [
+                sep_thick,
+                "EBAY",
+                sep_thick,
+                f"TITLE: {ebay_title}",
+                f"PRICE: ${ebay_price or price}",
+                "",
+                sep_thin,
+                "DESCRIPTION (HTML):",
+                sep_thin,
+                "",
+                ebay_description,
+            ]
     else:
         # Single-platform (FB only) — legacy format
         post_lines = [
@@ -466,7 +524,7 @@ def cmd_listing(args: list[str]) -> None:
 def cmd_copy(args: list[str]) -> None:
     """Print title or description from post.md to stdout for piping to pbcopy."""
     if "--folder" not in args:
-        _error("Usage: marketplace_client.py copy --folder <path> [--field title|description] [--platform fb|mercari]")
+        _error("Usage: marketplace_client.py copy --folder <path> [--field title|description] [--platform fb|mercari|ebay]")
         return
     folder = Path(args[args.index("--folder") + 1])
     field = args[args.index("--field") + 1] if "--field" in args else "description"
@@ -482,7 +540,8 @@ def cmd_copy(args: list[str]) -> None:
     has_platform_headers = any(line.startswith("═") for line in all_lines)
 
     if has_platform_headers:
-        platform_label = "FACEBOOK MARKETPLACE" if platform == "fb" else "MERCARI"
+        platform_labels = {"fb": "FACEBOOK MARKETPLACE", "mercari": "MERCARI", "ebay": "EBAY"}
+        platform_label = platform_labels.get(platform, platform.upper())
         section_lines: list[str] = []
         in_section = False
         past_header_sep = False

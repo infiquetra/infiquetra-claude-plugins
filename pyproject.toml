@@ -25,6 +25,9 @@ dev = [
     "bandit>=1.7",
     "safety>=3.0.0",
 ]
+ebay = [
+    "Pillow>=10.0",
+]
 
 [build-system]
 requires = ["hatchling"]

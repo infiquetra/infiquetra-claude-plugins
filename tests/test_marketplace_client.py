@@ -564,3 +564,115 @@ def test_extract_seq_plain_number() -> None:
 
 def test_extract_seq_no_number() -> None:
     assert mc._extract_seq("photo.jpg") is None
+
+
+# ── eBay listing generation ───────────────────────────────────────────────────
+
+SAMPLE_LISTING_JSON_EBAY = {
+    "title": "Cisco SG300-28 Managed Switch - Good",
+    "mercari_title": "Cisco SG300-28 Managed Switch 28Port Good",
+    "ebay_title": "Cisco SG300-28 28Port Gigabit Managed Switch Good Home Lab",
+    "category": "Electronics > Networking",
+    "mercari_category": "Electronics > Networking Equipment",
+    "ebay_category": "Switches & Hubs",
+    "condition": "Good",
+    "condition_code": 5000,
+    "description": "Solid managed switch for home lab use.",
+    "mercari_description": "Solid managed switch. Home lab ready. #cisco #networking",
+    "ebay_description": "<div><h2>Cisco SG300-28</h2><ul><li><strong>Ports:</strong> 28 Gigabit</li></ul></div>",
+    "location": "Indianapolis, IN",
+    "platforms": ["fb", "mercari", "ebay"],
+    "listing_format": "fixed_price",
+    "item_specifics": {"Brand": "Cisco", "Model": "SG300-28", "MPN": "SG300-28-K9-NA"},
+    "pricing": {
+        "quick_sale": 55,
+        "fair_market": 70,
+        "above_market": 80,
+        "maximum": 90,
+        "mercari_price": 78,
+        "ebay_price": 80,
+        "reasoning": "eBay sold comps $65-85",
+    },
+    "shipping": {
+        "estimated_weight_lbs": 5.0,
+        "recommended_carrier": "USPS Ground Advantage",
+        "estimated_cost": "~$10",
+        "packaging": "Medium box",
+        "ship_or_local": "Both",
+    },
+    "strategy": ["List Thursday"],
+    "photo_coaching": ["Add powered-on photo"],
+    "specs": {"Brand": "Cisco", "Model": "SG300-28"},
+}
+
+
+def test_listing_ebay_section_in_listing_md(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON_EBAY)))
+    mc.cmd_listing(["--folder", str(tmp_path)])
+    out = json.loads(capsys.readouterr().out)
+    assert out["success"] is True
+    assert out["platforms"] == ["fb", "mercari", "ebay"]
+
+    content = (tmp_path / "listing.md").read_text()
+    assert "eBay Listing" in content
+    assert "Cisco SG300-28 28Port Gigabit Managed Switch Good Home Lab" in content
+    assert "CONDITION CODE: 5000" in content
+    assert "Fixed Price" in content
+    assert "MPN: SG300-28-K9-NA" in content
+    assert "eBay Price | $80" in content
+
+
+def test_listing_ebay_in_post_md(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON_EBAY)))
+    mc.cmd_listing(["--folder", str(tmp_path)])
+    capsys.readouterr()
+
+    post_content = (tmp_path / "post.md").read_text()
+    assert "EBAY" in post_content
+    assert "═" in post_content  # multi-platform format triggered
+    assert "FACEBOOK MARKETPLACE" in post_content
+    assert "MERCARI" in post_content
+
+
+def test_listing_fb_ebay_only_no_mercari(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """eBay-only multi-platform without Mercari should still use multi-platform post.md format."""
+    data = {**SAMPLE_LISTING_JSON_EBAY, "platforms": ["fb", "ebay"]}
+    monkeypatch.setattr("sys.stdin", StringIO(json.dumps(data)))
+    mc.cmd_listing(["--folder", str(tmp_path)])
+    capsys.readouterr()
+
+    post_content = (tmp_path / "post.md").read_text()
+    assert "═" in post_content  # multi-platform format triggered even without Mercari
+    assert "EBAY" in post_content
+    assert "MERCARI" not in post_content
+
+
+def test_copy_ebay_description(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON_EBAY)))
+    mc.cmd_listing(["--folder", str(tmp_path)])
+    capsys.readouterr()
+
+    mc.cmd_copy(["--folder", str(tmp_path), "--field", "description", "--platform", "ebay"])
+    output = capsys.readouterr().out.strip()
+    assert "Cisco SG300-28" in output
+    assert "<div>" in output or "SG300-28" in output  # HTML description content
+
+
+def test_copy_ebay_title(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON_EBAY)))
+    mc.cmd_listing(["--folder", str(tmp_path)])
+    capsys.readouterr()
+
+    mc.cmd_copy(["--folder", str(tmp_path), "--field", "title", "--platform", "ebay"])
+    output = capsys.readouterr().out.strip()
+    assert output == "Cisco SG300-28 28Port Gigabit Managed Switch Good Home Lab"

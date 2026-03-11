@@ -81,6 +81,33 @@ Check each of these against the photos you viewed:
 - [ ] Is platform recommendation appropriate for item size/weight?
 - [ ] Is ship-vs-local call correct for the weight and price?
 - [ ] If shipping, is the carrier/cost estimate reasonable?
+- [ ] Is eBay recommended for brand-name items with MPN/UPC?
+
+## eBay-Specific Review
+
+### Photos (eBay allows 24)
+- [ ] **Model/serial label close-up** — eBay buyers verify model numbers before buying; this reduces "not as described" claims
+- [ ] **Defects documented** — eBay's Money Back Guarantee means undisclosed defects become expensive returns
+- [ ] **All angles covered** — eBay buyers can't inspect in person; thorough coverage builds trust
+- [ ] **Item powered on** — For electronics: powered-on photo is strong trust signal
+
+### Title (80 char max, keyword-dense)
+- [ ] **MPN included** if known — many eBay buyers search by exact part number
+- [ ] **UPC/EAN included** if known — enables eBay catalog matching (can improve rank)
+- [ ] **Condition omitted from title** — condition is a structured field; title characters better spent on keywords
+- [ ] **Brand + Model + Key Spec** packed in first 60 characters?
+
+### Description
+- [ ] **HTML used** — plain text looks unprofessional; check that HTML is valid
+- [ ] **Item specifics filled** — at least Brand, Model, MPN; ideally all category-relevant fields
+- [ ] **Condition description** completed — specific language ("one small scratch on lid, no affect on function")
+- [ ] **Returns policy stated** — 30-day returns mentioned in description even if it's in the listing policy
+
+### Pricing
+- [ ] **eBay price = FB price ÷ 0.87** — verify the formula was applied
+- [ ] **Auction considered** if item is vintage/collectible/rare — may yield higher final price
+- [ ] **Free shipping considered** for items under 1 lb — slight search rank boost worth the simplicity
+- [ ] **eBay monthly limits checked** — verify you have capacity (20 items/$1,000 monthly)
 
 ## Presenting Suggestions
 

@@ -21,6 +21,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from typing import Any
@@ -63,6 +64,11 @@ class SplunkClient:
 
         # Remove protocol if included
         self.host = self.host.replace("https://", "").replace("http://", "")
+
+        # Validate hostname to prevent SSRF — allow hostnames and IPv4 only
+        if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9.\-]*$", self.host):
+            self._error(f"Invalid SPLUNK_HOST value: {self.host!r}")
+            sys.exit(1)
 
         self.base_url = f"https://{self.host}:8089"
         self.headers = {

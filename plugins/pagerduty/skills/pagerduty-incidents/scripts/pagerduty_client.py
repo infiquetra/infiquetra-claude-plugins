@@ -20,6 +20,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 from typing import Any
 
@@ -36,6 +37,14 @@ except ImportError:
         )
     )
     sys.exit(1)
+
+
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+def _validate_email(email: str) -> bool:
+    """Return True if email is a valid address format."""
+    return bool(_EMAIL_RE.match(email))
 
 
 class PagerDutyClient:
@@ -127,7 +136,7 @@ class PagerDutyClient:
                     if "error" in error_data:
                         error_msg = error_data["error"].get("message", error_msg)
                 except (ValueError, KeyError):
-                    error_msg = response.text or error_msg
+                    pass  # Keep generic error message; don't leak raw response body
 
                 self._error(error_msg, status_code=response.status_code)
                 sys.exit(1)
@@ -268,6 +277,9 @@ class PagerDutyClient:
 
         headers = self.headers.copy()
         if from_email:
+            if not _validate_email(from_email):
+                self._error(f"Invalid email address: {from_email}")
+                sys.exit(1)
             headers["From"] = from_email
 
         response = self._request("PUT", f"/incidents/{incident_id}", data=data)
@@ -289,6 +301,9 @@ class PagerDutyClient:
 
         headers = self.headers.copy()
         if from_email:
+            if not _validate_email(from_email):
+                self._error(f"Invalid email address: {from_email}")
+                sys.exit(1)
             headers["From"] = from_email
 
         response = self._request("PUT", f"/incidents/{incident_id}", data=data)
@@ -306,6 +321,9 @@ class PagerDutyClient:
 
         headers = self.headers.copy()
         if from_email:
+            if not _validate_email(from_email):
+                self._error(f"Invalid email address: {from_email}")
+                sys.exit(1)
             headers["From"] = from_email
 
         response = self._request("POST", f"/incidents/{incident_id}/notes", data=data)
@@ -328,6 +346,9 @@ class PagerDutyClient:
 
         headers = self.headers.copy()
         if from_email:
+            if not _validate_email(from_email):
+                self._error(f"Invalid email address: {from_email}")
+                sys.exit(1)
             headers["From"] = from_email
 
         response = self._request("PUT", f"/incidents/{incident_id}", data=data)

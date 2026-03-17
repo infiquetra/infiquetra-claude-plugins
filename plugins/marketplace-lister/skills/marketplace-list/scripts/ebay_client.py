@@ -158,6 +158,7 @@ class EBayAuth:
             "sandbox": self.sandbox,
         }
         TOKEN_CACHE_FILE.write_text(json.dumps(token_data))
+        TOKEN_CACHE_FILE.chmod(0o600)  # Token is sensitive — owner-only read/write
         return str(token_data["access_token"])
 
 

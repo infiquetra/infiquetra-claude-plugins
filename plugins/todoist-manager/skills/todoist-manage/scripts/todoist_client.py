@@ -36,23 +36,14 @@ try:
         Duration,
     )
 except ImportError:
-    import subprocess
-    print(json.dumps({"info": "Installing todoist-api-python SDK..."}), flush=True)
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "todoist-api-python>=3.1.0,<4.0.0"],
-        stdout=subprocess.DEVNULL,
+    print(
+        json.dumps({
+            "error": "todoist-api-python not installed",
+            "message": "Install with: pip install 'todoist-api-python>=3.1.0,<4.0.0'",
+        }),
+        flush=True,
     )
-    from todoist_api_python.api import TodoistAPI
-    from todoist_api_python.models import (
-        Task,
-        Project,
-        Section,
-        Label,
-        Comment,
-        Due,
-        Duration,
-    )
-
+    sys.exit(1)
 
 class TodoistClient:
     """Wrapper for Todoist API operations with JSON output."""

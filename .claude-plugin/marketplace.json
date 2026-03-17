@@ -222,6 +222,30 @@
         "api"
       ],
       "category": "automation"
+    },
+    {
+      "name": "home-lab-ops",
+      "source": "./plugins/home-lab-ops",
+      "version": "1.0.0",
+      "description": "Proxmox VE cluster operations, Ansible pre-flight validation, Ceph management, monitoring guard, and vault helper for home lab infrastructure",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "proxmox",
+        "ansible",
+        "ceph",
+        "homelab",
+        "infrastructure",
+        "monitoring",
+        "grafana",
+        "prometheus",
+        "vault"
+      ],
+      "category": "infrastructure"
     }
   ],
   "version": "2.0.0"

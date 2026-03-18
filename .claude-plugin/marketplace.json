@@ -246,6 +246,31 @@
         "vault"
       ],
       "category": "infrastructure"
+    },
+    {
+      "name": "unifi",
+      "source": "./plugins/unifi",
+      "version": "1.0.0",
+      "description": "UniFi Network and Protect CLI for managing UDM devices, clients, VLANs, firewall rules, traffic routes, cameras, PTZ control, and motion events — dry-run by default, API key auth, no MCP supply chain risk",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "unifi",
+        "ubiquiti",
+        "network",
+        "protect",
+        "cameras",
+        "home-lab",
+        "udm",
+        "firewall",
+        "vlan",
+        "ptz"
+      ],
+      "category": "infrastructure"
     }
   ],
   "version": "2.0.0"

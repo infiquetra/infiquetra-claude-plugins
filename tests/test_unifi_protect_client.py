@@ -47,7 +47,7 @@ class TestInit:
         client = UnifiProtectClient()
 
         assert client.api_key == "test-key-123"
-        assert client.base_url == "https://10.220.1.1/proxy/protect/api"
+        assert client.base_url == "https://10.220.1.1/proxy/protect/integration/v1"
 
     def test_init_custom_host(self, monkeypatch):
         """Test UNIFI_HOST env var overrides the default host in base_url."""
@@ -56,7 +56,7 @@ class TestInit:
 
         client = UnifiProtectClient()
 
-        assert client.base_url == "https://192.168.1.1/proxy/protect/api"
+        assert client.base_url == "https://192.168.1.1/proxy/protect/integration/v1"
         assert client.host == "192.168.1.1"
 
     def test_init_default_host(self, monkeypatch):
@@ -101,7 +101,7 @@ class TestRequestHandling:
         mock_request.return_value = mock_response
 
         client = UnifiProtectClient()
-        result = client._request("GET", "https://10.220.1.1/proxy/protect/api/cameras")
+        result = client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
 
         assert result == [{"id": "cam1"}]
 
@@ -119,7 +119,7 @@ class TestRequestHandling:
         client = UnifiProtectClient()
         result = client._request(
             "POST",
-            "https://10.220.1.1/proxy/protect/api/cameras/cam1/ptz",
+            "https://10.220.1.1/proxy/protect/integration/v1/cameras/cam1/ptz",
             data={"type": "goto"},
             confirm=True,
         )
@@ -138,7 +138,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/api/cameras")
+            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -157,7 +157,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/api/cameras")
+            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -177,7 +177,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/api/cameras/bad-id")
+            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras/bad-id")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -197,7 +197,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/api/cameras")
+            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -217,7 +217,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/api/cameras")
+            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -235,7 +235,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/api/cameras")
+            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -253,7 +253,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/api/cameras")
+            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -271,7 +271,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/api/cameras")
+            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -289,7 +289,7 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("POST", "https://10.220.1.1/proxy/protect/api/cameras/c1/ptz", confirm=False)
+            client._request("POST", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz", confirm=False)
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
@@ -302,7 +302,7 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("PUT", "https://10.220.1.1/proxy/protect/api/liveviews/lv1", confirm=False)
+            client._request("PUT", "https://10.220.1.1/proxy/protect/integration/v1/liveviews/lv1", confirm=False)
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
@@ -315,7 +315,7 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("PATCH", "https://10.220.1.1/proxy/protect/api/cameras/c1", confirm=False)
+            client._request("PATCH", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1", confirm=False)
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
@@ -328,7 +328,7 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("DELETE", "https://10.220.1.1/proxy/protect/api/liveviews/lv1", confirm=False)
+            client._request("DELETE", "https://10.220.1.1/proxy/protect/integration/v1/liveviews/lv1", confirm=False)
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
@@ -341,7 +341,7 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):
-            client._request("POST", "https://10.220.1.1/proxy/protect/api/cameras/c1/ptz", confirm=False)
+            client._request("POST", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz", confirm=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -350,7 +350,7 @@ class TestDryRun:
     def test_dry_run_includes_url(self, monkeypatch, capsys):
         """Test dry-run output includes the request URL."""
         monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-        url = "https://10.220.1.1/proxy/protect/api/cameras/cam-abc/ptz"
+        url = "https://10.220.1.1/proxy/protect/integration/v1/cameras/cam-abc/ptz"
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):
@@ -367,7 +367,7 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):
-            client._request("POST", "https://10.220.1.1/proxy/protect/api/cameras/c1/ptz", data=body, confirm=False)
+            client._request("POST", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz", data=body, confirm=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -380,7 +380,7 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):
-            client._request("POST", "https://10.220.1.1/proxy/protect/api/cameras/c1/ptz", confirm=False)
+            client._request("POST", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz", confirm=False)
 
         mock_request.assert_not_called()
 
@@ -486,231 +486,6 @@ class TestCameras:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert output["dry_run"] is True
-
-    @patch("unifi_protect_client.requests.request")
-    def test_cameras_stream_url(self, mock_request, monkeypatch, capsys):
-        """Test cameras_stream_url extracts RTSP URL from enabled channel."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        camera = {
-            "id": "cam1",
-            "channels": [
-                {"isRtspEnabled": True, "rtspAlias": "test_alias_hq"},
-            ],
-        }
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = json.dumps(camera).encode()
-        mock_response.json.return_value = camera
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.cameras_stream_url("cam1")
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["success"] is True
-        assert output["data"]["rtsp_url"].startswith("rtsp://")
-        assert "test_alias_hq" in output["data"]["rtsp_url"]
-
-
-class TestPTZ:
-    """Test PTZ control methods."""
-
-    def test_ptz_goto_preset_dry_run(self, monkeypatch, capsys):
-        """Test ptz_goto_preset without confirm produces dry-run output."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        client = UnifiProtectClient()
-        with pytest.raises(SystemExit) as exc_info:
-            client.ptz_goto_preset("cam1", preset_id=2, confirm=False)
-
-        assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["dry_run"] is True
-
-    @patch("unifi_protect_client.requests.request")
-    def test_ptz_goto_preset_confirmed(self, mock_request, monkeypatch, capsys):
-        """Test ptz_goto_preset sends correct body with type and presetId."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = b"{}"
-        mock_response.json.return_value = {}
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.ptz_goto_preset("cam1", preset_id=3, confirm=True)
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["success"] is True
-
-        call_kwargs = mock_request.call_args[1]
-        assert call_kwargs["json"]["type"] == "goto"
-        assert call_kwargs["json"]["payload"]["presetId"] == 3
-
-    @patch("unifi_protect_client.requests.request")
-    def test_ptz_patrol_start_confirmed(self, mock_request, monkeypatch, capsys):
-        """Test ptz_patrol_start sends correct body with action=start."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = b"{}"
-        mock_response.json.return_value = {}
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.ptz_patrol_start("cam1", confirm=True)
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["success"] is True
-
-        call_kwargs = mock_request.call_args[1]
-        assert call_kwargs["json"]["type"] == "patrol"
-        assert call_kwargs["json"]["payload"]["action"] == "start"
-
-    @patch("unifi_protect_client.requests.request")
-    def test_ptz_list_presets(self, mock_request, monkeypatch, capsys):
-        """Test ptz_list_presets extracts ptzPresets from camera data."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        camera = {
-            "id": "cam1",
-            "ptzPresets": [
-                {"id": "1", "name": "Front Door"},
-                {"id": "2", "name": "Side Gate"},
-            ],
-        }
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = json.dumps(camera).encode()
-        mock_response.json.return_value = camera
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.ptz_list_presets("cam1")
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["success"] is True
-        assert output["count"] == 2
-        assert output["data"][0]["name"] == "Front Door"
-
-
-class TestEvents:
-    """Test event-related methods."""
-
-    @patch("unifi_protect_client.requests.request")
-    def test_events_list_no_filter(self, mock_request, monkeypatch, capsys):
-        """Test events_list without filters calls GET /events."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        events = [{"id": "ev1", "type": "motion"}, {"id": "ev2", "type": "ring"}]
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = json.dumps(events).encode()
-        mock_response.json.return_value = events
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.events_list()
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["success"] is True
-        assert len(output["data"]) == 2
-
-        call_kwargs = mock_request.call_args[1]
-        assert "type" not in call_kwargs.get("params", {})
-
-    @patch("unifi_protect_client.requests.request")
-    def test_events_list_with_type(self, mock_request, monkeypatch, capsys):
-        """Test events_list with event_type sends type param in query."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        events = [{"id": "ev1", "type": "motion"}]
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = json.dumps(events).encode()
-        mock_response.json.return_value = events
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.events_list(event_type="motion")
-
-        call_kwargs = mock_request.call_args[1]
-        assert call_kwargs["params"]["type"] == "motion"
-
-    @patch("unifi_protect_client.requests.request")
-    def test_events_list_with_limit(self, mock_request, monkeypatch, capsys):
-        """Test events_list with limit passes limit in query params."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = b"[]"
-        mock_response.json.return_value = []
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.events_list(limit=10)
-
-        call_kwargs = mock_request.call_args[1]
-        assert call_kwargs["params"]["limit"] == 10
-
-    @patch("unifi_protect_client.requests.request")
-    def test_events_get(self, mock_request, monkeypatch, capsys):
-        """Test events_get fetches a single event by ID."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        event = {"id": "ev-abc", "type": "smartDetectZone", "score": 95}
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = json.dumps(event).encode()
-        mock_response.json.return_value = event
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.events_get("ev-abc")
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["success"] is True
-        assert output["data"]["id"] == "ev-abc"
-        assert output["data"]["type"] == "smartDetectZone"
-
-
-class TestNVR:
-    """Test NVR methods."""
-
-    @patch("unifi_protect_client.requests.request")
-    def test_nvr_info(self, mock_request, monkeypatch, capsys):
-        """Test nvr_info fetches and returns NVR info."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        nvr_data = {"id": "nvr1", "name": "UDM Pro", "version": "3.0.0", "uptime": 86400}
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = json.dumps(nvr_data).encode()
-        mock_response.json.return_value = nvr_data
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.nvr_info()
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["success"] is True
-        assert output["data"]["name"] == "UDM Pro"
-
-        call_args = mock_request.call_args
-        assert call_args[1]["url"].endswith("/nvr")
-
 
 class TestLiveviews:
     """Test liveview-related methods."""
@@ -1042,88 +817,19 @@ class TestEdgeCases:
         assert decoded == original_bytes
 
     @patch("unifi_protect_client.requests.request")
-    def test_stream_url_no_rtsp_channels(self, mock_request, monkeypatch, capsys):
-        """Test cameras_stream_url exits with error when no RTSP channels found."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        camera = {
-            "id": "cam1",
-            "channels": [
-                {"isRtspEnabled": False, "rtspAlias": "disabled_alias"},
-            ],
-        }
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = json.dumps(camera).encode()
-        mock_response.json.return_value = camera
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        with pytest.raises(SystemExit) as exc_info:
-            client.cameras_stream_url("cam1")
-
-        assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["error"] is True
-
-    @patch("unifi_protect_client.requests.request")
-    def test_cameras_stream_url_format(self, mock_request, monkeypatch, capsys):
-        """Test cameras_stream_url returns a URL starting with rtsp://."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        camera = {
-            "id": "cam1",
-            "channels": [{"isRtspEnabled": True, "rtspAlias": "my_hq_stream"}],
-        }
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = json.dumps(camera).encode()
-        mock_response.json.return_value = camera
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.cameras_stream_url("cam1")
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["data"]["rtsp_url"].startswith("rtsp://")
-
-    @patch("unifi_protect_client.requests.request")
-    def test_events_type_filter_motion(self, mock_request, monkeypatch, capsys):
-        """Test events_list with motion filter passes type=motion param."""
-        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-
-        motion_events = [{"id": "ev1", "type": "motion"}]
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = json.dumps(motion_events).encode()
-        mock_response.json.return_value = motion_events
-        mock_request.return_value = mock_response
-
-        client = UnifiProtectClient()
-        client.events_list(event_type="motion")
-
-        call_kwargs = mock_request.call_args[1]
-        assert call_kwargs["params"]["type"] == "motion"
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["success"] is True
-        assert output["data"][0]["type"] == "motion"
-
-    @patch("unifi_protect_client.requests.request")
     def test_success_output_format(self, mock_request, monkeypatch, capsys):
         """Test success output always includes success=True and data key."""
         monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
 
+        cameras = [{"id": "cam1", "name": "Front"}]
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.content = b'{"id": "nvr1"}'
-        mock_response.json.return_value = {"id": "nvr1"}
+        mock_response.content = json.dumps(cameras).encode()
+        mock_response.json.return_value = cameras
         mock_request.return_value = mock_response
 
         client = UnifiProtectClient()
-        client.nvr_info()
+        client.cameras_list()
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -1148,7 +854,7 @@ class TestEdgeCases:
     def test_dry_run_includes_endpoint(self, monkeypatch, capsys):
         """Test dry-run output includes the full URL endpoint."""
         monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-        url = "https://10.220.1.1/proxy/protect/api/cameras/cam-xyz"
+        url = "https://10.220.1.1/proxy/protect/integration/v1/cameras/cam-xyz"
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):

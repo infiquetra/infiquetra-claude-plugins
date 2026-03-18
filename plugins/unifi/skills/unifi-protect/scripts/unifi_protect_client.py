@@ -2,8 +2,11 @@
 """
 UniFi Protect CLI - Command-line interface for UniFi Protect API operations.
 
-Manages UniFi Protect cameras, PTZ control, motion/smart events, NVR info,
-liveviews, lights, sensors, chimes, and viewers via the UniFi OS Protect API.
+Manages UniFi Protect cameras, liveviews, lights, sensors, chimes, and viewers
+via the UniFi OS Protect Integration API (/proxy/protect/integration/v1).
+
+Note: The integration API supports API key auth (X-Api-Key). The older
+/proxy/protect/api path requires cookie-based auth and is not used here.
 
 Environment Variables:
     UNIFI_API_KEY: UniFi OS API key (required)
@@ -12,8 +15,8 @@ Environment Variables:
 Usage:
     python unifi_protect_client.py cameras list
     python unifi_protect_client.py cameras snapshot --id <cam_id> --output /tmp/snap.jpg
-    python unifi_protect_client.py events list --type motion --limit 20
-    python unifi_protect_client.py ptz goto-preset --id <cam_id> --preset-id 1 --confirm
+    python unifi_protect_client.py cameras update --id <cam_id> --json '{"name":"Front"}' --confirm
+    python unifi_protect_client.py liveviews list
 """
 
 import argparse
@@ -65,7 +68,7 @@ class UnifiProtectClient:
 
         self.host = host or os.getenv("UNIFI_HOST", "10.220.1.1")
         self.verify_ssl = verify_ssl
-        self.base_url = f"https://{self.host}/proxy/protect/api"
+        self.base_url = f"https://{self.host}/proxy/protect/integration/v1"
         self.headers = {
             "X-Api-Key": self.api_key,
             "Content-Type": "application/json",
@@ -250,133 +253,6 @@ class UnifiProtectClient:
         url = f"{self.base_url}/cameras/{camera_id}"
         result = self._request("PATCH", url, data=data, confirm=confirm)
         self._success(result, message=f"Camera {camera_id} updated")
-
-    def cameras_stream_url(self, camera_id: str) -> None:
-        """Get the RTSP stream URL for a camera.
-
-        Args:
-            camera_id: Camera ID
-        """
-        url = f"{self.base_url}/cameras/{camera_id}"
-        camera_data = self._request("GET", url)
-
-        channels = camera_data.get("channels", [])
-        best = next((c for c in channels if c.get("isRtspEnabled")), None)
-
-        if best:
-            rtsp_url = f"rtsp://{self.host}:7447/{best['rtspAlias']}"
-            self._success({"rtsp_url": rtsp_url, "camera_id": camera_id, "channel": best})
-        else:
-            self._error(
-                "No RTSP-enabled channel found for this camera. Enable RTSP in Protect settings.",
-                camera_id=camera_id,
-            )
-            sys.exit(1)
-
-    # ===========================
-    # PTZ CONTROL
-    # ===========================
-
-    def ptz_goto_preset(self, camera_id: str, preset_id: int, confirm: bool = False) -> None:
-        """Move PTZ camera to a saved preset position.
-
-        Args:
-            camera_id: Camera ID
-            preset_id: Preset ID to move to
-            confirm: Must be True to execute; False shows dry-run
-        """
-        url = f"{self.base_url}/cameras/{camera_id}/ptz"
-        data = {"type": "goto", "payload": {"presetId": preset_id}}
-        result = self._request("POST", url, data=data, confirm=confirm)
-        self._success(result, message=f"Camera {camera_id} moved to preset {preset_id}")
-
-    def ptz_patrol_start(self, camera_id: str, confirm: bool = False) -> None:
-        """Start PTZ patrol on a camera.
-
-        Args:
-            camera_id: Camera ID
-            confirm: Must be True to execute; False shows dry-run
-        """
-        url = f"{self.base_url}/cameras/{camera_id}/ptz"
-        data = {"type": "patrol", "payload": {"action": "start"}}
-        result = self._request("POST", url, data=data, confirm=confirm)
-        self._success(result, message=f"PTZ patrol started on camera {camera_id}")
-
-    def ptz_patrol_stop(self, camera_id: str, confirm: bool = False) -> None:
-        """Stop PTZ patrol on a camera.
-
-        Args:
-            camera_id: Camera ID
-            confirm: Must be True to execute; False shows dry-run
-        """
-        url = f"{self.base_url}/cameras/{camera_id}/ptz"
-        data = {"type": "patrol", "payload": {"action": "stop"}}
-        result = self._request("POST", url, data=data, confirm=confirm)
-        self._success(result, message=f"PTZ patrol stopped on camera {camera_id}")
-
-    def ptz_list_presets(self, camera_id: str) -> None:
-        """List PTZ presets for a camera.
-
-        Args:
-            camera_id: Camera ID
-        """
-        url = f"{self.base_url}/cameras/{camera_id}"
-        camera_data = self._request("GET", url)
-        presets = camera_data.get("ptzPresets", [])
-        self._success(presets, count=len(presets), camera_id=camera_id)
-
-    # ===========================
-    # EVENTS
-    # ===========================
-
-    def events_list(
-        self,
-        event_type: str | None = None,
-        limit: int = 50,
-        start: int | None = None,
-        end: int | None = None,
-    ) -> None:
-        """List events with optional filters.
-
-        Args:
-            event_type: Filter by event type (motion, smartDetectZone, ring, loitering)
-            limit: Maximum number of events to return (default: 50)
-            start: Start timestamp in Unix milliseconds
-            end: End timestamp in Unix milliseconds
-        """
-        url = f"{self.base_url}/events"
-        params: dict[str, Any] = {"limit": limit}
-
-        if event_type:
-            params["type"] = event_type
-        if start is not None:
-            params["start"] = start
-        if end is not None:
-            params["end"] = end
-
-        result = self._request("GET", url, params=params)
-        count = len(result) if isinstance(result, list) else None
-        self._success(result, count=count)
-
-    def events_get(self, event_id: str) -> None:
-        """Get event details.
-
-        Args:
-            event_id: Event ID
-        """
-        url = f"{self.base_url}/events/{event_id}"
-        result = self._request("GET", url)
-        self._success(result)
-
-    # ===========================
-    # NVR
-    # ===========================
-
-    def nvr_info(self) -> None:
-        """Get NVR information."""
-        url = f"{self.base_url}/nvr"
-        result = self._request("GET", url)
-        self._success(result)
 
     # ===========================
     # LIVEVIEWS
@@ -603,63 +479,6 @@ def main() -> None:
     cameras_update_parser.add_argument("--id", required=True, help="Camera ID")
     cameras_update_parser.add_argument("--json", required=True, dest="json_data", help="JSON object of fields to update")
 
-    # cameras stream-url
-    cameras_stream_url_parser = cameras_subparsers.add_parser("stream-url", help="Get RTSP stream URL")
-    cameras_stream_url_parser.add_argument("--id", required=True, help="Camera ID")
-
-    # ===========================
-    # PTZ
-    # ===========================
-    ptz_parser = subparsers.add_parser("ptz", help="PTZ camera control")
-    ptz_subparsers = ptz_parser.add_subparsers(dest="action", help="PTZ action")
-
-    # ptz goto-preset
-    ptz_goto_parser = ptz_subparsers.add_parser("goto-preset", help="Move to a saved PTZ preset")
-    ptz_goto_parser.add_argument("--id", required=True, help="Camera ID")
-    ptz_goto_parser.add_argument("--preset-id", required=True, type=int, help="Preset ID to move to")
-
-    # ptz patrol-start
-    ptz_patrol_start_parser = ptz_subparsers.add_parser("patrol-start", help="Start PTZ patrol")
-    ptz_patrol_start_parser.add_argument("--id", required=True, help="Camera ID")
-
-    # ptz patrol-stop
-    ptz_patrol_stop_parser = ptz_subparsers.add_parser("patrol-stop", help="Stop PTZ patrol")
-    ptz_patrol_stop_parser.add_argument("--id", required=True, help="Camera ID")
-
-    # ptz list-presets
-    ptz_list_presets_parser = ptz_subparsers.add_parser("list-presets", help="List PTZ presets")
-    ptz_list_presets_parser.add_argument("--id", required=True, help="Camera ID")
-
-    # ===========================
-    # EVENTS
-    # ===========================
-    events_parser = subparsers.add_parser("events", help="Query motion and smart detection events")
-    events_subparsers = events_parser.add_subparsers(dest="action", help="Events action")
-
-    # events list
-    events_list_parser = events_subparsers.add_parser("list", help="List events")
-    events_list_parser.add_argument(
-        "--type",
-        dest="event_type",
-        choices=["motion", "smartDetectZone", "ring", "loitering"],
-        help="Filter by event type",
-    )
-    events_list_parser.add_argument("--limit", type=int, default=50, help="Maximum number of events (default: 50)")
-    events_list_parser.add_argument("--start", type=int, help="Start timestamp in Unix milliseconds")
-    events_list_parser.add_argument("--end", type=int, help="End timestamp in Unix milliseconds")
-
-    # events get
-    events_get_parser = events_subparsers.add_parser("get", help="Get event details")
-    events_get_parser.add_argument("--id", required=True, help="Event ID")
-
-    # ===========================
-    # NVR
-    # ===========================
-    nvr_parser = subparsers.add_parser("nvr", help="NVR information")
-    nvr_subparsers = nvr_parser.add_subparsers(dest="action", help="NVR action")
-
-    nvr_subparsers.add_parser("info", help="Get NVR info")
-
     # ===========================
     # LIVEVIEWS
     # ===========================
@@ -792,59 +611,6 @@ def main() -> None:
                 print(json.dumps({"error": True, "message": f"Invalid JSON: {e}"}))
                 sys.exit(1)
             client.cameras_update(camera_id=args.id, data=data, confirm=args.confirm)
-
-        elif args.action == "stream-url":
-            client.cameras_stream_url(camera_id=args.id)
-
-    # ===========================
-    # ROUTE: PTZ
-    # ===========================
-    elif args.resource == "ptz":
-        if not args.action:
-            ptz_parser.print_help()
-            sys.exit(1)
-
-        if args.action == "goto-preset":
-            client.ptz_goto_preset(camera_id=args.id, preset_id=args.preset_id, confirm=args.confirm)
-
-        elif args.action == "patrol-start":
-            client.ptz_patrol_start(camera_id=args.id, confirm=args.confirm)
-
-        elif args.action == "patrol-stop":
-            client.ptz_patrol_stop(camera_id=args.id, confirm=args.confirm)
-
-        elif args.action == "list-presets":
-            client.ptz_list_presets(camera_id=args.id)
-
-    # ===========================
-    # ROUTE: EVENTS
-    # ===========================
-    elif args.resource == "events":
-        if not args.action:
-            events_parser.print_help()
-            sys.exit(1)
-
-        if args.action == "list":
-            client.events_list(
-                event_type=args.event_type,
-                limit=args.limit,
-                start=args.start,
-                end=args.end,
-            )
-
-        elif args.action == "get":
-            client.events_get(event_id=args.id)
-
-    # ===========================
-    # ROUTE: NVR
-    # ===========================
-    elif args.resource == "nvr":
-        if not args.action:
-            nvr_parser.print_help()
-            sys.exit(1)
-
-        if args.action == "info":
-            client.nvr_info()
 
     # ===========================
     # ROUTE: LIVEVIEWS

@@ -271,6 +271,27 @@
         "ptz"
       ],
       "category": "infrastructure"
+    },
+    {
+      "name": "team-execution",
+      "source": "./plugins/team-execution",
+      "version": "1.0.0",
+      "description": "Two-phase plan execution with automatic multi-reviewer consensus. Phase A embeds a Team Structure into the plan during plan mode; Phase B orchestrates workers and reviewers directly via Claude after plan exit.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "team-execution",
+        "plan-execution",
+        "code-review",
+        "consensus",
+        "reviewers",
+        "workflow"
+      ],
+      "category": "development"
     }
   ],
   "version": "2.0.0"

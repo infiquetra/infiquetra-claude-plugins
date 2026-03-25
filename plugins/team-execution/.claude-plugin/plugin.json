@@ -1,0 +1,11 @@
+{
+  "name": "team-execution",
+  "version": "1.0.0",
+  "description": "Two-phase plan execution with automatic multi-reviewer consensus. Phase A runs during plan mode to embed a Team Structure into the plan (workers + reviewers). Phase B executes after plan exit via CLAUDE.md TeamCreate handoff: plan approval gates, parallel execution, max-3-iteration consensus loop with 9/10 threshold.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": ["team-execution", "plan-execution", "code-review", "consensus", "reviewers"]
+}

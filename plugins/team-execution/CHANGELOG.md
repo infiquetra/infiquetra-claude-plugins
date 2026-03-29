@@ -4,6 +4,20 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [1.4.0] — 2026-03-29
+
+### Fixed
+- **Workers no longer prompt user for permissions**: Changed worker spawn mode from `plan` to `bypassPermissions`. Claude Code's `plan` mode routes file access prompts and plan approval requests to the user — not the orchestrator. `bypassPermissions` workers run unrestricted with no user interruptions; quality control is handled entirely by the review cycle.
+- **tmux agent overflow**: `agent-overflow.sh` MAX_PANES was static at 4, allowing all 4 workers to crowd into the main window before overflow triggered. Changed to dynamic logic: main window (index 1) gets MAX_PANES=1 (agents always overflow to their own window); agent overflow windows get MAX_PANES=4.
+
+### Changed
+- Step A4 team structure template: worker rows now show `bypassPermissions` mode instead of `plan (requires approval)`
+- Review Protocol note updated: "Workers run in `bypassPermissions` mode — no permission prompts, quality enforced by review cycle"
+- Step B1 rewritten from "Plan Approval Gate" to "Worker Kickoff" — workers read their tasks and begin implementing immediately; no ExitPlanMode/plan_approval_request flow for workers
+- `docs/agent-overflow.sh` (plugin copy) kept in sync with installed `~/.config/tmux/agent-overflow.sh`
+
+---
+
 ## [1.3.0] — 2026-03-29
 
 ### Changed

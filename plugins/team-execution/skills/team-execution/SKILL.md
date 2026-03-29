@@ -257,8 +257,8 @@ After confirmation, write the following section at the END of the plan (before a
 
 | Agent | Role | Mode | Responsibilities |
 |-------|------|------|------------------|
-| `worker-1` | [Phase 1 name] | plan (requires approval) | [Tasks from plan] |
-| `worker-2` | [Phase 2 name] | plan (requires approval) | [Tasks from plan] |
+| `worker-1` | [Phase 1 name] | bypassPermissions | [Tasks from plan] |
+| `worker-2` | [Phase 2 name] | bypassPermissions | [Tasks from plan] |
 | `security-reviewer` | Security Reviewer | general-purpose | OWASP, secrets, auth/authZ, PII |
 | `devils-advocate` | Devil's Advocate | general-purpose | Assumptions, edge cases, failure modes |
 | `architecture-reviewer` | Architecture Reviewer | general-purpose | Design patterns, separation of concerns, conventions |
@@ -268,7 +268,7 @@ After confirmation, write the following section at the END of the plan (before a
 - Consensus threshold: **>= 9.0/10** from every reviewer
 - Maximum **3 review iterations**
 - Security/auth < 5.0 is a **blocking stop**
-- Workers run in `plan` mode — submit proposals for approval before edits
+- Workers run in `bypassPermissions` mode — no permission prompts, quality enforced by review cycle
 
 ### Reference Files
 - `team-execution/skills/team-execution/references/reviewer-registry.md`
@@ -329,7 +329,7 @@ If you find yourself about to use the Agent tool to implement something, stop. R
 
 Parse the `## Team Structure` table to identify:
 
-1. **Workers**: rows with `plan (requires approval)` in the Mode column — your implementation
+1. **Workers**: rows with `bypassPermissions` in the Mode column — your implementation
    agents. Note each worker's name and assigned responsibilities.
 2. **Reviewers**: rows with reviewer role names (Security Reviewer, Devil's Advocate, etc.) —
    your review agents. Note which are base vs optional.
@@ -344,33 +344,33 @@ plan mode and have the team-execution skill embed the team structure first.
 
 ---
 
-## Step B1: Plan Approval Gate
+## Step B1: Worker Kickoff
 
-Workers are spawned in `mode: "plan"` — they propose their implementation approach before
-writing any code.
+Workers are spawned in `mode: "bypassPermissions"` — they have full permissions and begin
+implementing immediately. No permission prompts reach the user; quality is enforced by the
+review cycle in Step B3.
 
-### B1a. Worker Proposes Plan
+### B1a. Worker Start
 
 Each worker:
 1. Reads its assigned tasks from the plan's `## Team Structure` table
-2. Proposes an implementation approach (files to change, approach, edge cases considered)
-3. Calls `ExitPlanMode` → sends `plan_approval_request`
+2. Reads relevant codebase context (existing files, patterns, conventions)
+3. Implements the assigned work directly
+4. Sends a brief summary to the orchestrator via SendMessage when complete (or if blocked)
 
-### B1b. Review Each Worker Plan
+### B1b. Orchestrator Oversight
 
-Review each worker's plan against:
-- Is it consistent with the original plan's intent?
-- Is it appropriately scoped (not over-engineering)?
-- Does it introduce any obvious security concerns?
-- Does it contradict known architectural patterns in this codebase?
+Monitor worker progress via team messages and task status updates. If a worker's approach
+seems off-track, redirect via SendMessage before the work goes too far. Workers should
+acknowledge and adjust.
 
-**Approve**: Worker proceeds to implementation.
-**Reject**: Return specific feedback. Worker revises and re-submits.
+**No hard approval gate** — the user approved the full plan in Phase A. Workers execute
+their assigned scope. The review cycle (Step B3) is the quality gate.
 
 ### B1c. Parallelism
 
-Workers with no dependencies can be approved and begin implementation in parallel.
-Workers with dependencies wait for their upstream task to complete before beginning.
+Workers with no dependencies begin simultaneously. Workers with dependencies wait for
+their upstream tasks to reach `completed` status before starting.
 
 ---
 

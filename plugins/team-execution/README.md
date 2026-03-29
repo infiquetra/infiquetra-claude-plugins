@@ -65,10 +65,10 @@ Phase B: After Plan Exit (automatic)
   → CLAUDE.md rule sees ## Team Structure → fires TeamCreate
   → Claude parses Team Structure, starts 4-step protocol:
 
-  Step 1: Plan Approval Gate
-    → Workers propose approach (plan mode)
-    → Claude approves/rejects each plan
-    → Only approved workers proceed
+  Step 1: Worker Kickoff
+    → Workers execute (bypassPermissions — no user prompts)
+    → Claude monitors progress via messaging
+    → Redirects if a worker goes off-track
 
   Step 2: Execution
     → Workers implement in parallel where tasks allow
@@ -130,8 +130,8 @@ The canonical format embedded into plans:
 
 | Agent | Role | Mode | Responsibilities |
 |-------|------|------|------------------|
-| `worker-1` | [Phase 1 name] | plan (requires approval) | [Tasks from plan] |
-| `worker-2` | [Phase 2 name] | plan (requires approval) | [Tasks from plan] |
+| `worker-1` | [Phase 1 name] | bypassPermissions | [Tasks from plan] |
+| `worker-2` | [Phase 2 name] | bypassPermissions | [Tasks from plan] |
 | `security-reviewer` | Security Reviewer | general-purpose | OWASP, secrets, auth/authZ, PII |
 | `devils-advocate` | Devil's Advocate | general-purpose | Assumptions, edge cases, failure modes |
 | `architecture-reviewer` | Architecture Reviewer | general-purpose | Design patterns, separation of concerns, conventions |
@@ -140,7 +140,7 @@ The canonical format embedded into plans:
 - Consensus threshold: **>= 9.0/10** from every reviewer
 - Maximum **3 review iterations**
 - Security/auth < 5.0 is a **blocking stop**
-- Workers run in `plan` mode — submit proposals for approval before edits
+- Workers run in `bypassPermissions` mode — no permission prompts, quality enforced by review cycle
 
 ### Reference Files
 - `team-execution/skills/team-execution/references/reviewer-registry.md`

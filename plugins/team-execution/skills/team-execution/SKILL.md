@@ -44,6 +44,99 @@ This skill has two phases:
 
 # Phase A: Team Planning (runs DURING plan mode)
 
+## Step A0: Environment Pre-flight
+
+Before doing anything else, validate that the user's environment is ready for team execution.
+Run these checks silently using bash commands. Only show output if something needs attention.
+
+### A0a. CLAUDE.md Auto-Handoff Rule (always checked)
+
+Run:
+```bash
+grep -q "Team Execution Auto-Handoff" ~/.claude/CLAUDE.md 2>/dev/null && echo "FOUND" || echo "MISSING"
+```
+
+If **MISSING**: this is critical — the skill will not work properly without it. Show:
+```
+⚠️  CLAUDE.md auto-handoff rule not found.
+
+The team-execution skill requires a rule in ~/.claude/CLAUDE.md to trigger TeamCreate
+automatically after plan approval. Without it, the handoff from planning to execution
+will not fire.
+
+Run /team-setup to install it, or add this to ~/.claude/CLAUDE.md manually:
+
+  ## Team Execution Auto-Handoff
+
+  When a plan exits plan mode and contains an explicit ## Team Structure section:
+  1. Your ONLY next action is TeamCreate — no exceptions
+  2. Do NOT use the Agent tool for implementation work
+  3. Parse the Team Structure table for workers and reviewers
+  4. Call TeamCreate immediately
+  5. Then follow Phase B orchestration from team-execution SKILL.md
+
+  This rule takes priority over any other agent-spawning behavior.
+```
+
+Proceed to A1 after showing the warning — do not block.
+
+### A0b. tmux Environment (skipped if opted out)
+
+First check if the user has dismissed tmux setup:
+```bash
+cat ~/.claude/team-execution.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print('DISMISSED' if d.get('tmux_setup_dismissed') else 'CHECK')" 2>/dev/null || echo "CHECK"
+```
+
+If **DISMISSED**: skip all tmux checks silently. Proceed to A1.
+
+If **CHECK**: run these checks and collect results:
+```bash
+# 1. tmux installed?
+command -v tmux >/dev/null 2>&1 && echo "tmux:OK" || echo "tmux:MISSING"
+
+# 2. Running inside tmux?
+[ -n "$TMUX" ] && echo "session:OK" || echo "session:MISSING"
+
+# 3. tmux.conf exists?
+[ -f ~/.tmux.conf ] && echo "config:OK" || echo "config:MISSING"
+
+# 4. Overflow script installed?
+[ -x ~/.config/tmux/agent-overflow.sh ] && echo "overflow:OK" || echo "overflow:MISSING"
+
+# 5. Claude settings: teammateMode set?
+cat ~/.claude.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); m=d.get('teammateMode','unset'); print(f'teammateMode:{m}')" 2>/dev/null || echo "teammateMode:unset"
+
+# 6. Claude settings: agent teams feature enabled?
+cat ~/.claude/settings.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('env',{}).get('CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS','unset'); print(f'agentTeams:{v}')" 2>/dev/null || echo "agentTeams:unset"
+```
+
+If **all OK** (tmux installed, in session, config present, overflow installed, teammateMode is "tmux" or "auto", agentTeams is "1"): proceed silently to A1.
+
+If **any MISSING or misconfigured**: show the results table and offer options:
+```
+tmux environment check:
+  ✅ tmux installed          (or ⚠️  tmux not installed)
+  ✅ Running in tmux session (or ⚠️  Not in tmux session)
+  ✅ ~/.tmux.conf present    (or ⚠️  ~/.tmux.conf not found)
+  ✅ Overflow script ready   (or ⚠️  agent-overflow.sh not installed)
+  ✅ teammateMode: tmux      (or ⚠️  teammateMode not set — agents won't use split panes)
+  ✅ Agent teams enabled     (or ⚠️  CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS not set)
+
+Options:
+  A) Run /team-setup to configure tmux for agent teams
+  B) Skip tmux setup — I have my own terminal config
+  C) Don't ask again — dismiss tmux checks permanently
+```
+
+If user picks **B**: proceed to A1.
+If user picks **C**: write the dismissal file and proceed:
+```bash
+mkdir -p ~/.claude && echo '{"tmux_setup_dismissed": true}' > ~/.claude/team-execution.json
+```
+If user picks **A**: tell them to run `/team-setup` after this session, then proceed to A1.
+
+---
+
 ## Step A1: Plan Intake & Triage
 
 ### A1a. Locate the Plan

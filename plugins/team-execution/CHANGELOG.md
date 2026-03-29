@@ -4,6 +4,21 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [1.2.0] — 2026-03-29
+
+### Added
+- **Step A0: Environment Pre-flight** in SKILL.md — checks CLAUDE.md handoff rule, tmux environment, and Claude settings before Phase A begins
+- **`/team-setup` command** — standalone setup wizard that validates environment, offers to install tmux config + overflow script, configures Claude settings, and manages CLAUDE.md handoff rule
+- tmux checks are opt-out: users can dismiss permanently, re-enable with `/team-setup reset`
+- Checks Claude `settings.json` for `teammateMode` and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`
+
+## [1.1.0] — 2026-03-29
+
+### Changed
+- Phase A now calls `ExitPlanMode` itself (new Step A5) — plan is a single atomic artifact
+- Added Critical Constraints block at Phase B entry: TeamCreate is the ONLY permitted first action
+- Strengthened CLAUDE.md auto-handoff rule with explicit prohibitions against Agent tool usage
+
 ## [1.0.0] — 2026-03-25
 
 ### Added

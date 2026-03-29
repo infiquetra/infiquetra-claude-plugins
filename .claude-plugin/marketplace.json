@@ -275,8 +275,8 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "1.1.0",
-      "description": "Two-phase plan execution with automatic multi-reviewer consensus. Phase A embeds a Team Structure and calls ExitPlanMode itself — plan is a single atomic artifact. Phase B fires TeamCreate immediately as the only permitted first action after approval.",
+      "version": "1.2.0",
+      "description": "Two-phase plan execution with automatic multi-reviewer consensus. Includes environment pre-flight checks, /team-setup wizard for tmux + Claude settings, and opt-out tmux setup with dismissal memory.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"

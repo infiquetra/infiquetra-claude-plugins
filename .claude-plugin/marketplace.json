@@ -295,6 +295,7 @@
     },
     {
       "name": "sdlc-manager",
+      "source": "./plugins/sdlc-manager",
       "version": "1.0.0",
       "description": "SDLC workflow manager for the Mount Olympus all-agent team. Kanban board management, issue lifecycle, flow metrics, and Beads coordination via Python CLI. Skills: sdlc-board, sdlc-issues, sdlc-labels, sdlc-metrics, sdlc-milestones, sdlc-rollout.",
       "author": {

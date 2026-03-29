@@ -45,7 +45,7 @@ echo ""
 
 # Spawn agents exactly as Claude Code does via TeamCreate:
 # tmux split-window -t :1 "<command that sets title and stays alive>"
-for name in worker-alpha worker-beta worker-gamma worker-delta security-reviewer architecture-reviewer; do
+for name in worker-alpha worker-beta worker-gamma worker-delta worker-epsilon worker-zeta worker-eta security-reviewer architecture-reviewer; do
     echo "Spawning $name..."
     # Split in window 1, set pane title, then sleep (sentinel process)
     tmux split-window -t :1 "printf '\033]2;${name}\033\\'; sleep 300"
@@ -57,14 +57,22 @@ echo "=== Result ==="
 tmux list-windows -F 'W#{window_index}: #{window_name} (#{window_panes} panes)'
 
 echo ""
+echo "=== Window colors (@agent_color) ==="
+while IFS='|' read -r idx win_id name; do
+    color=$(tmux show-window-option -t "$win_id" -v @agent_color 2>/dev/null || echo "(unset)")
+    printf "  W%s %-28s %s\n" "$idx" "$name" "$color"
+done < <(tmux list-windows -F '#{window_index}|#{window_id}|#{window_name}')
+
+echo ""
 echo "=== Debug log ==="
 cat /tmp/overflow.log
 
 echo ""
 echo "=== Expected ==="
-echo "  W1: (orchestrator) — 1 pane"
-echo "  workers window — 4 panes (tiled 2x2)"
-echo "  security-reviewer — 1 pane"
-echo "  architecture-reviewer — 1 pane"
+echo "  W1: (orchestrator) — 1 pane,  color: (unset)"
+echo "  workers — 4 panes,             color: colour34  (green)"
+echo "  workers — 3 panes,             color: colour34  (green)"
+echo "  security-reviewer — 1 pane,    color: colour208 (orange)"
+echo "  architecture-reviewer — 1 pane, color: colour141 (purple)"
 echo ""
 echo "To clean up test panes: bash docs/test-overflow.sh --cleanup"

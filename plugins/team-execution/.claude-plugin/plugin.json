@@ -1,6 +1,6 @@
 {
   "name": "team-execution",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Two-phase plan execution with automatic multi-reviewer consensus. Phase A runs during plan mode to embed a Team Structure and calls ExitPlanMode itself — the plan is a single atomic artifact (implementation + team roster + review protocol). Phase B fires TeamCreate immediately as the only permitted first action after approval, then runs plan approval gates, parallel execution, and max-3-iteration consensus loop with 9/10 threshold.",
   "author": {
     "name": "Infiquetra",

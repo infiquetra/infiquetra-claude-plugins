@@ -15,14 +15,24 @@ description: |
 
   Pattern source: adapted from a structured team review cycle for code/plan execution.
 when_to_use: |
-  Use this skill when:
-  - The user is in plan mode with a non-trivial plan that lacks a ## Team Structure section
-  - The user asks "who should review this?" or "what team do I need?" during planning
-  - The user invokes /team-execute
-  - A plan has 3+ steps, touches 3+ files, or involves docs/specs
+  Use this skill PROACTIVELY when in plan mode and ANY of these are true:
+  - The plan has 3+ steps, touches 3+ files, or involves docs/specs
+  - The plan involves multiple parallel work streams
+  - The user says: "agent team", "agentic team", "team of agents", "use agents",
+    "set up a team", "use team-execution", "who should review this?", "what team
+    do I need?", "agentic approach", "run this with agents"
+  - The user asks for code review as part of a plan
+
+  When auto-suggesting on a non-trivial plan, ask:
+    "This plan has [N] steps across [M] files. Would you like to set up an agent
+     team with workers and reviewers?
+       A) Yes, run team planning
+       B) No, I'll handle this myself"
+
   Do NOT use when:
   - The plan already has a ## Team Structure section (TeamCreate will fire automatically)
-  - The change is trivially simple (single file, no security surface)
+  - The change is trivially simple (single file, no security surface, < 3 steps)
+  - The user has already declined team planning for this plan in this session
 ---
 
 # Team Execution Skill

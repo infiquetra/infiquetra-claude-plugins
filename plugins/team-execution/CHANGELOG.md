@@ -4,6 +4,14 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [1.3.0] — 2026-03-29
+
+### Changed
+- Skill now auto-suggests during plan mode for any non-trivial plan (3+ steps, 3+ files)
+- Expanded natural language triggers: "use agents", "agent team", "agentic team", "team of agents", "agentic approach", "run with agents", etc.
+- When auto-suggesting, offers A/B choice so user can always decline
+- Skill no longer re-suggests if user declines in the same session
+
 ## [1.2.0] — 2026-03-29
 
 ### Added

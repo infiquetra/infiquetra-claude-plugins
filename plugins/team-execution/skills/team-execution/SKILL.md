@@ -4,12 +4,14 @@ description: |
   Two-phase structured plan execution with automatic multi-reviewer consensus workflow.
 
   Phase A runs DURING plan mode: reads the plan, derives workers from plan phases, detects
-  optional reviewers from keywords, and embeds a ## Team Structure section into the plan.
-  The global CLAUDE.md rule then fires TeamCreate automatically when plan mode exits.
+  optional reviewers from keywords, embeds a ## Team Structure section, and calls
+  ExitPlanMode itself. The plan is a single atomic artifact — implementation steps, team
+  roster, and review protocol approved together in one unit.
 
-  Phase B is the orchestration protocol that Claude follows directly after TeamCreate: plan
-  approval gates, parallel execution, max-3-iteration review cycle with 9/10 consensus
-  threshold, and completion reporting.
+  Phase B is the orchestration protocol that Claude follows directly after plan approval:
+  TeamCreate fires immediately (ONLY permitted first action), then plan approval gates,
+  parallel execution, max-3-iteration review cycle with 9/10 consensus threshold, and
+  completion reporting.
 
   Pattern source: adapted from a structured team review cycle for code/plan execution.
 when_to_use: |
@@ -28,14 +30,15 @@ when_to_use: |
 This skill has two phases:
 
 - **Phase A** runs DURING plan mode. You read the current plan, classify it, derive workers
-  from plan phases, detect optional reviewers, get user confirmation, and embed a
-  `## Team Structure` section into the plan. You do NOT spawn agents, call TeamCreate,
-  or call ExitPlanMode.
+  from plan phases, detect optional reviewers, get user confirmation, embed the
+  `## Team Structure` section, and then call `ExitPlanMode` yourself. The plan is a single
+  atomic artifact — the user approves the implementation plan, team roster, and review
+  protocol in one unit. You do NOT spawn agents or call TeamCreate during Phase A.
 
 - **Phase B** is the orchestration protocol for Claude to follow directly. It is NOT
-  invoked as a separate agent. When the plan exits plan mode, the global CLAUDE.md rule
-  sees `## Team Structure` and fires TeamCreate. Claude then reads Phase B as its
-  operating instructions and orchestrates workers and reviewers directly.
+  invoked as a separate agent. When Phase A calls ExitPlanMode and the plan contains
+  `## Team Structure`, your ONLY permitted next action is TeamCreate. Read Phase B as your
+  operating instructions and orchestrate workers and reviewers directly.
 
 ---
 
@@ -175,26 +178,47 @@ After writing the section, announce:
 ```
 ✅ Team Structure embedded in the plan.
 
-When you exit plan mode, your global CLAUDE.md rule will detect the ## Team Structure
-section and automatically fire TeamCreate. Workers and reviewers will be spawned and
-you'll orchestrate the execution and review cycle directly.
-
-Ready to exit plan mode when you are.
+This plan is now complete — it contains the implementation steps, the full team roster,
+and the review protocol. Submitting for your approval now.
 ```
 
 **Do NOT call TeamCreate here.**
-**Do NOT call ExitPlanMode here.**
 **Do NOT spawn any agents here.**
 
-Phase A is complete. The user exits plan mode when ready.
+---
+
+## Step A5: Submit the Plan for Approval
+
+Call `ExitPlanMode` now.
+
+The plan is the single artifact the user approves. It contains:
+- The implementation plan (phases, tasks, files)
+- The team roster (workers + confirmed reviewers)
+- The review protocol (consensus threshold, blocking rules)
+
+When the user approves, your ONLY next action is TeamCreate. See Phase B constraints.
 
 ---
 
 # Phase B: Orchestration Protocol (Claude follows this directly after TeamCreate)
 
-> **Phase B is not invoked as a separate agent.** When the user exits plan mode, the global
-> CLAUDE.md rule sees `## Team Structure` and fires TeamCreate. Claude then reads this
-> section as its operating instructions and orchestrates directly.
+> **Phase B is not invoked as a separate agent.** When Phase A calls ExitPlanMode and the
+> user approves, Claude reads this section as its operating instructions and orchestrates
+> directly.
+
+---
+
+## ⚠️ Critical Constraints — Phase B Entry
+
+These rules apply the moment the user approves the plan and ExitPlanMode returns:
+
+1. **Your ONLY permitted next action is TeamCreate.** No exceptions.
+2. **Do NOT use the Agent tool for any implementation work.** All work goes through TeamCreate workers listed in the `## Team Structure` table.
+3. **Do NOT spawn Explore, Plan, or general-purpose agents** for work that belongs to a worker.
+4. **Do NOT read files, analyze code, or do any preparatory work** before calling TeamCreate.
+5. **Parse the `## Team Structure` table → call TeamCreate → THEN proceed to B0.**
+
+If you find yourself about to use the Agent tool to implement something, stop. Route that work to the appropriate worker instead.
 
 ---
 

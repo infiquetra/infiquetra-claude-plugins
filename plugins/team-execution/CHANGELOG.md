@@ -4,6 +4,22 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [1.5.0] — 2026-03-29
+
+### Fixed
+- **Workers now pack into 2x2 grids, reviewers get solo windows**: `agent-overflow.sh` completely rewritten with two-phase routing. Phase 1 (synchronous): break new pane from orchestrator window immediately. Phase 2 (background, 1s delay): read pane title and route — `worker-*` agents join into an existing `workers` window (up to 4 panes tiled), reviewers/advocates stay solo with their agent name as the window name.
+- **Shift+Down no longer intercepted by tmux**: Removed `-n` (no-prefix) flag from `S-Up`/`S-Down` bindings. Now require prefix key so terminal apps (vim, less, text selection) receive Shift+arrows normally. New binding: `prefix + Shift+Down/Up`.
+- **Window creation beeps silenced**: Added `bell-action none` and `visual-bell off` to tmux.conf.
+- **Windows named after agents**: After pane title propagates (~1s), the new window is renamed to the agent name (e.g., `security-reviewer`, `devils-advocate`) or `workers` for worker windows.
+- **Window management with many agents**: Added `prefix+w` (fullscreen window tree) and `prefix+f` (find window by name). Window name truncated to 15 chars in status bar to prevent overflow with 10+ windows.
+
+### Changed
+- `agent-overflow.sh`: Full rewrite — uses `break-pane -d -P -F '#{window_id}'` to capture stable window ID at break time, routing via background subprocess
+- `tmux.conf`: Bell suppression, Shift fix, window name format, two new keybindings
+- Quick reference comments updated to describe new window layout model
+
+---
+
 ## [1.4.0] — 2026-03-29
 
 ### Fixed

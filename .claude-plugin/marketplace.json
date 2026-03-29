@@ -292,6 +292,27 @@
         "workflow"
       ],
       "category": "development"
+    },
+    {
+      "name": "sdlc-manager",
+      "version": "1.0.0",
+      "description": "SDLC workflow manager for the Mount Olympus all-agent team. Kanban board management, issue lifecycle, flow metrics, and Beads coordination via Python CLI. Skills: sdlc-board, sdlc-issues, sdlc-labels, sdlc-metrics, sdlc-milestones, sdlc-rollout.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "sdlc",
+        "kanban",
+        "project-management",
+        "github-projects",
+        "beads",
+        "mount-olympus",
+        "workflow"
+      ],
+      "category": "development"
     }
   ],
   "version": "2.0.0"

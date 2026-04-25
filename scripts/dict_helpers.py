@@ -3,7 +3,7 @@
 from typing import Any
 
 
-def get_nested(data: dict, path: str, default: Any = None) -> Any:
+def get_nested(data: dict[str, Any], path: str, default: Any = None) -> Any:
     """Walk a nested dict along a dotted path, returning the deepest match.
 
     Args:

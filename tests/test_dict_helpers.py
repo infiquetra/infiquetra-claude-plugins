@@ -35,3 +35,19 @@ class TestGetNested:
         """Three-plus-level nested lookup succeeds."""
         data = {"a": {"b": {"c": {"d": 5}}}}
         assert get_nested(data, "a.b.c.d") == 5
+
+    def test_get_nested_does_not_mutate_input(self):
+        """Input data remains unchanged after function call."""
+        original_data = {"a": {"b": {"c": 1}}, "x": 2}
+        # Make a deep copy to compare against
+        import copy
+        data_copy = copy.deepcopy(original_data)
+
+        # Call the function
+        result = get_nested(original_data, "a.b.c", default=0)
+
+        # Verify result is correct
+        assert result == 1
+
+        # Verify input data is unchanged
+        assert original_data == data_copy

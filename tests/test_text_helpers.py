@@ -1,6 +1,11 @@
 """Unit tests for scripts/text_helpers.py."""
 
-from scripts.text_helpers import pluralize
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+
+from text_helpers import pluralize
 
 
 class TestPluralize:

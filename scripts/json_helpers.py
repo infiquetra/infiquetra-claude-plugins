@@ -12,7 +12,7 @@ def safe_json_load(path: str | Path, default: Any = None) -> Any:
     """
     path = Path(path)
 
-    if not path.exists():
+    if not path.is_file():
         return default
 
     try:
@@ -20,5 +20,5 @@ def safe_json_load(path: str | Path, default: Any = None) -> Any:
         if not content:
             return default
         return json.loads(content)
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError:
         return default

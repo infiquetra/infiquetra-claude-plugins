@@ -3,9 +3,10 @@ import json
 from scripts.json_helpers import safe_json_load
 
 
-def test_safe_json_load_returns_default_for_missing_file():
+def test_safe_json_load_returns_default_for_missing_file(tmp_path):
     """AC 1.1: Missing file returns default value instead of raising."""
-    result = safe_json_load("non_existent_file.json", default={"status": "missing"})
+    missing_file = tmp_path / "does_not_exist.json"
+    result = safe_json_load(missing_file, default={"status": "missing"})
     assert result == {"status": "missing"}
 
 

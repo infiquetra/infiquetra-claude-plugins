@@ -3,7 +3,7 @@
 from typing import Any
 
 
-def get_nested(data: dict, path: str, default=None) -> Any:
+def get_nested(data: dict, path: str, default: Any = None) -> Any:
     """
     Retrieve a value from a nested dictionary using a dotted path.
 

@@ -34,3 +34,11 @@ def test_get_nested_deep_nesting():
     """Test that get_nested works with 3+ levels of nesting."""
     data = {"a": {"b": {"c": {"d": 2}}}}
     assert get_nested(data, "a.b.c.d") == 2
+
+
+def test_get_nested_does_not_mutate_input():
+    """Test that get_nested does not modify the source dict."""
+    data = {"a": {"b": 1}}
+    original_data = {"a": {"b": 1}}
+    get_nested(data, "a.b")
+    assert data == original_data

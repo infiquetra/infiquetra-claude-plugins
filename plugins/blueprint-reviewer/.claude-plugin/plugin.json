@@ -1,7 +1,7 @@
 {
   "name": "blueprint-reviewer",
   "version": "0.1.0",
-  "description": "Multi-phase artifact review for the Infiquetra SDLC: blueprints, specs, and issues. Provides rubric-driven reviewers for the upstream-of-PR phases (idea, spec, issue) that complement the existing plan/PR review system in the home-lab orchestrator. Rubrics here are the canonical source of truth — the home-lab Ansible vendors them at deploy time.",
+  "description": "Rubric-driven review for upstream-of-PR Infiquetra SDLC phases: blueprint sections, ADRs, specs, and GitHub issues. Complements home-lab orchestrator's plan/PR review.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

@@ -202,7 +202,7 @@
       "name": "marketplace-lister",
       "source": "./plugins/marketplace-lister",
       "version": "3.0.0",
-      "description": "Identify items from photos and generate multi-platform listings for Facebook Marketplace, Mercari, and eBay — with full eBay API integration for programmatic publish, status checks, fulfillment, and monthly limit tracking",
+      "description": "Identify items from photos and generate multi-platform listings for Facebook Marketplace, Mercari, and eBay with full eBay API integration.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -276,7 +276,7 @@
       "name": "team-execution",
       "source": "./plugins/team-execution",
       "version": "1.5.0",
-      "description": "Two-phase plan execution with automatic multi-reviewer consensus. Auto-suggests on non-trivial plans (3+ steps/files), responds to natural language triggers, and includes /team-setup wizard for tmux + Claude settings.",
+      "description": "Two-phase plan execution with multi-reviewer consensus. Auto-suggests on non-trivial plans, plus /team-setup wizard for tmux + Claude settings.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"

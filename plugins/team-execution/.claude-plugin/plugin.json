@@ -1,11 +1,17 @@
 {
   "name": "team-execution",
   "version": "1.5.0",
-  "description": "Two-phase plan execution with automatic multi-reviewer consensus. Phase A runs during plan mode to embed a Team Structure and calls ExitPlanMode itself — the plan is a single atomic artifact (implementation + team roster + review protocol). Phase B fires TeamCreate immediately as the only permitted first action after approval, then runs plan approval gates, parallel execution, and max-3-iteration consensus loop with 9/10 threshold.",
+  "description": "Two-phase plan execution with multi-reviewer consensus. Auto-suggests on non-trivial plans, plus /team-setup wizard for tmux + Claude settings.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
   "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-  "keywords": ["team-execution", "plan-execution", "code-review", "consensus", "reviewers"]
+  "keywords": [
+    "team-execution",
+    "plan-execution",
+    "code-review",
+    "consensus",
+    "reviewers"
+  ]
 }

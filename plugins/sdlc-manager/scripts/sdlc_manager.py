@@ -2351,35 +2351,422 @@ def config_init_defaults(non_interactive: bool, fmt: str) -> None:
 # CLI
 # ===========================
 
-def issue_create(repo: str, issue_type: str | None, fmt: str) -> None:
-    """Interactive issue creation with template guidance."""
-    if not issue_type:
-        print("\nIssue Type Selection")
-        print("=" * 40)
-        print("Decision tree:")
-        print("  1. Coordinating multiple capabilities with a target date? -> OBJECTIVE")
-        print("  2. Broken in production? -> DEFECT")
-        print("  3. New end-to-end deployable functionality? -> CAPABILITY")
-        print("  4. Improving existing functionality? -> ENHANCEMENT")
-        print("  5. Researching or investigating? -> EXPLORATION")
-        print("  6. Updating documentation? -> CONTEXT UPDATE")
-        print()
-        types = ["capability", "enhancement", "defect", "exploration", "context-update", "objective"]
-        choice = input("Select type (or press Enter for 'capability'): ").strip().lower()
-        issue_type = choice if choice in types else "capability"
+_ISSUE_TYPES = (
+    "capability", "enhancement", "defect",
+    "exploration", "context-update", "objective",
+)
+_HERMES_ACTIONABLE_TYPES = frozenset({
+    "capability", "enhancement", "defect", "exploration", "context-update",
+})
+# Issue types where the capability-adaptive fields are relevant (size,
+# etc.). The orchestrator's planner reads these to inform sequencing /
+# capacity decisions; non-capability cards don't need them.
+_CAPABILITY_ADAPTIVE_TYPES = frozenset({"capability", "objective"})
 
-    print(f"\nCreating {issue_type} issue in {ORG}/{repo}")
-    print(f"Use: gh issue create --repo {ORG}/{repo} --template {issue_type}.yml")
+
+def _select_issue_type(default: str | None = None) -> str:
+    """Decision-tree prompt for the 6 issue types. Returns the chosen
+    type. `default` overrides the built-in 'capability' default if set."""
+    print("\nIssue Type Selection")
+    print("=" * 40)
+    print("Decision tree:")
+    print("  1. Coordinating multiple capabilities with a target date? -> OBJECTIVE")
+    print("  2. Broken in production? -> DEFECT")
+    print("  3. New end-to-end deployable functionality? -> CAPABILITY")
+    print("  4. Improving existing functionality? -> ENHANCEMENT")
+    print("  5. Researching or investigating? -> EXPLORATION")
+    print("  6. Updating documentation? -> CONTEXT UPDATE")
+    print()
+    fallback = default if default in _ISSUE_TYPES else "capability"
+    try:
+        choice = input(
+            f"Select type (or press Enter for '{fallback}'): "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return fallback
+    return choice if choice in _ISSUE_TYPES else fallback
+
+
+_PARENT_REF_RE = re.compile(r"^\s*([\w.-]+)#(\d+)\s*$")
+
+
+def _prompt_parent_issue() -> tuple[str, int] | None:
+    """Sub-issue-first prompt — the first thing asked. Returns (parent_repo,
+    parent_number) if the operator provides a parent ref, or None for
+    'free-floating' / 'no parent'. Default is 'yes — paste a ref'; the
+    operator types 'no' (or 'n') to skip."""
+    print("\nSub-issue first: every new card has a parent by default.")
+    print("Paste a parent ref like 'campps-blueprint#42' or type 'no' to skip.")
+    try:
+        answer = input("Parent issue? (yes/no/<repo#N>) [yes]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return None  # treat as no-parent
+
+    if answer in ("no", "n", "skip", "-"):
+        return None
+    if answer in ("yes", "y", ""):
+        # Operator confirmed but didn't paste a ref — re-prompt for the ref
+        try:
+            ref = input("Parent ref (e.g., campps-blueprint#42): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        match = _PARENT_REF_RE.match(ref)
+    else:
+        match = _PARENT_REF_RE.match(answer)
+
+    if not match:
+        _warn(
+            "Couldn't parse parent ref. Expected '<repo>#<number>'. "
+            "Continuing as free-floating (no parent)."
+        )
+        return None
+    return match.group(1), int(match.group(2))
+
+
+def _project_field_options(project_name: str, field_name: str) -> list[str] | None:
+    """Look up the option names for a project single-select field, or
+    return None if the field doesn't exist on the project. Used for
+    per-project schema discovery — silently skip prompts for fields the
+    operator's project doesn't expose."""
+    try:
+        field = _resolve_project_field(project_name, field_name)
+    except (RuntimeError, GhApiError):
+        return None
+    return [o.get("name", "") for o in field.get("options", [])]
+
+
+def _prompt_choice(
+    label: str,
+    options: list[str] | None,
+    default: str | None = None,
+) -> str | None:
+    """Generic field-value prompt. If `options` is None, the field doesn't
+    exist on this project — skip silently (return None). Otherwise show
+    available options + accept Enter for default, '-' to skip."""
+    if options is None:
+        return None
+    options_display = ", ".join(options) if options else "(no options yet)"
+    if default and default in options:
+        prompt = f"  {label} [{default}] (options: {options_display}; '-' to skip): "
+    else:
+        prompt = f"  {label} (options: {options_display}; '-' to skip): "
+    try:
+        answer = input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if answer == "-" or answer.lower() in ("skip", "no"):
+        return None
+    if not answer:
+        return default if default and default in options else None
+    if options and answer not in options:
+        _warn(
+            f"'{answer}' not in {label} options ({options_display}); "
+            f"skipping. Use 'flow field-options --field {label}' to see "
+            f"current options or 'flow set-field' to set it post-create."
+        )
+        return None
+    return answer
+
+
+def _open_gh_issue_create_web(repo: str, issue_type: str) -> None:
+    """Open the gh web flow for the operator to fill the body. Returns
+    nothing — the operator submits in the browser, then pastes back the
+    issue number to the next prompt. We don't try to capture stdout from
+    `gh issue create --web` because gh's behavior with --web differs
+    across versions + operator may take arbitrary time in the browser."""
+    print(f"\nOpening browser to create {issue_type} issue in {ORG}/{repo}.")
+    print("Fill the form + submit. We'll capture the issue number after.\n")
+    try:
+        subprocess.run(
+            ["gh", "issue", "create",
+             "--repo", f"{ORG}/{repo}",
+             "--template", f"{issue_type}.yml",
+             "--web"],
+            check=False,  # operator may close the tab without submitting
+        )
+    except FileNotFoundError:
+        _error("gh CLI not found.")
+        raise
+
+
+def _prompt_issue_number(repo: str) -> int | None:
+    """After the browser flow, ask for the new issue number. Operator
+    can paste a URL ('https://github.com/foo/bar/issues/42') or just the
+    number. Return None if the operator skips."""
+    try:
+        answer = input(
+            f"\nIssue number that was created in {repo} "
+            f"(or paste URL; Enter to skip metadata): "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not answer:
+        return None
+    # Try to extract a trailing /issues/N or just a bare integer
+    match = re.search(r"/issues/(\d+)\b|^#?(\d+)$", answer)
+    if match:
+        return int(match.group(1) or match.group(2))
+    _warn(f"Couldn't parse issue number from {answer!r}; skipping metadata.")
+    return None
+
+
+def _apply_post_create_metadata(
+    repo: str,
+    issue_number: int,
+    issue_type: str,
+    project_name: str | None,
+    parent: tuple[str, int] | None,
+    field_values: dict[str, str],
+    fmt: str,
+) -> None:
+    """Apply the post-create metadata steps: hermes labels, board add,
+    project field values, sub-issue link. Each step is logged and
+    isolated — failures in one don't abort the others."""
+    issue_ref = f"{repo}#{issue_number}"
+    print(f"\nApplying metadata to {issue_ref}...")
+
+    # 1. Hermes-actionability label (only types we want the orchestrator
+    # to act on — capability/enhancement/defect/exploration/context-update)
+    if issue_type in _HERMES_ACTIONABLE_TYPES:
+        try:
+            _gh([
+                "issue", "edit", str(issue_number),
+                "--repo", f"{ORG}/{repo}",
+                "--add-label", "hermes-task",
+            ])
+            print(f"  ✓ Applied label `hermes-task`")
+        except GhApiError as e:
+            _warn(f"  ✗ Could not apply hermes-task label: {e}")
+    else:
+        # Objective gets explicit opt-out
+        try:
+            _gh([
+                "issue", "edit", str(issue_number),
+                "--repo", f"{ORG}/{repo}",
+                "--add-label", "hermes-not-actionable",
+            ])
+            print(f"  ✓ Applied label `hermes-not-actionable`")
+        except GhApiError as e:
+            _warn(f"  ✗ Could not apply hermes-not-actionable label: {e}")
+
+    # 2. Add to project board
+    if project_name:
+        try:
+            board_add(repo, issue_number, fmt, config=load_config())
+        except (RuntimeError, GhApiError) as e:
+            _warn(f"  ✗ board add failed: {e}")
+
+    # 3. Project field values (Initiative, Objective, Priority, Size, ...)
+    for field_name, option in field_values.items():
+        if not option or not project_name:
+            continue
+        try:
+            flow_set_field(
+                project_name, repo, issue_number,
+                field_name, option, fmt="text",
+            )
+        except (RuntimeError, GhApiError) as e:
+            _warn(f"  ✗ set {field_name}={option} failed: {e}")
+
+    # 4. Sub-issue link (parent → child)
+    if parent:
+        parent_repo, parent_number = parent
+        try:
+            flow_link_sub_issue(
+                parent_repo, parent_number, repo, issue_number, fmt="text"
+            )
+        except (RuntimeError, GhApiError) as e:
+            _warn(f"  ✗ sub-issue link failed: {e}")
+
+
+def _prompt_paired_card(repo: str, issue_number: int) -> tuple[str, str, str] | None:
+    """Opt-in paired-card prompt. After a successful card create, ask
+    if the operator wants a sibling card on another repo with similar
+    scope. Returns (target_repo, title_delta, body_delta) or None to
+    skip. Default is no — paired cards are useful for cross-service
+    capabilities (e.g., a backend change with a paired Flutter app
+    change) but not the common case."""
+    print(f"\nCreated {repo}#{issue_number}.")
+    try:
+        answer = input(
+            "Create a paired card on another repo with similar scope? (y/N): "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if answer not in ("y", "yes"):
+        return None
+    try:
+        target_repo = input("  Target repo (e.g., campps-flutter-app): ").strip()
+        title_delta = input("  Title note for the paired card (e.g., '[flutter]'): ").strip()
+        body_delta = input("  Extra body context (one line; press Enter to skip): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not target_repo:
+        return None
+    return target_repo, title_delta, body_delta
+
+
+def issue_create(
+    repo: str,
+    issue_type: str | None,
+    fmt: str,
+    parent_ref: str | None = None,
+    skip_metadata: bool = False,
+) -> None:
+    """Interactive issue creation — sub-issue-first, per-project schema
+    aware, with capability-adaptive fields and paired-card flow.
+
+    Flow:
+      1. Determine type (decision tree if not provided)
+      2. Sub-issue-first prompt: parent issue?
+      3. Discover project the repo maps to (if any)
+      4. Per-project schema discovery: which project fields exist?
+      5. Prompt for field values, defaults from ~/.claude/sdlc-defaults.json
+      6. Capability-adaptive: prompt for Size if type is capability/objective AND project exposes the field
+      7. Open `gh issue create --web` in browser; operator fills body
+      8. Operator pastes back the issue number
+      9. Apply hermes-task / hermes-not-actionable label, project field values, sub-issue link
+     10. Paired-card prompt (opt-in)
+
+    Args:
+      repo: target repo (without org)
+      issue_type: optional pre-selected type; decision-tree prompt if None
+      fmt: output format (passed to sub-helpers)
+      parent_ref: optional pre-supplied 'repo#N' parent ref; skips the prompt
+      skip_metadata: if True, just create the issue + skip post-create
+        metadata application (useful for testing or scripted flows)"""
+    defaults = load_user_defaults()
+
+    # Step 1: determine type
+    if issue_type is None:
+        issue_type = _select_issue_type(default=defaults.get("default_type"))
+
+    # Step 2: sub-issue-first parent prompt
+    parent: tuple[str, int] | None = None
+    if parent_ref:
+        match = _PARENT_REF_RE.match(parent_ref)
+        if match:
+            parent = (match.group(1), int(match.group(2)))
+        else:
+            _warn(f"Couldn't parse --parent-ref={parent_ref!r}; treating as no-parent.")
+    elif not skip_metadata:
+        parent = _prompt_parent_issue()
+
+    # Step 3: discover project for this repo
+    config = load_config()
+    projects = get_projects_for_repo(config, repo)
+    project_name: str | None = None
+    if projects:
+        # Prefer the user's default_project if it's one of the matches
+        default_project = defaults.get("default_project")
+        for p in projects:
+            if p.get("name", "").lower() == (default_project or "").lower() or \
+               p.get("number") == 1:  # mount-olympus is #1; canonical fallback
+                project_name = next(
+                    (k for k, v in config.get("project_mappings", {}).get("projects", {}).items()
+                     if v.get("number") == p.get("number")),
+                    None,
+                )
+                break
+        if not project_name:
+            # Just use the first match
+            project_name = next(
+                iter(config.get("project_mappings", {}).get("projects", {}).keys()),
+                None,
+            )
+
+    # Step 4 + 5: per-project schema discovery + field prompts
+    field_values: dict[str, str] = {}
+    if project_name and not skip_metadata:
+        print(f"\nProject: {project_name}")
+        # Initiative
+        opts = _project_field_options(project_name, "Initiative")
+        chosen = _prompt_choice(
+            "Initiative", opts, default=defaults.get("default_initiative")
+        )
+        if chosen:
+            field_values["Initiative"] = chosen
+
+        # Objective
+        opts = _project_field_options(project_name, "Objective")
+        chosen = _prompt_choice(
+            "Objective", opts, default=defaults.get("default_objective")
+        )
+        if chosen:
+            field_values["Objective"] = chosen
+
+        # Status (default Backlog or per-user default)
+        opts = _project_field_options(project_name, "Status")
+        chosen = _prompt_choice(
+            "Status", opts,
+            default=defaults.get("default_status") or "Backlog",
+        )
+        if chosen:
+            field_values["Status"] = chosen
+
+    # Step 6: capability-adaptive fields (only for capability/objective AND
+    # only when the project exposes the field)
+    if (issue_type in _CAPABILITY_ADAPTIVE_TYPES
+            and project_name and not skip_metadata):
+        for adaptive_field in ("Capability Size", "Business Value",
+                                "Technical Risk", "Target Quarter"):
+            opts = _project_field_options(project_name, adaptive_field)
+            chosen = _prompt_choice(adaptive_field, opts, default=None)
+            if chosen:
+                field_values[adaptive_field] = chosen
+
+    # Step 7: open browser
+    print(f"\nReady to create {issue_type} in {ORG}/{repo}")
+    if parent:
+        print(f"  Parent: {parent[0]}#{parent[1]}")
+    if field_values:
+        for k, v in field_values.items():
+            print(f"  {k}: {v}")
     print()
 
-    try:
-        result = input("Open interactive issue creation? (y/N): ").strip().lower()
-        if result == "y":
-            subprocess.run(
-                ["gh", "issue", "create", "--repo", f"{ORG}/{repo}", "--web"],
+    if not skip_metadata:
+        try:
+            confirm = input("Open browser? (Y/n): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("Aborted.")
+            return
+        if confirm in ("n", "no"):
+            print(f"\nRun manually: gh issue create --repo {ORG}/{repo} "
+                  f"--template {issue_type}.yml --web")
+            return
+
+        _open_gh_issue_create_web(repo, issue_type)
+
+        # Step 8: capture issue number
+        issue_number = _prompt_issue_number(repo)
+        if issue_number is None:
+            print("Skipping post-create metadata.")
+            return
+
+        # Step 9: apply metadata
+        _apply_post_create_metadata(
+            repo, issue_number, issue_type, project_name, parent, field_values, fmt,
+        )
+
+        # Step 10: paired-card prompt
+        paired = _prompt_paired_card(repo, issue_number)
+        if paired:
+            target_repo, _title_delta, _body_delta = paired
+            print(f"\nLaunching paired-card flow for {target_repo}...")
+            # Recurse with the same type + parent to create a sibling card.
+            # We don't auto-link the two cards — the operator decides whether
+            # they should be linked (e.g., as sibling sub-issues of a common
+            # parent). Title/body deltas would be applied via gh issue edit
+            # after the second create completes; for the minimum viable, we
+            # just kick off the second flow and let the operator drive it.
+            issue_create(
+                target_repo, issue_type, fmt,
+                parent_ref=f"{parent[0]}#{parent[1]}" if parent else None,
             )
-    except (EOFError, KeyboardInterrupt):
-        print(f"\nRun manually: gh issue create --repo {ORG}/{repo} --template {issue_type}.yml")
+    else:
+        # skip_metadata path: just print the manual command
+        print(f"Run manually: gh issue create --repo {ORG}/{repo} "
+              f"--template {issue_type}.yml --web")
 
 
 def main() -> None:
@@ -2431,12 +2818,28 @@ def main() -> None:
     issue_p = subparsers.add_parser("issue", help="Issue creation and management")
     issue_sp = issue_p.add_subparsers(dest="action", required=True)
 
-    issue_create_p = issue_sp.add_parser("create", help="Create issue with template")
+    issue_create_p = issue_sp.add_parser(
+        "create",
+        help="Sub-issue-first interactive issue creation with metadata application",
+    )
     issue_create_p.add_argument("--repo", required=True)
-    issue_create_p.add_argument("--type",
-                                choices=["capability", "enhancement", "defect",
-                                         "exploration", "context-update", "objective"],
-                                help="Issue type (uses template)")
+    issue_create_p.add_argument(
+        "--type",
+        choices=["capability", "enhancement", "defect",
+                 "exploration", "context-update", "objective"],
+        help="Issue type (uses template). If omitted, decision-tree prompts for it.",
+    )
+    issue_create_p.add_argument(
+        "--parent-ref",
+        default=None,
+        help="Optional pre-supplied 'repo#N' parent ref; skips the sub-issue prompt.",
+    )
+    issue_create_p.add_argument(
+        "--skip-metadata",
+        action="store_true",
+        help="Skip post-create metadata (labels, project fields, sub-issue link, "
+             "paired-card prompt). Useful for testing or scripted setup.",
+    )
 
     # ===========================
     # LABELS
@@ -2643,7 +3046,11 @@ def main() -> None:
 
         elif args.resource == "issue":
             if args.action == "create":
-                issue_create(args.repo, args.type, fmt)
+                issue_create(
+                    args.repo, args.type, fmt,
+                    parent_ref=args.parent_ref,
+                    skip_metadata=args.skip_metadata,
+                )
 
         elif args.resource == "labels":
             if args.action == "sync-fields":

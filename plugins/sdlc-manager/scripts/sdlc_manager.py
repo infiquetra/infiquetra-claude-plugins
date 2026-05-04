@@ -105,8 +105,14 @@ _USER_DEFAULTS_KEYS = (
 
 
 def load_user_defaults() -> dict[str, Any]:
-    """Read ~/.claude/sdlc-defaults.json. Returns {} if the file doesn't
-    exist (first run). Tolerates malformed JSON by returning {} + warning."""
+    """Read ~/.claude/sdlc-defaults.json. Returns {} on:
+      - file missing (first run)
+      - malformed JSON (warn + return {})
+      - non-object root (warn + return {})
+      - unreadable file / encoding errors (warn + return {})
+
+    The CLI must remain usable even if the defaults file is corrupt —
+    the operator can always re-run `config init-defaults` to reseed it."""
     if not _USER_DEFAULTS_PATH.exists():
         return {}
     try:
@@ -123,6 +129,14 @@ def load_user_defaults() -> dict[str, Any]:
         _warn(
             f"User defaults at {_USER_DEFAULTS_PATH} is malformed JSON "
             f"({e}); ignoring."
+        )
+        return {}
+    except (OSError, UnicodeDecodeError) as e:
+        # Permissions, broken symlink, non-UTF-8 encoding, etc. The defaults
+        # file is operator-owned and not load-bearing; warn + degrade.
+        _warn(
+            f"User defaults at {_USER_DEFAULTS_PATH} could not be read "
+            f"({type(e).__name__}: {e}); ignoring."
         )
         return {}
 
@@ -204,6 +218,16 @@ def load_config() -> dict[str, Any]:
     return config
 
 
+# Vendored project-mappings path. Module-level constant so tests can
+# `monkeypatch.setattr` it without renaming the real file (which is racy
+# under pytest-xdist + leaves a `.bak-test` orphan if the test crashes
+# between rename and `finally`). Resolves to `<plugin-dir>/config/project-mappings.json`
+# via `scripts/sdlc_manager.py → ../config/...`.
+_VENDORED_PROJECT_MAPPINGS_PATH = (
+    Path(__file__).resolve().parent.parent / "config" / "project-mappings.json"
+)
+
+
 def _resolve_project_mappings(sdlc_path: Path) -> dict[str, Any]:
     """Resolve project-mappings.json via the documented order:
     external override → vendored → remote fallback. Returns {} if all fail."""
@@ -214,10 +238,8 @@ def _resolve_project_mappings(sdlc_path: Path) -> dict[str, Any]:
             return json.load(f)
 
     # 2. Vendored canonical at <plugin-dir>/config/project-mappings.json
-    # Resolve relative to this file (scripts/sdlc_manager.py → ../config/)
-    vendored = Path(__file__).resolve().parent.parent / "config" / "project-mappings.json"
-    if vendored.exists():
-        with open(vendored) as f:
+    if _VENDORED_PROJECT_MAPPINGS_PATH.exists():
+        with open(_VENDORED_PROJECT_MAPPINGS_PATH) as f:
             return json.load(f)
 
     # 3. Remote fallback via gh api (reads infiquetra-sdlc directly)
@@ -272,42 +294,53 @@ def get_projects_for_repo(config: dict, repo_name: str) -> list[dict]:
 
 
 # ===========================
-# GH CLI WRAPPER
+# GH CLI WRAPPER + TYPED EXCEPTIONS
 # ===========================
-
-# ===========================
-# TYPED EXCEPTIONS
-# ===========================
+# `_gh` is the single subprocess shim; `_classify_gh_error` parses both
+# its stderr AND stdout streams to raise the appropriate typed subclass
+# (ApiNotFoundError, ApiAlreadyExistsError, ApiAuthError, etc.).
 # Replaces fragile `"422" in str(e)` substring matching across the
-# flow_* helpers. The parser inspects gh CLI stderr ONCE (in `_gh`)
-# and raises the appropriate subclass; downstream handlers catch by type.
-# This is the upgrade-path from PR #114's substring matches.
+# flow_* helpers. Downstream handlers catch by type.
 
 class GhApiError(RuntimeError):
     """Base for typed gh-API errors. Carries the parsed HTTP status_code
-    when one could be extracted; otherwise None."""
+    when one could be extracted; otherwise None. Also retains both stderr
+    AND stdout from the failed call — gh CLI prints the response body
+    (often containing the actual error code in JSON) to STDOUT for 4xx/5xx
+    failures, while stderr only carries a short summary like
+    `gh: Validation Failed (HTTP 422)`. Both are needed for accurate
+    classification (verified 2026-05-04 via direct `gh api` reproduction
+    of 404 + 422-duplicate-label cases)."""
 
     def __init__(self, message: str, *, status_code: int | None = None,
-                 stderr: str | None = None) -> None:
+                 stderr: str | None = None, stdout: str | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.stderr = stderr
+        self.stdout = stdout
 
 
-class ApiNotFound(GhApiError):
+# N818 — exception class names end in `Error`
+class ApiNotFoundError(GhApiError):
     """HTTP 404 from gh api. Used to detect 'label/issue/repo doesn't exist'
     cases without parsing English error strings."""
 
 
-class ApiAlreadyExists(GhApiError):
+class ApiAlreadyExistsError(GhApiError):
     """HTTP 422 from gh api when the conflict is a duplicate-resource case
     (sub-issue already linked, label already exists, etc.). Used by the
-    flow helpers to honor idempotency contracts. Note: 422 is also used
-    by GitHub for general validation failures; this class is raised only
-    when the response body matches a duplicate-resource pattern."""
+    flow helpers to honor idempotency contracts.
+
+    Note: 422 is also used by GitHub for general validation failures.
+    This class is raised only when the response body matches a duplicate-
+    resource pattern. The pattern check inspects BOTH stdout (where gh
+    puts the JSON body — `{"errors":[{"code":"already_exists",...}]}` for
+    label-already-exists; or English text for sub-issue link duplicates)
+    AND stderr (which carries only the short status summary). Verified
+    2026-05-04 against real GitHub responses."""
 
 
-class ApiRateLimited(GhApiError):
+class ApiRateLimitedError(GhApiError):
     """HTTP 403 with rate-limit signals, or 429."""
 
 
@@ -317,52 +350,102 @@ class ApiAuthError(GhApiError):
 
 # Status-code parser. gh CLI prints stderr like:
 #   "gh: Not Found (HTTP 404)"
-#   "HTTP 422: Validation Failed (https://...)\n... 'sub_issue_id': sub-issue already exists"
-# We extract the status from the first occurrence of "HTTP NNN" and
-# classify duplicate-resource 422s by message-body inspection.
+#   "gh: Validation Failed (HTTP 422)"
+# AND prints the JSON response body to stdout, e.g.:
+#   {"message":"Not Found","status":"404"}
+#   {"message":"Validation Failed","errors":[{"resource":"Label",
+#    "code":"already_exists","field":"name"}],"status":"422"}
+# Both streams are inspected. Verified 2026-05-04 by reproducing each
+# error type against the real GitHub API.
 _HTTP_STATUS_RE = re.compile(r"HTTP\s+(\d{3})\b", re.IGNORECASE)
+# The structured indicator: GitHub's JSON error body uses these `code:`
+# values for resource-already-exists. This is the canonical signal.
+_DUPLICATE_RESOURCE_CODES = (
+    '"code":"already_exists"',  # label-already-exists, etc. (no whitespace)
+    '"code": "already_exists"',  # same with whitespace variant
+)
+# English-text fallback hints for cases where gh emits the message but
+# not the structured code (e.g., sub-issue link duplicate where the
+# response body uses different wording).
 _DUPLICATE_RESOURCE_HINTS = (
     "already exists",
     "already a child",
     "already linked",
-    "name has already been taken",  # GitHub label already exists
+    "name has already been taken",
 )
 
 
-def _classify_gh_error(stderr: str, returncode: int) -> RuntimeError:
-    """Inspect gh CLI stderr + return the appropriate exception type.
-    Public for tests; called from _gh on non-zero exit."""
+def _classify_gh_error(
+    stderr: str,
+    returncode: int,
+    stdout: str = "",
+) -> RuntimeError:
+    """Inspect gh CLI stderr + stdout, return the appropriate exception
+    type. Public for tests; called from `_gh` on non-zero exit.
+
+    `stdout` defaults to "" for back-compat with tests written before
+    the dual-stream classifier — passing only stderr still works for
+    tests that synthesize stderr containing both status + body."""
     msg = stderr.strip() if stderr else "Unknown error"
     full = f"gh command failed: {msg}"
 
-    # Extract HTTP status (if present)
+    # Status extraction — check stderr first (where gh puts the summary
+    # `(HTTP NNN)` line), fall back to stdout JSON's `"status":"NNN"`.
     match = _HTTP_STATUS_RE.search(stderr)
+    if not match:
+        match = re.search(r'"status"\s*:\s*"?(\d{3})"?', stdout)
     status = int(match.group(1)) if match else None
 
+    # Combined haystack for substring searches (both streams)
+    combined_lower = (stderr + "\n" + stdout).lower()
+
     if status == 404:
-        return ApiNotFound(full, status_code=404, stderr=stderr)
+        return ApiNotFoundError(full, status_code=404, stderr=stderr, stdout=stdout)
     if status in (401, 403):
-        # Distinguish rate-limit from auth
-        if "rate limit" in stderr.lower() or "x-ratelimit" in stderr.lower():
-            return ApiRateLimited(full, status_code=status, stderr=stderr)
-        return ApiAuthError(full, status_code=status, stderr=stderr)
+        # Distinguish rate-limit from auth (rate-limit signals appear
+        # in both streams)
+        if "rate limit" in combined_lower or "x-ratelimit" in combined_lower:
+            return ApiRateLimitedError(
+                full, status_code=status, stderr=stderr, stdout=stdout
+            )
+        return ApiAuthError(full, status_code=status, stderr=stderr, stdout=stdout)
     if status == 429:
-        return ApiRateLimited(full, status_code=429, stderr=stderr)
+        return ApiRateLimitedError(
+            full, status_code=429, stderr=stderr, stdout=stdout
+        )
     if status == 422:
-        lower = stderr.lower()
-        if any(hint in lower for hint in _DUPLICATE_RESOURCE_HINTS):
-            return ApiAlreadyExists(full, status_code=422, stderr=stderr)
+        # Duplicate-resource detection: structured `"code":"already_exists"`
+        # in stdout JSON is the canonical signal; English-text hints in
+        # stderr are the fallback.
+        body_combined = stderr + stdout  # both streams, case-preserving for code match
+        if any(code in body_combined for code in _DUPLICATE_RESOURCE_CODES):
+            return ApiAlreadyExistsError(
+                full, status_code=422, stderr=stderr, stdout=stdout
+            )
+        if any(hint in combined_lower for hint in _DUPLICATE_RESOURCE_HINTS):
+            return ApiAlreadyExistsError(
+                full, status_code=422, stderr=stderr, stdout=stdout
+            )
         # Other 422s (validation failures) fall through to generic GhApiError
-        return GhApiError(full, status_code=422, stderr=stderr)
+        return GhApiError(full, status_code=422, stderr=stderr, stdout=stdout)
 
     # Any other status / no parseable status
-    return GhApiError(full, status_code=status, stderr=stderr)
+    return GhApiError(full, status_code=status, stderr=stderr, stdout=stdout)
+
+
+# Backward-compat aliases for callers using the original names. Removable
+# once a deprecation cycle has elapsed; kept here so any in-flight branches
+# can still merge cleanly.
+ApiNotFound = ApiNotFoundError
+ApiAlreadyExists = ApiAlreadyExistsError
+ApiRateLimited = ApiRateLimitedError
 
 
 def _gh(args: list[str], input_data: str | None = None, capture: bool = True) -> str:
     """Run gh CLI command. Raises a typed GhApiError subclass on non-zero
-    exit (ApiNotFound for 404, ApiAlreadyExists for duplicate-resource 422,
-    ApiRateLimited / ApiAuthError as appropriate, GhApiError otherwise).
+    exit (ApiNotFoundError for 404, ApiAlreadyExistsError for duplicate-
+    resource 422, ApiRateLimitedError / ApiAuthError as appropriate,
+    GhApiError otherwise).
     Callers can catch the base GhApiError or RuntimeError."""
     cmd = ["gh"] + args
     try:
@@ -374,7 +457,14 @@ def _gh(args: list[str], input_data: str | None = None, capture: bool = True) ->
             timeout=60,
         )
         if result.returncode != 0:
-            raise _classify_gh_error(result.stderr or "", result.returncode)
+            # Pass BOTH streams to the classifier — gh prints the JSON
+            # error body to stdout for 4xx/5xx responses; stderr only
+            # carries the short summary line.
+            raise _classify_gh_error(
+                result.stderr or "",
+                result.returncode,
+                stdout=result.stdout or "",
+            )
         return result.stdout.strip() if capture else ""
     except subprocess.TimeoutExpired:
         raise GhApiError("gh command timed out after 60s")
@@ -1866,7 +1956,7 @@ def flow_link_sub_issue(
             f"{parent_repo}#{parent_number}",
             fmt,
         )
-    except ApiAlreadyExists:
+    except ApiAlreadyExistsError:
         # Idempotency: 422 with a duplicate-resource hint = already linked.
         # Treat as success.
         _out(
@@ -1887,17 +1977,17 @@ def flow_verify_label(
     If 404, create with given color + description. Auth/rate-limit/server
     errors propagate as their typed exceptions — NOT silently treated as
     missing (which would create labels under the wrong auth context)."""
-    # Probe for existence via gh api. Typed exception parsing in `_gh`
-    # raises ApiNotFound on 404, ApiAuthError on 401/403, etc.
+    # Probe for existence. The try/except/else makes the two-branch nature
+    # explicit: success (label exists) vs ApiNotFoundError (need to create).
+    # Other typed exceptions (ApiAuthError, ApiRateLimitedError, generic
+    # GhApiError) propagate to the caller.
     try:
         _gh(["api", f"repos/{ORG}/{repo}/labels/{name}"])
+    except ApiNotFoundError:
+        pass  # fall through to create
+    else:
         _out(f"Label '{name}' already exists on {ORG}/{repo} (no-op).", fmt)
         return
-    except ApiNotFound:
-        # 404 — fall through to create
-        pass
-    # All other GhApiError subclasses (auth, rate-limit, server) propagate.
-    # No string matching; we trust the typed exception classifier.
 
     # 404 — create the label
     body: dict[str, str] = {"name": name}
@@ -1907,14 +1997,15 @@ def flow_verify_label(
         body["description"] = description
     try:
         _rest_post(f"repos/{ORG}/{repo}/labels", body)
-        _out(f"Created label '{name}' on {ORG}/{repo}.", fmt)
-    except ApiAlreadyExists:
+    except ApiAlreadyExistsError:
         # Race: another process created the label between our probe and POST.
         # Idempotency contract — treat as success.
         _out(
             f"Label '{name}' was just created (race detected; treating as no-op).",
             fmt,
         )
+        return
+    _out(f"Created label '{name}' on {ORG}/{repo}.", fmt)
 
 
 # ===========================
@@ -2159,11 +2250,18 @@ def config_init_defaults(non_interactive: bool, fmt: str) -> None:
     """First-run wizard: seed ~/.claude/sdlc-defaults.json.
 
     Interactive by default — prompts for each key with the existing value
-    (or a sensible suggestion) as the default.
+    (or a sensible suggestion) as the default. Type a value to override;
+    press Enter to accept the suggestion; type '-' to skip / unset.
 
     --non-interactive seeds with auto-detected values only (gh login as
-    assignee; default_project=mount-olympus if exactly one project mapped
-    in config; everything else left unset). Useful for CI / scripted setup."""
+    assignee; default_project=<sole-project> ONLY if exactly one project
+    mapped in config — no guessing on multi-project orgs). Useful for
+    CI / scripted setup.
+
+    **Both modes preserve existing values** — running this command again
+    against an already-populated defaults file does NOT clobber it. Keys
+    not recognized by the current schema (e.g., from a future plugin
+    version) are also preserved. Re-running is safe."""
     existing = load_user_defaults()
     new: dict[str, Any] = dict(existing)  # start from existing; preserve unknown keys
 
@@ -2216,7 +2314,11 @@ def config_init_defaults(non_interactive: bool, fmt: str) -> None:
         if key == "preferred_repos":
             current = ", ".join(suggestion) if suggestion else ""
             prompt = f"  preferred_repos (comma-separated) [{current}]: "
-            answer = input(prompt).strip()
+            try:
+                answer = input(prompt).strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nWizard aborted (no changes saved).")
+                return
             if answer == "-":
                 new.pop(key, None)
             elif answer:

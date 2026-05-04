@@ -2,6 +2,12 @@
 
 ## [1.2.0] — 2026-05-04
 
+### Migration notes
+- **No breaking changes.** Existing CLI invocations work identically.
+- **Recommended one-time setup**: run `python3 sdlc_manager.py config init-defaults` after upgrading to seed `~/.claude/sdlc-defaults.json` with your gh login + project defaults. Future Phase C PRs will read these as suggestion values in the interactive `issue create` flow.
+- **External override still wins**: if you have `$INFIQUETRA_SDLC_PATH/config/project-mappings.json`, it continues to take precedence over the new vendored copy.
+- **Exception class names changed (PEP 8 / N818)**: `ApiNotFound` → `ApiNotFoundError`, `ApiAlreadyExists` → `ApiAlreadyExistsError`, `ApiRateLimited` → `ApiRateLimitedError`. Backward-compat aliases retained for the old names; can be removed in a follow-up after a deprecation cycle.
+
 ### Added (Phase C deferred — Foundation)
 
 - **Typed exception classes** (`GhApiError`, `ApiNotFound`, `ApiAlreadyExists`, `ApiRateLimited`, `ApiAuthError`, `CardValidationError`). `_gh` now raises the appropriate subclass via `_classify_gh_error` instead of bare `RuntimeError` with a stringy message. Replaces the fragile `"422" in str(e)` substring matching pattern. Downstream callers catch by type:

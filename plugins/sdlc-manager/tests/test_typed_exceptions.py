@@ -7,7 +7,7 @@ GhApiError subclass; downstream callers catch by type instead of doing
 
 from pathlib import Path
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -92,10 +92,81 @@ def test_classifies_422_validation_failure_as_generic_GhApiError() -> None:
         stderr="HTTP 422: Validation Failed\n... 'color': must be a 6-character hex string",
         returncode=1,
     )
-    # Generic GhApiError, not ApiAlreadyExists
+    # Generic GhApiError, not ApiAlreadyExistsError
     assert isinstance(exc, sdlc_manager.GhApiError)
-    assert not isinstance(exc, sdlc_manager.ApiAlreadyExists)
+    assert not isinstance(exc, sdlc_manager.ApiAlreadyExistsError)
     assert exc.status_code == 422
+
+
+# --- Dual-stream classifier (the DA blocker fix) ---------------------------
+
+
+def test_classifies_real_label_already_exists_via_stdout_json() -> None:
+    """Real `gh api --method POST repos/.../labels` for an existing label
+    (verified 2026-05-04 against the actual GitHub API):
+      stderr: 'gh: Validation Failed (HTTP 422)'
+      stdout: '{"message":"Validation Failed","errors":[{"resource":"Label",
+              "code":"already_exists","field":"name"}],"status":"422"}'
+
+    Stderr alone has NO duplicate-resource hint. Without inspecting
+    stdout, the duplicate-detection in PR #115's original implementation
+    silently failed in production. This test pins that the classifier
+    inspects stdout's `"code":"already_exists"` JSON marker."""
+    real_stderr = "gh: Validation Failed (HTTP 422)\n"
+    real_stdout = (
+        '{"message":"Validation Failed",'
+        '"errors":[{"resource":"Label","code":"already_exists","field":"name"}],'
+        '"documentation_url":"https://docs.github.com/rest/issues/labels#create-a-label",'
+        '"status":"422"}'
+    )
+    exc = sdlc_manager._classify_gh_error(
+        stderr=real_stderr,
+        returncode=1,
+        stdout=real_stdout,
+    )
+    assert isinstance(exc, sdlc_manager.ApiAlreadyExistsError)
+    assert exc.status_code == 422
+    # The exception should retain BOTH streams for debugging
+    assert exc.stderr == real_stderr
+    assert exc.stdout == real_stdout
+
+
+def test_classifies_real_404_via_stderr_summary() -> None:
+    """Real `gh api repos/.../nonexistent` (verified 2026-05-04):
+      stderr: 'gh: Not Found (HTTP 404)'
+      stdout: '{"message":"Not Found","status":"404"}'
+    Stderr has the (HTTP 404) marker; stdout has the JSON. Either is
+    sufficient for status detection."""
+    exc = sdlc_manager._classify_gh_error(
+        stderr="gh: Not Found (HTTP 404)\n",
+        returncode=1,
+        stdout='{"message":"Not Found","status":"404"}',
+    )
+    assert isinstance(exc, sdlc_manager.ApiNotFoundError)
+    assert exc.status_code == 404
+
+
+def test_classifies_status_from_stdout_when_stderr_lacks_http_marker() -> None:
+    """Defensive: if some future `gh` version omits the (HTTP NNN) summary
+    from stderr, fall back to parsing the JSON body's `"status":"NNN"`."""
+    exc = sdlc_manager._classify_gh_error(
+        stderr="gh: Something went wrong\n",  # no HTTP marker
+        returncode=1,
+        stdout='{"message":"Not Found","status":"404"}',
+    )
+    assert exc.status_code == 404
+    assert isinstance(exc, sdlc_manager.ApiNotFoundError)
+
+
+def test_class_alias_compatibility() -> None:
+    """The old class names (ApiNotFound, ApiAlreadyExists, ApiRateLimited)
+    are retained as aliases for the *Error-suffixed PEP 8 names. Code that
+    catches the old names continues to work; isinstance checks pass either way."""
+    exc = sdlc_manager.ApiNotFoundError("test", status_code=404)
+    assert isinstance(exc, sdlc_manager.ApiNotFound)        # alias
+    assert isinstance(exc, sdlc_manager.ApiNotFoundError)   # canonical name
+    assert sdlc_manager.ApiAlreadyExists is sdlc_manager.ApiAlreadyExistsError
+    assert sdlc_manager.ApiRateLimited is sdlc_manager.ApiRateLimitedError
 
 
 # --- _classify_gh_error: edge cases ----------------------------------------

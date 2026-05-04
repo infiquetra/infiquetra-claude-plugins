@@ -54,6 +54,22 @@ def test_load_user_defaults_tolerates_non_object_root(tmp_defaults_path) -> None
     assert data == {}
 
 
+def test_load_user_defaults_tolerates_unreadable_file(tmp_defaults_path, capsys) -> None:
+    """If the file can't be opened (permissions, broken symlink, encoding
+    issue), return {} + warning. The CLI must remain usable; the operator
+    can re-run init-defaults to reseed."""
+    tmp_defaults_path.parent.mkdir(parents=True, exist_ok=True)
+    # Create with non-UTF-8 bytes so the open()/json.load chain raises
+    # UnicodeDecodeError (caught by the widened except clause)
+    tmp_defaults_path.write_bytes(b'\xff\xfe\xfd not valid utf-8')
+    data = sdlc_manager.load_user_defaults()
+    assert data == {}
+    captured = capsys.readouterr()
+    # Either warning text or stderr should mention the issue
+    assert "could not be read" in (captured.out + captured.err).lower() \
+        or "malformed" in (captured.out + captured.err).lower()
+
+
 def test_get_default_returns_None_when_unset(tmp_defaults_path) -> None:
     assert sdlc_manager.get_default("assignee") is None
 

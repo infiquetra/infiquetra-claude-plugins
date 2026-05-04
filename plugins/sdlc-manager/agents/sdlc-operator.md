@@ -70,7 +70,14 @@ You are deeply familiar with the Infiquetra SDLC process as documented in the
   are **single-select project FIELDS on the Olympus board** (decided 2026-05-03 — see
   `infiquetra-sdlc/docs/engineering-journal/DECISIONS.md`), NOT labels.
 - **6 issue types**: Capability, Enhancement, Defect, Exploration, Context-Update, Objective.
-  Five are Hermes-actionable (`hermes-task` label); one (Objective) carries `hermes-not-actionable`.
+  **Three are Hermes-actionable** (`hermes-task`: capability, enhancement, defect); **three are
+  non-actionable** (`hermes-not-actionable`: objective, exploration, context-update). Verified
+  2026-05-04 against `infiquetra-sdlc/.github/ISSUE_TEMPLATE/*.yml`.
+
+  **Today's reality (2026-05-04)**: only `Status` is a single-select field on the Olympus
+  board. Initiative, Objective, Capability Size, Business Value, Technical Risk, Target Quarter
+  are all "decided, not yet created" per Phase A carry-over #2. The `flow` helpers correctly
+  silently skip prompts for missing fields.
 - **1 project board**: Mount Olympus (project #1; only board). Strategic Direction was
   proposed but never created; the concept was dropped in PR #16.
 - **Sub-issues are the default grouping mechanism**: every new card has a parent by
@@ -90,9 +97,16 @@ You are deeply familiar with the Infiquetra SDLC process as documented in the
 - `board {view,add,move,archive,wip,standup,discover-fields}` — project board operations
 - `issue create` — sub-issue-first interactive issue creation (Phase C; see "Issue creation flow" below)
 - `flow {set-field,field-options,discover-project,link-sub-issue,verify-label,validate-card}` —
-  operator-facing GraphQL/REST helpers (Phase C minimum-viable)
-- `labels {audit,deploy,auto-label}` — label management. **Note**: `labels sync-fields` was
-  REMOVED in PR #114; Initiative/Objective are project fields, not labels.
+  operator-facing GraphQL/REST helpers (Phase C minimum-viable). **`flow set-field` failure modes**:
+  if the field doesn't exist on the project, raises `RuntimeError` with the available field list +
+  a hint pointing at `operational-reference.md`'s field-creation runbook. If the option doesn't
+  exist on the field, raises with the available option list + a hint pointing at
+  `flow field-options`. Verify before bulk operations.
+- `fields {create-option,discover}` — project field management (used in Initiative/Objective
+  setup workflows below)
+- `labels {audit,deploy,auto-label,sync-fields}` — label management. **Note**: `labels sync-fields`
+  is **deprecated** (Initiative/Objective are project fields, not labels) but the command still
+  exists in the script. Don't use it; prefer `flow set-field` for setting Initiative/Objective.
 - `metrics {cycle-time,throughput,wip-age,column-time}` — flow metrics
 - `milestones {create,list,progress,link}` — Objective milestones (optional secondary mechanism;
   the canonical Objective tracking is the Olympus board's Objective field)
@@ -241,12 +255,25 @@ python "$SCRIPT" flow set-field --project mount-olympus \
 Per the 2026-05-03 DECISION, Objectives are tracked via the project's Objective field, not
 labels or milestones-only.
 
-```bash
-# 1. Filter the board by the Objective field (use the GH UI or jq)
-gh project item-list 1 --owner infiquetra --format json --limit 200 \
-  | jq '.items[] | select(.objective=="<Objective name>") | {repo:.content.repository, n:.content.number, status, title:.content.title}'
+**Today (2026-05-04) the Objective project field doesn't exist yet** — this section's
+filter approach starts working once the operator runs the field-creation runbook in
+`infiquetra-sdlc/docs/operations/operational-reference.md`. For now, fall back to the
+parent-Objective-issue's sub-issue tree (`gh sub-issue list <parent>`).
 
-# 2. Per-repo milestone progress (optional secondary)
+```bash
+# 0. Discovery first — `gh project item-list` flattens project-field values into top-level
+# keys with lowercased / slugified names. Check the actual key on your project before
+# filtering (the field may be `objective`, or it may be slightly different):
+gh project item-list 1 --owner infiquetra --format json --limit 5 \
+  | jq '.items[0] | keys'
+
+# 1. Filter once you've confirmed the key. Use --limit 1000 (gh's upper bound) since the
+# Olympus board has 400+ items today and the default --limit of 30 silently truncates:
+gh project item-list 1 --owner infiquetra --format json --limit 1000 \
+  | jq --arg objective_key "objective" --arg target "<Objective name>" \
+       '.items[] | select(.[$objective_key] == $target) | {repo: .repository, status, title}'
+
+# 2. Per-repo milestone progress (optional secondary mechanism)
 python "$SCRIPT" milestones progress --repo <repo> --milestone <N>
 
 # 3. Calculate days until target date and flag at-risk; summarize
@@ -272,6 +299,16 @@ flow — the interactive flow is one-at-a-time by design.
 
 ### Triage Batch
 
+"Triage" here means assigning a priority label + ensuring the card is on the Mount Olympus
+board, for issues filed without one. The `needs-triage` label is added when an issue is
+created without a priority. To find them:
+
+```bash
+gh issue list --label needs-triage --state open --repo infiquetra/<repo>
+# Or org-wide:
+gh search issues "label:needs-triage state:open org:infiquetra"
+```
+
 For each `needs-triage` issue:
 
 ```bash
@@ -292,7 +329,9 @@ python "$SCRIPT" board move --repo <repo> --number <N> --status Ready
 ## Key Configuration
 
 ```bash
-# Script paths (use whichever exists)
+# Script paths (use whichever exists). Note: the cache version may lag plugin.json's
+# `version` field — list the actual installed dir if unsure:
+#   ls ~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/
 SCRIPT_INSTALLED="$HOME/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/<version>/scripts/sdlc_manager.py"
 SCRIPT_DEV="$HOME/workspace/infiquetra/infiquetra-claude-plugins/plugins/sdlc-manager/scripts/sdlc_manager.py"
 
@@ -332,12 +371,20 @@ There's only one (Mount Olympus, project #1). The vendored project-mappings.json
 
 ### Priority for defects
 
-| SLA | Label | Description |
+Per `infiquetra-sdlc/docs/process/issue-types.md` (canonical source — verify the consumer
+repo's actual labels via `gh label list --repo <repo>` before applying, since `infiquetra-sdlc`
+has both unprefixed `high-priority` and slash-prefixed `priority/high` forms documented in
+different docs):
+
+| Label | Cadence | Description |
 |---|---|---|
-| 4 hours | `critical` | System down, data loss |
-| 1 day | `high-priority` | Major functionality broken |
-| 3 days | `medium-priority` | Minor functionality broken |
-| backlog | `low-priority` | Cosmetic or rare edge case |
+| `critical` | Expedited orchestrator pickup | System down or data loss |
+| `high-priority` | 4-hour cadence | Major feature broken |
+| `medium-priority` | 1-day cadence | Feature degraded |
+| `low-priority` | Next-available capacity | Minor / cosmetic |
+
+(Source: `docs/process/issue-types.md`. If this table drifts from that source, the source
+wins.)
 
 ## Output Format
 

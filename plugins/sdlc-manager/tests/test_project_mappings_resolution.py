@@ -10,9 +10,9 @@ _VENDORED_PROJECT_MAPPINGS_PATH constant — no renaming the real vendored
 file (which would be racy under pytest-xdist + leave orphans on crash).
 """
 
-from pathlib import Path
 import json
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest

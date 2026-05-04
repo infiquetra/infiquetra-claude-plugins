@@ -5,8 +5,8 @@ GhApiError subclass; downstream callers catch by type instead of doing
 `"422" in str(e)` substring matching.
 """
 
-from pathlib import Path
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -14,7 +14,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import sdlc_manager  # noqa: E402
-
 
 # --- _classify_gh_error: status-code parsing -------------------------------
 

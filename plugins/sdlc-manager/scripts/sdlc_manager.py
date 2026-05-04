@@ -61,10 +61,9 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 # ===========================
 # CONFIGURATION
@@ -467,7 +466,7 @@ def _gh(args: list[str], input_data: str | None = None, capture: bool = True) ->
             )
         return result.stdout.strip() if capture else ""
     except subprocess.TimeoutExpired:
-        raise GhApiError("gh command timed out after 60s")
+        raise GhApiError("gh command timed out after 60s") from None
     except FileNotFoundError:
         _error("gh CLI not found. Install from: https://cli.github.com/")
         sys.exit(1)
@@ -733,7 +732,7 @@ def get_item_age_days(item: dict) -> float:
     if not created:
         return 0
     dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-    return (datetime.now(timezone.utc) - dt).total_seconds() / 86400
+    return (datetime.now(UTC) - dt).total_seconds() / 86400
 
 
 def board_view(project_name: str, status_filter: str | None, fmt: str) -> None:
@@ -1207,7 +1206,7 @@ def labels_auto_label(repo: str, number: int, fmt: str) -> None:
 
     text = f"{title} {body}"
     labels_to_add = []
-    for rule_name, rule in rules.items():
+    for _rule_name, rule in rules.items():
         pattern = rule.get("pattern", "")
         if re.search(pattern, text, re.IGNORECASE):
             labels_to_add.extend(rule.get("add_labels", []))
@@ -1250,8 +1249,8 @@ def fields_create_option(project_name: str, field_name: str, option_name: str, f
     print(f"Creating option '{option_name}' for field '{field_name}' in '{project_name}'...")
     print(f"Field ID: {target_field['id']}")
     print(f"Existing options: {[o['name'] for o in target_field.get('options', [])]}")
-    print(f"\nNote: Option creation via GraphQL may require specific permissions.")
-    print(f"If this fails, add the option manually in the GitHub Projects UI:")
+    print("\nNote: Option creation via GraphQL may require specific permissions.")
+    print("If this fails, add the option manually in the GitHub Projects UI:")
     print(f"  https://github.com/orgs/{ORG}/projects/{proj['number']}/settings/fields")
 
 
@@ -1357,7 +1356,7 @@ def metrics_cycle_time(project_name: str, days: int, issue_type: str | None, fmt
     p95 = cycle_times[min(int(n * 0.95), n - 1)]
 
     targets = {"capability": 5, "enhancement": 2, "defect": 1}
-    target = targets.get(issue_type or "", None)
+    target = targets.get(issue_type or "")
 
     if fmt == "json":
         _out({"count": n, "p50": p50, "p85": p85, "p95": p95, "target": target}, fmt)
@@ -1470,7 +1469,7 @@ def metrics_column_time(project_name: str, number: int, fmt: str) -> None:
         print("No column transitions recorded.")
         return
 
-    for i, t in enumerate(transitions):
+    for _i, t in enumerate(transitions):
         print(f"  {t['at'][:10]}: {t['from'] or 'start':25} -> {t['to']}")
 
     # Calculate durations between transitions
@@ -1597,7 +1596,7 @@ def rollout_status(team_filter: str | None, fmt: str) -> None:
         _out(status, fmt)
         return
 
-    print(f"\nSDLC Rollout Status")
+    print("\nSDLC Rollout Status")
     print(f"Last updated: {status.get('last_updated', 'unknown')}")
     print(f"Total: {summary.get('total_repos', 0)} repos | "
           f"Complete: {summary.get('completed', 0)} | "
@@ -1925,7 +1924,7 @@ def flow_link_sub_issue(
     try:
         child_data = _rest_get(f"repos/{ORG}/{child_repo}/issues/{child_number}")
     except RuntimeError as e:
-        raise RuntimeError(f"Could not fetch child {child_repo}#{child_number}: {e}")
+        raise RuntimeError(f"Could not fetch child {child_repo}#{child_number}: {e}") from e
     child_db_id = child_data.get("id")
     if not isinstance(child_db_id, int):
         raise RuntimeError(
@@ -1937,7 +1936,7 @@ def flow_link_sub_issue(
     try:
         parent_data = _rest_get(f"repos/{ORG}/{parent_repo}/issues/{parent_number}")
     except RuntimeError as e:
-        raise RuntimeError(f"Could not fetch parent {parent_repo}#{parent_number}: {e}")
+        raise RuntimeError(f"Could not fetch parent {parent_repo}#{parent_number}: {e}") from e
     if "pull_request" in parent_data:
         raise RuntimeError(
             f"Parent {parent_repo}#{parent_number} is a PR, not an issue. "
@@ -2166,7 +2165,7 @@ def flow_validate_card(repo: str, number: int, fmt: str) -> None:
     try:
         data = _rest_get(f"repos/{ORG}/{repo}/issues/{number}")
     except RuntimeError as e:
-        raise RuntimeError(f"Could not fetch issue {issue_ref}: {e}")
+        raise RuntimeError(f"Could not fetch issue {issue_ref}: {e}") from e
     body = data.get("body") or ""
     if not body:
         # Empty body fails trivially — report via the standard error path
@@ -2201,7 +2200,7 @@ def config_show(fmt: str) -> None:
         _out(config, fmt)
         return
 
-    print(f"\nInfiquetra SDLC Manager Configuration")
+    print("\nInfiquetra SDLC Manager Configuration")
     print(f"SDLC Path: {sdlc_path}")
     print(f"Organization: {ORG}")
 
@@ -2361,7 +2360,30 @@ _HERMES_ACTIONABLE_TYPES = frozenset({
 # Issue types where the capability-adaptive fields are relevant (size,
 # etc.). The orchestrator's planner reads these to inform sequencing /
 # capacity decisions; non-capability cards don't need them.
+#
+# IMPORTANT — PROJECT FIELD REALITY (verified 2026-05-04):
+# As of today, the only single-select field on the Olympus project (#1) is
+# `Status`. `Initiative`, `Objective`, `Capability Size`, `Business Value`,
+# `Technical Risk`, `Target Quarter` are all "decided, not yet created" per
+# Phase A carry-over #2 in `infiquetra-sdlc`. The interactive flow is built
+# to handle the post-create world (per-project schema discovery silently
+# skips prompts for fields the project doesn't expose), so today operators
+# will see ONLY the Status prompt. The skip is intentional, not a bug.
+# When the operator runs the field-creation runbook in
+# `infiquetra-sdlc/docs/operations/operational-reference.md`, the
+# additional prompts light up automatically.
 _CAPABILITY_ADAPTIVE_TYPES = frozenset({"capability", "objective"})
+
+
+def _safe_input(prompt: str) -> str | None:
+    """Wrap `input()` to handle EOF (Ctrl+D) and KeyboardInterrupt (Ctrl+C)
+    uniformly: return None instead of raising. Saves ~24 lines of repeated
+    try/except boilerplate across the prompt helpers + makes the contract
+    "what does Ctrl+D do here?" trivially answerable."""
+    try:
+        return input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
 
 
 def _select_issue_type(default: str | None = None) -> str:
@@ -2378,12 +2400,10 @@ def _select_issue_type(default: str | None = None) -> str:
     print("  6. Updating documentation? -> CONTEXT UPDATE")
     print()
     fallback = default if default in _ISSUE_TYPES else "capability"
-    try:
-        choice = input(
-            f"Select type (or press Enter for '{fallback}'): "
-        ).strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    answer = _safe_input(f"Select type (or press Enter for '{fallback}'): ")
+    if answer is None:
         return fallback
+    choice = answer.lower()
     return choice if choice in _ISSUE_TYPES else fallback
 
 
@@ -2397,22 +2417,21 @@ def _prompt_parent_issue() -> tuple[str, int] | None:
     operator types 'no' (or 'n') to skip."""
     print("\nSub-issue first: every new card has a parent by default.")
     print("Paste a parent ref like 'campps-blueprint#42' or type 'no' to skip.")
-    try:
-        answer = input("Parent issue? (yes/no/<repo#N>) [yes]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return None  # treat as no-parent
+    raw = _safe_input("Parent issue? (yes/no/<repo#N>) [yes]: ")
+    if raw is None:
+        return None  # Ctrl+D / Ctrl+C → treat as no-parent
+    answer = raw.lower()
 
     if answer in ("no", "n", "skip", "-"):
         return None
     if answer in ("yes", "y", ""):
         # Operator confirmed but didn't paste a ref — re-prompt for the ref
-        try:
-            ref = input("Parent ref (e.g., campps-blueprint#42): ").strip()
-        except (EOFError, KeyboardInterrupt):
+        ref = _safe_input("Parent ref (e.g., campps-blueprint#42): ")
+        if ref is None:
             return None
         match = _PARENT_REF_RE.match(ref)
     else:
-        match = _PARENT_REF_RE.match(answer)
+        match = _PARENT_REF_RE.match(raw)
 
     if not match:
         _warn(
@@ -2430,7 +2449,7 @@ def _project_field_options(project_name: str, field_name: str) -> list[str] | No
     operator's project doesn't expose."""
     try:
         field = _resolve_project_field(project_name, field_name)
-    except (RuntimeError, GhApiError):
+    except RuntimeError:
         return None
     return [o.get("name", "") for o in field.get("options", [])]
 
@@ -2440,29 +2459,49 @@ def _prompt_choice(
     options: list[str] | None,
     default: str | None = None,
 ) -> str | None:
-    """Generic field-value prompt. If `options` is None, the field doesn't
-    exist on this project — skip silently (return None). Otherwise show
-    available options + accept Enter for default, '-' to skip."""
+    """Generic field-value prompt.
+
+    Two distinct semantics:
+      - `options is None`  → the field doesn't exist on this project at all.
+                              Skip silently (return None) — caller wanted
+                              per-project schema discovery.
+      - `options == []`    → the field exists but has no options yet.
+                              Skip with a hint — accepting freeform input
+                              would create a useless reference; the operator
+                              should add options to the field first.
+      - `options == [...]` → normal prompt with options listed.
+
+    Operator can press Enter for default (if default is in options),
+    type a value matching one of the options, or type '-' to skip.
+    """
     if options is None:
         return None
-    options_display = ", ".join(options) if options else "(no options yet)"
+    if not options:  # empty list — field exists but no options
+        _warn(
+            f"  {label}: field exists on the project but has no options yet. "
+            f"Add options via the GH Projects UI or `gh project field-edit` "
+            f"before this prompt can offer values. Skipping."
+        )
+        return None
+    options_display = ", ".join(options)
     if default and default in options:
         prompt = f"  {label} [{default}] (options: {options_display}; '-' to skip): "
     else:
         prompt = f"  {label} (options: {options_display}; '-' to skip): "
-    try:
-        answer = input(prompt).strip()
-    except (EOFError, KeyboardInterrupt):
+    answer = _safe_input(prompt)
+    if answer is None:
         return None
     if answer == "-" or answer.lower() in ("skip", "no"):
         return None
     if not answer:
         return default if default and default in options else None
-    if options and answer not in options:
+    if answer not in options:
         _warn(
             f"'{answer}' not in {label} options ({options_display}); "
-            f"skipping. Use 'flow field-options --field {label}' to see "
-            f"current options or 'flow set-field' to set it post-create."
+            f"skipping. Use `flow field-options --field {label}` to see "
+            f"current options. If you need a new option, add it via the "
+            f"GH Projects UI or `gh project field-edit` — `flow set-field` "
+            f"will fail with the same not-in-options error otherwise."
         )
         return None
     return answer
@@ -2490,19 +2529,21 @@ def _open_gh_issue_create_web(repo: str, issue_type: str) -> None:
 
 
 def _prompt_issue_number(repo: str) -> int | None:
-    """After the browser flow, ask for the new issue number. Operator
-    can paste a URL ('https://github.com/foo/bar/issues/42') or just the
-    number. Return None if the operator skips."""
-    try:
-        answer = input(
-            f"\nIssue number that was created in {repo} "
-            f"(or paste URL; Enter to skip metadata): "
-        ).strip()
-    except (EOFError, KeyboardInterrupt):
-        return None
+    """After the browser flow, ask for the new issue number. Operator can
+    paste a URL ('https://github.com/foo/bar/issues/42') or just the
+    number. Return None if the operator skips (e.g., closed the browser
+    without submitting). PR URLs are intentionally rejected — sub-issue
+    linking and project field assignment work on issues, not PRs."""
+    answer = _safe_input(
+        f"\nIssue number that was created in {repo} "
+        f"(or paste URL; Enter to skip metadata): "
+    )
     if not answer:
         return None
-    # Try to extract a trailing /issues/N or just a bare integer
+    # Try to extract a trailing /issues/N or a bare integer (#42 / 42).
+    # The /issues/ branch matches the URL form; the bare-int branch is
+    # anchored (`^#?(\d+)$`) so a pasted /pull/N URL won't accidentally
+    # match the bare-int side.
     match = re.search(r"/issues/(\d+)\b|^#?(\d+)$", answer)
     if match:
         return int(match.group(1) or match.group(2))
@@ -2519,11 +2560,25 @@ def _apply_post_create_metadata(
     field_values: dict[str, str],
     fmt: str,
 ) -> None:
-    """Apply the post-create metadata steps: hermes labels, board add,
-    project field values, sub-issue link. Each step is logged and
-    isolated — failures in one don't abort the others."""
+    """Apply the post-create metadata steps. Each step is logged and
+    isolated — failures in one don't abort the others.
+
+    Steps execute IN ORDER (later steps depend on earlier ones):
+      1. Apply hermes-task / hermes-not-actionable label
+      2. Add the issue to the project board (`board_add`) — required
+         before step 3 can target the project item
+      3. Set each project field value via `flow_set_field` — depends on
+         step 2 having created the project item
+      4. Link as a sub-issue under `parent` via `flow_link_sub_issue`
+
+    Steps 2-3 require `project_name` to be set; step 1 always runs;
+    step 4 requires `parent`."""
     issue_ref = f"{repo}#{issue_number}"
     print(f"\nApplying metadata to {issue_ref}...")
+    # Cache config once — saves a load_config() round-trip on board_add.
+    # (flow_set_field internally re-loads; a global lru_cache on
+    # load_config would address that more cleanly, deferred to follow-up.)
+    cached_config = load_config()
 
     # 1. Hermes-actionability label (only types we want the orchestrator
     # to act on — capability/enhancement/defect/exploration/context-update)
@@ -2534,7 +2589,7 @@ def _apply_post_create_metadata(
                 "--repo", f"{ORG}/{repo}",
                 "--add-label", "hermes-task",
             ])
-            print(f"  ✓ Applied label `hermes-task`")
+            print("  ✓ Applied label `hermes-task`")
         except GhApiError as e:
             _warn(f"  ✗ Could not apply hermes-task label: {e}")
     else:
@@ -2545,15 +2600,15 @@ def _apply_post_create_metadata(
                 "--repo", f"{ORG}/{repo}",
                 "--add-label", "hermes-not-actionable",
             ])
-            print(f"  ✓ Applied label `hermes-not-actionable`")
+            print("  ✓ Applied label `hermes-not-actionable`")
         except GhApiError as e:
             _warn(f"  ✗ Could not apply hermes-not-actionable label: {e}")
 
     # 2. Add to project board
     if project_name:
         try:
-            board_add(repo, issue_number, fmt, config=load_config())
-        except (RuntimeError, GhApiError) as e:
+            board_add(repo, issue_number, fmt, config=cached_config)
+        except RuntimeError as e:
             _warn(f"  ✗ board add failed: {e}")
 
     # 3. Project field values (Initiative, Objective, Priority, Size, ...)
@@ -2565,7 +2620,7 @@ def _apply_post_create_metadata(
                 project_name, repo, issue_number,
                 field_name, option, fmt="text",
             )
-        except (RuntimeError, GhApiError) as e:
+        except RuntimeError as e:
             _warn(f"  ✗ set {field_name}={option} failed: {e}")
 
     # 4. Sub-issue link (parent → child)
@@ -2575,35 +2630,36 @@ def _apply_post_create_metadata(
             flow_link_sub_issue(
                 parent_repo, parent_number, repo, issue_number, fmt="text"
             )
-        except (RuntimeError, GhApiError) as e:
+        except RuntimeError as e:
             _warn(f"  ✗ sub-issue link failed: {e}")
 
 
-def _prompt_paired_card(repo: str, issue_number: int) -> tuple[str, str, str] | None:
+def _prompt_paired_card(repo: str, issue_number: int) -> str | None:
     """Opt-in paired-card prompt. After a successful card create, ask
     if the operator wants a sibling card on another repo with similar
-    scope. Returns (target_repo, title_delta, body_delta) or None to
-    skip. Default is no — paired cards are useful for cross-service
-    capabilities (e.g., a backend change with a paired Flutter app
-    change) but not the common case."""
+    scope. Returns the target repo name, or None to skip. Default is no
+    — paired cards are useful for cross-service capabilities (e.g., a
+    backend change with a paired Flutter app change) but not the common case.
+
+    Phase C v1: only the target repo is captured. The browser flow on the
+    sibling card is the right place for the operator to type the
+    title/body. Earlier drafts collected `title_delta` / `body_delta`
+    here but never applied them — a UX promise we don't keep. Implementing
+    them properly requires a `gh issue edit --title --body` post-create
+    step + careful handling of the existing template body; deferred to a
+    follow-up if the need surfaces."""
     print(f"\nCreated {repo}#{issue_number}.")
-    try:
-        answer = input(
-            "Create a paired card on another repo with similar scope? (y/N): "
-        ).strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    raw = _safe_input(
+        "Create a paired card on another repo with similar scope? (y/N): "
+    )
+    if raw is None:
         return None
-    if answer not in ("y", "yes"):
+    if raw.lower() not in ("y", "yes"):
         return None
-    try:
-        target_repo = input("  Target repo (e.g., campps-flutter-app): ").strip()
-        title_delta = input("  Title note for the paired card (e.g., '[flutter]'): ").strip()
-        body_delta = input("  Extra body context (one line; press Enter to skip): ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return None
+    target_repo = _safe_input("  Target repo (e.g., campps-flutter-app): ")
     if not target_repo:
         return None
-    return target_repo, title_delta, body_delta
+    return target_repo
 
 
 def issue_create(
@@ -2612,9 +2668,27 @@ def issue_create(
     fmt: str,
     parent_ref: str | None = None,
     skip_metadata: bool = False,
+    _in_paired_card: bool = False,
 ) -> None:
     """Interactive issue creation — sub-issue-first, per-project schema
     aware, with capability-adaptive fields and paired-card flow.
+
+    **Today's reality (2026-05-04)**: the Olympus project (#1) only exposes
+    `Status` as a single-select field. Initiative, Objective, Capability
+    Size, Business Value, Technical Risk, Target Quarter are all "decided,
+    not yet created" per Phase A carry-over #2. The per-project schema
+    discovery silently skips prompts for missing fields, so today operators
+    will see only the type, parent, Status, and confirm prompts. When the
+    operator runs the field-creation runbook in
+    `infiquetra-sdlc/docs/operations/operational-reference.md`, the
+    additional prompts light up automatically.
+
+    **`--web` flow caveat**: this calls `gh issue create --template <type>.yml --web`.
+    `gh` accepts both flags but the `--template` may not always prefill
+    the templated body in the browser tab (gh's `--web` URL generation
+    varies). If the browser opens to a blank issue form, manually pick
+    the `<type>` template from the GitHub UI's template chooser. This
+    has been observed but not catalogued by gh version.
 
     Flow:
       1. Determine type (decision tree if not provided)
@@ -2626,7 +2700,8 @@ def issue_create(
       7. Open `gh issue create --web` in browser; operator fills body
       8. Operator pastes back the issue number
       9. Apply hermes-task / hermes-not-actionable label, project field values, sub-issue link
-     10. Paired-card prompt (opt-in)
+     10. Paired-card prompt (opt-in) — suppressed when called recursively
+         (`_in_paired_card=True`) to prevent unbounded nesting
 
     Args:
       repo: target repo (without org)
@@ -2634,7 +2709,11 @@ def issue_create(
       fmt: output format (passed to sub-helpers)
       parent_ref: optional pre-supplied 'repo#N' parent ref; skips the prompt
       skip_metadata: if True, just create the issue + skip post-create
-        metadata application (useful for testing or scripted flows)"""
+        metadata application (useful for testing or scripted flows)
+      _in_paired_card: private flag set when this call is the
+        paired-card recursion. Suppresses the paired-card prompt at step 10
+        so a chain of yes-yes-yes can't recurse indefinitely. Operators
+        never set this directly."""
     defaults = load_user_defaults()
 
     # Step 1: determine type
@@ -2748,21 +2827,23 @@ def issue_create(
             repo, issue_number, issue_type, project_name, parent, field_values, fmt,
         )
 
-        # Step 10: paired-card prompt
-        paired = _prompt_paired_card(repo, issue_number)
-        if paired:
-            target_repo, _title_delta, _body_delta = paired
-            print(f"\nLaunching paired-card flow for {target_repo}...")
-            # Recurse with the same type + parent to create a sibling card.
-            # We don't auto-link the two cards — the operator decides whether
-            # they should be linked (e.g., as sibling sub-issues of a common
-            # parent). Title/body deltas would be applied via gh issue edit
-            # after the second create completes; for the minimum viable, we
-            # just kick off the second flow and let the operator drive it.
-            issue_create(
-                target_repo, issue_type, fmt,
-                parent_ref=f"{parent[0]}#{parent[1]}" if parent else None,
-            )
+        # Step 10: paired-card prompt — suppressed in recursive call to
+        # prevent unbounded nesting.
+        if not _in_paired_card:
+            target_repo = _prompt_paired_card(repo, issue_number)
+            if target_repo:
+                print(f"\nLaunching paired-card flow for {target_repo}...")
+                # Recurse with the same type + parent to create a sibling card.
+                # The recursive call gets _in_paired_card=True so its own
+                # Step 10 is skipped (no chain-recursion).
+                # We don't auto-link the two cards — the operator decides
+                # whether they should be linked (e.g., as sibling sub-issues
+                # of a common parent).
+                issue_create(
+                    target_repo, issue_type, fmt,
+                    parent_ref=f"{parent[0]}#{parent[1]}" if parent else None,
+                    _in_paired_card=True,
+                )
     else:
         # skip_metadata path: just print the manual command
         print(f"Run manually: gh issue create --repo {ORG}/{repo} "

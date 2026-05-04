@@ -7,16 +7,13 @@ exercise the small composable helpers (`_select_issue_type`,
 `_apply_post_create_metadata`) plus the integration via skip_metadata.
 """
 
-from pathlib import Path
 import sys
+from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import sdlc_manager  # noqa: E402
-
 
 # --- _select_issue_type ----------------------------------------------------
 
@@ -40,7 +37,7 @@ def test_select_issue_type_falls_back_on_invalid() -> None:
         assert sdlc_manager._select_issue_type() == "capability"
 
 
-def test_select_issue_type_handles_eof() -> None:
+def test_select_issue_type_handles_eof_returns_default() -> None:
     """Ctrl+D returns the default — no traceback."""
     with patch("builtins.input", side_effect=EOFError):
         assert sdlc_manager._select_issue_type(default="defect") == "defect"
@@ -67,7 +64,7 @@ def test_parent_prompt_blank_then_ref() -> None:
         assert sdlc_manager._prompt_parent_issue() == ("campps-mvp", 100)
 
 
-def test_parent_prompt_no_returns_None() -> None:
+def test_parent_prompt_no_returns_none() -> None:
     """'no' → free-floating card, return None."""
     with patch("builtins.input", return_value="no"):
         assert sdlc_manager._prompt_parent_issue() is None
@@ -75,13 +72,13 @@ def test_parent_prompt_no_returns_None() -> None:
         assert sdlc_manager._prompt_parent_issue() is None
 
 
-def test_parent_prompt_invalid_ref_warns_and_returns_None() -> None:
+def test_parent_prompt_invalid_ref_warns_and_returns_none() -> None:
     """A garbage ref doesn't crash — falls through to no-parent + warns."""
     with patch("builtins.input", return_value="not-a-ref"):
         assert sdlc_manager._prompt_parent_issue() is None
 
 
-def test_parent_prompt_eof_returns_None() -> None:
+def test_parent_prompt_eof_returns_none() -> None:
     """Ctrl+D returns None gracefully."""
     with patch("builtins.input", side_effect=EOFError):
         assert sdlc_manager._prompt_parent_issue() is None
@@ -90,7 +87,7 @@ def test_parent_prompt_eof_returns_None() -> None:
 # --- _prompt_choice (per-project schema discovery) -------------------------
 
 
-def test_prompt_choice_returns_None_when_field_does_not_exist() -> None:
+def test_prompt_choice_returns_none_when_field_does_not_exist() -> None:
     """If options=None (signaled by `_project_field_options` for missing
     fields), the prompt is silently skipped — caller doesn't ask the
     operator about a field the project doesn't expose."""
@@ -143,25 +140,50 @@ def test_prompt_choice_warns_on_invalid_value(capsys) -> None:
 # --- _prompt_paired_card ---------------------------------------------------
 
 
-def test_paired_card_default_no() -> None:
+def test_paired_card_default_is_no() -> None:
     """Empty input → no paired card (the safe default)."""
     with patch("builtins.input", return_value=""):
         assert sdlc_manager._prompt_paired_card("campps-mvp", 42) is None
 
 
-def test_paired_card_yes_collects_target_repo() -> None:
-    """y → prompts for target repo + title/body deltas."""
-    inputs = ["y", "campps-flutter-app", "[flutter]", "Mobile-side change"]
+def test_paired_card_yes_returns_target_repo() -> None:
+    """y → prompts for target repo. Phase C v1 only captures the target
+    repo; the title/body delta prompts were removed because the orchestrator
+    was discarding them anyway (UX promise we don't keep)."""
+    inputs = ["y", "campps-flutter-app"]
     with patch("builtins.input", side_effect=inputs):
         result = sdlc_manager._prompt_paired_card("campps-mvp", 42)
-        assert result == ("campps-flutter-app", "[flutter]", "Mobile-side change")
+        assert result == "campps-flutter-app"
 
 
-def test_paired_card_yes_no_target_returns_None() -> None:
+def test_paired_card_yes_no_target_returns_none() -> None:
     """y → empty target repo → None (operator changed their mind)."""
-    inputs = ["y", "", "", ""]
+    inputs = ["y", ""]
     with patch("builtins.input", side_effect=inputs):
         assert sdlc_manager._prompt_paired_card("campps-mvp", 42) is None
+
+
+def test_paired_card_recursion_guard() -> None:
+    """When `issue_create` is called with `_in_paired_card=True`, the
+    paired-card prompt is suppressed — preventing chain-recursion if an
+    operator types yes-yes-yes."""
+    # We mock everything below the paired-card check so the test only
+    # exercises the recursion-suppression branch.
+    with patch.object(sdlc_manager, "load_user_defaults", return_value={}), \
+         patch.object(sdlc_manager, "load_config", return_value={"project_mappings": {"projects": {}}}), \
+         patch.object(sdlc_manager, "get_projects_for_repo", return_value=[]), \
+         patch.object(sdlc_manager, "_prompt_parent_issue", return_value=None), \
+         patch.object(sdlc_manager, "_open_gh_issue_create_web"), \
+         patch.object(sdlc_manager, "_prompt_issue_number", return_value=42), \
+         patch.object(sdlc_manager, "_apply_post_create_metadata"), \
+         patch.object(sdlc_manager, "_prompt_paired_card") as mock_paired, \
+         patch("builtins.input", return_value="y"):  # confirm "Open browser?"
+        sdlc_manager.issue_create(
+            "campps-mvp", "capability", "text",
+            _in_paired_card=True,
+        )
+    # The paired-card prompt must NOT have been called when recursing
+    mock_paired.assert_not_called()
 
 
 # --- _apply_post_create_metadata ------------------------------------------
@@ -271,7 +293,8 @@ def test_metadata_skips_field_apply_when_no_project() -> None:
 def test_parent_ref_regex_accepts_realistic_refs() -> None:
     """Coverage of the parent-ref regex used by both the prompt and the
     --parent-ref CLI flag."""
-    parse = lambda s: sdlc_manager._PARENT_REF_RE.match(s)
+    def parse(s: str):
+        return sdlc_manager._PARENT_REF_RE.match(s)
     assert parse("campps-blueprint#42") is not None
     assert parse("infiquetra-sdlc#7") is not None
     assert parse("a.b.c#99") is not None  # dots allowed for completeness

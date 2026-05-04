@@ -42,11 +42,12 @@ Usage:
     sdlc_manager.py rollout deploy-all --repo athena-service
     sdlc_manager.py rollout update --repo athena-service --field labels --status complete
 
-    sdlc_manager.py beads ready
-    sdlc_manager.py beads claim --task-id TASK-001
-    sdlc_manager.py beads update --task-id TASK-001 --status in-progress
-    sdlc_manager.py beads complete --task-id TASK-001
-    sdlc_manager.py beads status
+    sdlc_manager.py flow set-field --project mount-olympus --repo R --number N --field Initiative --option <name>
+    sdlc_manager.py flow field-options --project mount-olympus --field Objective
+    sdlc_manager.py flow discover-project --repo athena-service
+    sdlc_manager.py flow link-sub-issue --parent-repo R --parent-number P --child-repo R2 --child-number C
+    sdlc_manager.py flow verify-label --repo athena-service --name high-priority [--color D93F0B] [--description "..."]
+    sdlc_manager.py flow validate-card --repo athena-service --number 42
 
     sdlc_manager.py config show
 
@@ -85,10 +86,17 @@ def load_config() -> dict[str, Any]:
     sdlc_path = get_sdlc_path()
     config: dict[str, Any] = {}
 
+    # `legacy_rollout_config` reads `beads-config.json` for back-compat.
+    # That file was removed from infiquetra-sdlc on 2026-04-26 (Beads removal);
+    # this key now degrades gracefully to {} on missing-file. Several functions
+    # below (board_wip, rollout_status, rollout_update, config_show) read this
+    # config; they treat empty as "no rollout state tracked" and behave
+    # sensibly. When a replacement file ships (e.g., rollout-status.json),
+    # rename the key + path here.
     config_files = {
         "project_mappings": sdlc_path / "config" / "project-mappings.json",
         "labels": sdlc_path / "config" / "labels.json",
-        "beads_config": sdlc_path / "config" / "beads-config.json",
+        "legacy_rollout_config": sdlc_path / "config" / "beads-config.json",
     }
 
     for key, path in config_files.items():
@@ -634,7 +642,7 @@ def board_wip(project_name: str, fmt: str) -> None:
     # WIP limits: configurable via beads-config.json "wip_limits" section.
     # "In Development" default is 10 (conservative for a mixed human/agent team
     # where not all agents do dev work). Override in config for your team size.
-    config_wip = config.get("beads_config", {}).get("wip_limits", {})
+    config_wip = config.get("legacy_rollout_config", {}).get("wip_limits", {})
     wip_limits = {
         "Ready": config_wip.get("ready", 10),
         "In Development": config_wip.get("in_development", 10),
@@ -1284,7 +1292,7 @@ def milestones_link(repo: str, issue_num: int, milestone_num: int, fmt: str) -> 
 def rollout_status(team_filter: str | None, fmt: str) -> None:
     """Show rollout status from config."""
     config = load_config()
-    status = config.get("beads_config", {})
+    status = config.get("legacy_rollout_config", {})
     repos = status.get("repositories", {})
     summary = status.get("summary", {})
 
@@ -1447,7 +1455,7 @@ def rollout_update(repo: str, field: str, status: str, fmt: str) -> None:
     status_file = sdlc_path / "config" / "beads-config.json"
 
     config = load_config()
-    beads = config.get("beads_config", {})
+    beads = config.get("legacy_rollout_config", {})
     repos = beads.get("repositories", {})
 
     if repo not in repos:
@@ -1481,55 +1489,353 @@ def rollout_update(repo: str, field: str, status: str, fmt: str) -> None:
 # BEADS OPERATIONS
 # ===========================
 
-def _bd(args: list[str]) -> str:
-    """Run bd (Beads/Dolt) CLI command."""
-    cmd = ["bd"] + args
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
+# NOTE: Beads/Dolt was removed from the Mount Olympus coordination layer
+# on 2026-04-26. The agent fleet now coordinates via Redis pub/sub
+# (`olympus:*` channels) + GitHub Projects v2 + Discord per-card threads.
+# The previous `beads {ready,claim,update,complete,status}` subcommand
+# group + the `_bd` shell helper were removed in this PR. See
+# infiquetra-sdlc/docs/engineering-journal/narratives/2026-04-26-beads-dolt-removed.md
+# for the migration narrative.
+
+
+# ===========================
+# FLOW OPERATIONS (Phase C)
+# ===========================
+# `flow` is a thin operator-facing surface over the GraphQL + REST APIs the
+# plugin already uses elsewhere. Commands here are the minimum viable set
+# needed to make the blueprint-to-issue workflow executable end-to-end:
+#   - set-field          set a single-select project field on a card
+#   - field-options      list current options for a project field
+#   - discover-project   resolve which project a repo is mapped to
+#   - link-sub-issue     wrap the native sub-issue API
+#   - verify-label       self-heal missing labels (404 → create; exists → no-op)
+#   - validate-card      run the card_validator schema check on an issue body
+
+
+def _resolve_project_field(project_name: str, field_name: str) -> dict:
+    """Look up a project field by name. Returns the field node (with
+    id, name, options if SINGLE_SELECT). Raises RuntimeError if missing."""
+    config = load_config()
+    proj = get_project_config(config, project_name)
+    data = _graphql(QUERY_GET_PROJECT_FIELDS, {"org": ORG, "number": proj["number"]})
+    fields = data.get("organization", {}).get("projectV2", {}).get("fields", {}).get("nodes", [])
+    for f in fields:
+        if f.get("name", "").lower() == field_name.lower():
+            return {**f, "_project_id": data["organization"]["projectV2"]["id"]}
+    raise RuntimeError(
+        f"Field '{field_name}' not found on project '{project_name}'. "
+        f"Available fields: {[f.get('name') for f in fields]}"
+    )
+
+
+def flow_field_options(project_name: str, field_name: str, fmt: str) -> None:
+    """List the current options for a project single-select field.
+    Live discovery — option IDs rotate on rename/recreate; never cache them."""
+    field = _resolve_project_field(project_name, field_name)
+    options = field.get("options", [])
+    if not options:
+        _out(
+            f"Field '{field_name}' has no options (or is not a SINGLE_SELECT field).",
+            fmt,
         )
-        if result.returncode != 0:
-            err = result.stderr.strip() if result.stderr else "Unknown error"
-            raise RuntimeError(f"bd command failed: {err}")
-        return result.stdout.strip()
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("bd command timed out after 30s")
-    except FileNotFoundError:
-        _error("bd CLI not found. Install Beads/Dolt tools first.")
+        return
+    if fmt == "json":
+        _out([{"id": o["id"], "name": o["name"]} for o in options], fmt)
+    else:
+        print(f"\nOptions for {project_name}.{field_name}:")
+        for o in options:
+            print(f"  {o['name']:30s}  (id: {o['id']})")
+
+
+def flow_set_field(
+    project_name: str,
+    repo: str,
+    number: int,
+    field_name: str,
+    option_name: str,
+    fmt: str,
+) -> None:
+    """Set a single-select field value on a card. Idempotent: re-running
+    with the same option produces the same final state."""
+    field = _resolve_project_field(project_name, field_name)
+    project_id = field["_project_id"]
+
+    # Find the option by name (case-insensitive)
+    options = field.get("options", [])
+    option = next(
+        (o for o in options if o.get("name", "").lower() == option_name.lower()),
+        None,
+    )
+    if not option:
+        raise RuntimeError(
+            f"Option '{option_name}' not found on field '{field_name}'. "
+            f"Available: {[o['name'] for o in options]}. "
+            f"Hint: use `flow field-options --project {project_name} --field {field_name}` "
+            f"to see current options."
+        )
+
+    # Find the project item for this repo+number
+    project_id_check, items = get_project_items(get_project_config(load_config(), project_name)["number"])
+    target_item = next(
+        (i for i in items
+         if i.get("content", {}).get("number") == number
+         and i.get("content", {}).get("repository", {}).get("name") == repo),
+        None,
+    )
+    if not target_item:
+        raise RuntimeError(
+            f"Issue {repo}#{number} is not on project '{project_name}'. "
+            f"Use `sdlc_manager.py board add --repo {repo} --number {number}` first."
+        )
+
+    _graphql(QUERY_SET_FIELD_VALUE, {
+        "projectId": project_id,
+        "itemId": target_item["id"],
+        "fieldId": field["id"],
+        "optionId": option["id"],
+    })
+    _out(f"Set {field_name}='{option_name}' on {repo}#{number} ({project_name})", fmt)
+
+
+def flow_discover_project(repo: str, fmt: str) -> None:
+    """Resolve which project(s) a repo is mapped to via project-mappings.json.
+    Returns a list of {name, number} entries; empty list if unmapped."""
+    config = load_config()
+    projects = get_projects_for_repo(config, repo)
+    if not projects:
+        mappings = config.get("project_mappings", {})
+        excluded = mappings.get("excluded_repositories", [])
+        if repo in excluded:
+            _out(f"Repo '{repo}' is in excluded_repositories.", fmt)
+        else:
+            _out(f"Repo '{repo}' is not mapped to any project.", fmt)
+        return
+    if fmt == "json":
+        _out([{"name": p["name"], "number": p["number"]} for p in projects], fmt)
+    else:
+        print(f"\n{repo} maps to:")
+        for p in projects:
+            print(f"  - {p['name']} (#{p['number']})")
+
+
+def flow_link_sub_issue(
+    parent_repo: str,
+    parent_number: int,
+    child_repo: str,
+    child_number: int,
+    fmt: str,
+) -> None:
+    """Link child as a native GitHub sub-issue of parent. Uses the REST
+    sub-issues API. Cross-repo supported. Idempotent — re-POST returns
+    HTTP 422 with 'already exists' which we treat as success."""
+    # Look up child's database ID (the sub-issues API uses db_id, not node id)
+    try:
+        child_data = _rest_get(f"repos/{ORG}/{child_repo}/issues/{child_number}")
+    except RuntimeError as e:
+        raise RuntimeError(f"Could not fetch child {child_repo}#{child_number}: {e}")
+    child_db_id = child_data.get("id")
+    if not isinstance(child_db_id, int):
+        raise RuntimeError(
+            f"Child {child_repo}#{child_number} returned no integer 'id'; "
+            f"got {child_db_id!r}. Cannot link."
+        )
+
+    # Validate parent exists + is an issue (not a PR)
+    try:
+        parent_data = _rest_get(f"repos/{ORG}/{parent_repo}/issues/{parent_number}")
+    except RuntimeError as e:
+        raise RuntimeError(f"Could not fetch parent {parent_repo}#{parent_number}: {e}")
+    if "pull_request" in parent_data:
+        raise RuntimeError(
+            f"Parent {parent_repo}#{parent_number} is a PR, not an issue. "
+            f"Sub-issues require an issue parent."
+        )
+
+    # POST the link. Endpoint is /repos/{owner}/{repo}/issues/{N}/sub_issues
+    # with body {"sub_issue_id": <child_db_id>}. Idempotent on duplicate.
+    try:
+        _rest_post(
+            f"repos/{ORG}/{parent_repo}/issues/{parent_number}/sub_issues",
+            {"sub_issue_id": child_db_id},
+        )
+        _out(
+            f"Linked {child_repo}#{child_number} as sub-issue of "
+            f"{parent_repo}#{parent_number}",
+            fmt,
+        )
+    except RuntimeError as e:
+        # Detect "already exists" to honor idempotency
+        msg = str(e).lower()
+        if "already exists" in msg or "422" in msg:
+            _out(
+                f"Already linked: {child_repo}#{child_number} is already a "
+                f"sub-issue of {parent_repo}#{parent_number} (idempotent re-run).",
+                fmt,
+            )
+            return
+        raise
+
+
+def flow_verify_label(
+    repo: str,
+    name: str,
+    color: str | None,
+    description: str | None,
+    fmt: str,
+) -> None:
+    """Self-healing label create. If the label exists on the repo, no-op.
+    If 404, create with given color + description. Distinguishes 404
+    (missing → create) from other errors (auth, rate-limit, server)."""
+    # Probe for existence via gh api; capture stderr to detect 404 vs other failures
+    cmd = ["api", f"repos/{ORG}/{repo}/labels/{name}"]
+    try:
+        _gh(cmd)
+        _out(f"Label '{name}' already exists on {ORG}/{repo} (no-op).", fmt)
+        return
+    except RuntimeError as e:
+        msg = str(e)
+        if "Not Found" not in msg and "404" not in msg:
+            # Re-raise non-404 errors verbatim — auth, rate-limit, server.
+            # Do NOT silently treat them as missing.
+            raise RuntimeError(
+                f"verify-label probe failed with non-404 error (not creating): {msg}"
+            )
+
+    # 404 — create the label
+    body: dict[str, str] = {"name": name}
+    if color:
+        body["color"] = color.lstrip("#")  # GH API rejects leading '#'
+    if description:
+        body["description"] = description
+    _rest_post(f"repos/{ORG}/{repo}/labels", body)
+    _out(f"Created label '{name}' on {ORG}/{repo}.", fmt)
+
+
+# ===========================
+# CARD VALIDATOR (mirror of home-lab card_validator.py)
+# ===========================
+# Mirrors the home-lab orchestrator's card_validator.py contract enough to
+# pre-flight check an issue body before plan-review fires. This is NOT a
+# strict re-implementation — the home-lab validator is the source of truth
+# (`home-lab/ansible/roles/hermes_orchestrator/files/card_validator.py`) and
+# should be consulted when the contract changes. We mirror the high-leverage
+# checks: 6 required H3 headers, AC has ≥1 checklist item, Verification has
+# ≥1 fenced code block, Files-expected has ≥1 path-like line, no placeholders.
+
+import re
+
+_REQUIRED_H3_HEADERS = (
+    "Objective",
+    "Acceptance criteria",
+    "Out-of-scope or non-goals",
+    "Files expected to change",
+    "Tests to add or update",
+    "Verification",
+)
+_OPTIONAL_H3_HEADERS = (
+    "Notes / conventions",
+    "Notes/conventions",
+    "Context library links",
+)
+_HEADER_RE = re.compile(r"^### (.+?)\s*$", re.MULTILINE)
+_CHECKLIST_RE = re.compile(r"^\s*- \[[ xX]\]\s", re.MULTILINE)
+_CODE_BLOCK_RE = re.compile(r"^```", re.MULTILINE)
+_PATH_LINE_RE = re.compile(r"^\s*[\w./_-]+/[\w./_-]+", re.MULTILINE)
+_PLACEHOLDER_LINES = {"- [ ]", "-", "* [ ]", "*", "_no response_", "none", "<!-- placeholder -->"}
+
+
+def _split_sections(body: str) -> dict[str, str]:
+    """Split a card body on `### H3` headers. Returns {header_text: section_text}."""
+    matches = list(_HEADER_RE.finditer(body))
+    sections: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        header = m.group(1).strip()
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        sections[header] = body[start:end].strip()
+    return sections
+
+
+def validate_card_body(body: str) -> tuple[bool, list[str]]:
+    """Run the card_validator schema check on an issue body.
+
+    Returns (is_valid, errors). Mirrors the high-leverage checks of
+    home-lab card_validator.py — when that file's contract changes,
+    update this shim.
+    """
+    errors: list[str] = []
+    sections = _split_sections(body)
+    section_names = set(sections.keys())
+
+    # 1. Required headers present
+    missing = [h for h in _REQUIRED_H3_HEADERS if h not in section_names]
+    if missing:
+        errors.append(f"Missing required H3 sections: {missing}")
+
+    # 2. Acceptance criteria has ≥1 checklist item
+    if "Acceptance criteria" in sections:
+        ac = sections["Acceptance criteria"]
+        if not _CHECKLIST_RE.search(ac):
+            errors.append(
+                "'Acceptance criteria' has no `- [ ]` checklist item "
+                "(card_validator requires at least one)"
+            )
+
+    # 3. Verification has ≥1 fenced code block
+    if "Verification" in sections:
+        v = sections["Verification"]
+        # Need at least 2 ``` markers to form one fenced block
+        if len(_CODE_BLOCK_RE.findall(v)) < 2:
+            errors.append(
+                "'Verification' has no fenced code block "
+                "(card_validator requires at least one ``` block)"
+            )
+
+    # 4. Files expected has ≥1 path-like line
+    if "Files expected to change" in sections:
+        f = sections["Files expected to change"]
+        if not _PATH_LINE_RE.search(f):
+            errors.append(
+                "'Files expected to change' has no path-like line "
+                "(card_validator requires at least one `dir/file` style entry)"
+            )
+
+    # 5. No placeholder-only sections
+    for header in _REQUIRED_H3_HEADERS:
+        if header not in sections:
+            continue
+        text = sections[header].strip()
+        # Strip blank lines + check whether all remaining lines are placeholders
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if lines and all(ln.lower() in _PLACEHOLDER_LINES for ln in lines):
+            errors.append(f"'{header}' contains only placeholder text")
+
+    return (len(errors) == 0, errors)
+
+
+def flow_validate_card(repo: str, number: int, fmt: str) -> None:
+    """Fetch an issue body via gh, run card_validator, report result."""
+    try:
+        data = _rest_get(f"repos/{ORG}/{repo}/issues/{number}")
+    except RuntimeError as e:
+        raise RuntimeError(f"Could not fetch issue {repo}#{number}: {e}")
+    body = data.get("body") or ""
+    if not body:
+        _out(f"Issue {repo}#{number} has no body — fails validation trivially.", fmt)
         sys.exit(1)
 
+    is_valid, errors = validate_card_body(body)
+    if is_valid:
+        _out(f"VALID: {repo}#{number} passes card_validator schema check.", fmt)
+        return
 
-def beads_ready(fmt: str) -> None:
-    """Show tasks ready for claiming."""
-    output = _bd(["ready"])
-    _out(output, fmt)
-
-
-def beads_claim(task_id: str, fmt: str) -> None:
-    """Claim a Beads task."""
-    output = _bd(["claim", task_id])
-    _out(output, fmt)
-
-
-def beads_update(task_id: str, status: str, fmt: str) -> None:
-    """Update a Beads task status."""
-    output = _bd(["update", task_id, status])
-    _out(output, fmt)
-
-
-def beads_complete(task_id: str, fmt: str) -> None:
-    """Complete a Beads task."""
-    output = _bd(["complete", task_id])
-    _out(output, fmt)
-
-
-def beads_status(fmt: str) -> None:
-    """Show Beads task status overview."""
-    output = _bd(["status"])
-    _out(output, fmt)
+    if fmt == "json":
+        _out({"valid": False, "errors": errors, "issue": f"{repo}#{number}"}, fmt)
+    else:
+        print(f"INVALID: {repo}#{number} fails card_validator schema check:")
+        for e in errors:
+            print(f"  - {e}")
+    sys.exit(1)
 
 
 # ===========================
@@ -1558,7 +1864,7 @@ def config_show(fmt: str) -> None:
     labels = config.get("labels", {}).get("labels", [])
     print(f"\nLabels: {len(labels)} defined")
 
-    beads = config.get("beads_config", {})
+    beads = config.get("legacy_rollout_config", {})
     summary = beads.get("summary", {})
     print(f"\nRollout: {summary.get('completed', 0)}/{summary.get('total_repos', 0)} repos complete")
 
@@ -1766,22 +2072,59 @@ def main() -> None:
     # ===========================
     # BEADS
     # ===========================
-    beads_p = subparsers.add_parser("beads", help="Beads/Dolt task coordination")
-    beads_sp = beads_p.add_subparsers(dest="action", required=True)
+    # ===========================
+    # FLOW (Phase C — operator-facing GraphQL/REST surface)
+    # ===========================
+    flow_p = subparsers.add_parser("flow", help="Operator-facing GraphQL + REST helpers")
+    flow_sp = flow_p.add_subparsers(dest="action", required=True)
 
-    beads_sp.add_parser("ready", help="Show tasks ready for claiming")
+    flow_setfield_p = flow_sp.add_parser(
+        "set-field",
+        help="Set a single-select project field on a card",
+    )
+    flow_setfield_p.add_argument("--project", required=True, help="Project name (e.g., mount-olympus)")
+    flow_setfield_p.add_argument("--repo", required=True)
+    flow_setfield_p.add_argument("--number", required=True, type=int)
+    flow_setfield_p.add_argument("--field", required=True, help="Field name (e.g., Initiative, Objective, Status)")
+    flow_setfield_p.add_argument("--option", required=True, help="Option name (case-insensitive)")
 
-    beads_claim_p = beads_sp.add_parser("claim", help="Claim a task")
-    beads_claim_p.add_argument("--task-id", required=True, help="Task ID to claim")
+    flow_options_p = flow_sp.add_parser(
+        "field-options",
+        help="List current options for a project field (live discovery)",
+    )
+    flow_options_p.add_argument("--project", required=True)
+    flow_options_p.add_argument("--field", required=True)
 
-    beads_update_p = beads_sp.add_parser("update", help="Update task status")
-    beads_update_p.add_argument("--task-id", required=True, help="Task ID")
-    beads_update_p.add_argument("--status", required=True, help="New status")
+    flow_disc_p = flow_sp.add_parser(
+        "discover-project",
+        help="Resolve which project(s) a repo is mapped to",
+    )
+    flow_disc_p.add_argument("--repo", required=True)
 
-    beads_complete_p = beads_sp.add_parser("complete", help="Complete a task")
-    beads_complete_p.add_argument("--task-id", required=True, help="Task ID to complete")
+    flow_link_p = flow_sp.add_parser(
+        "link-sub-issue",
+        help="Link child as native sub-issue of parent (cross-repo supported, idempotent)",
+    )
+    flow_link_p.add_argument("--parent-repo", required=True)
+    flow_link_p.add_argument("--parent-number", required=True, type=int)
+    flow_link_p.add_argument("--child-repo", required=True)
+    flow_link_p.add_argument("--child-number", required=True, type=int)
 
-    beads_sp.add_parser("status", help="Show task status overview")
+    flow_label_p = flow_sp.add_parser(
+        "verify-label",
+        help="Self-healing label create (404 → create; exists → no-op; other errors raise)",
+    )
+    flow_label_p.add_argument("--repo", required=True)
+    flow_label_p.add_argument("--name", required=True)
+    flow_label_p.add_argument("--color", default=None, help="Hex color without leading '#'")
+    flow_label_p.add_argument("--description", default=None)
+
+    flow_validate_p = flow_sp.add_parser(
+        "validate-card",
+        help="Run card_validator schema check on an existing issue body",
+    )
+    flow_validate_p.add_argument("--repo", required=True)
+    flow_validate_p.add_argument("--number", required=True, type=int)
 
     # ===========================
     # CONFIG
@@ -1867,17 +2210,22 @@ def main() -> None:
             elif args.action == "update":
                 rollout_update(args.repo, args.field, args.status, fmt)
 
-        elif args.resource == "beads":
-            if args.action == "ready":
-                beads_ready(fmt)
-            elif args.action == "claim":
-                beads_claim(args.task_id, fmt)
-            elif args.action == "update":
-                beads_update(args.task_id, args.status, fmt)
-            elif args.action == "complete":
-                beads_complete(args.task_id, fmt)
-            elif args.action == "status":
-                beads_status(fmt)
+        elif args.resource == "flow":
+            if args.action == "set-field":
+                flow_set_field(args.project, args.repo, args.number,
+                               args.field, args.option, fmt)
+            elif args.action == "field-options":
+                flow_field_options(args.project, args.field, fmt)
+            elif args.action == "discover-project":
+                flow_discover_project(args.repo, fmt)
+            elif args.action == "link-sub-issue":
+                flow_link_sub_issue(args.parent_repo, args.parent_number,
+                                    args.child_repo, args.child_number, fmt)
+            elif args.action == "verify-label":
+                flow_verify_label(args.repo, args.name, args.color,
+                                  args.description, fmt)
+            elif args.action == "validate-card":
+                flow_validate_card(args.repo, args.number, fmt)
 
         elif args.resource == "config":
             if args.action == "show":

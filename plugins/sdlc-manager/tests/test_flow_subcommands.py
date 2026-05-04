@@ -25,7 +25,11 @@ import sdlc_manager  # noqa: E402
 
 def test_link_sub_issue_idempotent_on_already_exists() -> None:
     """A duplicate POST returns HTTP 422 with 'already exists'; we treat
-    this as success, not failure (idempotency contract)."""
+    this as success, not failure (idempotency contract).
+
+    Phase C foundation: the contract is now expressed via the typed
+    `ApiAlreadyExists` exception (raised by `_classify_gh_error`), not
+    string-matching. See test_typed_exceptions.py for the classifier tests."""
     with patch.object(sdlc_manager, "_rest_get") as mock_get, \
          patch.object(sdlc_manager, "_rest_post") as mock_post, \
          patch.object(sdlc_manager, "_out") as mock_out:
@@ -33,8 +37,9 @@ def test_link_sub_issue_idempotent_on_already_exists() -> None:
             {"id": 12345},                               # child
             {"id": 67890, "title": "parent issue"},      # parent (no pull_request key)
         ]
-        mock_post.side_effect = RuntimeError(
-            "API call failed: 422 Unprocessable Entity — sub-issue already exists"
+        mock_post.side_effect = sdlc_manager.ApiAlreadyExists(
+            "API call failed: HTTP 422 sub-issue already exists",
+            status_code=422,
         )
 
         sdlc_manager.flow_link_sub_issue(
@@ -109,11 +114,13 @@ def test_verify_label_no_op_when_label_exists() -> None:
 
 
 def test_verify_label_creates_on_404() -> None:
-    """Probe raises 404 → POST creates the label."""
+    """Probe raises ApiNotFound (typed 404) → POST creates the label."""
     with patch.object(sdlc_manager, "_gh") as mock_gh, \
          patch.object(sdlc_manager, "_rest_post") as mock_post, \
-         patch.object(sdlc_manager, "_out") as mock_out:
-        mock_gh.side_effect = RuntimeError("API call failed: 404 Not Found")
+         patch.object(sdlc_manager, "_out"):
+        mock_gh.side_effect = sdlc_manager.ApiNotFound(
+            "API call failed: HTTP 404", status_code=404,
+        )
         sdlc_manager.flow_verify_label(
             "campps-mvp", "high-priority", "D93F0B", "High priority", fmt="text"
         )
@@ -129,7 +136,9 @@ def test_verify_label_strips_leading_hash_from_color() -> None:
     it; the helper strips it before POST."""
     with patch.object(sdlc_manager, "_gh") as mock_gh, \
          patch.object(sdlc_manager, "_rest_post") as mock_post:
-        mock_gh.side_effect = RuntimeError("API call failed: 404 Not Found")
+        mock_gh.side_effect = sdlc_manager.ApiNotFound(
+            "API call failed: HTTP 404", status_code=404,
+        )
         sdlc_manager.flow_verify_label(
             "r", "label", "#ABCDEF", None, fmt="text"
         )
@@ -140,13 +149,16 @@ def test_verify_label_strips_leading_hash_from_color() -> None:
 def test_verify_label_does_NOT_create_on_non_404_error() -> None:
     """Auth / rate-limit / server errors must propagate — silently treating
     them as 'missing' would mask real problems and create labels under wrong
-    auth context."""
+    auth context. With the typed-exception refactor, ApiAuthError /
+    ApiRateLimited / generic GhApiError propagate out of the `except
+    ApiNotFound:` block."""
     with patch.object(sdlc_manager, "_gh") as mock_gh, \
          patch.object(sdlc_manager, "_rest_post") as mock_post:
-        mock_gh.side_effect = RuntimeError(
-            "API call failed: 401 Bad credentials"
+        mock_gh.side_effect = sdlc_manager.ApiAuthError(
+            "API call failed: HTTP 401 Bad credentials",
+            status_code=401,
         )
-        with pytest.raises(RuntimeError, match="non-404|401"):
+        with pytest.raises(sdlc_manager.ApiAuthError):
             sdlc_manager.flow_verify_label(
                 "r", "label", None, None, fmt="text"
             )

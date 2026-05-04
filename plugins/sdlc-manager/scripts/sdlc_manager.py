@@ -81,6 +81,79 @@ def get_sdlc_path() -> Path:
     return Path.home() / "workspace" / "infiquetra" / "infiquetra-sdlc"
 
 
+# ===========================
+# PER-USER DEFAULTS
+# ===========================
+# Sticky defaults persisted at ~/.claude/sdlc-defaults.json. The first-run
+# wizard (`config init-defaults`) seeds the file. Subsequent commands read
+# defaults from here and present them as prompt-default values; operators
+# override per-card by typing a different value at the prompt.
+
+_USER_DEFAULTS_PATH = Path.home() / ".claude" / "sdlc-defaults.json"
+
+# Schema (all keys optional; missing keys = no default for that prompt).
+# Listed here so callers and the wizard agree on the set:
+_USER_DEFAULTS_KEYS = (
+    "assignee",          # gh login (NOT OS $USER) — fetched via `gh api user --jq .login`
+    "default_project",   # e.g., "mount-olympus"
+    "default_status",    # e.g., "Backlog"
+    "default_priority",  # e.g., "medium-priority"
+    "default_initiative",  # option name on Olympus board (None until field is created)
+    "default_objective",   # option name on Olympus board (None until field is created)
+    "preferred_repos",   # list[str] of repos the operator works with most
+)
+
+
+def load_user_defaults() -> dict[str, Any]:
+    """Read ~/.claude/sdlc-defaults.json. Returns {} if the file doesn't
+    exist (first run). Tolerates malformed JSON by returning {} + warning."""
+    if not _USER_DEFAULTS_PATH.exists():
+        return {}
+    try:
+        with open(_USER_DEFAULTS_PATH) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            _warn(
+                f"User defaults at {_USER_DEFAULTS_PATH} is not a JSON "
+                f"object; ignoring."
+            )
+            return {}
+        return data
+    except json.JSONDecodeError as e:
+        _warn(
+            f"User defaults at {_USER_DEFAULTS_PATH} is malformed JSON "
+            f"({e}); ignoring."
+        )
+        return {}
+
+
+def save_user_defaults(data: dict[str, Any]) -> None:
+    """Atomically write ~/.claude/sdlc-defaults.json. Creates parent dir
+    if missing. Atomic via tempfile + rename so a crash mid-write doesn't
+    corrupt the file."""
+    _USER_DEFAULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _USER_DEFAULTS_PATH.with_suffix(".json.tmp")
+    with open(tmp_path, "w") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+        f.write("\n")
+    tmp_path.replace(_USER_DEFAULTS_PATH)
+
+
+def get_default(key: str) -> Any:
+    """Convenience: read a single default. Returns None if not set."""
+    return load_user_defaults().get(key)
+
+
+def _fetch_gh_login() -> str | None:
+    """Get the operator's gh login via `gh api user --jq .login`. Returns
+    None if gh is unauthenticated or the call fails — caller decides what
+    to do. Importantly, NOT $USER (which can differ from the gh login)."""
+    try:
+        return _gh(["api", "user", "--jq", ".login"]) or None
+    except (GhApiError, RuntimeError):
+        return None
+
+
 def load_config() -> dict[str, Any]:
     """Load config from infiquetra-sdlc checkout with remote fallback."""
     sdlc_path = get_sdlc_path()
@@ -93,8 +166,17 @@ def load_config() -> dict[str, Any]:
     # config; they treat empty as "no rollout state tracked" and behave
     # sensibly. When a replacement file ships (e.g., rollout-status.json),
     # rename the key + path here.
+    #
+    # `project_mappings` resolution order (Phase C foundation):
+    #   1. External override:  $INFIQUETRA_SDLC_PATH/config/project-mappings.json
+    #   2. Vendored canonical: <plugin>/config/project-mappings.json
+    #   3. Remote `gh api` fallback (reads infiquetra-sdlc raw from GitHub)
+    # The plugin works without an external infiquetra-sdlc checkout because
+    # the vendored copy ships canonical state for the org's projects.
+    # Project node IDs captured in the vendored file are best-effort; field
+    # and option IDs are NEVER cached (rotate on rename) and are fetched
+    # live each call.
     config_files = {
-        "project_mappings": sdlc_path / "config" / "project-mappings.json",
         "labels": sdlc_path / "config" / "labels.json",
         "legacy_rollout_config": sdlc_path / "config" / "beads-config.json",
     }
@@ -115,8 +197,44 @@ def load_config() -> dict[str, Any]:
             except Exception:
                 config[key] = {}
 
+    # Project mappings — three-step resolution
+    config["project_mappings"] = _resolve_project_mappings(sdlc_path)
+
     config["sdlc_path"] = str(sdlc_path)
     return config
+
+
+def _resolve_project_mappings(sdlc_path: Path) -> dict[str, Any]:
+    """Resolve project-mappings.json via the documented order:
+    external override → vendored → remote fallback. Returns {} if all fail."""
+    # 1. External override at INFIQUETRA_SDLC_PATH/config/project-mappings.json
+    override = sdlc_path / "config" / "project-mappings.json"
+    if override.exists():
+        with open(override) as f:
+            return json.load(f)
+
+    # 2. Vendored canonical at <plugin-dir>/config/project-mappings.json
+    # Resolve relative to this file (scripts/sdlc_manager.py → ../config/)
+    vendored = Path(__file__).resolve().parent.parent / "config" / "project-mappings.json"
+    if vendored.exists():
+        with open(vendored) as f:
+            return json.load(f)
+
+    # 3. Remote fallback via gh api (reads infiquetra-sdlc directly)
+    try:
+        result = _gh(
+            ["api",
+             f"repos/{ORG}/infiquetra-sdlc/contents/config/project-mappings.json",
+             "--jq", ".content"]
+        )
+        if result:
+            import base64
+            content = base64.b64decode(result.strip()).decode()
+            return json.loads(content)
+    except (GhApiError, RuntimeError):
+        pass
+
+    return {}
 
 
 def get_project_config(config: dict, project_name: str) -> dict:
@@ -157,8 +275,95 @@ def get_projects_for_repo(config: dict, repo_name: str) -> list[dict]:
 # GH CLI WRAPPER
 # ===========================
 
+# ===========================
+# TYPED EXCEPTIONS
+# ===========================
+# Replaces fragile `"422" in str(e)` substring matching across the
+# flow_* helpers. The parser inspects gh CLI stderr ONCE (in `_gh`)
+# and raises the appropriate subclass; downstream handlers catch by type.
+# This is the upgrade-path from PR #114's substring matches.
+
+class GhApiError(RuntimeError):
+    """Base for typed gh-API errors. Carries the parsed HTTP status_code
+    when one could be extracted; otherwise None."""
+
+    def __init__(self, message: str, *, status_code: int | None = None,
+                 stderr: str | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.stderr = stderr
+
+
+class ApiNotFound(GhApiError):
+    """HTTP 404 from gh api. Used to detect 'label/issue/repo doesn't exist'
+    cases without parsing English error strings."""
+
+
+class ApiAlreadyExists(GhApiError):
+    """HTTP 422 from gh api when the conflict is a duplicate-resource case
+    (sub-issue already linked, label already exists, etc.). Used by the
+    flow helpers to honor idempotency contracts. Note: 422 is also used
+    by GitHub for general validation failures; this class is raised only
+    when the response body matches a duplicate-resource pattern."""
+
+
+class ApiRateLimited(GhApiError):
+    """HTTP 403 with rate-limit signals, or 429."""
+
+
+class ApiAuthError(GhApiError):
+    """HTTP 401 or 403 (non-rate-limit)."""
+
+
+# Status-code parser. gh CLI prints stderr like:
+#   "gh: Not Found (HTTP 404)"
+#   "HTTP 422: Validation Failed (https://...)\n... 'sub_issue_id': sub-issue already exists"
+# We extract the status from the first occurrence of "HTTP NNN" and
+# classify duplicate-resource 422s by message-body inspection.
+_HTTP_STATUS_RE = re.compile(r"HTTP\s+(\d{3})\b", re.IGNORECASE)
+_DUPLICATE_RESOURCE_HINTS = (
+    "already exists",
+    "already a child",
+    "already linked",
+    "name has already been taken",  # GitHub label already exists
+)
+
+
+def _classify_gh_error(stderr: str, returncode: int) -> RuntimeError:
+    """Inspect gh CLI stderr + return the appropriate exception type.
+    Public for tests; called from _gh on non-zero exit."""
+    msg = stderr.strip() if stderr else "Unknown error"
+    full = f"gh command failed: {msg}"
+
+    # Extract HTTP status (if present)
+    match = _HTTP_STATUS_RE.search(stderr)
+    status = int(match.group(1)) if match else None
+
+    if status == 404:
+        return ApiNotFound(full, status_code=404, stderr=stderr)
+    if status in (401, 403):
+        # Distinguish rate-limit from auth
+        if "rate limit" in stderr.lower() or "x-ratelimit" in stderr.lower():
+            return ApiRateLimited(full, status_code=status, stderr=stderr)
+        return ApiAuthError(full, status_code=status, stderr=stderr)
+    if status == 429:
+        return ApiRateLimited(full, status_code=429, stderr=stderr)
+    if status == 422:
+        lower = stderr.lower()
+        if any(hint in lower for hint in _DUPLICATE_RESOURCE_HINTS):
+            return ApiAlreadyExists(full, status_code=422, stderr=stderr)
+        # Other 422s (validation failures) fall through to generic GhApiError
+        return GhApiError(full, status_code=422, stderr=stderr)
+
+    # Any other status / no parseable status
+    return GhApiError(full, status_code=status, stderr=stderr)
+
+
 def _gh(args: list[str], input_data: str | None = None, capture: bool = True) -> str:
-    """Run gh CLI command."""
+    """Run gh CLI command. Raises a typed GhApiError subclass on non-zero
+    exit (ApiNotFound for 404, ApiAlreadyExists for duplicate-resource 422,
+    ApiRateLimited / ApiAuthError as appropriate, GhApiError otherwise).
+    Callers can catch the base GhApiError or RuntimeError."""
     cmd = ["gh"] + args
     try:
         result = subprocess.run(
@@ -169,11 +374,10 @@ def _gh(args: list[str], input_data: str | None = None, capture: bool = True) ->
             timeout=60,
         )
         if result.returncode != 0:
-            err = result.stderr.strip() if result.stderr else "Unknown error"
-            raise RuntimeError(f"gh command failed: {err}")
+            raise _classify_gh_error(result.stderr or "", result.returncode)
         return result.stdout.strip() if capture else ""
     except subprocess.TimeoutExpired:
-        raise RuntimeError("gh command timed out after 60s")
+        raise GhApiError("gh command timed out after 60s")
     except FileNotFoundError:
         _error("gh CLI not found. Install from: https://cli.github.com/")
         sys.exit(1)
@@ -1662,17 +1866,14 @@ def flow_link_sub_issue(
             f"{parent_repo}#{parent_number}",
             fmt,
         )
-    except RuntimeError as e:
-        # Detect "already exists" to honor idempotency
-        msg = str(e).lower()
-        if "already exists" in msg or "422" in msg:
-            _out(
-                f"Already linked: {child_repo}#{child_number} is already a "
-                f"sub-issue of {parent_repo}#{parent_number} (idempotent re-run).",
-                fmt,
-            )
-            return
-        raise
+    except ApiAlreadyExists:
+        # Idempotency: 422 with a duplicate-resource hint = already linked.
+        # Treat as success.
+        _out(
+            f"Already linked: {child_repo}#{child_number} is already a "
+            f"sub-issue of {parent_repo}#{parent_number} (idempotent re-run).",
+            fmt,
+        )
 
 
 def flow_verify_label(
@@ -1683,22 +1884,20 @@ def flow_verify_label(
     fmt: str,
 ) -> None:
     """Self-healing label create. If the label exists on the repo, no-op.
-    If 404, create with given color + description. Distinguishes 404
-    (missing → create) from other errors (auth, rate-limit, server)."""
-    # Probe for existence via gh api; capture stderr to detect 404 vs other failures
-    cmd = ["api", f"repos/{ORG}/{repo}/labels/{name}"]
+    If 404, create with given color + description. Auth/rate-limit/server
+    errors propagate as their typed exceptions — NOT silently treated as
+    missing (which would create labels under the wrong auth context)."""
+    # Probe for existence via gh api. Typed exception parsing in `_gh`
+    # raises ApiNotFound on 404, ApiAuthError on 401/403, etc.
     try:
-        _gh(cmd)
+        _gh(["api", f"repos/{ORG}/{repo}/labels/{name}"])
         _out(f"Label '{name}' already exists on {ORG}/{repo} (no-op).", fmt)
         return
-    except RuntimeError as e:
-        msg = str(e)
-        if "Not Found" not in msg and "404" not in msg:
-            # Re-raise non-404 errors verbatim — auth, rate-limit, server.
-            # Do NOT silently treat them as missing.
-            raise RuntimeError(
-                f"verify-label probe failed with non-404 error (not creating): {msg}"
-            )
+    except ApiNotFound:
+        # 404 — fall through to create
+        pass
+    # All other GhApiError subclasses (auth, rate-limit, server) propagate.
+    # No string matching; we trust the typed exception classifier.
 
     # 404 — create the label
     body: dict[str, str] = {"name": name}
@@ -1706,8 +1905,16 @@ def flow_verify_label(
         body["color"] = color.lstrip("#")  # GH API rejects leading '#'
     if description:
         body["description"] = description
-    _rest_post(f"repos/{ORG}/{repo}/labels", body)
-    _out(f"Created label '{name}' on {ORG}/{repo}.", fmt)
+    try:
+        _rest_post(f"repos/{ORG}/{repo}/labels", body)
+        _out(f"Created label '{name}' on {ORG}/{repo}.", fmt)
+    except ApiAlreadyExists:
+        # Race: another process created the label between our probe and POST.
+        # Idempotency contract — treat as success.
+        _out(
+            f"Label '{name}' was just created (race detected; treating as no-op).",
+            fmt,
+        )
 
 
 # ===========================
@@ -1919,6 +2126,123 @@ def config_show(fmt: str) -> None:
     beads = config.get("legacy_rollout_config", {})
     summary = beads.get("summary", {})
     print(f"\nRollout: {summary.get('completed', 0)}/{summary.get('total_repos', 0)} repos complete")
+
+    # Per-user defaults (Phase C)
+    defaults = load_user_defaults()
+    print(f"\nUser defaults: {_USER_DEFAULTS_PATH}")
+    if defaults:
+        for key in _USER_DEFAULTS_KEYS:
+            if key in defaults:
+                print(f"  {key:22s} = {defaults[key]!r}")
+    else:
+        print("  (none — run `config init-defaults` to seed)")
+
+
+def config_show_defaults(fmt: str) -> None:
+    """Display the current per-user defaults from ~/.claude/sdlc-defaults.json."""
+    defaults = load_user_defaults()
+    if fmt == "json":
+        _out({"path": str(_USER_DEFAULTS_PATH), "defaults": defaults}, fmt)
+        return
+    print(f"\nUser defaults: {_USER_DEFAULTS_PATH}")
+    if not defaults:
+        print("  (none set — run `config init-defaults` to seed)")
+        return
+    for key in _USER_DEFAULTS_KEYS:
+        if key in defaults:
+            print(f"  {key:22s} = {defaults[key]!r}")
+        else:
+            print(f"  {key:22s} = (not set)")
+
+
+def config_init_defaults(non_interactive: bool, fmt: str) -> None:
+    """First-run wizard: seed ~/.claude/sdlc-defaults.json.
+
+    Interactive by default — prompts for each key with the existing value
+    (or a sensible suggestion) as the default.
+
+    --non-interactive seeds with auto-detected values only (gh login as
+    assignee; default_project=mount-olympus if exactly one project mapped
+    in config; everything else left unset). Useful for CI / scripted setup."""
+    existing = load_user_defaults()
+    new: dict[str, Any] = dict(existing)  # start from existing; preserve unknown keys
+
+    # Always re-fetch the gh login (in case the operator changed accounts)
+    gh_login = _fetch_gh_login()
+
+    # Auto-detect default_project if exactly one project is mapped
+    auto_project: str | None = None
+    try:
+        cfg = load_config()
+        projects = cfg.get("project_mappings", {}).get("projects", {})
+        if len(projects) == 1:
+            auto_project = next(iter(projects.keys()))
+    except Exception:
+        pass  # config load failed; not fatal for the wizard
+
+    # Field-by-field seeding. For each key, the order is:
+    #   suggested = existing[key] OR auto-detected OR a built-in default
+    suggestions = {
+        "assignee": gh_login or existing.get("assignee"),
+        "default_project": existing.get("default_project") or auto_project,
+        "default_status": existing.get("default_status") or "Backlog",
+        "default_priority": existing.get("default_priority") or "medium-priority",
+        "default_initiative": existing.get("default_initiative"),  # no default
+        "default_objective": existing.get("default_objective"),    # no default
+        "preferred_repos": existing.get("preferred_repos") or [],
+    }
+
+    if non_interactive:
+        # Seed with suggestions only
+        for key in _USER_DEFAULTS_KEYS:
+            if suggestions.get(key) not in (None, []):
+                new[key] = suggestions[key]
+        save_user_defaults(new)
+        if fmt == "json":
+            _out({"saved_to": str(_USER_DEFAULTS_PATH), "defaults": new}, fmt)
+        else:
+            print(f"Seeded {_USER_DEFAULTS_PATH} with auto-detected values:")
+            for key in _USER_DEFAULTS_KEYS:
+                if key in new:
+                    print(f"  {key:22s} = {new[key]!r}")
+        return
+
+    # Interactive wizard
+    print(f"\nFirst-run wizard for {_USER_DEFAULTS_PATH}")
+    print("Press Enter to accept the [default]; type a value to override; type '-' to skip.\n")
+
+    for key in _USER_DEFAULTS_KEYS:
+        suggestion = suggestions.get(key)
+        if key == "preferred_repos":
+            current = ", ".join(suggestion) if suggestion else ""
+            prompt = f"  preferred_repos (comma-separated) [{current}]: "
+            answer = input(prompt).strip()
+            if answer == "-":
+                new.pop(key, None)
+            elif answer:
+                new[key] = [r.strip() for r in answer.split(",") if r.strip()]
+            elif suggestion:
+                new[key] = suggestion
+            continue
+
+        display = repr(suggestion) if suggestion is not None else "(not set)"
+        prompt = f"  {key} [{display}]: "
+        try:
+            answer = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nWizard aborted (no changes saved).")
+            return
+        if answer == "-":
+            new.pop(key, None)
+        elif answer:
+            new[key] = answer
+        elif suggestion is not None:
+            new[key] = suggestion
+        # else: leave unset
+
+    save_user_defaults(new)
+    print(f"\nSaved to {_USER_DEFAULTS_PATH}")
+    config_show_defaults(fmt)
 
 
 # ===========================
@@ -2181,6 +2505,16 @@ def main() -> None:
     config_p = subparsers.add_parser("config", help="Configuration operations")
     config_sp = config_p.add_subparsers(dest="action", required=True)
     config_sp.add_parser("show", help="Show loaded configuration")
+    config_sp.add_parser("show-defaults", help="Show per-user defaults from ~/.claude/sdlc-defaults.json")
+    config_init_p = config_sp.add_parser(
+        "init-defaults",
+        help="First-run wizard to seed per-user defaults",
+    )
+    config_init_p.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Seed with auto-detected values only (gh login as assignee, etc.); no prompts",
+    )
 
     # ===========================
     # PARSE AND ROUTE
@@ -2279,6 +2613,10 @@ def main() -> None:
         elif args.resource == "config":
             if args.action == "show":
                 config_show(fmt)
+            elif args.action == "show-defaults":
+                config_show_defaults(fmt)
+            elif args.action == "init-defaults":
+                config_init_defaults(args.non_interactive, fmt)
 
     except KeyboardInterrupt:
         print("\nAborted.", file=sys.stderr)

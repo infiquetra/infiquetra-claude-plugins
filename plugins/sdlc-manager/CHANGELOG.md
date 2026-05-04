@@ -1,5 +1,35 @@
 # Changelog — sdlc-manager
 
+## [1.2.0] — 2026-05-04
+
+### Added (Phase C deferred — Foundation)
+
+- **Typed exception classes** (`GhApiError`, `ApiNotFound`, `ApiAlreadyExists`, `ApiRateLimited`, `ApiAuthError`, `CardValidationError`). `_gh` now raises the appropriate subclass via `_classify_gh_error` instead of bare `RuntimeError` with a stringy message. Replaces the fragile `"422" in str(e)` substring matching pattern. Downstream callers catch by type:
+  ```python
+  try:
+      _rest_post(...)
+  except ApiAlreadyExists:
+      # idempotent re-run — treat as success
+  ```
+  The `flow_link_sub_issue` and `flow_verify_label` helpers were refactored to use this pattern. `flow_verify_label` also now handles a real race (two operators creating the same label simultaneously) via `ApiAlreadyExists` on POST.
+- **Per-user defaults file** at `~/.claude/sdlc-defaults.json`. Stores: `assignee` (gh login from `gh api user --jq .login` — *not* OS `$USER`), `default_project`, `default_status`, `default_priority`, `default_initiative`, `default_objective`, `preferred_repos`. Sticky across CLI invocations; future interactive flows read defaults as suggestion values.
+  - `load_user_defaults()` / `save_user_defaults()` helpers (atomic write via tempfile + rename; tolerant of missing file + malformed JSON)
+  - `get_default(key)` convenience reader
+  - New subcommands:
+    - `config show-defaults` — display current per-user defaults
+    - `config init-defaults [--non-interactive]` — first-run wizard. Interactive by default; `--non-interactive` seeds from `gh api user` + auto-detects `default_project` if exactly one project is mapped (no guessing on multi-project orgs).
+- **Vendored `project-mappings.json`** at `plugins/sdlc-manager/config/project-mappings.json`. The plugin now works without an external `infiquetra-sdlc` checkout for canonical Infiquetra projects.
+  - New `_resolve_project_mappings(sdlc_path)` helper implements the documented resolution order: external override (`$INFIQUETRA_SDLC_PATH/config/project-mappings.json`) → vendored canonical → remote `gh api` fallback.
+  - Project node IDs captured in the vendored file are best-effort + verified 2026-05-04. Field/option IDs are NEVER cached; always fetched live.
+
+### Tests
+- 33 new tests across 3 new test files:
+  - `test_typed_exceptions.py` (15 tests) — status-code parsing (404/401/403/429/422 disambiguation), 422-already-exists vs 422-validation-failure distinction, integration with `flow_link_sub_issue` + `flow_verify_label` (including race detection)
+  - `test_user_defaults.py` (13 tests) — read-side (missing file, malformed JSON, non-object root, unset key), write-side (atomic via tmpfile+rename, parent-dir auto-create, round-trip), `--non-interactive` wizard (gh-login seeded, multi-project no-guess, preserves unknown future keys)
+  - `test_project_mappings_resolution.py` (5 tests) — override wins over vendored, vendored used when no override, remote fallback when neither, empty dict on all-three failure, vendored file declares expected canonical state
+- Updated 3 PR #114 tests in `test_flow_subcommands.py` to use typed exceptions instead of bare `RuntimeError` with string-matching (the old pattern was testing the old implementation; new tests test the new contract).
+- Total: **64 / 64 passing** locally.
+
 ## [1.1.0] — 2026-05-04
 
 ### Fixed (during PR #114 review)

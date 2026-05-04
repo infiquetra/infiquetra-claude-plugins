@@ -1,0 +1,24 @@
+{
+  "_comment": "Vendored canonical project mapping for the Infiquetra org. Plugin reads this by default. Override at $INFIQUETRA_SDLC_PATH/config/project-mappings.json (per the resolution order in load_config). Project node IDs and field/option IDs are NOT cached here — they rotate on rename/recreate; fetched live via _resolve_project_field and discover_project_field_options.",
+  "_provenance": "Verified 2026-05-04 via `gh project list --owner infiquetra` (Olympus is the only project, #1). The id field below is captured for board_add convenience; if it rotates, re-run `gh project view 1 --owner infiquetra --format json -q .id` and update.",
+  "organization": "infiquetra",
+  "projects": {
+    "mount-olympus": {
+      "number": 1,
+      "id": "PVT_kwDODdfJoc4BVHOl",
+      "name": "Olympus",
+      "_id_note": "Project node id captured 2026-05-04. If it rotates (project rename/recreate), re-fetch via: gh project view 1 --owner infiquetra --format json -q .id",
+      "repositories": [
+        "campps-mvp",
+        "campps-flutter-app",
+        "campps-blueprint",
+        "mimir",
+        "mimir-blueprint",
+        "infiquetra-sdlc",
+        "infiquetra-claude-plugins",
+        "home-lab"
+      ]
+    }
+  },
+  "excluded_repositories": []
+}

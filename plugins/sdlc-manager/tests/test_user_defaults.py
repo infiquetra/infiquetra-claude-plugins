@@ -1,9 +1,9 @@
 """Tests for the per-user defaults file at ~/.claude/sdlc-defaults.json
 and the first-run wizard `config init-defaults`."""
 
-from pathlib import Path
 import json
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest

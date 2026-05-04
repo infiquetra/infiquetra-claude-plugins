@@ -9,8 +9,8 @@ End-to-end tests (real `gh` calls against a fixture project) are tracked
 as a P3 follow-up.
 """
 
-from pathlib import Path
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -18,7 +18,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import sdlc_manager  # noqa: E402
-
 
 # --- flow_link_sub_issue ----------------------------------------------------
 

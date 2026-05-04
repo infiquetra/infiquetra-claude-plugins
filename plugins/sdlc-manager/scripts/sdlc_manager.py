@@ -1485,17 +1485,12 @@ def rollout_update(repo: str, field: str, status: str, fmt: str) -> None:
     print(f"Updated {repo}.{field} = {status} in beads-config.json")
 
 
-# ===========================
-# BEADS OPERATIONS
-# ===========================
-
-# NOTE: Beads/Dolt was removed from the Mount Olympus coordination layer
-# on 2026-04-26. The agent fleet now coordinates via Redis pub/sub
-# (`olympus:*` channels) + GitHub Projects v2 + Discord per-card threads.
-# The previous `beads {ready,claim,update,complete,status}` subcommand
-# group + the `_bd` shell helper were removed in this PR. See
-# infiquetra-sdlc/docs/engineering-journal/narratives/2026-04-26-beads-dolt-removed.md
-# for the migration narrative.
+# NOTE: The `beads` subcommand group + `_bd` shell helper + `beads_*`
+# functions were removed in this PR. Beads/Dolt was decommissioned from
+# the Mount Olympus coordination layer on 2026-04-26 (see
+# infiquetra-sdlc/docs/engineering-journal/narratives/2026-04-26-beads-dolt-removed.md);
+# the agent fleet now coordinates via Redis pub/sub (`olympus:*` channels)
+# + GitHub Projects v2 + Discord per-card threads.
 
 
 # ===========================
@@ -1524,7 +1519,11 @@ def _resolve_project_field(project_name: str, field_name: str) -> dict:
             return {**f, "_project_id": data["organization"]["projectV2"]["id"]}
     raise RuntimeError(
         f"Field '{field_name}' not found on project '{project_name}'. "
-        f"Available fields: {[f.get('name') for f in fields]}"
+        f"Available fields: {[f.get('name') for f in fields]}. "
+        f"If you expected this field to exist (e.g., Initiative or Objective), "
+        f"the field-creation runbook is in "
+        f"`infiquetra-sdlc/docs/operations/operational-reference.md` "
+        f"under 'Initiative/Objective Tracking'."
     )
 
 
@@ -1575,7 +1574,7 @@ def flow_set_field(
         )
 
     # Find the project item for this repo+number
-    project_id_check, items = get_project_items(get_project_config(load_config(), project_name)["number"])
+    _, items = get_project_items(get_project_config(load_config(), project_name)["number"])
     target_item = next(
         (i for i in items
          if i.get("content", {}).get("number") == number
@@ -1722,26 +1721,43 @@ def flow_verify_label(
 # checks: 6 required H3 headers, AC has ≥1 checklist item, Verification has
 # ≥1 fenced code block, Files-expected has ≥1 path-like line, no placeholders.
 
-import re
+# All regexes + the placeholder set below MUST mirror the home-lab source-of-truth:
+# `home-lab/ansible/roles/hermes_orchestrator/files/card_validator.py`. When that
+# file's contract changes, update these in the same PR.
 
 _REQUIRED_H3_HEADERS = (
     "Objective",
     "Acceptance criteria",
-    "Out-of-scope or non-goals",
+    "Out-of-scope / non-goals",   # exact match: home-lab uses slash, not "or"
     "Files expected to change",
     "Tests to add or update",
     "Verification",
 )
 _OPTIONAL_H3_HEADERS = (
     "Notes / conventions",
-    "Notes/conventions",
     "Context library links",
 )
-_HEADER_RE = re.compile(r"^### (.+?)\s*$", re.MULTILINE)
-_CHECKLIST_RE = re.compile(r"^\s*- \[[ xX]\]\s", re.MULTILINE)
+_HEADER_RE = re.compile(r"^###\s+(.+?)\s*$", re.MULTILINE)
+# Checklist: `- [ ]`, `- [x]`, `* [ ]`, `* [X]`, with leading whitespace.
+# Requires `\S` after the bracket — empty checkbox-only lines don't count
+# (matches home-lab `card_validator.py:73`).
+_CHECKLIST_RE = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+\S", re.MULTILINE)
 _CODE_BLOCK_RE = re.compile(r"^```", re.MULTILINE)
-_PATH_LINE_RE = re.compile(r"^\s*[\w./_-]+/[\w./_-]+", re.MULTILINE)
-_PLACEHOLDER_LINES = {"- [ ]", "-", "* [ ]", "*", "_no response_", "none", "<!-- placeholder -->"}
+# A "plausible path" — matches home-lab `_PATH_LINE_RE` exactly:
+# optional bullet (`-` or `*`), optional quote/backtick wrapper, then a
+# token containing either `/` or `.` (so `pyproject.toml` and `- src/foo.py`
+# both pass). The orchestrator verifies actual existence; we just gate on
+# "looks like a path."
+_PATH_LINE_RE = re.compile(
+    r"^\s*(?:[-*]\s+)?"
+    r"[`'\"]?"
+    r"[\w./~\-]*[/.][\w./~\-]+"
+    r".*$",
+    re.MULTILINE,
+)
+_PLACEHOLDER_LINES = frozenset({
+    "- [ ]", "-", "* [ ]", "*", "_no response_", "none", "<!-- placeholder -->",
+})
 
 
 def _split_sections(body: str) -> dict[str, str]:
@@ -1759,9 +1775,22 @@ def _split_sections(body: str) -> dict[str, str]:
 def validate_card_body(body: str) -> tuple[bool, list[str]]:
     """Run the card_validator schema check on an issue body.
 
-    Returns (is_valid, errors). Mirrors the high-leverage checks of
-    home-lab card_validator.py — when that file's contract changes,
-    update this shim.
+    Mirrors home-lab card_validator.py's high-leverage checks. When that
+    file's contract changes, update this shim in the same PR.
+
+    Returns (is_valid, errors). The 5 checks:
+      1. All 6 required H3 sections present (Objective, Acceptance criteria,
+         Out-of-scope / non-goals, Files expected to change, Tests to add
+         or update, Verification).
+      2. Acceptance criteria has at least one `- [ ]` or `* [ ]` checklist
+         item with non-whitespace content after the bracket.
+      3. Verification has at least one fenced code block (≥2 ``` markers).
+      4. Files expected to change has at least one path-like line (matches
+         home-lab _PATH_LINE_RE — accepts plain filenames like
+         `pyproject.toml`, bullet-prefixed paths like `- src/foo.py`, and
+         backtick-wrapped paths).
+      5. No required section consists of only placeholder lines
+         (`- [ ]`, `_No response_`, `None`, etc.).
     """
     errors: list[str] = []
     sections = _split_sections(body)
@@ -1813,29 +1842,52 @@ def validate_card_body(body: str) -> tuple[bool, list[str]]:
     return (len(errors) == 0, errors)
 
 
+class CardValidationError(RuntimeError):
+    """Raised when an issue body fails the card_validator schema check.
+    `main()` catches RuntimeError and exits non-zero — using a typed
+    subclass lets future callers inspect the failure programmatically
+    while preserving the standard CLI exit-code path."""
+
+    def __init__(self, issue_ref: str, errors: list[str]):
+        self.issue_ref = issue_ref
+        self.errors = errors
+        super().__init__(
+            f"INVALID: {issue_ref} fails card_validator schema check: " +
+            "; ".join(errors)
+        )
+
+
 def flow_validate_card(repo: str, number: int, fmt: str) -> None:
-    """Fetch an issue body via gh, run card_validator, report result."""
+    """Fetch an issue body via gh, run card_validator, report result.
+
+    Consistent with other flow helpers: raises RuntimeError on failure
+    (caught by main() → exit 1). Does NOT call sys.exit() directly —
+    that would bypass main()'s formatted-error path and break programmatic
+    callers who import this function."""
+    issue_ref = f"{repo}#{number}"
     try:
         data = _rest_get(f"repos/{ORG}/{repo}/issues/{number}")
     except RuntimeError as e:
-        raise RuntimeError(f"Could not fetch issue {repo}#{number}: {e}")
+        raise RuntimeError(f"Could not fetch issue {issue_ref}: {e}")
     body = data.get("body") or ""
     if not body:
-        _out(f"Issue {repo}#{number} has no body — fails validation trivially.", fmt)
-        sys.exit(1)
+        # Empty body fails trivially — report via the standard error path
+        raise CardValidationError(issue_ref, ["Issue has empty body"])
 
     is_valid, errors = validate_card_body(body)
     if is_valid:
-        _out(f"VALID: {repo}#{number} passes card_validator schema check.", fmt)
+        _out(f"VALID: {issue_ref} passes card_validator schema check.", fmt)
         return
 
+    # For JSON callers, emit the structured payload before raising.
+    # The CardValidationError still propagates so main() exits 1.
     if fmt == "json":
-        _out({"valid": False, "errors": errors, "issue": f"{repo}#{number}"}, fmt)
+        _out({"valid": False, "errors": errors, "issue": issue_ref}, fmt)
     else:
-        print(f"INVALID: {repo}#{number} fails card_validator schema check:")
+        print(f"INVALID: {issue_ref} fails card_validator schema check:")
         for e in errors:
             print(f"  - {e}")
-    sys.exit(1)
+    raise CardValidationError(issue_ref, errors)
 
 
 # ===========================
@@ -2069,9 +2121,6 @@ def main() -> None:
     rollout_update_p.add_argument("--status", required=True,
                                    choices=["pending", "in-progress", "complete"])
 
-    # ===========================
-    # BEADS
-    # ===========================
     # ===========================
     # FLOW (Phase C — operator-facing GraphQL/REST surface)
     # ===========================

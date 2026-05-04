@@ -12,15 +12,14 @@ All operations run locally via the `gh` CLI, providing:
 - **Flow metrics** — cycle time, throughput, WIP age using GitHub timeline events
 - **Rollout tracking** — gap analysis and full SDLC deployment to any Infiquetra repo
 - **Milestone management** — create and track Objectives via GitHub Milestones
-- **Beads coordination** — task claiming, status updates, and completion via bd CLI
+- **Flow helpers** — `flow set-field` / `flow link-sub-issue` / `flow verify-label` / `flow validate-card` / `flow field-options` / `flow discover-project`. Operator-facing GraphQL + REST helpers for project field assignment, native sub-issue linking, self-healing label create, and card pre-flight validation
 
 ## Quick Start
 
 ### Prerequisites
 
-- `gh` CLI installed and authenticated with github.com
+- `gh` CLI installed and authenticated with github.com (Projects write scope required for `flow set-field` writes — see `gh auth status`)
 - `infiquetra-sdlc` repo checked out at `~/workspace/infiquetra/infiquetra-sdlc` (or set `INFIQUETRA_SDLC_PATH`)
-- `bd` CLI installed (for Beads task coordination)
 - Python 3.12+
 
 ### Script Location (after plugin install)
@@ -68,7 +67,9 @@ The `sdlc-operator` agent orchestrates complex multi-step operations:
 - New initiative/objective setup (labels + field options + milestone)
 - Objective progress tracking across repos
 - Batch triage of untriaged issues
-- Beads task coordination (ready -> claim -> update -> complete)
+- Project field assignment via `flow set-field` (Initiative, Objective, Status — single-select fields on the Olympus board per the 2026-05-03 DECISION)
+- Native sub-issue linking via `flow link-sub-issue` (cross-repo, idempotent)
+- Card body pre-flight validation via `flow validate-card`
 
 ## Architecture
 
@@ -183,23 +184,33 @@ python3 $SCRIPT rollout deploy-all --repo athena-service
 python3 $SCRIPT rollout update --repo athena-service --field labels --status complete
 ```
 
-### Beads Operations
+### Flow Operations (Phase C)
+
+Operator-facing GraphQL + REST helpers. See `skills/sdlc-flow/SKILL.md` for the full per-command idempotency contract.
 
 ```bash
-# Show tasks ready for claiming
-python3 $SCRIPT beads ready
+# Set Initiative or Objective on a card (project FIELDS, not labels)
+python3 $SCRIPT flow set-field --project mount-olympus \
+    --repo campps-mvp --number 42 \
+    --field Initiative --option olympus-quality
 
-# Claim a task
-python3 $SCRIPT beads claim --task-id TASK-001
+# List the live options on a project field (IDs rotate on rename)
+python3 $SCRIPT flow field-options --project mount-olympus --field Objective
 
-# Update task status
-python3 $SCRIPT beads update --task-id TASK-001 --status in-progress
+# Resolve which project a repo maps to
+python3 $SCRIPT flow discover-project --repo athena-service
 
-# Complete a task
-python3 $SCRIPT beads complete --task-id TASK-001
+# Link child as native sub-issue of parent (cross-repo, idempotent)
+python3 $SCRIPT flow link-sub-issue \
+    --parent-repo campps-blueprint --parent-number 1 \
+    --child-repo campps-mvp --child-number 42
 
-# Show overall task status
-python3 $SCRIPT beads status
+# Self-healing label create (404 → create; exists → no-op; auth/server errors raise)
+python3 $SCRIPT flow verify-label --repo campps-mvp \
+    --name high-priority --color D93F0B --description "High priority"
+
+# Pre-flight card body against the card_validator schema
+python3 $SCRIPT flow validate-card --repo campps-mvp --number 42
 ```
 
 ## Configuration
@@ -216,7 +227,7 @@ python3 $SCRIPT beads status
 |------|---------|
 | `config/project-mappings.json` | Project IDs, field IDs, repo-to-project mapping |
 | `config/labels.json` | Label definitions and auto-label rules |
-| `config/beads-config.json` | Beads/rollout tracking across repos |
+| `config/beads-config.json` | (legacy — file removed from infiquetra-sdlc on 2026-04-26; reads degrade gracefully to `{}`. The `legacy_rollout_config` key in `load_config` documents the migration.) |
 
 ## Projects
 

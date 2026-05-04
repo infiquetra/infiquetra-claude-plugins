@@ -21,7 +21,7 @@ Add schema validator that gates plan-review on structured card fields.
 - [ ] Validator runs on `projects_v2_item` webhook when status becomes Ready
 - [ ] Cards missing required fields get a `needs-author-action` label
 
-### Out-of-scope or non-goals
+### Out-of-scope / non-goals
 - Do NOT change the planner prompt in this card
 - Do NOT add new required fields beyond those in the plan spec
 
@@ -131,3 +131,44 @@ def test_optional_sections_not_required() -> None:
     body = body.split("### Notes / conventions")[0].rstrip() + "\n"
     is_valid, errors = sdlc_manager.validate_card_body(body)
     assert is_valid, f"Expected valid without optional sections; got: {errors}"
+
+
+def test_required_headers_match_actual_issue_templates() -> None:
+    """Drift guard: the validator's _REQUIRED_H3_HEADERS list must match the
+    `label:` fields in `infiquetra-sdlc/.github/ISSUE_TEMPLATE/{capability,
+    enhancement,defect}.yml`. If a template adds/renames a section, this
+    test fails so the validator can be updated in the same PR.
+
+    This is the test that PR #114's review caught was missing — the original
+    validator used 'Out-of-scope or non-goals' (with 'or') while the actual
+    templates use 'Out-of-scope / non-goals' (with '/'), and no test was
+    pinning the contract end-to-end."""
+    import os
+    sdlc_path = Path(
+        os.environ.get("INFIQUETRA_SDLC_PATH",
+                       Path.home() / "workspace/infiquetra/infiquetra-sdlc")
+    )
+    template_dir = sdlc_path / ".github" / "ISSUE_TEMPLATE"
+    if not template_dir.exists():
+        # Skip if running outside the developer's workspace (e.g., on a
+        # build agent without the sibling repo). The drift guard runs in
+        # CI when the repos are checked out together.
+        import pytest
+        pytest.skip(f"Templates not at {template_dir}; skipping drift check")
+
+    # Extract `label:` strings from the 3 actionable templates
+    import re as _re
+    template_headers: dict[str, set[str]] = {}
+    for tmpl in ("capability.yml", "enhancement.yml", "defect.yml"):
+        text = (template_dir / tmpl).read_text()
+        labels = set(_re.findall(r"^\s+label:\s*(.+?)\s*$", text, _re.MULTILINE))
+        template_headers[tmpl] = labels
+
+    # Every required validator header must appear as a label in every
+    # actionable template
+    for tmpl, labels in template_headers.items():
+        for required in sdlc_manager._REQUIRED_H3_HEADERS:
+            assert required in labels, (
+                f"Validator requires '{required}' but {tmpl} doesn't have a "
+                f"matching `label:` field. Templates have: {sorted(labels)}"
+            )

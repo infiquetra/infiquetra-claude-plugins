@@ -1,5 +1,44 @@
 # Changelog — sdlc-manager
 
+## [1.1.0] — 2026-05-04
+
+### Fixed (during PR #114 review)
+- **`validate_card_body` header text**: was `"Out-of-scope or non-goals"` (with "or"); home-lab card_validator.py and ALL actionable issue templates use `"Out-of-scope / non-goals"` (with "/"). Every real card would have failed validation with a phantom missing-section error. Corrected to match home-lab exactly. Same iteration also corrects `_PATH_LINE_RE` (now accepts plain filenames + bullet-prefixed paths matching home-lab) and `_CHECKLIST_RE` (now requires `\S` after `[ ]` and accepts `*` bullets matching home-lab).
+- **Drift-guard test**: added `test_required_headers_match_actual_issue_templates` that loads the real issue templates and verifies every `_REQUIRED_H3_HEADERS` entry has a matching `label:` in capability/enhancement/defect.yml. This is the test that would have caught the original "or" vs "/" bug.
+- **Pre-existing test breakage**: `tests/test_sdlc_manager.py` had a `TestBeadsClaim` class referencing the deleted `beads_claim` function. Class deleted; CHANGELOG note added in the test file.
+- **WIP-limits test fixture**: was using the old `beads_config` config-key (which now degrades to `{}`); the override test passed only by coincidence. Renamed fixture to `legacy_rollout_config`; tightened assertion to verify the OVERRIDDEN column (Ready) renders with the override limit, not just any column happening to have a "5" in its render.
+- **`flow_validate_card` exit-code path**: was calling `sys.exit(1)` directly, bypassing main()'s formatted-error path and breaking programmatic callers. Now raises `CardValidationError` (RuntimeError subclass) which main() catches; preserves the standard CLI exit code behavior + lets future callers inspect the failure.
+- **`_resolve_project_field` error message**: now includes a hint pointing at the field-creation runbook in `infiquetra-sdlc/docs/operations/operational-reference.md` when a field doesn't exist.
+- **Stale `# BEADS` banner**: removed (Beads removal had left an empty banner in the argparse section).
+- **Duplicate `import re`**: removed (validator block had a redundant import; top-level `import re` at line 61 already covers it).
+- **Unused `project_id_check` variable**: replaced with `_, items = ...` discard idiom (consistent with `board_wip` pattern).
+- **README.md**: removed the "Beads coordination" capability bullet + stale `bd` CLI prerequisite + stale `Beads Operations` section + stale `config/beads-config.json` row. Added `Flow Operations` section with the 6 new commands.
+
+### Added
+- New `flow` subcommand group — operator-facing GraphQL + REST helpers:
+  - `flow set-field` — set a single-select project field on a card (Initiative, Objective, Status, etc.)
+  - `flow field-options` — list current options for a project field (live discovery, IDs not cached)
+  - `flow discover-project` — resolve which project a repo maps to
+  - `flow link-sub-issue` — link child as native sub-issue of parent (cross-repo, idempotent)
+  - `flow verify-label` — self-healing label create (404 → create, exists → no-op, other errors raise)
+  - `flow validate-card` — pre-flight check an existing issue body against the card_validator schema
+- New `validate_card_body()` Python helper — mirrors home-lab card_validator.py's high-leverage checks (6 required H3 headers, AC has ≥1 checklist, Verification has ≥1 fenced code block, Files-expected has ≥1 path-like line, no placeholder-only sections)
+- New `sdlc-flow` skill (SKILL.md) describing the `flow` commands + idempotency contract + hard rules + integration with the blueprint-to-issue workflow
+- 20 tests in `tests/test_card_validator.py` and `tests/test_flow_subcommands.py` covering: validator schema rules, idempotency contracts, error classification (404 vs auth vs server), live-discovery vs cached, helpful error messages with current options listed
+
+### Changed
+- Renamed `beads_config` config-key to `legacy_rollout_config` in `load_config` and downstream readers (`board_wip`, `rollout_status`, `rollout_update`, `config_show`). The underlying file (`beads-config.json`) was already removed from infiquetra-sdlc on 2026-04-26; the key now degrades gracefully to `{}` for back-compat. Comment in `load_config` documents the migration.
+
+### Removed
+- `beads` subcommand group (`ready`, `claim`, `update`, `complete`, `status`)
+- `_bd` shell helper for invoking the `bd` CLI
+- All `beads_*` Python functions
+- The Beads/Dolt coordination layer was removed from Mount Olympus on 2026-04-26 (see `infiquetra-sdlc/docs/engineering-journal/narratives/2026-04-26-beads-dolt-removed.md`); the agent fleet now coordinates via Redis pub/sub + GitHub Projects v2 + Discord per-card threads. The plugin's `beads` commands targeted infrastructure that no longer exists.
+
+### Migration notes
+- Operators previously running `sdlc_manager.py beads <action>` will get an `argparse` error. There is no replacement — the underlying coordination has moved off Beads entirely. Use `gh` + the new `flow` commands for direct board operations.
+- The `flow set-field` command is the canonical mechanism for Initiative + Objective assignment per the 2026-05-03 DECISION (see `infiquetra-sdlc/docs/engineering-journal/DECISIONS.md`). The fields don't exist on the Olympus board today; create them via the operator runbook in `operational-reference.md` before using `flow set-field`.
+
 ## [1.0.0] — 2026-03-29
 
 ### Added

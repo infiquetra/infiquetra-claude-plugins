@@ -3,7 +3,7 @@
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -62,6 +62,50 @@ def client(monkeypatch):
     with patch("todoist_client.TodoistAPI"):
         c = TodoistClient()
     return c
+
+
+def test_init_without_token_exits_with_json_error(monkeypatch, capsys):
+    monkeypatch.delenv("TODOIST_TOKEN", raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TodoistClient()
+
+    assert exc_info.value.code == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "error": True,
+        "message": "TODOIST_TOKEN environment variable not set",
+    }
+
+
+def test_init_without_todoist_sdk_exits_with_install_message(monkeypatch, capsys):
+    monkeypatch.setenv("TODOIST_TOKEN", "test-token")
+    monkeypatch.setattr("todoist_client.TodoistAPI", None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TodoistClient()
+
+    assert exc_info.value.code == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "error": "todoist-api-python not installed",
+        "message": "Install with: pip install 'todoist-api-python>=3.1.0,<4.0.0'",
+    }
+
+
+def test_init_when_api_creation_fails_exits_with_json_error(monkeypatch, capsys):
+    monkeypatch.setenv("TODOIST_TOKEN", "test-token")
+
+    with patch("todoist_client.TodoistAPI", side_effect=Exception("boom")):
+        with pytest.raises(SystemExit) as exc_info:
+            TodoistClient()
+
+    assert exc_info.value.code == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "error": True,
+        "message": "Failed to initialize Todoist API: boom",
+    }
 
 
 class TestGetDescendantProjectIds:

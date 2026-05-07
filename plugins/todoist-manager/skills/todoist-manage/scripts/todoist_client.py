@@ -21,29 +21,17 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Iterator
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
 
-# Try to import the SDK; auto-install if missing
+if TYPE_CHECKING:
+    from todoist_api_python.models import Comment, Label, Project, Section, Task
+else:
+    Task = Project = Section = Label = Comment = Any
+
 try:
     from todoist_api_python.api import TodoistAPI
-    from todoist_api_python.models import (
-        Task,
-        Project,
-        Section,
-        Label,
-        Comment,
-        Due,
-        Duration,
-    )
 except ImportError:
-    print(
-        json.dumps({
-            "error": "todoist-api-python not installed",
-            "message": "Install with: pip install 'todoist-api-python>=3.1.0,<4.0.0'",
-        }),
-        flush=True,
-    )
-    sys.exit(1)
+    TodoistAPI = None
 
 class TodoistClient:
     """Wrapper for Todoist API operations with JSON output."""
@@ -57,6 +45,16 @@ class TodoistClient:
         self.token = token or os.getenv("TODOIST_TOKEN")
         if not self.token:
             self._error("TODOIST_TOKEN environment variable not set")
+            sys.exit(1)
+
+        if TodoistAPI is None:
+            print(
+                json.dumps({
+                    "error": "todoist-api-python not installed",
+                    "message": "Install with: pip install 'todoist-api-python>=3.1.0,<4.0.0'",
+                }),
+                flush=True,
+            )
             sys.exit(1)
 
         try:

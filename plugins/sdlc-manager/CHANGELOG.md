@@ -1,5 +1,11 @@
 # Changelog — sdlc-manager
 
+## Unreleased
+
+### Changed
+- Synced `sdlc-issues` template guidance with canonical issue forms in `infiquetra-sdlc`, including current Hermes actionable labels and required card sections.
+- Added a deterministic template documentation generator plus drift guard tests for `templates-reference.md`.
+
 ## [1.4.0] — 2026-05-04
 
 ### Migration notes

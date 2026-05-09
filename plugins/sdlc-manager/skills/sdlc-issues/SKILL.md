@@ -3,8 +3,8 @@ name: sdlc-issues
 description: |
   Create and manage SDLC issues in Infiquetra GitHub repositories using the 6-type issue
   taxonomy: capability, enhancement, defect, exploration, context-update, and objective.
-  Handles issue type selection, template-guided creation, label application, project board
-  assignment, and milestone linking.
+  Handles issue type selection, template-guided creation, Hermes label application, project
+  board assignment, and milestone linking.
 when_to_use: |
   Use this skill when the user wants to:
 
@@ -35,7 +35,8 @@ when_to_use: |
 # SDLC Issues
 
 Create and manage SDLC issues across Infiquetra repositories using the 6-type taxonomy.
-Handles type selection, template-guided creation, label application, and project board assignment.
+Handles type selection, template-guided creation, Hermes label application, and project board
+assignment.
 
 ## Script Location
 
@@ -49,16 +50,47 @@ $INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/sdlc-manager/scripts/
 
 Six issue types cover all Infiquetra work:
 
-| Type | Duration | When to Use |
-|------|----------|-------------|
-| **objective** | 2-8 weeks | Coordinating multiple capabilities with a target date |
-| **capability** | 1-4 weeks | New end-to-end deployable functionality |
-| **enhancement** | 2-5 days | Improving existing functionality |
-| **defect** | Hours-2 days | Broken functionality in production |
-| **exploration** | 1-3 days | Research, POC, or architectural investigation |
-| **context-update** | Hours-1 day | Updating Blueprint repository documentation |
+| Type | Hermes Actionable | Duration | When to Use |
+|------|-------------------|----------|-------------|
+| **capability** | Yes | 1-4 weeks | New end-to-end deployable functionality |
+| **enhancement** | Yes | 2-5 days | Improving existing functionality |
+| **defect** | Yes | Hours-2 days | Broken functionality that an agent can fix |
+| **objective** | No | 2-8 weeks | Coordinating multiple capabilities with a target date |
+| **exploration** | No | 1-3 days | Research, POC, or architectural investigation |
+| **context-update** | No | Hours-1 day | Updating Blueprint repository documentation |
 
 See `references/issue-types.md` for the complete guide and decision tree.
+See `references/templates-reference.md` for the generated template field and label reference.
+
+## Hermes Actionable Contract
+
+Actionable issue types are `capability`, `enhancement`, and `defect`. Their canonical templates
+apply `hermes-task`, `needs-plan`, and the type label.
+
+Each actionable card must render the following exact H3 section headers in the GitHub issue body:
+
+- `### Objective`
+- `### Acceptance criteria`
+- `### Out-of-scope / non-goals`
+- `### Files expected to change`
+- `### Tests to add or update`
+- `### Verification`
+
+Hermes validation expects these semantics:
+
+- `Acceptance criteria` includes at least one `- [ ]` checklist item.
+- `Verification` includes exact commands, preferably in a fenced shell code block.
+- `Files expected to change` includes at least one path-like line.
+- Empty placeholder sections such as `_No response_` are invalid.
+
+Optional actionable sections are `Notes / conventions` and `Context library links`. Capability cards
+also include optional `Capability size (human planning hint)`.
+
+## Non-actionable Templates
+
+Objective, Exploration, and Context Update templates carry `hermes-not-actionable`. Do not present
+these as Hermes task cards or dispatch them directly to agents. Use them for coordination,
+research, or documentation context.
 
 ## Core Operations
 
@@ -74,37 +106,27 @@ python3 sdlc_manager.py issue create --repo infiquetra-blueprint --type context-
 gh issue create --repo Infiquetra/infiquetra-core --template capability.yml
 ```
 
-After template creation, apply labels and add to project board (see below).
+After template creation, apply labels and add to the project board where applicable.
 
-### Apply Labels
+### Labels from Canonical Templates
 
-Labels are applied in two ways: auto-applied by the template, and manually added for context.
+**Actionable templates**:
 
-**Auto-applied by template** (from `.github/ISSUE_TEMPLATE/*.yml`):
-- `capability` -> adds `capability`, `needs-analysis`
-- `defect` -> adds `defect`, `needs-triage`
-- `enhancement` -> adds `enhancement`, `needs-analysis`
-- `exploration` -> adds `exploration`, `research`
-- `context-update` -> adds `context-update`, `documentation`
-- `objective` -> adds `objective`
+- `capability` -> `capability`, `hermes-task`, `needs-plan`
+- `enhancement` -> `enhancement`, `hermes-task`, `needs-plan`
+- `defect` -> `defect`, `hermes-task`, `needs-plan`
 
-**Auto-label rules** — apply additional labels based on content:
+**Non-actionable templates**:
+
+- `objective` -> `objective`, `hermes-not-actionable`
+- `exploration` -> `exploration`, `research`, `hermes-not-actionable`
+- `context-update` -> `context-update`, `documentation`, `hermes-not-actionable`
+
+**Apply labels manually** via gh CLI when a template did not apply them:
+
 ```bash
-python3 sdlc_manager.py labels auto-label --repo <repo> --number <N>
-```
-
-Auto-label logic:
-- `[CAPABILITY]` in title -> adds `capability`, `needs-analysis`
-- `[DEFECT]` in title -> adds `defect`, `needs-triage`
-- Mentions security/vulnerability/CVE -> adds `security`
-- Mentions performance/latency -> adds `performance`
-- Mentions breaking change -> adds `breaking-change`
-
-**Apply labels manually** via gh CLI:
-```bash
-gh issue edit <N> --repo Infiquetra/<repo> --add-label "objective:platform-launch"
-gh issue edit <N> --repo Infiquetra/<repo> --add-label "initiative:olympus-v1"
-gh issue edit <N> --repo Infiquetra/<repo> --add-label "high-priority"
+gh issue edit <N> --repo Infiquetra/<repo> --add-label "hermes-task,needs-plan,capability"
+gh issue edit <N> --repo Infiquetra/<repo> --add-label "hermes-not-actionable"
 ```
 
 ### Add to Project Board
@@ -120,16 +142,20 @@ project a repo belongs to.
 **If the repo is unmapped**: warn the user and offer to add manually via the GitHub web UI.
 Most new repos need to be added to `project-mappings.json` first.
 
-### Sync Labels to Project Fields
+### Sync Project Fields
 
-After applying initiative/objective labels, sync them to the GitHub Projects custom fields:
+Set project fields with the `flow` helpers after the issue is added to a board:
 
 ```bash
-python3 sdlc_manager.py labels sync-fields --repo <repo> --number <N>
+python3 sdlc_manager.py flow set-field \
+  --repo <repo> \
+  --number <N> \
+  --project "Mount Olympus Operations" \
+  --field Status \
+  --option Backlog
 ```
 
-This copies `initiative:*` and `objective:*` labels to the corresponding project board fields
-so the issue appears in filtered views.
+Use live field discovery rather than cached field IDs.
 
 ## Issue Creation Workflow
 
@@ -138,10 +164,11 @@ Follow these steps when creating any issue:
 ### Step 1: Determine Issue Type
 
 Use the decision tree (see `references/issue-types.md`) or ask the user:
-- Coordinating multiple capabilities with a target date? -> **OBJECTIVE**
-- Something broken in production? -> **DEFECT**
+
 - New end-to-end deployable functionality? -> **CAPABILITY**
 - Improving existing functionality? -> **ENHANCEMENT**
+- Broken functionality for an agent to fix? -> **DEFECT**
+- Coordinating multiple capabilities with a target date? -> **OBJECTIVE**
 - Researching or investigating? -> **EXPLORATION**
 - Updating Blueprint documentation? -> **CONTEXT UPDATE**
 
@@ -150,6 +177,7 @@ If uncertain, present the decision tree and ask clarifying questions.
 ### Step 2: Choose Target Repository
 
 Issue can be created in any Infiquetra repo. Common repos:
+
 - `infiquetra-core`, `infiquetra-auth`, `infiquetra-infra`
 - `infiquetra-blueprint` — for Context Updates and Explorations
 - `infiquetra-claude-plugins`
@@ -158,15 +186,20 @@ If the user doesn't specify, ask which repo the work belongs to.
 
 ### Step 3: Gather Required Fields
 
-Each issue type has required fields (see `references/templates-reference.md` for complete
-field lists). At minimum:
+For actionable cards, gather these exact required fields:
 
-- **Capability**: objective statement, business value, acceptance criteria, context links, size
-- **Defect**: problem description, priority, steps to reproduce, impact
-- **Enhancement**: what's being improved, current state, proposed improvement, acceptance criteria
-- **Exploration**: research question, context, success criteria, timebox
-- **Context Update**: what's being updated, why, files to update
-- **Objective**: objective name, type, target date, success criteria
+- Objective
+- Acceptance criteria
+- Out-of-scope / non-goals
+- Files expected to change
+- Tests to add or update
+- Verification
+
+Ask for optional Notes / conventions and Context library links when they would improve planning.
+Ask for Capability size only for capability cards and treat it as a human planning hint.
+
+For non-actionable cards, use the fields in `references/templates-reference.md` and preserve the
+`hermes-not-actionable` distinction.
 
 ### Step 4: Create the Issue
 
@@ -178,16 +211,11 @@ python3 sdlc_manager.py issue create --repo <repo> --type <type>
 gh issue create --repo Infiquetra/<repo> --template <type>.yml
 ```
 
-### Step 5: Apply Labels
+### Step 5: Verify Labels
 
-1. Confirm template auto-applied type and status labels
-2. Run auto-label to catch content-based labels:
-   ```bash
-   python3 sdlc_manager.py labels auto-label --repo <repo> --number <N>
-   ```
-3. Apply priority label if known: `critical`, `high-priority`, `medium-priority`
-4. Apply objective label if part of an objective: `objective:platform-launch`
-5. Apply initiative label if part of an initiative: `initiative:olympus-v1`
+1. Confirm actionable templates applied `hermes-task`, `needs-plan`, and the type label.
+2. Confirm non-actionable templates applied `hermes-not-actionable` and their context labels.
+3. Use `flow verify-label` for any required label that is missing.
 
 ### Step 6: Add to Project Board
 
@@ -195,46 +223,21 @@ gh issue create --repo Infiquetra/<repo> --template <type>.yml
 python3 sdlc_manager.py board add --repo <repo> --number <N>
 ```
 
-Issue starts in **Backlog** (or **Ready** for defects with Critical/High priority).
+Issue starts in **Backlog** unless the current project workflow moves it elsewhere.
 
-### Step 7: Sync Fields and Link Milestone
-
-```bash
-# Sync initiative/objective labels to project fields
-python3 sdlc_manager.py labels sync-fields --repo <repo> --number <N>
-
-# If part of an objective, link to milestone
-python3 sdlc_manager.py milestones link --repo <repo> --issue <N> --milestone <M>
-```
-
-### Step 8: Create Beads Task (if applicable)
-
-For work that will be claimed by Mount Olympus agents:
-```bash
-# Mark the task as ready for agent claiming
-bd ready <task-id>
-```
-
-Beads tasks sync to GitHub Issues automatically, so the issue will be tracked in both systems.
-
-### Step 9: For Objectives — Create Milestone
-
-When creating an Objective issue, also create a corresponding GitHub Milestone:
+### Step 7: Link Parent or Milestone
 
 ```bash
-python3 sdlc_manager.py milestones create \
-  --repo <repo> \
-  --title "Pilot: Platform Launch" \
-  --due-date 2026-04-15 \
-  --description "Platform launch pilot objective"
+# If part of an objective, link as a native sub-issue or attach to the objective milestone
+python3 sdlc_manager.py flow link-sub-issue \
+  --parent-repo <parent-repo> \
+  --parent-number <parent-number> \
+  --child-repo <repo> \
+  --child-number <N>
 ```
 
-Then link the Objective issue to the new milestone:
-```bash
-python3 sdlc_manager.py milestones link --repo <repo> --issue <N> --milestone <M>
-```
-
-See the `sdlc-milestones` skill for complete Objective/Milestone workflow.
+When creating an Objective issue, also create a corresponding GitHub Milestone if the workflow
+still uses milestones for that repository.
 
 ## Natural Language Examples
 
@@ -242,72 +245,58 @@ See the `sdlc-milestones` skill for complete Objective/Milestone workflow.
 -> `issue create --repo infiquetra-core --type capability`
 
 **"File a defect for the auth API crashing"**
--> `issue create --repo infiquetra-auth --type defect` (gather steps to reproduce, priority)
+-> `issue create --repo infiquetra-auth --type defect`
 
 **"Create an exploration to research biometric SDK options"**
 -> `issue create --repo infiquetra-blueprint --type exploration`
 
 **"Is this a capability or enhancement?"**
 -> Walk through decision tree: Is it new end-to-end deployable functionality? If yes -> capability.
-   If it improves existing functionality -> enhancement.
+If it improves existing functionality -> enhancement.
 
 **"Create issues for all the capabilities in this objective"**
--> List capabilities from the objective description, create each with `--type capability`,
-   link each to the objective milestone
+-> List capabilities from the objective description, create each with `--type capability`, and link
+each to the objective parent or milestone.
 
 **"What type of issue should this be?"**
--> Present the decision tree from `references/issue-types.md`
+-> Present the decision tree from `references/issue-types.md`.
 
 ## Label Reference
 
-### Type Labels
-| Label | Color | Applied To |
-|-------|-------|------------|
-| `capability` | Green | Capability issues |
-| `enhancement` | Blue | Enhancement issues |
-| `defect` | Red | Defect issues |
-| `exploration` | Purple | Exploration issues |
-| `context-update` | Gray | Context Update issues |
-| `objective` | Dark blue | Objective issues |
+### Actionable Labels
 
-### Status Labels
-| Label | Meaning |
-|-------|---------|
-| `needs-analysis` | Requires context gathering before development |
-| `needs-triage` | Defect needs priority assessment |
-| `blocked` | Cannot progress — dependency or blocker identified |
-| `in-progress` | Actively being worked on |
+| Type | Labels |
+|------|--------|
+| `capability` | `capability`, `hermes-task`, `needs-plan` |
+| `enhancement` | `enhancement`, `hermes-task`, `needs-plan` |
+| `defect` | `defect`, `hermes-task`, `needs-plan` |
 
-### Priority Labels (Defects)
-| Label | SLA |
-|-------|-----|
-| `critical` | 4 hours |
-| `high-priority` | 1 day |
-| `medium-priority` | 3 days |
-| `low-priority` | When capacity |
+### Non-actionable Labels
+
+| Type | Labels |
+|------|--------|
+| `objective` | `objective`, `hermes-not-actionable` |
+| `exploration` | `exploration`, `research`, `hermes-not-actionable` |
+| `context-update` | `context-update`, `documentation`, `hermes-not-actionable` |
 
 ### Content Labels
+
 | Label | Applied When |
 |-------|-------------|
 | `security` | Security vulnerability or CVE |
 | `performance` | Performance regression or optimization |
 | `breaking-change` | API or interface breaking change |
 
-### Hierarchy Labels
-| Format | Example | Description |
-|--------|---------|-------------|
-| `objective:{name}` | `objective:platform-launch` | Parent objective |
-| `initiative:{name}` | `initiative:olympus-v1` | Parent initiative |
-
 ## Key Behaviors
 
-- **Always confirm issue type** before creating — wrong type causes downstream confusion
-- **Defects with Critical priority** should be pulled directly to In Development, bypassing Ready
-- **Every Capability should create a paired Context Update** to document what was built
-- **Objectives auto-create a milestone** — don't skip this step
-- **Unmapped repos** will warn on board add — this is expected for newer repos
+- **Always confirm issue type** before creating — wrong type causes downstream confusion.
+- **Preserve Hermes actionable/non-actionable distinction** — only capability, enhancement, and defect are Hermes task cards.
+- **Use exact actionable H3 headers** — the Hermes validator matches section header text.
+- **Require checklist acceptance criteria** — at least one `- [ ]` item is mandatory.
+- **Require verification commands** — commands should be copy-pasteable and prove success.
+- **Unmapped repos** will warn on board add — this is expected for newer repos.
 
 ## Reference Documents
 
 - `references/issue-types.md` — Complete guide to all 6 issue types with decision tree
-- `references/templates-reference.md` — Rendered view of all 6 issue templates with examples
+- `references/templates-reference.md` — Generated view of canonical issue templates

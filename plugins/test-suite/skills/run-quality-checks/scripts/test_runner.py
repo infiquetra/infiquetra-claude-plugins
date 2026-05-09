@@ -10,10 +10,12 @@ import json
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # Color codes
 RED = "\033[0;31m"
@@ -127,15 +129,11 @@ class QualityCheckRunner:
         tests_failed = 0
         for line in result.output.split("\n"):
             if " passed" in line:
-                try:
+                with suppress(ValueError, IndexError):
                     tests_passed = int(line.split()[0])
-                except (ValueError, IndexError):
-                    pass
             if " failed" in line:
-                try:
+                with suppress(ValueError, IndexError):
                     tests_failed = int(line.split()[0])
-                except (ValueError, IndexError):
-                    pass
 
         result.details.update(
             {
@@ -232,7 +230,9 @@ class QualityCheckRunner:
                 name = futures[future]
                 try:
                     result = future.result()
-                    status_icon = f"{GREEN}✓{RESET}" if result.status == "passed" else f"{RED}✗{RESET}"
+                    status_icon = (
+                        f"{GREEN}✓{RESET}" if result.status == "passed" else f"{RED}✗{RESET}"
+                    )
                     print(f"[{i}/4] {name:20s} {status_icon} ({result.duration:.1f}s)")
                     results.append(result)
 
@@ -260,7 +260,9 @@ class QualityCheckRunner:
                 tests_passed = result.details.get("tests_passed", 0)
                 tests_failed = result.details.get("tests_failed", 0)
                 coverage = result.details.get("coverage", 0)
-                print(f" {tests_passed}/{tests_passed + tests_failed} tests passed   Coverage: {coverage}%")
+                print(
+                    f" {tests_passed}/{tests_passed + tests_failed} tests passed   Coverage: {coverage}%"
+                )
 
                 if tests_failed > 0 and self.verbose:
                     print(f"  {YELLOW}Failed tests:{RESET}")
@@ -313,8 +315,8 @@ class QualityCheckRunner:
         # Report location
         if any(r.name == "pytest" and r.status != "failed" for r in results):
             print(f"\n{BLUE}📄 Reports generated:{RESET}")
-            print(f"   - HTML: htmlcov/index.html")
-            print(f"   - Coverage: .coverage")
+            print("   - HTML: htmlcov/index.html")
+            print("   - Coverage: .coverage")
 
     def generate_json_output(self, results: list[CheckResult]) -> dict[str, Any]:
         """Generate JSON output for CI/CD integration."""

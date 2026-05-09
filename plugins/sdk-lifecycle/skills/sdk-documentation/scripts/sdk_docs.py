@@ -8,12 +8,11 @@ Extracts API documentation from code comments and generates comprehensive SDK do
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
 
 
 def generate_documentation(
     project_path: Path,
-    language: Optional[str] = None,
+    language: str | None = None,
     output_dir: Path = Path("docs"),
     format: str = "markdown",
 ) -> None:
@@ -55,6 +54,7 @@ def _generate_python_docs(project_path: Path, output_dir: Path, format: str) -> 
     # Check if Sphinx is available
     try:
         import subprocess
+
         subprocess.run(
             ["sphinx-apidoc", "-o", str(output_dir / "api"), str(project_path / "src")],
             check=True,
@@ -88,7 +88,7 @@ def _create_usage_guide_template(output_dir: Path, language: str) -> None:
     """Create usage guide template."""
     guide_path = output_dir / "usage-guide.md"
 
-    template = f"""# SDK Usage Guide
+    template = rf"""# SDK Usage Guide
 
 ## Installation
 

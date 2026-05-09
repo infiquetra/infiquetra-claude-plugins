@@ -1,8 +1,8 @@
 """Shared pytest fixtures for Infiquetra plugin tests."""
 
+from unittest.mock import MagicMock
+
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, MagicMock
 
 
 @pytest.fixture
@@ -68,6 +68,7 @@ def mock_subprocess_run(monkeypatch):
 # PagerDuty Fixtures
 # ===========================
 
+
 @pytest.fixture
 def mock_pagerduty_incident():
     """Mock PagerDuty incident response."""
@@ -96,6 +97,7 @@ def mock_pagerduty_service():
 # Splunk Fixtures
 # ===========================
 
+
 @pytest.fixture
 def mock_splunk_search_job():
     """Mock Splunk search job response."""
@@ -116,6 +118,7 @@ def mock_splunk_results():
 # ===========================
 # Slack Fixtures
 # ===========================
+
 
 @pytest.fixture
 def mock_slack_message():
@@ -142,6 +145,7 @@ def mock_slack_channel():
 # ===========================
 # UniFi Fixtures
 # ===========================
+
 
 @pytest.fixture
 def mock_unifi_device():

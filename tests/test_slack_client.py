@@ -1,12 +1,23 @@
 """Unit tests for slack_client.py."""
 
-import pytest
 import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "plugins" / "slack" / "skills" / "slack-messaging" / "scripts"))
+import pytest
+
+sys.path.insert(
+    0,
+    str(
+        Path(__file__).parent.parent
+        / "plugins"
+        / "slack"
+        / "skills"
+        / "slack-messaging"
+        / "scripts"
+    ),
+)
 
 from slack_client import SlackClient
 

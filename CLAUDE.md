@@ -132,19 +132,19 @@ plugin-name/
 
 ```bash
 # Run all checks
-pytest
+uv run pytest
 
 # Run specific test file
-pytest tests/test_pagerduty_client.py -v
+uv run pytest tests/test_pagerduty_client.py -v
 
 # Run linting
-ruff check .
+uv run ruff check .
 
 # Run type checking
-mypy plugins/
+uv run mypy plugins/
 
 # Run security scan
-bandit -r plugins/
+uv run bandit -r plugins/
 ```
 
 ## Scaffold New Plugin

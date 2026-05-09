@@ -24,7 +24,6 @@ sys.path.insert(
 
 import ebay_client as ec
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -67,7 +66,9 @@ def ebay_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # ── EBayAuth ──────────────────────────────────────────────────────────────────
 
 
-def test_auth_missing_credentials_exits(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+def test_auth_missing_credentials_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
     monkeypatch.delenv("EBAY_CLIENT_ID", raising=False)
     monkeypatch.delenv("EBAY_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("EBAY_REFRESH_TOKEN", raising=False)
@@ -282,7 +283,9 @@ def test_cmd_publish_returns_review_json(
 ) -> None:
     # Write a fresh token
     token_cache_path.write_text(
-        json.dumps({"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False})
+        json.dumps(
+            {"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False}
+        )
     )
 
     mock_cat_resp = mock.Mock()
@@ -347,7 +350,9 @@ def test_cmd_publish_confirm_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     token_cache_path.write_text(
-        json.dumps({"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False})
+        json.dumps(
+            {"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False}
+        )
     )
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(CONFIRMED_JSON)))
 
@@ -369,8 +374,9 @@ def test_cmd_publish_confirm_success(
 
     call_responses = [upload_resp, upload_resp, inv_resp, offer_create_resp, offer_pub_resp]
 
-    with mock.patch("requests.request", side_effect=call_responses[2:]), mock.patch(
-        "requests.post", side_effect=call_responses[:2]
+    with (
+        mock.patch("requests.request", side_effect=call_responses[2:]),
+        mock.patch("requests.post", side_effect=call_responses[:2]),
     ):
         ec.cmd_publish_confirm(["--folder", str(item_folder)])
 
@@ -400,7 +406,9 @@ def test_cmd_publish_confirm_blocks_at_limit(
     marketplace_base: Path,
 ) -> None:
     token_cache_path.write_text(
-        json.dumps({"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False})
+        json.dumps(
+            {"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False}
+        )
     )
     # Pre-fill limits to max
     limits = ec._load_limits()
@@ -436,9 +444,7 @@ def test_cmd_limits_shows_usage(
     assert out["amount"]["used"] == 245.0
 
 
-def test_cmd_limits_warns_at_80_percent(
-    patch_paths: None, capsys: pytest.CaptureFixture
-) -> None:
+def test_cmd_limits_warns_at_80_percent(patch_paths: None, capsys: pytest.CaptureFixture) -> None:
     limits = ec._load_limits()
     limits["items_listed"] = 17  # 85% of 20
     ec._save_limits(limits)
@@ -493,7 +499,9 @@ def test_cmd_categories_returns_suggestions(
     ebay_env: None, token_cache_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     token_cache_path.write_text(
-        json.dumps({"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False})
+        json.dumps(
+            {"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False}
+        )
     )
 
     mock_resp = mock.Mock()
@@ -555,7 +563,9 @@ def test_cmd_ship_no_ebay_json_exits(
     item_folder: Path, ebay_env: None, token_cache_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     token_cache_path.write_text(
-        json.dumps({"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False})
+        json.dumps(
+            {"access_token": "test-token", "expires_at": time.time() + 3600, "sandbox": False}
+        )
     )
 
     # No ebay.json — but we need to handle that the auth setup happens then order lookup fails
@@ -565,12 +575,16 @@ def test_cmd_ship_no_ebay_json_exits(
     mock_orders_resp.status_code = 200
     mock_orders_resp.json.return_value = {"orders": []}  # No matching order
 
-    with mock.patch("requests.request", return_value=mock_orders_resp):
-        with pytest.raises(SystemExit):
-            ec.cmd_ship([
-                "--folder", str(item_folder),
-                "--tracking", "1Z123456",
-                "--carrier", "UPS",
-            ])
+    with mock.patch("requests.request", return_value=mock_orders_resp), pytest.raises(SystemExit):
+        ec.cmd_ship(
+            [
+                "--folder",
+                str(item_folder),
+                "--tracking",
+                "1Z123456",
+                "--carrier",
+                "UPS",
+            ]
+        )
     out = json.loads(capsys.readouterr().out)
     assert "error" in out

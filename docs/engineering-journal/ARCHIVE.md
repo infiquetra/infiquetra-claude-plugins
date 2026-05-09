@@ -34,6 +34,19 @@
 
 ## Superseded
 
-*(none yet — this section will populate when a `LEARNINGS.md` or `DECISIONS.md` entry is invalidated by new evidence and its pre-correction version is preserved here.)*
+### No `uv.lock` while uv is not canonical  {#superseded-no-uv-lock-decision}
+
+**SUPERSEDED 2026-05-08** by DECISIONS [uv canonical sync](DECISIONS.md#uv-canonical-sync).
+
+**Original decision.** Add `.claude/` to `.gitignore`. Do not track `uv.lock`. Stray `swap-pane` (0-byte file from a tmux operation) deleted as one-off cleanup.
+
+**Original rejected alternatives.**
+- *Track `.claude/settings.local.json`.* Rejected: file holds per-user permission grants for the Claude Code session. Sharing one user's allowed-tool list would either leak local preferences or get blindly overwritten by the next user. The file is named `.local.json` for a reason.
+- *Track `.claude/context/sdlc-plan-state.json`.* Rejected: mid-session orchestration state from `sdlc-manager`. Stale immediately after the session ends; would create misleading commits if pushed.
+- *Track `uv.lock`.* Rejected: `pyproject.toml` declares `requires = ["hatchling"]` with no `[tool.uv]` section. The repo uses hatchling for building and ad hoc `pip`/`uv` invocations for local dev tooling, so there was no reproducible-build promise being made by checking in a uv lockfile. Tracking it would imply uv was part of the build path.
+
+**Original rationale.** `.claude/` content is per-user / per-session by design (settings.local + context state). `uv.lock` would make a build-tool claim the repo was not making at the time. Both were pure noise in the diff and confused contributors about what was authoritative.
+
+**Why superseded.** The repo now adopts uv as the canonical dependency sync path and CI installs from `uv.lock` with `uv sync --locked --extra dev`.
 
 ---

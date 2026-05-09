@@ -11,16 +11,16 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any
 
 
 class SecurityAuditor:
     """Main security auditor class."""
 
-    def __init__(self, project_path: Path, language: Optional[str] = None):
+    def __init__(self, project_path: Path, language: str | None = None):
         self.project_path = project_path
         self.language = language or self._detect_language()
-        self.findings: List[Dict[str, Any]] = []
+        self.findings: list[dict[str, Any]] = []
         self.score = 100
 
     def _detect_language(self) -> str:
@@ -34,7 +34,7 @@ class SecurityAuditor:
         else:
             raise ValueError("Could not detect project language")
 
-    def run_audit(self) -> Dict[str, Any]:
+    def run_audit(self) -> dict[str, Any]:
         """Run complete security audit."""
         print(f"🔍 Running security audit for {self.language.upper()} project...")
 
@@ -68,14 +68,16 @@ class SecurityAuditor:
             if result.returncode != 0:
                 vulnerabilities = json.loads(result.stdout) if result.stdout else []
                 for vuln in vulnerabilities:
-                    self.findings.append({
-                        "type": "vulnerable_dependency",
-                        "severity": "high",
-                        "package": vuln.get("package"),
-                        "version": vuln.get("installed_version"),
-                        "cve": vuln.get("id"),
-                        "description": vuln.get("advisory"),
-                    })
+                    self.findings.append(
+                        {
+                            "type": "vulnerable_dependency",
+                            "severity": "high",
+                            "package": vuln.get("package"),
+                            "version": vuln.get("installed_version"),
+                            "cve": vuln.get("id"),
+                            "description": vuln.get("advisory"),
+                        }
+                    )
                     self.score -= 10
         except (subprocess.TimeoutExpired, FileNotFoundError):
             print("  ⚠️  safety not installed or check failed")
@@ -92,14 +94,16 @@ class SecurityAuditor:
             if result.stdout:
                 bandit_results = json.loads(result.stdout)
                 for issue in bandit_results.get("results", []):
-                    self.findings.append({
-                        "type": "code_issue",
-                        "severity": issue.get("issue_severity", "").lower(),
-                        "file": issue.get("filename"),
-                        "line": issue.get("line_number"),
-                        "description": issue.get("issue_text"),
-                        "cwe": issue.get("issue_cwe", {}).get("id"),
-                    })
+                    self.findings.append(
+                        {
+                            "type": "code_issue",
+                            "severity": issue.get("issue_severity", "").lower(),
+                            "file": issue.get("filename"),
+                            "line": issue.get("line_number"),
+                            "description": issue.get("issue_text"),
+                            "cwe": issue.get("issue_cwe", {}).get("id"),
+                        }
+                    )
                     if issue.get("issue_severity") == "HIGH":
                         self.score -= 5
         except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -118,11 +122,13 @@ class SecurityAuditor:
                 timeout=60,
             )
             if "has the following vulnerable packages" in result.stdout:
-                self.findings.append({
-                    "type": "vulnerable_dependency",
-                    "severity": "high",
-                    "description": "Vulnerable .NET packages detected. Run 'dotnet list package --vulnerable' for details.",
-                })
+                self.findings.append(
+                    {
+                        "type": "vulnerable_dependency",
+                        "severity": "high",
+                        "description": "Vulnerable .NET packages detected. Run 'dotnet list package --vulnerable' for details.",
+                    }
+                )
                 self.score -= 10
         except (subprocess.TimeoutExpired, FileNotFoundError):
             print("  ⚠️  dotnet CLI not available")
@@ -144,12 +150,14 @@ class SecurityAuditor:
                 vulnerabilities = audit_results.get("vulnerabilities", {})
                 for pkg, vuln_info in vulnerabilities.items():
                     severity = vuln_info.get("severity", "low")
-                    self.findings.append({
-                        "type": "vulnerable_dependency",
-                        "severity": severity,
-                        "package": pkg,
-                        "description": vuln_info.get("via", [{}])[0].get("title", ""),
-                    })
+                    self.findings.append(
+                        {
+                            "type": "vulnerable_dependency",
+                            "severity": severity,
+                            "package": pkg,
+                            "description": vuln_info.get("via", [{}])[0].get("title", ""),
+                        }
+                    )
                     if severity in ["critical", "high"]:
                         self.score -= 10
                     elif severity == "medium":
@@ -179,15 +187,19 @@ class SecurityAuditor:
                 try:
                     content = file.read_text().lower()
                     for secret_pattern in secret_patterns:
-                        if f'"{secret_pattern}"' in content or f"'{secret_pattern}'" in content:
-                            # Potential hardcoded secret (simplified check)
-                            if "example" not in str(file) and "test" not in str(file):
-                                self.findings.append({
+                        if (
+                            (f'"{secret_pattern}"' in content or f"'{secret_pattern}'" in content)
+                            and "example" not in str(file)
+                            and "test" not in str(file)
+                        ):
+                            self.findings.append(
+                                {
                                     "type": "potential_secret",
                                     "severity": "medium",
                                     "file": str(file.relative_to(self.project_path)),
                                     "description": f"Potential hardcoded secret pattern: {secret_pattern}",
-                                })
+                                }
+                            )
                 except Exception:
                     continue
 
@@ -197,11 +209,13 @@ class SecurityAuditor:
 
         # Check for SECURITY.md
         if not (self.project_path / "SECURITY.md").exists():
-            self.findings.append({
-                "type": "missing_security_policy",
-                "severity": "low",
-                "description": "Missing SECURITY.md file for vulnerability reporting",
-            })
+            self.findings.append(
+                {
+                    "type": "missing_security_policy",
+                    "severity": "low",
+                    "description": "Missing SECURITY.md file for vulnerability reporting",
+                }
+            )
             self.score -= 5
 
         # Check for proper README
@@ -209,14 +223,16 @@ class SecurityAuditor:
         if readme.exists():
             content = readme.read_text().lower()
             if "security" not in content:
-                self.findings.append({
-                    "type": "missing_security_docs",
-                    "severity": "low",
-                    "description": "README.md missing security section",
-                })
+                self.findings.append(
+                    {
+                        "type": "missing_security_docs",
+                        "severity": "low",
+                        "description": "README.md missing security section",
+                    }
+                )
                 self.score -= 2
 
-    def _generate_report(self) -> Dict[str, Any]:
+    def _generate_report(self) -> dict[str, Any]:
         """Generate security audit report."""
         severity_counts = {
             "critical": 0,
@@ -254,7 +270,7 @@ class SecurityAuditor:
             return "F"
 
 
-def print_report(report: Dict[str, Any], format: str = "text") -> None:
+def print_report(report: dict[str, Any], format: str = "text") -> None:
     """Print security audit report."""
     if format == "json":
         print(json.dumps(report, indent=2))
@@ -279,7 +295,9 @@ def print_report(report: Dict[str, Any], format: str = "text") -> None:
         print("Findings")
         print("-" * 60)
         for i, finding in enumerate(report["findings"][:10], 1):  # Show first 10
-            print(f"{i}. [{finding['severity'].upper()}] {finding.get('description', 'No description')}")
+            print(
+                f"{i}. [{finding['severity'].upper()}] {finding.get('description', 'No description')}"
+            )
             if "file" in finding:
                 print(f"   File: {finding['file']}")
             if "package" in finding:
@@ -309,26 +327,17 @@ def print_report(report: Dict[str, Any], format: str = "text") -> None:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="SDK Security Audit")
-    parser.add_argument(
-        "--project-path",
-        type=Path,
-        default=Path.cwd(),
-        help="Path to SDK project"
-    )
+    parser.add_argument("--project-path", type=Path, default=Path.cwd(), help="Path to SDK project")
     parser.add_argument(
         "--language",
         choices=["python", "dotnet", "typescript"],
-        help="Project language (auto-detected if not specified)"
+        help="Project language (auto-detected if not specified)",
     )
     parser.add_argument(
-        "--report-format",
-        choices=["text", "json"],
-        default="text",
-        help="Report output format"
+        "--report-format", choices=["text", "json"], default="text", help="Report output format"
     )
     parser.add_argument(
-        "--fail-on",
-        help="Comma-separated severities to fail on (e.g., 'critical,high')"
+        "--fail-on", help="Comma-separated severities to fail on (e.g., 'critical,high')"
     )
 
     args = parser.parse_args()

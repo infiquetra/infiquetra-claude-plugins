@@ -6,15 +6,15 @@ Validates plugin manifests and marketplace registry against schemas.
 Ensures all plugins meet quality and structure requirements.
 """
 
+import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-import argparse
 
 
 class Colors:
     """ANSI color codes for terminal output."""
+
     GREEN = "\033[92m"
     RED = "\033[91m"
     YELLOW = "\033[93m"
@@ -52,10 +52,10 @@ class PluginValidator:
         self.plugins_dir = repo_root / "plugins"
         self.marketplace_file = repo_root / ".claude-plugin" / "marketplace.json"
         self.schema_file = repo_root / "marketplace" / "validator" / "schema.json"
-        self.errors: List[str] = []
-        self.warnings: List[str] = []
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
 
-    def validate_all(self) -> Tuple[bool, List[str], List[str]]:
+    def validate_all(self) -> tuple[bool, list[str], list[str]]:
         """
         Validate all plugins and marketplace registry.
 
@@ -77,7 +77,9 @@ class PluginValidator:
 
         # Validate each plugin
         print("\nValidating individual plugins...")
-        plugin_dirs = [d for d in self.plugins_dir.iterdir() if d.is_dir() and d.name != "example-plugin"]
+        plugin_dirs = [
+            d for d in self.plugins_dir.iterdir() if d.is_dir() and d.name != "example-plugin"
+        ]
 
         for plugin_dir in sorted(plugin_dirs):
             plugin_name = plugin_dir.name
@@ -106,11 +108,13 @@ class PluginValidator:
         if success:
             print(f"\n{Colors.GREEN}{Colors.BOLD}✓ All validations passed!{Colors.RESET}\n")
         else:
-            print(f"\n{Colors.RED}{Colors.BOLD}✗ Validation failed with {len(self.errors)} errors{Colors.RESET}\n")
+            print(
+                f"\n{Colors.RED}{Colors.BOLD}✗ Validation failed with {len(self.errors)} errors{Colors.RESET}\n"
+            )
 
         return success, self.errors, self.warnings
 
-    def validate_marketplace_registry(self) -> Tuple[bool, List[str]]:
+    def validate_marketplace_registry(self) -> tuple[bool, list[str]]:
         """Validate the marketplace.json registry file."""
         errors = []
 
@@ -138,7 +142,7 @@ class PluginValidator:
 
         return len(errors) == 0, errors
 
-    def validate_plugin(self, plugin_dir: Path) -> Tuple[bool, List[str], List[str]]:
+    def validate_plugin(self, plugin_dir: Path) -> tuple[bool, list[str], list[str]]:
         """
         Validate an individual plugin.
 
@@ -178,7 +182,9 @@ class PluginValidator:
 
         return len(errors) == 0, errors, warnings
 
-    def _validate_manifest(self, manifest_file: Path, plugin_dir: Path) -> Tuple[List[str], List[str]]:
+    def _validate_manifest(
+        self, manifest_file: Path, plugin_dir: Path
+    ) -> tuple[list[str], list[str]]:
         """Validate plugin.json against schema."""
         errors = []
         warnings = []
@@ -201,6 +207,7 @@ class PluginValidator:
         if schema:
             try:
                 import jsonschema
+
                 jsonschema.validate(manifest, schema)
             except ImportError:
                 warnings.append("jsonschema not installed, skipping schema validation")
@@ -239,7 +246,7 @@ class PluginValidator:
 
         return errors, warnings
 
-    def _validate_marketplace_entry(self, entry: Dict, index: int) -> List[str]:
+    def _validate_marketplace_entry(self, entry: dict, index: int) -> list[str]:
         """Validate a marketplace plugin entry."""
         errors = []
         required = ["name", "version", "source"]
@@ -252,11 +259,15 @@ class PluginValidator:
         if "source" in entry:
             source = entry["source"]
             if not isinstance(source, str):
-                errors.append(f"Plugin {entry.get('name', 'unknown')}: source must be a string path")
+                errors.append(
+                    f"Plugin {entry.get('name', 'unknown')}: source must be a string path"
+                )
             else:
                 plugin_path = self.repo_root / source
                 if not plugin_path.exists():
-                    errors.append(f"Plugin {entry.get('name', 'unknown')}: path not found: {source}")
+                    errors.append(
+                        f"Plugin {entry.get('name', 'unknown')}: path not found: {source}"
+                    )
 
         return errors
 
@@ -264,6 +275,7 @@ class PluginValidator:
     def _is_valid_semver(version: str) -> bool:
         """Check if version follows semantic versioning."""
         import re
+
         pattern = r"^\d+\.\d+\.\d+(-[a-zA-Z0-9]+)?$"
         return bool(re.match(pattern, version))
 
@@ -271,8 +283,13 @@ class PluginValidator:
     def _is_valid_plugin_id(plugin_id: str) -> bool:
         """Check if plugin ID is in kebab-case."""
         import re
+
         pattern = r"^[a-z0-9-]+$"
-        return bool(re.match(pattern, plugin_id)) and not plugin_id.startswith("-") and not plugin_id.endswith("-")
+        return (
+            bool(re.match(pattern, plugin_id))
+            and not plugin_id.startswith("-")
+            and not plugin_id.endswith("-")
+        )
 
 
 def main():

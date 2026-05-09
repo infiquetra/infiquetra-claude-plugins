@@ -61,13 +61,15 @@ def test_load_user_defaults_tolerates_unreadable_file(tmp_defaults_path, capsys)
     tmp_defaults_path.parent.mkdir(parents=True, exist_ok=True)
     # Create with non-UTF-8 bytes so the open()/json.load chain raises
     # UnicodeDecodeError (caught by the widened except clause)
-    tmp_defaults_path.write_bytes(b'\xff\xfe\xfd not valid utf-8')
+    tmp_defaults_path.write_bytes(b"\xff\xfe\xfd not valid utf-8")
     data = sdlc_manager.load_user_defaults()
     assert data == {}
     captured = capsys.readouterr()
     # Either warning text or stderr should mention the issue
-    assert "could not be read" in (captured.out + captured.err).lower() \
+    assert (
+        "could not be read" in (captured.out + captured.err).lower()
         or "malformed" in (captured.out + captured.err).lower()
+    )
 
 
 def test_get_default_returns_None_when_unset(tmp_defaults_path) -> None:
@@ -125,12 +127,12 @@ def test_save_then_load_round_trips(tmp_defaults_path) -> None:
 def test_init_defaults_non_interactive_seeds_from_gh_login(tmp_defaults_path) -> None:
     """--non-interactive: no prompts, just auto-detected values.
     `assignee` comes from `gh api user --jq .login` (NOT $USER)."""
-    with patch.object(sdlc_manager, "_fetch_gh_login", return_value="namredips"), \
-         patch.object(sdlc_manager, "load_config") as mock_cfg:
+    with (
+        patch.object(sdlc_manager, "_fetch_gh_login", return_value="namredips"),
+        patch.object(sdlc_manager, "load_config") as mock_cfg,
+    ):
         mock_cfg.return_value = {
-            "project_mappings": {
-                "projects": {"mount-olympus": {"number": 1, "name": "Olympus"}}
-            }
+            "project_mappings": {"projects": {"mount-olympus": {"number": 1, "name": "Olympus"}}}
         }
         sdlc_manager.config_init_defaults(non_interactive=True, fmt="text")
 
@@ -146,8 +148,10 @@ def test_init_defaults_non_interactive_skips_unset_when_no_gh_login(
 ) -> None:
     """If `gh api user` fails (unauthenticated), assignee should NOT default
     to $USER or any string — it should be omitted so the operator notices."""
-    with patch.object(sdlc_manager, "_fetch_gh_login", return_value=None), \
-         patch.object(sdlc_manager, "load_config") as mock_cfg:
+    with (
+        patch.object(sdlc_manager, "_fetch_gh_login", return_value=None),
+        patch.object(sdlc_manager, "load_config") as mock_cfg,
+    ):
         mock_cfg.return_value = {"project_mappings": {"projects": {}}}
         sdlc_manager.config_init_defaults(non_interactive=True, fmt="text")
 
@@ -160,8 +164,10 @@ def test_init_defaults_non_interactive_skips_default_project_with_multiple_proje
 ) -> None:
     """Auto-detection of default_project ONLY fires when exactly 1 project
     is mapped. With 2+, the operator must choose; we don't guess."""
-    with patch.object(sdlc_manager, "_fetch_gh_login", return_value="namredips"), \
-         patch.object(sdlc_manager, "load_config") as mock_cfg:
+    with (
+        patch.object(sdlc_manager, "_fetch_gh_login", return_value="namredips"),
+        patch.object(sdlc_manager, "load_config") as mock_cfg,
+    ):
         mock_cfg.return_value = {
             "project_mappings": {
                 "projects": {
@@ -183,12 +189,16 @@ def test_init_defaults_preserves_existing_unrecognized_keys(tmp_defaults_path) -
     """A future version of the script may add new defaults keys; an older
     script running --non-interactive must NOT clobber them."""
     tmp_defaults_path.parent.mkdir(parents=True, exist_ok=True)
-    sdlc_manager.save_user_defaults({
-        "assignee": "namredips",
-        "future_key_not_in_schema": "custom-value",
-    })
-    with patch.object(sdlc_manager, "_fetch_gh_login", return_value="namredips"), \
-         patch.object(sdlc_manager, "load_config") as mock_cfg:
+    sdlc_manager.save_user_defaults(
+        {
+            "assignee": "namredips",
+            "future_key_not_in_schema": "custom-value",
+        }
+    )
+    with (
+        patch.object(sdlc_manager, "_fetch_gh_login", return_value="namredips"),
+        patch.object(sdlc_manager, "load_config") as mock_cfg,
+    ):
         mock_cfg.return_value = {"project_mappings": {"projects": {}}}
         sdlc_manager.config_init_defaults(non_interactive=True, fmt="text")
 

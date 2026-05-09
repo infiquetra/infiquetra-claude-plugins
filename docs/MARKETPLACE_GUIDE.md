@@ -151,7 +151,7 @@ Install plugin dependencies:
 
 ```bash
 cd ~/.claude/plugins/infiquetra
-uv pip install -e ".[dev]"
+uv sync --locked --extra dev
 ```
 
 ### Python Version

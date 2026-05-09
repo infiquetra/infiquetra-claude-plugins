@@ -22,7 +22,7 @@ import json
 import os
 import re
 import sys
-from typing import Any
+from typing import Any, cast
 
 try:
     import requests
@@ -141,7 +141,7 @@ class PagerDutyClient:
                 self._error(error_msg, status_code=response.status_code)
                 sys.exit(1)
 
-            return response.json()
+            return cast(dict[str, Any], response.json())
 
         except requests.exceptions.Timeout:
             self._error("Request timeout after 30 seconds")
@@ -185,8 +185,15 @@ class PagerDutyClient:
             items = response.get(key, [])
             if not items:
                 # Try to find the right key automatically
-                for possible_key in ["incidents", "services", "teams", "users",
-                                    "escalation_policies", "schedules", "oncalls"]:
+                for possible_key in [
+                    "incidents",
+                    "services",
+                    "teams",
+                    "users",
+                    "escalation_policies",
+                    "schedules",
+                    "oncalls",
+                ]:
                     if possible_key in response:
                         items = response[possible_key]
                         break
@@ -309,7 +316,9 @@ class PagerDutyClient:
         response = self._request("PUT", f"/incidents/{incident_id}", data=data)
         self._success(response.get("incident", {}), message="Incident resolved")
 
-    def incidents_add_note(self, incident_id: str, content: str, from_email: str | None = None) -> None:
+    def incidents_add_note(
+        self, incident_id: str, content: str, from_email: str | None = None
+    ) -> None:
         """Add a note to an incident.
 
         Args:
@@ -329,7 +338,9 @@ class PagerDutyClient:
         response = self._request("POST", f"/incidents/{incident_id}/notes", data=data)
         self._success(response.get("note", {}), message="Note added to incident")
 
-    def incidents_reassign(self, incident_id: str, user_id: str, from_email: str | None = None) -> None:
+    def incidents_reassign(
+        self, incident_id: str, user_id: str, from_email: str | None = None
+    ) -> None:
         """Reassign an incident to a different user.
 
         Args:
@@ -352,7 +363,9 @@ class PagerDutyClient:
             headers["From"] = from_email
 
         response = self._request("PUT", f"/incidents/{incident_id}", data=data)
-        self._success(response.get("incident", {}), message=f"Incident reassigned to user {user_id}")
+        self._success(
+            response.get("incident", {}), message=f"Incident reassigned to user {user_id}"
+        )
 
     # ===========================
     # SERVICES
@@ -634,7 +647,9 @@ class PagerDutyClient:
             data["escalation_policy"]["teams"] = [{"id": team_id, "type": "team_reference"}]
 
         response = self._request("POST", "/escalation_policies", data=data)
-        self._success(response.get("escalation_policy", {}), message=f"Escalation policy '{name}' created")
+        self._success(
+            response.get("escalation_policy", {}), message=f"Escalation policy '{name}' created"
+        )
 
     def policies_update(
         self,
@@ -665,7 +680,9 @@ class PagerDutyClient:
         }
 
         response = self._request("PUT", f"/escalation_policies/{policy_id}", data=update_data)
-        self._success(response.get("escalation_policy", {}), message=f"Escalation policy {policy_id} updated")
+        self._success(
+            response.get("escalation_policy", {}), message=f"Escalation policy {policy_id} updated"
+        )
 
     def policies_delete(self, policy_id: str) -> None:
         """Delete an escalation policy.
@@ -782,10 +799,16 @@ def main():
 
     # incidents list
     incidents_list_parser = incidents_subparsers.add_parser("list", help="List incidents")
-    incidents_list_parser.add_argument("--status", choices=["triggered", "acknowledged", "resolved"], help="Filter by status")
-    incidents_list_parser.add_argument("--urgency", choices=["high", "low"], help="Filter by urgency")
+    incidents_list_parser.add_argument(
+        "--status", choices=["triggered", "acknowledged", "resolved"], help="Filter by status"
+    )
+    incidents_list_parser.add_argument(
+        "--urgency", choices=["high", "low"], help="Filter by urgency"
+    )
     incidents_list_parser.add_argument("--service-id", help="Filter by service ID")
-    incidents_list_parser.add_argument("--team-id", help="Filter by team ID (defaults to Infiquetra team)")
+    incidents_list_parser.add_argument(
+        "--team-id", help="Filter by team ID (defaults to Infiquetra team)"
+    )
     incidents_list_parser.add_argument("--user-id", help="Filter by assigned user ID")
     incidents_list_parser.add_argument("--since", help="Start date/time (ISO 8601)")
     incidents_list_parser.add_argument("--until", help="End date/time (ISO 8601)")
@@ -796,7 +819,9 @@ def main():
     incidents_get_parser.add_argument("--id", required=True, help="Incident ID")
 
     # incidents acknowledge
-    incidents_ack_parser = incidents_subparsers.add_parser("acknowledge", help="Acknowledge incident")
+    incidents_ack_parser = incidents_subparsers.add_parser(
+        "acknowledge", help="Acknowledge incident"
+    )
     incidents_ack_parser.add_argument("--id", required=True, help="Incident ID")
     incidents_ack_parser.add_argument("--from-email", help="Email of user acknowledging")
 
@@ -812,7 +837,9 @@ def main():
     incidents_note_parser.add_argument("--from-email", help="Email of user adding note")
 
     # incidents reassign
-    incidents_reassign_parser = incidents_subparsers.add_parser("reassign", help="Reassign incident")
+    incidents_reassign_parser = incidents_subparsers.add_parser(
+        "reassign", help="Reassign incident"
+    )
     incidents_reassign_parser.add_argument("--id", required=True, help="Incident ID")
     incidents_reassign_parser.add_argument("--user-id", required=True, help="Target user ID")
     incidents_reassign_parser.add_argument("--from-email", help="Email of user reassigning")
@@ -825,7 +852,9 @@ def main():
 
     # services list
     services_list_parser = services_subparsers.add_parser("list", help="List services")
-    services_list_parser.add_argument("--team-id", help="Filter by team ID (defaults to Infiquetra team)")
+    services_list_parser.add_argument(
+        "--team-id", help="Filter by team ID (defaults to Infiquetra team)"
+    )
     services_list_parser.add_argument("--query", help="Search query")
 
     # services get
@@ -836,7 +865,9 @@ def main():
     services_create_parser = services_subparsers.add_parser("create", help="Create service")
     services_create_parser.add_argument("--name", required=True, help="Service name")
     services_create_parser.add_argument("--description", help="Service description")
-    services_create_parser.add_argument("--escalation-policy-id", help="Escalation policy ID (defaults to Infiquetra policy)")
+    services_create_parser.add_argument(
+        "--escalation-policy-id", help="Escalation policy ID (defaults to Infiquetra policy)"
+    )
 
     # services update
     services_update_parser = services_subparsers.add_parser("update", help="Update service")
@@ -881,9 +912,16 @@ def main():
     # teams members
     teams_members_parser = teams_subparsers.add_parser("members", help="Manage team members")
     teams_members_parser.add_argument("--team-id", required=True, help="Team ID")
-    teams_members_parser.add_argument("--action", choices=["list", "add", "remove"], required=True, help="Member action")
+    teams_members_parser.add_argument(
+        "--action", choices=["list", "add", "remove"], required=True, help="Member action"
+    )
     teams_members_parser.add_argument("--user-id", help="User ID (for add/remove)")
-    teams_members_parser.add_argument("--role", choices=["manager", "responder", "observer"], default="manager", help="User role (for add)")
+    teams_members_parser.add_argument(
+        "--role",
+        choices=["manager", "responder", "observer"],
+        default="manager",
+        help="User role (for add)",
+    )
 
     # ===========================
     # ESCALATION POLICIES
@@ -973,9 +1011,13 @@ def main():
         elif args.action == "resolve":
             client.incidents_resolve(incident_id=args.id, from_email=args.from_email)
         elif args.action == "add-note":
-            client.incidents_add_note(incident_id=args.id, content=args.content, from_email=args.from_email)
+            client.incidents_add_note(
+                incident_id=args.id, content=args.content, from_email=args.from_email
+            )
         elif args.action == "reassign":
-            client.incidents_reassign(incident_id=args.id, user_id=args.user_id, from_email=args.from_email)
+            client.incidents_reassign(
+                incident_id=args.id, user_id=args.user_id, from_email=args.from_email
+            )
 
     elif args.resource == "services":
         if not args.action:

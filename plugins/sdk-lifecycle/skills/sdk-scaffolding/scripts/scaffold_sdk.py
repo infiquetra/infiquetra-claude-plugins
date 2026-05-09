@@ -6,13 +6,11 @@ Generates complete SDK project structure for Python, .NET, or TypeScript.
 """
 
 import argparse
-import os
-import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 
-def create_python_sdk(config: Dict[str, Any]) -> None:
+def create_python_sdk(config: dict[str, Any]) -> None:
     """Create Python SDK project structure."""
     name = config["name"]
     base_dir = Path(name)
@@ -38,8 +36,8 @@ def create_python_sdk(config: Dict[str, Any]) -> None:
     pyproject = f"""[project]
 name = "{name}"
 version = "0.1.0"
-description = "{config['description']}"
-authors = [{{name = "{config['author']}", email = "hello@infiquetra.com"}}]
+description = "{config["description"]}"
+authors = [{{name = "{config["author"]}", email = "hello@infiquetra.com"}}]
 requires-python = ">=3.12"
 readme = "README.md"
 license = {{text = "MIT"}}
@@ -122,7 +120,7 @@ class {to_pascal_case(name)}Client:
 
     def __init__(
         self,
-        base_url: str = "{config['api_url']}",
+        base_url: str = "{config["api_url"]}",
         api_key: Optional[str] = None,
         timeout: float = 30.0,
     ):
@@ -333,7 +331,7 @@ env/
     (base_dir / ".gitignore").write_text(gitignore)
 
     # Create GitHub workflow
-    workflow = f"""name: Test
+    workflow = """name: Test
 
 on: [push, pull_request]
 
@@ -350,7 +348,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{{{ matrix.python-version }}}}
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
@@ -370,13 +368,13 @@ jobs:
     print(f"✅ Python SDK scaffolded: {base_dir}/")
 
 
-def create_dotnet_sdk(config: Dict[str, Any]) -> None:
+def create_dotnet_sdk(config: dict[str, Any]) -> None:
     """Create .NET SDK project structure."""
     print("⚠️  .NET scaffolding not yet implemented. Use 'dotnet new classlib' for now.")
     print("   Reference: references/dotnet-template.md")
 
 
-def create_typescript_sdk(config: Dict[str, Any]) -> None:
+def create_typescript_sdk(config: dict[str, Any]) -> None:
     """Create TypeScript SDK project structure."""
     print("⚠️  TypeScript scaffolding not yet implemented. Use 'npm init' for now.")
     print("   Reference: references/typescript-template.md")
@@ -392,17 +390,10 @@ def main():
     parser = argparse.ArgumentParser(description="Scaffold SDK project")
     parser.add_argument("--name", required=True, help="SDK name (e.g., my-sdk)")
     parser.add_argument(
-        "--language",
-        required=True,
-        choices=["python", "dotnet", "typescript"],
-        help="SDK language"
+        "--language", required=True, choices=["python", "dotnet", "typescript"], help="SDK language"
     )
     parser.add_argument("--description", required=True, help="SDK description")
-    parser.add_argument(
-        "--api-url",
-        default="https://api.example.com",
-        help="Base API URL"
-    )
+    parser.add_argument("--api-url", default="https://api.example.com", help="Base API URL")
     parser.add_argument("--author", default="Infiquetra Team", help="Author name")
 
     args = parser.parse_args()

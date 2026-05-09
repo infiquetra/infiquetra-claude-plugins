@@ -1,12 +1,18 @@
 """Unit tests for splunk_client.py."""
 
-import pytest
 import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "plugins" / "splunk" / "skills" / "splunk-search" / "scripts"))
+import pytest
+
+sys.path.insert(
+    0,
+    str(
+        Path(__file__).parent.parent / "plugins" / "splunk" / "skills" / "splunk-search" / "scripts"
+    ),
+)
 
 from splunk_client import SplunkClient
 
@@ -64,9 +70,7 @@ class TestSplunkClient:
         # Mock status response (done)
         status_response = MagicMock()
         status_response.status_code = 200
-        status_response.json.return_value = {
-            "entry": [{"content": {"isDone": True}}]
-        }
+        status_response.json.return_value = {"entry": [{"content": {"isDone": True}}]}
 
         # Mock results response
         results_response = MagicMock()

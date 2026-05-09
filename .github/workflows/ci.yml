@@ -1,0 +1,292 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - 'v*.*.*'
+      - 'plugins/*/v*.*.*'
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Tests (Python 3.12)
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Run tests with coverage
+        run: uv run python -m pytest -v --cov=plugins --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 5
+
+  validate:
+    name: Validate Plugins
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Validate plugin manifests
+        run: uv run python scripts/validate_plugins.py
+
+      - name: Validate marketplace registry
+        run: uv run python marketplace/validator/validate.py
+
+  lint:
+    name: Lint
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Run ruff check
+        run: uv run python -m ruff check .
+
+      - name: Run ruff format check
+        run: uv run python -m ruff format --check .
+
+  type-check:
+    name: Type Check
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Run mypy
+        run: uv run python -m mypy plugins/ scripts/ tests/ --ignore-missing-imports
+
+  security:
+    name: Security Scan
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Run bandit security scan
+        run: uv run python -m bandit -r plugins/ scripts/ tests/ -ll -f json -o bandit-report.json || true
+
+      - name: Report security findings
+        if: always()
+        run: |
+          if [ -f bandit-report.json ]; then
+            cat bandit-report.json
+          else
+            echo "No bandit report generated"
+          fi
+
+  publish:
+    name: Publish Plugin
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+    needs: [tests, validate, lint, type-check, security]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Extract release information
+        id: release
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+
+          if [[ "$REF_NAME" == plugins/* ]]; then
+            PLUGIN=$(echo "$REF_NAME" | cut -d'/' -f2)
+            VERSION=$(echo "$REF_NAME" | cut -d'/' -f3)
+            echo "plugin=$PLUGIN" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "type=plugin" >> "$GITHUB_OUTPUT"
+            echo "Plugin release: $PLUGIN $VERSION"
+          else
+            VERSION="$REF_NAME"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "type=marketplace" >> "$GITHUB_OUTPUT"
+            echo "Marketplace release: $VERSION"
+          fi
+
+      - name: Validate plugin before release
+        if: steps.release.outputs.type == 'plugin'
+        run: uv run python marketplace/validator/validate.py
+
+      - name: Extract changelog
+        id: changelog
+        if: steps.release.outputs.type == 'plugin'
+        env:
+          PLUGIN_NAME: ${{ steps.release.outputs.plugin }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if [ -f "plugins/$PLUGIN_NAME/CHANGELOG.md" ]; then
+            CHANGELOG=$(sed -n "/## \[$RELEASE_VERSION\]/,/## \[/p" "plugins/$PLUGIN_NAME/CHANGELOG.md" | sed '$ d')
+            echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "changelog=No changelog available" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ steps.release.outputs.type == 'plugin' && format('{0} {1}', steps.release.outputs.plugin, steps.release.outputs.version) || format('Marketplace {0}', steps.release.outputs.version) }}
+          body: |
+            ${{ steps.release.outputs.type == 'plugin' && format('## {0} {1}', steps.release.outputs.plugin, steps.release.outputs.version) || format('## Infiquetra Plugin Marketplace {0}', steps.release.outputs.version) }}
+
+            ${{ steps.changelog.outputs.changelog || 'See CHANGELOG.md for details.' }}
+
+            ---
+
+            ### Installation
+
+            ```bash
+            # Install from marketplace
+            /plugin install ${{ steps.release.outputs.plugin }}
+            ```
+
+            ### Documentation
+            - [Plugin README](https://github.com/infiquetra/infiquetra-claude-plugins/tree/main/plugins/${{ steps.release.outputs.plugin }})
+            - [Marketplace Guide](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/docs/MARKETPLACE_GUIDE.md)
+          draft: false
+          prerelease: ${{ contains(steps.release.outputs.version, 'alpha') || contains(steps.release.outputs.version, 'beta') || contains(steps.release.outputs.version, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Slack
+        if: success()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          RELEASE_TYPE: ${{ steps.release.outputs.type }}
+          PLUGIN_NAME: ${{ steps.release.outputs.plugin }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK" ]; then
+            python - <<'PY' > slack-payload.json
+          import json
+          import os
+
+          release_type = os.environ["RELEASE_TYPE"]
+          plugin_name = os.environ.get("PLUGIN_NAME", "")
+          release_version = os.environ["RELEASE_VERSION"]
+          ref_name = os.environ["REF_NAME"]
+          if release_type == "plugin":
+              message = f"New plugin release: {plugin_name} {release_version}"
+          else:
+              message = f"New marketplace release: {release_version}"
+
+          print(json.dumps({
+              "channel": "",
+              "text": message,
+              "attachments": [{
+                  "color": "good",
+                  "fields": [{
+                      "title": "Release",
+                      "value": ref_name,
+                      "short": True,
+                  }, {
+                      "title": "Repository",
+                      "value": "claude-plugins",
+                      "short": True,
+                  }],
+              }],
+          }))
+          PY
+            curl -X POST "$SLACK_WEBHOOK" \
+              -H 'Content-Type: application/json' \
+              --data @slack-payload.json
+          else
+            echo "SLACK_WEBHOOK not configured, skipping notification"
+          fi
+
+      - name: Update marketplace index
+        if: steps.release.outputs.type == 'plugin'
+        env:
+          PLUGIN_NAME: ${{ steps.release.outputs.plugin }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          echo "Marketplace index update would happen here"
+          echo "Plugin: $PLUGIN_NAME"
+          echo "Version: $RELEASE_VERSION"

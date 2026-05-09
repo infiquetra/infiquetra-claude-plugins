@@ -4,17 +4,26 @@ import json
 import sys
 from io import StringIO
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
 # Add script directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "plugins" / "marketplace-lister" / "skills" / "marketplace-list" / "scripts"))
+sys.path.insert(
+    0,
+    str(
+        Path(__file__).parent.parent
+        / "plugins"
+        / "marketplace-lister"
+        / "skills"
+        / "marketplace-list"
+        / "scripts"
+    ),
+)
 
 import marketplace_client as mc
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def icloud_root(tmp_path: Path) -> Path:
@@ -59,6 +68,7 @@ def patch_paths(icloud_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 # ── _photos_in ────────────────────────────────────────────────────────────────
 
+
 def test_photos_in_returns_only_images(item_folder: Path) -> None:
     photos = mc._photos_in(item_folder)
     names = {p.name for p in photos}
@@ -72,6 +82,7 @@ def test_photos_in_empty_folder(tmp_path: Path) -> None:
 
 
 # ── _dated_slug ───────────────────────────────────────────────────────────────
+
 
 def test_dated_slug_format() -> None:
     slug = mc._dated_slug("My Cool Item")
@@ -88,7 +99,10 @@ def test_dated_slug_format() -> None:
 
 # ── cmd_init ──────────────────────────────────────────────────────────────────
 
-def test_init_creates_dirs(icloud_root: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+
+def test_init_creates_dirs(
+    icloud_root: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     mc.cmd_init([])
     out = json.loads(capsys.readouterr().out)
     assert out["success"] is True
@@ -96,14 +110,18 @@ def test_init_creates_dirs(icloud_root: Path, patch_paths: None, capsys: pytest.
     assert (icloud_root / "Marketplace" / "unidentified").exists()
 
 
-def test_init_already_exists(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_init_already_exists(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     mc.cmd_init([])
     out = json.loads(capsys.readouterr().out)
     assert out["success"] is True
     assert out["created"] == []  # nothing new created
 
 
-def test_init_no_icloud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+def test_init_no_icloud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
     # iCloud root does not exist
     fake_icloud = tmp_path / "nonexistent"
     monkeypatch.setattr(mc, "ICLOUD_BASE", fake_icloud)
@@ -118,7 +136,10 @@ def test_init_no_icloud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys:
 
 # ── cmd_scan ──────────────────────────────────────────────────────────────────
 
-def test_scan_lists_folders(marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+
+def test_scan_lists_folders(
+    marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     mc.cmd_scan([])
     out = json.loads(capsys.readouterr().out)
     assert out["count"] == 1
@@ -126,7 +147,9 @@ def test_scan_lists_folders(marketplace_dirs: tuple, item_folder: Path, patch_pa
     assert out["folders"][0]["photo_count"] == 2
 
 
-def test_scan_empty_inbox(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_scan_empty_inbox(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     mc.cmd_scan([])
     out = json.loads(capsys.readouterr().out)
     assert out["count"] == 0
@@ -151,7 +174,10 @@ def test_scan_missing_inbox(patch_paths: None, capsys: pytest.CaptureFixture) ->
 
 # ── cmd_photos ────────────────────────────────────────────────────────────────
 
-def test_photos_lists_images(item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+
+def test_photos_lists_images(
+    item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     mc.cmd_photos(["--folder", str(item_folder)])
     out = json.loads(capsys.readouterr().out)
     assert out["count"] == 2
@@ -165,7 +191,9 @@ def test_photos_no_args(capsys: pytest.CaptureFixture) -> None:
         mc.cmd_photos([])
 
 
-def test_photos_inbox_relative(marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_photos_inbox_relative(
+    marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     # Use just the folder name (relative to inbox)
     mc.cmd_photos(["my-drill"])
     out = json.loads(capsys.readouterr().out)
@@ -174,7 +202,10 @@ def test_photos_inbox_relative(marketplace_dirs: tuple, item_folder: Path, patch
 
 # ── cmd_organize ──────────────────────────────────────────────────────────────
 
-def test_organize_moves_folder(marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+
+def test_organize_moves_folder(
+    marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     base, _, _ = marketplace_dirs
     mc.cmd_organize(["--source", str(item_folder), "--name", "dewalt-drill"])
     out = json.loads(capsys.readouterr().out)
@@ -185,7 +216,9 @@ def test_organize_moves_folder(marketplace_dirs: tuple, item_folder: Path, patch
     assert "dewalt-drill" in new_path.name
 
 
-def test_organize_dest_already_exists(marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_organize_dest_already_exists(
+    marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     base, _, _ = marketplace_dirs
     # Manually create destination
     mc.cmd_organize(["--source", str(item_folder), "--name", "dewalt-drill"])
@@ -206,7 +239,10 @@ def test_organize_missing_args(capsys: pytest.CaptureFixture) -> None:
 
 # ── cmd_unidentified ──────────────────────────────────────────────────────────
 
-def test_unidentified_moves_folder(marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+
+def test_unidentified_moves_folder(
+    marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     _, _, unidentified = marketplace_dirs
     mc.cmd_unidentified(["--source", str(item_folder)])
     out = json.loads(capsys.readouterr().out)
@@ -238,7 +274,9 @@ SAMPLE_LISTING_JSON = {
 }
 
 
-def test_listing_writes_file(tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_writes_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON)))
     mc.cmd_listing(["--folder", str(tmp_path)])
     out = json.loads(capsys.readouterr().out)
@@ -251,7 +289,9 @@ def test_listing_writes_file(tmp_path: Path, capsys: pytest.CaptureFixture, monk
     assert "Thursday" in content
 
 
-def test_listing_invalid_json(tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_invalid_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("sys.stdin", StringIO("not valid json"))
     with pytest.raises(SystemExit):
         mc.cmd_listing(["--folder", str(tmp_path)])
@@ -259,12 +299,16 @@ def test_listing_invalid_json(tmp_path: Path, capsys: pytest.CaptureFixture, mon
     assert "error" in out
 
 
-def test_listing_missing_folder(capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_missing_folder(
+    capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with pytest.raises(SystemExit):
         mc.cmd_listing([])
 
 
-def test_listing_nonexistent_folder(capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_nonexistent_folder(
+    capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON)))
     with pytest.raises(SystemExit):
         mc.cmd_listing(["--folder", "/nonexistent/path/that/does/not/exist"])
@@ -274,7 +318,10 @@ def test_listing_nonexistent_folder(capsys: pytest.CaptureFixture, monkeypatch: 
 
 # ── cmd_status ────────────────────────────────────────────────────────────────
 
-def test_status_lists_organized_items(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+
+def test_status_lists_organized_items(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     base, _, _ = marketplace_dirs
     # Create organized item folders
     item1 = base / "2026-03-09-yeti-cooler"
@@ -299,7 +346,9 @@ def test_status_lists_organized_items(marketplace_dirs: tuple, patch_paths: None
     assert drill["has_listing"] is False
 
 
-def test_status_excludes_inbox_and_unidentified(marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_status_excludes_inbox_and_unidentified(
+    marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     mc.cmd_status([])
     out = json.loads(capsys.readouterr().out)
     folders = [i["folder"] for i in out["items"]]
@@ -316,7 +365,10 @@ def test_status_not_initialized(patch_paths: None, capsys: pytest.CaptureFixture
 
 # ── cmd_scan (loose photos) ───────────────────────────────────────────────────
 
-def test_scan_reports_loose_photos(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+
+def test_scan_reports_loose_photos(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     _, inbox, _ = marketplace_dirs
     # Place a loose photo directly in inbox (not in subfolder)
     (inbox / "IMG_2670.jpg").write_bytes(b"fake")
@@ -326,7 +378,9 @@ def test_scan_reports_loose_photos(marketplace_dirs: tuple, patch_paths: None, c
     assert "IMG_2670.jpg" in out["loose_photos"]
 
 
-def test_scan_no_loose_photos(marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_scan_no_loose_photos(
+    marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     mc.cmd_scan([])
     out = json.loads(capsys.readouterr().out)
     assert out["loose_count"] == 0
@@ -335,7 +389,10 @@ def test_scan_no_loose_photos(marketplace_dirs: tuple, item_folder: Path, patch_
 
 # ── cmd_group ─────────────────────────────────────────────────────────────────
 
-def test_group_single_item(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+
+def test_group_single_item(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     _, inbox, _ = marketplace_dirs
     (inbox / "IMG_2670.jpg").write_bytes(b"fake")
     (inbox / "IMG_2671.jpg").write_bytes(b"fake")
@@ -347,7 +404,9 @@ def test_group_single_item(marketplace_dirs: tuple, patch_paths: None, capsys: p
     assert out["groups"][0]["count"] == 3
 
 
-def test_group_splits_on_sequence_gap(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_group_splits_on_sequence_gap(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     _, inbox, _ = marketplace_dirs
     # Gap of 10 between IMG_2672 and IMG_2682 should create two groups
     (inbox / "IMG_2670.jpg").write_bytes(b"fake")
@@ -362,7 +421,9 @@ def test_group_splits_on_sequence_gap(marketplace_dirs: tuple, patch_paths: None
     assert out["groups"][1]["count"] == 2
 
 
-def test_group_no_gap_keeps_together(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_group_no_gap_keeps_together(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     _, inbox, _ = marketplace_dirs
     # Gap of 3 (< threshold of 5) should stay as one group
     (inbox / "IMG_2670.jpg").write_bytes(b"fake")
@@ -372,7 +433,9 @@ def test_group_no_gap_keeps_together(marketplace_dirs: tuple, patch_paths: None,
     assert out["group_count"] == 1
 
 
-def test_group_no_loose_photos(marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_group_no_loose_photos(
+    marketplace_dirs: tuple, item_folder: Path, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     # item_folder has photos in a subfolder — no loose photos
     mc.cmd_group([])
     out = json.loads(capsys.readouterr().out)
@@ -387,7 +450,10 @@ def test_group_missing_inbox(patch_paths: None, capsys: pytest.CaptureFixture) -
 
 # ── cmd_create_folder ─────────────────────────────────────────────────────────
 
-def test_create_folder_moves_photos(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+
+def test_create_folder_moves_photos(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     _, inbox, _ = marketplace_dirs
     (inbox / "IMG_2670.jpg").write_bytes(b"fake")
     (inbox / "IMG_2671.jpg").write_bytes(b"fake")
@@ -400,7 +466,9 @@ def test_create_folder_moves_photos(marketplace_dirs: tuple, patch_paths: None, 
     assert not (inbox / "IMG_2670.jpg").exists()
 
 
-def test_create_folder_reports_missing_photos(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_create_folder_reports_missing_photos(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     _, inbox, _ = marketplace_dirs
     (inbox / "IMG_2670.jpg").write_bytes(b"fake")
     mc.cmd_create_folder(["--name", "router", "--photos", "IMG_2670.jpg,IMG_9999.jpg"])
@@ -411,7 +479,9 @@ def test_create_folder_reports_missing_photos(marketplace_dirs: tuple, patch_pat
     assert "warning" in out
 
 
-def test_create_folder_error_if_exists(marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture) -> None:
+def test_create_folder_error_if_exists(
+    marketplace_dirs: tuple, patch_paths: None, capsys: pytest.CaptureFixture
+) -> None:
     _, inbox, _ = marketplace_dirs
     (inbox / "router").mkdir()
     (inbox / "IMG_2670.jpg").write_bytes(b"fake")
@@ -459,7 +529,9 @@ SAMPLE_LISTING_JSON_MULTI = {
 }
 
 
-def test_listing_multi_platform_writes_both_sections(tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_multi_platform_writes_both_sections(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON_MULTI)))
     mc.cmd_listing(["--folder", str(tmp_path)])
     out = json.loads(capsys.readouterr().out)
@@ -478,7 +550,9 @@ def test_listing_multi_platform_writes_both_sections(tmp_path: Path, capsys: pyt
     assert "═" in post_content  # platform headers present
 
 
-def test_listing_shipping_section_in_listing_md(tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_shipping_section_in_listing_md(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON_MULTI)))
     mc.cmd_listing(["--folder", str(tmp_path)])
     capsys.readouterr()
@@ -487,7 +561,9 @@ def test_listing_shipping_section_in_listing_md(tmp_path: Path, capsys: pytest.C
     assert "USPS Ground Advantage" in content
 
 
-def test_listing_fb_only_legacy_format(tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_fb_only_legacy_format(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # FB-only listing should use legacy format (no ═ headers in post.md)
     fb_only = {**SAMPLE_LISTING_JSON, "platforms": ["fb"]}
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(fb_only)))
@@ -499,7 +575,10 @@ def test_listing_fb_only_legacy_format(tmp_path: Path, capsys: pytest.CaptureFix
 
 # ── cmd_copy (platform-aware) ─────────────────────────────────────────────────
 
-def test_copy_fb_description_from_multi_platform(tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+
+def test_copy_fb_description_from_multi_platform(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Write multi-platform post.md
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON_MULTI)))
     mc.cmd_listing(["--folder", str(tmp_path)])
@@ -511,7 +590,9 @@ def test_copy_fb_description_from_multi_platform(tmp_path: Path, capsys: pytest.
     assert "#cisco" not in output  # Mercari hashtags not in FB description
 
 
-def test_copy_mercari_description_from_multi_platform(tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_copy_mercari_description_from_multi_platform(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON_MULTI)))
     mc.cmd_listing(["--folder", str(tmp_path)])
     capsys.readouterr()
@@ -521,7 +602,9 @@ def test_copy_mercari_description_from_multi_platform(tmp_path: Path, capsys: py
     assert "#cisco" in output
 
 
-def test_copy_fb_title_from_multi_platform(tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_copy_fb_title_from_multi_platform(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON_MULTI)))
     mc.cmd_listing(["--folder", str(tmp_path)])
     capsys.readouterr()
@@ -531,7 +614,9 @@ def test_copy_fb_title_from_multi_platform(tmp_path: Path, capsys: pytest.Captur
     assert output == "Cisco SG300-28 Managed Switch - Good"
 
 
-def test_copy_legacy_format_still_works(tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_copy_legacy_format_still_works(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Write a legacy single-platform post.md (FB only, no ═ headers)
     monkeypatch.setattr("sys.stdin", StringIO(json.dumps(SAMPLE_LISTING_JSON)))
     mc.cmd_listing(["--folder", str(tmp_path)])
@@ -553,6 +638,7 @@ def test_copy_missing_post_md(tmp_path: Path, capsys: pytest.CaptureFixture) -> 
 
 
 # ── _extract_seq ──────────────────────────────────────────────────────────────
+
 
 def test_extract_seq_img_format() -> None:
     assert mc._extract_seq("IMG_2670.JPG") == 2670

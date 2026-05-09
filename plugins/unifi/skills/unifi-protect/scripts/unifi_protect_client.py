@@ -191,14 +191,10 @@ class UnifiProtectClient:
             self._error("Request timeout after 30 seconds")
             sys.exit(1)
         except requests.exceptions.SSLError:
-            self._error(
-                "SSL verification failed. Set verify_ssl=True or check certificate."
-            )
+            self._error("SSL verification failed. Set verify_ssl=True or check certificate.")
             sys.exit(1)
         except requests.exceptions.ConnectionError:
-            self._error(
-                f"Cannot reach UDM at {self.host}. Check network connectivity."
-            )
+            self._error(f"Cannot reach UDM at {self.host}. Check network connectivity.")
             sys.exit(1)
         except Exception as e:
             self._error(f"Unexpected error: {str(e)}")
@@ -470,14 +466,20 @@ def main() -> None:
     cameras_get_parser.add_argument("--id", required=True, help="Camera ID")
 
     # cameras snapshot
-    cameras_snapshot_parser = cameras_subparsers.add_parser("snapshot", help="Capture a JPEG snapshot")
+    cameras_snapshot_parser = cameras_subparsers.add_parser(
+        "snapshot", help="Capture a JPEG snapshot"
+    )
     cameras_snapshot_parser.add_argument("--id", required=True, help="Camera ID")
-    cameras_snapshot_parser.add_argument("--output", help="File path to save snapshot (optional; returns base64 if omitted)")
+    cameras_snapshot_parser.add_argument(
+        "--output", help="File path to save snapshot (optional; returns base64 if omitted)"
+    )
 
     # cameras update
     cameras_update_parser = cameras_subparsers.add_parser("update", help="Update camera settings")
     cameras_update_parser.add_argument("--id", required=True, help="Camera ID")
-    cameras_update_parser.add_argument("--json", required=True, dest="json_data", help="JSON object of fields to update")
+    cameras_update_parser.add_argument(
+        "--json", required=True, dest="json_data", help="JSON object of fields to update"
+    )
 
     # ===========================
     # LIVEVIEWS
@@ -494,12 +496,16 @@ def main() -> None:
 
     # liveviews create
     liveviews_create_parser = liveviews_subparsers.add_parser("create", help="Create a liveview")
-    liveviews_create_parser.add_argument("--json", required=True, dest="json_data", help="JSON object for liveview configuration")
+    liveviews_create_parser.add_argument(
+        "--json", required=True, dest="json_data", help="JSON object for liveview configuration"
+    )
 
     # liveviews update
     liveviews_update_parser = liveviews_subparsers.add_parser("update", help="Update a liveview")
     liveviews_update_parser.add_argument("--id", required=True, help="Liveview ID")
-    liveviews_update_parser.add_argument("--json", required=True, dest="json_data", help="JSON object of fields to update")
+    liveviews_update_parser.add_argument(
+        "--json", required=True, dest="json_data", help="JSON object of fields to update"
+    )
 
     # liveviews delete
     liveviews_delete_parser = liveviews_subparsers.add_parser("delete", help="Delete a liveview")
@@ -521,7 +527,9 @@ def main() -> None:
     # lights update
     lights_update_parser = lights_subparsers.add_parser("update", help="Update light settings")
     lights_update_parser.add_argument("--id", required=True, help="Light ID")
-    lights_update_parser.add_argument("--json", required=True, dest="json_data", help="JSON object of fields to update")
+    lights_update_parser.add_argument(
+        "--json", required=True, dest="json_data", help="JSON object of fields to update"
+    )
 
     # ===========================
     # SENSORS
@@ -539,7 +547,9 @@ def main() -> None:
     # sensors update
     sensors_update_parser = sensors_subparsers.add_parser("update", help="Update sensor settings")
     sensors_update_parser.add_argument("--id", required=True, help="Sensor ID")
-    sensors_update_parser.add_argument("--json", required=True, dest="json_data", help="JSON object of fields to update")
+    sensors_update_parser.add_argument(
+        "--json", required=True, dest="json_data", help="JSON object of fields to update"
+    )
 
     # ===========================
     # CHIMES
@@ -557,7 +567,9 @@ def main() -> None:
     # chimes update
     chimes_update_parser = chimes_subparsers.add_parser("update", help="Update chime settings")
     chimes_update_parser.add_argument("--id", required=True, help="Chime ID")
-    chimes_update_parser.add_argument("--json", required=True, dest="json_data", help="JSON object of fields to update")
+    chimes_update_parser.add_argument(
+        "--json", required=True, dest="json_data", help="JSON object of fields to update"
+    )
 
     # ===========================
     # VIEWERS
@@ -575,7 +587,9 @@ def main() -> None:
     # viewers update
     viewers_update_parser = viewers_subparsers.add_parser("update", help="Update viewer settings")
     viewers_update_parser.add_argument("--id", required=True, help="Viewer ID")
-    viewers_update_parser.add_argument("--json", required=True, dest="json_data", help="JSON object of fields to update")
+    viewers_update_parser.add_argument(
+        "--json", required=True, dest="json_data", help="JSON object of fields to update"
+    )
 
     # Parse arguments
     args = parser.parse_args()

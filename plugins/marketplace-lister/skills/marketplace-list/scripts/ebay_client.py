@@ -30,6 +30,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any, cast
 
 import requests
 
@@ -101,7 +102,9 @@ class EBayAuth:
             if not val
         ]
         if missing:
-            _error(f"Missing eBay credentials: {', '.join(missing)}. See references/ebay-fields.md.")
+            _error(
+                f"Missing eBay credentials: {', '.join(missing)}. See references/ebay-fields.md."
+            )
 
     def get_access_token(self) -> str:
         """Return a valid access token, refreshing from eBay if expired."""
@@ -120,7 +123,7 @@ class EBayAuth:
                 data = json.loads(TOKEN_CACHE_FILE.read_text())
                 # Don't reuse a production token for sandbox or vice versa
                 if data.get("sandbox") == self.sandbox:
-                    return data
+                    return cast(dict[str, Any], data)
             except (json.JSONDecodeError, KeyError):
                 pass
         return None
@@ -130,9 +133,7 @@ class EBayAuth:
         return float(time.time()) >= float(token_data.get("expires_at", 0)) - 60
 
     def _refresh_access_token(self) -> str:
-        credentials = base64.b64encode(
-            f"{self.client_id}:{self.client_secret}".encode()
-        ).decode()
+        credentials = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
 
         response = requests.post(
             self.token_url,
@@ -336,9 +337,12 @@ class EBayAPI:
 
 def _mime_type(path: Path) -> str:
     ext = path.suffix.lower()
-    return {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(
-        ext.lstrip("."), "image/jpeg"
-    )
+    return {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "webp": "image/webp",
+    }.get(ext.lstrip("."), "image/jpeg")
 
 
 def _maybe_convert_heic(path: Path) -> bytes:
@@ -629,9 +633,7 @@ def cmd_publish_confirm(args: list[str]) -> None:
         "availableQuantity": 1,
         "categoryId": category_id,
         "listingDescription": ebay_description,
-        "pricingSummary": {
-            "price": {"currency": "USD", "value": f"{price:.2f}"}
-        },
+        "pricingSummary": {"price": {"currency": "USD", "value": f"{price:.2f}"}},
     }
     if fulfillment_policy_id:
         offer_data.setdefault("listingPolicies", {})["fulfillmentPolicyId"] = fulfillment_policy_id
@@ -799,9 +801,7 @@ def cmd_revise(args: list[str]) -> None:
 def cmd_ship(args: list[str]) -> None:
     """Add shipping fulfillment after a sale."""
     if "--folder" not in args or "--tracking" not in args or "--carrier" not in args:
-        _error(
-            "Usage: ebay_client.py ship --folder <path> --tracking <number> --carrier <name>"
-        )
+        _error("Usage: ebay_client.py ship --folder <path> --tracking <number> --carrier <name>")
         return
 
     folder = Path(args[args.index("--folder") + 1])
@@ -906,7 +906,9 @@ def cmd_limits(_args: list[str]) -> None:
         "listings": limits.get("listings", []),
     }
     if item_pct >= 80 or amount_pct >= 80:
-        result["warning"] = "Approaching monthly limits. Consider requesting a limit increase from eBay."
+        result["warning"] = (
+            "Approaching monthly limits. Consider requesting a limit increase from eBay."
+        )
     _success(result)
 
 

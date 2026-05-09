@@ -1,9 +1,8 @@
 """Unit tests for sdlc_manager.py."""
 
-import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,10 +14,10 @@ sys.path.insert(
 
 import sdlc_manager
 
-
 # ===========================
 # Helpers
 # ===========================
+
 
 def make_subprocess_result(stdout="", stderr="", returncode=0):
     """Create a mock subprocess.CompletedProcess."""
@@ -32,6 +31,7 @@ def make_subprocess_result(stdout="", stderr="", returncode=0):
 # ===========================
 # _gh wrapper tests
 # ===========================
+
 
 class TestGhWrapper:
     """Tests for the _gh CLI wrapper."""
@@ -61,9 +61,7 @@ class TestGhWrapper:
 
     def test_gh_failure_raises(self, monkeypatch):
         """gh returns RuntimeError on non-zero exit."""
-        mock_run = MagicMock(return_value=make_subprocess_result(
-            stderr="not found", returncode=1
-        ))
+        mock_run = MagicMock(return_value=make_subprocess_result(stderr="not found", returncode=1))
         monkeypatch.setattr("subprocess.run", mock_run)
 
         with pytest.raises(RuntimeError, match="gh command failed"):
@@ -73,6 +71,7 @@ class TestGhWrapper:
 # ===========================
 # Metrics: cycle time percentile calculation
 # ===========================
+
 
 class TestMetricsCycleTime:
     """Tests for metrics_cycle_time percentile math."""
@@ -84,34 +83,32 @@ class TestMetricsCycleTime:
         """P50/P85/P95 are correct for a known 10-item dataset."""
         mock_config.return_value = {
             "project_mappings": {
-                "projects": {
-                    "mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}
-                }
+                "projects": {"mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}}
             }
         }
 
         # Build 10 deployed items with known cycle times
         cycle_days = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
         items = []
-        for i, days in enumerate(cycle_days):
-            items.append({
-                "id": f"item-{i}",
-                "createdAt": "2026-01-01T00:00:00Z",
-                "updatedAt": "2026-01-15T00:00:00Z",
-                "content": {
-                    "number": i + 1,
-                    "title": f"Item {i + 1}",
-                    "url": "",
-                    "state": "CLOSED",
-                    "labels": {"nodes": [{"name": "capability"}]},
-                    "repository": {"name": "test-repo"},
-                },
-                "fieldValues": {
-                    "nodes": [
-                        {"name": "Deployed", "field": {"name": "Status", "id": "F1"}}
-                    ]
-                },
-            })
+        for i, _days in enumerate(cycle_days):
+            items.append(
+                {
+                    "id": f"item-{i}",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "updatedAt": "2026-01-15T00:00:00Z",
+                    "content": {
+                        "number": i + 1,
+                        "title": f"Item {i + 1}",
+                        "url": "",
+                        "state": "CLOSED",
+                        "labels": {"nodes": [{"name": "capability"}]},
+                        "repository": {"name": "test-repo"},
+                    },
+                    "fieldValues": {
+                        "nodes": [{"name": "Deployed", "field": {"name": "Status", "id": "F1"}}]
+                    },
+                }
+            )
 
         mock_items.return_value = ("P1", items)
 
@@ -120,7 +117,11 @@ class TestMetricsCycleTime:
             days = cycle_days[number - 1]
             return [
                 {"at": "2026-01-01T00:00:00Z", "from": "", "to": "In Development"},
-                {"at": f"2026-01-{int(1 + days):02d}T00:00:00Z", "from": "In Development", "to": "Deployed"},
+                {
+                    "at": f"2026-01-{int(1 + days):02d}T00:00:00Z",
+                    "from": "In Development",
+                    "to": "Deployed",
+                },
             ]
 
         mock_times.side_effect = fake_times
@@ -139,9 +140,7 @@ class TestMetricsCycleTime:
         """No deployed items should print a message, not crash."""
         mock_config.return_value = {
             "project_mappings": {
-                "projects": {
-                    "mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}
-                }
+                "projects": {"mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}}
             }
         }
         mock_items.return_value = ("P1", [])
@@ -158,40 +157,42 @@ class TestMetricsCycleTime:
         """Percentile calculation handles fewer than 7 items without crashing."""
         mock_config.return_value = {
             "project_mappings": {
-                "projects": {
-                    "mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}
-                }
+                "projects": {"mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}}
             }
         }
 
         # Only 3 items
         items = []
         for i in range(3):
-            items.append({
-                "id": f"item-{i}",
-                "createdAt": "2026-01-01T00:00:00Z",
-                "updatedAt": "2026-01-15T00:00:00Z",
-                "content": {
-                    "number": i + 1,
-                    "title": f"Item {i + 1}",
-                    "url": "",
-                    "state": "CLOSED",
-                    "labels": {"nodes": [{"name": "capability"}]},
-                    "repository": {"name": "test-repo"},
-                },
-                "fieldValues": {
-                    "nodes": [
-                        {"name": "Deployed", "field": {"name": "Status", "id": "F1"}}
-                    ]
-                },
-            })
+            items.append(
+                {
+                    "id": f"item-{i}",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "updatedAt": "2026-01-15T00:00:00Z",
+                    "content": {
+                        "number": i + 1,
+                        "title": f"Item {i + 1}",
+                        "url": "",
+                        "state": "CLOSED",
+                        "labels": {"nodes": [{"name": "capability"}]},
+                        "repository": {"name": "test-repo"},
+                    },
+                    "fieldValues": {
+                        "nodes": [{"name": "Deployed", "field": {"name": "Status", "id": "F1"}}]
+                    },
+                }
+            )
 
         mock_items.return_value = ("P1", items)
 
         def fake_times(org, repo, number):
             return [
                 {"at": "2026-01-01T00:00:00Z", "from": "", "to": "In Development"},
-                {"at": f"2026-01-{number + 1:02d}T00:00:00Z", "from": "In Development", "to": "Deployed"},
+                {
+                    "at": f"2026-01-{number + 1:02d}T00:00:00Z",
+                    "from": "In Development",
+                    "to": "Deployed",
+                },
             ]
 
         mock_times.side_effect = fake_times
@@ -208,6 +209,7 @@ class TestMetricsCycleTime:
 # Board: archive dry-run
 # ===========================
 
+
 class TestBoardArchive:
     """Tests for board_archive dry-run behavior."""
 
@@ -218,9 +220,7 @@ class TestBoardArchive:
         """Dry-run lists items but does not call the archive mutation."""
         mock_config.return_value = {
             "project_mappings": {
-                "projects": {
-                    "mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}
-                }
+                "projects": {"mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}}
             }
         }
 
@@ -234,9 +234,7 @@ class TestBoardArchive:
                     "repository": {"name": "athena-service"},
                 },
                 "fieldValues": {
-                    "nodes": [
-                        {"name": "Deployed", "field": {"name": "Status", "id": "F1"}}
-                    ]
+                    "nodes": [{"name": "Deployed", "field": {"name": "Status", "id": "F1"}}]
                 },
             },
             {
@@ -248,9 +246,7 @@ class TestBoardArchive:
                     "repository": {"name": "athena-service"},
                 },
                 "fieldValues": {
-                    "nodes": [
-                        {"name": "In Development", "field": {"name": "Status", "id": "F1"}}
-                    ]
+                    "nodes": [{"name": "In Development", "field": {"name": "Status", "id": "F1"}}]
                 },
             },
         ]
@@ -274,9 +270,7 @@ class TestBoardArchive:
         """Non-dry-run actually calls the archive mutation."""
         mock_config.return_value = {
             "project_mappings": {
-                "projects": {
-                    "mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}
-                }
+                "projects": {"mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}}
             }
         }
 
@@ -290,9 +284,7 @@ class TestBoardArchive:
                     "repository": {"name": "athena-service"},
                 },
                 "fieldValues": {
-                    "nodes": [
-                        {"name": "Deployed", "field": {"name": "Status", "id": "F1"}}
-                    ]
+                    "nodes": [{"name": "Deployed", "field": {"name": "Status", "id": "F1"}}]
                 },
             },
         ]
@@ -317,6 +309,7 @@ class TestBoardArchive:
 # WIP limits: configurable
 # ===========================
 
+
 class TestWipLimitsConfigurable:
     """Tests for configurable WIP limits from legacy_rollout_config.
 
@@ -332,9 +325,7 @@ class TestWipLimitsConfigurable:
         """WIP limits from legacy_rollout_config override defaults."""
         mock_config.return_value = {
             "project_mappings": {
-                "projects": {
-                    "mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}
-                }
+                "projects": {"mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}}
             },
             "legacy_rollout_config": {
                 "wip_limits": {
@@ -365,9 +356,7 @@ class TestWipLimitsConfigurable:
         """Missing wip_limits in legacy_rollout_config falls back to defaults."""
         mock_config.return_value = {
             "project_mappings": {
-                "projects": {
-                    "mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}
-                }
+                "projects": {"mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}}
             },
             "legacy_rollout_config": {},
         }

@@ -103,7 +103,7 @@ python3 plugins/slack/skills/slack-messaging/scripts/slack_client.py message \
 
 ### Prerequisites
 - Python 3.12+
-- uv (recommended) or pip
+- uv
 
 ### Setup
 ```bash
@@ -111,16 +111,16 @@ git clone git@github.com:infiquetra/infiquetra-claude-plugins.git
 cd infiquetra-claude-plugins
 
 # Install dependencies
-uv pip install -e ".[dev]"
+uv sync --locked --extra dev
 
 # Run tests
-pytest
+uv run pytest
 
 # Run linting
-ruff check .
+uv run ruff check .
 
 # Run type checking
-mypy plugins/
+uv run mypy plugins/
 ```
 
 ### Adding a New Plugin

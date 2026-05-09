@@ -1,14 +1,22 @@
 """Unit tests for test_runner.py."""
 
-import pytest
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 import sys
+from pathlib import Path
 
 # Add plugin skills directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "plugins" / "test-suite" / "skills" / "run-quality-checks" / "scripts"))
+sys.path.insert(
+    0,
+    str(
+        Path(__file__).parent.parent
+        / "plugins"
+        / "test-suite"
+        / "skills"
+        / "run-quality-checks"
+        / "scripts"
+    ),
+)
 
-from test_runner import QualityCheckRunner, CheckResult
+from test_runner import CheckResult, QualityCheckRunner
 
 
 class TestTestRunner:

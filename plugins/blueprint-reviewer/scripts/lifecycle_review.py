@@ -40,6 +40,7 @@ By convention, the script lives at:
 And the rubrics live at:
   <plugin-cache>/rubrics/<phase>/{core,extras}/<slug>.md
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,10 +48,9 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
-
+from typing import cast
 
 # ─── Paths ────────────────────────────────────────────────────────────────
 
@@ -103,7 +103,9 @@ def _parse_yaml_simple(block: str) -> dict:
             inner = val[1:-1].strip()
             items = [s.strip().strip("\"'") for s in inner.split(",") if s.strip()]
             out[key] = items
-        elif (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        elif (val.startswith('"') and val.endswith('"')) or (
+            val.startswith("'") and val.endswith("'")
+        ):
             out[key] = val[1:-1]
         else:
             out[key] = val
@@ -144,7 +146,7 @@ def rubrics_for_phase(phase: str, tier: str) -> list[Rubric]:
     )
 
 
-def find_rubric(phase: str, slug: str) -> Optional[Rubric]:
+def find_rubric(phase: str, slug: str) -> Rubric | None:
     """Find a rubric by slug across both core and extras tiers."""
     for tier in ("core", "extras"):
         path = RUBRICS_DIR / phase / tier / f"{slug}.md"
@@ -196,7 +198,7 @@ def _format_log_entry(
     date: str,
     slug: str,
     score: float,
-    pr_url: Optional[str],
+    pr_url: str | None,
     headline: str,
 ) -> str:
     """Format a single review-log entry line.
@@ -205,11 +207,8 @@ def _format_log_entry(
       infiquetra-sdlc/docs/lifecycle/ideation-to-pr.md
     """
     score_str = f"({score:.1f})"
-    if pr_url:
-        link = f" — [comment]({pr_url})"
-    else:
-        link = ""
-    return f"- {date} — {slug} {score_str}{link} — \"{headline}\""
+    link = f" — [comment]({pr_url})" if pr_url else ""
+    return f'- {date} — {slug} {score_str}{link} — "{headline}"'
 
 
 def _ensure_markers(text: str) -> str:
@@ -220,11 +219,7 @@ def _ensure_markers(text: str) -> str:
     if REVIEW_LOG_START in text and REVIEW_LOG_END in text:
         return text
     sep = "" if text.endswith("\n") else "\n"
-    block = (
-        f"\n{REVIEW_LOG_START}\n"
-        "### Review log\n"
-        f"{REVIEW_LOG_END}\n"
-    )
+    block = f"\n{REVIEW_LOG_START}\n### Review log\n{REVIEW_LOG_END}\n"
     return text + sep + block
 
 
@@ -235,7 +230,7 @@ def cmd_log_append_section(args: argparse.Namespace) -> int:
         return 1
     text = target.read_text()
     text = _ensure_markers(text)
-    date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date = args.date or datetime.now(UTC).strftime("%Y-%m-%d")
     entry = _format_log_entry(
         date=date,
         slug=args.reviewer,
@@ -311,7 +306,7 @@ def cmd_adr_review_write(args: argparse.Namespace) -> int:
         return 1
     reviews_dir = _adr_reviews_dir(adr_path)
     reviews_dir.mkdir(parents=True, exist_ok=True)
-    date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date = args.date or datetime.now(UTC).strftime("%Y-%m-%d")
     out_path = reviews_dir / f"{date}-{args.reviewer}.md"
     if out_path.exists():
         # Don't clobber existing reviews — append a counter suffix.
@@ -363,7 +358,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_rlc.add_argument("--json", action="store_true", help="Emit JSON list of slugs")
     p_rlc.set_defaults(func=cmd_rubrics_list_cores)
 
-    p_rle = sub_rub.add_parser("list-extras", help="List conditional-applicability rubrics for a phase")
+    p_rle = sub_rub.add_parser(
+        "list-extras", help="List conditional-applicability rubrics for a phase"
+    )
     p_rle.add_argument("--phase", required=True, choices=["idea", "spec", "issue"])
     p_rle.add_argument("--json", action="store_true", help="Emit JSON list of slugs")
     p_rle.set_defaults(func=cmd_rubrics_list_extras)
@@ -402,7 +399,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_aw.add_argument("adr_path")
     p_aw.add_argument("--reviewer", required=True)
     p_aw.add_argument("--score", required=True, type=float)
-    p_aw.add_argument("--content-file", required=True, help="Path to file with the review body markdown")
+    p_aw.add_argument(
+        "--content-file", required=True, help="Path to file with the review body markdown"
+    )
     p_aw.add_argument("--date", help="Override date (default: today UTC)")
     p_aw.add_argument("--phase", help="Phase (default: idea)")
     p_aw.add_argument("--verdict", help="PROCEED|REVISE|BLOCK (default: PROCEED)")
@@ -418,7 +417,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    return cast(int, args.func(args))
 
 
 if __name__ == "__main__":

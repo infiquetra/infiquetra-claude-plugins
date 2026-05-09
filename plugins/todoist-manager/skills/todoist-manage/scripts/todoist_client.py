@@ -20,8 +20,9 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from todoist_api_python.models import Comment, Label, Project, Section, Task
@@ -33,10 +34,11 @@ try:
 except ImportError:
     TodoistAPI = None
 
+
 class TodoistClient:
     """Wrapper for Todoist API operations with JSON output."""
 
-    def __init__(self, token: Optional[str] = None):
+    def __init__(self, token: str | None = None):
         """Initialize the Todoist client.
 
         Args:
@@ -49,10 +51,12 @@ class TodoistClient:
 
         if TodoistAPI is None:
             print(
-                json.dumps({
-                    "error": "todoist-api-python not installed",
-                    "message": "Install with: pip install 'todoist-api-python>=3.1.0,<4.0.0'",
-                }),
+                json.dumps(
+                    {
+                        "error": "todoist-api-python not installed",
+                        "message": "Install with: pip install 'todoist-api-python>=3.1.0,<4.0.0'",
+                    }
+                ),
                 flush=True,
             )
             sys.exit(1)
@@ -75,7 +79,7 @@ class TodoistClient:
         output.update(kwargs)
         print(json.dumps(output, indent=2, default=str))
 
-    def _collect(self, iterator: Iterator) -> List[Any]:
+    def _collect(self, iterator: Iterator) -> list[Any]:
         """Collect all pages from an iterator.
 
         The SDK returns Iterator[list[T]] for paginated results.
@@ -93,7 +97,7 @@ class TodoistClient:
             sys.exit(1)
         return results
 
-    def _task_to_dict(self, task: Task) -> Dict[str, Any]:
+    def _task_to_dict(self, task: Task) -> dict[str, Any]:
         """Convert Task object to dict with nested object handling."""
         task_dict = {
             "id": task.id,
@@ -134,7 +138,7 @@ class TodoistClient:
 
         return task_dict
 
-    def _project_to_dict(self, project: Project) -> Dict[str, Any]:
+    def _project_to_dict(self, project: Project) -> dict[str, Any]:
         """Convert Project object to dict."""
         return {
             "id": project.id,
@@ -156,7 +160,7 @@ class TodoistClient:
             "folder_id": project.folder_id,
         }
 
-    def _section_to_dict(self, section: Section) -> Dict[str, Any]:
+    def _section_to_dict(self, section: Section) -> dict[str, Any]:
         """Convert Section object to dict."""
         return {
             "id": section.id,
@@ -165,7 +169,7 @@ class TodoistClient:
             "name": section.name,
         }
 
-    def _label_to_dict(self, label: Label) -> Dict[str, Any]:
+    def _label_to_dict(self, label: Label) -> dict[str, Any]:
         """Convert Label object to dict."""
         return {
             "id": label.id,
@@ -175,7 +179,7 @@ class TodoistClient:
             "is_favorite": label.is_favorite,
         }
 
-    def _comment_to_dict(self, comment: Comment) -> Dict[str, Any]:
+    def _comment_to_dict(self, comment: Comment) -> dict[str, Any]:
         """Convert Comment object to dict."""
         return {
             "id": comment.id,
@@ -207,9 +211,14 @@ class TodoistClient:
                 queue.append(child_id)
         return descendants
 
-    def tasks_list(self, project_id: Optional[str] = None, section_id: Optional[str] = None,
-                   label: Optional[str] = None, ids: Optional[List[str]] = None,
-                   include_child_projects: bool = False) -> None:
+    def tasks_list(
+        self,
+        project_id: str | None = None,
+        section_id: str | None = None,
+        label: str | None = None,
+        ids: list[str] | None = None,
+        include_child_projects: bool = False,
+    ) -> None:
         """List tasks with optional filters."""
         try:
             if include_child_projects and project_id:
@@ -261,17 +270,27 @@ class TodoistClient:
             self._error(f"Failed to get task: {str(e)}", task_id=task_id)
             sys.exit(1)
 
-    def tasks_add(self, content: str, description: Optional[str] = None,
-                  project_id: Optional[str] = None, section_id: Optional[str] = None,
-                  parent_id: Optional[str] = None, order: Optional[int] = None,
-                  labels: Optional[List[str]] = None, priority: Optional[int] = None,
-                  due_string: Optional[str] = None, due_date: Optional[str] = None,
-                  due_datetime: Optional[str] = None, due_lang: Optional[str] = None,
-                  assignee_id: Optional[str] = None, duration: Optional[int] = None,
-                  duration_unit: Optional[str] = None) -> None:
+    def tasks_add(
+        self,
+        content: str,
+        description: str | None = None,
+        project_id: str | None = None,
+        section_id: str | None = None,
+        parent_id: str | None = None,
+        order: int | None = None,
+        labels: list[str] | None = None,
+        priority: int | None = None,
+        due_string: str | None = None,
+        due_date: str | None = None,
+        due_datetime: str | None = None,
+        due_lang: str | None = None,
+        assignee_id: str | None = None,
+        duration: int | None = None,
+        duration_unit: str | None = None,
+    ) -> None:
         """Add a new task."""
         try:
-            kwargs = {"content": content}
+            kwargs: dict[str, Any] = {"content": content}
             if description:
                 kwargs["description"] = description
             if project_id:
@@ -315,15 +334,24 @@ class TodoistClient:
             self._error(f"Failed to quick-add task: {str(e)}", text=text)
             sys.exit(1)
 
-    def tasks_update(self, task_id: str, content: Optional[str] = None,
-                     description: Optional[str] = None, labels: Optional[List[str]] = None,
-                     priority: Optional[int] = None, due_string: Optional[str] = None,
-                     due_date: Optional[str] = None, due_datetime: Optional[str] = None,
-                     due_lang: Optional[str] = None, assignee_id: Optional[str] = None,
-                     duration: Optional[int] = None, duration_unit: Optional[str] = None) -> None:
+    def tasks_update(
+        self,
+        task_id: str,
+        content: str | None = None,
+        description: str | None = None,
+        labels: list[str] | None = None,
+        priority: int | None = None,
+        due_string: str | None = None,
+        due_date: str | None = None,
+        due_datetime: str | None = None,
+        due_lang: str | None = None,
+        assignee_id: str | None = None,
+        duration: int | None = None,
+        duration_unit: str | None = None,
+    ) -> None:
         """Update an existing task."""
         try:
-            kwargs = {}
+            kwargs: dict[str, Any] = {}
             if content:
                 kwargs["content"] = content
             if description:
@@ -431,12 +459,17 @@ class TodoistClient:
             self._error(f"Failed to get project: {str(e)}", project_id=project_id)
             sys.exit(1)
 
-    def projects_add(self, name: str, parent_id: Optional[str] = None,
-                     color: Optional[str] = None, is_favorite: Optional[bool] = None,
-                     view_style: Optional[str] = None) -> None:
+    def projects_add(
+        self,
+        name: str,
+        parent_id: str | None = None,
+        color: str | None = None,
+        is_favorite: bool | None = None,
+        view_style: str | None = None,
+    ) -> None:
         """Add a new project."""
         try:
-            kwargs = {"name": name}
+            kwargs: dict[str, Any] = {"name": name}
             if parent_id:
                 kwargs["parent_id"] = parent_id
             if color:
@@ -452,12 +485,17 @@ class TodoistClient:
             self._error(f"Failed to add project: {str(e)}")
             sys.exit(1)
 
-    def projects_update(self, project_id: str, name: Optional[str] = None,
-                        color: Optional[str] = None, is_favorite: Optional[bool] = None,
-                        view_style: Optional[str] = None) -> None:
+    def projects_update(
+        self,
+        project_id: str,
+        name: str | None = None,
+        color: str | None = None,
+        is_favorite: bool | None = None,
+        view_style: str | None = None,
+    ) -> None:
         """Update an existing project."""
         try:
-            kwargs = {}
+            kwargs: dict[str, Any] = {}
             if name:
                 kwargs["name"] = name
             if color:
@@ -495,10 +533,10 @@ class TodoistClient:
     # SECTIONS
     # ===========================
 
-    def sections_list(self, project_id: Optional[str] = None) -> None:
+    def sections_list(self, project_id: str | None = None) -> None:
         """List sections, optionally filtered by project."""
         try:
-            kwargs = {}
+            kwargs: dict[str, Any] = {}
             if project_id:
                 kwargs["project_id"] = project_id
 
@@ -519,10 +557,10 @@ class TodoistClient:
             self._error(f"Failed to get section: {str(e)}", section_id=section_id)
             sys.exit(1)
 
-    def sections_add(self, name: str, project_id: str, order: Optional[int] = None) -> None:
+    def sections_add(self, name: str, project_id: str, order: int | None = None) -> None:
         """Add a new section to a project."""
         try:
-            kwargs = {"name": name, "project_id": project_id}
+            kwargs: dict[str, Any] = {"name": name, "project_id": project_id}
             if order is not None:
                 kwargs["order"] = order
 
@@ -583,11 +621,16 @@ class TodoistClient:
             self._error(f"Failed to get label: {str(e)}", label_id=label_id)
             sys.exit(1)
 
-    def labels_add(self, name: str, color: Optional[str] = None,
-                   order: Optional[int] = None, is_favorite: Optional[bool] = None) -> None:
+    def labels_add(
+        self,
+        name: str,
+        color: str | None = None,
+        order: int | None = None,
+        is_favorite: bool | None = None,
+    ) -> None:
         """Add a new label."""
         try:
-            kwargs = {"name": name}
+            kwargs: dict[str, Any] = {"name": name}
             if color:
                 kwargs["color"] = color
             if order is not None:
@@ -601,12 +644,17 @@ class TodoistClient:
             self._error(f"Failed to add label: {str(e)}")
             sys.exit(1)
 
-    def labels_update(self, label_id: str, name: Optional[str] = None,
-                      color: Optional[str] = None, order: Optional[int] = None,
-                      is_favorite: Optional[bool] = None) -> None:
+    def labels_update(
+        self,
+        label_id: str,
+        name: str | None = None,
+        color: str | None = None,
+        order: int | None = None,
+        is_favorite: bool | None = None,
+    ) -> None:
         """Update an existing label."""
         try:
-            kwargs = {}
+            kwargs: dict[str, Any] = {}
             if name:
                 kwargs["name"] = name
             if color:
@@ -644,10 +692,10 @@ class TodoistClient:
     # COMMENTS
     # ===========================
 
-    def comments_list(self, task_id: Optional[str] = None, project_id: Optional[str] = None) -> None:
+    def comments_list(self, task_id: str | None = None, project_id: str | None = None) -> None:
         """List comments for a task or project."""
         try:
-            kwargs = {}
+            kwargs: dict[str, Any] = {}
             if task_id:
                 kwargs["task_id"] = task_id
             if project_id:
@@ -670,11 +718,12 @@ class TodoistClient:
             self._error(f"Failed to get comment: {str(e)}", comment_id=comment_id)
             sys.exit(1)
 
-    def comments_add(self, content: str, task_id: Optional[str] = None,
-                     project_id: Optional[str] = None) -> None:
+    def comments_add(
+        self, content: str, task_id: str | None = None, project_id: str | None = None
+    ) -> None:
         """Add a comment to a task or project."""
         try:
-            kwargs = {"content": content}
+            kwargs: dict[str, Any] = {"content": content}
             if task_id:
                 kwargs["task_id"] = task_id
             if project_id:
@@ -775,7 +824,7 @@ class TodoistClient:
         """Generate daily summary: completed today + remaining today."""
         try:
             # Get today's date range
-            today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = today_start + timedelta(days=1)
 
             # Fetch completed tasks for today
@@ -788,8 +837,10 @@ class TodoistClient:
                 for page in completed_iterator:
                     for task in page:
                         # Filter by completion date
-                        if hasattr(task, 'completed_at'):
-                            completed_at = datetime.fromisoformat(task.completed_at.replace('Z', '+00:00'))
+                        if hasattr(task, "completed_at"):
+                            completed_at = datetime.fromisoformat(
+                                task.completed_at.replace("Z", "+00:00")
+                            )
                             if today_start <= completed_at < today_end:
                                 completed_today.append(self._task_to_dict(task))
             except Exception:
@@ -844,8 +895,9 @@ def main():
     tasks_list_parser.add_argument("--label", help="Filter by label name")
     tasks_list_parser.add_argument("--ids", nargs="+", help="Specific task IDs")
     tasks_list_parser.add_argument(
-        "--include-child-projects", action="store_true",
-        help="Include tasks from all child projects (requires --project-id)"
+        "--include-child-projects",
+        action="store_true",
+        help="Include tasks from all child projects (requires --project-id)",
     )
 
     # tasks filter
@@ -865,14 +917,18 @@ def main():
     tasks_add_parser.add_argument("--parent-id", help="Parent task ID")
     tasks_add_parser.add_argument("--order", type=int, help="Task order")
     tasks_add_parser.add_argument("--labels", nargs="+", help="Label names")
-    tasks_add_parser.add_argument("--priority", type=int, choices=[1, 2, 3, 4], help="Priority (1=normal, 4=urgent)")
+    tasks_add_parser.add_argument(
+        "--priority", type=int, choices=[1, 2, 3, 4], help="Priority (1=normal, 4=urgent)"
+    )
     tasks_add_parser.add_argument("--due-string", help="Due date in natural language")
     tasks_add_parser.add_argument("--due-date", help="Due date (YYYY-MM-DD)")
     tasks_add_parser.add_argument("--due-datetime", help="Due datetime (RFC3339)")
     tasks_add_parser.add_argument("--due-lang", help="Language for due string")
     tasks_add_parser.add_argument("--assignee-id", help="Assignee ID")
     tasks_add_parser.add_argument("--duration", type=int, help="Duration amount")
-    tasks_add_parser.add_argument("--duration-unit", choices=["minute", "day"], help="Duration unit")
+    tasks_add_parser.add_argument(
+        "--duration-unit", choices=["minute", "day"], help="Duration unit"
+    )
 
     # tasks quick-add
     tasks_quick_add_parser = tasks_subparsers.add_parser("quick-add", help="Quick add task")
@@ -891,7 +947,9 @@ def main():
     tasks_update_parser.add_argument("--due-lang", help="Language for due string")
     tasks_update_parser.add_argument("--assignee-id", help="Assignee ID")
     tasks_update_parser.add_argument("--duration", type=int, help="Duration amount")
-    tasks_update_parser.add_argument("--duration-unit", choices=["minute", "day"], help="Duration unit")
+    tasks_update_parser.add_argument(
+        "--duration-unit", choices=["minute", "day"], help="Duration unit"
+    )
 
     # tasks complete
     tasks_complete_parser = tasks_subparsers.add_parser("complete", help="Complete a task")
@@ -906,7 +964,9 @@ def main():
     tasks_delete_parser.add_argument("--task-id", required=True, help="Task ID")
 
     # tasks subtasks
-    tasks_subtasks_parser = tasks_subparsers.add_parser("subtasks", help="Get subtasks for a parent task")
+    tasks_subtasks_parser = tasks_subparsers.add_parser(
+        "subtasks", help="Get subtasks for a parent task"
+    )
     tasks_subtasks_parser.add_argument("--parent-id", required=True, help="Parent task ID")
 
     # ===========================
@@ -935,8 +995,12 @@ def main():
     projects_update_parser.add_argument("--project-id", required=True, help="Project ID")
     projects_update_parser.add_argument("--name", help="New name")
     projects_update_parser.add_argument("--color", help="New color")
-    projects_update_parser.add_argument("--is-favorite", action="store_true", help="Mark as favorite")
-    projects_update_parser.add_argument("--view-style", choices=["list", "board"], help="View style")
+    projects_update_parser.add_argument(
+        "--is-favorite", action="store_true", help="Mark as favorite"
+    )
+    projects_update_parser.add_argument(
+        "--view-style", choices=["list", "board"], help="View style"
+    )
 
     # projects delete
     projects_delete_parser = projects_subparsers.add_parser("delete", help="Delete a project")

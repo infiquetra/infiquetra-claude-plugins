@@ -96,9 +96,11 @@ def test_init_without_todoist_sdk_exits_with_install_message(monkeypatch, capsys
 def test_init_when_api_creation_fails_exits_with_json_error(monkeypatch, capsys):
     monkeypatch.setenv("TODOIST_TOKEN", "test-token")
 
-    with patch("todoist_client.TodoistAPI", side_effect=Exception("boom")):
-        with pytest.raises(SystemExit) as exc_info:
-            TodoistClient()
+    with (
+        patch("todoist_client.TodoistAPI", side_effect=Exception("boom")),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        TodoistClient()
 
     assert exc_info.value.code == 1
     output = json.loads(capsys.readouterr().out)

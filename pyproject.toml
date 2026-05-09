@@ -23,7 +23,10 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "bandit>=1.7",
+    "jsonschema>=4.0",
     "safety>=3.0.0",
+    "types-PyYAML>=6.0",
+    "types-requests>=2.31",
 ]
 ebay = [
     "Pillow>=10.0",
@@ -70,9 +73,4 @@ omit = ["*/tests/*"]
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
-]
-
-[dependency-groups]
-dev = [
-    "pytest-cov>=7.1.0",
 ]

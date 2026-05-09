@@ -143,9 +143,9 @@ def test_required_headers_match_actual_issue_templates() -> None:
     templates use 'Out-of-scope / non-goals' (with '/'), and no test was
     pinning the contract end-to-end."""
     import os
+
     sdlc_path = Path(
-        os.environ.get("INFIQUETRA_SDLC_PATH",
-                       Path.home() / "workspace/infiquetra/infiquetra-sdlc")
+        os.environ.get("INFIQUETRA_SDLC_PATH", Path.home() / "workspace/infiquetra/infiquetra-sdlc")
     )
     template_dir = sdlc_path / ".github" / "ISSUE_TEMPLATE"
     if not template_dir.exists():
@@ -153,10 +153,12 @@ def test_required_headers_match_actual_issue_templates() -> None:
         # build agent without the sibling repo). The drift guard runs in
         # CI when the repos are checked out together.
         import pytest
+
         pytest.skip(f"Templates not at {template_dir}; skipping drift check")
 
     # Extract `label:` strings from the 3 actionable templates
     import re as _re
+
     template_headers: dict[str, set[str]] = {}
     for tmpl in ("capability.yml", "enhancement.yml", "defect.yml"):
         text = (template_dir / tmpl).read_text()

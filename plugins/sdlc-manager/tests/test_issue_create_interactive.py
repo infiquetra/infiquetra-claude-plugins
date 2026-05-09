@@ -133,8 +133,10 @@ def test_prompt_choice_warns_on_invalid_value(capsys) -> None:
         )
         assert result is None
     captured = capsys.readouterr()
-    assert "not in" in (captured.out + captured.err).lower() \
+    assert (
+        "not in" in (captured.out + captured.err).lower()
         or "skipping" in (captured.out + captured.err).lower()
+    )
 
 
 # --- _prompt_paired_card ---------------------------------------------------
@@ -169,17 +171,23 @@ def test_paired_card_recursion_guard() -> None:
     operator types yes-yes-yes."""
     # We mock everything below the paired-card check so the test only
     # exercises the recursion-suppression branch.
-    with patch.object(sdlc_manager, "load_user_defaults", return_value={}), \
-         patch.object(sdlc_manager, "load_config", return_value={"project_mappings": {"projects": {}}}), \
-         patch.object(sdlc_manager, "get_projects_for_repo", return_value=[]), \
-         patch.object(sdlc_manager, "_prompt_parent_issue", return_value=None), \
-         patch.object(sdlc_manager, "_open_gh_issue_create_web"), \
-         patch.object(sdlc_manager, "_prompt_issue_number", return_value=42), \
-         patch.object(sdlc_manager, "_apply_post_create_metadata"), \
-         patch.object(sdlc_manager, "_prompt_paired_card") as mock_paired, \
-         patch("builtins.input", return_value="y"):  # confirm "Open browser?"
+    with (
+        patch.object(sdlc_manager, "load_user_defaults", return_value={}),
+        patch.object(
+            sdlc_manager, "load_config", return_value={"project_mappings": {"projects": {}}}
+        ),
+        patch.object(sdlc_manager, "get_projects_for_repo", return_value=[]),
+        patch.object(sdlc_manager, "_prompt_parent_issue", return_value=None),
+        patch.object(sdlc_manager, "_open_gh_issue_create_web"),
+        patch.object(sdlc_manager, "_prompt_issue_number", return_value=42),
+        patch.object(sdlc_manager, "_apply_post_create_metadata"),
+        patch.object(sdlc_manager, "_prompt_paired_card") as mock_paired,
+        patch("builtins.input", return_value="y"),
+    ):  # confirm "Open browser?"
         sdlc_manager.issue_create(
-            "campps-mvp", "capability", "text",
+            "campps-mvp",
+            "capability",
+            "text",
             _in_paired_card=True,
         )
     # The paired-card prompt must NOT have been called when recursing
@@ -192,11 +200,13 @@ def test_paired_card_recursion_guard() -> None:
 def test_metadata_applies_hermes_task_for_actionable_types() -> None:
     """Capability/enhancement/defect/exploration/context-update get
     `hermes-task`; objective gets `hermes-not-actionable`."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "board_add"), \
-         patch.object(sdlc_manager, "flow_set_field"), \
-         patch.object(sdlc_manager, "flow_link_sub_issue"), \
-         patch.object(sdlc_manager, "load_config", return_value={}):
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+        patch.object(sdlc_manager, "flow_link_sub_issue"),
+        patch.object(sdlc_manager, "load_config", return_value={}),
+    ):
         sdlc_manager._apply_post_create_metadata(
             repo="campps-mvp",
             issue_number=42,
@@ -216,11 +226,13 @@ def test_metadata_applies_hermes_task_for_actionable_types() -> None:
 
 def test_metadata_applies_hermes_not_actionable_for_objective() -> None:
     """Objective is the explicit non-actionable type."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "board_add"), \
-         patch.object(sdlc_manager, "flow_set_field"), \
-         patch.object(sdlc_manager, "flow_link_sub_issue"), \
-         patch.object(sdlc_manager, "load_config", return_value={}):
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+        patch.object(sdlc_manager, "flow_link_sub_issue"),
+        patch.object(sdlc_manager, "load_config", return_value={}),
+    ):
         sdlc_manager._apply_post_create_metadata(
             repo="campps-blueprint",
             issue_number=1,
@@ -244,11 +256,13 @@ def test_metadata_applies_hermes_not_actionable_for_objective() -> None:
 def test_metadata_label_failure_does_not_abort_other_steps() -> None:
     """If the hermes-task label apply fails, the project field assignment
     + sub-issue link should still be attempted. Each step is isolated."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "board_add") as mock_board, \
-         patch.object(sdlc_manager, "flow_set_field") as mock_set_field, \
-         patch.object(sdlc_manager, "flow_link_sub_issue") as mock_link, \
-         patch.object(sdlc_manager, "load_config", return_value={}):
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "board_add") as mock_board,
+        patch.object(sdlc_manager, "flow_set_field") as mock_set_field,
+        patch.object(sdlc_manager, "flow_link_sub_issue") as mock_link,
+        patch.object(sdlc_manager, "load_config", return_value={}),
+    ):
         # First call (label apply) fails; downstream calls still happen
         mock_gh.side_effect = sdlc_manager.GhApiError("label apply failed")
         sdlc_manager._apply_post_create_metadata(
@@ -271,11 +285,13 @@ def test_metadata_label_failure_does_not_abort_other_steps() -> None:
 def test_metadata_skips_field_apply_when_no_project() -> None:
     """If the repo isn't mapped to a project, skip board add + field
     assignment but still apply hermes labels + sub-issue link."""
-    with patch.object(sdlc_manager, "_gh"), \
-         patch.object(sdlc_manager, "board_add") as mock_board, \
-         patch.object(sdlc_manager, "flow_set_field") as mock_set_field, \
-         patch.object(sdlc_manager, "flow_link_sub_issue") as mock_link, \
-         patch.object(sdlc_manager, "load_config", return_value={}):
+    with (
+        patch.object(sdlc_manager, "_gh"),
+        patch.object(sdlc_manager, "board_add") as mock_board,
+        patch.object(sdlc_manager, "flow_set_field") as mock_set_field,
+        patch.object(sdlc_manager, "flow_link_sub_issue") as mock_link,
+        patch.object(sdlc_manager, "load_config", return_value={}),
+    ):
         sdlc_manager._apply_post_create_metadata(
             repo="some-unmapped-repo",
             issue_number=42,
@@ -293,8 +309,10 @@ def test_metadata_skips_field_apply_when_no_project() -> None:
 def test_parent_ref_regex_accepts_realistic_refs() -> None:
     """Coverage of the parent-ref regex used by both the prompt and the
     --parent-ref CLI flag."""
+
     def parse(s: str):
         return sdlc_manager._PARENT_REF_RE.match(s)
+
     assert parse("campps-blueprint#42") is not None
     assert parse("infiquetra-sdlc#7") is not None
     assert parse("a.b.c#99") is not None  # dots allowed for completeness

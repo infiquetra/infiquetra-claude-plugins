@@ -56,10 +56,14 @@ def test_vendored_used_when_no_override(tmp_path, fake_vendored_path) -> None:
     """Override missing → fall through to vendored. We control the
     vendored content via the fixture so the test is hermetic."""
     no_override_path = tmp_path / "nonexistent-sdlc"
-    fake_vendored_path.write_text(json.dumps({
-        "organization": "infiquetra",
-        "projects": {"vendored-project": {"number": 1}},
-    }))
+    fake_vendored_path.write_text(
+        json.dumps(
+            {
+                "organization": "infiquetra",
+                "projects": {"vendored-project": {"number": 1}},
+            }
+        )
+    )
 
     result = sdlc_manager._resolve_project_mappings(no_override_path)
     assert "vendored-project" in result["projects"]
@@ -69,6 +73,7 @@ def test_remote_fallback_when_neither_exists(tmp_path, fake_vendored_path) -> No
     """If both override and vendored are missing, fall back to `gh api`.
     Mock `_gh` to verify the API call + simulate a base64 response."""
     import base64
+
     fake_payload = json.dumps({"projects": {"remote": {"number": 5}}})
     fake_b64 = base64.b64encode(fake_payload.encode()).decode()
 
@@ -88,7 +93,8 @@ def test_returns_empty_dict_when_all_three_fail(tmp_path, fake_vendored_path) ->
     assert not fake_vendored_path.exists()
 
     with patch.object(
-        sdlc_manager, "_gh",
+        sdlc_manager,
+        "_gh",
         side_effect=sdlc_manager.GhApiError("simulated failure"),
     ):
         result = sdlc_manager._resolve_project_mappings(no_override_path)

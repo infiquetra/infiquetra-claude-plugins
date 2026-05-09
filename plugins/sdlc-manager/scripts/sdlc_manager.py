@@ -63,7 +63,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # ===========================
 # CONFIGURATION
@@ -93,13 +93,13 @@ _USER_DEFAULTS_PATH = Path.home() / ".claude" / "sdlc-defaults.json"
 # Schema (all keys optional; missing keys = no default for that prompt).
 # Listed here so callers and the wizard agree on the set:
 _USER_DEFAULTS_KEYS = (
-    "assignee",          # gh login (NOT OS $USER) — fetched via `gh api user --jq .login`
-    "default_project",   # e.g., "mount-olympus"
-    "default_status",    # e.g., "Backlog"
+    "assignee",  # gh login (NOT OS $USER) — fetched via `gh api user --jq .login`
+    "default_project",  # e.g., "mount-olympus"
+    "default_status",  # e.g., "Backlog"
     "default_priority",  # e.g., "medium-priority"
     "default_initiative",  # option name on Olympus board (None until field is created)
-    "default_objective",   # option name on Olympus board (None until field is created)
-    "preferred_repos",   # list[str] of repos the operator works with most
+    "default_objective",  # option name on Olympus board (None until field is created)
+    "preferred_repos",  # list[str] of repos the operator works with most
 )
 
 
@@ -118,17 +118,11 @@ def load_user_defaults() -> dict[str, Any]:
         with open(_USER_DEFAULTS_PATH) as f:
             data = json.load(f)
         if not isinstance(data, dict):
-            _warn(
-                f"User defaults at {_USER_DEFAULTS_PATH} is not a JSON "
-                f"object; ignoring."
-            )
+            _warn(f"User defaults at {_USER_DEFAULTS_PATH} is not a JSON object; ignoring.")
             return {}
         return data
     except json.JSONDecodeError as e:
-        _warn(
-            f"User defaults at {_USER_DEFAULTS_PATH} is malformed JSON "
-            f"({e}); ignoring."
-        )
+        _warn(f"User defaults at {_USER_DEFAULTS_PATH} is malformed JSON ({e}); ignoring.")
         return {}
     except (OSError, UnicodeDecodeError) as e:
         # Permissions, broken symlink, non-UTF-8 encoding, etc. The defaults
@@ -201,10 +195,17 @@ def load_config() -> dict[str, Any]:
         else:
             # Remote fallback via gh api
             try:
-                result = _gh(["api", f"repos/{ORG}/infiquetra-sdlc/contents/config/{path.name}",
-                               "--jq", ".content"])
+                result = _gh(
+                    [
+                        "api",
+                        f"repos/{ORG}/infiquetra-sdlc/contents/config/{path.name}",
+                        "--jq",
+                        ".content",
+                    ]
+                )
                 if result:
                     import base64
+
                     content = base64.b64decode(result.strip()).decode()
                     config[key] = json.loads(content)
             except Exception:
@@ -234,24 +235,28 @@ def _resolve_project_mappings(sdlc_path: Path) -> dict[str, Any]:
     override = sdlc_path / "config" / "project-mappings.json"
     if override.exists():
         with open(override) as f:
-            return json.load(f)
+            return cast(dict[str, Any], json.load(f))
 
     # 2. Vendored canonical at <plugin-dir>/config/project-mappings.json
     if _VENDORED_PROJECT_MAPPINGS_PATH.exists():
         with open(_VENDORED_PROJECT_MAPPINGS_PATH) as f:
-            return json.load(f)
+            return cast(dict[str, Any], json.load(f))
 
     # 3. Remote fallback via gh api (reads infiquetra-sdlc directly)
     try:
         result = _gh(
-            ["api",
-             f"repos/{ORG}/infiquetra-sdlc/contents/config/project-mappings.json",
-             "--jq", ".content"]
+            [
+                "api",
+                f"repos/{ORG}/infiquetra-sdlc/contents/config/project-mappings.json",
+                "--jq",
+                ".content",
+            ]
         )
         if result:
             import base64
+
             content = base64.b64decode(result.strip()).decode()
-            return json.loads(content)
+            return cast(dict[str, Any], json.loads(content))
     except (GhApiError, RuntimeError):
         pass
 
@@ -264,7 +269,7 @@ def get_project_config(config: dict, project_name: str) -> dict:
     if project_name not in projects:
         _error(f"Unknown project: {project_name}. Known projects: {', '.join(projects.keys())}")
         sys.exit(1)
-    return projects[project_name]
+    return cast(dict, projects[project_name])
 
 
 def get_projects_for_repo(config: dict, repo_name: str) -> list[dict]:
@@ -301,6 +306,7 @@ def get_projects_for_repo(config: dict, repo_name: str) -> list[dict]:
 # Replaces fragile `"422" in str(e)` substring matching across the
 # flow_* helpers. Downstream handlers catch by type.
 
+
 class GhApiError(RuntimeError):
     """Base for typed gh-API errors. Carries the parsed HTTP status_code
     when one could be extracted; otherwise None. Also retains both stderr
@@ -311,8 +317,14 @@ class GhApiError(RuntimeError):
     classification (verified 2026-05-04 via direct `gh api` reproduction
     of 404 + 422-duplicate-label cases)."""
 
-    def __init__(self, message: str, *, status_code: int | None = None,
-                 stderr: str | None = None, stdout: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        stderr: str | None = None,
+        stdout: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.stderr = stderr
@@ -404,27 +416,19 @@ def _classify_gh_error(
         # Distinguish rate-limit from auth (rate-limit signals appear
         # in both streams)
         if "rate limit" in combined_lower or "x-ratelimit" in combined_lower:
-            return ApiRateLimitedError(
-                full, status_code=status, stderr=stderr, stdout=stdout
-            )
+            return ApiRateLimitedError(full, status_code=status, stderr=stderr, stdout=stdout)
         return ApiAuthError(full, status_code=status, stderr=stderr, stdout=stdout)
     if status == 429:
-        return ApiRateLimitedError(
-            full, status_code=429, stderr=stderr, stdout=stdout
-        )
+        return ApiRateLimitedError(full, status_code=429, stderr=stderr, stdout=stdout)
     if status == 422:
         # Duplicate-resource detection: structured `"code":"already_exists"`
         # in stdout JSON is the canonical signal; English-text hints in
         # stderr are the fallback.
         body_combined = stderr + stdout  # both streams, case-preserving for code match
         if any(code in body_combined for code in _DUPLICATE_RESOURCE_CODES):
-            return ApiAlreadyExistsError(
-                full, status_code=422, stderr=stderr, stdout=stdout
-            )
+            return ApiAlreadyExistsError(full, status_code=422, stderr=stderr, stdout=stdout)
         if any(hint in combined_lower for hint in _DUPLICATE_RESOURCE_HINTS):
-            return ApiAlreadyExistsError(
-                full, status_code=422, stderr=stderr, stdout=stdout
-            )
+            return ApiAlreadyExistsError(full, status_code=422, stderr=stderr, stdout=stdout)
         # Other 422s (validation failures) fall through to generic GhApiError
         return GhApiError(full, status_code=422, stderr=stderr, stdout=stdout)
 
@@ -474,7 +478,7 @@ def _gh(args: list[str], input_data: str | None = None, capture: bool = True) ->
 
 def _graphql(query: str, variables: dict | None = None) -> dict:
     """Execute a GraphQL query via gh CLI."""
-    payload = {"query": query}
+    payload: dict[str, Any] = {"query": query}
     if variables:
         payload["variables"] = variables
 
@@ -484,7 +488,7 @@ def _graphql(query: str, variables: dict | None = None) -> dict:
 
     if "errors" in data:
         raise RuntimeError(f"GraphQL errors: {data['errors']}")
-    return data.get("data", {})
+    return cast(dict, data.get("data", {}))
 
 
 def _rest_get(path: str) -> Any:
@@ -495,21 +499,20 @@ def _rest_get(path: str) -> Any:
 
 def _rest_post(path: str, body: dict) -> Any:
     """Execute a REST POST via gh CLI."""
-    result = _gh(["api", "--method", "POST", path,
-                   "--input", "-"], input_data=json.dumps(body))
+    result = _gh(["api", "--method", "POST", path, "--input", "-"], input_data=json.dumps(body))
     return json.loads(result)
 
 
 def _rest_patch(path: str, body: dict) -> Any:
     """Execute a REST PATCH via gh CLI."""
-    result = _gh(["api", "--method", "PATCH", path,
-                   "--input", "-"], input_data=json.dumps(body))
+    result = _gh(["api", "--method", "PATCH", path, "--input", "-"], input_data=json.dumps(body))
     return json.loads(result)
 
 
 # ===========================
 # OUTPUT HELPERS
 # ===========================
+
 
 def _out(data: Any, fmt: str = "text") -> None:
     """Output data in the requested format."""
@@ -681,6 +684,7 @@ query($org: String!, $repo: String!, $number: Int!, $cursor: String) {
 # BOARD OPERATIONS
 # ===========================
 
+
 def get_project_items(project_number: int) -> tuple[str, list[dict]]:
     """Fetch all items from a project, returning (project_id, items)."""
     all_items = []
@@ -688,11 +692,14 @@ def get_project_items(project_number: int) -> tuple[str, list[dict]]:
     project_id = ""
 
     while True:
-        data = _graphql(QUERY_GET_PROJECT_ITEMS, {
-            "org": ORG,
-            "number": project_number,
-            "cursor": cursor,
-        })
+        data = _graphql(
+            QUERY_GET_PROJECT_ITEMS,
+            {
+                "org": ORG,
+                "number": project_number,
+                "cursor": cursor,
+            },
+        )
         proj = data.get("organization", {}).get("projectV2", {})
         if not project_id:
             project_id = proj.get("id", "")
@@ -713,7 +720,7 @@ def get_item_status(item: dict) -> str:
     for fv in item.get("fieldValues", {}).get("nodes", []):
         field_name = fv.get("field", {}).get("name", "")
         if field_name == "Status":
-            return fv.get("name", "")
+            return cast(str, fv.get("name", ""))
     return ""
 
 
@@ -722,7 +729,7 @@ def get_item_field_value(item: dict, field_name: str) -> str:
     for fv in item.get("fieldValues", {}).get("nodes", []):
         fn = fv.get("field", {}).get("name", "")
         if fn == field_name:
-            return fv.get("name", "") or fv.get("text", "") or fv.get("date", "")
+            return cast(str, fv.get("name", "") or fv.get("text", "") or fv.get("date", ""))
     return ""
 
 
@@ -752,17 +759,23 @@ def board_view(project_name: str, status_filter: str | None, fmt: str) -> None:
         columns.setdefault(status, []).append(item)
 
     # WIP limits
-    wip_limits = {"Ready": 10, "In Development": None, "E2E Testing": 3,
-                  "Deployment Ready": 5}
-    column_order = ["Ready", "In Development", "E2E Testing", "Deployment Ready", "Deployed", "No Status"]
+    wip_limits = {"Ready": 10, "In Development": None, "E2E Testing": 3, "Deployment Ready": 5}
+    column_order = [
+        "Ready",
+        "In Development",
+        "E2E Testing",
+        "Deployment Ready",
+        "Deployed",
+        "No Status",
+    ]
 
     if fmt == "json":
         _out({"project": project_name, "columns": columns}, fmt)
         return
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {proj['name']} (Project #{proj['number']})")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     for col in column_order:
         col_items = columns.get(col, [])
@@ -782,7 +795,14 @@ def board_view(project_name: str, status_filter: str | None, fmt: str) -> None:
             title = content.get("title", "")[:60]
             age = get_item_age_days(item)
             labels = [la["name"] for la in content.get("labels", {}).get("nodes", [])]
-            type_label = next((la for la in labels if la in ["capability", "enhancement", "defect", "exploration"]), "")
+            type_label = next(
+                (
+                    la
+                    for la in labels
+                    if la in ["capability", "enhancement", "defect", "exploration"]
+                ),
+                "",
+            )
             print(f"  - [{type_label or 'unknown'}] {repo}#{number}: {title} (age: {age:.0f}d)")
         print()
 
@@ -814,17 +834,18 @@ def board_add(repo: str, number: int, fmt: str, config: dict | None = None) -> N
     results = []
     for proj in projects:
         try:
-            _graphql(QUERY_ADD_ITEM_TO_PROJECT, {
-                "projectId": proj["id"],
-                "contentId": item_id,
-            })
+            _graphql(
+                QUERY_ADD_ITEM_TO_PROJECT,
+                {
+                    "projectId": proj["id"],
+                    "contentId": item_id,
+                },
+            )
             results.append(f"Added {repo}#{number} to '{proj['name']}' (#{proj['number']})")
 
             # Sync label fields if project has label_fields config
             if "label_fields" in proj:
-                sync_results = _sync_label_fields_for_item(
-                    repo, number, proj, item_id
-                )
+                sync_results = _sync_label_fields_for_item(repo, number, proj, item_id)
                 results.extend(sync_results)
         except Exception as e:
             results.append(f"Failed to add to '{proj['name']}': {e}")
@@ -848,8 +869,10 @@ def board_move(repo: str, number: int, status: str, fmt: str) -> None:
         target_item = None
         for item in items:
             content = item.get("content", {})
-            if content.get("number") == number and \
-               content.get("repository", {}).get("name") == repo:
+            if (
+                content.get("number") == number
+                and content.get("repository", {}).get("name") == repo
+            ):
                 target_item = item
                 break
 
@@ -859,7 +882,12 @@ def board_move(repo: str, number: int, status: str, fmt: str) -> None:
 
         # Find Status field ID and option ID via field discovery
         fields_data = _graphql(QUERY_GET_PROJECT_FIELDS, {"org": ORG, "number": proj["number"]})
-        proj_fields = fields_data.get("organization", {}).get("projectV2", {}).get("fields", {}).get("nodes", [])
+        proj_fields = (
+            fields_data.get("organization", {})
+            .get("projectV2", {})
+            .get("fields", {})
+            .get("nodes", [])
+        )
 
         status_field = None
         status_option_id = None
@@ -881,12 +909,15 @@ def board_move(repo: str, number: int, status: str, fmt: str) -> None:
             continue
 
         try:
-            _graphql(QUERY_SET_FIELD_VALUE, {
-                "projectId": project_id,
-                "itemId": target_item["id"],
-                "fieldId": status_field["id"],
-                "optionId": status_option_id,
-            })
+            _graphql(
+                QUERY_SET_FIELD_VALUE,
+                {
+                    "projectId": project_id,
+                    "itemId": target_item["id"],
+                    "fieldId": status_field["id"],
+                    "optionId": status_option_id,
+                },
+            )
             results.append(f"Moved {repo}#{number} to '{status}' in '{proj['name']}'")
         except Exception as e:
             results.append(f"Failed to move: {e}")
@@ -906,7 +937,9 @@ def board_archive(project_name: str, dry_run: bool, fmt: str) -> None:
         print(f"DRY RUN: Would archive {len(deployed)} items from '{proj['name']}':")
         for item in deployed:
             content = item.get("content", {})
-            print(f"  - {content.get('repository', {}).get('name', '?')}#{content.get('number', '?')}: {content.get('title', '')[:50]}")
+            print(
+                f"  - {content.get('repository', {}).get('name', '?')}#{content.get('number', '?')}: {content.get('title', '')[:50]}"
+            )
         return
 
     results = []
@@ -914,10 +947,13 @@ def board_archive(project_name: str, dry_run: bool, fmt: str) -> None:
         content = item.get("content", {})
         label = f"{content.get('repository', {}).get('name', '?')}#{content.get('number', '?')}"
         try:
-            _graphql(QUERY_ARCHIVE_ITEM, {
-                "projectId": project_id,
-                "itemId": item["id"],
-            })
+            _graphql(
+                QUERY_ARCHIVE_ITEM,
+                {
+                    "projectId": project_id,
+                    "itemId": item["id"],
+                },
+            )
             results.append(f"Archived {label}")
         except Exception as e:
             results.append(f"Failed to archive {label}: {e}")
@@ -982,10 +1018,10 @@ def board_standup(project_name: str, fmt: str) -> None:
 
     right_to_left = ["Deployed", "Deployment Ready", "E2E Testing", "In Development", "Ready"]
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  STANDUP PREP — {proj['name']}")
     print(f"  {datetime.now().strftime('%Y-%m-%d')}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     for col in right_to_left:
         col_items = columns.get(col, [])
@@ -1009,7 +1045,9 @@ def board_standup(project_name: str, fmt: str) -> None:
         print()
 
     # Summary
-    total_active = sum(len(columns.get(c, [])) for c in ["In Development", "E2E Testing", "Deployment Ready"])
+    total_active = sum(
+        len(columns.get(c, [])) for c in ["In Development", "E2E Testing", "Deployment Ready"]
+    )
     print(f"Summary: {total_active} active items, {len(columns.get('Ready', []))} in Ready")
 
 
@@ -1042,6 +1080,7 @@ def board_discover_fields(project_name: str, fmt: str) -> None:
 # LABEL OPERATIONS
 # ===========================
 
+
 def _get_item_labels(repo: str, number: int) -> list[str]:
     """Get label names for an issue."""
     data = _graphql(QUERY_GET_ITEM_LABELS, {"org": ORG, "repo": repo, "number": number})
@@ -1052,9 +1091,7 @@ def _get_item_labels(repo: str, number: int) -> list[str]:
     return [n["name"] for n in item_data.get("labels", {}).get("nodes", [])]
 
 
-def _sync_label_fields_for_item(
-    repo: str, number: int, proj: dict, item_id: str
-) -> list[str]:
+def _sync_label_fields_for_item(repo: str, number: int, proj: dict, item_id: str) -> list[str]:
     """Sync initiative/objective labels to project fields. Returns result messages."""
     label_fields = proj.get("label_fields", {})
     if not label_fields:
@@ -1069,7 +1106,7 @@ def _sync_label_fields_for_item(
         options = field_config.get("options", {})
         prefix = f"{label_prefix}:"
 
-        matching = [lbl[len(prefix):] for lbl in labels if lbl.startswith(prefix)]
+        matching = [lbl[len(prefix) :] for lbl in labels if lbl.startswith(prefix)]
         if not matching:
             continue
 
@@ -1077,16 +1114,21 @@ def _sync_label_fields_for_item(
         option_id = options.get(value)
 
         if not option_id:
-            results.append(f"No option ID for {label_prefix}:{value} — consider running 'fields create-option'")
+            results.append(
+                f"No option ID for {label_prefix}:{value} — consider running 'fields create-option'"
+            )
             continue
 
         try:
-            _graphql(QUERY_SET_FIELD_VALUE, {
-                "projectId": project_id,
-                "itemId": item_id,
-                "fieldId": field_id,
-                "optionId": option_id,
-            })
+            _graphql(
+                QUERY_SET_FIELD_VALUE,
+                {
+                    "projectId": project_id,
+                    "itemId": item_id,
+                    "fieldId": field_id,
+                    "optionId": option_id,
+                },
+            )
             results.append(f"Set {label_prefix}={value}")
         except Exception as e:
             results.append(f"Failed to set {label_prefix}={value}: {e}")
@@ -1110,10 +1152,13 @@ def labels_sync_fields(repo: str, number: int, fmt: str) -> None:
         # Find the project item ID
         project_id, items = get_project_items(proj["number"])
         target_item = next(
-            (i for i in items
-             if i.get("content", {}).get("number") == number
-             and i.get("content", {}).get("repository", {}).get("name") == repo),
-            None
+            (
+                i
+                for i in items
+                if i.get("content", {}).get("number") == number
+                and i.get("content", {}).get("repository", {}).get("name") == repo
+            ),
+            None,
         )
         if not target_item:
             all_results.append(f"Item {repo}#{number} not found in '{proj['name']}'")
@@ -1142,8 +1187,16 @@ def labels_audit(repo: str, fmt: str) -> None:
     extra = [la for la in existing if la not in required_labels]
 
     if fmt == "json":
-        _out({"repo": repo, "missing": missing, "extra": list(extra),
-              "required_count": len(required_labels), "existing_count": len(existing)}, fmt)
+        _out(
+            {
+                "repo": repo,
+                "missing": missing,
+                "extra": list(extra),
+                "required_count": len(required_labels),
+                "existing_count": len(existing),
+            },
+            fmt,
+        )
         return
 
     print(f"\nLabel Audit: {ORG}/{repo}")
@@ -1172,11 +1225,20 @@ def labels_deploy(repo: str, fmt: str) -> None:
         description = label.get("description", "")
 
         try:
-            _gh(["label", "create", name,
-                 "--color", color,
-                 "--description", description,
-                 "--repo", f"{ORG}/{repo}",
-                 "--force"])
+            _gh(
+                [
+                    "label",
+                    "create",
+                    name,
+                    "--color",
+                    color,
+                    "--description",
+                    description,
+                    "--repo",
+                    f"{ORG}/{repo}",
+                    "--force",
+                ]
+            )
             results.append(f"OK: {name}")
         except Exception as e:
             results.append(f"FAIL: {name}: {e}")
@@ -1218,10 +1280,7 @@ def labels_auto_label(repo: str, number: int, fmt: str) -> None:
 
     # Apply labels
     try:
-        _rest_post(
-            f"/repos/{ORG}/{repo}/issues/{number}/labels",
-            {"labels": labels_to_add}
-        )
+        _rest_post(f"/repos/{ORG}/{repo}/issues/{number}/labels", {"labels": labels_to_add})
         print(f"Applied labels to {repo}#{number}: {', '.join(labels_to_add)}")
     except Exception as e:
         _error(f"Failed to apply labels: {e}")
@@ -1263,15 +1322,16 @@ def fields_discover(project_name: str, fmt: str) -> None:
 # METRICS OPERATIONS
 # ===========================
 
+
 def _get_issue_column_times(org: str, repo: str, number: int) -> list[dict]:
     """Get time spent in each column via timeline events."""
     all_events = []
     cursor = None
 
     while True:
-        data = _graphql(QUERY_GET_ISSUE_TIMELINE, {
-            "org": org, "repo": repo, "number": number, "cursor": cursor
-        })
+        data = _graphql(
+            QUERY_GET_ISSUE_TIMELINE, {"org": org, "repo": repo, "number": number, "cursor": cursor}
+        )
         issue = data.get("repository", {}).get("issue", {})
         timeline = issue.get("timelineItems", {})
         all_events.extend(timeline.get("nodes", []))
@@ -1291,11 +1351,13 @@ def _get_issue_column_times(org: str, repo: str, number: int) -> list[dict]:
         prev_status = prev.get("name", "") if prev else ""
         curr_status = curr.get("name", "") if curr else ""
         if curr_status:
-            transitions.append({
-                "at": event.get("createdAt", ""),
-                "from": prev_status,
-                "to": curr_status,
-            })
+            transitions.append(
+                {
+                    "at": event.get("createdAt", ""),
+                    "from": prev_status,
+                    "to": curr_status,
+                }
+            )
 
     return transitions
 
@@ -1379,6 +1441,7 @@ def metrics_throughput(project_name: str, weeks: int, fmt: str) -> None:
     _, items = get_project_items(proj["number"])
 
     from collections import defaultdict
+
     weekly: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     for item in items:
@@ -1388,7 +1451,9 @@ def metrics_throughput(project_name: str, weeks: int, fmt: str) -> None:
 
         content = item.get("content", {})
         labels = [la["name"] for la in content.get("labels", {}).get("nodes", [])]
-        issue_type = next((la for la in labels if la in ["capability", "enhancement", "defect"]), "other")
+        issue_type = next(
+            (la for la in labels if la in ["capability", "enhancement", "defect"]), "other"
+        )
 
         updated = item.get("updatedAt", "")
         if updated:
@@ -1400,7 +1465,13 @@ def metrics_throughput(project_name: str, weeks: int, fmt: str) -> None:
     all_weeks = sorted(weekly.keys())[-weeks:]
 
     if fmt == "json":
-        _out({"project": project_name, "weeks": {w: dict(v) for w, v in weekly.items() if w in all_weeks}}, fmt)
+        _out(
+            {
+                "project": project_name,
+                "weeks": {w: dict(v) for w, v in weekly.items() if w in all_weeks},
+            },
+            fmt,
+        )
         return
 
     print(f"\nThroughput — {proj['name']} (last {weeks} weeks)")
@@ -1486,6 +1557,7 @@ def metrics_column_time(project_name: str, number: int, fmt: str) -> None:
 # MILESTONE OPERATIONS
 # ===========================
 
+
 def milestones_create(repo: str, title: str, due_date: str, description: str, fmt: str) -> None:
     """Create a GitHub milestone for an Objective."""
     body = {"title": title, "due_on": f"{due_date}T00:00:00Z"}
@@ -1545,8 +1617,17 @@ def milestones_progress(repo: str, milestone_num: int, fmt: str) -> None:
     due = ms.get("due_on", "")[:10] if ms.get("due_on") else "no due date"
 
     if fmt == "json":
-        _out({"title": title, "open": open_count, "closed": closed_count,
-              "total": total, "percent": pct, "due": due}, fmt)
+        _out(
+            {
+                "title": title,
+                "open": open_count,
+                "closed": closed_count,
+                "total": total,
+                "percent": pct,
+                "due": due,
+            },
+            fmt,
+        )
         return
 
     print(f"\nMilestone Progress: {title}")
@@ -1569,10 +1650,7 @@ def milestones_progress(repo: str, milestone_num: int, fmt: str) -> None:
 def milestones_link(repo: str, issue_num: int, milestone_num: int, fmt: str) -> None:
     """Link an issue to a milestone."""
     try:
-        _rest_patch(
-            f"/repos/{ORG}/{repo}/issues/{issue_num}",
-            {"milestone": milestone_num}
-        )
+        _rest_patch(f"/repos/{ORG}/{repo}/issues/{issue_num}", {"milestone": milestone_num})
         print(f"Linked {repo}#{issue_num} to milestone #{milestone_num}")
     except Exception as e:
         _error(f"Failed to link issue to milestone: {e}")
@@ -1581,6 +1659,7 @@ def milestones_link(repo: str, issue_num: int, milestone_num: int, fmt: str) -> 
 # ===========================
 # ROLLOUT OPERATIONS
 # ===========================
+
 
 def rollout_status(team_filter: str | None, fmt: str) -> None:
     """Show rollout status from config."""
@@ -1598,10 +1677,12 @@ def rollout_status(team_filter: str | None, fmt: str) -> None:
 
     print("\nSDLC Rollout Status")
     print(f"Last updated: {status.get('last_updated', 'unknown')}")
-    print(f"Total: {summary.get('total_repos', 0)} repos | "
-          f"Complete: {summary.get('completed', 0)} | "
-          f"In progress: {summary.get('in_progress', 0)} | "
-          f"Pending: {summary.get('pending', 0)}")
+    print(
+        f"Total: {summary.get('total_repos', 0)} repos | "
+        f"Complete: {summary.get('completed', 0)} | "
+        f"In progress: {summary.get('in_progress', 0)} | "
+        f"Pending: {summary.get('pending', 0)}"
+    )
     print()
 
     # Group by tier
@@ -1636,8 +1717,14 @@ def rollout_gap_analysis(repo: str, fmt: str) -> None:
     """Check what SDLC setup is missing from a repo."""
     config = load_config()
     required_labels = [la["name"] for la in config.get("labels", {}).get("labels", [])]
-    template_names = ["capability.yml", "context-update.yml", "defect.yml",
-                      "enhancement.yml", "exploration.yml", "objective.yml"]
+    template_names = [
+        "capability.yml",
+        "context-update.yml",
+        "defect.yml",
+        "enhancement.yml",
+        "exploration.yml",
+        "objective.yml",
+    ]
 
     gaps = []
 
@@ -1647,7 +1734,9 @@ def rollout_gap_analysis(repo: str, fmt: str) -> None:
         existing_labels = {la["name"] for la in existing_labels_raw}
         missing_labels = [la for la in required_labels if la not in existing_labels]
         if missing_labels:
-            gaps.append(f"Missing {len(missing_labels)} labels (run: sdlc_manager.py rollout deploy-labels --repo {repo})")
+            gaps.append(
+                f"Missing {len(missing_labels)} labels (run: sdlc_manager.py rollout deploy-labels --repo {repo})"
+            )
         else:
             gaps.append("All labels present")
     except Exception as e:
@@ -1663,7 +1752,9 @@ def rollout_gap_analysis(repo: str, fmt: str) -> None:
         else:
             gaps.append("All issue templates present")
     except Exception:
-        gaps.append(f"Missing .github/ISSUE_TEMPLATE/ directory (run: sdlc_manager.py rollout deploy-templates --repo {repo})")
+        gaps.append(
+            f"Missing .github/ISSUE_TEMPLATE/ directory (run: sdlc_manager.py rollout deploy-templates --repo {repo})"
+        )
 
     # Check project mapping
     projects = get_projects_for_repo(config, repo)
@@ -1697,6 +1788,7 @@ def rollout_deploy_templates(repo: str, fmt: str) -> None:
             content = f.read()
 
         import base64
+
         content_b64 = base64.b64encode(content.encode()).decode()
 
         gh_path = f".github/ISSUE_TEMPLATE/{template_path.name}"
@@ -1869,9 +1961,12 @@ def flow_set_field(
     # Find the project item for this repo+number
     _, items = get_project_items(get_project_config(load_config(), project_name)["number"])
     target_item = next(
-        (i for i in items
-         if i.get("content", {}).get("number") == number
-         and i.get("content", {}).get("repository", {}).get("name") == repo),
+        (
+            i
+            for i in items
+            if i.get("content", {}).get("number") == number
+            and i.get("content", {}).get("repository", {}).get("name") == repo
+        ),
         None,
     )
     if not target_item:
@@ -1880,12 +1975,15 @@ def flow_set_field(
             f"Use `sdlc_manager.py board add --repo {repo} --number {number}` first."
         )
 
-    _graphql(QUERY_SET_FIELD_VALUE, {
-        "projectId": project_id,
-        "itemId": target_item["id"],
-        "fieldId": field["id"],
-        "optionId": option["id"],
-    })
+    _graphql(
+        QUERY_SET_FIELD_VALUE,
+        {
+            "projectId": project_id,
+            "itemId": target_item["id"],
+            "fieldId": field["id"],
+            "optionId": option["id"],
+        },
+    )
     _out(f"Set {field_name}='{option_name}' on {repo}#{number} ({project_name})", fmt)
 
 
@@ -1951,8 +2049,7 @@ def flow_link_sub_issue(
             {"sub_issue_id": child_db_id},
         )
         _out(
-            f"Linked {child_repo}#{child_number} as sub-issue of "
-            f"{parent_repo}#{parent_number}",
+            f"Linked {child_repo}#{child_number} as sub-issue of {parent_repo}#{parent_number}",
             fmt,
         )
     except ApiAlreadyExistsError:
@@ -2025,7 +2122,7 @@ def flow_verify_label(
 _REQUIRED_H3_HEADERS = (
     "Objective",
     "Acceptance criteria",
-    "Out-of-scope / non-goals",   # exact match: home-lab uses slash, not "or"
+    "Out-of-scope / non-goals",  # exact match: home-lab uses slash, not "or"
     "Files expected to change",
     "Tests to add or update",
     "Verification",
@@ -2052,9 +2149,17 @@ _PATH_LINE_RE = re.compile(
     r".*$",
     re.MULTILINE,
 )
-_PLACEHOLDER_LINES = frozenset({
-    "- [ ]", "-", "* [ ]", "*", "_no response_", "none", "<!-- placeholder -->",
-})
+_PLACEHOLDER_LINES = frozenset(
+    {
+        "- [ ]",
+        "-",
+        "* [ ]",
+        "*",
+        "_no response_",
+        "none",
+        "<!-- placeholder -->",
+    }
+)
 
 
 def _split_sections(body: str) -> dict[str, str]:
@@ -2149,8 +2254,7 @@ class CardValidationError(RuntimeError):
         self.issue_ref = issue_ref
         self.errors = errors
         super().__init__(
-            f"INVALID: {issue_ref} fails card_validator schema check: " +
-            "; ".join(errors)
+            f"INVALID: {issue_ref} fails card_validator schema check: " + "; ".join(errors)
         )
 
 
@@ -2182,14 +2286,15 @@ def flow_validate_card(repo: str, number: int, fmt: str) -> None:
         _out({"valid": False, "errors": errors, "issue": issue_ref}, fmt)
     else:
         print(f"INVALID: {issue_ref} fails card_validator schema check:")
-        for e in errors:
-            print(f"  - {e}")
+        for err in errors:
+            print(f"   - {err}")
     raise CardValidationError(issue_ref, errors)
 
 
 # ===========================
 # CONFIG OPERATIONS
 # ===========================
+
 
 def config_show(fmt: str) -> None:
     """Display loaded configuration."""
@@ -2208,14 +2313,18 @@ def config_show(fmt: str) -> None:
     projects = pm.get("projects", {})
     print(f"\nProjects: {len(projects)}")
     for name, proj in projects.items():
-        print(f"  - {name}: #{proj['number']} — {proj.get('name', '')} ({len(proj.get('repositories', []))} repos)")
+        print(
+            f"  - {name}: #{proj['number']} — {proj.get('name', '')} ({len(proj.get('repositories', []))} repos)"
+        )
 
     labels = config.get("labels", {}).get("labels", [])
     print(f"\nLabels: {len(labels)} defined")
 
     beads = config.get("legacy_rollout_config", {})
     summary = beads.get("summary", {})
-    print(f"\nRollout: {summary.get('completed', 0)}/{summary.get('total_repos', 0)} repos complete")
+    print(
+        f"\nRollout: {summary.get('completed', 0)}/{summary.get('total_repos', 0)} repos complete"
+    )
 
     # Per-user defaults (Phase C)
     defaults = load_user_defaults()
@@ -2285,7 +2394,7 @@ def config_init_defaults(non_interactive: bool, fmt: str) -> None:
         "default_status": existing.get("default_status") or "Backlog",
         "default_priority": existing.get("default_priority") or "medium-priority",
         "default_initiative": existing.get("default_initiative"),  # no default
-        "default_objective": existing.get("default_objective"),    # no default
+        "default_objective": existing.get("default_objective"),  # no default
         "preferred_repos": existing.get("preferred_repos") or [],
     }
 
@@ -2351,12 +2460,22 @@ def config_init_defaults(non_interactive: bool, fmt: str) -> None:
 # ===========================
 
 _ISSUE_TYPES = (
-    "capability", "enhancement", "defect",
-    "exploration", "context-update", "objective",
+    "capability",
+    "enhancement",
+    "defect",
+    "exploration",
+    "context-update",
+    "objective",
 )
-_HERMES_ACTIONABLE_TYPES = frozenset({
-    "capability", "enhancement", "defect", "exploration", "context-update",
-})
+_HERMES_ACTIONABLE_TYPES = frozenset(
+    {
+        "capability",
+        "enhancement",
+        "defect",
+        "exploration",
+        "context-update",
+    }
+)
 # Issue types where the capability-adaptive fields are relevant (size,
 # etc.). The orchestrator's planner reads these to inform sequencing /
 # capacity decisions; non-capability cards don't need them.
@@ -2517,10 +2636,16 @@ def _open_gh_issue_create_web(repo: str, issue_type: str) -> None:
     print("Fill the form + submit. We'll capture the issue number after.\n")
     try:
         subprocess.run(
-            ["gh", "issue", "create",
-             "--repo", f"{ORG}/{repo}",
-             "--template", f"{issue_type}.yml",
-             "--web"],
+            [
+                "gh",
+                "issue",
+                "create",
+                "--repo",
+                f"{ORG}/{repo}",
+                "--template",
+                f"{issue_type}.yml",
+                "--web",
+            ],
             check=False,  # operator may close the tab without submitting
         )
     except FileNotFoundError:
@@ -2535,8 +2660,7 @@ def _prompt_issue_number(repo: str) -> int | None:
     without submitting). PR URLs are intentionally rejected — sub-issue
     linking and project field assignment work on issues, not PRs."""
     answer = _safe_input(
-        f"\nIssue number that was created in {repo} "
-        f"(or paste URL; Enter to skip metadata): "
+        f"\nIssue number that was created in {repo} (or paste URL; Enter to skip metadata): "
     )
     if not answer:
         return None
@@ -2584,22 +2708,34 @@ def _apply_post_create_metadata(
     # to act on — capability/enhancement/defect/exploration/context-update)
     if issue_type in _HERMES_ACTIONABLE_TYPES:
         try:
-            _gh([
-                "issue", "edit", str(issue_number),
-                "--repo", f"{ORG}/{repo}",
-                "--add-label", "hermes-task",
-            ])
+            _gh(
+                [
+                    "issue",
+                    "edit",
+                    str(issue_number),
+                    "--repo",
+                    f"{ORG}/{repo}",
+                    "--add-label",
+                    "hermes-task",
+                ]
+            )
             print("  ✓ Applied label `hermes-task`")
         except GhApiError as e:
             _warn(f"  ✗ Could not apply hermes-task label: {e}")
     else:
         # Objective gets explicit opt-out
         try:
-            _gh([
-                "issue", "edit", str(issue_number),
-                "--repo", f"{ORG}/{repo}",
-                "--add-label", "hermes-not-actionable",
-            ])
+            _gh(
+                [
+                    "issue",
+                    "edit",
+                    str(issue_number),
+                    "--repo",
+                    f"{ORG}/{repo}",
+                    "--add-label",
+                    "hermes-not-actionable",
+                ]
+            )
             print("  ✓ Applied label `hermes-not-actionable`")
         except GhApiError as e:
             _warn(f"  ✗ Could not apply hermes-not-actionable label: {e}")
@@ -2617,8 +2753,12 @@ def _apply_post_create_metadata(
             continue
         try:
             flow_set_field(
-                project_name, repo, issue_number,
-                field_name, option, fmt="text",
+                project_name,
+                repo,
+                issue_number,
+                field_name,
+                option,
+                fmt="text",
             )
         except RuntimeError as e:
             _warn(f"  ✗ set {field_name}={option} failed: {e}")
@@ -2627,9 +2767,7 @@ def _apply_post_create_metadata(
     if parent:
         parent_repo, parent_number = parent
         try:
-            flow_link_sub_issue(
-                parent_repo, parent_number, repo, issue_number, fmt="text"
-            )
+            flow_link_sub_issue(parent_repo, parent_number, repo, issue_number, fmt="text")
         except RuntimeError as e:
             _warn(f"  ✗ sub-issue link failed: {e}")
 
@@ -2649,9 +2787,7 @@ def _prompt_paired_card(repo: str, issue_number: int) -> str | None:
     step + careful handling of the existing template body; deferred to a
     follow-up if the need surfaces."""
     print(f"\nCreated {repo}#{issue_number}.")
-    raw = _safe_input(
-        "Create a paired card on another repo with similar scope? (y/N): "
-    )
+    raw = _safe_input("Create a paired card on another repo with similar scope? (y/N): ")
     if raw is None:
         return None
     if raw.lower() not in ("y", "yes"):
@@ -2739,11 +2875,15 @@ def issue_create(
         # Prefer the user's default_project if it's one of the matches
         default_project = defaults.get("default_project")
         for p in projects:
-            if p.get("name", "").lower() == (default_project or "").lower() or \
-               p.get("number") == 1:  # mount-olympus is #1; canonical fallback
+            if (
+                p.get("name", "").lower() == (default_project or "").lower() or p.get("number") == 1
+            ):  # mount-olympus is #1; canonical fallback
                 project_name = next(
-                    (k for k, v in config.get("project_mappings", {}).get("projects", {}).items()
-                     if v.get("number") == p.get("number")),
+                    (
+                        k
+                        for k, v in config.get("project_mappings", {}).get("projects", {}).items()
+                        if v.get("number") == p.get("number")
+                    ),
                     None,
                 )
                 break
@@ -2760,24 +2900,21 @@ def issue_create(
         print(f"\nProject: {project_name}")
         # Initiative
         opts = _project_field_options(project_name, "Initiative")
-        chosen = _prompt_choice(
-            "Initiative", opts, default=defaults.get("default_initiative")
-        )
+        chosen = _prompt_choice("Initiative", opts, default=defaults.get("default_initiative"))
         if chosen:
             field_values["Initiative"] = chosen
 
         # Objective
         opts = _project_field_options(project_name, "Objective")
-        chosen = _prompt_choice(
-            "Objective", opts, default=defaults.get("default_objective")
-        )
+        chosen = _prompt_choice("Objective", opts, default=defaults.get("default_objective"))
         if chosen:
             field_values["Objective"] = chosen
 
         # Status (default Backlog or per-user default)
         opts = _project_field_options(project_name, "Status")
         chosen = _prompt_choice(
-            "Status", opts,
+            "Status",
+            opts,
             default=defaults.get("default_status") or "Backlog",
         )
         if chosen:
@@ -2785,10 +2922,13 @@ def issue_create(
 
     # Step 6: capability-adaptive fields (only for capability/objective AND
     # only when the project exposes the field)
-    if (issue_type in _CAPABILITY_ADAPTIVE_TYPES
-            and project_name and not skip_metadata):
-        for adaptive_field in ("Capability Size", "Business Value",
-                                "Technical Risk", "Target Quarter"):
+    if issue_type in _CAPABILITY_ADAPTIVE_TYPES and project_name and not skip_metadata:
+        for adaptive_field in (
+            "Capability Size",
+            "Business Value",
+            "Technical Risk",
+            "Target Quarter",
+        ):
             opts = _project_field_options(project_name, adaptive_field)
             chosen = _prompt_choice(adaptive_field, opts, default=None)
             if chosen:
@@ -2810,8 +2950,10 @@ def issue_create(
             print("Aborted.")
             return
         if confirm in ("n", "no"):
-            print(f"\nRun manually: gh issue create --repo {ORG}/{repo} "
-                  f"--template {issue_type}.yml --web")
+            print(
+                f"\nRun manually: gh issue create --repo {ORG}/{repo} "
+                f"--template {issue_type}.yml --web"
+            )
             return
 
         _open_gh_issue_create_web(repo, issue_type)
@@ -2824,7 +2966,13 @@ def issue_create(
 
         # Step 9: apply metadata
         _apply_post_create_metadata(
-            repo, issue_number, issue_type, project_name, parent, field_values, fmt,
+            repo,
+            issue_number,
+            issue_type,
+            project_name,
+            parent,
+            field_values,
+            fmt,
         )
 
         # Step 10: paired-card prompt — suppressed in recursive call to
@@ -2840,14 +2988,17 @@ def issue_create(
                 # whether they should be linked (e.g., as sibling sub-issues
                 # of a common parent).
                 issue_create(
-                    target_repo, issue_type, fmt,
+                    target_repo,
+                    issue_type,
+                    fmt,
                     parent_ref=f"{parent[0]}#{parent[1]}" if parent else None,
                     _in_paired_card=True,
                 )
     else:
         # skip_metadata path: just print the manual command
-        print(f"Run manually: gh issue create --repo {ORG}/{repo} "
-              f"--template {issue_type}.yml --web")
+        print(
+            f"Run manually: gh issue create --repo {ORG}/{repo} --template {issue_type}.yml --web"
+        )
 
 
 def main() -> None:
@@ -2855,8 +3006,9 @@ def main() -> None:
         description="Infiquetra SDLC Manager — Unified CLI for Infiquetra SDLC automation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--format", choices=["text", "json", "markdown"],
-                        default="text", help="Output format")
+    parser.add_argument(
+        "--format", choices=["text", "json", "markdown"], default="text", help="Output format"
+    )
 
     subparsers = parser.add_subparsers(dest="resource", required=True)
 
@@ -2877,8 +3029,9 @@ def main() -> None:
     board_move_p = board_sp.add_parser("move", help="Move item to different column")
     board_move_p.add_argument("--repo", required=True)
     board_move_p.add_argument("--number", required=True, type=int)
-    board_move_p.add_argument("--status", required=True,
-                              help="Target status (e.g. 'In Development', 'E2E Testing')")
+    board_move_p.add_argument(
+        "--status", required=True, help="Target status (e.g. 'In Development', 'E2E Testing')"
+    )
 
     board_archive_p = board_sp.add_parser("archive", help="Archive deployed items")
     board_archive_p.add_argument("--project", required=True, choices=["mount-olympus"])
@@ -2887,10 +3040,14 @@ def main() -> None:
     board_wip_p = board_sp.add_parser("wip", help="Show WIP counts and limits")
     board_wip_p.add_argument("--project", required=True, choices=["mount-olympus"])
 
-    board_standup_p = board_sp.add_parser("standup", help="Standup prep — right-to-left board review")
+    board_standup_p = board_sp.add_parser(
+        "standup", help="Standup prep — right-to-left board review"
+    )
     board_standup_p.add_argument("--project", required=True, choices=["mount-olympus"])
 
-    board_fields_p = board_sp.add_parser("discover-fields", help="Discover all project fields and options")
+    board_fields_p = board_sp.add_parser(
+        "discover-fields", help="Discover all project fields and options"
+    )
     board_fields_p.add_argument("--project", required=True, choices=["mount-olympus"])
 
     # ===========================
@@ -2906,8 +3063,14 @@ def main() -> None:
     issue_create_p.add_argument("--repo", required=True)
     issue_create_p.add_argument(
         "--type",
-        choices=["capability", "enhancement", "defect",
-                 "exploration", "context-update", "objective"],
+        choices=[
+            "capability",
+            "enhancement",
+            "defect",
+            "exploration",
+            "context-update",
+            "objective",
+        ],
         help="Issue type (uses template). If omitted, decision-tree prompts for it.",
     )
     issue_create_p.add_argument(
@@ -2919,7 +3082,7 @@ def main() -> None:
         "--skip-metadata",
         action="store_true",
         help="Skip post-create metadata (labels, project fields, sub-issue link, "
-             "paired-card prompt). Useful for testing or scripted setup.",
+        "paired-card prompt). Useful for testing or scripted setup.",
     )
 
     # ===========================
@@ -2928,7 +3091,9 @@ def main() -> None:
     labels_p = subparsers.add_parser("labels", help="Label management")
     labels_sp = labels_p.add_subparsers(dest="action", required=True)
 
-    labels_sync_p = labels_sp.add_parser("sync-fields", help="Sync initiative/objective labels to project fields")
+    labels_sync_p = labels_sp.add_parser(
+        "sync-fields", help="Sync initiative/objective labels to project fields"
+    )
     labels_sync_p.add_argument("--repo", required=True)
     labels_sync_p.add_argument("--number", required=True, type=int)
 
@@ -2950,7 +3115,9 @@ def main() -> None:
 
     fields_create_p = fields_sp.add_parser("create-option", help="Create new single-select option")
     fields_create_p.add_argument("--project", required=True, choices=["mount-olympus"])
-    fields_create_p.add_argument("--field", required=True, help="Field name (e.g. initiative, objective)")
+    fields_create_p.add_argument(
+        "--field", required=True, help="Field name (e.g. initiative, objective)"
+    )
     fields_create_p.add_argument("--option", required=True, help="New option name")
 
     fields_discover_p = fields_sp.add_parser("discover", help="Discover all fields and options")
@@ -2965,7 +3132,9 @@ def main() -> None:
     metrics_ct_p = metrics_sp.add_parser("cycle-time", help="Cycle time percentiles")
     metrics_ct_p.add_argument("--project", required=True, choices=["mount-olympus"])
     metrics_ct_p.add_argument("--days", type=int, default=30)
-    metrics_ct_p.add_argument("--type", choices=["capability", "enhancement", "defect", "exploration"])
+    metrics_ct_p.add_argument(
+        "--type", choices=["capability", "enhancement", "defect", "exploration"]
+    )
 
     metrics_th_p = metrics_sp.add_parser("throughput", help="Items deployed per week")
     metrics_th_p.add_argument("--project", required=True, choices=["mount-olympus"])
@@ -2974,7 +3143,9 @@ def main() -> None:
     metrics_age_p = metrics_sp.add_parser("wip-age", help="Age of in-progress items")
     metrics_age_p.add_argument("--project", required=True, choices=["mount-olympus"])
 
-    metrics_col_p = metrics_sp.add_parser("column-time", help="Time in each column for a specific item")
+    metrics_col_p = metrics_sp.add_parser(
+        "column-time", help="Time in each column for a specific item"
+    )
     metrics_col_p.add_argument("--project", required=True, choices=["mount-olympus"])
     metrics_col_p.add_argument("--number", required=True, type=int)
 
@@ -2986,7 +3157,9 @@ def main() -> None:
 
     ms_create_p = ms_sp.add_parser("create", help="Create milestone for Objective")
     ms_create_p.add_argument("--repo", required=True)
-    ms_create_p.add_argument("--title", required=True, help="Milestone title (e.g. 'Pilot: Auth MVP')")
+    ms_create_p.add_argument(
+        "--title", required=True, help="Milestone title (e.g. 'Pilot: Auth MVP')"
+    )
     ms_create_p.add_argument("--due-date", required=True, help="Due date (YYYY-MM-DD)")
     ms_create_p.add_argument("--description", default="", help="Milestone description")
 
@@ -3018,7 +3191,9 @@ def main() -> None:
     rollout_labels_p = rollout_sp.add_parser("deploy-labels", help="Deploy all SDLC labels to repo")
     rollout_labels_p.add_argument("--repo", required=True)
 
-    rollout_templates_p = rollout_sp.add_parser("deploy-templates", help="Deploy all SDLC templates to repo")
+    rollout_templates_p = rollout_sp.add_parser(
+        "deploy-templates", help="Deploy all SDLC templates to repo"
+    )
     rollout_templates_p.add_argument("--repo", required=True)
 
     rollout_all_p = rollout_sp.add_parser("deploy-all", help="Full SDLC deployment to repo")
@@ -3026,10 +3201,12 @@ def main() -> None:
 
     rollout_update_p = rollout_sp.add_parser("update", help="Update beads-config.json")
     rollout_update_p.add_argument("--repo", required=True)
-    rollout_update_p.add_argument("--field", required=True,
-                                   choices=["labels", "templates", "claude_md", "project"])
-    rollout_update_p.add_argument("--status", required=True,
-                                   choices=["pending", "in-progress", "complete"])
+    rollout_update_p.add_argument(
+        "--field", required=True, choices=["labels", "templates", "claude_md", "project"]
+    )
+    rollout_update_p.add_argument(
+        "--status", required=True, choices=["pending", "in-progress", "complete"]
+    )
 
     # ===========================
     # FLOW (Phase C — operator-facing GraphQL/REST surface)
@@ -3041,10 +3218,14 @@ def main() -> None:
         "set-field",
         help="Set a single-select project field on a card",
     )
-    flow_setfield_p.add_argument("--project", required=True, help="Project name (e.g., mount-olympus)")
+    flow_setfield_p.add_argument(
+        "--project", required=True, help="Project name (e.g., mount-olympus)"
+    )
     flow_setfield_p.add_argument("--repo", required=True)
     flow_setfield_p.add_argument("--number", required=True, type=int)
-    flow_setfield_p.add_argument("--field", required=True, help="Field name (e.g., Initiative, Objective, Status)")
+    flow_setfield_p.add_argument(
+        "--field", required=True, help="Field name (e.g., Initiative, Objective, Status)"
+    )
     flow_setfield_p.add_argument("--option", required=True, help="Option name (case-insensitive)")
 
     flow_options_p = flow_sp.add_parser(
@@ -3091,7 +3272,9 @@ def main() -> None:
     config_p = subparsers.add_parser("config", help="Configuration operations")
     config_sp = config_p.add_subparsers(dest="action", required=True)
     config_sp.add_parser("show", help="Show loaded configuration")
-    config_sp.add_parser("show-defaults", help="Show per-user defaults from ~/.claude/sdlc-defaults.json")
+    config_sp.add_parser(
+        "show-defaults", help="Show per-user defaults from ~/.claude/sdlc-defaults.json"
+    )
     config_init_p = config_sp.add_parser(
         "init-defaults",
         help="First-run wizard to seed per-user defaults",
@@ -3128,7 +3311,9 @@ def main() -> None:
         elif args.resource == "issue":
             if args.action == "create":
                 issue_create(
-                    args.repo, args.type, fmt,
+                    args.repo,
+                    args.type,
+                    fmt,
                     parent_ref=args.parent_ref,
                     skip_metadata=args.skip_metadata,
                 )
@@ -3185,18 +3370,17 @@ def main() -> None:
 
         elif args.resource == "flow":
             if args.action == "set-field":
-                flow_set_field(args.project, args.repo, args.number,
-                               args.field, args.option, fmt)
+                flow_set_field(args.project, args.repo, args.number, args.field, args.option, fmt)
             elif args.action == "field-options":
                 flow_field_options(args.project, args.field, fmt)
             elif args.action == "discover-project":
                 flow_discover_project(args.repo, fmt)
             elif args.action == "link-sub-issue":
-                flow_link_sub_issue(args.parent_repo, args.parent_number,
-                                    args.child_repo, args.child_number, fmt)
+                flow_link_sub_issue(
+                    args.parent_repo, args.parent_number, args.child_repo, args.child_number, fmt
+                )
             elif args.action == "verify-label":
-                flow_verify_label(args.repo, args.name, args.color,
-                                  args.description, fmt)
+                flow_verify_label(args.repo, args.name, args.color, args.description, fmt)
             elif args.action == "validate-card":
                 flow_validate_card(args.repo, args.number, fmt)
 

@@ -12,12 +12,7 @@ import pytest
 sys.path.insert(
     0,
     str(
-        Path(__file__).parent.parent
-        / "plugins"
-        / "unifi"
-        / "skills"
-        / "unifi-protect"
-        / "scripts"
+        Path(__file__).parent.parent / "plugins" / "unifi" / "skills" / "unifi-protect" / "scripts"
     ),
 )
 
@@ -289,7 +284,11 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("POST", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz", confirm=False)
+            client._request(
+                "POST",
+                "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz",
+                confirm=False,
+            )
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
@@ -302,7 +301,11 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("PUT", "https://10.220.1.1/proxy/protect/integration/v1/liveviews/lv1", confirm=False)
+            client._request(
+                "PUT",
+                "https://10.220.1.1/proxy/protect/integration/v1/liveviews/lv1",
+                confirm=False,
+            )
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
@@ -315,7 +318,9 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("PATCH", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1", confirm=False)
+            client._request(
+                "PATCH", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1", confirm=False
+            )
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
@@ -328,7 +333,11 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("DELETE", "https://10.220.1.1/proxy/protect/integration/v1/liveviews/lv1", confirm=False)
+            client._request(
+                "DELETE",
+                "https://10.220.1.1/proxy/protect/integration/v1/liveviews/lv1",
+                confirm=False,
+            )
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
@@ -341,7 +350,11 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):
-            client._request("POST", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz", confirm=False)
+            client._request(
+                "POST",
+                "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz",
+                confirm=False,
+            )
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -367,7 +380,12 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):
-            client._request("POST", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz", data=body, confirm=False)
+            client._request(
+                "POST",
+                "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz",
+                data=body,
+                confirm=False,
+            )
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -380,7 +398,11 @@ class TestDryRun:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):
-            client._request("POST", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz", confirm=False)
+            client._request(
+                "POST",
+                "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz",
+                confirm=False,
+            )
 
         mock_request.assert_not_called()
 
@@ -486,6 +508,7 @@ class TestCameras:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert output["dry_run"] is True
+
 
 class TestLiveviews:
     """Test liveview-related methods."""

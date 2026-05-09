@@ -24,7 +24,7 @@ import os
 import re
 import sys
 import time
-from typing import Any
+from typing import Any, cast
 
 try:
     import requests
@@ -135,7 +135,7 @@ class SplunkClient:
                 self._error(error_msg, status_code=response.status_code)
                 sys.exit(1)
 
-            return response.json()
+            return cast(dict[str, Any], response.json())
 
         except requests.exceptions.Timeout:
             self._error("Request timeout after 30 seconds")
@@ -224,9 +224,7 @@ class SplunkClient:
         """
         params = {"output_mode": "json", "offset": offset, "count": count}
 
-        response = self._request(
-            "GET", f"/services/search/jobs/{job_id}/results", params=params
-        )
+        response = self._request("GET", f"/services/search/jobs/{job_id}/results", params=params)
 
         results = response.get("results", [])
         self._success(results, count=len(results), offset=offset)
@@ -391,9 +389,15 @@ def main():
     # search submit
     search_submit_parser = search_subparsers.add_parser("submit", help="Submit search job")
     search_submit_parser.add_argument("--query", required=True, help="SPL search query")
-    search_submit_parser.add_argument("--earliest-time", default="-1h", help="Start time (default: -1h)")
-    search_submit_parser.add_argument("--latest-time", default="now", help="End time (default: now)")
-    search_submit_parser.add_argument("--max-count", type=int, default=100, help="Max results (default: 100)")
+    search_submit_parser.add_argument(
+        "--earliest-time", default="-1h", help="Start time (default: -1h)"
+    )
+    search_submit_parser.add_argument(
+        "--latest-time", default="now", help="End time (default: now)"
+    )
+    search_submit_parser.add_argument(
+        "--max-count", type=int, default=100, help="Max results (default: 100)"
+    )
 
     # search poll
     search_poll_parser = search_subparsers.add_parser("poll", help="Poll search job status")
@@ -402,17 +406,33 @@ def main():
     # search results
     search_results_parser = search_subparsers.add_parser("results", help="Get search results")
     search_results_parser.add_argument("--job-id", required=True, help="Search job ID (sid)")
-    search_results_parser.add_argument("--offset", type=int, default=0, help="Result offset (default: 0)")
-    search_results_parser.add_argument("--count", type=int, default=100, help="Result count (default: 100)")
+    search_results_parser.add_argument(
+        "--offset", type=int, default=0, help="Result offset (default: 0)"
+    )
+    search_results_parser.add_argument(
+        "--count", type=int, default=100, help="Result count (default: 100)"
+    )
 
     # search execute
-    search_execute_parser = search_subparsers.add_parser("execute", help="Execute search and wait for results")
+    search_execute_parser = search_subparsers.add_parser(
+        "execute", help="Execute search and wait for results"
+    )
     search_execute_parser.add_argument("--query", required=True, help="SPL search query")
-    search_execute_parser.add_argument("--earliest-time", default="-1h", help="Start time (default: -1h)")
-    search_execute_parser.add_argument("--latest-time", default="now", help="End time (default: now)")
-    search_execute_parser.add_argument("--max-count", type=int, default=100, help="Max results (default: 100)")
-    search_execute_parser.add_argument("--timeout", type=int, default=60, help="Timeout in seconds (default: 60)")
-    search_execute_parser.add_argument("--poll-interval", type=int, default=2, help="Poll interval in seconds (default: 2)")
+    search_execute_parser.add_argument(
+        "--earliest-time", default="-1h", help="Start time (default: -1h)"
+    )
+    search_execute_parser.add_argument(
+        "--latest-time", default="now", help="End time (default: now)"
+    )
+    search_execute_parser.add_argument(
+        "--max-count", type=int, default=100, help="Max results (default: 100)"
+    )
+    search_execute_parser.add_argument(
+        "--timeout", type=int, default=60, help="Timeout in seconds (default: 60)"
+    )
+    search_execute_parser.add_argument(
+        "--poll-interval", type=int, default=2, help="Poll interval in seconds (default: 2)"
+    )
 
     # search delete
     search_delete_parser = search_subparsers.add_parser("delete", help="Delete search job")

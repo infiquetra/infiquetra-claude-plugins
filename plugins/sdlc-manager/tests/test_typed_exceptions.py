@@ -153,8 +153,8 @@ def test_classifies_status_from_stdout_when_stderr_lacks_http_marker() -> None:
         returncode=1,
         stdout='{"message":"Not Found","status":"404"}',
     )
-    assert exc.status_code == 404
     assert isinstance(exc, sdlc_manager.ApiNotFoundError)
+    assert exc.status_code == 404
 
 
 def test_class_alias_compatibility() -> None:
@@ -162,8 +162,8 @@ def test_class_alias_compatibility() -> None:
     are retained as aliases for the *Error-suffixed PEP 8 names. Code that
     catches the old names continues to work; isinstance checks pass either way."""
     exc = sdlc_manager.ApiNotFoundError("test", status_code=404)
-    assert isinstance(exc, sdlc_manager.ApiNotFound)        # alias
-    assert isinstance(exc, sdlc_manager.ApiNotFoundError)   # canonical name
+    assert isinstance(exc, sdlc_manager.ApiNotFound)  # alias
+    assert isinstance(exc, sdlc_manager.ApiNotFoundError)  # canonical name
     assert sdlc_manager.ApiAlreadyExists is sdlc_manager.ApiAlreadyExistsError
     assert sdlc_manager.ApiRateLimited is sdlc_manager.ApiRateLimitedError
 
@@ -193,9 +193,11 @@ def test_flow_link_sub_issue_idempotent_via_ApiAlreadyExists() -> None:
     """The Phase C foundation refactor: link-sub-issue catches the typed
     ApiAlreadyExists, not a substring match. This test ensures the typed
     path works when the classifier raises the right type."""
-    with patch.object(sdlc_manager, "_rest_get") as mock_get, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post, \
-         patch.object(sdlc_manager, "_out") as mock_out:
+    with (
+        patch.object(sdlc_manager, "_rest_get") as mock_get,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
         mock_get.side_effect = [
             {"id": 12345},
             {"id": 67890, "title": "parent issue"},
@@ -208,21 +210,22 @@ def test_flow_link_sub_issue_idempotent_via_ApiAlreadyExists() -> None:
             stderr="HTTP 422: Validation Failed ... already exists",
         )
 
-        sdlc_manager.flow_link_sub_issue(
-            "campps-blueprint", 1, "campps-mvp", 42, fmt="text"
-        )
+        sdlc_manager.flow_link_sub_issue("campps-blueprint", 1, "campps-mvp", 42, fmt="text")
 
         msgs = [c.args[0] for c in mock_out.call_args_list]
-        assert any("Already linked" in m for m in msgs), \
+        assert any("Already linked" in m for m in msgs), (
             f"Expected idempotent success message; got: {msgs}"
+        )
 
 
 def test_flow_link_sub_issue_raises_on_non_duplicate_422() -> None:
     """A 422 that's NOT a duplicate (validation failure on the body) must
     NOT be silently treated as 'already exists' — it should propagate so
     the operator sees the real error."""
-    with patch.object(sdlc_manager, "_rest_get") as mock_get, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post:
+    with (
+        patch.object(sdlc_manager, "_rest_get") as mock_get,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+    ):
         mock_get.side_effect = [
             {"id": 12345},
             {"id": 67890},
@@ -233,9 +236,7 @@ def test_flow_link_sub_issue_raises_on_non_duplicate_422() -> None:
             status_code=422,
         )
         with pytest.raises(sdlc_manager.GhApiError) as exc_info:
-            sdlc_manager.flow_link_sub_issue(
-                "campps-blueprint", 1, "campps-mvp", 42, fmt="text"
-            )
+            sdlc_manager.flow_link_sub_issue("campps-blueprint", 1, "campps-mvp", 42, fmt="text")
         # Confirm it's not the ApiAlreadyExists subclass
         assert not isinstance(exc_info.value, sdlc_manager.ApiAlreadyExists)
 
@@ -245,9 +246,11 @@ def test_flow_link_sub_issue_raises_on_non_duplicate_422() -> None:
 
 def test_flow_verify_label_creates_via_ApiNotFound() -> None:
     """Probe raises ApiNotFound (typed 404) → fall through to create."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post, \
-         patch.object(sdlc_manager, "_out"):
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+        patch.object(sdlc_manager, "_out"),
+    ):
         mock_gh.side_effect = sdlc_manager.ApiNotFound(
             "gh command failed: HTTP 404",
             status_code=404,
@@ -261,16 +264,16 @@ def test_flow_verify_label_creates_via_ApiNotFound() -> None:
 def test_flow_verify_label_propagates_ApiAuthError() -> None:
     """Probe raises ApiAuthError (typed 401/403) → must NOT silently
     create; the auth failure propagates so the operator sees it."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post:
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+    ):
         mock_gh.side_effect = sdlc_manager.ApiAuthError(
             "gh command failed: HTTP 401 Bad credentials",
             status_code=401,
         )
         with pytest.raises(sdlc_manager.ApiAuthError):
-            sdlc_manager.flow_verify_label(
-                "campps-mvp", "x", None, None, fmt="text"
-            )
+            sdlc_manager.flow_verify_label("campps-mvp", "x", None, None, fmt="text")
         mock_post.assert_not_called()
 
 
@@ -278,18 +281,19 @@ def test_flow_verify_label_handles_race_via_ApiAlreadyExists_on_post() -> None:
     """Race: two operators run verify-label simultaneously, both see 404
     on probe, both POST, second gets 422-already-exists. Our impl must
     treat that as success (idempotency contract), not propagate."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post, \
-         patch.object(sdlc_manager, "_out") as mock_out:
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
         mock_gh.side_effect = sdlc_manager.ApiNotFound("404", status_code=404)
         mock_post.side_effect = sdlc_manager.ApiAlreadyExists(
             "name has already been taken",
             status_code=422,
         )
         # Should NOT raise
-        sdlc_manager.flow_verify_label(
-            "campps-mvp", "high-priority", "D93F0B", None, fmt="text"
-        )
+        sdlc_manager.flow_verify_label("campps-mvp", "high-priority", "D93F0B", None, fmt="text")
         msgs = [c.args[0] for c in mock_out.call_args_list]
-        assert any("just created" in m or "race detected" in m for m in msgs), \
+        assert any("just created" in m or "race detected" in m for m in msgs), (
             f"Expected race-detection message; got: {msgs}"
+        )

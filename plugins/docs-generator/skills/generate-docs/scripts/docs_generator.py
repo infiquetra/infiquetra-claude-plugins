@@ -8,10 +8,9 @@ Automated documentation generation for Infiquetra services.
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
 
 try:
-    import yaml
+    import yaml  # noqa: F401
 except ImportError:
     print("❌ Missing pyyaml. Install with: uv pip install pyyaml")
     sys.exit(1)
@@ -40,7 +39,7 @@ class DocsGenerator:
         readme_content = f"""# {self.service_name.upper()} Service
 
 ## Overview
-{self.service_name.replace('-', ' ').title()} service for the Infiquetra platform.
+{self.service_name.replace("-", " ").title()} service for the Infiquetra platform.
 
 ## Features
 - Feature 1
@@ -118,7 +117,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## Team
 - **Team**: infiquetra (Chainproofers)
-- **Slack**: 
+- **Slack**:
 - **Portfolio**: I5, Vehicle Services
 
 ## License
@@ -139,7 +138,7 @@ Copyright © 2024 your organization Inc.
         api_content = f"""# {self.service_name.upper()} API
 
 ## Overview
-REST API for {self.service_name.replace('-', ' ').title()} service.
+REST API for {self.service_name.replace("-", " ").title()} service.
 
 **Base URL**: `https://{self.service_name}.vecu.example.com`
 **Authentication**: JWT Bearer token
@@ -284,7 +283,7 @@ resources = response.json()
         arch_content = f"""# {self.service_name.upper()} Architecture
 
 ## Overview
-This document describes the architecture of the {self.service_name.replace('-', ' ').title()} service.
+This document describes the architecture of the {self.service_name.replace("-", " ").title()} service.
 
 ## Components
 
@@ -461,7 +460,9 @@ def main():
     # Generate command
     gen_parser = subparsers.add_parser("generate", help="Generate documentation")
     gen_parser.add_argument("--all", action="store_true", help="Generate all documentation")
-    gen_parser.add_argument("--type", choices=["readme", "api-spec", "architecture"], help="Documentation type")
+    gen_parser.add_argument(
+        "--type", choices=["readme", "api-spec", "architecture"], help="Documentation type"
+    )
     gen_parser.add_argument("--service", default="service", help="Service name")
     gen_parser.add_argument("--output", default="docs", help="Output directory")
 

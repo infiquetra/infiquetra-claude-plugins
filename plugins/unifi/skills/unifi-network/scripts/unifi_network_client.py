@@ -21,7 +21,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Any
+from typing import Any, cast
 
 import urllib3
 
@@ -142,15 +142,11 @@ class UnifiNetworkClient:
                 sys.exit(1)
 
             if response.status_code == 403:
-                self._error(
-                    "Insufficient permissions. Check API key scope.", status_code=403
-                )
+                self._error("Insufficient permissions. Check API key scope.", status_code=403)
                 sys.exit(1)
 
             if response.status_code == 404:
-                self._error(
-                    "Resource not found. Verify ID/MAC.", status_code=404
-                )
+                self._error("Resource not found. Verify ID/MAC.", status_code=404)
                 sys.exit(1)
 
             if response.status_code == 429:
@@ -186,20 +182,16 @@ class UnifiNetworkClient:
             if response.status_code == 204 or not response.content:
                 return {}
 
-            return response.json()
+            return cast(dict[str, Any], response.json())
 
         except requests.exceptions.Timeout:
             self._error("Request timeout after 30 seconds")
             sys.exit(1)
         except requests.exceptions.SSLError:
-            self._error(
-                "SSL verification failed. Set verify_ssl=True or check certificate."
-            )
+            self._error("SSL verification failed. Set verify_ssl=True or check certificate.")
             sys.exit(1)
         except requests.exceptions.ConnectionError:
-            self._error(
-                f"Cannot reach UDM at {self.host}. Check network connectivity."
-            )
+            self._error(f"Cannot reach UDM at {self.host}. Check network connectivity.")
             sys.exit(1)
         except Exception as e:
             self._error(f"Unexpected error: {str(e)}")
@@ -391,9 +383,7 @@ class UnifiNetworkClient:
         result = response.get("data", [{}])
         self._success(result[0] if result else {}, message="Network created")
 
-    def networks_update(
-        self, network_id: str, data: dict[str, Any], confirm: bool = False
-    ) -> None:
+    def networks_update(self, network_id: str, data: dict[str, Any], confirm: bool = False) -> None:
         """Update a network configuration.
 
         Args:
@@ -451,9 +441,7 @@ class UnifiNetworkClient:
         result = response.get("data", [{}])
         self._success(result[0] if result else {}, message="Firewall rule created")
 
-    def firewall_update(
-        self, rule_id: str, data: dict[str, Any], confirm: bool = False
-    ) -> None:
+    def firewall_update(self, rule_id: str, data: dict[str, Any], confirm: bool = False) -> None:
         """Update a firewall rule.
 
         Args:
@@ -497,12 +485,14 @@ class UnifiNetworkClient:
         """
         url = f"{self.base_v2}/trafficroutes/{route_id}"
         response = self._request("GET", url)
-        data = response if isinstance(response, dict) and "id" in response else response.get("data", {})
+        data = (
+            response
+            if isinstance(response, dict) and "id" in response
+            else response.get("data", {})
+        )
         self._success(data)
 
-    def traffic_routes_create(
-        self, data: dict[str, Any], confirm: bool = False
-    ) -> None:
+    def traffic_routes_create(self, data: dict[str, Any], confirm: bool = False) -> None:
         """Create a new traffic route.
 
         Args:
@@ -585,7 +575,9 @@ class UnifiNetworkClient:
         url = f"{self.base_v1}/rest/portforward/{forward_id}"
         response = self._request("PUT", url, data=data, confirm=confirm)
         result = response.get("data", [{}])
-        self._success(result[0] if result else {}, message=f"Port forward rule {forward_id} updated")
+        self._success(
+            result[0] if result else {}, message=f"Port forward rule {forward_id} updated"
+        )
 
     def port_forwards_delete(self, forward_id: str, confirm: bool = False) -> None:
         """Delete a port forwarding rule.
@@ -620,9 +612,7 @@ class UnifiNetworkClient:
         data = response.get("data", [])
         self._success(data[0] if data else {})
 
-    def wlans_update(
-        self, wlan_id: str, data: dict[str, Any], confirm: bool = False
-    ) -> None:
+    def wlans_update(self, wlan_id: str, data: dict[str, Any], confirm: bool = False) -> None:
         """Update a WLAN configuration.
 
         Args:
@@ -683,7 +673,11 @@ class UnifiNetworkClient:
         """
         url = f"{self.base_v2}/static-dns/{dns_id}"
         response = self._request("GET", url)
-        data = response if isinstance(response, dict) and "_id" in response else response.get("data", {})
+        data = (
+            response
+            if isinstance(response, dict) and "_id" in response
+            else response.get("data", {})
+        )
         self._success(data)
 
     def dns_create(self, data: dict[str, Any], confirm: bool = False) -> None:
@@ -697,9 +691,7 @@ class UnifiNetworkClient:
         response = self._request("POST", url, data=data, confirm=confirm)
         self._success(response, message="Static DNS entry created")
 
-    def dns_update(
-        self, dns_id: str, data: dict[str, Any], confirm: bool = False
-    ) -> None:
+    def dns_update(self, dns_id: str, data: dict[str, Any], confirm: bool = False) -> None:
         """Update a static DNS entry.
 
         Args:
@@ -844,10 +836,14 @@ def main():
     devices_forget_parser = devices_subparsers.add_parser("forget", help="Forget a device")
     devices_forget_parser.add_argument("--mac", required=True, help="Device MAC address")
 
-    devices_upgrade_parser = devices_subparsers.add_parser("upgrade", help="Upgrade device firmware")
+    devices_upgrade_parser = devices_subparsers.add_parser(
+        "upgrade", help="Upgrade device firmware"
+    )
     devices_upgrade_parser.add_argument("--mac", required=True, help="Device MAC address")
 
-    devices_locate_parser = devices_subparsers.add_parser("locate", help="Toggle locate mode on a device")
+    devices_locate_parser = devices_subparsers.add_parser(
+        "locate", help="Toggle locate mode on a device"
+    )
     devices_locate_parser.add_argument("--mac", required=True, help="Device MAC address")
 
     # ===========================
@@ -890,7 +886,10 @@ def main():
 
     networks_create_parser = networks_subparsers.add_parser("create", help="Create a network")
     networks_create_parser.add_argument(
-        "--json", required=True, dest="json_data", help='Network configuration JSON (e.g. \'{"name":"IoT","purpose":"corporate","vlan":30}\')'
+        "--json",
+        required=True,
+        dest="json_data",
+        help='Network configuration JSON (e.g. \'{"name":"IoT","purpose":"corporate","vlan":30}\')',
     )
 
     networks_update_parser = networks_subparsers.add_parser("update", help="Update a network")
@@ -930,9 +929,7 @@ def main():
     # ===========================
     # TRAFFIC ROUTES
     # ===========================
-    traffic_routes_parser = subparsers.add_parser(
-        "traffic-routes", help="Manage traffic routes"
-    )
+    traffic_routes_parser = subparsers.add_parser("traffic-routes", help="Manage traffic routes")
     traffic_routes_subparsers = traffic_routes_parser.add_subparsers(
         dest="action", help="Traffic route action"
     )
@@ -993,7 +990,10 @@ def main():
     )
     port_forwards_update_parser.add_argument("--id", required=True, help="Port forward rule ID")
     port_forwards_update_parser.add_argument(
-        "--json", required=True, dest="json_data", help="Updated port forward rule configuration JSON"
+        "--json",
+        required=True,
+        dest="json_data",
+        help="Updated port forward rule configuration JSON",
     )
 
     port_forwards_delete_parser = port_forwards_subparsers.add_parser(
@@ -1043,7 +1043,10 @@ def main():
 
     dns_create_parser = dns_subparsers.add_parser("create", help="Create a static DNS entry")
     dns_create_parser.add_argument(
-        "--json", required=True, dest="json_data", help='Static DNS entry JSON (e.g. \'{"key":"host.local","record_type":"A","value":"192.168.1.10"}\')'
+        "--json",
+        required=True,
+        dest="json_data",
+        help='Static DNS entry JSON (e.g. \'{"key":"host.local","record_type":"A","value":"192.168.1.10"}\')',
     )
 
     dns_update_parser = dns_subparsers.add_parser("update", help="Update a static DNS entry")

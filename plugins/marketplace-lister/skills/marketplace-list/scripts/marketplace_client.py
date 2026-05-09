@@ -38,6 +38,7 @@ GROUP_GAP_THRESHOLD = 5
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _success(data: dict) -> None:
     print(json.dumps(data, indent=2))
 
@@ -80,6 +81,7 @@ def _extract_seq(filename: str) -> int | None:
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
+
 def cmd_init(_args: list[str]) -> None:
     """Create Marketplace directory structure in iCloud."""
     if not ICLOUD_BASE.exists():
@@ -90,13 +92,15 @@ def cmd_init(_args: list[str]) -> None:
         if not d.exists():
             d.mkdir(parents=True)
             created.append(str(d))
-    _success({
-        "success": True,
-        "created": created,
-        "inbox": str(INBOX),
-        "unidentified": str(UNIDENTIFIED),
-        "message": "Marketplace directories ready." if created else "Already initialized.",
-    })
+    _success(
+        {
+            "success": True,
+            "created": created,
+            "inbox": str(INBOX),
+            "unidentified": str(UNIDENTIFIED),
+            "message": "Marketplace directories ready." if created else "Already initialized.",
+        }
+    )
 
 
 def cmd_scan(args: list[str]) -> None:
@@ -110,21 +114,25 @@ def cmd_scan(args: list[str]) -> None:
     for item in sorted(scan_path.iterdir()):
         if item.is_dir():
             photos = _photos_in(item)
-            folders.append({
-                "folder": item.name,
-                "path": str(item),
-                "photo_count": len(photos),
-                "photos": [p.name for p in sorted(photos)],
-            })
+            folders.append(
+                {
+                    "folder": item.name,
+                    "path": str(item),
+                    "photo_count": len(photos),
+                    "photos": [p.name for p in sorted(photos)],
+                }
+            )
         elif item.is_file() and item.suffix.lower() in PHOTO_EXTS:
             loose.append(item.name)
-    _success({
-        "folders": folders,
-        "count": len(folders),
-        "path": str(scan_path),
-        "loose_photos": loose,
-        "loose_count": len(loose),
-    })
+    _success(
+        {
+            "folders": folders,
+            "count": len(folders),
+            "path": str(scan_path),
+            "loose_photos": loose,
+            "loose_count": len(loose),
+        }
+    )
 
 
 def cmd_group(args: list[str]) -> None:
@@ -136,17 +144,18 @@ def cmd_group(args: list[str]) -> None:
 
     # Collect only loose files (not in subfolders)
     loose_photos = sorted(
-        f for f in scan_path.iterdir()
-        if f.is_file() and f.suffix.lower() in PHOTO_EXTS
+        f for f in scan_path.iterdir() if f.is_file() and f.suffix.lower() in PHOTO_EXTS
     )
 
     if not loose_photos:
-        _success({
-            "groups": [],
-            "group_count": 0,
-            "loose_count": 0,
-            "message": "No loose photos found. Photos are already organized into subfolders.",
-        })
+        _success(
+            {
+                "groups": [],
+                "group_count": 0,
+                "loose_count": 0,
+                "message": "No loose photos found. Photos are already organized into subfolders.",
+            }
+        )
         return
 
     # Group by gaps in filename sequence numbers
@@ -157,7 +166,11 @@ def cmd_group(args: list[str]) -> None:
         prev_seq = _extract_seq(loose_photos[i - 1].name)
         curr_seq = _extract_seq(loose_photos[i].name)
 
-        if prev_seq is not None and curr_seq is not None and (curr_seq - prev_seq) >= GROUP_GAP_THRESHOLD:
+        if (
+            prev_seq is not None
+            and curr_seq is not None
+            and (curr_seq - prev_seq) >= GROUP_GAP_THRESHOLD
+        ):
             groups.append(current)
             current = [loose_photos[i]]
         else:
@@ -175,18 +188,22 @@ def cmd_group(args: list[str]) -> None:
         for i, grp in enumerate(groups)
     ]
 
-    _success({
-        "groups": result_groups,
-        "group_count": len(result_groups),
-        "loose_count": len(loose_photos),
-        "inbox": str(scan_path),
-    })
+    _success(
+        {
+            "groups": result_groups,
+            "group_count": len(result_groups),
+            "loose_count": len(loose_photos),
+            "inbox": str(scan_path),
+        }
+    )
 
 
 def cmd_create_folder(args: list[str]) -> None:
     """Create a named subfolder in inbox and move specified photos into it."""
     if "--name" not in args or "--photos" not in args:
-        _error("Usage: marketplace_client.py create-folder --name <slug> --photos IMG_001.JPG,IMG_002.JPG")
+        _error(
+            "Usage: marketplace_client.py create-folder --name <slug> --photos IMG_001.JPG,IMG_002.JPG"
+        )
         return
 
     name = args[args.index("--name") + 1]
@@ -243,12 +260,14 @@ def cmd_organize(args: list[str]) -> None:
         _error(f"Destination already exists: {dest}")
         return
     src.rename(dest)
-    _success({
-        "success": True,
-        "from": str(src),
-        "to": str(dest),
-        "folder": dest_name,
-    })
+    _success(
+        {
+            "success": True,
+            "from": str(src),
+            "to": str(dest),
+            "folder": dest_name,
+        }
+    )
 
 
 def cmd_unidentified(args: list[str]) -> None:
@@ -267,7 +286,9 @@ def cmd_unidentified(args: list[str]) -> None:
 
 def cmd_listing(args: list[str]) -> None:
     """Read listing JSON from stdin, write listing.md + post.md to the specified folder."""
-    folder_arg = args[args.index("--folder") + 1] if "--folder" in args else (args[0] if args else None)
+    folder_arg = (
+        args[args.index("--folder") + 1] if "--folder" in args else (args[0] if args else None)
+    )
     if not folder_arg:
         _error("Usage: marketplace_client.py listing --folder <path>  (pipe JSON via stdin)")
         return
@@ -512,19 +533,23 @@ def cmd_listing(args: list[str]) -> None:
     post_path = folder / "post.md"
     post_path.write_text("\n".join(post_lines))
 
-    _success({
-        "success": True,
-        "path": str(listing_path),
-        "post_path": str(post_path),
-        "title": title,
-        "platforms": platforms,
-    })
+    _success(
+        {
+            "success": True,
+            "path": str(listing_path),
+            "post_path": str(post_path),
+            "title": title,
+            "platforms": platforms,
+        }
+    )
 
 
 def cmd_copy(args: list[str]) -> None:
     """Print title or description from post.md to stdout for piping to pbcopy."""
     if "--folder" not in args:
-        _error("Usage: marketplace_client.py copy --folder <path> [--field title|description] [--platform fb|mercari|ebay]")
+        _error(
+            "Usage: marketplace_client.py copy --folder <path> [--field title|description] [--platform fb|mercari|ebay]"
+        )
         return
     folder = Path(args[args.index("--folder") + 1])
     field = args[args.index("--field") + 1] if "--field" in args else "description"
@@ -571,15 +596,15 @@ def cmd_copy(args: list[str]) -> None:
     if field == "title":
         for line in target_lines:
             if line.startswith("TITLE: "):
-                print(line[len("TITLE: "):].strip())
+                print(line[len("TITLE: ") :].strip())
                 return
         _error("Title not found in post.md")
     elif field == "description":
         separators = [i for i, line in enumerate(target_lines) if line.startswith("─")]
         if len(separators) >= 2:
-            print("\n".join(target_lines[separators[1] + 1:]).strip())
+            print("\n".join(target_lines[separators[1] + 1 :]).strip())
         elif len(separators) == 1:
-            print("\n".join(target_lines[separators[0] + 1:]).strip())
+            print("\n".join(target_lines[separators[0] + 1 :]).strip())
         else:
             _error("Description not found in post.md")
     else:
@@ -596,12 +621,14 @@ def cmd_status(_args: list[str]) -> None:
         if item.is_dir() and item.name not in ("inbox", "unidentified"):
             listing = item / "listing.md"
             photos = _photos_in(item)
-            items.append({
-                "folder": item.name,
-                "path": str(item),
-                "has_listing": listing.exists(),
-                "photo_count": len(photos),
-            })
+            items.append(
+                {
+                    "folder": item.name,
+                    "path": str(item),
+                    "has_listing": listing.exists(),
+                    "photo_count": len(photos),
+                }
+            )
     _success({"items": items, "count": len(items)})
 
 

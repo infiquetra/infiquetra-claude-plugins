@@ -22,25 +22,43 @@
 
 ---
 
+## 2026-05-08
+
+### Adopt uv as canonical dependency sync (commit pending)  {#uv-canonical-sync}
+
+**Decision.** Use uv as the canonical repository dependency sync tool. Track `uv.lock`, install CI dependencies with `uv sync --locked --extra dev`, and run local and CI checks through `uv run`.
+
+**Rejected alternatives.**
+- *Keep using pip in CI.* Rejected: it contradicts the desired repository standard and leaves installs unreproducible.
+- *Use `uv pip install` without a lockfile.* Rejected: it is still an ad hoc install path and does not satisfy the existing revisit condition for tracking `uv.lock`.
+- *Move all dev dependencies to `[dependency-groups]` now.* Rejected: the existing `dev` extra maps directly from the prior `pip install -e ".[dev]"` workflow, so moving dependency ownership would add churn without improving the conversion.
+
+**Rationale.** The repository already has `pyproject.toml` metadata and had a documented revisit condition to track `uv.lock` once uv became canonical. A checked lockfile plus `uv sync --locked --extra dev` makes CI and local development use the same dependency graph.
+
+**Revisit when.** uv stops being the repository development standard, or the project intentionally changes from extras-based dev dependencies to uv dependency groups.
+
+**Refs.** Supersedes the `uv.lock` portion of [gitignore `.claude/` + no `uv.lock`](#gitignore-claude-and-no-uv-lock); archived pre-correction version in [ARCHIVE](ARCHIVE.md#superseded-no-uv-lock-decision).
+
+---
+
 ## 2026-05-01
 
-### Gitignore `.claude/`, do not track `uv.lock` (commit `4da5705`)  {#gitignore-claude-and-no-uv-lock}
+### Gitignore `.claude/`; `uv.lock` decision superseded (commit `4da5705`)  {#gitignore-claude-and-no-uv-lock}
 
-**Decision.** Add `.claude/` to `.gitignore`. Do not track `uv.lock`. Stray `swap-pane` (0-byte file from a tmux operation) deleted as one-off cleanup.
+**Decision.** Add `.claude/` to `.gitignore`. The prior decision not to track `uv.lock` is superseded by [Adopt uv as canonical dependency sync](#uv-canonical-sync).
 
 **Rejected alternatives.**
 - *Track `.claude/settings.local.json`.* Rejected: file holds per-user permission grants for the Claude Code session. Sharing one user's allowed-tool list would either leak local preferences or get blindly overwritten by the next user. The file is named `.local.json` for a reason.
 - *Track `.claude/context/sdlc-plan-state.json`.* Rejected: mid-session orchestration state from `sdlc-manager`. Stale immediately after the session ends; would create misleading commits if pushed.
-- *Track `uv.lock`.* Rejected: `pyproject.toml` declares `requires = ["hatchling"]` with no `[tool.uv]` section. The repo uses hatchling for building and ad-hoc `pip`/`uv` invocations for local dev tooling — there's no reproducible-build promise being made by checking in a uv lockfile. Tracking it would imply uv is part of the build path.
 
-**Rationale.** `.claude/` content is per-user / per-session by design (settings.local + context state). `uv.lock` would make a build-tool claim the repo isn't currently making. Both are pure noise in the diff and confuse contributors about what's authoritative.
+**Rationale.** `.claude/` content is per-user / per-session by design (settings.local + context state). The earlier `uv.lock` rationale was correct when the repo used ad hoc pip/uv installs, but no longer applies now that uv is the canonical lock-and-install path.
 
-**Revisit when.**
-- The repo adopts uv as the canonical lock-and-install tool (would require a `[tool.uv]` block in `pyproject.toml` and a CI step that installs from the lockfile). Then check it in and remove the gitignore exclusion.
-- Claude Code introduces a *shared* settings file under `.claude/` that's intended to be checked in. At that point, narrow the gitignore from `.claude/` to specifically `.claude/settings.local.json` and `.claude/context/`.
+**Revisit when.** Claude Code introduces a *shared* settings file under `.claude/` that's intended to be checked in. At that point, narrow the gitignore from `.claude/` to specifically `.claude/settings.local.json` and `.claude/context/`.
 
 **Refs.**
+- DECISIONS [uv canonical sync](#uv-canonical-sync) — supersedes the lockfile portion of this decision.
 - LEARNINGS [marketplace registry drift](LEARNINGS.md#marketplace-drift) — same PR (#112).
 - ARCHIVE [PR #112](ARCHIVE.md#pr-112-marketplace-fix) — shipped record.
+- ARCHIVE [superseded no-uv-lock decision](ARCHIVE.md#superseded-no-uv-lock-decision) — pre-correction record.
 
 ---

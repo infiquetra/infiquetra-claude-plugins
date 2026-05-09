@@ -29,45 +29,44 @@ def test_link_sub_issue_idempotent_on_already_exists() -> None:
     Phase C foundation: the contract is now expressed via the typed
     `ApiAlreadyExists` exception (raised by `_classify_gh_error`), not
     string-matching. See test_typed_exceptions.py for the classifier tests."""
-    with patch.object(sdlc_manager, "_rest_get") as mock_get, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post, \
-         patch.object(sdlc_manager, "_out") as mock_out:
+    with (
+        patch.object(sdlc_manager, "_rest_get") as mock_get,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
         mock_get.side_effect = [
-            {"id": 12345},                               # child
-            {"id": 67890, "title": "parent issue"},      # parent (no pull_request key)
+            {"id": 12345},  # child
+            {"id": 67890, "title": "parent issue"},  # parent (no pull_request key)
         ]
         mock_post.side_effect = sdlc_manager.ApiAlreadyExists(
             "API call failed: HTTP 422 sub-issue already exists",
             status_code=422,
         )
 
-        sdlc_manager.flow_link_sub_issue(
-            "campps-blueprint", 1, "campps-mvp", 42, fmt="text"
-        )
+        sdlc_manager.flow_link_sub_issue("campps-blueprint", 1, "campps-mvp", 42, fmt="text")
 
         # Should NOT have raised; should have called _out with idempotent message
         msgs = [c.args[0] for c in mock_out.call_args_list]
-        assert any("Already linked" in m for m in msgs), \
+        assert any("Already linked" in m for m in msgs), (
             f"Expected idempotent success message; got: {msgs}"
+        )
 
 
 def test_link_sub_issue_raises_on_real_error() -> None:
     """A non-422 error (auth, server, network) must propagate, not get
     swallowed as 'already exists'."""
-    with patch.object(sdlc_manager, "_rest_get") as mock_get, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post:
+    with (
+        patch.object(sdlc_manager, "_rest_get") as mock_get,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+    ):
         mock_get.side_effect = [
             {"id": 12345},
             {"id": 67890},
         ]
-        mock_post.side_effect = RuntimeError(
-            "API call failed: 500 Internal Server Error"
-        )
+        mock_post.side_effect = RuntimeError("API call failed: 500 Internal Server Error")
 
         with pytest.raises(RuntimeError, match="500"):
-            sdlc_manager.flow_link_sub_issue(
-                "campps-blueprint", 1, "campps-mvp", 42, fmt="text"
-            )
+            sdlc_manager.flow_link_sub_issue("campps-blueprint", 1, "campps-mvp", 42, fmt="text")
 
 
 def test_link_sub_issue_rejects_pr_as_parent() -> None:
@@ -76,12 +75,13 @@ def test_link_sub_issue_rejects_pr_as_parent() -> None:
     with patch.object(sdlc_manager, "_rest_get") as mock_get:
         mock_get.side_effect = [
             {"id": 12345},  # child
-            {"id": 67890, "pull_request": {"url": "..."}},  # parent has pull_request key → it's a PR
+            {
+                "id": 67890,
+                "pull_request": {"url": "..."},
+            },  # parent has pull_request key → it's a PR
         ]
         with pytest.raises(RuntimeError, match="parent.*PR.*not an issue|Parent.*is a PR"):
-            sdlc_manager.flow_link_sub_issue(
-                "campps-mvp", 1, "campps-mvp", 42, fmt="text"
-            )
+            sdlc_manager.flow_link_sub_issue("campps-mvp", 1, "campps-mvp", 42, fmt="text")
 
 
 def test_link_sub_issue_rejects_missing_child_db_id() -> None:
@@ -90,9 +90,7 @@ def test_link_sub_issue_rejects_missing_child_db_id() -> None:
     with patch.object(sdlc_manager, "_rest_get") as mock_get:
         mock_get.return_value = {"id": None}
         with pytest.raises(RuntimeError, match="no integer 'id'|Cannot link"):
-            sdlc_manager.flow_link_sub_issue(
-                "r", 1, "r", 2, fmt="text"
-            )
+            sdlc_manager.flow_link_sub_issue("r", 1, "r", 2, fmt="text")
 
 
 # --- flow_verify_label ------------------------------------------------------
@@ -100,9 +98,11 @@ def test_link_sub_issue_rejects_missing_child_db_id() -> None:
 
 def test_verify_label_no_op_when_label_exists() -> None:
     """Probe returns 200 → label exists → no POST, just a 'no-op' message."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post, \
-         patch.object(sdlc_manager, "_out") as mock_out:
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
         mock_gh.return_value = '{"name":"high-priority","color":"D93F0B"}'
         sdlc_manager.flow_verify_label(
             "campps-mvp", "high-priority", "D93F0B", "High priority", fmt="text"
@@ -114,11 +114,14 @@ def test_verify_label_no_op_when_label_exists() -> None:
 
 def test_verify_label_creates_on_404() -> None:
     """Probe raises ApiNotFound (typed 404) → POST creates the label."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post, \
-         patch.object(sdlc_manager, "_out"):
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+        patch.object(sdlc_manager, "_out"),
+    ):
         mock_gh.side_effect = sdlc_manager.ApiNotFound(
-            "API call failed: HTTP 404", status_code=404,
+            "API call failed: HTTP 404",
+            status_code=404,
         )
         sdlc_manager.flow_verify_label(
             "campps-mvp", "high-priority", "D93F0B", "High priority", fmt="text"
@@ -133,14 +136,15 @@ def test_verify_label_creates_on_404() -> None:
 def test_verify_label_strips_leading_hash_from_color() -> None:
     """Operators may pass '#D93F0B' (with leading hash). GitHub API rejects
     it; the helper strips it before POST."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post:
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+    ):
         mock_gh.side_effect = sdlc_manager.ApiNotFound(
-            "API call failed: HTTP 404", status_code=404,
+            "API call failed: HTTP 404",
+            status_code=404,
         )
-        sdlc_manager.flow_verify_label(
-            "r", "label", "#ABCDEF", None, fmt="text"
-        )
+        sdlc_manager.flow_verify_label("r", "label", "#ABCDEF", None, fmt="text")
         body = mock_post.call_args.args[1]
         assert body["color"] == "ABCDEF"
 
@@ -151,16 +155,16 @@ def test_verify_label_does_NOT_create_on_non_404_error() -> None:
     auth context. With the typed-exception refactor, ApiAuthError /
     ApiRateLimited / generic GhApiError propagate out of the `except
     ApiNotFound:` block."""
-    with patch.object(sdlc_manager, "_gh") as mock_gh, \
-         patch.object(sdlc_manager, "_rest_post") as mock_post:
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "_rest_post") as mock_post,
+    ):
         mock_gh.side_effect = sdlc_manager.ApiAuthError(
             "API call failed: HTTP 401 Bad credentials",
             status_code=401,
         )
         with pytest.raises(sdlc_manager.ApiAuthError):
-            sdlc_manager.flow_verify_label(
-                "r", "label", None, None, fmt="text"
-            )
+            sdlc_manager.flow_verify_label("r", "label", None, None, fmt="text")
         mock_post.assert_not_called()
 
 
@@ -170,9 +174,11 @@ def test_verify_label_does_NOT_create_on_non_404_error() -> None:
 def test_field_options_reads_live_from_graphql() -> None:
     """field-options is a live discovery — never cached. Call must hit
     QUERY_GET_PROJECT_FIELDS."""
-    with patch.object(sdlc_manager, "load_config") as mock_load, \
-         patch.object(sdlc_manager, "_graphql") as mock_gql, \
-         patch.object(sdlc_manager, "_out") as mock_out:
+    with (
+        patch.object(sdlc_manager, "load_config") as mock_load,
+        patch.object(sdlc_manager, "_graphql") as mock_gql,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
         mock_load.return_value = {
             "project_mappings": {
                 "projects": {"mount-olympus": {"number": 1, "name": "Olympus"}},
@@ -210,8 +216,10 @@ def test_field_options_reads_live_from_graphql() -> None:
 def test_set_field_raises_with_helpful_message_on_unknown_option() -> None:
     """If the operator passes an option that doesn't exist on the field,
     the error must list the actual options so they can correct."""
-    with patch.object(sdlc_manager, "load_config") as mock_load, \
-         patch.object(sdlc_manager, "_graphql") as mock_gql:
+    with (
+        patch.object(sdlc_manager, "load_config") as mock_load,
+        patch.object(sdlc_manager, "_graphql") as mock_gql,
+    ):
         mock_load.return_value = {
             "project_mappings": {
                 "projects": {"mount-olympus": {"number": 1, "name": "Olympus"}},
@@ -238,8 +246,12 @@ def test_set_field_raises_with_helpful_message_on_unknown_option() -> None:
         }
         with pytest.raises(RuntimeError) as exc:
             sdlc_manager.flow_set_field(
-                "mount-olympus", "campps-mvp", 42,
-                "Initiative", "nonexistent-option", fmt="text",
+                "mount-olympus",
+                "campps-mvp",
+                42,
+                "Initiative",
+                "nonexistent-option",
+                fmt="text",
             )
         msg = str(exc.value)
         assert "nonexistent-option" in msg

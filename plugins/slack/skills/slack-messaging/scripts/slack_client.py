@@ -19,7 +19,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Any
+from typing import Any, cast
 
 try:
     import requests
@@ -68,7 +68,7 @@ class SlackClient:
                 self._error(f"Slack API error: {error_msg}")
                 sys.exit(1)
 
-            return data
+            return cast(dict[str, Any], data)
 
         except Exception as e:
             self._error(f"Request error: {str(e)}")
@@ -192,7 +192,9 @@ def main():
     channels_subparsers = channels_parser.add_subparsers(dest="action")
 
     list_parser = channels_subparsers.add_parser("list", help="List channels")
-    list_parser.add_argument("--types", default="public_channel,private_channel", help="Channel types")
+    list_parser.add_argument(
+        "--types", default="public_channel,private_channel", help="Channel types"
+    )
 
     info_parser = channels_subparsers.add_parser("info", help="Get channel info")
     info_parser.add_argument("--channel", required=True, help="Channel ID")

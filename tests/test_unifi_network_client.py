@@ -11,17 +11,11 @@ import requests
 sys.path.insert(
     0,
     str(
-        Path(__file__).parent.parent
-        / "plugins"
-        / "unifi"
-        / "skills"
-        / "unifi-network"
-        / "scripts"
+        Path(__file__).parent.parent / "plugins" / "unifi" / "skills" / "unifi-network" / "scripts"
     ),
 )
 
 from unifi_network_client import UnifiNetworkClient
-
 
 # ---------------------------------------------------------------------------
 # TestInit
@@ -140,7 +134,9 @@ class TestRequestHandling:
         mock_request.return_value = mock_response
 
         client = UnifiNetworkClient()
-        result = client._request("POST", f"{client.base_v1}/cmd/devmgr", data={"cmd": "restart"}, confirm=True)
+        result = client._request(
+            "POST", f"{client.base_v1}/cmd/devmgr", data={"cmd": "restart"}, confirm=True
+        )
 
         assert result == {"data": []}
         mock_request.assert_called_once()
@@ -318,7 +314,9 @@ class TestDryRun:
         client = UnifiNetworkClient()
 
         with pytest.raises(SystemExit) as exc_info:
-            client._request("POST", f"{client.base_v1}/cmd/devmgr", data={"cmd": "restart"}, confirm=False)
+            client._request(
+                "POST", f"{client.base_v1}/cmd/devmgr", data={"cmd": "restart"}, confirm=False
+            )
 
         assert exc_info.value.code == 0
         mock_request.assert_not_called()
@@ -334,7 +332,12 @@ class TestDryRun:
         client = UnifiNetworkClient()
 
         with pytest.raises(SystemExit) as exc_info:
-            client._request("PUT", f"{client.base_v1}/rest/networkconf/abc123", data={"name": "test"}, confirm=False)
+            client._request(
+                "PUT",
+                f"{client.base_v1}/rest/networkconf/abc123",
+                data={"name": "test"},
+                confirm=False,
+            )
 
         assert exc_info.value.code == 0
         mock_request.assert_not_called()
@@ -347,7 +350,12 @@ class TestDryRun:
         client = UnifiNetworkClient()
 
         with pytest.raises(SystemExit) as exc_info:
-            client._request("PATCH", f"{client.base_v1}/rest/wlanconf/wlan1", data={"enabled": False}, confirm=False)
+            client._request(
+                "PATCH",
+                f"{client.base_v1}/rest/wlanconf/wlan1",
+                data={"enabled": False},
+                confirm=False,
+            )
 
         assert exc_info.value.code == 0
         mock_request.assert_not_called()
@@ -425,7 +433,9 @@ class TestDryRun:
         mock_request.return_value = mock_response
 
         client = UnifiNetworkClient()
-        client._request("POST", f"{client.base_v1}/cmd/devmgr", data={"cmd": "restart"}, confirm=True)
+        client._request(
+            "POST", f"{client.base_v1}/cmd/devmgr", data={"cmd": "restart"}, confirm=True
+        )
 
         mock_request.assert_called_once()
 
@@ -595,7 +605,9 @@ class TestClients:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.content = b'{"data": [{"mac": "aa:bb:cc:dd:ee:01", "hostname": "laptop"}]}'
-        mock_response.json.return_value = {"data": [{"mac": "aa:bb:cc:dd:ee:01", "hostname": "laptop"}]}
+        mock_response.json.return_value = {
+            "data": [{"mac": "aa:bb:cc:dd:ee:01", "hostname": "laptop"}]
+        }
         mock_request.return_value = mock_response
 
         client = UnifiNetworkClient()
@@ -1231,7 +1243,9 @@ class TestVPN:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.content = b'{"data": [{"mac": "aa:bb:cc:dd:ee:ff", "vpn_type": "openvpn"}]}'
-        mock_response.json.return_value = {"data": [{"mac": "aa:bb:cc:dd:ee:ff", "vpn_type": "openvpn"}]}
+        mock_response.json.return_value = {
+            "data": [{"mac": "aa:bb:cc:dd:ee:ff", "vpn_type": "openvpn"}]
+        }
         mock_request.return_value = mock_response
 
         client = UnifiNetworkClient()
@@ -1346,7 +1360,9 @@ class TestDNS:
         client = UnifiNetworkClient()
 
         with pytest.raises(SystemExit) as exc_info:
-            client.dns_create({"key": "myhost.lan", "record_type": "A", "value": "10.0.0.5"}, confirm=False)
+            client.dns_create(
+                {"key": "myhost.lan", "record_type": "A", "value": "10.0.0.5"}, confirm=False
+            )
 
         assert exc_info.value.code == 0
         mock_request.assert_not_called()
@@ -1363,7 +1379,9 @@ class TestDNS:
         mock_request.return_value = mock_response
 
         client = UnifiNetworkClient()
-        client.dns_create({"key": "myhost.lan", "record_type": "A", "value": "10.0.0.5"}, confirm=True)
+        client.dns_create(
+            {"key": "myhost.lan", "record_type": "A", "value": "10.0.0.5"}, confirm=True
+        )
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -1416,7 +1434,9 @@ class TestDHCP:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.content = b'{"data": [{"mac": "aa:bb:cc:dd:ee:01", "ip": "10.0.0.100"}]}'
-        mock_response.json.return_value = {"data": [{"mac": "aa:bb:cc:dd:ee:01", "ip": "10.0.0.100"}]}
+        mock_response.json.return_value = {
+            "data": [{"mac": "aa:bb:cc:dd:ee:01", "ip": "10.0.0.100"}]
+        }
         mock_request.return_value = mock_response
 
         client = UnifiNetworkClient()
@@ -1510,7 +1530,9 @@ class TestStats:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.content = b'{"data": [{"key": "EVT_AP_Connected", "msg": "AP connected"}]}'
-        mock_response.json.return_value = {"data": [{"key": "EVT_AP_Connected", "msg": "AP connected"}]}
+        mock_response.json.return_value = {
+            "data": [{"key": "EVT_AP_Connected", "msg": "AP connected"}]
+        }
         mock_request.return_value = mock_response
 
         client = UnifiNetworkClient()
@@ -1561,7 +1583,9 @@ class TestBackup:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.content = b'{"data": [{"datetime": "2026-01-01", "filename": "backup.unf"}]}'
-        mock_response.json.return_value = {"data": [{"datetime": "2026-01-01", "filename": "backup.unf"}]}
+        mock_response.json.return_value = {
+            "data": [{"datetime": "2026-01-01", "filename": "backup.unf"}]
+        }
         mock_request.return_value = mock_response
 
         client = UnifiNetworkClient()

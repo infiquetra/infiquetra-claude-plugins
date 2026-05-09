@@ -1,10 +1,11 @@
 """Unit tests for pagerduty_client.py."""
 
-import pytest
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Add plugin skills directory to path
 sys.path.insert(
@@ -94,9 +95,7 @@ class TestPagerDutyClient:
 
         mock_response = MagicMock()
         mock_response.status_code = 404
-        mock_response.json.return_value = {
-            "error": {"message": "Incident not found", "code": 2003}
-        }
+        mock_response.json.return_value = {"error": {"message": "Incident not found", "code": 2003}}
         mock_request.return_value = mock_response
 
         client = PagerDutyClient()
@@ -201,9 +200,7 @@ class TestPagerDutyClient:
 
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "incident": {"id": "PXXXXX", "status": "acknowledged"}
-        }
+        mock_response.json.return_value = {"incident": {"id": "PXXXXX", "status": "acknowledged"}}
         mock_request.return_value = mock_response
 
         client = PagerDutyClient()
@@ -222,9 +219,7 @@ class TestPagerDutyClient:
 
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "incident": {"id": "PXXXXX", "status": "resolved"}
-        }
+        mock_response.json.return_value = {"incident": {"id": "PXXXXX", "status": "resolved"}}
         mock_request.return_value = mock_response
 
         client = PagerDutyClient()
@@ -281,9 +276,7 @@ class TestPagerDutyClient:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "services": [
-                {"id": "SXXXXX", "name": "wallet-service", "status": "active"}
-            ],
+            "services": [{"id": "SXXXXX", "name": "wallet-service", "status": "active"}],
             "more": False,
         }
         mock_request.return_value = mock_response
@@ -384,7 +377,9 @@ class TestPagerDutyClient:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "teams": [{"id": "YOUR_TEAM_ID", "name": "Infiquetra", "description": "Infiquetra team"}],
+            "teams": [
+                {"id": "YOUR_TEAM_ID", "name": "Infiquetra", "description": "Infiquetra team"}
+            ],
             "more": False,
         }
         mock_request.return_value = mock_response

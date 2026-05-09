@@ -1,7 +1,7 @@
 {
   "name": "sdlc-manager",
   "version": "1.4.0",
-  "description": "SDLC management for the Mount Olympus agent team. Kanban board operations, issue creation, label management, flow metrics, milestone tracking, project-field assignment, sub-issue linking, and card validation.",
+  "description": "SDLC management for Mount Olympus: Kanban boards, issues, labels, flow metrics, milestones, project fields, sub-issues, and card validation.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

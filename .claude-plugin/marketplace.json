@@ -339,6 +339,28 @@
         "mount-olympus"
       ],
       "category": "development"
+    },
+    {
+      "name": "infiquetra-deploy",
+      "source": "./plugins/infiquetra-deploy",
+      "version": "0.1.0",
+      "description": "Greenfield deployment promotion helpers for production tags, GitHub Deployment status, generated release-note previews, rollback tags, and explicit hotfix tags.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "deployment",
+        "promotion",
+        "release",
+        "github-actions",
+        "github-deployments",
+        "hotfix",
+        "rollback"
+      ],
+      "category": "infrastructure"
     }
   ],
   "version": "2.0.0"

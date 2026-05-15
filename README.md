@@ -15,6 +15,7 @@ Claude Code plugins for Infiquetra development workflows.
 | [docs-generator](plugins/docs-generator/) | Automated README, API spec, and architecture documentation generation | Development |
 | [python-toolkit](plugins/python-toolkit/) | Python patterns for serverless apps: Lambda Powertools, DynamoDB, error handling | Development |
 | [sdk-lifecycle](plugins/sdk-lifecycle/) | SDK scaffolding, documentation, security review, and registry publishing | Development |
+| [infiquetra-deploy](plugins/infiquetra-deploy/) | Greenfield deployment promotion helpers for production tags, status, notes, and hotfixes | Infrastructure |
 
 ## Installation
 

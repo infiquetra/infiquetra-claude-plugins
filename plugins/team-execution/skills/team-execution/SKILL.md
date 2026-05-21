@@ -303,11 +303,16 @@ When the user approves, your ONLY next action is TeamCreate. See Phase B constra
 
 ---
 
-# Phase B: Orchestration Protocol (Claude follows this directly after TeamCreate)
+# Phase B: Orchestration Protocol (Claude/Gemini acts as the Team Lead)
 
 > **Phase B is not invoked as a separate agent.** When Phase A calls ExitPlanMode and the
-> user approves, Claude reads this section as its operating instructions and orchestrates
-> directly.
+> user approves, Claude/Gemini reads this section as its operating instructions and acts as the **Team Lead** to orchestrate directly.
+> 
+> **Consensus Role Definition**:
+> - The **Team Lead** (main orchestrator agent) is responsible for the overall execution, routing fixes, and verifying changes.
+> - The **Reviewers** (subagents) evaluate implementation quality.
+> - **Consensus** is strictly a mutual agreement between the **Team Lead** and the **Reviewers** (max 3 rounds, achieving a score of >= 9.0/10).
+> - The **Human User** is a passive stakeholder who is **not** part of the consensus agreement loop or review-revise iterations. Do not prompt the user for approvals or consensus sign-offs between cycles.
 
 ---
 
@@ -400,10 +405,13 @@ When all tasks are `completed`, signal readiness for Step B3.
 
 ---
 
-## Step B3: Review Cycle
+## Step B3: Review Cycle (Team Lead & Reviewer Consensus)
 
 Read `team-execution/skills/team-execution/references/consensus-protocol.md`
-for the full protocol. Summary below.
+for the full protocol. Summary below:
+- The **Team Lead** coordinates the review-revise cycles entirely autonomously.
+- Do not request the human user's approval or validation between cycles. 
+- Iteratively apply fixes and re-run reviews until consensus (score >= 9.0/10) is achieved or the 3-cycle cap is met.
 
 ### B3a. Spawn Reviewers in Parallel
 

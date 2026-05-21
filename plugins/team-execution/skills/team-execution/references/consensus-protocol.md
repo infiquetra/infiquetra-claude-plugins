@@ -7,8 +7,12 @@ Read this before running the review cycle to understand scoring, fix routing, an
 
 ## Overview
 
-After implementation is complete (Step B2), run a structured review cycle with all spawned
-reviewers. The goal is consensus: **all reviewers must score >= 9.0/10** to proceed to completion.
+After implementation is complete (Step B2), the **Team Lead** (the main orchestrator agent, Claude/Gemini) coordinates a structured review cycle with all spawned **Reviewers** (the specialized reviewer subagents).
+
+The goal is a mutual consensus agreement between the Team Lead and the Reviewers:
+1. **Reviewers** evaluate the implementation and score 5 dimensions. Each reviewer must achieve an overall score of **>= 9.0/10** to signal acceptance.
+2. **Team Lead** reviews each reviewer's assessment, verifies that all requested fixes are soundly implemented, and provides the final lead consensus sign-off.
+3. The **Human User (Client/Stakeholder)** is **not** part of this consensus loop or the review-revise iterations. They are kept informed of progress and only alerted for severe escalations.
 
 Maximum iterations: **3**. After 3 cycles, proceed with the best available version regardless of scores.
 

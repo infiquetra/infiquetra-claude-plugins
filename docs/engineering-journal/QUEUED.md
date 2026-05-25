@@ -41,6 +41,32 @@
 
 ## P2 — important
 
+### Discord button approval for permissions (redis-bridge v2)  {#discord-button-approval}
+
+**Priority.** P2.
+
+**Effort.** Half-day to 1 day. Add an ephemeral DM with Allow/Deny buttons in `hermes-claude-code-router`'s permission handler, plus discord.py interaction handler + custom_id parsing + race-cancel with the voice path.
+
+**Worth it when.** Audit logs from `~/.hermes/plugins/hermes_claude_code_router/audit.jsonl` show non-trivial false-positive rate on voice approvals (≥1/month with destructive impact), OR user reports voice approval failing reliably in their actual usage environment (noisy car etc).
+
+**Context.**
+- Deferred from `redis-bridge` v1 per [voice-only-permission-approval](DECISIONS.md#voice-only-permission-approval).
+- Reference pattern: official Anthropic Discord channel plugin (`server.ts:486-518`) already does Allow/Deny buttons in DMs for permission relay. We mirror that exact shape.
+- v1 already speaks `{verdict, source}` in the verdict stream where `source` includes a slot for `"button"` — the protocol is forward-compatible. Just need to add the button code paths on the router side; CC plugin needs no changes.
+
+### Proactive notifications: push session-needs-attention to user  {#proactive-notifications}
+
+**Priority.** P2.
+
+**Effort.** 1 day. Router-side: detect when a CC session has emitted a permission_request that's been pending >5s, OR has been idle but produced output ("long task done"), and proactively DM the user via Mimir without being asked. Needs subscription state ("user wants notifications for session X") and pub/sub plumbing on `cc-sessions:events:<name>`.
+
+**Worth it when.** User reports missing approval prompts because they weren't actively listening — i.e., the v1 model ("you have to be in voice channel actively") breaks down for async workflows. Likely shows up first when user wants to start a long task and step away.
+
+**Context.**
+- Deferred from `redis-bridge` v1; the v1 model assumes the user is actively engaged.
+- Builds on the lifecycle events pub/sub channel already in protocol.
+- See PROTOCOL.md "Lifecycle events" — `presence_ping` and `mode_change` are the existing event types; a new `attention_required` type would join them.
+
 ### Build the `plugins/engineering-journal/` plugin  {#engineering-journal-plugin}
 
 **Priority.** P2.

@@ -27,6 +27,71 @@
 
 ## 2026-05-25
 
+### Redis password URL-injection broke on URL-special characters  {#redis-url-password-encoding}
+
+**Context.** Phase 2 headless integration test against live olympus-bus Redis failed at the `redis_bridge_connect` call with `"Port could not be cast to integer value as 'YPPu3qQ0VkURKkkm1J81l4'"`. The "port" was actually a suffix of the 44-char Hermes Redis password. fakeredis unit tests had passed because the test password was the literal string `"password"` with no URL-special chars; the bug was invisible in unit tests.
+
+**Evidence.** `plugins/redis-bridge/server/redis_client.py:resolve_url_with_password` was building the netloc as `f":{password}@{host}:{port}"` with the raw password. When the password contained `:` (the user:password separator) or `@` (the auth:host separator), redis-py's URL parser tokenized it wrong and tried to interpret a substring as the port number.
+
+**Mechanism.** Real Redis passwords from password generators or `openssl rand -base64 32` contain `:`, `+`, `/`, `=`, `@` etc. URL syntax for `://user:pass@host:port/db` is positional: the parser scans for the next `:` after the user (which would be inside our unencoded password). The fix is straightforward — `urllib.parse.quote(password, safe="")` — but the bug class is wider: **any URL component built from external input MUST be URL-encoded if not coming from a URL itself**.
+
+**Fix.** `urllib.parse.quote(password, safe="")` on both the password and username before injection. Eight new regression tests in `tests/test_redis_bridge_redis_client.py` covering: no password / unset env / empty env / simple password / password with `:` / with `@` / with `/` / base64-shaped 44-char password / db-index preservation. Commit on Phase 2 follow-up.
+
+**Validation.** Headless integration test rerun: all 4 phases pass end-to-end against live olympus-bus Redis. Real password (44 chars, base64-style) connects cleanly; redis-py URL parser doesn't barf.
+
+**What surprised.** That the unit test suite — which had 76 fakeredis-backed cases by that point — never caught it. The seam was at the URL-build → `redis.Redis.from_url` boundary, and our fakeredis fixture bypasses URL parsing entirely (you instantiate `FakeRedis()` directly). A integration test against real Redis was the first thing that exercised the URL parser.
+
+**Generalizable rule.** **Anytime you interpolate a value into a URL component, URL-encode it.** Doubly true when the value comes from an environment variable / user config / secret that you don't control the shape of. And: **fakeredis-backed unit tests don't exercise the URL parser** — for any plugin that builds Redis URLs, an integration test against real Redis is the only way to catch URL-formatting bugs.
+
+**Refs.** `plugins/redis-bridge/server/redis_client.py`, `tests/test_redis_bridge_redis_client.py`, headless integration test at `$CLAUDE_JOB_DIR/integ_test.py`.
+
+---
+
+### FastMCP stdio loop doesn't exit on SIGTERM  {#fastmcp-stdio-sigterm}
+
+**Context.** Phase 2 integration test's MCPClient.shutdown() called `proc.terminate()` (sends SIGTERM) and waited 5s, then fell back to SIGKILL. Every shutdown of the server process logged `[harness] server didn't exit on terminate; SIGKILL`. The redis-bridge server installs SIGTERM handlers, but they don't fire fast enough for shutdown to complete in 5s.
+
+**Evidence.** `plugins/redis-bridge/server/channel.py:_install_signal_handlers` installs a handler that calls `_STATE.shutdown()` then `sys.exit(0)`. In practice the server only exits when its stdin closes (FastMCP's stdio transport blocks on the read loop). SIGTERM gets queued but doesn't interrupt the async stdin reader.
+
+**Mechanism.** FastMCP runs the MCP server inside an `asyncio.run()` that drives `stdio_server()`. The stdio transport reads from stdin via `anyio` streams, which on macOS uses kqueue-backed file descriptors. SIGTERM is delivered to the Python process but the asyncio loop doesn't have a signal handler for it (we install a *signal* handler, not a *loop signal handler* via `loop.add_signal_handler`), so the handler runs synchronously on the main thread but can't preempt the blocking read.
+
+**Fix (queued, not blocking).** Adding `loop.add_signal_handler(SIGTERM, ...)` would let asyncio receive the signal and cancel the stdio task. Out of scope for Phase 2's headless test (the integration test works fine with the SIGKILL fallback); queued for Phase 6 polish.
+
+**Validation.** Integration test passes end-to-end despite the SIGKILL fallback. Server's atexit-registered cleanup still fires before kill (registry HDEL + hb DEL via the previous disconnect call in phase C; SIGKILL'd-phase server in phase D was *meant* to skip cleanup to test the stale-GC path).
+
+**What surprised.** That the signal handler we installed runs but doesn't actually break the server out of its async loop within a useful timeframe. The classic Python signal trap — synchronous handlers can't interrupt blocking syscalls cleanly.
+
+**Generalizable rule.** **In FastMCP-based stdio servers, use `asyncio.get_running_loop().add_signal_handler(...)` instead of `signal.signal(...)` for graceful shutdown.** Plain `signal.signal()` works at the language level but the asyncio loop doesn't see it, so it can't cancel the stdio read task. For tests / orchestration: don't rely on SIGTERM-then-wait for a clean exit; close stdin or fall back to SIGKILL.
+
+**Refs.** `plugins/redis-bridge/server/channel.py:_install_signal_handlers`. Queued follow-up.
+
+---
+
+### Headless integration test caught two bugs unit tests didn't  {#integ-test-value}
+
+**Context.** Built a headless harness that drives `python -m server` over real JSON-RPC stdio against live olympus-bus Redis. 4 phases: connect+inbound+notification round-trip, reply outbound XADD, graceful disconnect, SIGKILL+lazy GC. First run failed phase A with the Redis password URL-encoding bug above; second run (after fix) passed all 4 phases.
+
+**Evidence.** Harness lives in `$CLAUDE_JOB_DIR/integ_test.py`. Bugs caught:
+1. **Password URL-encoding** ([see entry above](#redis-url-password-encoding)) — would have shipped to first manual user run.
+2. **FastMCP SIGTERM behavior** ([see entry above](#fastmcp-stdio-sigterm)) — known FastMCP-side issue but our wrapper code didn't paper over it.
+
+Validated:
+- Real `XREADGROUP` + `XADD` round-trip against Redis 7.0.15.
+- AsyncNotifier successfully marshals `notifications/claude/channel` from the consumer thread → asyncio loop → JSON-RPC stdout.
+- `_msg_id` correlation works end-to-end.
+- `reply` tool XADDs the full Outbound payload with all fields (session_name, endpoint, chat_id, text, voice, in_reply_to, ts) round-tripping correctly.
+- Lazy stale-GC: kill server without unregister → fresh server's `list` call lazily HDELs the stale registry entry.
+
+**Mechanism.** fakeredis is a pure-Python redis-protocol implementation that doesn't go through redis-py's URL parser — you construct `FakeRedis()` directly. Anything that breaks at the URL-build → `Redis.from_url()` boundary is invisible to fakeredis-backed tests. Real Redis exercises the full stack including URL parsing, authentication handshake, stream consumer groups, and pubsub.
+
+**Fix (artifact).** Promoting the harness into `plugins/redis-bridge/scripts/integ_test.py` so it lives with the plugin. Won't run in CI (needs real Redis + a keychain password) but documented as the way to verify before manual ship.
+
+**Generalizable rule.** **For Redis-backed plugins, a live-Redis integration test is non-optional.** Unit tests with fakeredis verify the plugin's own logic; they cannot verify URL encoding, auth handshake, or any behavior that depends on the real wire protocol. Write the integration test as soon as you have a Redis to point at — even a synthetic harness like the one for redis-bridge catches real bugs the unit suite can't.
+
+**Refs.** `$CLAUDE_JOB_DIR/integ_test.py` (transient), `plugins/redis-bridge/scripts/integ_test.py` (after promotion).
+
+---
+
 ### Wrong-hostname propagation: stale plan + memory beats current inventory  {#redis-host-mac-mini-vs-olympus-bus}
 
 **Context.** Plan + Phase 1 example config + Phase 2 PR body all asserted Redis lived at `jeffs-mac-mini.infiquetra.com:6379`. User caught it during verification-recipe handoff: Redis is actually on `olympus-bus.infiquetra.com` (10.220.1.64), a Proxmox-cluster VM. Migration off the Mac mini happened 2026-04-26 per `home-lab/ansible/inventory/hosts.yml` (`redis_bus` group, comment: "Renamed from olympus_bus 2026-04-26 (legacy pull-queue scaffolding stripped)").

@@ -64,6 +64,12 @@ python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+exclude = [
+    # Integration scripts use raw redis-py clients whose return types are
+    # `Awaitable[X] | X` wide unions. We don't ship these as a library —
+    # they're tooling, exercised only when run manually against real Redis.
+    "plugins/.*/scripts/",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "plugins/*/tests"]

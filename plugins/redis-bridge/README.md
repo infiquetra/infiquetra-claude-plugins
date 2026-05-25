@@ -17,23 +17,39 @@ It is **not** a Discord bot. It does not touch Discord, voice-channel audio, STT
 
 ## Status
 
-**Phase 0 scaffold.** Protocol + state-machine specs are nailed down; pydantic models pin the wire format; tests cover the type surface. The MCP server loop, Redis I/O, slash commands, and permission relay land in later phases. See `/Users/jefcox/.claude/plans/i-would-like-to-distributed-hanrahan.md` for the full roadmap.
+**Phase 1 complete.** Presence + heartbeat + slash list working end-to-end against fakeredis; live multi-session listing with stale GC. Phase 2 (text bridge: DM/channel/thread) is next. Roadmap: `/Users/jefcox/.claude/plans/i-would-like-to-distributed-hanrahan.md`.
+
+## Quickstart
+
+1. **Configure an endpoint.** Copy `docs/registry.example.json` to `~/.claude/channels/redis-bridge/registry.json` and edit. At minimum set `redis_url` and `redis_password_env` (the name of the env var containing your Redis password — never embed the password in the file).
+2. **Make sure Python deps are available.** The plugin's MCP server (`python -m server`) needs `mcp` and `redis` on its Python path. `uv sync --extra dev` at the repo root covers it for development.
+3. **Connect from inside Claude Code.** Run `/redis-bridge-connect mimir` (or whatever endpoint name you configured). The session is registered with an auto-generated `<cwd-basename>-<8hex>` name, heartbeat starts.
+4. **Verify.** Run `/redis-bridge-list` to see the registry. Start another CC session in a different repo and `/redis-bridge-connect` it too; the list shows both.
+5. **Disconnect.** `/redis-bridge-disconnect` gracefully unregisters. Killing the process is also safe — the heartbeat key expires within 60s and other sessions GC the entry the next time they `list`.
 
 ## Layout
 
 ```
 plugins/redis-bridge/
 ├── .claude-plugin/plugin.json     # Claude Code plugin manifest
+├── .mcp.json                      # auto-launch the MCP server
 ├── PROTOCOL.md                    # canonical wire format
-├── docs/STATE_MACHINE.md          # router-side routing state machine
-├── agents/redis-bridge-coach.md   # behavioral hints for Claude when this channel is active
-├── skills/redis-bridge/SKILL.md   # skill metadata
-├── commands/                      # slash commands (connect, disconnect, list, etc.)
+├── docs/
+│   ├── STATE_MACHINE.md           # router-side routing state machine
+│   └── registry.example.json      # sample endpoint config
+├── agents/redis-bridge-coach.md
+├── skills/redis-bridge/SKILL.md
+├── commands/                      # slash commands (connect, disconnect, list, ...)
 ├── server/
 │   ├── __init__.py
 │   ├── __main__.py                # `python -m server` entry point
+│   ├── channel.py                 # FastMCP server: connect/disconnect/list tools
+│   ├── presence.py                # registry HSET + heartbeat thread + lifecycle pubsub
+│   ├── redis_client.py            # connection helper + password-env injection
+│   ├── registry.py                # local endpoint config loader
+│   ├── session_id.py              # auto-name generator + override validation
 │   └── protocol.py                # pydantic models matching PROTOCOL.md
-└── (tests at repo-root tests/test_redis_bridge_protocol.py, per repo convention)
+└── (tests at repo-root tests/test_redis_bridge_*.py)
 ```
 
 ## Protocol overview
@@ -57,7 +73,7 @@ Tests live at the repo root (per this repo's CLI-plugin convention), with the pl
 
 ```bash
 # From repo root:
-uv run pytest tests/test_redis_bridge_protocol.py -v
+uv run pytest tests/test_redis_bridge_*.py -v
 uv run ruff check plugins/redis-bridge/
 uv run mypy plugins/redis-bridge/server/
 ```

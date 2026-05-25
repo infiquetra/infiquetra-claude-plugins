@@ -236,7 +236,7 @@ def test_shutdown_disconnects_active_session(patched_state: channel.ServerState,
 
 
 def test_build_app_smoke() -> None:
-    """Verify FastMCP wiring constructs cleanly + registers our 3 tools."""
+    """Verify FastMCP wiring constructs cleanly + registers all expected tools."""
     app = channel.build_app()
     # FastMCP exposes registered tools via a _tool_manager or tools attribute,
     # depending on version. Try both; if neither exists we just ensure the
@@ -248,6 +248,162 @@ def test_build_app_smoke() -> None:
     elif hasattr(app, "tools"):
         tool_names = {t.name for t in app.tools}
     if tool_names:
-        assert {"redis_bridge_connect", "redis_bridge_disconnect", "redis_bridge_list"} <= (
-            tool_names
+        expected = {
+            "redis_bridge_connect",
+            "redis_bridge_disconnect",
+            "redis_bridge_list",
+            "reply",
+        }
+        assert expected <= tool_names
+
+
+# ─── Phase 2 additions: consumer + reply ────────────────────────────────────
+
+
+import threading  # noqa: E402
+import time as _time  # noqa: E402
+
+from server import notifier as notifier_mod  # noqa: E402, type: ignore[import-not-found]
+from server import redis_consumer, redis_producer  # noqa: E402, type: ignore[import-not-found]
+
+
+def test_connect_attaches_inbound_consumer(patched_state: channel.ServerState, fr: Any) -> None:
+    """A message XADD'd to inbound after connect reaches the notifier."""
+    rec = notifier_mod.RecordingNotifier()
+    out = patched_state.connect(endpoint="mimir", session_name="with-consumer", notifier=rec)
+    try:
+        assert out["ok"] is True
+        assert out["consumer_attached"] is True
+        assert out["notifier_kind"] == "RecordingNotifier"
+
+        # Simulate the router writing an inbound message
+        stream = redis_consumer.inbound_stream("with-consumer")
+        msg_id = fr.xadd(
+            stream, {"payload": json.dumps({"text": "hi from router", "chat_id": "c1"})}
         )
+
+        # Wait for the consumer thread to dispatch
+        for _ in range(30):
+            if rec.emitted:
+                break
+            _time.sleep(0.1)
+        assert len(rec.emitted) == 1
+        payload = rec.emitted[0]
+        assert payload["text"] == "hi from router"
+        assert payload["chat_id"] == "c1"
+        assert payload["_msg_id"] == msg_id
+    finally:
+        patched_state.disconnect()
+
+
+def test_disconnect_stops_consumer(patched_state: channel.ServerState, fr: Any) -> None:
+    rec = notifier_mod.RecordingNotifier()
+    patched_state.connect(endpoint="mimir", session_name="stop-test", notifier=rec)
+    patched_state.disconnect()
+
+    # Find any thread named redis-bridge-consumer-stop-test — should be gone
+    matches = [t for t in threading.enumerate() if "consumer-stop-test" in t.name]
+    assert matches == [] or not any(t.is_alive() for t in matches)
+
+
+def test_second_connect_replaces_consumer(patched_state: channel.ServerState, fr: Any) -> None:
+    rec1 = notifier_mod.RecordingNotifier()
+    patched_state.connect(endpoint="mimir", session_name="first", notifier=rec1)
+    rec2 = notifier_mod.RecordingNotifier()
+    patched_state.connect(endpoint="mimir", session_name="second", notifier=rec2)
+    try:
+        # Write to second's inbound — only rec2 sees it
+        stream = redis_consumer.inbound_stream("second")
+        fr.xadd(stream, {"payload": json.dumps({"text": "for second"})})
+        for _ in range(30):
+            if rec2.emitted:
+                break
+            _time.sleep(0.1)
+        assert any(p["text"] == "for second" for p in rec2.emitted)
+        assert rec1.emitted == []
+    finally:
+        patched_state.disconnect()
+
+
+def test_reply_xadds_to_outbound(patched_state: channel.ServerState, fr: Any) -> None:
+    patched_state.connect(endpoint="mimir", session_name="reply-test")
+    try:
+        out = patched_state.reply(
+            chat_id="c-discord-123",
+            text="hello back",
+            voice=False,
+        )
+        assert out["ok"] is True
+        assert out["session_name"] == "reply-test"
+        assert out["chat_id"] == "c-discord-123"
+        msg_id = out["msg_id"]
+        # Now read the outbound stream to verify
+        entries = fr.xrange(redis_producer.outbound_stream("reply-test"))
+        assert len(entries) == 1
+        written_id, fields = entries[0]
+        assert written_id == msg_id
+        payload = json.loads(fields["payload"])
+        assert payload["session_name"] == "reply-test"
+        assert payload["endpoint"] == "mimir"
+        assert payload["chat_id"] == "c-discord-123"
+        assert payload["text"] == "hello back"
+        assert payload["voice"] is False
+    finally:
+        patched_state.disconnect()
+
+
+def test_reply_propagates_voice_flag(patched_state: channel.ServerState, fr: Any) -> None:
+    patched_state.connect(endpoint="mimir", session_name="voice-reply")
+    try:
+        patched_state.reply(chat_id="vc-1", text="speak this", voice=True)
+        entries = fr.xrange(redis_producer.outbound_stream("voice-reply"))
+        payload = json.loads(entries[0][1]["payload"])
+        assert payload["voice"] is True
+    finally:
+        patched_state.disconnect()
+
+
+def test_reply_in_reply_to(patched_state: channel.ServerState, fr: Any) -> None:
+    patched_state.connect(endpoint="mimir", session_name="thread-reply")
+    try:
+        patched_state.reply(
+            chat_id="c1",
+            text="answer",
+            in_reply_to="1716000000000-0",
+        )
+        entries = fr.xrange(redis_producer.outbound_stream("thread-reply"))
+        payload = json.loads(entries[0][1]["payload"])
+        assert payload["in_reply_to"] == "1716000000000-0"
+    finally:
+        patched_state.disconnect()
+
+
+def test_reply_when_not_connected(patched_state: channel.ServerState) -> None:
+    out = patched_state.reply(chat_id="c1", text="hi")
+    assert out["ok"] is False
+    assert "not connected" in out["error"]
+
+
+def test_reply_validates_empty_text(patched_state: channel.ServerState, fr: Any) -> None:
+    patched_state.connect(endpoint="mimir", session_name="validate-empty")
+    try:
+        out = patched_state.reply(chat_id="c1", text="")
+        assert out["ok"] is False
+        assert out["error"] == "invalid argument"
+        assert "text" in out["detail"]
+        # Whitespace-only also rejected
+        out2 = patched_state.reply(chat_id="c1", text="   \n  ")
+        assert out2["ok"] is False
+    finally:
+        patched_state.disconnect()
+
+
+def test_reply_validates_empty_chat_id(patched_state: channel.ServerState, fr: Any) -> None:
+    patched_state.connect(endpoint="mimir", session_name="validate-chat")
+    try:
+        out = patched_state.reply(chat_id="", text="hi")
+        assert out["ok"] is False
+        assert out["error"] == "invalid argument"
+        assert "chat_id" in out["detail"]
+    finally:
+        patched_state.disconnect()

@@ -1,34 +1,41 @@
 """MCP server (stdio) for redis-bridge.
 
-Phase 1 exposes three tools:
+Phase 1 tools:
     - redis_bridge_connect(endpoint=..., session_name=...)
     - redis_bridge_disconnect()
     - redis_bridge_list()
 
-The server is single-session: at most one active Presence at a time per
-process. A second `connect` call disconnects the previous session first
-(common when re-running the slash command after a config change).
+Phase 2 additions:
+    - reply(chat_id, text, voice=False, source_msg_id=None)
+    - On connect: spawn a consumer thread that XREADGROUPs the inbound
+      stream and emits each message as a `notifications/claude/channel`
+      MCP notification on the session.
 
-Phase 2+ will add channel notifications (`notifications/claude/channel`),
-a `reply` tool, and AskUserQuestion interception. This file is the seam
-where that wiring lands.
+Single-session per process: at most one active Presence+Consumer pair
+at a time. A second `connect` call replaces the previous one.
 """
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import contextlib
 import logging
 import signal
 import sys
 import threading
+import time
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 from . import __version__
+from .notifier import AsyncNotifier, ChannelNotifier, NoopNotifier
 from .presence import Presence, build_metadata, list_live_sessions
+from .protocol import Outbound
 from .redis_client import connect as redis_connect
+from .redis_consumer import Consumer
+from .redis_producer import publish_outbound
 from .registry import (
     EndpointNotFoundError,
     RegistryError,
@@ -43,13 +50,16 @@ log = logging.getLogger("redis_bridge.channel")
 class ServerState:
     """Single-active-session state for the channel server.
 
-    Wrapped in a lock so heartbeat thread (in Presence) and tool-handler
-    threads (FastMCP can dispatch concurrently) don't race on lifecycle.
+    Wrapped in a lock so heartbeat thread (Presence), consumer thread,
+    and tool-handler threads (FastMCP can dispatch concurrently) don't
+    race on lifecycle.
     """
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._presence: Presence | None = None
+        self._consumer: Consumer | None = None
+        self._notifier: ChannelNotifier | None = None
         self._client: Any | None = None
         self._endpoint_name: str | None = None
 
@@ -58,7 +68,19 @@ class ServerState:
         with self._lock:
             return self._presence is not None
 
-    def connect(self, *, endpoint: str, session_name: str | None) -> dict[str, Any]:
+    def connect(
+        self,
+        *,
+        endpoint: str,
+        session_name: str | None,
+        notifier: ChannelNotifier | None = None,
+    ) -> dict[str, Any]:
+        """Open the channel: register presence, start consumer.
+
+        `notifier` is the surface to which inbound stream messages are
+        forwarded. In production it's the AsyncNotifier built from the
+        MCP session + loop; in tests it's a RecordingNotifier or NoopNotifier.
+        """
         try:
             with self._lock:
                 if self._presence is not None:
@@ -79,7 +101,19 @@ class ServerState:
                     ttl_seconds=registry.defaults.registry_ttl_seconds,
                 )
                 presence.start()
+
+                resolved_notifier: ChannelNotifier = notifier or NoopNotifier()
+                consumer = Consumer(
+                    client,
+                    resolved_name,
+                    on_message=resolved_notifier.emit,
+                    block_ms=registry.defaults.consumer_block_ms,
+                )
+                consumer.start()
+
                 self._presence = presence
+                self._consumer = consumer
+                self._notifier = resolved_notifier
                 self._client = client
                 self._endpoint_name = endpoint
                 return {
@@ -91,6 +125,8 @@ class ServerState:
                     "cwd": metadata.cwd,
                     "heartbeat_seconds": registry.defaults.heartbeat_seconds,
                     "registry_ttl_seconds": registry.defaults.registry_ttl_seconds,
+                    "consumer_attached": True,
+                    "notifier_kind": type(resolved_notifier).__name__,
                 }
         except RegistryError as e:
             return _format_registry_error(e)
@@ -147,6 +183,57 @@ class ServerState:
             log.exception("list failed")
             return {"ok": False, "error": type(e).__name__, "detail": str(e)}
 
+    def reply(
+        self,
+        *,
+        chat_id: str,
+        text: str,
+        voice: bool = False,
+        in_reply_to: str | None = None,
+    ) -> dict[str, Any]:
+        """XADD an Outbound payload to the active session's outbound stream."""
+        try:
+            if not chat_id or not chat_id.strip():
+                raise ValueError("chat_id must be non-empty")
+            if not text or not text.strip():
+                raise ValueError("text must be non-empty")
+            with self._lock:
+                if self._presence is None or self._client is None:
+                    return {
+                        "ok": False,
+                        "error": "not connected — call redis_bridge_connect first",
+                    }
+                session_name = self._presence.session_name
+                endpoint = self._endpoint_name or ""
+                client = self._client
+
+            # Validate via Pydantic; rejects empty text, malformed chat_id, etc.
+            payload = Outbound(
+                session_name=session_name,
+                endpoint=endpoint,
+                chat_id=chat_id,
+                text=text,
+                voice=voice,
+                in_reply_to=in_reply_to,
+                ts=time.time(),
+            )
+            msg_id = publish_outbound(
+                client,
+                session_name,
+                payload.model_dump(mode="json", exclude_none=True),
+            )
+            return {
+                "ok": True,
+                "session_name": session_name,
+                "chat_id": chat_id,
+                "msg_id": msg_id,
+            }
+        except ValueError as e:
+            return {"ok": False, "error": "invalid argument", "detail": str(e)}
+        except Exception as e:  # noqa: BLE001
+            log.exception("reply failed")
+            return {"ok": False, "error": type(e).__name__, "detail": str(e)}
+
     def shutdown(self) -> None:
         """Best-effort cleanup on process exit."""
         with self._lock:
@@ -154,6 +241,14 @@ class ServerState:
                 self._disconnect_locked(reason="shutdown")
 
     def _disconnect_locked(self, *, reason: str) -> None:
+        # Order: stop consumer first (so it doesn't try to ack on a stale
+        # client), then presence, then close the client.
+        if self._consumer is not None:
+            try:
+                self._consumer.stop()
+            except Exception:  # noqa: BLE001
+                log.exception("consumer.stop raised during disconnect")
+            self._consumer = None
         if self._presence is not None:
             try:
                 self._presence.stop(reason=reason)
@@ -169,6 +264,7 @@ class ServerState:
                 log.exception("redis client close raised during disconnect")
             self._client = None
         self._endpoint_name = None
+        self._notifier = None
 
 
 _STATE = ServerState()
@@ -190,15 +286,31 @@ def _format_registry_error(err: RegistryError) -> dict[str, Any]:
     return {"ok": False, "error": "registry parse error", "detail": str(err)}
 
 
+def _build_async_notifier(ctx: Context | None) -> ChannelNotifier:
+    """If we have an MCP session + running loop, build a real notifier.
+
+    Falls back to NoopNotifier if Context isn't injected (test code paths
+    that call ServerState.connect directly should pass their own notifier).
+    """
+    if ctx is None:
+        return NoopNotifier()
+    try:
+        session = ctx.session
+        loop = asyncio.get_running_loop()
+    except Exception:  # noqa: BLE001
+        return NoopNotifier()
+    return AsyncNotifier(session, loop)
+
+
 def build_app() -> FastMCP:
-    """Construct the FastMCP app with all Phase 1 tools registered."""
+    """Construct the FastMCP app with all redis-bridge tools registered."""
     app = FastMCP(
         name=f"redis-bridge v{__version__}",
         instructions=(
             "Generic Redis-streams bridge for Claude Code sessions. "
             "Pair with a router (e.g. hermes-claude-code-router) on the consumer "
-            "side. Phase 1: presence + listing. Later phases add bidirectional "
-            "channel notifications + reply tool."
+            "side. The connect tool registers presence + starts the inbound "
+            "consumer; reply XADDs outbound messages."
         ),
     )
 
@@ -207,25 +319,32 @@ def build_app() -> FastMCP:
         description=(
             "Connect this Claude Code session to a redis-bridge endpoint "
             "(typically a Hermes profile like 'mimir'). Registers in the shared "
-            "Redis registry and starts a 10s heartbeat. Returns the resolved "
-            "session_name and endpoint metadata."
+            "Redis registry, starts a 10s heartbeat, and attaches an inbound "
+            "consumer that emits notifications/claude/channel for each XADD'd "
+            "inbound message. Returns the resolved session_name + metadata."
         ),
     )
-    def redis_bridge_connect(
+    async def redis_bridge_connect(
         endpoint: str = "mimir",
         session_name: str | None = None,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
-        return _STATE.connect(endpoint=endpoint, session_name=session_name)
+        notifier = _build_async_notifier(ctx)
+        return _STATE.connect(
+            endpoint=endpoint,
+            session_name=session_name,
+            notifier=notifier,
+        )
 
     @app.tool(
         name="redis_bridge_disconnect",
         description=(
             "Gracefully disconnect from the redis-bridge endpoint: stops "
-            "heartbeat, removes the session from the registry, and emits an "
-            "'unregistered' lifecycle event."
+            "heartbeat + consumer, removes the session from the registry, "
+            "and emits an 'unregistered' lifecycle event."
         ),
     )
-    def redis_bridge_disconnect() -> dict[str, Any]:
+    async def redis_bridge_disconnect() -> dict[str, Any]:
         return _STATE.disconnect()
 
     @app.tool(
@@ -236,8 +355,34 @@ def build_app() -> FastMCP:
             "lazily GCs them from the registry. Requires a prior connect."
         ),
     )
-    def redis_bridge_list() -> dict[str, Any]:
+    async def redis_bridge_list() -> dict[str, Any]:
         return _STATE.list_sessions()
+
+    @app.tool(
+        name="reply",
+        description=(
+            "Send a reply to the originating chat surface. The router on the "
+            "other side of the redis-bridge listens to outbound messages and "
+            "writes them to the corresponding Discord channel/DM/thread/voice. "
+            "Set voice=True to request TTS playback in the originating voice "
+            "channel (router may ignore if the source wasn't voice). chat_id "
+            "must match the value provided on the inbound notification. "
+            "Optionally pass in_reply_to=<original message_id from the "
+            "inbound notification's _msg_id field> to thread the reply."
+        ),
+    )
+    async def reply(
+        chat_id: str,
+        text: str,
+        voice: bool = False,
+        in_reply_to: str | None = None,
+    ) -> dict[str, Any]:
+        return _STATE.reply(
+            chat_id=chat_id,
+            text=text,
+            voice=voice,
+            in_reply_to=in_reply_to,
+        )
 
     return app
 

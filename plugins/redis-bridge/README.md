@@ -17,7 +17,7 @@ It is **not** a Discord bot. It does not touch Discord, voice-channel audio, STT
 
 ## Status
 
-**Phase 1 complete.** Presence + heartbeat + slash list working end-to-end against fakeredis; live multi-session listing with stale GC. Phase 2 (text bridge: DM/channel/thread) is next. Roadmap: `/Users/jefcox/.claude/plans/i-would-like-to-distributed-hanrahan.md`.
+**Phase 2 complete.** Presence + heartbeat (P1) plus inbound consumer + `reply` MCP tool (P2). Channel notifications surface as `notifications/claude/channel` events with the full Inbound payload; replies XADD onto the outbound stream with router-correlation IDs and an `in_reply_to` field for threading. Phase 3 (voice routing through Hermes TTS/STT) and Phase 4 (permission relay + AskUserQuestion interception) still to come — both gated on the matching router-side implementation in `hermes-claude-code-router`. Roadmap: `/Users/jefcox/.claude/plans/i-would-like-to-distributed-hanrahan.md`.
 
 ## Quickstart
 
@@ -43,9 +43,12 @@ plugins/redis-bridge/
 ├── server/
 │   ├── __init__.py
 │   ├── __main__.py                # `python -m server` entry point
-│   ├── channel.py                 # FastMCP server: connect/disconnect/list tools
+│   ├── channel.py                 # FastMCP server: connect/disconnect/list + reply tools
 │   ├── presence.py                # registry HSET + heartbeat thread + lifecycle pubsub
 │   ├── redis_client.py            # connection helper + password-env injection
+│   ├── redis_consumer.py          # XREADGROUP loop, dispatches to notifier
+│   ├── redis_producer.py          # XADD helper for outbound stream
+│   ├── notifier.py                # thread → asyncio bridge for notifications/claude/channel
 │   ├── registry.py                # local endpoint config loader
 │   ├── session_id.py              # auto-name generator + override validation
 │   └── protocol.py                # pydantic models matching PROTOCOL.md

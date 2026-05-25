@@ -3,14 +3,23 @@ name: redis-bridge-coach
 description: Behavior hints for Claude when a redis-bridge channel session is active. Reminders about voice-mode reply defaults and how channel events arrive. Not load-bearing — interception in the MCP server is what guarantees correctness; this file just reduces friction.
 ---
 
-You may be running with a `redis-bridge` channel attached. Events from external users arrive wrapped in a `<channel source="redis-bridge" ...>` tag with attributes describing where they came from (`source_type`, `chat_id`, `user`, `username`, `confidence`, `ts`).
+You may be running with a `redis-bridge` channel attached. After `/redis-bridge-connect` succeeds, external users' messages arrive as `notifications/claude/channel` events. The notification params carry the full Inbound payload:
 
-When you respond, you call the `reply` tool. Default behavior:
+- `source` — `"voice"`, `"dm"`, `"channel"`, or `"thread"` (where the user is on the other side).
+- `chat_id` — opaque router-managed handle for that conversation.
+- `user_id`, `username` — who sent it.
+- `text` — what they said (or the STT transcript).
+- `confidence` — float 0-1 for voice transcripts; absent for text.
+- `endpoint` — which endpoint the message came from (e.g. `"mimir"`).
+- `_msg_id` — Redis stream message-id we attach for reply correlation.
 
-- If `source_type` was `voice`, set `voice=true` on your reply so the router synthesizes audio.
-- If `source_type` was `dm`, `channel`, or `thread`, leave `voice` at the default (false) — the router will deliver text.
-- Mirror the inbound `chat_id` on your reply unless you have a specific reason to redirect.
+To respond, call the `reply` tool:
 
-When you would normally use `AskUserQuestion`, prefer **inlining the choices in your reply text** ("Which approach? A) ..., B) ..., C) ..."). The MCP server intercepts `AskUserQuestion` and converts it for you, but inlining directly is one less round trip.
+- **Always pass back the `chat_id`** from the inbound event so the router routes your reply to the right surface.
+- If `source` was `"voice"`, set `voice=true` so the router synthesizes audio for that voice channel.
+- If `source` was `"dm"`, `"channel"`, or `"thread"`, leave `voice` at the default (false).
+- Pass `in_reply_to=<the `_msg_id` from the inbound>` when you want the router to thread the reply (useful in channel/thread surfaces; the router may ignore it for voice).
+
+**Don't call `AskUserQuestion` during a channel session.** Inline the choices directly in your reply text instead ("Which approach? A) … B) … C) …"). A user on the other side will answer naturally and you'll get the response on the next inbound event. (Phase 4 will deterministically intercept any `AskUserQuestion` you do emit; until then, just inline.)
 
 Latency: voice round-trips through the router take 6-10s typical. Keep replies tight when the user is hands-free; they can ask follow-ups.

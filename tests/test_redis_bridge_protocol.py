@@ -1,13 +1,24 @@
-"""Tests for the protocol pydantic models.
+"""Tests for the redis-bridge plugin's protocol pydantic models.
 
-These pin the wire format. Any change here means PROTOCOL.md must change
-(and the matching change must land in hermes-claude-code-router).
+Lives at repo-root tests/ per this repo's CLI-plugin testing convention
+(mirrors `tests/test_slack_client.py` etc). Pins the wire format; any
+change here means PROTOCOL.md must change (and the matching change must
+land in hermes-claude-code-router).
 """
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Make `plugins/redis-bridge/server/*` importable without installing.
+_REDIS_BRIDGE_ROOT = (
+    Path(__file__).parent.parent / "plugins" / "redis-bridge"
+)
+sys.path.insert(0, str(_REDIS_BRIDGE_ROOT))
+
 import pytest
-from server.protocol import (
+from server.protocol import (  # noqa: E402
     PROTOCOL_VERSION,
     Inbound,
     LifecycleEvent,

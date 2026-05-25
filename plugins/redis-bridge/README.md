@@ -33,7 +33,7 @@ plugins/redis-bridge/
 │   ├── __init__.py
 │   ├── __main__.py                # `python -m server` entry point
 │   └── protocol.py                # pydantic models matching PROTOCOL.md
-└── tests/                         # pytest suite, protocol coverage
+└── (tests at repo-root tests/test_redis_bridge_protocol.py, per repo convention)
 ```
 
 ## Protocol overview
@@ -53,9 +53,11 @@ See `docs/STATE_MACHINE.md`. The CC plugin is stateless about routing; the route
 
 ## Development
 
+Tests live at the repo root (per this repo's CLI-plugin convention), with the plugin source on `sys.path` via the test file itself.
+
 ```bash
 # From repo root:
-uv run pytest plugins/redis-bridge/tests/ -v
+uv run pytest tests/test_redis_bridge_protocol.py -v
 uv run ruff check plugins/redis-bridge/
 uv run mypy plugins/redis-bridge/server/
 ```

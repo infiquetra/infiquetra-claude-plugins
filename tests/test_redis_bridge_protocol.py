@@ -12,9 +12,7 @@ import sys
 from pathlib import Path
 
 # Make `plugins/redis-bridge/server/*` importable without installing.
-_REDIS_BRIDGE_ROOT = (
-    Path(__file__).parent.parent / "plugins" / "redis-bridge"
-)
+_REDIS_BRIDGE_ROOT = Path(__file__).parent.parent / "plugins" / "redis-bridge"
 sys.path.insert(0, str(_REDIS_BRIDGE_ROOT))
 
 import pytest  # noqa: E402

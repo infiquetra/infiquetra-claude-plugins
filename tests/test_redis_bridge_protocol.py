@@ -17,7 +17,7 @@ _REDIS_BRIDGE_ROOT = (
 )
 sys.path.insert(0, str(_REDIS_BRIDGE_ROOT))
 
-import pytest
+import pytest  # noqa: E402
 from server.protocol import (  # noqa: E402
     PROTOCOL_VERSION,
     Inbound,

@@ -19,7 +19,9 @@ from server import channel, presence  # type: ignore[import-not-found]
 
 
 @pytest.fixture
-def fr() -> fakeredis.FakeRedis:
+def fr() -> Any:
+    # Returns the real fakeredis client; typed as Any so redis-py's
+    # Awaitable[X] | X return types don't propagate into the tests.
     return fakeredis.FakeRedis(decode_responses=True)
 
 
@@ -50,7 +52,7 @@ def registry_file(tmp_path: Path) -> Path:
 @pytest.fixture
 def patched_state(
     monkeypatch: pytest.MonkeyPatch,
-    fr: fakeredis.FakeRedis,
+    fr: Any,
     registry_file: Path,
 ) -> channel.ServerState:
     """Build a ServerState whose Redis connect returns the fakeredis instance,
@@ -70,7 +72,7 @@ def patched_state(
 
 
 def test_connect_registers_and_starts_heartbeat(
-    patched_state: channel.ServerState, fr: fakeredis.FakeRedis
+    patched_state: channel.ServerState, fr: Any
 ) -> None:
     out = patched_state.connect(endpoint="mimir", session_name="my-session")
     try:
@@ -89,9 +91,7 @@ def test_connect_registers_and_starts_heartbeat(
         patched_state.disconnect()
 
 
-def test_connect_uses_auto_name_when_omitted(
-    patched_state: channel.ServerState, fr: fakeredis.FakeRedis
-) -> None:
+def test_connect_uses_auto_name_when_omitted(patched_state: channel.ServerState, fr: Any) -> None:
     out = patched_state.connect(endpoint="mimir", session_name=None)
     try:
         assert out["ok"] is True
@@ -103,9 +103,7 @@ def test_connect_uses_auto_name_when_omitted(
         patched_state.disconnect()
 
 
-def test_disconnect_clears_state(
-    patched_state: channel.ServerState, fr: fakeredis.FakeRedis
-) -> None:
+def test_disconnect_clears_state(patched_state: channel.ServerState, fr: Any) -> None:
     patched_state.connect(endpoint="mimir", session_name="bye")
     assert patched_state.is_connected
     out = patched_state.disconnect()
@@ -122,9 +120,7 @@ def test_disconnect_when_not_connected_is_idempotent(
     assert out == {"ok": True, "was_connected": False}
 
 
-def test_second_connect_replaces_first(
-    patched_state: channel.ServerState, fr: fakeredis.FakeRedis
-) -> None:
+def test_second_connect_replaces_first(patched_state: channel.ServerState, fr: Any) -> None:
     patched_state.connect(endpoint="mimir", session_name="first")
     patched_state.connect(endpoint="mimir", session_name="second")
     try:
@@ -141,9 +137,7 @@ def test_list_requires_connection(patched_state: channel.ServerState) -> None:
     assert "not connected" in out["error"]
 
 
-def test_list_returns_self(
-    patched_state: channel.ServerState, fr: fakeredis.FakeRedis
-) -> None:
+def test_list_returns_self(patched_state: channel.ServerState, fr: Any) -> None:
     patched_state.connect(endpoint="mimir", session_name="solo")
     try:
         out = patched_state.list_sessions()
@@ -156,9 +150,7 @@ def test_list_returns_self(
         patched_state.disconnect()
 
 
-def test_list_returns_other_live_sessions(
-    patched_state: channel.ServerState, fr: fakeredis.FakeRedis
-) -> None:
+def test_list_returns_other_live_sessions(patched_state: channel.ServerState, fr: Any) -> None:
     """Simulate another CC session by writing to the registry directly."""
     other_meta = presence.build_metadata(
         session_name="other-session",
@@ -185,9 +177,7 @@ def test_list_returns_other_live_sessions(
         patched_state.disconnect()
 
 
-def test_list_gcs_stale_entries(
-    patched_state: channel.ServerState, fr: fakeredis.FakeRedis
-) -> None:
+def test_list_gcs_stale_entries(patched_state: channel.ServerState, fr: Any) -> None:
     stale_meta = presence.build_metadata(
         session_name="ghost",
         endpoint="mimir",
@@ -207,9 +197,7 @@ def test_list_gcs_stale_entries(
         patched_state.disconnect()
 
 
-def test_connect_with_missing_registry(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_connect_with_missing_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """When registry.json doesn't exist, connect returns a structured error."""
 
     def fake_load_registry() -> Any:
@@ -240,9 +228,7 @@ def test_connect_with_invalid_session_name(
     assert out["error"] == "invalid argument"
 
 
-def test_shutdown_disconnects_active_session(
-    patched_state: channel.ServerState, fr: fakeredis.FakeRedis
-) -> None:
+def test_shutdown_disconnects_active_session(patched_state: channel.ServerState, fr: Any) -> None:
     patched_state.connect(endpoint="mimir", session_name="atexit-test")
     patched_state.shutdown()
     assert not patched_state.is_connected

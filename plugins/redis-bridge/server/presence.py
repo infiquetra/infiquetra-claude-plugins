@@ -110,9 +110,7 @@ def is_live(client: RedisLike, session_name: str) -> bool:
     return bool(client.exists(hb_key(session_name)))
 
 
-def list_live_sessions(
-    client: RedisLike, *, gc_stale: bool = False
-) -> dict[str, SessionMetadata]:
+def list_live_sessions(client: RedisLike, *, gc_stale: bool = False) -> dict[str, SessionMetadata]:
     """Return live sessions from the registry, filtered by hb key existence.
 
     With `gc_stale=True`, also HDEL any registry entries whose hb key has
@@ -192,8 +190,12 @@ class Presence:
         )
         self._thread.start()
         self._started = True
-        log.info("registered session %s (heartbeat every %ds, ttl %ds)",
-                 self.session_name, self._heartbeat_seconds, self._ttl_seconds)
+        log.info(
+            "registered session %s (heartbeat every %ds, ttl %ds)",
+            self.session_name,
+            self._heartbeat_seconds,
+            self._ttl_seconds,
+        )
 
     def stop(self, *, reason: str = "graceful") -> None:
         """Stop heartbeat, unregister, and publish lifecycle event."""

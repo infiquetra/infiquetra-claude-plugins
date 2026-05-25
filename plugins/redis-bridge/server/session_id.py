@@ -63,8 +63,6 @@ def resolve_session_name(
     if candidate:
         candidate = candidate.strip()
         if not is_valid_session_name(candidate):
-            raise ValueError(
-                f"invalid session name {candidate!r}: must match {_NAME_RE.pattern}"
-            )
+            raise ValueError(f"invalid session name {candidate!r}: must match {_NAME_RE.pattern}")
         return candidate
     return auto_session_name(cwd=cwd, host=host)

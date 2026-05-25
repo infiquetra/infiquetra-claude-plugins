@@ -128,25 +128,17 @@ def load_registry(path: Path | None = None) -> Registry:
         session_name_override_env=defaults_raw.get(
             "session_name_override_env", base.session_name_override_env
         ),
-        heartbeat_seconds=int(
-            defaults_raw.get("heartbeat_seconds", base.heartbeat_seconds)
-        ),
+        heartbeat_seconds=int(defaults_raw.get("heartbeat_seconds", base.heartbeat_seconds)),
         registry_ttl_seconds=int(
             defaults_raw.get("registry_ttl_seconds", base.registry_ttl_seconds)
         ),
         destructive_confirm_seconds=int(
-            defaults_raw.get(
-                "destructive_confirm_seconds", base.destructive_confirm_seconds
-            )
+            defaults_raw.get("destructive_confirm_seconds", base.destructive_confirm_seconds)
         ),
         permission_window_seconds=int(
-            defaults_raw.get(
-                "permission_window_seconds", base.permission_window_seconds
-            )
+            defaults_raw.get("permission_window_seconds", base.permission_window_seconds)
         ),
-        consumer_block_ms=int(
-            defaults_raw.get("consumer_block_ms", base.consumer_block_ms)
-        ),
+        consumer_block_ms=int(defaults_raw.get("consumer_block_ms", base.consumer_block_ms)),
     )
 
     return Registry(endpoints=endpoints, defaults=defaults, source=cfg_path)

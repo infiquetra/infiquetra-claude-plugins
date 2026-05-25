@@ -58,9 +58,7 @@ class ServerState:
         with self._lock:
             return self._presence is not None
 
-    def connect(
-        self, *, endpoint: str, session_name: str | None
-    ) -> dict[str, Any]:
+    def connect(self, *, endpoint: str, session_name: str | None) -> dict[str, Any]:
         try:
             with self._lock:
                 if self._presence is not None:
@@ -142,9 +140,7 @@ class ServerState:
                                 and m.session_name == self._presence.session_name
                             ),
                         }
-                        for m in sorted(
-                            sessions.values(), key=lambda meta: meta.started_at
-                        )
+                        for m in sorted(sessions.values(), key=lambda meta: meta.started_at)
                     ],
                 }
         except Exception as e:  # noqa: BLE001

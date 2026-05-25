@@ -53,17 +53,13 @@ def test_resolve_uses_explicit_override(tmp_path: Path) -> None:
     assert out == "my-name"
 
 
-def test_resolve_uses_env_override(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_resolve_uses_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CLAUDE_SESSION_NAME", "via-env")
     out = session_id.resolve_session_name(cwd=tmp_path, host="h")
     assert out == "via-env"
 
 
-def test_resolve_falls_back_to_auto(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_resolve_falls_back_to_auto(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("CLAUDE_SESSION_NAME", raising=False)
     out = session_id.resolve_session_name(cwd=tmp_path, host="h")
     assert "-" in out

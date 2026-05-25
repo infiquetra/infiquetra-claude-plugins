@@ -83,6 +83,38 @@ class SessionMetadata:
         )
 
 
+def detect_git_branch(cwd: str) -> str | None:
+    """Return the current git branch for `cwd`, or None if not a git repo / git
+    is unavailable / detection fails for any reason.
+
+    Best-effort: a 1s subprocess timeout caps the cost in case the cwd is on a
+    slow/unresponsive filesystem (e.g. stale NFS mount). Returns None for
+    detached HEAD ("HEAD" is filtered to None) so the router has a clean
+    "no branch context" signal.
+    """
+    import subprocess  # noqa: PLC0415  (local import — keeps presence import-light)
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        # git not installed, cwd doesn't exist, slow FS, or other transient
+        return None
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    if not branch or branch == "HEAD":
+        # Empty result or detached-HEAD state
+        return None
+    return branch
+
+
 def build_metadata(
     *,
     session_name: str,
@@ -93,10 +125,17 @@ def build_metadata(
     started_at: float | None = None,
     extras: dict[str, str] | None = None,
 ) -> SessionMetadata:
+    resolved_cwd = cwd or os.getcwd()
+    # Auto-detect git_branch when not explicitly supplied. Pass git_branch=""
+    # or an explicit value to override; the sentinel for "no detection" is
+    # `git_branch=""` which is stored verbatim (and routers can treat empty
+    # string as "no branch info").
+    if git_branch is None:
+        git_branch = detect_git_branch(resolved_cwd)
     return SessionMetadata(
         session_name=session_name,
         host=host or socket.gethostname(),
-        cwd=cwd or os.getcwd(),
+        cwd=resolved_cwd,
         git_branch=git_branch,
         started_at=started_at if started_at is not None else time.time(),
         pid=os.getpid(),

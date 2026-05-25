@@ -50,6 +50,148 @@ def test_build_metadata_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert meta.cwd  # non-empty
 
 
+# ─── git_branch auto-detection ──────────────────────────────────────────────
+
+
+def test_detect_git_branch_non_git_dir_returns_none(tmp_path) -> None:
+    assert presence.detect_git_branch(str(tmp_path)) is None
+
+
+def test_detect_git_branch_missing_cwd_returns_none(tmp_path) -> None:
+    assert presence.detect_git_branch(str(tmp_path / "does-not-exist")) is None
+
+
+def test_detect_git_branch_real_repo(tmp_path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    assert presence.detect_git_branch(str(tmp_path)) == "main"
+
+
+def test_detect_git_branch_feature_branch(tmp_path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "checkout", "-q", "-b", "feature/x"], cwd=tmp_path, check=True)
+    assert presence.detect_git_branch(str(tmp_path)) == "feature/x"
+
+
+def test_detect_git_branch_detached_head_returns_none(tmp_path) -> None:
+    """Detached HEAD ("HEAD" string) is mapped to None — no branch context."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    # Detach HEAD by checking out the commit SHA
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", "-q", "--detach", sha], cwd=tmp_path, check=True)
+    assert presence.detect_git_branch(str(tmp_path)) is None
+
+
+def test_build_metadata_auto_detects_git_branch(tmp_path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "-b", "auth-feature"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    meta = presence.build_metadata(session_name="s", endpoint="mimir", cwd=str(tmp_path))
+    assert meta.git_branch == "auth-feature"
+
+
+def test_build_metadata_explicit_git_branch_overrides_detection(tmp_path) -> None:
+    """Caller-supplied git_branch wins over detection (useful for tests + the
+    rare case where an external runner already knows the branch)."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "-b", "actually-on-this"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "i",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    meta = presence.build_metadata(
+        session_name="s",
+        endpoint="mimir",
+        cwd=str(tmp_path),
+        git_branch="overridden",
+    )
+    assert meta.git_branch == "overridden"
+
+
 def test_presence_start_writes_registry_and_hb(fr: Any) -> None:
     meta = make_meta()
     p = presence.Presence(fr, meta, heartbeat_seconds=1, ttl_seconds=10)

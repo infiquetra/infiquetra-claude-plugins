@@ -27,6 +27,29 @@
 
 ## 2026-05-25
 
+### Emitting custom MCP notification methods from FastMCP  {#fastmcp-custom-notification}
+
+**Context.** Phase 2 of `redis-bridge` needs the MCP server to emit `notifications/claude/channel` — a notification type that's specific to Claude Code's channel protocol and **not** part of the upstream MCP spec. FastMCP's `Context` exposes `log/info/debug/error/elicit` but none of those emit a custom method name. The underlying `ServerSession.send_notification` accepts a typed `SendNotificationT` union, and Claude's `notifications/claude/channel` is not in that union.
+
+**Evidence.**
+- `[m for m in dir(Context) if not m.startswith('_')]` → no raw `send_notification` exposed.
+- `ServerSession.send_notification` signature: `(notification: SendNotificationT, related_request_id)`. `SendNotificationT` is a discriminated union over Pydantic Notification subclasses keyed on the method literal — no `"notifications/claude/channel"` variant.
+- But `mcp.types` also exports `Notification[Union[dict[str, Any], NoneType], str]` — a fully-generic Notification[params, method-as-str] form. This is the escape hatch.
+
+**Mechanism.** `send_notification` doesn't actually validate that the notification method is in the spec union — it just calls `notification.model_dump(by_alias=True, mode='json', exclude_none=True)` and wraps the result in a `JSONRPCNotification`. The discrimination happens via Pydantic, but a generic `Notification[dict, str]` instance has `method: str` so it passes through verbatim. Static typing rejects it (`type: ignore[arg-type]` needed), runtime accepts it.
+
+**Fix.** `plugins/redis-bridge/server/notifier.py` constructs `Notification[dict, str](method="notifications/claude/channel", params=payload)` and passes it to `session.send_notification(notif)` with a type-ignore. Threadsafe scheduling via `asyncio.run_coroutine_threadsafe` because the consumer thread isn't on the asyncio loop.
+
+**Validation.** Phase 2 unit test `test_async_notifier_schedules_coroutine` constructs an AsyncNotifier with a stub session + a real asyncio loop running on a side thread, calls emit, and verifies the stub session's `send_notification` was awaited with `method="notifications/claude/channel"` and `params` matching.
+
+**What surprised.** The MCP SDK exports a fully-generic `Notification[params, method-as-str]` type. Looking at the dir() of `mcp.types`, the entry `'Notification[Union[dict[str, Any], NoneType], str]'` was the giveaway — that's exactly the escape hatch for vendor-specific notification methods.
+
+**Generalizable rule.** When you need to emit an MCP notification method that isn't in the SDK's `ServerNotificationType` union (Claude-specific extensions like `notifications/claude/channel`, or any other downstream extension): use the generic `Notification[dict, str]` form with a string method, accept the `type: ignore[arg-type]` on `send_notification`, and don't try to wedge it into the typed union. Static typing was wrong to demand discrimination here — the JSON-RPC protocol itself doesn't care.
+
+**Refs.** `plugins/redis-bridge/server/notifier.py`; Phase 2 PR.
+
+---
+
 ### `@dataclass(slots=True)` doesn't expose class-level field defaults  {#dataclass-slots-class-defaults}
 
 **Context.** While building `plugins/redis-bridge/server/registry.py`, the loader read each config field via `defaults_raw.get(key, Defaults.heartbeat_seconds)` — reaching into the dataclass class to pull the field default. Five tests failed with `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'member_descriptor'`.

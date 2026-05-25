@@ -2,12 +2,11 @@
 description: Cleanly disconnect this Claude Code session from its redis-bridge endpoint.
 ---
 
-Disconnect the current session from its `redis-bridge` endpoint:
-- Stops inbound consumer.
-- Deletes the heartbeat key.
-- Removes session from the presence registry.
-- Publishes an `unregistered{reason:"graceful"}` lifecycle event.
+**Action:** Call the `redis_bridge_disconnect` MCP tool (no arguments).
 
-The router observes the disconnect and reverts any routing targets pointing at this session.
+After the tool returns:
+- On `{"ok": true, "was_connected": true}` — confirm the named session has been removed from the registry. Mention briefly that any router pointing at this session will lose its target (Phase 2+).
+- On `{"ok": true, "was_connected": false}` — tell the user the session wasn't connected; no action was needed.
+- On `{"ok": false}` — show `error` + `detail`.
 
-**Not implemented in Phase 0.** Lands in Phase 1.
+Effects on success: stops the heartbeat thread, deletes `cc-sessions:hb:<name>`, HDELs from `cc-sessions:registry`, and publishes an `unregistered` lifecycle event on `cc-sessions:events:<name>`.

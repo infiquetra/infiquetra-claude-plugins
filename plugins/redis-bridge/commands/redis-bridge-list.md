@@ -1,10 +1,18 @@
 ---
-description: List configured redis-bridge endpoints and their connection status.
+description: List all live Claude Code sessions registered at this session's connected redis-bridge endpoint.
 ---
 
-Print the configured endpoints from `~/.claude/channels/redis-bridge/registry.json`. For each:
-- Endpoint name + display name + Redis URL (password redacted).
-- Current connection status (this session connected? other session connected? unreachable?).
-- For connected endpoints, show all live registered sessions (this session highlighted).
+**Action:** Call the `redis_bridge_list` MCP tool (no arguments). Requires a prior `/redis-bridge-connect`.
 
-**Not implemented in Phase 0.** Lands in Phase 1.
+On `{"ok": true}`, render the `sessions` array as a compact table or bullet list. Useful columns:
+- `session_name` (mark `is_self: true` with `(this session)` next to the name)
+- `host`
+- `cwd`
+- `git_branch` (omit if null)
+- elapsed since `started_at`
+
+Show `count` in the header, and the `endpoint` they belong to. Sort is already by `started_at` ascending.
+
+On `{"ok": false, "error": "not connected ..."}` — tell the user to run `/redis-bridge-connect` first.
+
+Stale entries (heartbeat expired) are already filtered out and lazily GC'd from the registry by the tool — you do not need to do any extra filtering.

@@ -1,16 +1,16 @@
 ---
 description: Connect this Claude Code session to a redis-bridge endpoint (default: mimir). Registers session presence in Redis.
-argument-hint: "[endpoint-name]"
+argument-hint: "[endpoint-name] [--session-name <name>]"
 ---
 
-Connect the current session to a configured `redis-bridge` endpoint. The endpoint must exist in `~/.claude/channels/redis-bridge/registry.json` (use `/redis-bridge list` to see configured endpoints, or `/redis-bridge configure <name>` to add one).
+Connect the current session to a configured `redis-bridge` endpoint.
 
-On success:
-- Session is registered in the Redis presence registry under an auto-generated name (`<cwd-basename>-<short-hash>`) or the value of `$CLAUDE_SESSION_NAME` if set.
-- Heartbeat starts (refresh every 10s, TTL 60s).
-- Inbound stream consumer attaches.
-- `reply` MCP tool becomes available for sending messages back to the router.
+**Action:** Call the `redis_bridge_connect` MCP tool with `endpoint` set to `$1` (or `"mimir"` if no argument). If the user supplied `--session-name <name>`, pass that as `session_name`; otherwise omit it and let the server auto-generate `<cwd-basename>-<short-hash>`.
 
-If `$1` is omitted, defaults to `mimir`.
+After the tool returns:
+- On `{"ok": true}` — report the resolved `session_name`, the endpoint, and the heartbeat interval. Briefly note that the session is now visible to the router and the heartbeat refreshes every 10s.
+- On `{"ok": false, "error": "registry not configured"}` — show the `hint` from the response and stop. The user needs to run `/redis-bridge-configure` first.
+- On `{"ok": false, "error": "endpoint not found"}` — show the `detail` (which lists available endpoints) and stop.
+- On any other `{"ok": false}` — show `error` + `detail` and stop.
 
-**Not implemented in Phase 0.** Lands in Phase 1 (presence + slash list).
+Endpoints live in `~/.claude/channels/redis-bridge/registry.json`. A second connect call automatically disconnects the previous session first.

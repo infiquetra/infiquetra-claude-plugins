@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "redis-bridge": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "server"],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}",
+      "env": {}
+    }
+  }
+}

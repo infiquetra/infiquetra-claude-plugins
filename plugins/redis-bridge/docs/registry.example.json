@@ -1,0 +1,17 @@
+{
+  "endpoints": {
+    "mimir": {
+      "redis_url": "redis://jeffs-mac-mini.infiquetra.com:6379/0",
+      "redis_password_env": "HERMES_REDIS_PASSWORD",
+      "display_name": "Mimir (Hermes engineering-council profile)"
+    }
+  },
+  "defaults": {
+    "session_name_override_env": "CLAUDE_SESSION_NAME",
+    "heartbeat_seconds": 10,
+    "registry_ttl_seconds": 60,
+    "destructive_confirm_seconds": 3,
+    "permission_window_seconds": 30,
+    "consumer_block_ms": 1000
+  }
+}

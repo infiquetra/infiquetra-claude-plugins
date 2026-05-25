@@ -27,6 +27,62 @@
 
 ## 2026-05-25
 
+### `@dataclass(slots=True)` doesn't expose class-level field defaults  {#dataclass-slots-class-defaults}
+
+**Context.** While building `plugins/redis-bridge/server/registry.py`, the loader read each config field via `defaults_raw.get(key, Defaults.heartbeat_seconds)` — reaching into the dataclass class to pull the field default. Five tests failed with `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'member_descriptor'`.
+
+**Evidence.** Reproducer:
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True, slots=True)
+class D:
+    n: int = 10
+
+print(type(D.n))  # <class 'member_descriptor'>  ← not int!
+print(D().n)     # 10  ← only an *instance* has the value
+```
+
+`pytest` failure trail at `plugins/redis-bridge/server/registry.py:130` calling `int(Defaults.heartbeat_seconds)`. Fix commit in this PR replaces `Defaults.<field>` with `base = Defaults(); base.<field>`.
+
+**Mechanism.** With `slots=True`, the dataclass `__slots__` machinery installs *descriptors* on the class to mediate per-instance attribute storage. Looking up `D.field` returns the descriptor object itself, not the field's default. Without `slots=True`, the class still has plain class attributes that happen to equal the defaults — so the pattern works by accident, masking the bug for any non-slotted dataclass. `dataclasses.fields(D)[i].default` is the *correct* way to read a field's default without instantiating.
+
+**Fix.** Construct a `Defaults()` instance first and pull values off it; commit on branch `worktree-redis-bridge-phase1` (this PR).
+
+**Validation.** 35 unit tests across session_id, registry, and presence now pass (was 30 passing + 5 failing).
+
+**What surprised.** The error message ("not a real number") gives no hint that the issue is `slots=True`. I assumed a JSON-parsing bug for several minutes before the traceback pointed at `int(Defaults.heartbeat_seconds)`.
+
+**Generalizable rule.** When you put `slots=True` on a dataclass, **do not read field defaults via `Class.field`** — that pattern returns the slot descriptor, not the default. Either (a) instantiate a default object and read from it, (b) call `dataclasses.fields(Class)`, or (c) drop `slots=True` if you want the convenience. This bug is invisible without slots, so it only shows up after you turn slots on for memory/lookup reasons.
+
+**Refs.** Phase 1 PR for redis-bridge.
+
+---
+
+### MCP Python SDK's `RedisLike` Protocol stricter than the runtime  {#redis-like-protocol-too-strict}
+
+**Context.** I declared a `RedisLike` `typing.Protocol` in `redis_client.py` to allow both `redis.Redis` and `fakeredis.FakeRedis` (used in tests) as Presence inputs without circular typing. mypy rejected `Presence(redis.Redis(...), ...)` because `redis.Redis.exists` returns `Awaitable[Any] | Any` (covering both sync and async clients) and my Protocol declared `-> int`.
+
+**Evidence.** mypy on `channel.py:78`:
+
+```
+error: Argument 1 to "Presence" has incompatible type "Redis"; expected "RedisLike"
+note: Following member(s) of "Redis" have conflicts:
+note:     Expected: def delete(self, *names: str) -> int
+note:     Got: def delete(self, *names: bytes|str|memoryview[int]) -> Awaitable[Any]|Any
+```
+
+**Mechanism.** `redis-py` types its client union-style (sync + async share one class hierarchy) so every call returns `Awaitable[Any] | Any`. A narrowed Protocol that promises a concrete return type can never be satisfied by such a wide union, even though the runtime behavior is exactly what we want.
+
+**Fix.** `RedisLike = typing.Any`. Code keeps duck-typing; mypy is unblocked. Both `redis.Redis` and `fakeredis.FakeRedis` work at runtime as before. Commit on branch `worktree-redis-bridge-phase1`.
+
+**Generalizable rule.** When a client library exposes both sync + async via one wide-union type, narrowing it via `Protocol` to be more useful in your code's signatures will fight you. Use `Any` (or accept that you're going to lose mypy coverage on those calls). The dynamic-typing escape hatch is the right tool here — Protocol is for protocols you actually want to enforce, not for shaving down third-party type uncertainty.
+
+**Refs.** `plugins/redis-bridge/server/redis_client.py`.
+
+---
+
 ### Verification findings while planning the `redis-bridge` plugin  {#redis-bridge-verification}
 
 **Context.** During design of the `redis-bridge` + `hermes-claude-code-router` plan, several "obvious" claims about the Hermes-side infrastructure turned out to be wrong in ways that meaningfully reshaped the architecture. This entry captures the surprises for future plan-verification work.

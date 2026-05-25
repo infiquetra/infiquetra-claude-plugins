@@ -5,7 +5,7 @@ argument-hint: "<endpoint-name>"
 
 Interactively configure the `redis-bridge` endpoint named `$1` (or prompt for a name if `$1` is empty). Walks through:
 
-- Redis URL (e.g., `redis://jeffs-mac-mini.infiquetra.com:6379/0`)
+- Redis URL (e.g., `redis://olympus-bus.infiquetra.com:6379/0`)
 - Password env-var name (no password value entered here — that lives in env)
 - Display name for `list` output
 - Persists to `~/.claude/channels/redis-bridge/registry.json`

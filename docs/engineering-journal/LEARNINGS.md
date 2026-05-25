@@ -27,6 +27,31 @@
 
 ## 2026-05-25
 
+### Wrong-hostname propagation: stale plan + memory beats current inventory  {#redis-host-mac-mini-vs-olympus-bus}
+
+**Context.** Plan + Phase 1 example config + Phase 2 PR body all asserted Redis lived at `jeffs-mac-mini.infiquetra.com:6379`. User caught it during verification-recipe handoff: Redis is actually on `olympus-bus.infiquetra.com` (10.220.1.64), a Proxmox-cluster VM. Migration off the Mac mini happened 2026-04-26 per `home-lab/ansible/inventory/hosts.yml` (`redis_bus` group, comment: "Renamed from olympus_bus 2026-04-26 (legacy pull-queue scaffolding stripped)").
+
+**Evidence.**
+- `home-lab/ansible/inventory/hosts.yml` redis_bus group: `olympus-bus.infiquetra.com → 10.220.1.64`.
+- `host olympus-bus.infiquetra.com` → `10.220.1.64` (resolved).
+- `nc -zv olympus-bus.infiquetra.com 6379` → Connection succeeded.
+- The redis-bridge plan I'd written days earlier included this in its "Resolved by verification" section: `Redis auth + reachability: 10.220.1.64:6379 reachable`. The IP was right; I just paired it with the wrong hostname.
+- Wrong references shipped in three files: `plugins/redis-bridge/docs/registry.example.json`, `plugins/redis-bridge/commands/redis-bridge-configure.md`, `plugins/redis-bridge/skills/redis-bridge/SKILL.md`. All fixed in this PR.
+
+**Mechanism.** The plan was written from incomplete-context exploration, and the "Mac mini" / "Hermes Redis" association got cemented before I'd re-verified the actual host. Memory carried the IP forward but lost the hostname/host-association. When I wrote the example registry config in Phase 1, I reached for a hostname from conversation context (Mac mini) without re-checking the inventory. Twice in Phase 2 follow-up writeups I propagated the same wrong fact. The user's CLAUDE.md explicitly warns against this pattern ("Validation Discipline — NEVER assert without checking"), and I violated it.
+
+**Fix.** Corrected the three files. Saved a feedback memory ([[verify-infra-facts-against-home-lab]]) + a reference memory ([[redis-bus-location]]) so future-me has both the rule and the canonical fact in one place. MEMORY.md updated to surface both at the top of the index.
+
+**Validation.** `grep -rn jeffs-mac-mini plugins/redis-bridge/ docs/` now empty for the redis-bridge references. `host olympus-bus.infiquetra.com` and `nc -zv ... 6379` both succeed.
+
+**What surprised.** That the wrong fact survived three writeups (Phase 0 plan, Phase 1 PR, Phase 2 PR body) even though my memory had the correct IP. The IP and the hostname are normally bound; here they got decoupled because I'd seen `10.220.1.64` in one context (Hermes Redis) and "Mac mini" in another (voice work) and merged them.
+
+**Generalizable rule.** **Don't write infrastructure facts (hostnames, IPs, service-host mappings) into shipped code or docs without grepping `home-lab/ansible/inventory/` or live-probing first.** Plan documents and conversation context are not authoritative for infra — the home-lab inventory is. Plans from N days ago describing "where service X runs" are especially suspect because of the ongoing Mac-mini→Proxmox migrations. If you can't verify in the current context, say "I'd need to check — let me verify" instead of asserting. Mac mini hostnames are the highest-risk class because they're the legacy location for many services that have since moved.
+
+**Refs.** [[verify-infra-facts-against-home-lab]] memory, [[redis-bus-location]] memory, `home-lab/ansible/inventory/hosts.yml` redis_bus group.
+
+---
+
 ### Emitting custom MCP notification methods from FastMCP  {#fastmcp-custom-notification}
 
 **Context.** Phase 2 of `redis-bridge` needs the MCP server to emit `notifications/claude/channel` — a notification type that's specific to Claude Code's channel protocol and **not** part of the upstream MCP spec. FastMCP's `Context` exposes `log/info/debug/error/elicit` but none of those emit a custom method name. The underlying `ServerSession.send_notification` accepts a typed `SendNotificationT` union, and Claude's `notifications/claude/channel` is not in that union.

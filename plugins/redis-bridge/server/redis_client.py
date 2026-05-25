@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import quote, urlparse, urlunparse
 
 import redis
 
@@ -40,10 +40,16 @@ def resolve_url_with_password(endpoint: Endpoint) -> str:
         )
     parsed = urlparse(endpoint.redis_url)
     # Build netloc with password injected; keep username if present (rare).
-    user = parsed.username or ""
+    # URL-encode both user and password so chars like ':', '@', '/', '#', '?'
+    # in real Redis passwords (e.g. base64-style 44-char strings) don't break
+    # redis-py's URL parser ("port could not be cast to integer" on the next
+    # ':' it finds). `safe=""` quotes everything that's not unreserved.
+    raw_user = parsed.username or ""
+    user = quote(raw_user, safe="")
+    encoded_password = quote(password, safe="")
     host = parsed.hostname or ""
     port_suffix = f":{parsed.port}" if parsed.port else ""
-    auth_prefix = f"{user}:{password}@" if user else f":{password}@"
+    auth_prefix = f"{user}:{encoded_password}@" if user else f":{encoded_password}@"
     netloc = f"{auth_prefix}{host}{port_suffix}"
     return urlunparse(parsed._replace(netloc=netloc))
 

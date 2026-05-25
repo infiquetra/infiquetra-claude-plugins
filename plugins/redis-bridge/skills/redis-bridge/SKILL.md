@@ -28,7 +28,7 @@ description: Operator-facing guide for the redis-bridge Claude Code channel plug
 {
   "endpoints": {
     "mimir": {
-      "redis_url": "redis://jeffs-mac-mini.infiquetra.com:6379/0",
+      "redis_url": "redis://olympus-bus.infiquetra.com:6379/0",
       "redis_password_env": "HERMES_REDIS_PASSWORD",
       "display_name": "Mimir (Hermes profile)"
     }

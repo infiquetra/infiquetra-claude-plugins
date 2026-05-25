@@ -6,10 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Make `plugins/redis-bridge/server/*` importable without installing.
+# Make `plugins/redis-channel/server/*` importable without installing.
 # The plugin dir contains a hyphen so it isn't a valid Python package name —
 # we put the *plugin* dir on sys.path so `from server.foo import ...` works.
-_REDIS_BRIDGE_ROOT = Path(__file__).parent.parent / "plugins" / "redis-bridge"
+_REDIS_BRIDGE_ROOT = Path(__file__).parent.parent / "plugins" / "redis-channel"
 if str(_REDIS_BRIDGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_REDIS_BRIDGE_ROOT))
 

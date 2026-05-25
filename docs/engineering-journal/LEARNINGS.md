@@ -27,15 +27,50 @@
 
 ## 2026-05-25
 
+### Channel-plugin naming: noun-channel, not noun-bridge  {#redis-channel-rename}
+
+**Context.** Shipped the plugin as `redis-bridge` through Phases 0-2 (PRs #127-131). Jeff flagged the name as too generic: Anthropic's official channel plugins are named after what they connect to (`discord`, `telegram`, `imessage`), and "bridge" loses the signal that this is a `notifications/claude/channel`-emitting MCP server vs. a tool-only MCP. Renamed to `redis-channel` before Phase 3 work (which will pair with the not-yet-built router-side repo).
+
+**Evidence.** Naming convention from official Claude Code plugins: the plugin name = the system it bridges to. `discord`, `telegram`, `imessage` etc. For redis-channel, the plugin is deliberately Hermes-agnostic — the only thing it "knows about" is Redis. So `redis` + `-channel` suffix to signal channel-protocol-emitting plugin. Slug "channel" parallels the discord/telegram pattern in that it identifies what kind of plugin this is at a glance.
+
+**Mechanism (of why bridge was wrong).** "bridge" is generic — could mean anything that connects two things. "channel" is a specific term in the Claude Code MCP spec referring to plugins that emit `notifications/claude/channel`. Naming a Claude Code channel-plugin `*-channel` makes the type self-documenting; `*-bridge` doesn't. Cost of late rename: every Phase 3+ writeup would have propagated the wrong shape.
+
+**Fix.** Single PR renames 33 files end-to-end:
+- `plugins/redis-bridge/` → `plugins/redis-channel/` (git mv preserves history)
+- `redis_bridge_*` MCP tool names → `redis_channel_*`
+- `/redis-bridge-*` slash commands → `/redis-channel-*`
+- Logger `redis_bridge.channel` → `redis_channel.channel`
+- `~/.claude/channels/redis-bridge/` runtime config dir → `~/.claude/channels/redis-channel/`
+- Marketplace entry name + plugin.json + `.mcp.json` server key
+- 9 test files renamed
+- 6 slash command files renamed
+- Plugin version 0.3.0 → 0.4.0 (signals breaking-name change)
+- All `redis-bridge` references in README/CHANGELOG/coach/journal prose
+- Auto-memory files updated
+
+**Preserved deliberately**:
+- Two engineering-journal anchor slugs (`#redis-bridge-verification`, `#redis-bridge-decoupled`) per the journal convention "keep slugs stable". Their titles + prose now say "redis-channel" but the slug stays as a historical ID for any external link.
+- Zero protocol breakage: the Redis namespace `cc-sessions:*` doesn't reference the plugin name, so router-side and existing-Redis-state need no migration. PROTOCOL.md unchanged in semantics.
+
+**Validation.** All 387 unit tests pass. Headless integration test passes all 4 phases (live olympus-bus Redis): real connect, inbound XADD → notifications/claude/channel notification, reply tool XADD round-trip, graceful disconnect, SIGKILL+lazy-GC.
+
+**What surprised.** How clean the rename was. The plugin's Redis-side wire format (`cc-sessions:*`) was deliberately not bound to the plugin name in PROTOCOL.md, so we got the "free" rename property: old Redis state stays valid, the (not-yet-built) router doesn't need to know the plugin was renamed. The lesson there is about loose coupling at protocol boundaries: **name your wire format independently of your plugin name**.
+
+**Generalizable rule.** **For Claude Code channel-emitting plugins, use the `<target>-channel` shape** (parallels `discord`/`telegram`/etc.). Avoid generic suffixes like `-bridge` / `-mcp` / `-server` — those describe an implementation detail, not what the user will reach for in `/plugin install`. Catch this naming question before Phase 1, not after Phase 2.
+
+**Refs.** PR for the rename; previous PRs #127-131 under the old name.
+
+---
+
 ### Redis password URL-injection broke on URL-special characters  {#redis-url-password-encoding}
 
-**Context.** Phase 2 headless integration test against live olympus-bus Redis failed at the `redis_bridge_connect` call with `"Port could not be cast to integer value as 'YPPu3qQ0VkURKkkm1J81l4'"`. The "port" was actually a suffix of the 44-char Hermes Redis password. fakeredis unit tests had passed because the test password was the literal string `"password"` with no URL-special chars; the bug was invisible in unit tests.
+**Context.** Phase 2 headless integration test against live olympus-bus Redis failed at the `redis_channel_connect` call with `"Port could not be cast to integer value as 'YPPu3qQ0VkURKkkm1J81l4'"`. The "port" was actually a suffix of the 44-char Hermes Redis password. fakeredis unit tests had passed because the test password was the literal string `"password"` with no URL-special chars; the bug was invisible in unit tests.
 
-**Evidence.** `plugins/redis-bridge/server/redis_client.py:resolve_url_with_password` was building the netloc as `f":{password}@{host}:{port}"` with the raw password. When the password contained `:` (the user:password separator) or `@` (the auth:host separator), redis-py's URL parser tokenized it wrong and tried to interpret a substring as the port number.
+**Evidence.** `plugins/redis-channel/server/redis_client.py:resolve_url_with_password` was building the netloc as `f":{password}@{host}:{port}"` with the raw password. When the password contained `:` (the user:password separator) or `@` (the auth:host separator), redis-py's URL parser tokenized it wrong and tried to interpret a substring as the port number.
 
 **Mechanism.** Real Redis passwords from password generators or `openssl rand -base64 32` contain `:`, `+`, `/`, `=`, `@` etc. URL syntax for `://user:pass@host:port/db` is positional: the parser scans for the next `:` after the user (which would be inside our unencoded password). The fix is straightforward — `urllib.parse.quote(password, safe="")` — but the bug class is wider: **any URL component built from external input MUST be URL-encoded if not coming from a URL itself**.
 
-**Fix.** `urllib.parse.quote(password, safe="")` on both the password and username before injection. Eight new regression tests in `tests/test_redis_bridge_redis_client.py` covering: no password / unset env / empty env / simple password / password with `:` / with `@` / with `/` / base64-shaped 44-char password / db-index preservation. Commit on Phase 2 follow-up.
+**Fix.** `urllib.parse.quote(password, safe="")` on both the password and username before injection. Eight new regression tests in `tests/test_redis_channel_redis_client.py` covering: no password / unset env / empty env / simple password / password with `:` / with `@` / with `/` / base64-shaped 44-char password / db-index preservation. Commit on Phase 2 follow-up.
 
 **Validation.** Headless integration test rerun: all 4 phases pass end-to-end against live olympus-bus Redis. Real password (44 chars, base64-style) connects cleanly; redis-py URL parser doesn't barf.
 
@@ -43,15 +78,15 @@
 
 **Generalizable rule.** **Anytime you interpolate a value into a URL component, URL-encode it.** Doubly true when the value comes from an environment variable / user config / secret that you don't control the shape of. And: **fakeredis-backed unit tests don't exercise the URL parser** — for any plugin that builds Redis URLs, an integration test against real Redis is the only way to catch URL-formatting bugs.
 
-**Refs.** `plugins/redis-bridge/server/redis_client.py`, `tests/test_redis_bridge_redis_client.py`, headless integration test at `$CLAUDE_JOB_DIR/integ_test.py`.
+**Refs.** `plugins/redis-channel/server/redis_client.py`, `tests/test_redis_channel_redis_client.py`, headless integration test at `$CLAUDE_JOB_DIR/integ_test.py`.
 
 ---
 
 ### FastMCP stdio loop doesn't exit on SIGTERM  {#fastmcp-stdio-sigterm}
 
-**Context.** Phase 2 integration test's MCPClient.shutdown() called `proc.terminate()` (sends SIGTERM) and waited 5s, then fell back to SIGKILL. Every shutdown of the server process logged `[harness] server didn't exit on terminate; SIGKILL`. The redis-bridge server installs SIGTERM handlers, but they don't fire fast enough for shutdown to complete in 5s.
+**Context.** Phase 2 integration test's MCPClient.shutdown() called `proc.terminate()` (sends SIGTERM) and waited 5s, then fell back to SIGKILL. Every shutdown of the server process logged `[harness] server didn't exit on terminate; SIGKILL`. The redis-channel server installs SIGTERM handlers, but they don't fire fast enough for shutdown to complete in 5s.
 
-**Evidence.** `plugins/redis-bridge/server/channel.py:_install_signal_handlers` installs a handler that calls `_STATE.shutdown()` then `sys.exit(0)`. In practice the server only exits when its stdin closes (FastMCP's stdio transport blocks on the read loop). SIGTERM gets queued but doesn't interrupt the async stdin reader.
+**Evidence.** `plugins/redis-channel/server/channel.py:_install_signal_handlers` installs a handler that calls `_STATE.shutdown()` then `sys.exit(0)`. In practice the server only exits when its stdin closes (FastMCP's stdio transport blocks on the read loop). SIGTERM gets queued but doesn't interrupt the async stdin reader.
 
 **Mechanism.** FastMCP runs the MCP server inside an `asyncio.run()` that drives `stdio_server()`. The stdio transport reads from stdin via `anyio` streams, which on macOS uses kqueue-backed file descriptors. SIGTERM is delivered to the Python process but the asyncio loop doesn't have a signal handler for it (we install a *signal* handler, not a *loop signal handler* via `loop.add_signal_handler`), so the handler runs synchronously on the main thread but can't preempt the blocking read.
 
@@ -63,7 +98,7 @@
 
 **Generalizable rule.** **In FastMCP-based stdio servers, use `asyncio.get_running_loop().add_signal_handler(...)` instead of `signal.signal(...)` for graceful shutdown.** Plain `signal.signal()` works at the language level but the asyncio loop doesn't see it, so it can't cancel the stdio read task. For tests / orchestration: don't rely on SIGTERM-then-wait for a clean exit; close stdin or fall back to SIGKILL.
 
-**Refs.** `plugins/redis-bridge/server/channel.py:_install_signal_handlers`. Queued follow-up.
+**Refs.** `plugins/redis-channel/server/channel.py:_install_signal_handlers`. Queued follow-up.
 
 ---
 
@@ -84,11 +119,11 @@ Validated:
 
 **Mechanism.** fakeredis is a pure-Python redis-protocol implementation that doesn't go through redis-py's URL parser — you construct `FakeRedis()` directly. Anything that breaks at the URL-build → `Redis.from_url()` boundary is invisible to fakeredis-backed tests. Real Redis exercises the full stack including URL parsing, authentication handshake, stream consumer groups, and pubsub.
 
-**Fix (artifact).** Promoting the harness into `plugins/redis-bridge/scripts/integ_test.py` so it lives with the plugin. Won't run in CI (needs real Redis + a keychain password) but documented as the way to verify before manual ship.
+**Fix (artifact).** Promoting the harness into `plugins/redis-channel/scripts/integ_test.py` so it lives with the plugin. Won't run in CI (needs real Redis + a keychain password) but documented as the way to verify before manual ship.
 
-**Generalizable rule.** **For Redis-backed plugins, a live-Redis integration test is non-optional.** Unit tests with fakeredis verify the plugin's own logic; they cannot verify URL encoding, auth handshake, or any behavior that depends on the real wire protocol. Write the integration test as soon as you have a Redis to point at — even a synthetic harness like the one for redis-bridge catches real bugs the unit suite can't.
+**Generalizable rule.** **For Redis-backed plugins, a live-Redis integration test is non-optional.** Unit tests with fakeredis verify the plugin's own logic; they cannot verify URL encoding, auth handshake, or any behavior that depends on the real wire protocol. Write the integration test as soon as you have a Redis to point at — even a synthetic harness like the one for redis-channel catches real bugs the unit suite can't.
 
-**Refs.** `$CLAUDE_JOB_DIR/integ_test.py` (transient), `plugins/redis-bridge/scripts/integ_test.py` (after promotion).
+**Refs.** `$CLAUDE_JOB_DIR/integ_test.py` (transient), `plugins/redis-channel/scripts/integ_test.py` (after promotion).
 
 ---
 
@@ -100,14 +135,14 @@ Validated:
 - `home-lab/ansible/inventory/hosts.yml` redis_bus group: `olympus-bus.infiquetra.com → 10.220.1.64`.
 - `host olympus-bus.infiquetra.com` → `10.220.1.64` (resolved).
 - `nc -zv olympus-bus.infiquetra.com 6379` → Connection succeeded.
-- The redis-bridge plan I'd written days earlier included this in its "Resolved by verification" section: `Redis auth + reachability: 10.220.1.64:6379 reachable`. The IP was right; I just paired it with the wrong hostname.
-- Wrong references shipped in three files: `plugins/redis-bridge/docs/registry.example.json`, `plugins/redis-bridge/commands/redis-bridge-configure.md`, `plugins/redis-bridge/skills/redis-bridge/SKILL.md`. All fixed in this PR.
+- The redis-channel plan I'd written days earlier included this in its "Resolved by verification" section: `Redis auth + reachability: 10.220.1.64:6379 reachable`. The IP was right; I just paired it with the wrong hostname.
+- Wrong references shipped in three files: `plugins/redis-channel/docs/registry.example.json`, `plugins/redis-channel/commands/redis-channel-configure.md`, `plugins/redis-channel/skills/redis-channel/SKILL.md`. All fixed in this PR.
 
 **Mechanism.** The plan was written from incomplete-context exploration, and the "Mac mini" / "Hermes Redis" association got cemented before I'd re-verified the actual host. Memory carried the IP forward but lost the hostname/host-association. When I wrote the example registry config in Phase 1, I reached for a hostname from conversation context (Mac mini) without re-checking the inventory. Twice in Phase 2 follow-up writeups I propagated the same wrong fact. The user's CLAUDE.md explicitly warns against this pattern ("Validation Discipline — NEVER assert without checking"), and I violated it.
 
 **Fix.** Corrected the three files. Saved a feedback memory ([[verify-infra-facts-against-home-lab]]) + a reference memory ([[redis-bus-location]]) so future-me has both the rule and the canonical fact in one place. MEMORY.md updated to surface both at the top of the index.
 
-**Validation.** `grep -rn jeffs-mac-mini plugins/redis-bridge/ docs/` now empty for the redis-bridge references. `host olympus-bus.infiquetra.com` and `nc -zv ... 6379` both succeed.
+**Validation.** `grep -rn jeffs-mac-mini plugins/redis-channel/ docs/` now empty for the redis-channel references. `host olympus-bus.infiquetra.com` and `nc -zv ... 6379` both succeed.
 
 **What surprised.** That the wrong fact survived three writeups (Phase 0 plan, Phase 1 PR, Phase 2 PR body) even though my memory had the correct IP. The IP and the hostname are normally bound; here they got decoupled because I'd seen `10.220.1.64` in one context (Hermes Redis) and "Mac mini" in another (voice work) and merged them.
 
@@ -119,7 +154,7 @@ Validated:
 
 ### Emitting custom MCP notification methods from FastMCP  {#fastmcp-custom-notification}
 
-**Context.** Phase 2 of `redis-bridge` needs the MCP server to emit `notifications/claude/channel` — a notification type that's specific to Claude Code's channel protocol and **not** part of the upstream MCP spec. FastMCP's `Context` exposes `log/info/debug/error/elicit` but none of those emit a custom method name. The underlying `ServerSession.send_notification` accepts a typed `SendNotificationT` union, and Claude's `notifications/claude/channel` is not in that union.
+**Context.** Phase 2 of `redis-channel` needs the MCP server to emit `notifications/claude/channel` — a notification type that's specific to Claude Code's channel protocol and **not** part of the upstream MCP spec. FastMCP's `Context` exposes `log/info/debug/error/elicit` but none of those emit a custom method name. The underlying `ServerSession.send_notification` accepts a typed `SendNotificationT` union, and Claude's `notifications/claude/channel` is not in that union.
 
 **Evidence.**
 - `[m for m in dir(Context) if not m.startswith('_')]` → no raw `send_notification` exposed.
@@ -128,7 +163,7 @@ Validated:
 
 **Mechanism.** `send_notification` doesn't actually validate that the notification method is in the spec union — it just calls `notification.model_dump(by_alias=True, mode='json', exclude_none=True)` and wraps the result in a `JSONRPCNotification`. The discrimination happens via Pydantic, but a generic `Notification[dict, str]` instance has `method: str` so it passes through verbatim. Static typing rejects it (`type: ignore[arg-type]` needed), runtime accepts it.
 
-**Fix.** `plugins/redis-bridge/server/notifier.py` constructs `Notification[dict, str](method="notifications/claude/channel", params=payload)` and passes it to `session.send_notification(notif)` with a type-ignore. Threadsafe scheduling via `asyncio.run_coroutine_threadsafe` because the consumer thread isn't on the asyncio loop.
+**Fix.** `plugins/redis-channel/server/notifier.py` constructs `Notification[dict, str](method="notifications/claude/channel", params=payload)` and passes it to `session.send_notification(notif)` with a type-ignore. Threadsafe scheduling via `asyncio.run_coroutine_threadsafe` because the consumer thread isn't on the asyncio loop.
 
 **Validation.** Phase 2 unit test `test_async_notifier_schedules_coroutine` constructs an AsyncNotifier with a stub session + a real asyncio loop running on a side thread, calls emit, and verifies the stub session's `send_notification` was awaited with `method="notifications/claude/channel"` and `params` matching.
 
@@ -136,13 +171,13 @@ Validated:
 
 **Generalizable rule.** When you need to emit an MCP notification method that isn't in the SDK's `ServerNotificationType` union (Claude-specific extensions like `notifications/claude/channel`, or any other downstream extension): use the generic `Notification[dict, str]` form with a string method, accept the `type: ignore[arg-type]` on `send_notification`, and don't try to wedge it into the typed union. Static typing was wrong to demand discrimination here — the JSON-RPC protocol itself doesn't care.
 
-**Refs.** `plugins/redis-bridge/server/notifier.py`; Phase 2 PR.
+**Refs.** `plugins/redis-channel/server/notifier.py`; Phase 2 PR.
 
 ---
 
 ### `@dataclass(slots=True)` doesn't expose class-level field defaults  {#dataclass-slots-class-defaults}
 
-**Context.** While building `plugins/redis-bridge/server/registry.py`, the loader read each config field via `defaults_raw.get(key, Defaults.heartbeat_seconds)` — reaching into the dataclass class to pull the field default. Five tests failed with `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'member_descriptor'`.
+**Context.** While building `plugins/redis-channel/server/registry.py`, the loader read each config field via `defaults_raw.get(key, Defaults.heartbeat_seconds)` — reaching into the dataclass class to pull the field default. Five tests failed with `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'member_descriptor'`.
 
 **Evidence.** Reproducer:
 
@@ -157,11 +192,11 @@ print(type(D.n))  # <class 'member_descriptor'>  ← not int!
 print(D().n)     # 10  ← only an *instance* has the value
 ```
 
-`pytest` failure trail at `plugins/redis-bridge/server/registry.py:130` calling `int(Defaults.heartbeat_seconds)`. Fix commit in this PR replaces `Defaults.<field>` with `base = Defaults(); base.<field>`.
+`pytest` failure trail at `plugins/redis-channel/server/registry.py:130` calling `int(Defaults.heartbeat_seconds)`. Fix commit in this PR replaces `Defaults.<field>` with `base = Defaults(); base.<field>`.
 
 **Mechanism.** With `slots=True`, the dataclass `__slots__` machinery installs *descriptors* on the class to mediate per-instance attribute storage. Looking up `D.field` returns the descriptor object itself, not the field's default. Without `slots=True`, the class still has plain class attributes that happen to equal the defaults — so the pattern works by accident, masking the bug for any non-slotted dataclass. `dataclasses.fields(D)[i].default` is the *correct* way to read a field's default without instantiating.
 
-**Fix.** Construct a `Defaults()` instance first and pull values off it; commit on branch `worktree-redis-bridge-phase1` (this PR).
+**Fix.** Construct a `Defaults()` instance first and pull values off it; commit on branch `worktree-redis-channel-phase1` (this PR).
 
 **Validation.** 35 unit tests across session_id, registry, and presence now pass (was 30 passing + 5 failing).
 
@@ -169,7 +204,7 @@ print(D().n)     # 10  ← only an *instance* has the value
 
 **Generalizable rule.** When you put `slots=True` on a dataclass, **do not read field defaults via `Class.field`** — that pattern returns the slot descriptor, not the default. Either (a) instantiate a default object and read from it, (b) call `dataclasses.fields(Class)`, or (c) drop `slots=True` if you want the convenience. This bug is invisible without slots, so it only shows up after you turn slots on for memory/lookup reasons.
 
-**Refs.** Phase 1 PR for redis-bridge.
+**Refs.** Phase 1 PR for redis-channel.
 
 ---
 
@@ -188,17 +223,17 @@ note:     Got: def delete(self, *names: bytes|str|memoryview[int]) -> Awaitable[
 
 **Mechanism.** `redis-py` types its client union-style (sync + async share one class hierarchy) so every call returns `Awaitable[Any] | Any`. A narrowed Protocol that promises a concrete return type can never be satisfied by such a wide union, even though the runtime behavior is exactly what we want.
 
-**Fix.** `RedisLike = typing.Any`. Code keeps duck-typing; mypy is unblocked. Both `redis.Redis` and `fakeredis.FakeRedis` work at runtime as before. Commit on branch `worktree-redis-bridge-phase1`.
+**Fix.** `RedisLike = typing.Any`. Code keeps duck-typing; mypy is unblocked. Both `redis.Redis` and `fakeredis.FakeRedis` work at runtime as before. Commit on branch `worktree-redis-channel-phase1`.
 
 **Generalizable rule.** When a client library exposes both sync + async via one wide-union type, narrowing it via `Protocol` to be more useful in your code's signatures will fight you. Use `Any` (or accept that you're going to lose mypy coverage on those calls). The dynamic-typing escape hatch is the right tool here — Protocol is for protocols you actually want to enforce, not for shaving down third-party type uncertainty.
 
-**Refs.** `plugins/redis-bridge/server/redis_client.py`.
+**Refs.** `plugins/redis-channel/server/redis_client.py`.
 
 ---
 
-### Verification findings while planning the `redis-bridge` plugin  {#redis-bridge-verification}
+### Verification findings while planning the `redis-channel` plugin  {#redis-bridge-verification}
 
-**Context.** During design of the `redis-bridge` + `hermes-claude-code-router` plan, several "obvious" claims about the Hermes-side infrastructure turned out to be wrong in ways that meaningfully reshaped the architecture. This entry captures the surprises for future plan-verification work.
+**Context.** During design of the `redis-channel` + `hermes-claude-code-router` plan, several "obvious" claims about the Hermes-side infrastructure turned out to be wrong in ways that meaningfully reshaped the architecture. This entry captures the surprises for future plan-verification work.
 
 **Evidence.**
 - An earlier exploration agent reported voice-forge on Mac mini as listening at `0.0.0.0:9876` reachable from the LAN. Direct `lsof` proved it bound to `127.0.0.1:9876` only. Not a blocker (Hermes consumes it locally) but the initial plan's "127.0.0.1:9876 from laptop" wiring was wrong.
@@ -210,7 +245,7 @@ note:     Got: def delete(self, *names: bytes|str|memoryview[int]) -> Awaitable[
 
 **Mechanism.** Earlier exploration agents conflated **proximity** ("X is referenced near Y") with **availability** ("X is implemented in this repo"). Clearest examples: voice-receive (referenced in arbiter, implemented in hermes-agent) and voice-forge (running on Mac mini, but as a local-bound daemon, not LAN-reachable). The agents reported the references; the implementation locations weren't independently verified.
 
-**Fix.** Build proceeds with the architecture the actual ground truth supports: `redis-bridge` stays Hermes-agnostic; Hermes does all voice work via its existing pipeline; vault extraction switches to Python-based per-field; Mimir profile is a prereq before any bridge code runs. The plan's "Prerequisites" section codifies this; the LEARNINGS-flagged "I should have looked here first" findings shaped Decisions [redis-bridge-decoupled](DECISIONS.md#redis-bridge-decoupled) and [askuserquestion-interception](DECISIONS.md#askuserquestion-interception).
+**Fix.** Build proceeds with the architecture the actual ground truth supports: `redis-channel` stays Hermes-agnostic; Hermes does all voice work via its existing pipeline; vault extraction switches to Python-based per-field; Mimir profile is a prereq before any bridge code runs. The plan's "Prerequisites" section codifies this; the LEARNINGS-flagged "I should have looked here first" findings shaped Decisions [redis-bridge-decoupled](DECISIONS.md#redis-bridge-decoupled) and [askuserquestion-interception](DECISIONS.md#askuserquestion-interception).
 
 **What surprised.** That `ctx.register_tool` exists at all — initially I assumed Hermes plugins were hook-only and the LLM-fallback path would require modifying Hermes core. Reading `hermes-extensions/docs/plugin-authoring.md` end-to-end found the API in the first place I should have looked.
 

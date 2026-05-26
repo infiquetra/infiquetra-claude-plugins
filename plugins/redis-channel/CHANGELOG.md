@@ -7,6 +7,23 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — coach upgrades the two-places rule from soft guidance to mandatory output shape (v0.4.7)
+
+v0.4.5 introduced the "write the same answer in two places" coaching, but live testing of v0.4.6 caught Claude occasionally emitting just the `reply` tool call with no preceding text block. The terminal then shows only `Called plugin:redis-channel:redis-channel` — the human has to expand the tool call or scroll back through `/resume` history to read what was sent. The functional pipeline (Hermes/Discord/voice) is unaffected because the outbound stream still gets the correct `text` argument, but the local-terminal UX takes a hit.
+
+The protocol limitation is real: Claude Code's render pipeline does not surface MCP tool result content as chat (`Tool … not found in render-time tools`), and there is no notification channel that renders outbound replies. The only mechanism that puts text on the local terminal is a text block in the assistant turn — and whether Claude emits that text block alongside the tool call is inference-variant.
+
+Coach is tightened from "write the same answer in two places" (soft) to a MANDATORY output shape with a concrete skeleton:
+
+```
+<your one answer to the user, as a plain text block>
+<tool_use: reply(chat_id=…, text=<that same answer, byte-identical>, …)>
+```
+
+Plus an explicit anti-pattern list: tool call alone, text+tool with different wording, narration ("Sent reply…"), and chain-of-thought in the text. This is best-effort — coaching reduces but does not eliminate inference variance. The deterministic fix (server-side echo notification) was considered and rejected: it would double-render every reply on the local terminal, costing tokens and confusing the merged-chat illusion. Document the imperfection; accept that hands-off review may occasionally require expanding a tool call.
+
+Files: `agents/redis-channel-coach.md`. No code or test changes.
+
 ### Fixed — per-session stream cleanup on disconnect + lazy GC (v0.4.6)
 
 Live audit of olympus-bus Redis caught that we were leaking stream keys: every disconnected session left `cc-sessions:<name>:inbound` and `cc-sessions:<name>:outbound` behind forever. Eight orphan stream keys accumulated in one afternoon of testing.

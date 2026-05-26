@@ -36,34 +36,21 @@ the user's actual text here
 | `thread`              | `false`     | Threaded reply. Same formatting as `dm`/`channel`. Pass `in_reply_to` for proper threading.                                                                                                                                                                                                                            |
 | *(any other / unset)* | `false`     | Default to `dm`-style behavior. Future router-side surfaces (email, SMS, alerts) will document their conventions; until then treat unknown sources as text-rendered.                                                                                                                                                  |
 
-## What `text` is for
+## Two users in this conversation — answer them both
 
-The `text` argument is **the user-facing message body**, full stop. The recipient on the other side either reads it (text sources) or hears it spoken via TTS (voice). Do NOT put any of the following in `text`:
-- Tool-call narration ("calling reply", "I responded with…", "Reply sent on the outbound stream…")
-- Internal reasoning or chain-of-thought
-- Terminal-only commentary
-- Status updates the developer already saw
+When a `<channel>` event arrives, there are **two distinct users** you're responding to in the same turn:
 
-## How the back-and-forth renders in the terminal — REQUIRED OUTPUT SHAPE
+1. **The local terminal user** (the developer reading your assistant output in the CLI). They see your turn's assistant text. They do NOT see anything inside MCP tool calls or results — those render as `Called plugin:…` collapsed.
+2. **The channel user** (Discord/voice/etc. via the router). They see whatever you put in `reply()`'s `text` argument. They do NOT see your assistant text.
 
-When a `<channel>` event arrives, the terminal shows the inbound tag automatically. The OUTBOUND side (your reply) does NOT auto-render from the tool result content — Claude Code's UI shows the tool was called, but doesn't surface its result body as chat content. So the local terminal user only sees your answer if you also emit it as a plain text block in the same assistant turn.
+Both users want your answer to their question. Two separate audiences, one answer, two delivery surfaces:
 
-**MANDATORY output shape for every channel inbound:** your assistant turn that calls `reply` MUST contain a plain text block **before** the tool call, and the text block content MUST be byte-identical to the `text` argument you pass to `reply`. No exceptions.
+- **Write your answer as your normal assistant text** — that's how the local user reads it. It's your primary response, just like any other turn. Not narration, not commentary — it's the answer.
+- **Also call `reply(chat_id=…, text=<same answer>, …)`** — that's how the channel user reads it. The tool is the shipping mechanism for the remote surface.
 
-```
-<your one answer to the user, as a plain text block>
-<tool_use: reply(chat_id=<from inbound>, text=<that same answer, byte-identical>, voice=<per source>, in_reply_to=<_msg_id>)>
-```
+These are not redundant. Each user sees only their own surface. If you skip the assistant text, the local user sees nothing. If you skip the `reply` tool, the channel user sees nothing.
 
-Why both: the text block is what the local terminal user sees. The tool call is what gets XADD'd to outbound for the Discord/voice user. Same words, two surfaces.
-
-**Anti-patterns — do not do these:**
-- Tool call alone with no text block → terminal user only sees "Called plugin:…" and has to expand the tool call to read your answer. Bad UX, breaks the "look like normal chat" goal.
-- Text block + tool call with different wording → confusing; the two surfaces disagree.
-- Narrating the send ("Sent reply to user.", "Replying with: …", "I responded with…") → adds noise; the text block IS the reply, no meta-commentary needed.
-- Internal reasoning or chain-of-thought in the text block → the channel user doesn't want to see your thinking, just your answer.
-
-The text block is your one answer to the user, full stop. The tool call carries that same answer to the router.
+Format the `text` arg per the source-mode table above (voice → speakable prose; dm/channel/thread → normal markdown). Your assistant text can match exactly, or be a slightly fuller markdown version for the terminal — but easiest is byte-identical: write your answer once, use it twice.
 
 (The `debug` flag on `/redis-channel-connect` is reserved for future opt-in dev verbosity but currently has no effect.)
 

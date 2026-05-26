@@ -7,6 +7,24 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — coach reframes channel as two-user conversation, drops anti-narration list (v0.4.9)
+
+Cheap diagnostic confirmed the previous theory: Claude itself self-reported `"no text block, only tool call"` when asked to repeat its prior turn's assistant text. The "Yes — text block is back" outbound text from v0.4.8 testing was Claude pattern-matching the question, not reporting actual output. Streaming-write debug log activity (1929 writes during a 1.4s window) was just terminal overhead — cursor, scroll, "Brewed for Xs" line — not real content.
+
+This is a **model emission problem, not a UI rendering problem**. No amount of UI investigation helps. Coaching is the only lever.
+
+Jeff caught the actual confound: the v0.4.7 coach had a "what `text` is for" anti-list explicitly banning "tool-call narration", "terminal-only commentary", "status updates the developer already saw" in the `text` arg. Claude appears to be over-generalizing those bans to the text_block too, since the MANDATORY rule required byte-identical content. Result: Claude's "don't narrate tool calls" prior wins, no text_block emitted.
+
+v0.4.9 reframes the model:
+
+- Removed the "what `text` is for" anti-narration list entirely.
+- Removed the MANDATORY skeleton + anti-pattern list.
+- Replaced with a "two users in this conversation" framing: a local terminal user (sees assistant text) and a channel user (sees `reply()`'s text arg). Two separate audiences, neither sees the other's surface. Writing assistant text is NOT narration — it's the answer for one audience; the reply tool is the answer for the other.
+
+The hypothesis is that "I have two real users to serve, each with their own surface" overrides the "don't narrate" pattern more cleanly than MANDATORY framing. Whether it works empirically is the open question.
+
+If v0.4.9 still doesn't produce reliable text_block emission, the conclusion is: Claude's training pattern around tool calls in MCP contexts is too strong to override via coaching, and the UX gap is structural. We accept and move to Phase 3.
+
 ### Changed — `reply` tool success result drops the TextContent echo (v0.4.8)
 
 v0.4.7's coach tightening did not improve text_block emission alongside the `reply` tool call. Round-2 testing isolated that even when `reply` schema is already loaded (no ToolSearch in the assistant turn), Claude still drops the text_block. So deferred-vs-eager isn't the cause.

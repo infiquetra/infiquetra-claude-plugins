@@ -7,6 +7,28 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — `reply` tool success result drops the TextContent echo (v0.4.8)
+
+v0.4.7's coach tightening did not improve text_block emission alongside the `reply` tool call. Round-2 testing isolated that even when `reply` schema is already loaded (no ToolSearch in the assistant turn), Claude still drops the text_block. So deferred-vs-eager isn't the cause.
+
+New working hypothesis: the v0.4.4 echo (returning `CallToolResult(content=[TextContent(text=text)], ...)`) signals to Claude that "the text was delivered as user-visible content from the tool" — making a redundant text_block feel wrong from Claude's POV. Even though Claude Code's renderer doesn't actually show MCP `TextContent` (`[ERROR] Tool ... not found in render-time tools`), Claude's training pattern of "tool result containing the answer means no text_block needed" appears to win.
+
+Investigation via the claude-code-guide subagent confirmed: MCP spec is silent on rendering semantics ("implementations are free to expose tools through any interface pattern that suits their needs"), and Claude Code changelog has zero mentions of MCP result content rendering in 2025-2026. There is no documented mechanism to force text_block emission alongside a tool_use.
+
+This release removes the TextContent echo from the success path:
+
+```python
+# before (v0.4.4 - v0.4.7):
+return CallToolResult(content=[TextContent(text=text)], structuredContent=result)
+
+# after (v0.4.8):
+return CallToolResult(content=[], structuredContent=result)
+```
+
+Error path keeps TextContent (Claude must be able to read why the tool failed). Programmatic clients (integ_test.py + Hermes router) read `structuredContent.msg_id` and `structuredContent.ok` — both unaffected. No tests assert on the echo so no test changes needed.
+
+If this still doesn't restore text_block emission reliably, the conclusion is: Claude Code's design intentionally skips MCP result rendering, the gap is structural, and best-effort coaching is the only available lever. We document the limitation and stop fighting it — for Phase 3 (voice routing) this UX gap is moot because TTS speaks the answer to the channel-side user.
+
 ### Changed — coach upgrades the two-places rule from soft guidance to mandatory output shape (v0.4.7)
 
 v0.4.5 introduced the "write the same answer in two places" coaching, but live testing of v0.4.6 caught Claude occasionally emitting just the `reply` tool call with no preceding text block. The terminal then shows only `Called plugin:redis-channel:redis-channel` — the human has to expand the tool call or scroll back through `/resume` history to read what was sent. The functional pipeline (Hermes/Discord/voice) is unaffected because the outbound stream still gets the correct `text` argument, but the local-terminal UX takes a hit.

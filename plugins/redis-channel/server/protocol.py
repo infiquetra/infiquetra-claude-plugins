@@ -5,8 +5,9 @@ are the enforcement layer: every inbound payload from Redis is validated
 against them before processing; every outbound payload is serialized through
 them. Schema mismatches fail loud, not silent.
 
-Both this repo and `hermes-claude-code-router` keep these in sync. Any change
-to the protocol requires synchronized PRs.
+This repo and any router implementation (e.g., `hermes-claude-code-router` as
+the reference router) keep these in sync. Any change to the protocol requires
+coordinated updates on both sides.
 """
 
 from __future__ import annotations

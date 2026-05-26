@@ -1,12 +1,12 @@
 ---
-description: Connect this Claude Code session to a redis-channel endpoint (default: mimir). Registers session presence in Redis.
+description: Connect this Claude Code session to a configured redis-channel endpoint. Registers session presence in Redis.
 argument-hint: "[endpoint-name] [--session-name <name>] [--debug]"
 ---
 
 Connect the current session to a configured `redis-channel` endpoint.
 
 **Argument parsing:**
-- First positional arg = endpoint name (default `"mimir"`).
+- First positional arg = endpoint name (optional). If omitted, the server resolves to `registry.defaults.default_endpoint`, with a single-endpoint convenience fallback when only one is configured.
 - `--session-name <name>` flag (optional) — pass that as `session_name`. Otherwise omit and let the server auto-generate `<cwd-basename>-<short-hash>`.
 - `--debug` flag (optional) — pass `debug=true` to the tool. **Default `false`.** Without this flag, reply behavior is *quiet*; with it, reply behavior is *verbose* (see below).
 

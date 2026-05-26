@@ -90,7 +90,7 @@ class ServerState:
     def connect(
         self,
         *,
-        endpoint: str,
+        endpoint: str | None,
         session_name: str | None,
         notifier: ChannelNotifier | None = None,
         debug: bool = False,
@@ -100,6 +100,10 @@ class ServerState:
         `notifier` is the surface to which inbound stream messages are
         forwarded. In production it's the AsyncNotifier built from the
         MCP session + loop; in tests it's a RecordingNotifier or NoopNotifier.
+
+        When `endpoint` is None, resolves to `registry.defaults.default_endpoint`
+        with a single-endpoint convenience fallback (see
+        `Registry.resolve_default_endpoint`).
         """
         try:
             with self._lock:
@@ -107,7 +111,11 @@ class ServerState:
                     self._disconnect_locked(reason="reconnect")
 
                 registry = load_registry()
-                ep = registry.get(endpoint)
+                if endpoint is None:
+                    ep = registry.resolve_default_endpoint()
+                    endpoint = ep.name
+                else:
+                    ep = registry.get(endpoint)
                 resolved_name = resolve_session_name(session_name)
                 client = redis_connect(ep)
                 # Auto-disambiguate only when the user didn't supply an
@@ -341,8 +349,8 @@ def build_app() -> FastMCP:
         name=f"redis-channel v{__version__}",
         instructions=(
             "Generic Redis-streams bridge for Claude Code sessions. Pair "
-            "with a router (e.g. hermes-claude-code-router) on the "
-            "consumer side.\n"
+            "with any router that speaks the protocol on the consumer "
+            "side.\n"
             "\n"
             "When a redis-channel session is active (after "
             "/redis-channel-connect), external user messages arrive as "
@@ -397,16 +405,19 @@ def build_app() -> FastMCP:
         name="redis_channel_connect",
         description=(
             "Connect this Claude Code session to a redis-channel endpoint "
-            "(typically a Hermes profile like 'mimir'). Registers in the shared "
-            "Redis registry, starts a 10s heartbeat, and attaches an inbound "
-            "consumer that emits notifications/claude/channel for each XADD'd "
-            "inbound message. Returns the resolved session_name + metadata. "
-            "Pass debug=true to opt into verbose reply narration in the local "
-            "terminal (useful for dev/test); default false = quiet."
+            "(a configured router target from your registry). Registers in "
+            "the shared Redis registry, starts a 10s heartbeat, and attaches "
+            "an inbound consumer that emits notifications/claude/channel for "
+            "each XADD'd inbound message. Returns the resolved session_name "
+            "+ metadata. If `endpoint` is omitted, resolves to "
+            "registry.defaults.default_endpoint (falling back to the sole "
+            "configured endpoint when only one exists). Pass debug=true to "
+            "opt into verbose reply narration in the local terminal (useful "
+            "for dev/test); default false = quiet."
         ),
     )
     async def redis_channel_connect(
-        endpoint: str = "mimir",
+        endpoint: str | None = None,
         session_name: str | None = None,
         debug: bool = False,
         ctx: Context | None = None,

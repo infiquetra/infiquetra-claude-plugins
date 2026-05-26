@@ -110,3 +110,122 @@ def test_registry_get_unknown_endpoint_raises(tmp_path: Path) -> None:
     r = registry.load_registry(cfg)
     with pytest.raises(registry.EndpointNotFoundError, match="available: mimir"):
         r.get("nope")
+
+
+# ─── New in v0.4.11: default_endpoint + auto_connect_endpoint ───────────────
+
+
+def test_defaults_default_endpoint_value(tmp_path: Path) -> None:
+    """`defaults.default_endpoint` is read from JSON when present."""
+    cfg = write_config(
+        tmp_path / "r.json",
+        {
+            "endpoints": {"alpha": {"redis_url": "redis://h"}},
+            "defaults": {"default_endpoint": "alpha"},
+        },
+    )
+    r = registry.load_registry(cfg)
+    assert r.defaults.default_endpoint == "alpha"
+
+
+def test_defaults_default_endpoint_default_value(tmp_path: Path) -> None:
+    """When `default_endpoint` is omitted, falls back to dataclass default."""
+    cfg = write_config(
+        tmp_path / "r.json",
+        {"endpoints": {"alpha": {"redis_url": "redis://h"}}},
+    )
+    r = registry.load_registry(cfg)
+    assert r.defaults.default_endpoint == "default"
+
+
+def test_defaults_auto_connect_endpoint_value(tmp_path: Path) -> None:
+    cfg = write_config(
+        tmp_path / "r.json",
+        {
+            "endpoints": {"alpha": {"redis_url": "redis://h"}},
+            "defaults": {"auto_connect_endpoint": "alpha"},
+        },
+    )
+    r = registry.load_registry(cfg)
+    assert r.defaults.auto_connect_endpoint == "alpha"
+
+
+def test_defaults_auto_connect_endpoint_omitted_is_none(tmp_path: Path) -> None:
+    cfg = write_config(
+        tmp_path / "r.json",
+        {"endpoints": {"alpha": {"redis_url": "redis://h"}}},
+    )
+    r = registry.load_registry(cfg)
+    assert r.defaults.auto_connect_endpoint is None
+
+
+def test_defaults_auto_connect_endpoint_null_explicit_is_none(tmp_path: Path) -> None:
+    cfg = write_config(
+        tmp_path / "r.json",
+        {
+            "endpoints": {"alpha": {"redis_url": "redis://h"}},
+            "defaults": {"auto_connect_endpoint": None},
+        },
+    )
+    r = registry.load_registry(cfg)
+    assert r.defaults.auto_connect_endpoint is None
+
+
+def test_resolve_default_endpoint_hits_named(tmp_path: Path) -> None:
+    """Happy path: defaults.default_endpoint names a configured endpoint."""
+    cfg = write_config(
+        tmp_path / "r.json",
+        {
+            "endpoints": {
+                "alpha": {"redis_url": "redis://h1"},
+                "beta": {"redis_url": "redis://h2"},
+            },
+            "defaults": {"default_endpoint": "beta"},
+        },
+    )
+    r = registry.load_registry(cfg)
+    ep = r.resolve_default_endpoint()
+    assert ep.name == "beta"
+
+
+def test_resolve_default_endpoint_falls_back_to_sole_endpoint(tmp_path: Path) -> None:
+    """Single-endpoint convenience: when default_endpoint isn't in endpoints
+    but there's exactly one configured endpoint, use that."""
+    cfg = write_config(
+        tmp_path / "r.json",
+        {
+            "endpoints": {"alpha": {"redis_url": "redis://h"}},
+            # default_endpoint defaults to "default" — not "alpha".
+        },
+    )
+    r = registry.load_registry(cfg)
+    ep = r.resolve_default_endpoint()
+    assert ep.name == "alpha"
+
+
+def test_resolve_default_endpoint_raises_when_multi_and_unresolvable(
+    tmp_path: Path,
+) -> None:
+    """Multi-endpoint without a resolvable default → clear error."""
+    cfg = write_config(
+        tmp_path / "r.json",
+        {
+            "endpoints": {
+                "alpha": {"redis_url": "redis://h1"},
+                "beta": {"redis_url": "redis://h2"},
+            },
+            # default_endpoint=="default" not in endpoints; >1 configured.
+        },
+    )
+    r = registry.load_registry(cfg)
+    with pytest.raises(
+        registry.EndpointNotFoundError, match="no default endpoint resolvable"
+    ):
+        r.resolve_default_endpoint()
+
+
+def test_resolve_default_endpoint_raises_on_empty_registry(tmp_path: Path) -> None:
+    cfg = write_config(tmp_path / "r.json", {"endpoints": {}})
+    r = registry.load_registry(cfg)
+    with pytest.raises(registry.EndpointNotFoundError):
+        r.resolve_default_endpoint()

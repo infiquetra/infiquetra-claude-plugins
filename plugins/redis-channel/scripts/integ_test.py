@@ -38,12 +38,15 @@ import redis
 
 # Plugin root = parent of scripts/ dir. Works regardless of worktree location.
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
-REDIS_HOST = os.environ.get("REDIS_BRIDGE_INTEG_HOST", "olympus-bus.infiquetra.com")
-REDIS_PORT = int(os.environ.get("REDIS_BRIDGE_INTEG_PORT", "6379"))
-# Caller must set HERMES_REDIS_PASSWORD in env before invoking this script:
-#   HERMES_REDIS_PASSWORD="$(security find-generic-password -s hermes-redis-password -w)" \
+REDIS_HOST = os.environ.get("REDIS_CHANNEL_INTEG_HOST", "olympus-bus.infiquetra.com")
+REDIS_PORT = int(os.environ.get("REDIS_CHANNEL_INTEG_PORT", "6379"))
+# Caller must set the Redis password in env before invoking this script.
+# The env var name is whatever your test environment uses — this harness
+# accepts REDIS_CHANNEL_INTEG_PASSWORD (preferred) or falls back to
+# HERMES_REDIS_PASSWORD for legacy compatibility. Example:
+#   REDIS_CHANNEL_INTEG_PASSWORD="$(security find-generic-password -s my-redis-password -w)" \
 #     uv run python plugins/redis-channel/scripts/integ_test.py
-REDIS_PASSWORD = os.environ["HERMES_REDIS_PASSWORD"]
+REDIS_PASSWORD = os.environ.get("REDIS_CHANNEL_INTEG_PASSWORD") or os.environ["HERMES_REDIS_PASSWORD"]
 TEST_SESSION_NAME = "integ-test-headless"
 NOTIFICATION_WAIT_S = 5.0
 SHUTDOWN_WAIT_S = 5.0
@@ -187,7 +190,13 @@ class MCPClient:
 
 def spawn_server() -> MCPClient:
     env = os.environ.copy()
-    env["HERMES_REDIS_PASSWORD"] = REDIS_PASSWORD
+    # Set the env var that the integ-test fixture's registry.json expects in
+    # its `redis_password_env` field. The default fixture uses
+    # HERMES_REDIS_PASSWORD for backward compatibility with the existing dev
+    # setup; override via REDIS_CHANNEL_INTEG_VAR if your fixture uses
+    # a different name.
+    password_var = os.environ.get("REDIS_CHANNEL_INTEG_VAR", "HERMES_REDIS_PASSWORD")
+    env[password_var] = REDIS_PASSWORD
     # The server logs to stderr; we want unbuffered so we see it live.
     env["PYTHONUNBUFFERED"] = "1"
     trace(f"spawning: uv run --project {PLUGIN_DIR.parent.parent} python -m server")

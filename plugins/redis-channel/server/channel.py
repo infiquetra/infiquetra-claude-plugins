@@ -21,7 +21,9 @@ import asyncio
 import atexit
 import contextlib
 import logging
+import os
 import signal
+import socket
 import sys
 import threading
 import time
@@ -31,7 +33,12 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from . import __version__
 from .notifier import AsyncNotifier, ChannelNotifier, NoopNotifier
-from .presence import Presence, build_metadata, list_live_sessions
+from .presence import (
+    Presence,
+    build_metadata,
+    disambiguate_if_collision,
+    list_live_sessions,
+)
 from .protocol import Outbound
 from .redis_client import connect as redis_connect
 from .redis_consumer import Consumer
@@ -90,6 +97,16 @@ class ServerState:
                 ep = registry.get(endpoint)
                 resolved_name = resolve_session_name(session_name)
                 client = redis_connect(ep)
+                # Auto-disambiguate only when the user didn't supply an
+                # explicit name. An explicit name is treated as intent — we
+                # let the regular reconnect/replace semantics handle it.
+                if session_name is None:
+                    resolved_name = disambiguate_if_collision(
+                        client,
+                        resolved_name,
+                        host=socket.gethostname(),
+                        pid=os.getpid(),
+                    )
                 metadata = build_metadata(
                     session_name=resolved_name,
                     endpoint=endpoint,

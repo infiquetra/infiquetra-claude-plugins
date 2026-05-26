@@ -47,6 +47,50 @@ def events_channel(session_name: str) -> str:
     return f"{EVENTS_CHANNEL_PREFIX}{session_name}"
 
 
+def disambiguate_if_collision(
+    client: RedisLike,
+    base_name: str,
+    *,
+    host: str,
+    pid: int,
+) -> str:
+    """Return a session name that won't collide with a live entry.
+
+    Same-cwd same-host CC sessions auto-name themselves identically (because
+    the auto-name is `sha256(cwd + host)[:8]`). Without this, two background
+    sessions in the same repo race for the same registry key, hb key, and
+    consumer-group consumer name. This helper appends a 4-hex-of-pid suffix
+    on collision.
+
+    Returns base_name unchanged if any of:
+      - no live presence at base_name (hb key absent → either never claimed
+        or stale + about to be GC'd)
+      - the live presence belongs to us (same host AND pid → reconnect from
+        the same process; channel layer handles the local reconnect)
+      - the registry entry is missing or corrupt (best-effort; we'll
+        overwrite it cleanly)
+
+    Disambiguates by appending `-<pid_hex_4>` when a different live process
+    on the same host (or a different host) already owns base_name. PIDs
+    don't actually collide within a single host at the same time, so the
+    suffix is unique enough; across hosts the underlying auto-name already
+    differs (host is in the hash input).
+    """
+    if not client.exists(hb_key(base_name)):
+        return base_name
+    raw = client.hget(REGISTRY_KEY, base_name)
+    if raw is None:
+        return base_name
+    try:
+        existing = SessionMetadata.from_json(raw)
+    except (ValueError, KeyError, json.JSONDecodeError):
+        return base_name
+    if existing.host == host and existing.pid == pid:
+        return base_name
+    suffix = f"{pid:x}"[-4:].rjust(4, "0")
+    return f"{base_name}-{suffix}"
+
+
 @dataclass(frozen=True, slots=True)
 class SessionMetadata:
     """Static registry payload for a CC session.
@@ -83,6 +127,38 @@ class SessionMetadata:
         )
 
 
+def detect_git_branch(cwd: str) -> str | None:
+    """Return the current git branch for `cwd`, or None if not a git repo / git
+    is unavailable / detection fails for any reason.
+
+    Best-effort: a 1s subprocess timeout caps the cost in case the cwd is on a
+    slow/unresponsive filesystem (e.g. stale NFS mount). Returns None for
+    detached HEAD ("HEAD" is filtered to None) so the router has a clean
+    "no branch context" signal.
+    """
+    import subprocess  # noqa: PLC0415  (local import — keeps presence import-light)
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        # git not installed, cwd doesn't exist, slow FS, or other transient
+        return None
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    if not branch or branch == "HEAD":
+        # Empty result or detached-HEAD state
+        return None
+    return branch
+
+
 def build_metadata(
     *,
     session_name: str,
@@ -93,10 +169,17 @@ def build_metadata(
     started_at: float | None = None,
     extras: dict[str, str] | None = None,
 ) -> SessionMetadata:
+    resolved_cwd = cwd or os.getcwd()
+    # Auto-detect git_branch when not explicitly supplied. Pass git_branch=""
+    # or an explicit value to override; the sentinel for "no detection" is
+    # `git_branch=""` which is stored verbatim (and routers can treat empty
+    # string as "no branch info").
+    if git_branch is None:
+        git_branch = detect_git_branch(resolved_cwd)
     return SessionMetadata(
         session_name=session_name,
         host=host or socket.gethostname(),
-        cwd=cwd or os.getcwd(),
+        cwd=resolved_cwd,
         git_branch=git_branch,
         started_at=started_at if started_at is not None else time.time(),
         pid=os.getpid(),

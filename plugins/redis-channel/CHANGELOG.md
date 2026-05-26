@@ -7,6 +7,18 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — `debug` flag on `/redis-channel-connect` controls reply narration (v0.4.3)
+
+Live testing surfaced that Claude narrates "Reply sent on the outbound stream — msg_id=…" in the terminal after calling the `reply` tool. That's noise when the recipient is on the channel side (Discord/voice) and only the developer is watching the terminal.
+
+`redis_channel_connect` now accepts a `debug: bool = False` arg. Honored as follows:
+- **`debug=false` (default)**: quiet mode — coach + slash-command markdown tell Claude *not* to narrate replies in the terminal; the reply tool's structured result is the only confirmation.
+- **`debug=true`**: verbose mode — Claude is invited to print a one-line `→ replied to <chat_id> · msg_id=<x>` after each `reply`. For developers running live integration tests.
+
+CLI usage: `/redis-channel-connect mimir --debug` for verbose, plain `/redis-channel-connect mimir` for quiet.
+
+The flag is stored on `ServerState`, returned in the connect response (so the coach can key off it), and reset to `false` on disconnect.
+
 ### Fixed — channel notifications now use the correct {content, meta} schema + declare `claude/channel` capability + cd to plugin root (v0.4.2)
 
 Live install testing surfaced **three** issues that together prevented Claude Code from actually surfacing channel events end-to-end:

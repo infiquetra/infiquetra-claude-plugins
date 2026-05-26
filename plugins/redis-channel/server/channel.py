@@ -69,11 +69,21 @@ class ServerState:
         self._notifier: ChannelNotifier | None = None
         self._client: Any | None = None
         self._endpoint_name: str | None = None
+        # `debug` controls how chatty Claude should be in the terminal after
+        # replying. Default off (quiet). Set via the connect tool's `debug`
+        # arg; surfaced in connect's response so the slash-command markdown
+        # + agent coach can steer Claude's reply-narration behavior.
+        self._debug: bool = False
 
     @property
     def is_connected(self) -> bool:
         with self._lock:
             return self._presence is not None
+
+    @property
+    def debug(self) -> bool:
+        with self._lock:
+            return self._debug
 
     def connect(
         self,
@@ -81,6 +91,7 @@ class ServerState:
         endpoint: str,
         session_name: str | None,
         notifier: ChannelNotifier | None = None,
+        debug: bool = False,
     ) -> dict[str, Any]:
         """Open the channel: register presence, start consumer.
 
@@ -133,11 +144,13 @@ class ServerState:
                 self._notifier = resolved_notifier
                 self._client = client
                 self._endpoint_name = endpoint
+                self._debug = bool(debug)
                 return {
                     "ok": True,
                     "session_name": metadata.session_name,
                     "endpoint": endpoint,
                     "endpoint_display": ep.display_name,
+                    "debug": self._debug,
                     "host": metadata.host,
                     "cwd": metadata.cwd,
                     "heartbeat_seconds": registry.defaults.heartbeat_seconds,
@@ -282,6 +295,7 @@ class ServerState:
             self._client = None
         self._endpoint_name = None
         self._notifier = None
+        self._debug = False
 
 
 _STATE = ServerState()
@@ -338,12 +352,15 @@ def build_app() -> FastMCP:
             "(typically a Hermes profile like 'mimir'). Registers in the shared "
             "Redis registry, starts a 10s heartbeat, and attaches an inbound "
             "consumer that emits notifications/claude/channel for each XADD'd "
-            "inbound message. Returns the resolved session_name + metadata."
+            "inbound message. Returns the resolved session_name + metadata. "
+            "Pass debug=true to opt into verbose reply narration in the local "
+            "terminal (useful for dev/test); default false = quiet."
         ),
     )
     async def redis_channel_connect(
         endpoint: str = "mimir",
         session_name: str | None = None,
+        debug: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         notifier = _build_async_notifier(ctx)
@@ -351,6 +368,7 @@ def build_app() -> FastMCP:
             endpoint=endpoint,
             session_name=session_name,
             notifier=notifier,
+            debug=debug,
         )
 
     @app.tool(

@@ -1,6 +1,6 @@
 {
   "name": "redis-channel",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Claude Code channel that bridges sessions to external systems over Redis Streams. Pair with hermes-claude-code-router for Discord/voice via Hermes.",
   "author": {
     "name": "Infiquetra",

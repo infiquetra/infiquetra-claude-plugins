@@ -1,6 +1,6 @@
 ---
 name: redis-channel-coach
-description: Behavior hints for Claude when a redis-channel session is active. Reminders about reading the channel-tag attributes, voice-mode reply defaults, and the AskUserQuestion ban. Not load-bearing — interception in the MCP server is what guarantees correctness; this file just reduces friction.
+description: Behavior hints for Claude when a redis-channel session is active. Reminders about reading the channel-tag attributes, distinguishing voice vs text source modes, and the AskUserQuestion ban. Not load-bearing — interception in the MCP server is what guarantees correctness; this file just reduces friction.
 ---
 
 You may be running with a `redis-channel` session attached. After `/redis-channel-connect` succeeds, external users' messages arrive as `<channel>` tags injected into your context:
@@ -12,29 +12,42 @@ the user's actual text here
 ```
 
 **Reading the tag:**
-- `source` — `"voice"`, `"dm"`, `"channel"`, or `"thread"` (where the user is reaching you from).
+- `source` — `"voice"`, `"dm"`, `"channel"`, or `"thread"`. **Drives formatting + voice flag — see "Source-mode behavior" below.**
 - `chat_id` — opaque router-managed handle for that conversation. **Always pass this back on reply.**
 - `user_id`, `username` — who sent it.
 - `endpoint` — which redis-channel endpoint the message came from (e.g. `"mimir"`).
 - `_msg_id` — Redis stream message-id we attach for reply correlation.
-- `confidence` — float 0-1 on voice transcripts; absent for text.
+- `confidence` — float 0-1 on voice transcripts; absent for text sources.
 - `router`, `ts` — source-of-truth router id + timestamp; rarely useful for routing logic but available.
-- The body inside the tag is the user's text/transcript — treat it as the user's message.
+- The body inside the tag is the user's text or speech-transcript — treat it as the user's message.
 
 **Responding with the `reply` tool:**
 - **Always pass back the `chat_id`** from the inbound tag so the router routes your reply to the right surface.
-- If `source` was `"voice"`, set `voice=true` so the router synthesizes audio for that voice channel.
-- If `source` was `"dm"`, `"channel"`, or `"thread"`, leave `voice` at the default (false).
-- Pass `in_reply_to=<the _msg_id from the inbound>` when you want the router to thread the reply (useful in channel/thread surfaces; the router may ignore it for voice).
+- Set `voice` and format your `text` according to `source` (see table below).
+- Pass `in_reply_to=<the _msg_id from the inbound>` for threading on `channel` / `thread` sources (router may ignore it for voice/dm).
 
-**Don't call `AskUserQuestion` during a channel session.** Inline the choices directly in your reply text instead ("Which approach? A) … B) … C) …"). A user on the other side will answer naturally and you'll get the response on the next inbound `<channel>` event. (Phase 4 will deterministically intercept any `AskUserQuestion` you do emit; until then, just inline.)
+## Source-mode behavior
 
-**Verbosity (driven by the `debug` flag on `/redis-channel-connect`):**
+| `source`              | `voice` arg | Formatting rules for `text`                                                                                                                                                                                                                                                                                            |
+| --------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `voice`               | `true`      | **TTS will SPEAK your `text` aloud.** Keep it short (round-trip is 6-10s). NO markdown, NO code blocks, NO bare URLs (they get read letter-by-letter and sound awful). Speakable prose only. Don't reference visual elements ("see the diagram above"). If you must mention a URL, say "I'll send the link in a DM."  |
+| `dm`                  | `false`     | Direct message rendering — markdown, code blocks, lists, and inline links all render properly. Mid-length OK. No threading concept here.                                                                                                                                                                              |
+| `channel`             | `false`     | Public channel message. Same formatting as `dm`. Be aware others may see your reply. Pass `in_reply_to` to thread under the original message.                                                                                                                                                                          |
+| `thread`              | `false`     | Threaded reply. Same formatting as `dm`/`channel`. Pass `in_reply_to` for proper threading.                                                                                                                                                                                                                            |
+| *(any other / unset)* | `false`     | Default to `dm`-style behavior. Future router-side surfaces (email, SMS, alerts) will document their conventions; until then treat unknown sources as text-rendered.                                                                                                                                                  |
 
-- The connect tool's response includes a `debug: bool` field. Honor it for the lifetime of this connection:
-- **`debug=false` (default)** — quiet mode. After calling the `reply` tool for a channel event, **do not narrate the reply in the local terminal**. The recipient is on the channel side (Discord/voice/etc.); your terminal narration is invisible to them and noisy for whoever is watching the terminal. Just call the tool — the tool's structured result is the only confirmation needed.
-- **`debug=true`** — verbose mode. After replying, print a one-line confirmation in the terminal (e.g. `→ replied to <chat_id> · msg_id=<x>`). This mode is for developers running live integration tests from the terminal.
+## What `text` is for
 
-If you don't remember the debug flag from connect (e.g. session was resumed), default to quiet.
+The `text` argument is **the user-facing message body**, full stop. The recipient on the other side either reads it (text sources) or hears it spoken via TTS (voice). Do NOT put any of the following in `text`:
+- Tool-call narration ("calling reply", "I responded with…", "Reply sent on the outbound stream…")
+- Internal reasoning or chain-of-thought
+- Terminal-only commentary
+- Status updates that the user already saw via the tool result
 
-Latency: voice round-trips through the router take 6-10s typical. Keep replies tight when the user is hands-free; they can ask follow-ups.
+If you have something to say to the developer watching the terminal but NOT to the user on the channel side, just don't say it — the tool's natural echo of `text` is the only thing the terminal needs to render. (The `debug` flag on `/redis-channel-connect` is reserved for future opt-in dev verbosity but currently has no effect.)
+
+## Other rules
+
+**Don't call `AskUserQuestion` during a channel session.** Inline the choices directly in your `text` instead — "Which approach? A) … B) … C) …" — and the user will answer naturally on the next inbound. (For voice, restate the choices conversationally: "Want A, B, or C?") Phase 4 will deterministically intercept any `AskUserQuestion` you do emit; until then, just inline.
+
+**Latency**: voice round-trips through the router take 6-10s typical. Keep voice replies tight; the user is probably driving or jogging and they can always ask follow-ups.

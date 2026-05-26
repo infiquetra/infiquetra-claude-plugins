@@ -7,6 +7,30 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — `reply` tool echoes sent text as natural MCP result content (v0.4.4)
+
+The reply tool's MCP wrapper now returns a `CallToolResult` with the sent `text` as the unstructured `content` element + the existing `{ok, session_name, chat_id, msg_id}` as `structuredContent`. The result: the terminal automatically renders the reply text as the tool's natural output — no model-side narration ("Reply sent on the outbound stream…", "I responded with…") needed to make the back-and-forth visible.
+
+This closes the outbound-visibility gap toward the user's stated goal of "channels should feel like Remote Control" — both sides of the chat now render in terminal without meta-decoration.
+
+The agent coach was rewritten with **per-source-mode formatting guidance**, because voice and text sources need fundamentally different reply shapes:
+
+| `source`              | `voice` arg | Formatting rules for `text`                                                                                          |
+| --------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| `voice`               | `true`      | TTS will SPEAK aloud. Short. No markdown, no code blocks, no bare URLs. Speakable prose only. No visual references.  |
+| `dm`                  | `false`     | Direct message. Full markdown, code blocks, lists, links all render properly.                                        |
+| `channel`             | `false`     | Public channel. Same formatting as DM. Use `in_reply_to` to thread.                                                  |
+| `thread`              | `false`     | Threaded reply. Same formatting as DM/channel.                                                                       |
+| *(any other / unset)* | `false`     | Default to DM-style for forward-compatibility with future sources (email, SMS, alerts, etc.).                        |
+
+Also:
+- Removed the `debug=false/true` narration toggle (the tool's natural echo replaces it).
+- Kept the TTS-safety reminder explicit: when `voice=true`, the `text` arg is what gets SPOKEN aloud — Claude must not put tool-call narration, reasoning, or terminal-only commentary into `text`.
+- Added explicit "what `text` is for" section: it's the user-facing message body, full stop.
+- The `debug` flag stays on the connect tool for future opt-in dev verbosity but currently has no effect.
+
+`ServerState.reply` itself still returns a dict (unchanged) — only the MCP-tool-wrapper layer in `build_app()` was modified. Existing unit tests pass without changes.
+
 ### Added — `debug` flag on `/redis-channel-connect` controls reply narration (v0.4.3)
 
 Live testing surfaced that Claude narrates "Reply sent on the outbound stream — msg_id=…" in the terminal after calling the `reply` tool. That's noise when the recipient is on the channel side (Discord/voice) and only the developer is watching the terminal.

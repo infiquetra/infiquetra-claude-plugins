@@ -521,3 +521,204 @@ def test_reply_validates_empty_chat_id(patched_state: channel.ServerState, fr: A
         assert "chat_id" in out["detail"]
     finally:
         patched_state.disconnect()
+
+
+# ─── Phase 2.5: auto-connect at MCP startup ─────────────────────────────────
+
+
+def test_startup_register_eager_no_consumer(
+    patched_state: channel.ServerState, fr: Any
+) -> None:
+    """startup_register publishes presence + creates consumer group but
+    does NOT start consumer thread (no MCP ctx yet at startup time)."""
+    out = patched_state.startup_register(endpoint="mimir")
+    try:
+        assert out["ok"] is True
+        assert out["consumer_attached"] is False
+        assert out["notifier_kind"] is None
+        # Presence (hb key) should be live
+        assert fr.exists(presence.hb_key(out["session_name"])) == 1
+        # Internal state: consumer is None until ensure_consumer_attached
+        assert patched_state._consumer is None  # noqa: SLF001
+        assert patched_state._notifier is None  # noqa: SLF001
+        # Consumer group should already exist on the inbound stream so
+        # XREADGROUP > later picks up anything XADD'd in the gap.
+        from server.redis_consumer import (  # type: ignore[import-not-found]
+            consumer_group,
+            inbound_stream,
+        )
+
+        groups = fr.xinfo_groups(inbound_stream(out["session_name"]))
+        group_names = {g["name"] for g in groups}
+        assert consumer_group(out["session_name"]) in group_names
+    finally:
+        patched_state.disconnect()
+
+
+def test_startup_register_idempotent_when_already_connected(
+    patched_state: channel.ServerState, fr: Any
+) -> None:
+    """Calling startup_register a second time while connected is a no-op."""
+    patched_state.connect(endpoint="mimir", session_name="sr-idem")
+    try:
+        out = patched_state.startup_register(endpoint="mimir")
+        assert out["ok"] is True
+        assert out.get("was_already_connected") is True
+    finally:
+        patched_state.disconnect()
+
+
+def test_ensure_consumer_attached_lazy_starts_thread(
+    patched_state: channel.ServerState, fr: Any
+) -> None:
+    """After startup_register, calling ensure_consumer_attached with a real
+    notifier starts the consumer thread and wires the notifier in."""
+    from server.notifier import NoopNotifier  # type: ignore[import-not-found]
+
+    out = patched_state.startup_register(endpoint="mimir")
+    try:
+        assert patched_state._consumer is None  # noqa: SLF001
+        attached = patched_state.ensure_consumer_attached(NoopNotifier())
+        assert attached is True
+        assert patched_state._consumer is not None  # noqa: SLF001
+        # Second call is a no-op
+        attached2 = patched_state.ensure_consumer_attached(NoopNotifier())
+        assert attached2 is False
+    finally:
+        patched_state.disconnect()
+        _ = out
+
+
+def test_ensure_consumer_attached_noop_when_no_presence(
+    patched_state: channel.ServerState,
+) -> None:
+    """ensure_consumer_attached without prior startup_register/connect is a
+    no-op (returns False), not an error."""
+    from server.notifier import NoopNotifier  # type: ignore[import-not-found]
+
+    attached = patched_state.ensure_consumer_attached(NoopNotifier())
+    assert attached is False
+    assert patched_state._consumer is None  # noqa: SLF001
+
+
+def test_maybe_auto_connect_gate_strict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_maybe_auto_connect only fires on literal '1'. 'true', 'yes', '0',
+    empty, missing — all treated as off."""
+    calls: list[str] = []
+
+    def fake_startup_register(*, endpoint: str) -> dict[str, Any]:
+        calls.append(endpoint)
+        return {"ok": True, "session_name": "x"}
+
+    monkeypatch.setattr(channel._STATE, "startup_register", fake_startup_register)
+    monkeypatch.delenv("CLAUDE_CHANNEL_AUTO_CONNECT", raising=False)
+    monkeypatch.delenv("CLAUDE_CHANNEL_ENDPOINT", raising=False)
+
+    # missing → no call
+    channel._maybe_auto_connect()
+    assert calls == []
+
+    # empty → no call
+    monkeypatch.setenv("CLAUDE_CHANNEL_AUTO_CONNECT", "")
+    channel._maybe_auto_connect()
+    assert calls == []
+
+    # "0" → no call
+    monkeypatch.setenv("CLAUDE_CHANNEL_AUTO_CONNECT", "0")
+    channel._maybe_auto_connect()
+    assert calls == []
+
+    # "true" → no call (strict; only "1")
+    monkeypatch.setenv("CLAUDE_CHANNEL_AUTO_CONNECT", "true")
+    channel._maybe_auto_connect()
+    assert calls == []
+
+    # "1" + endpoint via env → call
+    monkeypatch.setenv("CLAUDE_CHANNEL_AUTO_CONNECT", "1")
+    monkeypatch.setenv("CLAUDE_CHANNEL_ENDPOINT", "mimir")
+    channel._maybe_auto_connect()
+    assert calls == ["mimir"]
+
+
+def test_maybe_auto_connect_no_endpoint_resolvable_continues(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When AUTO_CONNECT=1 but no endpoint resolvable (env unset, registry
+    missing auto_connect_endpoint), log warning and continue without raising."""
+
+    def fake_load_registry() -> Any:
+        from server import registry as registry_mod  # type: ignore[import-not-found]
+
+        return registry_mod.Registry(
+            endpoints={},
+            defaults=registry_mod.Defaults(),  # auto_connect_endpoint=None
+            source=Path("/dev/null"),
+        )
+
+    monkeypatch.setattr(channel, "load_registry", fake_load_registry)
+    monkeypatch.setenv("CLAUDE_CHANNEL_AUTO_CONNECT", "1")
+    monkeypatch.delenv("CLAUDE_CHANNEL_ENDPOINT", raising=False)
+    with caplog.at_level("WARNING", logger="redis_channel.channel"):
+        channel._maybe_auto_connect()  # should not raise
+    assert any("no endpoint resolvable" in r.message for r in caplog.records)
+
+
+def test_maybe_auto_connect_registry_missing_continues(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When AUTO_CONNECT=1, endpoint not in env, AND registry file missing,
+    log warning and continue (don't crash the MCP server)."""
+    from server import registry as registry_mod  # type: ignore[import-not-found]
+
+    def raising_load() -> Any:
+        raise registry_mod.RegistryNotFoundError("test-no-file")
+
+    monkeypatch.setattr(channel, "load_registry", raising_load)
+    monkeypatch.setenv("CLAUDE_CHANNEL_AUTO_CONNECT", "1")
+    monkeypatch.delenv("CLAUDE_CHANNEL_ENDPOINT", raising=False)
+    with caplog.at_level("WARNING", logger="redis_channel.channel"):
+        channel._maybe_auto_connect()  # should not raise
+    assert any("registry error" in r.message for r in caplog.records)
+
+
+# ─── Phase 2.5: /redis-channel-status ───────────────────────────────────────
+
+
+def test_status_disconnected(patched_state: channel.ServerState) -> None:
+    out = patched_state.status()
+    assert out == {"ok": True, "connected": False}
+
+
+def test_status_connected_shape(patched_state: channel.ServerState, fr: Any) -> None:
+    patched_state.connect(endpoint="mimir", session_name="status-test")
+    try:
+        out = patched_state.status()
+        assert out["ok"] is True
+        assert out["connected"] is True
+        assert out["session_name"] == "status-test"
+        assert out["endpoint"] == "mimir"
+        assert "host" in out
+        assert isinstance(out["uptime_seconds"], int)
+        assert out["uptime_seconds"] >= 0
+        assert out["consumer_attached"] is True
+        # No inbound XADD'd yet → pending_inbound == 0
+        assert out["pending_inbound"] == 0
+    finally:
+        patched_state.disconnect()
+
+
+def test_status_after_startup_register_consumer_not_attached(
+    patched_state: channel.ServerState, fr: Any
+) -> None:
+    """When auto-connect ran but no tool dispatch has happened, status
+    should report consumer_attached=False."""
+    out = patched_state.startup_register(endpoint="mimir")
+    try:
+        s = patched_state.status()
+        assert s["connected"] is True
+        assert s["consumer_attached"] is False
+        assert s["session_name"] == out["session_name"]
+    finally:
+        patched_state.disconnect()

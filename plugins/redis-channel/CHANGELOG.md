@@ -7,6 +7,23 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — auto-connect falls back to single-endpoint convenience (v0.4.18)
+
+Jeff tested v0.4.17, found `--bg` still landed in a session where `/redis-channel-list` reported "Not connected". Diagnostic via `ps eww -p <mcp-pid>` confirmed `CLAUDE_CHANNEL_AUTO_CONNECT=1` and `CLAUDE_SESSION_NAME=plugin-testing` DID make it into the bg session's env (so v0.4.17's `--settings` injection works). The actual bug: `_maybe_auto_connect` tried `CLAUDE_CHANNEL_ENDPOINT` env → `registry.defaults.auto_connect_endpoint` → bailed with "no endpoint resolvable" when both were unset.
+
+Existing solo-developer setups (like Jeff's) have ONE endpoint configured (`mimir`) but never set `auto_connect_endpoint` (the field was added in v0.4.11; older registries lack it). The fix is to fall through to `Registry.resolve_default_endpoint()`, which already has the single-endpoint convenience built in from v0.4.11.
+
+New resolution order in `_maybe_auto_connect`:
+1. `CLAUDE_CHANNEL_ENDPOINT` env var (explicit per-invocation override; set by the wrapper when user passes `--endpoint`)
+2. `registry.defaults.auto_connect_endpoint` (registry-wide pin; useful for multi-endpoint setups)
+3. `registry.resolve_default_endpoint()` — covers two cases: (a) `defaults.default_endpoint` names a configured endpoint, or (b) single-endpoint convenience fallback when only one endpoint is configured
+
+Multi-endpoint registries without a resolvable default still log a warning + skip (we can't guess which endpoint to pick). The warning message now includes the inner error from `resolve_default_endpoint` so the user knows whether the issue is multi-endpoint ambiguity vs missing config.
+
+For Jeff's specific setup (`mimir` is the only endpoint), `claude-channel --session-name plugin-testing --bg` will now auto-connect to `mimir` without any explicit endpoint flag or registry edit.
+
+New unit test: `test_maybe_auto_connect_falls_back_to_single_endpoint_convenience`. 173 redis-channel tests total; ruff clean.
+
 ### Fixed — `claude-channel --bg` injects env via `--settings` so auto-connect fires in dispatched sessions (v0.4.17)
 
 Jeff tested v0.4.16's --bg path against a real backgrounded session, found that `/redis-channel-list` inside it reported "Not connected" — auto-connect didn't fire. Root cause: **background-dispatched claude sessions do not inherit env from the invoking shell**. claude --bg sends a spawn RPC to an agent dispatcher; the dispatched session starts with the dispatcher's env, not the wrapper's. So `CLAUDE_CHANNEL_AUTO_CONNECT=1` (set by the wrapper before exec) never reached the spawned MCP server.

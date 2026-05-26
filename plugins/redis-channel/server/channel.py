@@ -922,12 +922,22 @@ def _maybe_auto_connect() -> None:
     gate = os.environ.get(_AUTO_CONNECT_ENV)
     if gate != "1":
         return
-    endpoint = os.environ.get(_AUTO_CONNECT_ENDPOINT_ENV)
-    # Fall back to registry.defaults.auto_connect_endpoint if env unset.
+    # Resolution order:
+    #   1. CLAUDE_CHANNEL_ENDPOINT env var (explicit, per-invocation)
+    #   2. registry.defaults.auto_connect_endpoint (explicit, registry-wide)
+    #   3. registry.defaults.default_endpoint via resolve_default_endpoint
+    #      (which also has single-endpoint convenience fallback)
+    # Steps 1 and 2 let the user PIN auto-connect to a specific endpoint
+    # even when multiple are configured. Step 3 is the "just works" case
+    # for users with one configured endpoint who haven't customized the
+    # auto-connect field. Each step that fails to resolve falls through;
+    # only fail loudly when ALL three come up empty AND we're a multi-
+    # endpoint registry (single-endpoint failures already have a clear
+    # error message inside resolve_default_endpoint).
+    endpoint: str | None = os.environ.get(_AUTO_CONNECT_ENDPOINT_ENV)
     if not endpoint:
         try:
             registry = load_registry()
-            endpoint = registry.defaults.auto_connect_endpoint
         except RegistryError as e:
             log.warning(
                 "auto-connect skipped: registry error (%s). Set "
@@ -936,15 +946,25 @@ def _maybe_auto_connect() -> None:
                 DEFAULT_CONFIG_PATH,
             )
             return
-    if not endpoint:
-        log.warning(
-            "auto-connect requested via %s=1 but no endpoint resolvable "
-            "(set %s or registry.defaults.auto_connect_endpoint). Server "
-            "continuing; use /redis-channel-connect manually.",
-            _AUTO_CONNECT_ENV,
-            _AUTO_CONNECT_ENDPOINT_ENV,
-        )
-        return
+        endpoint = registry.defaults.auto_connect_endpoint
+        if not endpoint:
+            # Step 3: try resolve_default_endpoint (single-endpoint
+            # convenience or registry.defaults.default_endpoint).
+            try:
+                ep_obj = registry.resolve_default_endpoint()
+                endpoint = ep_obj.name
+            except EndpointNotFoundError as e:
+                log.warning(
+                    "auto-connect requested via %s=1 but no endpoint "
+                    "resolvable: %s. Set %s, or "
+                    "registry.defaults.auto_connect_endpoint, or "
+                    "registry.defaults.default_endpoint. Server "
+                    "continuing; use /redis-channel-connect manually.",
+                    _AUTO_CONNECT_ENV,
+                    e,
+                    _AUTO_CONNECT_ENDPOINT_ENV,
+                )
+                return
     log.info("auto-connect: registering at endpoint=%s", endpoint)
     result = _STATE.startup_register(endpoint=endpoint)
     if result.get("ok"):

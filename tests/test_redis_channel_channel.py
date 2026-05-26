@@ -683,6 +683,42 @@ def test_maybe_auto_connect_registry_missing_continues(
     assert any("registry error" in r.message for r in caplog.records)
 
 
+def test_maybe_auto_connect_falls_back_to_single_endpoint_convenience(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When AUTO_CONNECT=1 but neither env nor auto_connect_endpoint is set,
+    and the registry has exactly ONE configured endpoint, fall through to
+    resolve_default_endpoint's single-endpoint convenience and auto-connect
+    to that endpoint. This is the common 'just works' path for solo setups
+    where the user hasn't set auto_connect_endpoint explicitly."""
+    from server import registry as registry_mod  # type: ignore[import-not-found]
+
+    fake_endpoint = registry_mod.Endpoint(
+        name="sole-endpoint",
+        redis_url="redis://h:6379/0",
+        redis_password_env=None,
+        display_name="Sole",
+    )
+    fake_registry = registry_mod.Registry(
+        endpoints={"sole-endpoint": fake_endpoint},
+        defaults=registry_mod.Defaults(),  # default_endpoint="default"; auto_connect_endpoint=None
+        source=Path("/dev/null"),
+    )
+    monkeypatch.setattr(channel, "load_registry", lambda: fake_registry)
+    monkeypatch.setenv("CLAUDE_CHANNEL_AUTO_CONNECT", "1")
+    monkeypatch.delenv("CLAUDE_CHANNEL_ENDPOINT", raising=False)
+
+    calls: list[str] = []
+
+    def fake_startup_register(*, endpoint: str) -> dict[str, Any]:
+        calls.append(endpoint)
+        return {"ok": True, "session_name": "x"}
+
+    monkeypatch.setattr(channel._STATE, "startup_register", fake_startup_register)
+    channel._maybe_auto_connect()
+    assert calls == ["sole-endpoint"]
+
+
 # ─── Phase 2.5: /redis-channel-status ───────────────────────────────────────
 
 

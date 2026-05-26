@@ -7,6 +7,19 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — per-session stream cleanup on disconnect + lazy GC (v0.4.6)
+
+Live audit of olympus-bus Redis caught that we were leaking stream keys: every disconnected session left `cc-sessions:<name>:inbound` and `cc-sessions:<name>:outbound` behind forever. Eight orphan stream keys accumulated in one afternoon of testing.
+
+Fix in two layers:
+
+1. **Graceful disconnect** (`Presence.stop`) now DELs the inbound + outbound stream keys alongside the existing `HDEL cc-sessions:registry` + `DEL cc-sessions:hb:<name>`. Reflects the "this session is done" intent. Stream history is not preserved across disconnects — if you need durable transcripts, the router should snapshot them.
+2. **Lazy GC on stale entries** (`list_live_sessions(gc_stale=True)`) now extends its sweep to also DEL the streams of any registry entry whose hb key has expired. Catches ungraceful crash paths (process killed mid-session) that bypass graceful disconnect.
+
+New helper `presence.session_stream_keys(session_name)` enumerates all per-session keys (inbound, outbound, hb) so both code paths share one source of truth for what belongs to a session.
+
+Tests: 4 new (`test_presence_stop_drops_session_streams`, `test_session_stream_keys_layout`, `test_list_live_sessions_gc_drops_stale_streams`, `test_list_live_sessions_no_gc_when_disabled`). Repo total: 418 tests pass.
+
 ### Changed — coach asks Claude to write the reply text twice: terminal + tool (v0.4.5)
 
 Live testing of v0.4.4 surfaced that **Claude Code does not render MCP tool result text content as visible chat output** — even when the tool returns `CallToolResult(content=[TextContent(text="…")])`. The debug log confirms:

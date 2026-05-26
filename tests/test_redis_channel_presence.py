@@ -301,6 +301,30 @@ def test_presence_stop_cleans_up(fr: Any) -> None:
     assert fr.exists(presence.hb_key(meta.session_name)) == 0
 
 
+def test_presence_stop_drops_session_streams(fr: Any) -> None:
+    """Graceful disconnect must DEL inbound + outbound streams so they don't
+    accumulate one pair per ever-disconnected session."""
+    meta = make_meta("with-streams")
+    p = presence.Presence(fr, meta, heartbeat_seconds=1, ttl_seconds=10)
+    p.start()
+    fr.xadd("cc-sessions:with-streams:inbound", {"payload": "{}"})
+    fr.xadd("cc-sessions:with-streams:outbound", {"payload": "{}"})
+    assert fr.exists("cc-sessions:with-streams:inbound") == 1
+    assert fr.exists("cc-sessions:with-streams:outbound") == 1
+    p.stop()
+    assert fr.exists("cc-sessions:with-streams:inbound") == 0
+    assert fr.exists("cc-sessions:with-streams:outbound") == 0
+
+
+def test_session_stream_keys_layout() -> None:
+    """The session_stream_keys helper enumerates all per-session keys we GC."""
+    assert presence.session_stream_keys("foo") == [
+        "cc-sessions:foo:inbound",
+        "cc-sessions:foo:outbound",
+        "cc-sessions:hb:foo",
+    ]
+
+
 def test_presence_is_idempotent_on_double_stop(fr: Any) -> None:
     meta = make_meta()
     p = presence.Presence(fr, meta, heartbeat_seconds=1, ttl_seconds=10)
@@ -384,6 +408,37 @@ def test_list_live_sessions_gc_stale(fr: Any) -> None:
     presence.list_live_sessions(fr, gc_stale=True)
     assert fr.hget(presence.REGISTRY_KEY, "stale") is None
     assert fr.hget(presence.REGISTRY_KEY, "live") is not None
+
+
+def test_list_live_sessions_gc_drops_stale_streams(fr: Any) -> None:
+    """Stale-entry GC must also DEL the per-session inbound/outbound streams
+    that a crashed-mid-session would otherwise leave behind."""
+    fr.hset(presence.REGISTRY_KEY, "ghost", make_meta("ghost").to_json())
+    fr.xadd("cc-sessions:ghost:inbound", {"payload": "{}"})
+    fr.xadd("cc-sessions:ghost:outbound", {"payload": "{}"})
+    # no hb key for ghost → it's stale
+
+    fr.hset(presence.REGISTRY_KEY, "live", make_meta("live").to_json())
+    fr.set(presence.hb_key("live"), str(time.time()), ex=60)
+    fr.xadd("cc-sessions:live:inbound", {"payload": "{}"})
+
+    presence.list_live_sessions(fr, gc_stale=True)
+    # stale: registry entry + both streams gone
+    assert fr.hget(presence.REGISTRY_KEY, "ghost") is None
+    assert fr.exists("cc-sessions:ghost:inbound") == 0
+    assert fr.exists("cc-sessions:ghost:outbound") == 0
+    # live: untouched
+    assert fr.hget(presence.REGISTRY_KEY, "live") is not None
+    assert fr.exists("cc-sessions:live:inbound") == 1
+
+
+def test_list_live_sessions_no_gc_when_disabled(fr: Any) -> None:
+    """Default gc_stale=False must NOT touch streams (or registry)."""
+    fr.hset(presence.REGISTRY_KEY, "ghost", make_meta("ghost").to_json())
+    fr.xadd("cc-sessions:ghost:inbound", {"payload": "{}"})
+    presence.list_live_sessions(fr)  # gc_stale defaults to False
+    assert fr.hget(presence.REGISTRY_KEY, "ghost") is not None
+    assert fr.exists("cc-sessions:ghost:inbound") == 1
 
 
 def test_list_live_sessions_handles_corrupt_entry(fr: Any) -> None:

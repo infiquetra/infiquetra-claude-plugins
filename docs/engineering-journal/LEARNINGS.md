@@ -27,6 +27,55 @@
 
 ## 2026-05-26
 
+### Channel-plugin notifications don't reach `--bg` / `/bg` sessions: Claude Code's carry-through set excludes channels  {#cc-channels-bg-not-supported}
+
+**Context.** Phase 2.5 (PRs #144-#151) added env-var-driven auto-connect (`CLAUDE_CHANNEL_AUTO_CONNECT=1`) and a `claude-channel` wrapper, designed to enable Phase 5's "Mimir programmatically spawns a CC session" pattern. The wrapper successfully propagates env to background-dispatched sessions via claude's `--settings '{"env":{...}}'` JSON (verified with `ps eww -p <mcp-pid>` — env vars present in the MCP server's environment). The plugin auto-connects, registers presence in Redis, and creates the consumer group. The XREADGROUP loop reads each XADD'd inbound message and `xack`s it cleanly. But **Claude inside the dispatched bg session never sees the `<channel>` notification in its context** — no `↳ redis-channel: <text>` line in the attached terminal, no LLM-side processing, no reply.
+
+**Evidence.**
+1. **Empirical round-trip test (passes in foreground, fails in --bg):**
+   - Foreground `claude-channel --session-name plugin-testing-2271` → auto-connected to `mimir`, XADD'd test inbound, Claude replied: `'Confirmed — foreground auto-connected session received your message on endpoint mimir. Reply path working.'` → outbound stream got it. ✓
+   - `claude-channel --bg --session-name plugin-testing` → auto-connected, presence registered, consumer thread attached (XINFO GROUPS showed `consumers=1 pending=0 last-delivered-id=<my-msg-id>`), but no notification rendered in the attached bg session's terminal, no outbound reply. ✗
+   - Running explicit `/redis-channel-connect` inside the bg session (to rebuild the consumer with a guaranteed-live `ctx`) made no difference — confirms NoopNotifier-vs-AsyncNotifier wasn't the issue.
+2. **Process inspection (bg-spare daemon claim):** `ps -ww -p <bg-session-pid>` showed the bg session's claude was invoked as `claude --bg-spare /tmp/cc-daemon-501/<id>/spare/<n>.claim.sock` — completely different argv than what our wrapper passed. **No `--dangerously-load-development-channels` flag in the bg-spare process's argv.** The dispatching `claude --bg ...` call only applies its flags to the supervisor-dispatch action; the spare process that actually runs the dispatched session has its own argv set by the daemon, not the caller.
+3. **`/bg` (from inside a running session) behaves the same way.** A foreground session that was working perfectly (plugin-testing-2271, full round-trip verified) had `/bg` invoked. After `/bg`: the session was *removed* from the Redis registry (v0.4.6 graceful disconnect cleanup fired during the foreground claude's shutdown), and the new bg-spare that took over the session ID came up without dev-channels enabled — so it didn't auto-connect or receive notifications.
+4. **Documentation confirmation** (via claude-code-guide subagent against the agent-view docs): the flags that carry through from a `--bg` dispatch (or `/bg`) to the dispatched session are: `--mcp-config`, `--strict-mcp-config`, `--settings`, `--add-dir`, `--plugin-dir`, `--fallback-model`, and directories added with `/add-dir`. **`--dangerously-load-development-channels` and `--channels` are deliberately not in this set.** Channels are session-specific opt-ins, intended only for foreground use; the docs don't expose a config knob (settings.json key, env var, plugin manifest field) that says "enable this channel by default for future sessions."
+
+**Mechanism.** Claude Code's bg-dispatch model is supervisor + spare-process pool. The user-facing `claude --bg ...` or `/bg` is a *handoff*, not a context-clone: the supervisor claims a spare process from its pre-warmed pool, hands the session-id + (a few) carry-through flags to it, and that spare process starts a fresh Claude with just those flags. The original claude process — including its loaded channels plugin, its MCP servers, and its `--dangerously-load-development-channels` config — exits or detaches. Channels are deliberately scoped to the launching session because they're an interactive concept (someone routing messages into "your" claude session), not a worker-process concept (bg agents are independent tasks).
+
+Internally, our MCP server's `_enable_channel_capability` monkey-patch declares `claude/channel` in the initialize response, but **only a Claude Code client that was launched with the channels feature opted-in (via `--dangerously-load-development-channels` for research preview, or `--channels` later) will recognize and route those `notifications/claude/channel` events to the model's context.** A bg-spare that wasn't launched with the flag accepts the notification at the MCP-protocol level (no handshake error) but drops it before surfacing to Claude — which is why the consumer thread on the server side sees its message ack'd successfully while nothing reaches the model.
+
+**Fix.** Not a code fix; an architecture acknowledgment. Phase 2.5 shipped a correct + working solution for the foreground auto-connect case. The bg-dispatch case is not currently solvable from the plugin side. Two practical workarounds for "long-running session that consumes from Redis":
+1. **Foreground inside tmux.** `tmux new-session -d -s <name> 'claude-channel --session-name <name>'` runs claude foreground (PTY-backed) but detaches the user's terminal. The session has the dev flag in its argv → channels work. User can `tmux attach -t <name>` to inspect. This is the Phase 5 spawn primitive going forward. *(Funny twist: my v0.4.15 tmux work was right architecture, wrong reasoning — I cited PTY allocation, but the actual reason tmux helps is "keeps the session foreground from Claude Code's POV.")*
+2. **Pre-launched dedicated foreground sessions.** User opens an iTerm/Terminal window with claude-channel running once; that long-lived session listens. Less flexible than spawn-on-demand but no tooling needed.
+
+Phase 5's plan section ([[plan-file]] §5) currently assumes `claude --bg` works for Mimir-spawn; that section needs revising to mandate tmux-wrapped foreground sessions (or document an Anthropic feature request for adding channels to the carry-through set).
+
+**Validation.**
+- Foreground round-trip: outbound payload `'Confirmed — foreground auto-connected session received your message on endpoint mimir. Reply path working.'` proves the full pipeline (auto-connect → presence → inbound → notification → model → reply tool → outbound) works in foreground.
+- Bg round-trip: 4 separate test inbounds (Phase 2.5 testing across v0.4.15 → v0.4.18 + post-`/bg`) all showed the same pattern: consumer reads + acks, no reply.
+- Docs-side validation: claude-code-guide subagent against Claude Code agent-view docs confirmed the carry-through flag list. Nothing in `settings.json` schema for channel defaults.
+
+**What surprised.**
+1. The `--settings '{"env":{...}}'` env injection (v0.4.17) and the auto-connect-fallback (v0.4.18) BOTH worked — env DID propagate to bg-spare, MCP server DID auto-connect, presence DID register, consumer DID read. But channel-notification routing is a separate Claude Code-client-side concern that none of those mechanisms touch.
+2. `/bg` is not a context-switch; it's a process hand-off. The foreground claude exits cleanly (our v0.4.6 graceful-disconnect cleanup fires and HDEL's the registry) — which is exactly the behavior you'd want, but it means there's no "still the same session, just running in the background" semantic.
+3. claude-codex's `--settings` pattern (which we copied for env propagation) is for ANTHROPIC_BASE_URL / model / proxy config — none of which are dev-channels-related. Codex doesn't have this problem because it doesn't use channels.
+4. The MCP-server side declaration of `claude/channel` capability via `_enable_channel_capability` is necessary but not sufficient — the *client* must also opt in via `--channels` / `--dangerously-load-development-channels`. A spare-process started without the flag silently drops channel notifications.
+
+**Generalizable rules.**
+- **Channel plugins are foreground-only today.** If your plugin uses `notifications/claude/channel`, design for `claude` launched in an interactive context (terminal or tmux pane). Don't assume `--bg` or `/bg` will keep channels working; they won't, even when MCP servers, env, and tools all propagate correctly.
+- **Carry-through ≠ inheritance.** When Claude Code "dispatches" a session (bg-spare, agent-spawn, etc.), it's not forking your current process — it's claiming a fresh worker and passing it a small, *documented* set of flags. Always verify your launch flag is in that set before assuming it'll propagate. Flags NOT in the set: `--dangerously-load-development-channels`, `--channels`, anything model-specific, anything debug-specific, plus most experimental features.
+- **For programmatic-spawn ("Mimir starts a session for me"), tmux is the right primitive while channels stay research-preview.** tmux gives you: detached-from-user-terminal but foreground-from-claude's-POV, plus a way to inspect/attach later. The CLI invocation looks like: `tmux new-session -d -s <name> 'claude-channel --session-name <name>'`.
+- **When debugging "Claude doesn't see my MCP notification": always check both server-side emit AND client-side capability.** Server-side: monkey-patch + emit work. Client-side: `--dangerously-load-development-channels` (or its successor) must be in the claude process's argv that's *actually receiving* the notification — not the one that dispatched it.
+
+**Refs.**
+- Phase 2.5 PRs #144-#151 (v0.4.11 through v0.4.18) trace the chase
+- Existing [[cc-channels-surface-split]] entry (related: terminal/channel surface split by design)
+- claude-code-guide subagent output (this conversation)
+- `~/bin/claude-codex` for the `--settings` env pattern (line 327-333) we copied for env propagation
+- Plan file §5 (Phase 5 — Hybrid intelligence) needs updating to mandate tmux-wrapped foreground for the spawn primitive
+
+---
+
 ### Claude Code Channels split terminal + channel surfaces *by design* — stop trying to mirror them  {#cc-channels-surface-split}
 
 **Context.** After Phase 2 text-bridge worked end-to-end (PRs #128-138), the local-terminal UX bothered Jeff: the inbound `<channel>` notification rendered as `↳ redis-channel: <text>`, but Claude's reply rendered only as `Called plugin:redis-channel:...` — no visible reply text in the terminal. Drove five iterative attempts (v0.4.5–v0.4.10) to make Claude emit a text_block alongside the `reply` tool call. None worked. Turns out we were fighting documented Claude Code Channels design intent, not a bug.

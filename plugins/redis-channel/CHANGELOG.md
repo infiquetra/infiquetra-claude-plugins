@@ -7,6 +7,36 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — `claude-channel` is now a thin pass-through; `--bg` goes straight to claude (v0.4.16)
+
+Jeff caught that v0.4.15's tmux-based `--bg` was solving the wrong problem. **`claude --bg` is a real (if undocumented-in-help) claude flag** that spawns a native background agent, prints the agent ID + attach/logs/stop hints, and returns. Verified:
+
+```
+$ claude --bg --help
+backgrounded · 1d80a5ac (idle — send a prompt to start)
+  claude agents             list sessions
+  claude attach 1d80a5ac    open in this terminal
+  claude logs 1d80a5ac      show recent output
+  claude stop 1d80a5ac      stop this session
+```
+
+Claude Code already handles background agents natively — process management, PTY allocation, logging, attach, stop — all built in. The wrapper trying to reimplement this with tmux was redundant + buggy (the v0.4.13 nohup version crashed because no PTY; the v0.4.15 tmux version worked but added a tmux dependency for no reason since claude handles it natively).
+
+**Fix.** Strip the wrapper down to a thin pure-pass-through:
+
+- `--bg` (and everything else claude understands: `--print`, `--resume`, `--model`, `--remote-control`, `--worktree`, etc.) is now an UNCLAIMED flag → falls through to claude's argv verbatim.
+- Wrapper's only owned flags: `--session-name`, `--endpoint`, `--cwd`, `--help`.
+- Removed: `--bg` / `--background` arg-parsing case, `BACKGROUND` variable, the entire if-bg-then-spawn-detached block, tmux logic, `--print-info` (claude's `agents --json` and the redis-channel presence registry are the canonical discovery mechanisms — wrapper doesn't need to invent a JSON emit).
+- The pass-through is greedy: any arg the wrapper doesn't claim goes to claude. Standard claude flags Just Work.
+
+**Tmux dependency dropped.** v0.4.15's hard requirement on tmux for `--bg` is gone — `claude --bg` doesn't need tmux. (The user's `~/bin/claude-codex` confirmed the pattern: passes `--bg` straight to claude in its argv array.)
+
+For Phase 5 (Mimir programmatic spawn): callers do `claude-channel --session-name foo --bg`. Claude returns the agent ID; caller polls `cc-sessions:hb:foo` for readiness (the canonical signal — works regardless of how claude was launched); kills via `claude stop <agent-id>` or by SIGTERM from `cc-sessions:registry`'s PID.
+
+`--print-info` removed since callers either pass `--session-name` (and already know it) or query `claude agents --json` / `cc-sessions:registry` to discover. Net: simpler wrapper, no wrapper-specific output format to learn.
+
+`install-claude-channel.sh` unchanged (still works as the manual install fallback). The `/redis-channel-setup` slash command shipped in v0.4.14 is still the canonical setup path.
+
 ### Fixed — `claude-channel --bg` spawns via tmux to give claude a real PTY (v0.4.15)
 
 Jeff tested v0.4.14's wrapper, got an immediate crash with the log showing:

@@ -375,10 +375,12 @@ def test_connect_attaches_inbound_consumer(patched_state: channel.ServerState, f
                 break
             _time.sleep(0.1)
         assert len(rec.emitted) == 1
-        payload = rec.emitted[0]
-        assert payload["text"] == "hi from router"
-        assert payload["chat_id"] == "c1"
-        assert payload["_msg_id"] == msg_id
+        # RecordingNotifier records the post-translation channel-notification
+        # shape: {content: <text>, meta: {<identifier-safe fields...>}}
+        params = rec.emitted[0]
+        assert params["content"] == "hi from router"
+        assert params["meta"]["chat_id"] == "c1"
+        assert params["meta"]["_msg_id"] == msg_id
     finally:
         patched_state.disconnect()
 
@@ -406,7 +408,8 @@ def test_second_connect_replaces_consumer(patched_state: channel.ServerState, fr
             if rec2.emitted:
                 break
             _time.sleep(0.1)
-        assert any(p["text"] == "for second" for p in rec2.emitted)
+        # rec emits in channel-notification shape: {content, meta}
+        assert any(p["content"] == "for second" for p in rec2.emitted)
         assert rec1.emitted == []
     finally:
         patched_state.disconnect()

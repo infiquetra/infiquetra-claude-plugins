@@ -9,6 +9,6 @@ Override the router-side routing default for inbound messages to this session:
 - `always_route` — every message from any chat with this user/endpoint forwards to this session regardless of mode-toggle phrases.
 - `never_route` — this session ignores inbound; only the router LLM responds. Useful for "pause" scenarios.
 
-The override publishes a `mode_change` lifecycle event. The router-side behavior depends on the consumer's implementation (`hermes-claude-code-router` honors all three).
+The override publishes a `mode_change` lifecycle event. Router-side behavior depends on the consumer's implementation; reference implementations (e.g. `hermes-claude-code-router`) honor all three modes.
 
 **Not implemented in Phase 0.** Lands in Phase 3 (voice routing) or later.

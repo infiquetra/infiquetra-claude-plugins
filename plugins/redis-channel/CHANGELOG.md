@@ -7,6 +7,34 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — router-agnostic refactor + registry resolves default endpoint (v0.4.11)
+
+First slice of Phase 2.5 (the convenience + programmatic-launch foundation). Two coupled changes:
+
+**Router-agnosticism audit.** The plugin is documented as "router-agnostic by design" (any consumer that speaks the protocol can drive it), but the codebase leaked router-specific names into descriptions, defaults, and examples. Audited and genericized:
+
+- `server/registry.py` module docstring: "Hermes profile: mimir, freya" → router-agnostic framing.
+- `server/protocol.py` module docstring: "Both this repo and `hermes-claude-code-router`" → "any router implementation".
+- `server/channel.py` MCP `instructions=` text: "a router (e.g. hermes-claude-code-router)" → "any router that speaks the protocol".
+- `server/channel.py` `redis_channel_connect` tool description: "(typically a Hermes profile like 'mimir')" → "a configured router target from your registry". Tool default `endpoint: str = "mimir"` → `endpoint: str | None = None` (resolves via registry).
+- `docs/registry.example.json`: `mimir` endpoint with `HERMES_REDIS_PASSWORD` → `default` endpoint with `MY_REDIS_PASSWORD` placeholder.
+- `.mcp.json` launcher: hardcoded `export HERMES_REDIS_PASSWORD=$(get-redis-password.sh)` → sources `~/.claude/channels/redis-channel/source-env.sh` for whatever env vars the deployment needs. `docs/source-env.example.sh` provides a template.
+- `README.md`, `skills/redis-channel/SKILL.md`, `commands/redis-channel-mode.md`, `commands/redis-channel-connect.md` description copy generalized; hermes-claude-code-router downgraded from "the reference router" to "one reference router implementation".
+- `plugin.json` description + keywords: dropped `hermes` keyword; description reflects router-agnosticism.
+
+**Kept** (intentional, contextual mentions of the reference router as a worked example): PROTOCOL.md, docs/STATE_MACHINE.md, CHANGELOG.md historical entries, README's "Related" link.
+
+**Registry: `default_endpoint` + `auto_connect_endpoint` fields.** New `Defaults` fields support endpoint resolution without baking a router name into the plugin:
+
+- `default_endpoint: str = "default"` — what `/redis-channel-connect` (no args) resolves to. Falls back to single-endpoint convenience when the named endpoint isn't configured but exactly one endpoint exists (covers solo-router setups where users just configure their one router without setting `default_endpoint`).
+- `auto_connect_endpoint: str | None = None` — endpoint name to use for env-var-driven MCP-startup auto-connect (lands in v0.5.0 with the `CLAUDE_CHANNEL_AUTO_CONNECT=1` gate).
+
+`Registry.resolve_default_endpoint()` is the canonical resolver. Existing single-endpoint registries Just Work via the convenience fallback; multi-endpoint registries get a clear error message listing the configured names.
+
+**Soft-breaking migration for `.mcp.json`:** the launcher no longer hardcodes `HERMES_REDIS_PASSWORD`. Existing deployments need to rename their `~/.claude/channels/redis-channel/get-redis-password.sh` script to `source-env.sh` and change it from `echo "$pwd"` to `export <VAR>="$pwd"` (where `<VAR>` matches the registry's `redis_password_env` field). See `docs/source-env.example.sh` for the new template.
+
+Tests: 14 → 18 registry tests (4 new for default/auto-connect endpoint resolution); 155 redis-channel tests total, all pass. ruff clean.
+
 ### Fixed — move runtime coaching into MCP server `instructions=` field (v0.4.10)
 
 Major finding: the `agents/redis-channel-coach.md` file is a Claude Code **subagent definition**, not an auto-loaded context document. Subagents are invoked via the `Agent` tool — they are NOT automatically loaded into Claude's active context. So during notification-triggered turns (where no Agent invocation happens), Claude **never read our coach**.

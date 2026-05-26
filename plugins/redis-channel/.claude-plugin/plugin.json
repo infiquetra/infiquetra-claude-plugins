@@ -1,7 +1,7 @@
 {
   "name": "redis-channel",
-  "version": "0.4.10",
-  "description": "Claude Code channel that bridges sessions to external systems over Redis Streams. Pair with hermes-claude-code-router for Discord/voice via Hermes.",
+  "version": "0.4.11",
+  "description": "Claude Code channel that bridges sessions to external systems over Redis Streams. Router-agnostic: pair with any router implementation that speaks the protocol.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
@@ -12,7 +12,7 @@
     "mcp",
     "redis",
     "redis-streams",
-    "hermes",
+    "router-agnostic",
     "voice",
     "hands-free"
   ]

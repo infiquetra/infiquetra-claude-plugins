@@ -1,15 +1,17 @@
 """Local config reader for redis-channel endpoints.
 
 The endpoint registry lives at `~/.claude/channels/redis-channel/registry.json`
-and lists the Redis backends this CC plugin can connect to (typically one per
-Hermes profile: mimir, freya, etc).
+and lists the Redis backends this CC plugin can connect to. Each endpoint is
+one configured router target — the plugin itself is router-agnostic, so this
+could be any consumer that speaks the protocol (a Hermes profile, a custom
+router, a CLI test harness).
 
 Schema:
     {
       "endpoints": {
         "<name>": {
           "redis_url": "redis://host:6379/0",
-          "redis_password_env": "HERMES_REDIS_PASSWORD",
+          "redis_password_env": "MY_REDIS_PASSWORD",
           "display_name": "Human label"
         }, ...
       },
@@ -52,6 +54,15 @@ class Defaults:
     destructive_confirm_seconds: int = 3
     permission_window_seconds: int = 30
     consumer_block_ms: int = 1000
+    # Name of the endpoint to use when `redis_channel_connect` is called without
+    # an explicit `endpoint` arg. Falls back to single-endpoint convenience: if
+    # this name isn't in endpoints AND there's exactly one configured endpoint,
+    # that endpoint is used. Else `resolve_default_endpoint` raises.
+    default_endpoint: str = "default"
+    # Name of the endpoint to use for env-var-driven auto-connect at MCP server
+    # startup (see CLAUDE_CHANNEL_AUTO_CONNECT in server/channel.py::run). When
+    # None, auto-connect requires CLAUDE_CHANNEL_ENDPOINT to be set.
+    auto_connect_endpoint: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +79,28 @@ class Registry:
             raise EndpointNotFoundError(
                 f"endpoint {name!r} not in registry (available: {available})"
             ) from e
+
+    def resolve_default_endpoint(self) -> Endpoint:
+        """Return the endpoint to use when no explicit endpoint is passed.
+
+        Tries (in order):
+          1. `defaults.default_endpoint` if it names a configured endpoint.
+          2. The sole configured endpoint, if exactly one exists
+             (single-endpoint convenience for solo setups).
+          3. Raises EndpointNotFoundError otherwise.
+        """
+        name = self.defaults.default_endpoint
+        if name in self.endpoints:
+            return self.endpoints[name]
+        if len(self.endpoints) == 1:
+            return next(iter(self.endpoints.values()))
+        available = ", ".join(sorted(self.endpoints)) or "<none>"
+        raise EndpointNotFoundError(
+            f"no default endpoint resolvable: defaults.default_endpoint={name!r} "
+            f"not in registry, and multiple endpoints configured (available: "
+            f"{available}). Specify --endpoint explicitly or set "
+            f"defaults.default_endpoint to one of them."
+        )
 
 
 class RegistryError(Exception):
@@ -139,6 +172,12 @@ def load_registry(path: Path | None = None) -> Registry:
             defaults_raw.get("permission_window_seconds", base.permission_window_seconds)
         ),
         consumer_block_ms=int(defaults_raw.get("consumer_block_ms", base.consumer_block_ms)),
+        default_endpoint=str(defaults_raw.get("default_endpoint", base.default_endpoint)),
+        auto_connect_endpoint=(
+            str(defaults_raw["auto_connect_endpoint"])
+            if defaults_raw.get("auto_connect_endpoint") is not None
+            else base.auto_connect_endpoint
+        ),
     )
 
     return Registry(endpoints=endpoints, defaults=defaults, source=cfg_path)

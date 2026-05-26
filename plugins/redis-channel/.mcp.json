@@ -5,7 +5,7 @@
       "command": "/bin/sh",
       "args": [
         "-c",
-        "cd \"$CLAUDE_PLUGIN_ROOT\" || exit 1; if [ -x \"$HOME/.claude/channels/redis-channel/get-redis-password.sh\" ]; then export HERMES_REDIS_PASSWORD=\"$(\"$HOME/.claude/channels/redis-channel/get-redis-password.sh\")\"; fi; exec uv run --quiet --with 'mcp>=1.0' --with 'redis>=5.0' --with 'pydantic>=2.5' python3 -m server"
+        "cd \"$CLAUDE_PLUGIN_ROOT\" || exit 1; if [ -r \"$HOME/.claude/channels/redis-channel/source-env.sh\" ]; then . \"$HOME/.claude/channels/redis-channel/source-env.sh\"; fi; exec uv run --quiet --with 'mcp>=1.0' --with 'redis>=5.0' --with 'pydantic>=2.5' python3 -m server"
       ],
       "env": {}
     }

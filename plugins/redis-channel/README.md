@@ -1,8 +1,8 @@
 # redis-channel
 
-Claude Code channel plugin that bridges a session to external systems over **Redis Streams**. Hermes-agnostic by design: it speaks a documented protocol over Redis, and any router that speaks the same protocol can drive it.
+Claude Code channel plugin that bridges a session to external systems over **Redis Streams**. Router-agnostic by design: it speaks a documented protocol over Redis, and any router (web UI, mobile app, Discord bot, CLI test harness, ...) that speaks the same protocol can drive it.
 
-The reference router is [`hermes-claude-code-router`](https://github.com/infiquetra/hermes-claude-code-router), which routes Discord voice/text through Hermes/Mimir into a connected Claude Code session for hands-free workflows.
+One reference router is [`hermes-claude-code-router`](https://github.com/infiquetra/hermes-claude-code-router), which routes Discord voice/text into a connected Claude Code session for hands-free workflows. Other routers can be built against the same protocol.
 
 ## What this plugin does
 
@@ -17,13 +17,13 @@ It is **not** a Discord bot. It does not touch Discord, voice-channel audio, STT
 
 ## Status
 
-**Phase 2 complete.** Presence + heartbeat (P1) plus inbound consumer + `reply` MCP tool (P2). Channel notifications surface as `notifications/claude/channel` events with the full Inbound payload; replies XADD onto the outbound stream with router-correlation IDs and an `in_reply_to` field for threading. Phase 3 (voice routing through Hermes TTS/STT) and Phase 4 (permission relay + AskUserQuestion interception) still to come — both gated on the matching router-side implementation in `hermes-claude-code-router`. Roadmap: `/Users/jefcox/.claude/plans/i-would-like-to-distributed-hanrahan.md`.
+**Phase 2 complete.** Presence + heartbeat (P1) plus inbound consumer + `reply` MCP tool (P2). Channel notifications surface as `notifications/claude/channel` events with the full Inbound payload; replies XADD onto the outbound stream with router-correlation IDs and an `in_reply_to` field for threading. Voice routing (P3), permission relay + AskUserQuestion interception (P4), and hybrid LLM-tool intelligence (P5) still to come — each requires matching router-side implementation. Roadmap: `/Users/jefcox/.claude/plans/i-would-like-to-distributed-hanrahan.md`.
 
 ## Quickstart
 
 1. **Configure an endpoint.** Copy `docs/registry.example.json` to `~/.claude/channels/redis-channel/registry.json` and edit. At minimum set `redis_url` and `redis_password_env` (the name of the env var containing your Redis password — never embed the password in the file).
 2. **Make sure Python deps are available.** The plugin's MCP server (`python -m server`) needs `mcp` and `redis` on its Python path. `uv sync --extra dev` at the repo root covers it for development.
-3. **Connect from inside Claude Code.** Run `/redis-channel-connect mimir` (or whatever endpoint name you configured). The session is registered with an auto-generated `<cwd-basename>-<8hex>` name, heartbeat starts.
+3. **Connect from inside Claude Code.** Run `/redis-channel-connect` (uses the registry's `default_endpoint`, or `/redis-channel-connect <endpoint-name>` to pick a specific one). The session is registered with an auto-generated `<cwd-basename>-<8hex>` name, heartbeat starts.
 4. **Verify.** Run `/redis-channel-list` to see the registry. Start another CC session in a different repo and `/redis-channel-connect` it too; the list shows both.
 5. **Disconnect.** `/redis-channel-disconnect` gracefully unregisters. Killing the process is also safe — the heartbeat key expires within 60s and other sessions GC the entry the next time they `list`.
 
@@ -83,6 +83,5 @@ uv run mypy plugins/redis-channel/server/
 
 ## Related
 
-- [`hermes-claude-code-router`](https://github.com/infiquetra/hermes-claude-code-router) — reference router implementation for Hermes.
-- [`hermes-extensions`](https://github.com/infiquetra/hermes-extensions) — pattern this plugin's router was modeled on.
+- [`hermes-claude-code-router`](https://github.com/infiquetra/hermes-claude-code-router) — one reference router implementation (Discord-via-Hermes).
 - [Claude Code channels reference](https://code.claude.com/docs/en/channels-reference) — upstream channel protocol Claude Code itself speaks.

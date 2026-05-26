@@ -82,11 +82,35 @@ def test_connect_registers_and_starts_heartbeat(
         assert out["endpoint_display"] == "Mimir (test)"
         assert out["heartbeat_seconds"] == 1
         assert out["registry_ttl_seconds"] == 10
+        # debug defaults to false; surfaced in response for slash command / coach
+        assert out["debug"] is False
         # registry should have the entry
         raw = fr.hget(presence.REGISTRY_KEY, "my-session")
         assert raw is not None
         # hb key must exist
         assert fr.exists(presence.hb_key("my-session")) == 1
+    finally:
+        patched_state.disconnect()
+
+
+def test_connect_debug_flag_propagates(patched_state: channel.ServerState, fr: Any) -> None:
+    """debug=true must round-trip through connect response and ServerState."""
+    out = patched_state.connect(endpoint="mimir", session_name="dbg", debug=True)
+    try:
+        assert out["debug"] is True
+        assert patched_state.debug is True
+    finally:
+        patched_state.disconnect()
+    # After disconnect, debug resets so a subsequent connect starts quiet.
+    assert patched_state.debug is False
+
+
+def test_connect_debug_flag_default_quiet(patched_state: channel.ServerState, fr: Any) -> None:
+    """Omitting debug (default) must keep ServerState.debug == False."""
+    out = patched_state.connect(endpoint="mimir", session_name="quiet")
+    try:
+        assert out["debug"] is False
+        assert patched_state.debug is False
     finally:
         patched_state.disconnect()
 

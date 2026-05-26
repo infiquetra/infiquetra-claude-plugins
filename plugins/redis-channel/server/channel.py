@@ -23,11 +23,13 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import signal
 import socket
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -427,6 +429,195 @@ class ServerState:
 _STATE = ServerState()
 
 
+# ─── Setup / first-run scaffolding ──────────────────────────────────────────
+
+
+CHANNEL_CONFIG_DIR = Path("~/.claude/channels/redis-channel").expanduser()
+BIN_DIR = Path("~/bin").expanduser()
+WRAPPER_SYMLINK = BIN_DIR / "claude-channel"
+
+
+def _plugin_root() -> Path | None:
+    """Resolve the plugin's installed cache dir.
+
+    Claude Code sets `CLAUDE_PLUGIN_ROOT` when launching MCP servers from
+    plugin dirs. Fall back to deriving from this module's __file__ if the
+    env var isn't set (e.g., in tests).
+    """
+    env = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if env:
+        return Path(env)
+    # `server/channel.py` lives at <plugin_root>/server/channel.py
+    return Path(__file__).resolve().parent.parent
+
+
+def _expected_wrapper_path() -> Path | None:
+    """Where the symlink should point: <plugin_root>/scripts/claude-channel.sh."""
+    root = _plugin_root()
+    if root is None:
+        return None
+    return root / "scripts" / "claude-channel.sh"
+
+
+def _check_setup() -> dict[str, Any]:
+    """Return a structured report of which setup artifacts are present / current.
+
+    Used by both the setup tool (to decide what work to do) and the startup
+    nag (to decide whether to log a "run /redis-channel-setup" hint).
+    """
+    wrapper_target = _expected_wrapper_path()
+    symlink_status: str
+    if not WRAPPER_SYMLINK.exists() and not WRAPPER_SYMLINK.is_symlink():
+        symlink_status = "missing"
+    elif not WRAPPER_SYMLINK.is_symlink():
+        symlink_status = "exists_not_symlink"
+    else:
+        try:
+            actual = WRAPPER_SYMLINK.resolve()
+            if wrapper_target is not None and actual == wrapper_target.resolve():
+                symlink_status = "current"
+            else:
+                symlink_status = "stale"
+        except (OSError, RuntimeError):
+            symlink_status = "broken"
+
+    source_env = CHANNEL_CONFIG_DIR / "source-env.sh"
+    registry_json = CHANNEL_CONFIG_DIR / "registry.json"
+
+    return {
+        "plugin_root": str(_plugin_root()) if _plugin_root() else None,
+        "wrapper_symlink_path": str(WRAPPER_SYMLINK),
+        "wrapper_symlink_expected_target": (
+            str(wrapper_target) if wrapper_target else None
+        ),
+        "wrapper_symlink_status": symlink_status,
+        "source_env_path": str(source_env),
+        "source_env_exists": source_env.exists(),
+        "registry_path": str(registry_json),
+        "registry_exists": registry_json.exists(),
+        "all_ready": (
+            symlink_status == "current"
+            and source_env.exists()
+            and registry_json.exists()
+        ),
+    }
+
+
+def _do_setup(*, link_wrapper: bool, scaffold_configs: bool) -> dict[str, Any]:
+    """Do the install actions. Idempotent — safe to re-run.
+
+    `link_wrapper`: create/update the ~/bin/claude-channel symlink.
+    `scaffold_configs`: copy source-env.example.sh + registry.example.json
+      into the channel config dir if those files don't exist yet.
+
+    Never overwrites existing user config files. The wrapper symlink IS
+    overwritten on each call so plugin updates are picked up.
+    """
+    actions: list[dict[str, Any]] = []
+
+    if link_wrapper:
+        target = _expected_wrapper_path()
+        if target is None or not target.exists():
+            actions.append(
+                {
+                    "target": str(WRAPPER_SYMLINK),
+                    "status": "skipped",
+                    "reason": (
+                        f"plugin's claude-channel.sh not found at "
+                        f"{target} — is the plugin installed?"
+                    ),
+                }
+            )
+        else:
+            try:
+                BIN_DIR.mkdir(parents=True, exist_ok=True)
+                # Remove existing symlink/file first; ln -sf semantics in Python.
+                if WRAPPER_SYMLINK.is_symlink() or WRAPPER_SYMLINK.exists():
+                    WRAPPER_SYMLINK.unlink()
+                WRAPPER_SYMLINK.symlink_to(target)
+                actions.append(
+                    {
+                        "target": str(WRAPPER_SYMLINK),
+                        "status": "linked",
+                        "to": str(target),
+                    }
+                )
+            except OSError as e:
+                actions.append(
+                    {
+                        "target": str(WRAPPER_SYMLINK),
+                        "status": "error",
+                        "detail": str(e),
+                    }
+                )
+
+    if scaffold_configs:
+        root = _plugin_root()
+        docs = root / "docs" if root else None
+        CHANNEL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+        for filename, example_name in [
+            ("source-env.sh", "source-env.example.sh"),
+            ("registry.json", "registry.example.json"),
+        ]:
+            dest = CHANNEL_CONFIG_DIR / filename
+            example = docs / example_name if docs else None
+            if dest.exists():
+                actions.append(
+                    {
+                        "target": str(dest),
+                        "status": "exists",
+                        "note": "left as-is (will not overwrite user config)",
+                    }
+                )
+                continue
+            if example is None or not example.exists():
+                actions.append(
+                    {
+                        "target": str(dest),
+                        "status": "skipped",
+                        "reason": (
+                            f"example not found at {example} — is the plugin "
+                            f"installed?"
+                        ),
+                    }
+                )
+                continue
+            try:
+                shutil.copy2(example, dest)
+                # source-env.sh needs to be executable for safety
+                # (it's not exec'd via sh dot-source, but a future change
+                # might switch to exec; defense in depth).
+                if filename.endswith(".sh"):
+                    dest.chmod(0o755)
+                actions.append(
+                    {
+                        "target": str(dest),
+                        "status": "created_from_example",
+                        "example": str(example),
+                        "next_step": (
+                            "edit this file with your real values"
+                            if filename == "registry.json"
+                            else "edit if your env-var or keychain item name differs"
+                        ),
+                    }
+                )
+            except OSError as e:
+                actions.append(
+                    {
+                        "target": str(dest),
+                        "status": "error",
+                        "detail": str(e),
+                    }
+                )
+
+    return {
+        "ok": True,
+        "actions": actions,
+        "state": _check_setup(),
+    }
+
+
 def _format_registry_error(err: RegistryError) -> dict[str, Any]:
     if isinstance(err, RegistryNotFoundError):
         return {
@@ -586,6 +777,26 @@ def build_app() -> FastMCP:
     async def redis_channel_status(ctx: Context | None = None) -> dict[str, Any]:
         _STATE.ensure_consumer_attached(_build_async_notifier(ctx))
         return _STATE.status()
+
+    @app.tool(
+        name="redis_channel_setup",
+        description=(
+            "Idempotent first-run setup. Symlinks ~/bin/claude-channel to "
+            "this plugin's wrapper script (so the symlink follows plugin "
+            "updates) and scaffolds ~/.claude/channels/redis-channel/"
+            "source-env.sh + registry.json from the bundled examples if "
+            "they don't already exist. Never overwrites existing config — "
+            "safe to re-run after every plugin update. Returns a per-"
+            "action status report so the slash command can render which "
+            "files were linked/created/skipped and where to edit next."
+        ),
+    )
+    async def redis_channel_setup(
+        link_wrapper: bool = True, scaffold_configs: bool = True
+    ) -> dict[str, Any]:
+        return _do_setup(
+            link_wrapper=link_wrapper, scaffold_configs=scaffold_configs
+        )
 
     @app.tool(
         name="reply",
@@ -750,6 +961,35 @@ def _maybe_auto_connect() -> None:
         )
 
 
+def _log_setup_nag() -> None:
+    """One-shot startup check: if setup is incomplete, log a hint suggesting
+    the user run /redis-channel-setup. Passive — never blocks, never modifies
+    anything. Designed to surface in the user's terminal the next time they
+    reconnect MCP after a plugin update."""
+    try:
+        state = _check_setup()
+    except Exception:  # noqa: BLE001
+        return  # never let the nag break the server
+    if state.get("all_ready"):
+        return
+    issues = []
+    if state.get("wrapper_symlink_status") != "current":
+        issues.append(
+            f"~/bin/claude-channel: {state.get('wrapper_symlink_status')} "
+            f"(expected target: {state.get('wrapper_symlink_expected_target')})"
+        )
+    if not state.get("source_env_exists"):
+        issues.append(f"missing: {state.get('source_env_path')}")
+    if not state.get("registry_exists"):
+        issues.append(f"missing: {state.get('registry_path')}")
+    if issues:
+        log.warning(
+            "redis-channel setup is incomplete — run /redis-channel-setup. "
+            "Issues: %s",
+            "; ".join(issues),
+        )
+
+
 def run() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -761,6 +1001,7 @@ def run() -> int:
     _install_signal_handlers()
     app = build_app()
     _enable_channel_capability(app)
+    _log_setup_nag()
     _maybe_auto_connect()
     app.run()  # blocks until stdio closes
     return 0

@@ -44,20 +44,26 @@ The `text` argument is **the user-facing message body**, full stop. The recipien
 - Terminal-only commentary
 - Status updates the developer already saw
 
-## How the back-and-forth renders in the terminal
+## How the back-and-forth renders in the terminal — REQUIRED OUTPUT SHAPE
 
-When a `<channel>` event arrives, the terminal shows the inbound tag automatically. The OUTBOUND side (your reply) does NOT auto-render from the tool result content — Claude Code's UI shows the tool was called, but doesn't surface its result body as chat content.
+When a `<channel>` event arrives, the terminal shows the inbound tag automatically. The OUTBOUND side (your reply) does NOT auto-render from the tool result content — Claude Code's UI shows the tool was called, but doesn't surface its result body as chat content. So the local terminal user only sees your answer if you also emit it as a plain text block in the same assistant turn.
 
-To make the conversation look chat-like in the local terminal (closer to Remote Control's experience), **write the same answer in two places**:
+**MANDATORY output shape for every channel inbound:** your assistant turn that calls `reply` MUST contain a plain text block **before** the tool call, and the text block content MUST be byte-identical to the `text` argument you pass to `reply`. No exceptions.
 
-1. As your normal conversational reply in the terminal (the text that appears in your assistant turn).
-2. As the `text` argument to the `reply` tool.
+```
+<your one answer to the user, as a plain text block>
+<tool_use: reply(chat_id=<from inbound>, text=<that same answer, byte-identical>, voice=<per source>, in_reply_to=<_msg_id>)>
+```
 
-Both contain the **same words** — your single answer, rendered in both surfaces:
-- Terminal user sees it as your natural response.
-- Channel user (Discord/voice/etc.) sees/hears it via the reply XADD'd to the outbound stream.
+Why both: the text block is what the local terminal user sees. The tool call is what gets XADD'd to outbound for the Discord/voice user. Same words, two surfaces.
 
-Do not write the same answer twice in different forms ("Replying to user: <text>" + the tool call). Just compose your one answer, type it as your terminal response, and call `reply(text=<that same answer>, chat_id=<from inbound>)`. Skip any "I responded with…" / "Sent reply…" narration entirely — the tool call + your one-time text in the terminal are enough.
+**Anti-patterns — do not do these:**
+- Tool call alone with no text block → terminal user only sees "Called plugin:…" and has to expand the tool call to read your answer. Bad UX, breaks the "look like normal chat" goal.
+- Text block + tool call with different wording → confusing; the two surfaces disagree.
+- Narrating the send ("Sent reply to user.", "Replying with: …", "I responded with…") → adds noise; the text block IS the reply, no meta-commentary needed.
+- Internal reasoning or chain-of-thought in the text block → the channel user doesn't want to see your thinking, just your answer.
+
+The text block is your one answer to the user, full stop. The tool call carries that same answer to the router.
 
 (The `debug` flag on `/redis-channel-connect` is reserved for future opt-in dev verbosity but currently has no effect.)
 

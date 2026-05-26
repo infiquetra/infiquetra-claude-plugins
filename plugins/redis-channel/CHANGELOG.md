@@ -7,6 +7,25 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — move runtime coaching into MCP server `instructions=` field (v0.4.10)
+
+Major finding: the `agents/redis-channel-coach.md` file is a Claude Code **subagent definition**, not an auto-loaded context document. Subagents are invoked via the `Agent` tool — they are NOT automatically loaded into Claude's active context. So during notification-triggered turns (where no Agent invocation happens), Claude **never read our coach**.
+
+This explains why v0.4.5 / v0.4.7 / v0.4.9 coaching iterations produced no observable behavior change — Claude wasn't reading the file. We were tuning inert text.
+
+Comparison: the official `claude-plugins-official/discord` plugin has **no `agents/` directory at all** — all its instructional content ("The sender reads Discord, not this session. Anything you want them to see must go through the reply tool — your transcript output never reaches their chat.") lives in the MCP server's `instructions=` field. Claude Code injects that field into the system prompt automatically whenever the server is connected.
+
+Our `instructions=` previously held 4 lines of generic blurb (no behavior coaching). v0.4.10 moves the coaching content from `agents/redis-channel-coach.md` into `instructions=` in `server/channel.py::build_app`:
+
+- Tag-format reference (channel notification shape, attributes).
+- "Two users in this conversation" framing (local terminal user sees assistant text; channel user sees `reply()`'s text arg; both want the answer; write it in both surfaces).
+- Source-mode formatting table (voice → speakable prose; dm/channel/thread → markdown).
+- AskUserQuestion ban.
+
+The agent file is slimmed to a 14-line pointer doc explaining the new layout — kept around in case `agents/` is required by Claude Code plugin discovery, and as a place to document why coaching lives in `instructions=` now.
+
+This is the most plausible fix we've had so far for the missing-text_block issue. If it still doesn't restore text_block emission, then the gap really is structural — Claude treats notification-triggered turns differently from user-message-triggered turns regardless of coaching — and we accept + move to Phase 3.
+
 ### Changed — coach reframes channel as two-user conversation, drops anti-narration list (v0.4.9)
 
 Cheap diagnostic confirmed the previous theory: Claude itself self-reported `"no text block, only tool call"` when asked to repeat its prior turn's assistant text. The "Yes — text block is back" outbound text from v0.4.8 testing was Claude pattern-matching the question, not reporting actual output. Streaming-write debug log activity (1929 writes during a 1.4s window) was just terminal overhead — cursor, scroll, "Brewed for Xs" line — not real content.

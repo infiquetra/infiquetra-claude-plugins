@@ -1,61 +1,14 @@
 ---
 name: redis-channel-coach
-description: Behavior hints for Claude when a redis-channel session is active. Reminders about reading the channel-tag attributes, distinguishing voice vs text source modes, and the AskUserQuestion ban. Not load-bearing — interception in the MCP server is what guarantees correctness; this file just reduces friction.
+description: Reference doc for redis-channel session behavior. The load-bearing runtime guidance lives in the MCP server's `instructions=` field (see server/channel.py build_app) so Claude reads it on every turn including notification-triggered ones. This file is a human-readable pointer; subagent invocations not expected.
 ---
 
-You may be running with a `redis-channel` session attached. After `/redis-channel-connect` succeeds, external users' messages arrive as `<channel>` tags injected into your context:
+The runtime behavior coaching for redis-channel sessions is delivered through the MCP server's `instructions` field — see `server/channel.py::build_app` and the corresponding "MCP Server Instructions" section that Claude Code injects into the system prompt at session start.
 
-```
-<channel source="dm" chat_id="c-discord-123" user_id="u-456" username="jeff" endpoint="mimir" _msg_id="1779741709703-0" router="hermes-claude-code-router" ts="1779741709.5">
-the user's actual text here
-</channel>
-```
+Why not here? Files in `agents/` define Claude Code subagents — they're invoked via the Agent tool, not automatically loaded into Claude's active context. For a plugin like this one where behavior coaching must apply during notification-triggered turns (where no Agent invocation happens), the coaching needs to live somewhere that loads with the MCP server itself.
 
-**Reading the tag:**
-- `source` — `"voice"`, `"dm"`, `"channel"`, or `"thread"`. **Drives formatting + voice flag — see "Source-mode behavior" below.**
-- `chat_id` — opaque router-managed handle for that conversation. **Always pass this back on reply.**
-- `user_id`, `username` — who sent it.
-- `endpoint` — which redis-channel endpoint the message came from (e.g. `"mimir"`).
-- `_msg_id` — Redis stream message-id we attach for reply correlation.
-- `confidence` — float 0-1 on voice transcripts; absent for text sources.
-- `router`, `ts` — source-of-truth router id + timestamp; rarely useful for routing logic but available.
-- The body inside the tag is the user's text or speech-transcript — treat it as the user's message.
+If you need to adjust the coaching, edit the `instructions=` string in `server/channel.py`. Bump the plugin version + add a CHANGELOG entry as usual.
 
-**Responding with the `reply` tool:**
-- **Always pass back the `chat_id`** from the inbound tag so the router routes your reply to the right surface.
-- Set `voice` and format your `text` according to `source` (see table below).
-- Pass `in_reply_to=<the _msg_id from the inbound>` for threading on `channel` / `thread` sources (router may ignore it for voice/dm).
-
-## Source-mode behavior
-
-| `source`              | `voice` arg | Formatting rules for `text`                                                                                                                                                                                                                                                                                            |
-| --------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `voice`               | `true`      | **TTS will SPEAK your `text` aloud.** Keep it short (round-trip is 6-10s). NO markdown, NO code blocks, NO bare URLs (they get read letter-by-letter and sound awful). Speakable prose only. Don't reference visual elements ("see the diagram above"). If you must mention a URL, say "I'll send the link in a DM."  |
-| `dm`                  | `false`     | Direct message rendering — markdown, code blocks, lists, and inline links all render properly. Mid-length OK. No threading concept here.                                                                                                                                                                              |
-| `channel`             | `false`     | Public channel message. Same formatting as `dm`. Be aware others may see your reply. Pass `in_reply_to` to thread under the original message.                                                                                                                                                                          |
-| `thread`              | `false`     | Threaded reply. Same formatting as `dm`/`channel`. Pass `in_reply_to` for proper threading.                                                                                                                                                                                                                            |
-| *(any other / unset)* | `false`     | Default to `dm`-style behavior. Future router-side surfaces (email, SMS, alerts) will document their conventions; until then treat unknown sources as text-rendered.                                                                                                                                                  |
-
-## Two users in this conversation — answer them both
-
-When a `<channel>` event arrives, there are **two distinct users** you're responding to in the same turn:
-
-1. **The local terminal user** (the developer reading your assistant output in the CLI). They see your turn's assistant text. They do NOT see anything inside MCP tool calls or results — those render as `Called plugin:…` collapsed.
-2. **The channel user** (Discord/voice/etc. via the router). They see whatever you put in `reply()`'s `text` argument. They do NOT see your assistant text.
-
-Both users want your answer to their question. Two separate audiences, one answer, two delivery surfaces:
-
-- **Write your answer as your normal assistant text** — that's how the local user reads it. It's your primary response, just like any other turn. Not narration, not commentary — it's the answer.
-- **Also call `reply(chat_id=…, text=<same answer>, …)`** — that's how the channel user reads it. The tool is the shipping mechanism for the remote surface.
-
-These are not redundant. Each user sees only their own surface. If you skip the assistant text, the local user sees nothing. If you skip the `reply` tool, the channel user sees nothing.
-
-Format the `text` arg per the source-mode table above (voice → speakable prose; dm/channel/thread → normal markdown). Your assistant text can match exactly, or be a slightly fuller markdown version for the terminal — but easiest is byte-identical: write your answer once, use it twice.
-
-(The `debug` flag on `/redis-channel-connect` is reserved for future opt-in dev verbosity but currently has no effect.)
-
-## Other rules
-
-**Don't call `AskUserQuestion` during a channel session.** Inline the choices directly in your `text` instead — "Which approach? A) … B) … C) …" — and the user will answer naturally on the next inbound. (For voice, restate the choices conversationally: "Want A, B, or C?") Phase 4 will deterministically intercept any `AskUserQuestion` you do emit; until then, just inline.
-
-**Latency**: voice round-trips through the router take 6-10s typical. Keep voice replies tight; the user is probably driving or jogging and they can always ask follow-ups.
+Open questions worth exploring later:
+- Should `agents/` get a different file that DOES make sense as a subagent (e.g., a "redis-channel-debugger" agent invoked when troubleshooting connection issues)?
+- Are there any redis-channel behaviors that fit the subagent invocation pattern (Agent-tool-triggered, not always-on)?

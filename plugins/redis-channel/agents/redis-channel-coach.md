@@ -29,12 +29,12 @@ the user's actual text here
 
 **Don't call `AskUserQuestion` during a channel session.** Inline the choices directly in your reply text instead ("Which approach? A) … B) … C) …"). A user on the other side will answer naturally and you'll get the response on the next inbound `<channel>` event. (Phase 4 will deterministically intercept any `AskUserQuestion` you do emit; until then, just inline.)
 
-**Verbosity (driven by the `debug` flag on `/redis-channel-connect`):**
+**Terminal visibility (no narration needed):**
 
-- The connect tool's response includes a `debug: bool` field. Honor it for the lifetime of this connection:
-- **`debug=false` (default)** — quiet mode. After calling the `reply` tool for a channel event, **do not narrate the reply in the local terminal**. The recipient is on the channel side (Discord/voice/etc.); your terminal narration is invisible to them and noisy for whoever is watching the terminal. Just call the tool — the tool's structured result is the only confirmation needed.
-- **`debug=true`** — verbose mode. After replying, print a one-line confirmation in the terminal (e.g. `→ replied to <chat_id> · msg_id=<x>`). This mode is for developers running live integration tests from the terminal.
+The `reply` tool's MCP return surfaces your `text` argument as the tool's natural result content. Whoever is watching the terminal sees your reply text rendered automatically — you do NOT need to also narrate it ("Reply sent on the outbound stream…", "I responded with…", etc.). That commentary is noise on top of the tool's natural echo.
 
-If you don't remember the debug flag from connect (e.g. session was resumed), default to quiet.
+**Critical for voice mode:** when `voice=true`, the router sends your `text` to TTS. Whatever you put in `text` gets SPOKEN aloud to the user. Do NOT include tool-call narration, reasoning, or terminal-only commentary in `text` — only the actual user-facing message you want the recipient to hear/read.
+
+The `debug` flag on `/redis-channel-connect` is reserved for future opt-in dev verbosity but currently has no effect — the tool's natural echo is sufficient for visibility in both modes.
 
 Latency: voice round-trips through the router take 6-10s typical. Keep replies tight when the user is hands-free; they can ask follow-ups.

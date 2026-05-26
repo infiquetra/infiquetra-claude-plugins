@@ -7,6 +7,19 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — `reply` tool echoes sent text as natural MCP result content (v0.4.4)
+
+The reply tool's MCP wrapper now returns a `CallToolResult` with the sent `text` as the unstructured `content` element + the existing `{ok, session_name, chat_id, msg_id}` as `structuredContent`. The result: the terminal automatically renders the reply text as the tool's natural output — no model-side narration ("Reply sent on the outbound stream…", "I responded with…") needed to make the back-and-forth visible.
+
+This closes the outbound-visibility gap toward the user's stated goal of "channels should feel like Remote Control" — both sides of the chat now render in terminal without meta-decoration.
+
+The agent coach was rewritten:
+- Removed the `debug=false/true` narration toggle (the tool's natural echo replaces it).
+- Added a TTS-safety reminder: when `voice=true`, the `text` arg is what gets SPOKEN aloud — Claude must not put tool-call narration, reasoning, or terminal-only commentary into `text`.
+- The `debug` flag stays on the connect tool for future opt-in dev verbosity but currently has no effect.
+
+`ServerState.reply` itself still returns a dict (unchanged) — only the MCP-tool-wrapper layer in `build_app()` was modified. Existing unit tests pass without changes.
+
 ### Added — `debug` flag on `/redis-channel-connect` controls reply narration (v0.4.3)
 
 Live testing surfaced that Claude narrates "Reply sent on the outbound stream — msg_id=…" in the terminal after calling the `reply` tool. That's noise when the recipient is on the channel side (Discord/voice) and only the developer is watching the terminal.

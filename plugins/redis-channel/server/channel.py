@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import contextlib
+import json
 import logging
 import os
 import signal
@@ -30,6 +31,7 @@ import time
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import CallToolResult, TextContent
 
 from . import __version__
 from .notifier import AsyncNotifier, ChannelNotifier, NoopNotifier
@@ -403,7 +405,10 @@ def build_app() -> FastMCP:
             "channel (router may ignore if the source wasn't voice). chat_id "
             "must match the value provided on the inbound notification. "
             "Optionally pass in_reply_to=<original message_id from the "
-            "inbound notification's _msg_id field> to thread the reply."
+            "inbound notification's _msg_id field> to thread the reply. "
+            "The `text` argument IS the user-facing message — it's what the "
+            "recipient reads or hears via TTS. Do NOT put internal reasoning, "
+            "tool-call narration, or terminal-only commentary in `text`."
         ),
     )
     async def reply(
@@ -411,12 +416,28 @@ def build_app() -> FastMCP:
         text: str,
         voice: bool = False,
         in_reply_to: str | None = None,
-    ) -> dict[str, Any]:
-        return _STATE.reply(
+    ) -> CallToolResult:
+        result = _STATE.reply(
             chat_id=chat_id,
             text=text,
             voice=voice,
             in_reply_to=in_reply_to,
+        )
+        if not result.get("ok"):
+            # Error path: surface the structured error as JSON text content so
+            # Claude can read it and the user can see what went wrong.
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(result))],
+                structuredContent=result,
+                isError=True,
+            )
+        # Success: echo the actual sent text so the terminal renders it as
+        # the tool's natural result — closes the chat-loop visibility gap.
+        # Structured fields (msg_id, etc.) ride along for programmatic clients.
+        return CallToolResult(
+            content=[TextContent(type="text", text=text)],
+            structuredContent=result,
+            isError=False,
         )
 
     return app

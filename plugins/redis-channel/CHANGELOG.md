@@ -7,6 +7,13 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — same-cwd disambiguation + git_branch auto-detection
+
+- `presence.detect_git_branch(cwd)`: runs `git rev-parse --abbrev-ref HEAD` with a 1s subprocess timeout. Returns `None` for non-git dirs / missing cwds / detached HEAD / git not installed / any subprocess failure. `build_metadata` calls it automatically when `git_branch` is unset, so live session metadata in `cc-sessions:registry` now carries the branch — useful for natural-language session routing later.
+- `presence.disambiguate_if_collision(client, base_name, host, pid)`: prevents two CC sessions in the same cwd (which auto-name identically because the name's hash is `sha256(cwd + host)[:8]`) from clobbering each other in Redis. On collision with a live presence owned by a different PID on the same host, appends `-<pid_hex_4>` to the auto-name. Same-PID collision (reconnect) keeps the base name. Stale-entry (hb expired) and corrupt-entry cases pass through cleanly. Only applies when no explicit session_name was passed — user-supplied names are honored as intent and use regular replace semantics.
+- `channel.py:connect` wires disambiguation into the auto-name path.
+- Tests: 8 new presence cases (no-collision, same-PID, different-PID, different-host, short-PID zero-padding, stale, half-state, corrupt) + 2 channel cases (auto-name disambiguates on collision; explicit name does NOT).
+
 ### Added — Phase 2 (text bridge: inbound consumer + reply tool)
 
 - `server/redis_consumer.py`: XREADGROUP consumer thread for `cc-sessions:<name>:inbound`. Creates the consumer group on first connect (idempotent on BUSYGROUP). Each decoded payload is handed to a caller-supplied `on_message` callback. Acks after the callback returns; a raising callback leaves the message in the pending entries list for re-delivery. Drops + acks structurally bad payloads (missing `payload` field, undecodable JSON, non-object body) so the consumer never loops on garbage. The original Redis message-id is attached as `_msg_id` for reply correlation.

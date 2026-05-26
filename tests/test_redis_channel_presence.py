@@ -5,6 +5,7 @@ Uses fakeredis to model the Redis backend so tests run without a server.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -190,6 +191,90 @@ def test_build_metadata_explicit_git_branch_overrides_detection(tmp_path) -> Non
         git_branch="overridden",
     )
     assert meta.git_branch == "overridden"
+
+
+# ─── disambiguation for same-cwd collisions ─────────────────────────────────
+
+
+def _seed_other_session(
+    fr: Any, name: str, *, host: str = "other-host", pid: int = 999, ttl: int = 60
+) -> None:
+    """Helper: write a presence entry for some *other* session at `name`."""
+    other = presence.build_metadata(
+        session_name=name,
+        endpoint="mimir",
+        cwd="/somewhere",
+        host=host,
+        git_branch="other-branch",
+        started_at=500.0,
+    )
+    # build_metadata sets pid=os.getpid(); we want to fake a different pid
+    raw = json.loads(other.to_json())
+    raw["pid"] = pid
+    fr.hset(presence.REGISTRY_KEY, name, json.dumps(raw))
+    fr.set(presence.hb_key(name), str(time.time()), ex=ttl)
+
+
+def test_disambiguate_no_existing_entry(fr: Any) -> None:
+    name = presence.disambiguate_if_collision(fr, "myrepo-abc12345", host="h", pid=1234)
+    assert name == "myrepo-abc12345"
+
+
+def test_disambiguate_same_pid_same_host_returns_base(fr: Any) -> None:
+    """Reconnect scenario: same process re-registering should keep the same name."""
+    _seed_other_session(fr, "myrepo-abc12345", host="same-host", pid=1234)
+    name = presence.disambiguate_if_collision(fr, "myrepo-abc12345", host="same-host", pid=1234)
+    assert name == "myrepo-abc12345"
+
+
+def test_disambiguate_different_pid_same_host_appends_suffix(fr: Any) -> None:
+    """Same cwd, same host, different process — must disambiguate."""
+    _seed_other_session(fr, "myrepo-abc12345", host="same-host", pid=999)
+    name = presence.disambiguate_if_collision(fr, "myrepo-abc12345", host="same-host", pid=0x4321)
+    assert name == "myrepo-abc12345-4321"
+
+
+def test_disambiguate_different_host_also_appends_suffix(fr: Any) -> None:
+    """If host differs, the base auto-name shouldn't have collided in the first
+    place (host is in the hash). But if it does (manual config), still disambiguate."""
+    _seed_other_session(fr, "myrepo-abc12345", host="host-a", pid=999)
+    name = presence.disambiguate_if_collision(fr, "myrepo-abc12345", host="host-b", pid=0xABCD)
+    assert name == "myrepo-abc12345-abcd"
+
+
+def test_disambiguate_short_pid_zero_pads(fr: Any) -> None:
+    _seed_other_session(fr, "n", host="h", pid=1)
+    name = presence.disambiguate_if_collision(fr, "n", host="h", pid=0x12)
+    assert name == "n-0012"
+
+
+def test_disambiguate_stale_entry_returns_base(fr: Any) -> None:
+    """Registry has an entry but hb key expired → not a live collision."""
+    other = presence.build_metadata(
+        session_name="ghost",
+        endpoint="mimir",
+        cwd="/gone",
+        host="h",
+        started_at=1.0,
+    )
+    fr.hset(presence.REGISTRY_KEY, "ghost", other.to_json())
+    # no hb key
+    name = presence.disambiguate_if_collision(fr, "ghost", host="h", pid=1)
+    assert name == "ghost"
+
+
+def test_disambiguate_missing_registry_entry_returns_base(fr: Any) -> None:
+    """Half-state: hb key exists but registry HSET is missing. Take the name."""
+    fr.set(presence.hb_key("orphan-hb"), "12345", ex=60)
+    name = presence.disambiguate_if_collision(fr, "orphan-hb", host="h", pid=1)
+    assert name == "orphan-hb"
+
+
+def test_disambiguate_corrupt_registry_entry_returns_base(fr: Any) -> None:
+    fr.hset(presence.REGISTRY_KEY, "broken", "{ not valid json")
+    fr.set(presence.hb_key("broken"), "12345", ex=60)
+    name = presence.disambiguate_if_collision(fr, "broken", host="h", pid=1)
+    assert name == "broken"
 
 
 def test_presence_start_writes_registry_and_hb(fr: Any) -> None:

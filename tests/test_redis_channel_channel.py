@@ -131,6 +131,93 @@ def test_second_connect_replaces_first(patched_state: channel.ServerState, fr: A
         patched_state.disconnect()
 
 
+def test_auto_name_disambiguates_on_collision(patched_state: channel.ServerState, fr: Any) -> None:
+    """Two processes in the same cwd → second auto-name gets a pid suffix."""
+    import os
+    import socket
+    import time as _time
+
+    # Simulate another live CC session on this host at the same auto-name.
+    other_pid = os.getpid() + 1
+    other_name_components = [
+        ("session_name", "infiquetra-claude-plugins-9f3e2c1a"),
+        ("host", socket.gethostname()),
+        ("cwd", "/Users/jefcox/workspace/infiquetra/infiquetra-claude-plugins"),
+        ("git_branch", "main"),
+        ("started_at", 1.0),
+        ("pid", other_pid),
+        ("endpoint", "mimir"),
+        ("extras", {}),
+    ]
+    other_payload = json.dumps(dict(other_name_components))
+    fr.hset(presence.REGISTRY_KEY, "infiquetra-claude-plugins-9f3e2c1a", other_payload)
+    fr.set(
+        presence.hb_key("infiquetra-claude-plugins-9f3e2c1a"),
+        str(_time.time()),
+        ex=60,
+    )
+
+    # Monkey-patch resolve_session_name to return the SAME base name the seeded
+    # entry uses — this simulates the cwd-hash collision deterministically.
+    import server.session_id as session_id_mod  # type: ignore[import-not-found]
+
+    real_resolve = session_id_mod.resolve_session_name
+
+    def fake_resolve(override=None, **kw):  # noqa: ANN001
+        if override is not None:
+            return real_resolve(override, **kw)
+        return "infiquetra-claude-plugins-9f3e2c1a"
+
+    import server.channel as channel_mod  # type: ignore[import-not-found]
+
+    monkey_target = channel_mod  # connect() imports resolve_session_name into channel
+    original = monkey_target.resolve_session_name
+    monkey_target.resolve_session_name = fake_resolve  # type: ignore[assignment]
+    try:
+        out = patched_state.connect(endpoint="mimir", session_name=None)
+        try:
+            assert out["ok"] is True, out
+            # Our session_name must NOT equal the seeded base — should be disambiguated
+            assert out["session_name"] != "infiquetra-claude-plugins-9f3e2c1a"
+            assert out["session_name"].startswith("infiquetra-claude-plugins-9f3e2c1a-")
+            suffix = out["session_name"].rsplit("-", 1)[1]
+            # Suffix is 4 hex chars of our pid
+            assert len(suffix) == 4
+            assert all(c in "0123456789abcdef" for c in suffix)
+        finally:
+            patched_state.disconnect()
+    finally:
+        monkey_target.resolve_session_name = original  # type: ignore[assignment]
+
+
+def test_explicit_name_does_not_disambiguate(patched_state: channel.ServerState, fr: Any) -> None:
+    """Explicit session_name = user intent → no disambiguation, replace semantics."""
+    import socket
+    import time as _time
+
+    seeded_name = "explicit-name"
+    other_payload = json.dumps(
+        {
+            "session_name": seeded_name,
+            "host": socket.gethostname(),
+            "cwd": "/whatever",
+            "git_branch": None,
+            "started_at": 1.0,
+            "pid": 99999,
+            "endpoint": "mimir",
+            "extras": {},
+        }
+    )
+    fr.hset(presence.REGISTRY_KEY, seeded_name, other_payload)
+    fr.set(presence.hb_key(seeded_name), str(_time.time()), ex=60)
+
+    out = patched_state.connect(endpoint="mimir", session_name=seeded_name)
+    try:
+        assert out["session_name"] == seeded_name  # exact match — no suffix
+    finally:
+        patched_state.disconnect()
+
+
 def test_list_requires_connection(patched_state: channel.ServerState) -> None:
     out = patched_state.list_sessions()
     assert out["ok"] is False

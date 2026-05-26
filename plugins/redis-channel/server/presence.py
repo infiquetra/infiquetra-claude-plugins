@@ -47,6 +47,50 @@ def events_channel(session_name: str) -> str:
     return f"{EVENTS_CHANNEL_PREFIX}{session_name}"
 
 
+def disambiguate_if_collision(
+    client: RedisLike,
+    base_name: str,
+    *,
+    host: str,
+    pid: int,
+) -> str:
+    """Return a session name that won't collide with a live entry.
+
+    Same-cwd same-host CC sessions auto-name themselves identically (because
+    the auto-name is `sha256(cwd + host)[:8]`). Without this, two background
+    sessions in the same repo race for the same registry key, hb key, and
+    consumer-group consumer name. This helper appends a 4-hex-of-pid suffix
+    on collision.
+
+    Returns base_name unchanged if any of:
+      - no live presence at base_name (hb key absent → either never claimed
+        or stale + about to be GC'd)
+      - the live presence belongs to us (same host AND pid → reconnect from
+        the same process; channel layer handles the local reconnect)
+      - the registry entry is missing or corrupt (best-effort; we'll
+        overwrite it cleanly)
+
+    Disambiguates by appending `-<pid_hex_4>` when a different live process
+    on the same host (or a different host) already owns base_name. PIDs
+    don't actually collide within a single host at the same time, so the
+    suffix is unique enough; across hosts the underlying auto-name already
+    differs (host is in the hash input).
+    """
+    if not client.exists(hb_key(base_name)):
+        return base_name
+    raw = client.hget(REGISTRY_KEY, base_name)
+    if raw is None:
+        return base_name
+    try:
+        existing = SessionMetadata.from_json(raw)
+    except (ValueError, KeyError, json.JSONDecodeError):
+        return base_name
+    if existing.host == host and existing.pid == pid:
+        return base_name
+    suffix = f"{pid:x}"[-4:].rjust(4, "0")
+    return f"{base_name}-{suffix}"
+
+
 @dataclass(frozen=True, slots=True)
 class SessionMetadata:
     """Static registry payload for a CC session.

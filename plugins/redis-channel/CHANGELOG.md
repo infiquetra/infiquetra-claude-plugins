@@ -7,6 +7,35 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — `claude-channel` wrapper + PROTOCOL.md programmatic-launch contract (v0.4.13)
+
+Third and final slice of Phase 2.5. Together with v0.4.11 (router-agnostic refactor + registry resolver) and v0.4.12 (env-var auto-connect + status command), this closes the loop on "redis-channel sessions startable from outside the terminal."
+
+**`~/bin/claude-channel` wrapper** at `plugins/redis-channel/scripts/claude-channel.sh`, installed via `install-claude-channel.sh` which symlinks the user's `~/bin/claude-channel` at the latest plugin cache version's wrapper. Flags:
+
+- `--session-name NAME` → exports `CLAUDE_SESSION_NAME`; validated with bash regex matching `session_id.py:_NAME_RE` BEFORE spawning claude (exit 2 on mismatch).
+- `--endpoint NAME` → exports `CLAUDE_CHANNEL_ENDPOINT`.
+- `--bg`/`--background` → POSIX-portable detach (subshell + nohup + redirect + disown — works on macOS without `setsid`). Log at `${XDG_CACHE_HOME:-$HOME/.cache}/claude-channel/sessions/<name>-<epoch>.log`.
+- `--cwd PATH` → cd before exec. Load-bearing for Phase 5: routers spawn in target dirs; auto-name derivation uses cwd.
+- `--print-info` → emit JSON `{session_name, endpoint, log_path, pid, cwd, mode}`. **Foreground: prints to stderr** (no stdout pollution while claude is interactive). **Background: prints to stdout** (caller capturing wrapper output gets the JSON cleanly).
+- `--help`.
+
+Env knobs:
+- `CLAUDE_BIN` override (required when claude isn't in `$PATH`, e.g. Phase 5's Hermes-runtime context).
+- `CLAUDE_CHANNEL_PRODUCTION=1` to omit dev-only `--dangerously-*` flags.
+- `CLAUDE_CHANNEL_PLUGIN_REF` to override the development-channels plugin URI.
+
+The wrapper sets `CLAUDE_CHANNEL_AUTO_CONNECT=1` and best-effort sources `HERMES_REDIS_PASSWORD` from macOS keychain (backward-compat for the original dev setup; future deployments should rely on `~/.claude/channels/redis-channel/source-env.sh`).
+
+**`PROTOCOL.md` programmatic-launch contract.** New section documents spawn/list/kill semantics for external consumers (Phase 5's Mimir LLM tools, future routers):
+
+- **Spawn**: `claude-channel --bg --session-name <N> --cwd <D> --print-info` → parse JSON → poll `EXISTS cc-sessions:hb:<N>` until live.
+- **List**: `HGETALL cc-sessions:registry` filtered by `EXISTS cc-sessions:hb:<name>`.
+- **Kill**: HGET PID, verify with `ps -p <pid> -o comm=` to defend against PID reuse, then SIGTERM.
+- **Collision**: spawning with an existing session-name replaces the previous session; callers SHOULD `EXISTS` check first.
+
+Manual smoke tests: `--help` works, invalid session-name rejected with exit 2 before spawn, foreground prints JSON to stderr, background prints to stdout + spawns detached process. Programmatic integ test (subprocess.run on the wrapper) deferred to a follow-up PR.
+
 ### Added — env-var-driven auto-connect + `/redis-channel-status` (v0.4.12)
 
 Second slice of Phase 2.5. Together with the v0.4.13 wrapper script (next), this makes redis-channel sessions startable from outside the terminal — needed for Phase 5 (Mimir spawning CC sessions on demand) but also a UX win for humans who don't want to type `/redis-channel-connect` on every session start.

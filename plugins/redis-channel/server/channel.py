@@ -417,6 +417,30 @@ def _install_signal_handlers() -> None:
             signal.signal(sig, _handle)
 
 
+def _enable_channel_capability(app: FastMCP) -> None:
+    """Declare the `claude/channel` experimental capability in the initialize
+    response so Claude Code accepts our `notifications/claude/channel` events.
+
+    Without this, Claude Code logs: "Channel notifications skipped: server did
+    not declare claude/channel capability" and silently drops every channel
+    notification we emit — which makes Phase 2's text bridge a no-op from
+    Claude Code's perspective.
+
+    FastMCP doesn't expose a constructor param for experimental_capabilities,
+    so we patch the underlying server's create_initialization_options to inject
+    the capability whenever it's called (which happens once per `app.run()`).
+    """
+    server = app._mcp_server  # noqa: SLF001
+    original = server.create_initialization_options
+
+    def patched(notification_options=None, experimental_capabilities=None):  # noqa: ANN001, ANN202
+        experimental_capabilities = dict(experimental_capabilities or {})
+        experimental_capabilities.setdefault("claude/channel", {})
+        return original(notification_options, experimental_capabilities)
+
+    server.create_initialization_options = patched  # type: ignore[method-assign]
+
+
 def run() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -427,5 +451,6 @@ def run() -> int:
     atexit.register(_STATE.shutdown)
     _install_signal_handlers()
     app = build_app()
+    _enable_channel_capability(app)
     app.run()  # blocks until stdio closes
     return 0

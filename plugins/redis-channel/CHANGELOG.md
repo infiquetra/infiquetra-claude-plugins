@@ -7,6 +7,22 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — channel notifications now use the correct {content, meta} schema + declare `claude/channel` capability + cd to plugin root (v0.4.2)
+
+Live install testing surfaced **three** issues that together prevented Claude Code from actually surfacing channel events end-to-end:
+
+**1. MCP server didn't declare `claude/channel` capability.** Claude Code's launcher reads `initialize`'s `capabilities.experimental['claude/channel']` to decide whether to register a listener for channel notifications. FastMCP's `Server` doesn't expose a constructor knob for `experimental_capabilities`, so we monkey-patch `app._mcp_server.create_initialization_options` in `channel.py:_enable_channel_capability` to inject `{"claude/channel": {}}`. Without this, claude logs `"Channel notifications skipped: server did not declare claude/channel capability"` and silently drops every event.
+
+**2. Notification params were the wrong shape.** Claude Code's [channels reference](https://code.claude.com/docs/en/channels-reference) requires `params: {content: str, meta: dict[str,str]}` — `content` becomes the body of a `<channel source="..." attr="val">…</channel>` tag in Claude's context, each `meta` key (identifiers only, no hyphens) becomes a tag attribute. We were passing the raw Inbound payload (`{v, router, source, chat_id, text, ...}`) as params, which Claude Code can't render. New `notifier.inbound_to_channel_params()` translates at the emission boundary: `content` = `text`, `meta` = the other fields stringified and filtered to identifier-safe keys. Wire format on Redis stays unchanged; only the in-process MCP frame is reshaped.
+
+**3. `cwd: ${CLAUDE_PLUGIN_ROOT}` wasn't being honored by Claude Code's MCP launcher.** The wrapper inherited claude's cwd, so `python3 -m server` couldn't find the `server` package (error: `No module named server`). Fixed by adding `cd "$CLAUDE_PLUGIN_ROOT" || exit 1;` at the start of the shell wrapper.
+
+**Agent coach rewrite.** `agents/redis-channel-coach.md` now describes the actual `<channel source="..." chat_id="..." …>body</channel>` tag format Claude sees in context, with concrete instructions for reading attributes and constructing replies.
+
+**Tests:** 8 new tests in `test_redis_channel_notifier.py` covering the translation (text-only, full payload, None values dropped, nested values dropped, non-identifier keys dropped, numeric/bool stringification, missing-text fallback). Existing channel tests updated to assert the new shape. Repo total: 412 tests pass.
+
+**Heads-up for users**: during the channels research preview, custom plugins like this one are NOT on Anthropic's approved channel allowlist. You must launch claude with `--dangerously-load-development-channels plugin:redis-channel@infiquetra-plugins` (and acknowledge the confirmation prompt) for the channel events to register. After v1 ships and Anthropic accepts the plugin onto the official allowlist, this flag becomes unnecessary.
+
 ### Changed — `.mcp.json` runs server under `uv run` + auto-sources password (v0.4.1)
 
 Two reliability fixes to the shipped `.mcp.json` so the MCP server boots correctly out of the box:

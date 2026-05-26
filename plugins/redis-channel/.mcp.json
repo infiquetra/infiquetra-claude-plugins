@@ -2,8 +2,11 @@
   "mcpServers": {
     "redis-channel": {
       "type": "stdio",
-      "command": "python",
-      "args": ["-m", "server"],
+      "command": "/bin/sh",
+      "args": [
+        "-c",
+        "if [ -z \"${HERMES_REDIS_PASSWORD:-}\" ] && [ -x ~/.claude/channels/redis-channel/get-redis-password.sh ]; then export HERMES_REDIS_PASSWORD=\"$(~/.claude/channels/redis-channel/get-redis-password.sh)\"; fi; exec uv run --quiet --with 'mcp>=1.0' --with 'redis>=5.0' --with 'pydantic>=2.5' python3 -m server"
+      ],
       "cwd": "${CLAUDE_PLUGIN_ROOT}",
       "env": {}
     }

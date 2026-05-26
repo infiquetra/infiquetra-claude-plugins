@@ -7,6 +7,28 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — `.mcp.json` runs server under `uv run` + auto-sources password (v0.4.1)
+
+Two reliability fixes to the shipped `.mcp.json` so the MCP server boots correctly out of the box:
+
+**1. Use `uv run` with inline deps instead of bare `python`.** The previous `command: python` failed in Claude Code's MCP-spawn shell because `python` is rarely on the minimal default PATH on macOS (only `python3` is, via homebrew). Even when `python3` resolves, system Python doesn't have `mcp`/`redis`/`pydantic` installed. The new command is:
+
+```
+uv run --quiet --with "mcp>=1.0" --with "redis>=5.0" --with "pydantic>=2.5" python3 -m server
+```
+
+`uv` is reliably on PATH (homebrew default), it manages a per-spec cached env, and the `--with` flags ensure deps resolve at first launch — no pre-`pip install` step required. Subsequent launches use the cached env (~50ms cold-start overhead acceptable for a long-lived MCP server).
+
+**2. Auto-source HERMES_REDIS_PASSWORD from the keychain helper.** The wrapper script now does:
+
+1. If `HERMES_REDIS_PASSWORD` is already in env (you launched claude with it set) → use that value, helper not invoked.
+2. Otherwise, if `~/.claude/channels/redis-channel/get-redis-password.sh` exists and is executable → source the value from it.
+3. Otherwise (no env, no helper) → falls through to `uv run python3 -m server`, and the existing structured "endpoint X requires password env var Y but it is unset or empty" error fires at connect time with a clear message.
+
+**Together, these mean** `/reload-plugins` is now the only thing needed to get a freshly-installed plugin connected to Redis, instead of "exit claude, set env, run pip install, relaunch claude".
+
+**Requirements** on the host: `uv` installed (homebrew or astral installer) + the keychain helper script in place (which the user creates once as part of capturing the Redis password — see README).
+
 ### Added — same-cwd disambiguation + git_branch auto-detection
 
 - `presence.detect_git_branch(cwd)`: runs `git rev-parse --abbrev-ref HEAD` with a 1s subprocess timeout. Returns `None` for non-git dirs / missing cwds / detached HEAD / git not installed / any subprocess failure. `build_metadata` calls it automatically when `git_branch` is unset, so live session metadata in `cc-sessions:registry` now carries the branch — useful for natural-language session routing later.

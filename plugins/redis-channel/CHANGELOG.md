@@ -7,6 +7,22 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — Phase 6 polish: configure command + auto-refresh symlink + ARCHITECTURE.md (v0.5.0)
+
+Phase 6 wraps up the CC-plugin side of the master plan. Three deliverables:
+
+**`/redis-channel-configure` slash command + `redis_channel_configure` MCP tool.** Was a stub since Phase 0; now fully implemented. Interactive endpoint setup that asks for redis_url, redis_password_env, display_name, set-as-default, then writes/updates `~/.claude/channels/redis-channel/registry.json` atomically. Idempotent — re-running for the same endpoint name overwrites the entry; other endpoints + defaults preserved. Validates: endpoint name matches `^[a-z0-9][a-z0-9_-]*$`, redis_url starts with `redis://` or `rediss://`. Does NOT create source-env.sh (that's `/redis-channel-setup`'s job).
+
+**Auto-refresh stale symlink in MCP startup nag.** Extends the v0.4.14 startup nag: when `~/bin/claude-channel` is a symlink pointing into our plugin cache hierarchy but at an OLDER version (the common "plugin updated, symlink lagged" case), the MCP server now refreshes it in-place + logs INFO. Scope: only self-managed symlinks; user-customized symlinks pointing elsewhere are left alone (nag still fires for those). Missing config files (source-env.sh, registry.json) stay nag-only — never auto-create user config. New helpers `_auto_refresh_stale_symlink()` and `_is_our_plugin_cache_target()`.
+
+**`plugins/redis-channel/ARCHITECTURE.md`** — system narrative with a Mermaid diagram covering roles, round-trip flow, components in this plugin, state + lifecycle semantics, config files, Claude Code integration knobs, known limitations (cross-ref'd to LEARNINGS). Plugin-side only; router-specific details stay in the router repo.
+
+**README polish** — Status section restructured to reflect what's actually shipped (P1, P2, P2.5, P6) and what's deferred to the router repo. Quickstart rewritten around `/redis-channel-setup` + `/redis-channel-configure` (was: "manually copy registry.example.json"). Known limitation about bg sessions called out at the top.
+
+Tests: 14 new (6 auto-refresh + 8 configure-endpoint); 187 redis-channel tests total; ruff clean.
+
+This release marks the CC-plugin side of the master plan as feature-complete. Router-side work (text routing, voice routing, permission relay, LLM tools) lives in [`hermes-claude-code-router`](https://github.com/infiquetra/hermes-claude-code-router).
+
 ### Fixed — auto-connect falls back to single-endpoint convenience (v0.4.18)
 
 Jeff tested v0.4.17, found `--bg` still landed in a session where `/redis-channel-list` reported "Not connected". Diagnostic via `ps eww -p <mcp-pid>` confirmed `CLAUDE_CHANNEL_AUTO_CONNECT=1` and `CLAUDE_SESSION_NAME=plugin-testing` DID make it into the bg session's env (so v0.4.17's `--settings` injection works). The actual bug: `_maybe_auto_connect` tried `CLAUDE_CHANNEL_ENDPOINT` env → `registry.defaults.auto_connect_endpoint` → bailed with "no endpoint resolvable" when both were unset.

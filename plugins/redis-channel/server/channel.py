@@ -23,6 +23,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import socket
@@ -503,6 +504,107 @@ def _check_setup() -> dict[str, Any]:
     }
 
 
+_ENDPOINT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _configure_endpoint(
+    *,
+    endpoint_name: str,
+    redis_url: str,
+    redis_password_env: str | None = None,
+    display_name: str | None = None,
+    set_default: bool = False,
+) -> dict[str, Any]:
+    """Add or update an endpoint in `~/.claude/channels/redis-channel/registry.json`.
+
+    Idempotent: if the endpoint already exists, its fields are overwritten
+    with the new values. Other endpoints + defaults are left intact. Writes
+    atomically via a .tmp + replace.
+
+    Does NOT create source-env.sh — that's `/redis-channel-setup`'s job.
+    """
+    if not _ENDPOINT_NAME_RE.match(endpoint_name):
+        return {
+            "ok": False,
+            "error": "invalid endpoint_name",
+            "detail": f"must match {_ENDPOINT_NAME_RE.pattern}; got {endpoint_name!r}",
+        }
+    if not (redis_url.startswith("redis://") or redis_url.startswith("rediss://")):
+        return {
+            "ok": False,
+            "error": "invalid redis_url",
+            "detail": "must start with redis:// or rediss://",
+        }
+    if redis_password_env is not None and not redis_password_env.strip():
+        # Empty string → treat as None (no password env)
+        redis_password_env = None
+
+    cfg_path = CHANNEL_CONFIG_DIR / "registry.json"
+    try:
+        CHANNEL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return {"ok": False, "error": "mkdir failed", "detail": str(e)}
+
+    if cfg_path.exists():
+        try:
+            existing = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            return {
+                "ok": False,
+                "error": "registry parse error",
+                "detail": f"existing {cfg_path}: {e}",
+            }
+        if not isinstance(existing, dict):
+            return {
+                "ok": False,
+                "error": "registry shape error",
+                "detail": f"existing {cfg_path} top-level must be object",
+            }
+    else:
+        existing = {}
+
+    endpoints = existing.setdefault("endpoints", {})
+    if not isinstance(endpoints, dict):
+        return {
+            "ok": False,
+            "error": "registry shape error",
+            "detail": "endpoints must be object",
+        }
+    endpoint_entry: dict[str, Any] = {"redis_url": redis_url}
+    if redis_password_env is not None:
+        endpoint_entry["redis_password_env"] = redis_password_env
+    if display_name is not None and display_name.strip():
+        endpoint_entry["display_name"] = display_name.strip()
+    is_update = endpoint_name in endpoints
+    endpoints[endpoint_name] = endpoint_entry
+
+    if set_default:
+        defaults = existing.setdefault("defaults", {})
+        if not isinstance(defaults, dict):
+            return {
+                "ok": False,
+                "error": "registry shape error",
+                "detail": "defaults must be object",
+            }
+        defaults["default_endpoint"] = endpoint_name
+
+    tmp = cfg_path.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(cfg_path)
+    except OSError as e:
+        return {"ok": False, "error": "write failed", "detail": str(e)}
+
+    return {
+        "ok": True,
+        "written": str(cfg_path),
+        "endpoint_name": endpoint_name,
+        "action": "updated" if is_update else "created",
+        "endpoint_count": len(endpoints),
+        "default_endpoint": existing.get("defaults", {}).get("default_endpoint"),
+    }
+
+
 def _do_setup(*, link_wrapper: bool, scaffold_configs: bool) -> dict[str, Any]:
     """Do the install actions. Idempotent — safe to re-run.
 
@@ -799,6 +901,35 @@ def build_app() -> FastMCP:
         )
 
     @app.tool(
+        name="redis_channel_configure",
+        description=(
+            "Add or update an endpoint in the local registry file "
+            "(~/.claude/channels/redis-channel/registry.json). Idempotent + "
+            "atomic. Other endpoints + defaults are preserved. Pass "
+            "set_default=true to make this the connect-without-args "
+            "default. Does NOT create source-env.sh — use /redis-channel-"
+            "setup for that. Endpoint name must match "
+            "^[a-z0-9][a-z0-9_-]*$. redis_url must start with redis:// or "
+            "rediss://. redis_password_env names the env var that will "
+            "hold the password at runtime — populate it via source-env.sh."
+        ),
+    )
+    async def redis_channel_configure(
+        endpoint_name: str,
+        redis_url: str,
+        redis_password_env: str | None = None,
+        display_name: str | None = None,
+        set_default: bool = False,
+    ) -> dict[str, Any]:
+        return _configure_endpoint(
+            endpoint_name=endpoint_name,
+            redis_url=redis_url,
+            redis_password_env=redis_password_env,
+            display_name=display_name,
+            set_default=set_default,
+        )
+
+    @app.tool(
         name="reply",
         description=(
             "Send a reply to the originating chat surface. The router on the "
@@ -981,12 +1112,82 @@ def _maybe_auto_connect() -> None:
         )
 
 
+def _is_our_plugin_cache_target(symlink_target: Path) -> bool:
+    """True if `symlink_target` points into our plugin's cache dir hierarchy.
+
+    Used to bound the auto-refresh: only refresh symlinks whose target lives
+    under `~/.claude/plugins/cache/infiquetra-plugins/redis-channel/<version>/`.
+    Symlinks pointing elsewhere (user-customized, dev checkouts, etc.) are
+    left alone — we don't second-guess user intent."""
+    try:
+        resolved = symlink_target.resolve()
+    except (OSError, RuntimeError):
+        return False
+    cache_marker = Path.home() / ".claude/plugins/cache/infiquetra-plugins/redis-channel"
+    try:
+        resolved.relative_to(cache_marker)
+        return True
+    except ValueError:
+        return False
+
+
+def _auto_refresh_stale_symlink() -> str | None:
+    """If `~/bin/claude-channel` is a stale symlink into OUR plugin cache,
+    refresh it to point at the running version's wrapper. Self-heal after
+    plugin updates.
+
+    Scope: only refresh self-managed symlinks (target inside our cache dir
+    hierarchy). Don't touch:
+      - missing symlinks (user hasn't run /redis-channel-setup yet — nag
+        them via the existing path instead)
+      - non-symlink files at the path (user installed a real script there)
+      - symlinks pointing outside our cache (user customization, dev checkout)
+      - broken symlinks (target doesn't exist; can't safely guess intent)
+
+    Returns the new target string if a refresh happened, else None.
+    """
+    if not WRAPPER_SYMLINK.is_symlink():
+        return None
+    new_target = _expected_wrapper_path()
+    if new_target is None or not new_target.exists():
+        return None
+    try:
+        old_target = WRAPPER_SYMLINK.resolve()
+    except (OSError, RuntimeError):
+        return None
+    if old_target == new_target.resolve():
+        return None  # already current
+    if not _is_our_plugin_cache_target(WRAPPER_SYMLINK):
+        return None  # external target — don't touch
+    try:
+        WRAPPER_SYMLINK.unlink()
+        WRAPPER_SYMLINK.symlink_to(new_target)
+    except OSError as e:
+        log.warning("auto-refresh symlink failed: %s", e)
+        return None
+    return str(new_target)
+
+
 def _log_setup_nag() -> None:
     """One-shot startup check: if setup is incomplete, log a hint suggesting
-    the user run /redis-channel-setup. Passive — never blocks, never modifies
-    anything. Designed to surface in the user's terminal the next time they
-    reconnect MCP after a plugin update."""
+    the user run /redis-channel-setup. Passive — never blocks user-facing
+    work.
+
+    Self-healing for plugin updates: if the only issue is a stale symlink
+    AND that symlink already points into our plugin cache (i.e., user has
+    run /redis-channel-setup before but a plugin update made their symlink
+    point at the old version), auto-refresh it in-place + log INFO. The
+    user doesn't need to re-run /redis-channel-setup after every plugin
+    update for this common case.
+
+    For other issues (missing symlink, missing source-env.sh, missing
+    registry.json, external symlink target), keep the existing nag — those
+    need user intent (the user must decide whether to set up at all, OR
+    edit user config that we should never auto-create)."""
     try:
+        refreshed = _auto_refresh_stale_symlink()
+        if refreshed is not None:
+            log.info("auto-refreshed ~/bin/claude-channel → %s", refreshed)
         state = _check_setup()
     except Exception:  # noqa: BLE001
         return  # never let the nag break the server

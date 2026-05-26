@@ -947,3 +947,298 @@ def test_setup_nag_silent_when_state_ready(
     assert not any(
         "/redis-channel-setup" in r.message for r in caplog.records
     )
+
+
+# ─── Phase 6: auto-refresh stale symlink (extends v0.4.14 startup nag) ────
+
+
+def test_auto_refresh_skips_when_no_symlink(
+    fake_home: Path,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No symlink → don't auto-create; nag still fires via _log_setup_nag."""
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    result = channel._auto_refresh_stale_symlink()
+    assert result is None
+
+
+def test_auto_refresh_skips_when_symlink_current(
+    fake_plugin_root: Path, fake_home: Path
+) -> None:
+    """If symlink already points at the running version's wrapper → no-op."""
+    channel._do_setup(link_wrapper=True, scaffold_configs=False)
+    symlink = fake_home / "bin" / "claude-channel"
+    assert symlink.is_symlink()
+    # Pre-condition: current.
+    pre_state = channel._check_setup()
+    assert pre_state["wrapper_symlink_status"] == "current"
+
+    result = channel._auto_refresh_stale_symlink()
+    assert result is None  # already current, nothing to do
+
+
+def test_auto_refresh_fixes_stale_symlink_into_our_cache(
+    fake_plugin_root: Path,
+    fake_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """If symlink points at an OLDER version under our plugin cache,
+    refresh it to point at the running version's wrapper."""
+    # Create a fake "old cached version" inside our cache marker path so it
+    # passes the _is_our_plugin_cache_target check.
+    cache_marker = tmp_path / "home" / ".claude/plugins/cache/infiquetra-plugins/redis-channel"
+    old_version_dir = cache_marker / "0.4.5" / "scripts"
+    old_version_dir.mkdir(parents=True)
+    old_wrapper = old_version_dir / "claude-channel.sh"
+    old_wrapper.write_text("#!/bin/sh\necho old\n")
+    old_wrapper.chmod(0o755)
+    # Patch Path.home() so _is_our_plugin_cache_target compares against
+    # tmp_path/home, where our fake cache lives.
+    monkeypatch.setattr(channel.Path, "home", lambda: tmp_path / "home")
+
+    symlink = fake_home / "bin" / "claude-channel"
+    symlink.parent.mkdir(parents=True, exist_ok=True)
+    symlink.symlink_to(old_wrapper)
+    assert symlink.resolve() == old_wrapper.resolve()
+
+    refreshed = channel._auto_refresh_stale_symlink()
+    assert refreshed is not None
+    new_target = fake_plugin_root / "scripts" / "claude-channel.sh"
+    assert symlink.resolve() == new_target.resolve()
+
+
+def test_auto_refresh_leaves_external_symlink_alone(
+    fake_plugin_root: Path,
+    fake_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If symlink points OUTSIDE our plugin cache (user customization,
+    dev checkout, alternate install), don't touch it. The nag still fires
+    via _log_setup_nag for the user to investigate."""
+    monkeypatch.setattr(channel.Path, "home", lambda: tmp_path / "home")
+    # External target outside our cache
+    external = tmp_path / "elsewhere" / "claude-channel-custom.sh"
+    external.parent.mkdir(parents=True)
+    external.write_text("#!/bin/sh\necho custom\n")
+    external.chmod(0o755)
+
+    symlink = fake_home / "bin" / "claude-channel"
+    symlink.parent.mkdir(parents=True, exist_ok=True)
+    symlink.symlink_to(external)
+
+    result = channel._auto_refresh_stale_symlink()
+    assert result is None
+    # Symlink unchanged
+    assert symlink.resolve() == external.resolve()
+
+
+def test_auto_refresh_leaves_non_symlink_alone(
+    fake_plugin_root: Path,  # noqa: ARG001
+    fake_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If something is at ~/bin/claude-channel but isn't a symlink (user
+    installed a real script there), leave it alone."""
+    monkeypatch.setattr(channel.Path, "home", lambda: fake_home)
+    bin_dir = fake_home / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    real_file = bin_dir / "claude-channel"
+    real_file.write_text("#!/bin/sh\necho real_script\n")
+    real_file.chmod(0o755)
+    assert not real_file.is_symlink()
+
+    result = channel._auto_refresh_stale_symlink()
+    assert result is None
+    # Still a real file, not a symlink
+    assert not real_file.is_symlink()
+    assert real_file.read_text() == "#!/bin/sh\necho real_script\n"
+
+
+def test_log_setup_nag_auto_refreshes_and_logs_info(
+    fake_plugin_root: Path,
+    fake_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """End-to-end: stale symlink into our cache → nag auto-refreshes +
+    logs INFO; the WARNING about stale symlink does NOT fire afterward
+    (state becomes 'current')."""
+    cache_marker = tmp_path / "home" / ".claude/plugins/cache/infiquetra-plugins/redis-channel"
+    old_version_dir = cache_marker / "0.4.5" / "scripts"
+    old_version_dir.mkdir(parents=True)
+    old_wrapper = old_version_dir / "claude-channel.sh"
+    old_wrapper.write_text("#!/bin/sh\necho old\n")
+    old_wrapper.chmod(0o755)
+    monkeypatch.setattr(channel.Path, "home", lambda: tmp_path / "home")
+
+    symlink = fake_home / "bin" / "claude-channel"
+    symlink.parent.mkdir(parents=True, exist_ok=True)
+    symlink.symlink_to(old_wrapper)
+
+    # Also scaffold configs so source-env.sh + registry.json are present,
+    # leaving symlink staleness as the ONLY issue.
+    channel._do_setup(link_wrapper=False, scaffold_configs=True)
+
+    with caplog.at_level("INFO", logger="redis_channel.channel"):
+        channel._log_setup_nag()
+
+    # Auto-refresh fired
+    assert any("auto-refreshed" in r.message for r in caplog.records)
+    # No "setup is incomplete" warning (state was fixed in-place)
+    assert not any(
+        "setup is incomplete" in r.message for r in caplog.records
+    )
+
+
+# ─── Phase 6: /redis-channel-configure ─────────────────────────────────────
+
+
+def test_configure_creates_fresh_registry(
+    fake_home: Path,  # noqa: ARG001
+) -> None:
+    """Fresh: no existing registry.json → create it with the new endpoint."""
+    result = channel._configure_endpoint(
+        endpoint_name="default",
+        redis_url="redis://host.example.com:6379/0",
+        redis_password_env="MY_REDIS_PASSWORD",
+        display_name="Default endpoint",
+        set_default=True,
+    )
+    assert result["ok"] is True
+    assert result["action"] == "created"
+    assert result["endpoint_count"] == 1
+    assert result["default_endpoint"] == "default"
+    cfg_path = Path(result["written"])
+    assert cfg_path.exists()
+    data = json.loads(cfg_path.read_text())
+    assert "default" in data["endpoints"]
+    ep = data["endpoints"]["default"]
+    assert ep["redis_url"] == "redis://host.example.com:6379/0"
+    assert ep["redis_password_env"] == "MY_REDIS_PASSWORD"
+    assert ep["display_name"] == "Default endpoint"
+    assert data["defaults"]["default_endpoint"] == "default"
+
+
+def test_configure_adds_second_endpoint_preserves_first(
+    fake_home: Path,  # noqa: ARG001
+) -> None:
+    """Adding a second endpoint preserves the first + defaults."""
+    channel._configure_endpoint(
+        endpoint_name="prod",
+        redis_url="redis://prod:6379/0",
+        redis_password_env="PROD_PWD",
+        set_default=True,
+    )
+    result = channel._configure_endpoint(
+        endpoint_name="staging",
+        redis_url="redis://staging:6379/0",
+        redis_password_env="STAGING_PWD",
+    )
+    assert result["ok"] is True
+    assert result["action"] == "created"
+    assert result["endpoint_count"] == 2
+    # Default still 'prod'
+    assert result["default_endpoint"] == "prod"
+
+    data = json.loads(Path(result["written"]).read_text())
+    assert set(data["endpoints"]) == {"prod", "staging"}
+    assert data["endpoints"]["prod"]["redis_url"] == "redis://prod:6379/0"
+    assert data["endpoints"]["staging"]["redis_url"] == "redis://staging:6379/0"
+
+
+def test_configure_updates_existing_endpoint(
+    fake_home: Path,  # noqa: ARG001
+) -> None:
+    """Re-running configure for the same name overwrites + reports 'updated'."""
+    channel._configure_endpoint(
+        endpoint_name="default",
+        redis_url="redis://old:6379/0",
+        redis_password_env="OLD_PWD",
+    )
+    result = channel._configure_endpoint(
+        endpoint_name="default",
+        redis_url="redis://new:6379/0",
+        redis_password_env="NEW_PWD",
+        display_name="Renamed",
+    )
+    assert result["ok"] is True
+    assert result["action"] == "updated"
+    assert result["endpoint_count"] == 1
+    data = json.loads(Path(result["written"]).read_text())
+    assert data["endpoints"]["default"]["redis_url"] == "redis://new:6379/0"
+    assert data["endpoints"]["default"]["redis_password_env"] == "NEW_PWD"
+    assert data["endpoints"]["default"]["display_name"] == "Renamed"
+
+
+def test_configure_rejects_invalid_endpoint_name(
+    fake_home: Path,  # noqa: ARG001
+) -> None:
+    for bad in ["BadCaps", "-leading-dash", "spaces here", "", "_underscore_start"]:
+        result = channel._configure_endpoint(
+            endpoint_name=bad,
+            redis_url="redis://h:6379/0",
+        )
+        assert result["ok"] is False, bad
+        assert "invalid endpoint_name" in result["error"], bad
+
+
+def test_configure_rejects_invalid_redis_url(
+    fake_home: Path,  # noqa: ARG001
+) -> None:
+    for bad in ["http://h:6379", "h:6379/0", "", "ftp://h"]:
+        result = channel._configure_endpoint(
+            endpoint_name="x",
+            redis_url=bad,
+        )
+        assert result["ok"] is False, bad
+        assert "invalid redis_url" in result["error"], bad
+
+
+def test_configure_normalizes_empty_password_env_to_none(
+    fake_home: Path,  # noqa: ARG001
+) -> None:
+    """Empty string redis_password_env → omitted from the written entry."""
+    result = channel._configure_endpoint(
+        endpoint_name="noauth",
+        redis_url="redis://h:6379/0",
+        redis_password_env="   ",  # whitespace
+    )
+    assert result["ok"] is True
+    data = json.loads(Path(result["written"]).read_text())
+    assert "redis_password_env" not in data["endpoints"]["noauth"]
+
+
+def test_configure_atomic_write_doesnt_leave_tmp(
+    fake_home: Path,  # noqa: ARG001
+) -> None:
+    """No .tmp file should remain after a successful write."""
+    result = channel._configure_endpoint(
+        endpoint_name="x",
+        redis_url="redis://h:6379/0",
+    )
+    cfg_path = Path(result["written"])
+    tmp = cfg_path.with_suffix(".json.tmp")
+    assert not tmp.exists()
+
+
+def test_configure_rejects_malformed_existing_registry(
+    fake_home: Path,  # noqa: ARG001
+) -> None:
+    """If existing registry.json is not valid JSON, surface a parse error +
+    don't clobber it."""
+    cfg_path = channel.CHANNEL_CONFIG_DIR / "registry.json"
+    channel.CHANNEL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text("{ this is not json")
+    before = cfg_path.read_text()
+
+    result = channel._configure_endpoint(
+        endpoint_name="x",
+        redis_url="redis://h:6379/0",
+    )
+    assert result["ok"] is False
+    assert "parse error" in result["error"]
+    # Original content untouched
+    assert cfg_path.read_text() == before

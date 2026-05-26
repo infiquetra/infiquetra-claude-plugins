@@ -431,11 +431,18 @@ def build_app() -> FastMCP:
                 structuredContent=result,
                 isError=True,
             )
-        # Success: echo the actual sent text so the terminal renders it as
-        # the tool's natural result — closes the chat-loop visibility gap.
-        # Structured fields (msg_id, etc.) ride along for programmatic clients.
+        # Success: return ONLY structuredContent — no TextContent echo. The
+        # v0.4.4 echo was intended to make the terminal render the sent text,
+        # but Claude Code does not render MCP TextContent as chat output
+        # (debug log: "Tool ... not found in render-time tools"). Worse, the
+        # echo signals to Claude that the text was "already delivered as
+        # user-visible content," which appears to suppress text_block emission
+        # alongside the tool call — leaving only "Called plugin:..." in the
+        # terminal. Removing the echo eliminates that false signal; the
+        # text_block in Claude's assistant turn is now the only path to making
+        # the answer visible locally.
         return CallToolResult(
-            content=[TextContent(type="text", text=text)],
+            content=[],
             structuredContent=result,
             isError=False,
         )

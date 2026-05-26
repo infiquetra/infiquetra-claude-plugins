@@ -7,6 +7,24 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — `claude-channel --bg` injects env via `--settings` so auto-connect fires in dispatched sessions (v0.4.17)
+
+Jeff tested v0.4.16's --bg path against a real backgrounded session, found that `/redis-channel-list` inside it reported "Not connected" — auto-connect didn't fire. Root cause: **background-dispatched claude sessions do not inherit env from the invoking shell**. claude --bg sends a spawn RPC to an agent dispatcher; the dispatched session starts with the dispatcher's env, not the wrapper's. So `CLAUDE_CHANNEL_AUTO_CONNECT=1` (set by the wrapper before exec) never reached the spawned MCP server.
+
+Verified by inspecting `~/bin/claude-codex`, which solves the same problem the same way: when --bg is detected, prepend `--settings '{"env":{...}}'` to claude's argv. claude reads the settings JSON and propagates the env entries into the dispatched session.
+
+**Fix in the wrapper:** when `--bg` / `--background` appears in pass-through args, the wrapper now builds a settings JSON containing the env vars the plugin needs and injects it as `--settings '{"env":{...}}'`. Vars injected:
+
+- `CLAUDE_CHANNEL_AUTO_CONNECT=1` (always — the gate that triggers auto-connect)
+- `CLAUDE_SESSION_NAME` (if `--session-name` was set)
+- `CLAUDE_CHANNEL_ENDPOINT` (if `--endpoint` was set)
+
+`HERMES_REDIS_PASSWORD` is NOT injected — it's per-deployment and handled by `~/.claude/channels/redis-channel/source-env.sh`, which the MCP launcher (`.mcp.json`) sources before starting each MCP server, including in dispatched bg sessions.
+
+If the user supplied their own `--settings` in passthru args (rare), the wrapper warns instead of double-injecting and reminds the user to put the env vars in their settings themselves. Matches the codex pattern (line 332-335 of `~/bin/claude-codex`).
+
+Manual smoke-tested: `--bg` alone → settings injected with the right env shape; no `--bg` → no injection (foreground inherits env normally); `--bg --settings <user>` → warn + leave their settings alone. 172 redis-channel tests pass; ruff clean.
+
 ### Changed — `claude-channel` is now a thin pass-through; `--bg` goes straight to claude (v0.4.16)
 
 Jeff caught that v0.4.15's tmux-based `--bg` was solving the wrong problem. **`claude --bg` is a real (if undocumented-in-help) claude flag** that spawns a native background agent, prints the agent ID + attach/logs/stop hints, and returns. Verified:

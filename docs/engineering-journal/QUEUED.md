@@ -41,6 +41,33 @@
 
 ## P2 — important
 
+### Phase 5 spawn primitive: tmux-wrapped foreground sessions (replaces `--bg` from current plan)  {#phase5-spawn-via-tmux}
+
+**Priority.** P2. Blocks Phase 5 implementation but Phase 5 hasn't started yet.
+
+**Effort.** ~Half-day. Add a `--tmux` mode (or equivalent) to `claude-channel` that runs `tmux new-session -d -s <session-name> 'claude-channel ...'` instead of execing claude directly. Update PROTOCOL.md launch contract. Update plan §5 to mandate this path.
+
+**Worth it when.** Starting Phase 5 implementation. Right now we don't need it because the foreground path works for testing; Phase 5's Mimir LLM tools are when we actually need programmatic spawn.
+
+**Context.**
+- Phase 2.5 PROTOCOL.md launch contract currently documents `claude-channel --bg ...` for Phase 5 consumers. That doesn't work today — see [[cc-channels-bg-not-supported]] for the empirical finding (channel notifications don't surface in bg-dispatched processes because `--dangerously-load-development-channels` isn't in Claude Code's bg-carry-through flag set).
+- tmux works: detached from user's terminal but foreground from claude's POV, gives a real PTY, has the dev flag in argv, channels work, can `tmux attach -t <name>` for inspection, can `tmux kill-session -t <name>` for cleanup.
+- My v0.4.15 work (PR #148, later removed in v0.4.16 PR #149) had the right architecture, wrong reasoning. The actual reason tmux helps is keeping claude foreground from Claude Code's POV, not PTY allocation per se.
+- When `--channels` graduates from research preview + Anthropic adds it to the carry-through flag set: revisit and possibly switch back to native `--bg`.
+
+### Channels in bg sessions: file feature request with Anthropic  {#channels-in-bg-feature-request}
+
+**Priority.** P2. Long-term cleanup; tmux workaround is fine for now.
+
+**Effort.** ~1 hour. Write a clear issue/discussion against the Claude Code repo or research-preview channel-of-record.
+
+**Worth it when.** Phase 5 has shipped with the tmux workaround and we've used it for a month. By then we'll know: how often the tmux dependency is annoying, what UX wishes the workaround papers over, whether Anthropic's docs on channels-in-bg have changed.
+
+**Context.**
+- Carry-through flags doc'd in agent-view: `--mcp-config`, `--strict-mcp-config`, `--settings`, `--add-dir`, `--plugin-dir`, `--fallback-model`, `/add-dir`-added dirs. Notably excludes `--dangerously-load-development-channels` and `--channels`.
+- The MCP server's `claude/channel` capability declaration IS sufficient for the server side; the gap is purely on the client (claude process) side — it needs the explicit opt-in flag.
+- Possible fix Anthropic could make: add `--channels` (and dev variant) to the carry-through set, OR add a `~/.claude/settings.json` key like `defaultChannels: ["plugin:redis-channel"]` that bg sessions read at startup.
+
 ### Discord button approval for permissions (redis-channel v2)  {#discord-button-approval}
 
 **Priority.** P2.

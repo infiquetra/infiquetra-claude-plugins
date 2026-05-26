@@ -193,11 +193,28 @@ def is_live(client: RedisLike, session_name: str) -> bool:
     return bool(client.exists(hb_key(session_name)))
 
 
+def session_stream_keys(session_name: str) -> list[str]:
+    """All session-scoped key names belonging to one session.
+
+    Currently: inbound stream + outbound stream + hb key. Single source of
+    truth for what gets deleted in graceful disconnect and stale-entry GC.
+    The channel-events pub/sub doesn't persist a key (publishes are
+    ephemeral), so it's not included.
+    """
+    return [
+        f"cc-sessions:{session_name}:inbound",
+        f"cc-sessions:{session_name}:outbound",
+        hb_key(session_name),
+    ]
+
+
 def list_live_sessions(client: RedisLike, *, gc_stale: bool = False) -> dict[str, SessionMetadata]:
     """Return live sessions from the registry, filtered by hb key existence.
 
-    With `gc_stale=True`, also HDEL any registry entries whose hb key has
-    expired. Returned dict is keyed by session_name.
+    With `gc_stale=True`, also HDEL the registry entries whose hb key has
+    expired AND DEL their per-session streams (so abandoned sessions don't
+    accumulate stream keys in Redis forever). Returned dict is keyed by
+    session_name.
     """
     raw = client.hgetall(REGISTRY_KEY)
     live: dict[str, SessionMetadata] = {}
@@ -215,7 +232,21 @@ def list_live_sessions(client: RedisLike, *, gc_stale: bool = False) -> dict[str
             stale.append(name)
     if gc_stale and stale:
         client.hdel(REGISTRY_KEY, *stale)
-        log.info("GC'd %d stale registry entries: %s", len(stale), stale)
+        # Also DEL the per-session streams. These don't auto-expire, so
+        # without this cleanup the registry HDEL would succeed but
+        # `cc-sessions:<n>:{inbound,outbound}` would accumulate one pair
+        # per ever-disconnected session.
+        stream_keys: list[str] = []
+        for name in stale:
+            stream_keys.extend(session_stream_keys(name))
+        if stream_keys:
+            client.delete(*stream_keys)
+        log.info(
+            "GC'd %d stale registry entries (+ %d stream keys): %s",
+            len(stale),
+            len(stream_keys),
+            stale,
+        )
     return live
 
 
@@ -281,7 +312,14 @@ class Presence:
         )
 
     def stop(self, *, reason: str = "graceful") -> None:
-        """Stop heartbeat, unregister, and publish lifecycle event."""
+        """Stop heartbeat, unregister, and publish lifecycle event.
+
+        Graceful disconnect intent: the session is done, so we also DEL the
+        per-session inbound/outbound stream keys (alongside the existing
+        registry HDEL + hb DEL). Without this, every disconnected session
+        leaks an orphan stream pair in Redis. Stream deletion is best-effort
+        and swallowed.
+        """
         if not self._started:
             return
         self._stop_event.set()
@@ -290,7 +328,7 @@ class Presence:
             self._thread = None
         # Best-effort cleanup; swallow errors so __exit__ never raises.
         try:
-            self._client.delete(hb_key(self.session_name))
+            self._client.delete(*session_stream_keys(self.session_name))
             self._client.hdel(REGISTRY_KEY, self.session_name)
             self._publish_lifecycle("unregistered", extra={"reason": reason})
         except Exception:  # noqa: BLE001

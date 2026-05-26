@@ -17,15 +17,30 @@ It is **not** a Discord bot. It does not touch Discord, voice-channel audio, STT
 
 ## Status
 
-**Phase 2 complete.** Presence + heartbeat (P1) plus inbound consumer + `reply` MCP tool (P2). Channel notifications surface as `notifications/claude/channel` events with the full Inbound payload; replies XADD onto the outbound stream with router-correlation IDs and an `in_reply_to` field for threading. Voice routing (P3), permission relay + AskUserQuestion interception (P4), and hybrid LLM-tool intelligence (P5) still to come — each requires matching router-side implementation. Roadmap: `/Users/jefcox/.claude/plans/i-would-like-to-distributed-hanrahan.md`.
+**CC-plugin side complete (foreground end-to-end verified).** Phases shipped:
+- **P1** — presence registry + heartbeat (`/redis-channel-list`, 60s hb TTL).
+- **P2** — inbound XREADGROUP → `notifications/claude/channel` → `reply` tool → outbound XADD round-trip.
+- **P2.5** — env-var-driven auto-connect (`CLAUDE_CHANNEL_AUTO_CONNECT=1`), `claude-channel` wrapper, `/redis-channel-setup` first-run helper, `/redis-channel-status` probe, self-refreshing wrapper symlink on plugin updates.
+- **P6** — `/redis-channel-configure` interactive endpoint setup, this README, [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+**Router-side phases** (voice routing, permission relay, hybrid LLM tools, etc.) live in the router repo ([`hermes-claude-code-router`](https://github.com/infiquetra/hermes-claude-code-router)) — they don't change this plugin. The CC-plugin side is feature-complete for what a router needs to drive it.
+
+**Known limitation** — `/redis-channel-connect` works in **foreground** claude sessions. Background-dispatched sessions (`claude --bg`, `/bg`) silently drop channel notifications because Claude Code's bg-carry-through flag set excludes `--dangerously-load-development-channels`. See [`docs/engineering-journal/LEARNINGS.md#cc-channels-bg-not-supported`](../../docs/engineering-journal/LEARNINGS.md#cc-channels-bg-not-supported) for the chase + the tmux-foreground workaround.
 
 ## Quickstart
 
-1. **Configure an endpoint.** Copy `docs/registry.example.json` to `~/.claude/channels/redis-channel/registry.json` and edit. At minimum set `redis_url` and `redis_password_env` (the name of the env var containing your Redis password — never embed the password in the file).
-2. **Make sure Python deps are available.** The plugin's MCP server (`python -m server`) needs `mcp` and `redis` on its Python path. `uv sync --extra dev` at the repo root covers it for development.
-3. **Connect from inside Claude Code.** Run `/redis-channel-connect` (uses the registry's `default_endpoint`, or `/redis-channel-connect <endpoint-name>` to pick a specific one). The session is registered with an auto-generated `<cwd-basename>-<8hex>` name, heartbeat starts.
-4. **Verify.** Run `/redis-channel-list` to see the registry. Start another CC session in a different repo and `/redis-channel-connect` it too; the list shows both.
-5. **Disconnect.** `/redis-channel-disconnect` gracefully unregisters. Killing the process is also safe — the heartbeat key expires within 60s and other sessions GC the entry the next time they `list`.
+1. **Install the plugin** via Claude Code's `/plugin` UI.
+2. **Run `/redis-channel-setup`** in a Claude Code session. This symlinks `~/bin/claude-channel` to the cached wrapper (refreshes on each plugin update) and scaffolds `~/.claude/channels/redis-channel/source-env.sh` + `registry.json` from the bundled examples (only if those user files don't already exist).
+3. **Edit `~/.claude/channels/redis-channel/source-env.sh`** to populate the env var named in your registry's `redis_password_env` field. Example for macOS keychain:
+   ```sh
+   export MY_REDIS_PASSWORD="$(security find-generic-password -s 'my-redis-keychain-item' -w)"
+   ```
+4. **Run `/redis-channel-configure`** to add your endpoint interactively (Redis URL, password env-var name, display name, set-as-default). Or edit `registry.json` directly.
+5. **Connect.** From inside Claude Code: `/redis-channel-connect` (uses the registry's `default_endpoint`, or `/redis-channel-connect <endpoint-name>` for a specific one). The session registers under an auto-generated `<cwd-basename>-<8hex>` name; heartbeat starts.
+
+   Or, for fresh sessions: launch via `claude-channel --session-name <name>` from a terminal. The wrapper sets `CLAUDE_CHANNEL_AUTO_CONNECT=1` so the plugin auto-connects at startup — no manual connect needed.
+6. **Verify.** `/redis-channel-list` shows the registry. `/redis-channel-status` reports the current session's state.
+7. **Disconnect.** `/redis-channel-disconnect` gracefully unregisters. Killing the process is also safe — the heartbeat key expires within 60s and other sessions GC the entry on the next `list`.
 
 ## Layout
 

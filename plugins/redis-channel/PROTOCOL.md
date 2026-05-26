@@ -245,6 +245,80 @@ Event types:
 
 Both sides subscribe to relevant channels. Pub/sub is at-most-once; do not rely on it for state — use streams for durable handoffs.
 
+## Programmatic session lifecycle (consumer-side)
+
+This section documents how an external router (or any tool, e.g. a CLI test harness, a future router LLM) can spawn, observe, and tear down redis-channel-attached Claude Code sessions on the local host. The CC plugin exposes this via the `claude-channel` shell wrapper (`plugins/redis-channel/scripts/claude-channel.sh`, symlinked into `~/bin/` by the install script).
+
+### Spawn a new session
+
+```
+claude-channel --bg --session-name <NAME> --cwd <ABS_PATH> --print-info -- <claude args...>
+```
+
+- `--session-name <NAME>` — required for programmatic use. Validated against `^[a-z0-9][a-z0-9_-]{0,63}$`.
+- `--cwd <ABS_PATH>` — sets the spawned session's working dir. Load-bearing: the auto-name and registry-recorded `cwd` field both derive from this.
+- `--bg` — detached launch. Wrapper exits immediately after spawn.
+- `--print-info` — wrapper emits one JSON line on stdout (background mode) with `{session_name, endpoint, log_path, pid, cwd, mode}`.
+
+The wrapper sets `CLAUDE_CHANNEL_AUTO_CONNECT=1`, so the spawned CC session auto-registers presence + creates the consumer group at startup. After parsing the JSON, the caller MUST poll `EXISTS cc-sessions:hb:<NAME>` with backoff (100ms) up to a 15s timeout before XADD'ing inbound. Once `hb` exists, the session is live; XADD-ed inbound will not be lost (the consumer group was created BEFORE presence published — XREADGROUP `>` picks up anything in the gap once the consumer thread starts on first MCP tool dispatch).
+
+### Verify session readiness
+
+The canonical readiness signal is `EXISTS cc-sessions:hb:<NAME>` returning 1. The MCP-side `redis_channel_status` tool also reports it, but external callers should use the Redis check directly — it's faster and doesn't require any MCP transport.
+
+### List live sessions
+
+```
+HGETALL cc-sessions:registry
+```
+
+For each `<NAME> -> <JSON>` pair, filter by `EXISTS cc-sessions:hb:<NAME>` to drop stale entries. See §Presence for full details.
+
+### Tear down a session
+
+```
+HGET cc-sessions:registry <NAME>  →  parse JSON  →  read `pid` and `host`
+```
+
+If `host != local hostname`: cross-host kill is **not supported in v1** — abort.
+
+If `host == local hostname`: **verify the PID still owns a CC process** before SIGTERM, to defend against PID reuse:
+
+```
+ps -p <pid> -o comm=
+# expect output containing "python3" or "server" — if neither, abort
+```
+
+Then:
+
+```
+kill <pid>             # SIGTERM; the CC plugin's signal handlers + atexit cleanly disconnect.
+# Optional: wait until cc-sessions:hb:<NAME> disappears (a few seconds typical).
+```
+
+If the CC process died ungracefully (SIGKILL, crash), the registry entry persists until either (a) the next `redis_channel_list` call's GC sweep removes it, or (b) the next `list_live_sessions(gc_stale=True)` from a different live session removes it. The `hb:<NAME>` key expires within the TTL window (60s default).
+
+### Collision handling
+
+If a wrapper is invoked with `--session-name <NAME>` where `cc-sessions:hb:<NAME>` already exists, the new CC session's `connect` logic replaces the existing session (the older one is disconnected). Programmatic callers should `EXISTS hb:<NAME>` BEFORE spawn to avoid surprise kicks; expose a `force=True` opt-in to bypass.
+
+### Environment variables the wrapper sets
+
+The wrapper exports the following into the spawned CC's environment before exec:
+
+| Var | Effect |
+|---|---|
+| `CLAUDE_SESSION_NAME` | (if `--session-name` given) override auto-name |
+| `CLAUDE_CHANNEL_ENDPOINT` | (if `--endpoint` given) pick a specific configured endpoint |
+| `CLAUDE_CHANNEL_AUTO_CONNECT=1` | always set; gates the plugin's auto-connect at MCP startup |
+| `HERMES_REDIS_PASSWORD` | (best-effort, macOS only) sourced from keychain item `hermes-redis-password` if not already in env. Backward-compat for the original dev setup; future deployments should rely on `~/.claude/channels/redis-channel/source-env.sh` instead. |
+
+### Soft requirements + assumptions
+
+- The wrapper requires `claude` in `PATH` or `CLAUDE_BIN` env override.
+- The `--dangerously-load-development-channels` flag is prepended by default (development preview); set `CLAUDE_CHANNEL_PRODUCTION=1` to omit when channels graduate from research preview.
+- Background-mode logs go to `${XDG_CACHE_HOME:-$HOME/.cache}/claude-channel/sessions/<name>-<epoch>.log`. No rotation in v1 — sweep is the user's problem (Phase 6 polish candidate).
+
 ## Versioning and compatibility
 
 - All payloads carry `v: 1`.

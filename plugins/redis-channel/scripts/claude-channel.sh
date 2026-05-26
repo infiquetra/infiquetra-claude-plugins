@@ -61,9 +61,11 @@ Options:
   --endpoint NAME        Router endpoint name. Exports CLAUDE_CHANNEL_ENDPOINT.
                          If omitted, plugin resolves to registry's
                          default_endpoint.
-  --bg, --background     Detached launch. stdout+stderr go to log file under
-                         ~/.cache/claude-channel/sessions/. Wrapper exits
-                         after spawn.
+  --bg, --background     Detached launch via tmux (claude needs a real PTY;
+                         plain nohup doesn't work). Log mirrors at
+                         ~/.cache/claude-channel/sessions/<name>-<epoch>.log.
+                         Attach later with: tmux attach -t <name>.
+                         Requires tmux installed.
   --cwd PATH             cd to PATH before exec/spawn. Load-bearing for
                          programmatic callers (auto-naming uses cwd).
   --print-info           Emit JSON {session_name, endpoint, log_path, pid,
@@ -225,22 +227,55 @@ if [ "$BACKGROUND" -eq 1 ]; then
     NAME_FOR_LOG="${SESSION_NAME:-auto-$(date +%s)}"
     LOG_PATH="${CACHE_DIR}/${NAME_FOR_LOG}-$(date +%s).log"
 
-    # POSIX-portable detach (no setsid on macOS): subshell + nohup + redirect
-    # + disown. Subshell isolates from parent process group.
-    (
-        nohup "$CLAUDE_BIN" "${CLAUDE_ARGS[@]}" >"$LOG_PATH" 2>&1 </dev/null &
-        echo $! >"${LOG_PATH}.pid"
-        disown
-    )
-    # Read the PID we just wrote.
-    sleep 0.1
-    PID=$(cat "${LOG_PATH}.pid" 2>/dev/null || echo 0)
-    rm -f "${LOG_PATH}.pid"
+    # Claude requires a TTY on stdout — without one it auto-falls into --print
+    # mode and expects a prompt argument, then exits immediately. Plain
+    # `nohup ... > log 2>&1 &` reproduces this failure ("Input must be
+    # provided either through stdin or as a prompt argument when using
+    # --print"). Solution: spawn claude inside a detached tmux session
+    # which provides a real PTY. Bonuses: the user can `tmux attach -t
+    # <name>` later to inspect the live session, and the tmux session name
+    # naturally maps to the redis-channel session name. Trade-off: requires
+    # tmux installed.
+    if ! command -v tmux >/dev/null 2>&1; then
+        die "background mode requires tmux (install via 'brew install tmux' on macOS or your package manager on Linux)" 4
+    fi
+
+    # tmux session name must be unique among live tmux sessions; suffix with
+    # epoch to allow re-spawn after a previous session ends (or use a stable
+    # name if the caller supplied --session-name and there's no collision).
+    TMUX_SESSION="$NAME_FOR_LOG"
+    if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+        TMUX_SESSION="${TMUX_SESSION}-$(date +%s)"
+    fi
+
+    # Build a single-string command for tmux to run. Quote each arg so spaces
+    # / special chars survive the shell that tmux invokes.
+    quoted=""
+    for arg in "$CLAUDE_BIN" "${CLAUDE_ARGS[@]}"; do
+        printf -v escaped '%q' "$arg"
+        quoted+="$escaped "
+    done
+
+    # Start the detached tmux session.
+    if ! tmux new-session -d -s "$TMUX_SESSION" "$quoted" 2>>"$LOG_PATH"; then
+        die "tmux new-session failed (see $LOG_PATH)" 4
+    fi
+
+    # Mirror the pane's output to the log file so the user can `tail -f` it
+    # without needing to attach. `-o` only opens; pane output is duplicated
+    # to the pipe target. `cat` keeps the log file open for appending.
+    tmux pipe-pane -t "$TMUX_SESSION" -o "cat >> '$LOG_PATH'" 2>/dev/null || true
+
+    # Capture the pane's process PID (claude's PID, as a child of tmux's shell).
+    PID=$(tmux list-panes -t "$TMUX_SESSION" -F '#{pane_pid}' 2>/dev/null | head -1)
+    PID=${PID:-0}
 
     if [ "$PRINT_INFO" -eq 1 ]; then
         emit_info "background" "$PID" "$LOG_PATH"
     else
-        printf 'claude-channel: spawned pid=%s log=%s\n' "$PID" "$LOG_PATH"
+        printf 'claude-channel: spawned tmux session=%s pid=%s log=%s\n' \
+            "$TMUX_SESSION" "$PID" "$LOG_PATH"
+        printf '  attach with: tmux attach -t %s\n' "$TMUX_SESSION"
     fi
     exit 0
 else

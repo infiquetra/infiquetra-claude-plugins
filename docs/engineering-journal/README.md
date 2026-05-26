@@ -30,6 +30,8 @@ Each of the four core files has a block-quote intro at the top with its own form
 
 ## Quick navigation by topic
 
+- Claude Code Channels split terminal/channel surfaces by design (don't try to mirror) → [LEARNINGS](LEARNINGS.md#cc-channels-surface-split)
+- Plugin runtime coaching belongs in MCP `instructions=`, NOT `agents/*.md` → [LEARNINGS](LEARNINGS.md#cc-channels-surface-split)
 - Marketplace registry drift (PRs #110/#111 missed registration) → [LEARNINGS](LEARNINGS.md#marketplace-drift)
 - `marketplace.json` `Edit` requires `]` in `old_string` → [LEARNINGS](LEARNINGS.md#marketplace-edit-guard)
 - Gitignore `.claude/` and skip `uv.lock` → [DECISIONS](DECISIONS.md#gitignore-claude-and-no-uv-lock)

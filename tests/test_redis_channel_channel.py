@@ -722,3 +722,192 @@ def test_status_after_startup_register_consumer_not_attached(
         assert s["session_name"] == out["session_name"]
     finally:
         patched_state.disconnect()
+
+
+# ─── Phase 2.5 follow-up: /redis-channel-setup ──────────────────────────────
+
+
+@pytest.fixture
+def fake_plugin_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Build a fake plugin install layout in tmp_path with the scripts +
+    docs files the setup tool reads from."""
+    plugin = tmp_path / "plugin"
+    (plugin / "scripts").mkdir(parents=True)
+    (plugin / "docs").mkdir(parents=True)
+    wrapper = plugin / "scripts" / "claude-channel.sh"
+    wrapper.write_text("#!/bin/sh\necho fake\n")
+    wrapper.chmod(0o755)
+    (plugin / "docs" / "source-env.example.sh").write_text(
+        "#!/bin/sh\nexport FOO=bar\n"
+    )
+    (plugin / "docs" / "registry.example.json").write_text(
+        '{"endpoints":{}}\n'
+    )
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin))
+    return plugin
+
+
+@pytest.fixture
+def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirect HOME-relative paths used by setup to a temp dir so tests
+    don't touch the user's real ~/bin or ~/.claude."""
+    home = tmp_path / "home"
+    home.mkdir()
+    bin_dir = home / "bin"
+    cfg_dir = home / ".claude" / "channels" / "redis-channel"
+    monkeypatch.setattr(channel, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(channel, "WRAPPER_SYMLINK", bin_dir / "claude-channel")
+    monkeypatch.setattr(channel, "CHANNEL_CONFIG_DIR", cfg_dir)
+    return home
+
+
+def test_setup_fresh_creates_symlink_and_configs(
+    fake_plugin_root: Path, fake_home: Path
+) -> None:
+    """First-time setup: symlink absent, configs absent → both created."""
+    result = channel._do_setup(link_wrapper=True, scaffold_configs=True)
+    assert result["ok"] is True
+
+    symlink = fake_home / "bin" / "claude-channel"
+    assert symlink.is_symlink()
+    assert symlink.resolve() == (fake_plugin_root / "scripts" / "claude-channel.sh").resolve()
+
+    cfg = fake_home / ".claude" / "channels" / "redis-channel"
+    assert (cfg / "source-env.sh").exists()
+    assert (cfg / "registry.json").exists()
+
+    # State should now report all_ready
+    assert result["state"]["all_ready"] is True
+
+    statuses = [a["status"] for a in result["actions"]]
+    assert "linked" in statuses
+    assert statuses.count("created_from_example") == 2
+
+
+def test_setup_preserves_existing_user_config(
+    fake_plugin_root: Path, fake_home: Path
+) -> None:
+    """Re-running setup must NOT overwrite an existing source-env.sh / registry."""
+    cfg = fake_home / ".claude" / "channels" / "redis-channel"
+    cfg.mkdir(parents=True)
+    user_source = cfg / "source-env.sh"
+    user_source.write_text("#!/bin/sh\n# user-customized\nexport MY_PWD=secret\n")
+    user_registry = cfg / "registry.json"
+    user_registry.write_text('{"endpoints":{"my":{"redis_url":"redis://r"}}}\n')
+    user_source_content = user_source.read_text()
+    user_registry_content = user_registry.read_text()
+
+    result = channel._do_setup(link_wrapper=True, scaffold_configs=True)
+
+    # User content untouched
+    assert user_source.read_text() == user_source_content
+    assert user_registry.read_text() == user_registry_content
+
+    # Reported as exists (not overwritten)
+    config_actions = [
+        a for a in result["actions"] if "source-env" in a.get("target", "")
+        or "registry" in a.get("target", "")
+    ]
+    for a in config_actions:
+        assert a["status"] == "exists"
+
+
+def test_setup_refreshes_stale_symlink(
+    fake_plugin_root: Path, fake_home: Path, tmp_path: Path
+) -> None:
+    """If ~/bin/claude-channel points at an old cached version, setup
+    overwrites it to point at the current plugin root."""
+    symlink = fake_home / "bin" / "claude-channel"
+    symlink.parent.mkdir(parents=True)
+    stale_target = tmp_path / "old-cache" / "claude-channel.sh"
+    stale_target.parent.mkdir(parents=True)
+    stale_target.write_text("#!/bin/sh\necho stale\n")
+    stale_target.chmod(0o755)
+    symlink.symlink_to(stale_target)
+    assert symlink.resolve() == stale_target.resolve()
+
+    channel._do_setup(link_wrapper=True, scaffold_configs=False)
+
+    # Symlink now points at the current plugin's wrapper
+    assert symlink.is_symlink()
+    assert symlink.resolve() == (fake_plugin_root / "scripts" / "claude-channel.sh").resolve()
+
+
+def test_check_setup_reports_all_ready_only_when_complete(
+    fake_plugin_root: Path, fake_home: Path
+) -> None:
+    """Sanity-check the state report drives the startup nag correctly."""
+    # Nothing set up yet
+    state = channel._check_setup()
+    assert state["all_ready"] is False
+    assert state["wrapper_symlink_status"] == "missing"
+
+    # After full setup
+    channel._do_setup(link_wrapper=True, scaffold_configs=True)
+    state = channel._check_setup()
+    assert state["all_ready"] is True
+    assert state["wrapper_symlink_status"] == "current"
+    assert state["source_env_exists"] is True
+    assert state["registry_exists"] is True
+
+
+def test_setup_skips_link_when_wrapper_not_in_plugin_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defensive: if CLAUDE_PLUGIN_ROOT points somewhere with no
+    scripts/claude-channel.sh, the link action is skipped with a clear reason
+    (don't link to a broken target)."""
+    bogus_root = tmp_path / "bogus"
+    bogus_root.mkdir()
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(bogus_root))
+    bin_dir = tmp_path / "bin"
+    monkeypatch.setattr(channel, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(channel, "WRAPPER_SYMLINK", bin_dir / "claude-channel")
+
+    result = channel._do_setup(link_wrapper=True, scaffold_configs=False)
+    link_actions = [
+        a for a in result["actions"] if "claude-channel" in a.get("target", "")
+    ]
+    assert len(link_actions) == 1
+    assert link_actions[0]["status"] == "skipped"
+    assert (bin_dir / "claude-channel").is_symlink() is False
+
+
+def test_setup_nag_logs_when_state_incomplete(
+    fake_home: Path,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_log_setup_nag emits a WARNING when setup is incomplete."""
+    # No plugin root, no symlink, no configs
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    monkeypatch.setattr(
+        channel, "_check_setup", lambda: {
+            "all_ready": False,
+            "wrapper_symlink_status": "missing",
+            "wrapper_symlink_expected_target": "/x",
+            "source_env_path": "/y",
+            "source_env_exists": False,
+            "registry_path": "/z",
+            "registry_exists": False,
+        }
+    )
+    with caplog.at_level("WARNING", logger="redis_channel.channel"):
+        channel._log_setup_nag()
+    assert any(
+        "/redis-channel-setup" in r.message for r in caplog.records
+    )
+
+
+def test_setup_nag_silent_when_state_ready(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """_log_setup_nag stays quiet when everything is in order."""
+    monkeypatch.setattr(
+        channel, "_check_setup", lambda: {"all_ready": True}
+    )
+    with caplog.at_level("WARNING", logger="redis_channel.channel"):
+        channel._log_setup_nag()
+    assert not any(
+        "/redis-channel-setup" in r.message for r in caplog.records
+    )

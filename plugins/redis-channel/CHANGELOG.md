@@ -7,6 +7,32 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — `/redis-channel-setup` self-service install + MCP startup nag (v0.4.14)
+
+Jeff flagged that v0.4.13's `install-claude-channel.sh` requires the user to remember to run a shell script after every plugin update — bad UX. Claude Code plugins don't expose a `postinstall` hook (verified by surveying the official plugins; Discord uses skills for setup, no install lifecycle hook exists), so the best fix is a self-service slash command + a passive startup check that nags when state drifts out of date.
+
+**New `redis_channel_setup` MCP tool + `/redis-channel-setup` slash command.** Idempotent — safe to re-run after every plugin update. Two actions:
+
+1. Symlink `~/bin/claude-channel` to `$CLAUDE_PLUGIN_ROOT/scripts/claude-channel.sh` (always overwrites — that's how plugin-update tracking works).
+2. Scaffold `~/.claude/channels/redis-channel/source-env.sh` and `registry.json` from the bundled examples in `docs/` IF those user files don't already exist. **Never overwrites existing user config** — re-running on a configured deployment is a no-op for config files.
+
+Returns a per-action status report (`linked` / `created_from_example` / `exists` / `skipped` / `error`) so the slash command markdown can render which actions did what.
+
+**MCP startup nag.** New `_log_setup_nag()` runs once when the MCP server boots (after `_enable_channel_capability`, before `app.run()`). Checks whether the symlink is current, source-env.sh exists, registry.json exists. If anything's missing or stale, logs a single WARNING to stderr listing the issues and suggesting `/redis-channel-setup`. Passive — never blocks startup, never modifies anything, never fails.
+
+This means: after every plugin update, the first time the user reconnects MCP, they see a stderr nag like:
+
+```
+WARNING redis-channel setup is incomplete — run /redis-channel-setup.
+Issues: ~/bin/claude-channel: stale (expected target: .../0.4.14/scripts/claude-channel.sh)
+```
+
+They run `/redis-channel-setup` once, the symlink refreshes, the nag goes away on next startup. No more remembering to run install scripts manually.
+
+Tests: 7 new for setup (fresh install, preserve user config, refresh stale symlink, broken plugin root, state reporting, nag fires when incomplete, nag silent when ready); 172 redis-channel tests total; ruff clean.
+
+`install-claude-channel.sh` stays in the repo as a manual fallback for cold-install scenarios (e.g., bootstrapping before Claude itself can talk to the plugin), but the slash command is now the canonical path.
+
 ### Added — `claude-channel` wrapper + PROTOCOL.md programmatic-launch contract (v0.4.13)
 
 Third and final slice of Phase 2.5. Together with v0.4.11 (router-agnostic refactor + registry resolver) and v0.4.12 (env-var auto-connect + status command), this closes the loop on "redis-channel sessions startable from outside the terminal."

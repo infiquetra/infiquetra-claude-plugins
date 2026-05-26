@@ -7,6 +7,24 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — env-var-driven auto-connect + `/redis-channel-status` (v0.4.12)
+
+Second slice of Phase 2.5. Together with the v0.4.13 wrapper script (next), this makes redis-channel sessions startable from outside the terminal — needed for Phase 5 (Mimir spawning CC sessions on demand) but also a UX win for humans who don't want to type `/redis-channel-connect` on every session start.
+
+**Auto-connect at MCP server startup.** When the MCP server boots with `CLAUDE_CHANNEL_AUTO_CONNECT=1` in its environment, the server eagerly registers presence + creates the inbound consumer group, then defers starting the consumer thread until the first MCP tool dispatch (when a live MCP Context is available to build the AsyncNotifier from). Because the consumer group is created at `id="$"` BEFORE presence publishes, XREADGROUP `>` on first tool dispatch picks up every message XADD'd in the gap — no silent drop.
+
+- Gate is strict: only the literal value `"1"` enables. `"0"`, `"true"`, empty, unset — all off. Avoids accidental enable from a leaky shell env.
+- Endpoint resolution: `CLAUDE_CHANNEL_ENDPOINT` env var if set, else `registry.defaults.auto_connect_endpoint` (added in v0.4.11). Both unset → log warning + continue running so the user can still `/redis-channel-connect` manually.
+- Failure modes (registry missing, endpoint not configured, Redis unreachable) → log + continue. The MCP server never crashes on auto-connect failure.
+
+Refactored `ServerState.connect()` to share code with the new `startup_register()` / `ensure_consumer_attached()` pair: `connect()` now does eager-register + immediate consumer-attach in one call; `startup_register()` only does the eager part (the deferred path); existing `connect()` tests still pass unchanged.
+
+Tool handlers for `list`, `reply`, and the new `status` (below) gained a `ctx: Context | None = None` parameter and call `_STATE.ensure_consumer_attached(_build_async_notifier(ctx))` at entry — so the FIRST tool call after auto-connect lazily attaches the consumer thread + AsyncNotifier.
+
+**`/redis-channel-status` slash command.** New MCP tool `redis_channel_status` reports current session state: `{connected, session_name, endpoint, host, uptime_seconds, consumer_attached, pending_inbound}`. New `commands/redis-channel-status.md` formats the response for terminal users. Useful for humans asking "am I still connected?" and as a programmatic probe (though the canonical readiness signal for external callers stays the `cc-sessions:hb:<name>` Redis key check).
+
+Tests: 7 new for auto-connect paths (strict gate, env-vs-registry endpoint, failure modes); 3 new for status command. 165 redis-channel tests total, all pass; ruff clean.
+
 ### Changed — router-agnostic refactor + registry resolves default endpoint (v0.4.11)
 
 First slice of Phase 2.5 (the convenience + programmatic-launch foundation). Two coupled changes:

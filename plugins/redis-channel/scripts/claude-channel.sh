@@ -1,29 +1,34 @@
 #!/usr/bin/env bash
-# claude-channel — launch Claude Code with a redis-channel session configured.
+# claude-channel — launch claude with a redis-channel session pre-configured.
 #
-# Provides:
-#   - --session-name <name>  → exports CLAUDE_SESSION_NAME (validated)
-#   - --endpoint <name>      → exports CLAUDE_CHANNEL_ENDPOINT
-#   - --bg / --background    → detached launch with log file
-#   - --cwd <path>           → cd before exec (load-bearing for Phase 5)
-#   - --print-info           → emit JSON metadata for programmatic callers
-#   - --help                 → usage
+# Thin wrapper around `claude`. Sets env vars + dev flags the plugin needs,
+# then exec's claude. All standard claude flags (--bg, --print, --resume,
+# --model, --remote-control, --worktree, etc.) pass straight through.
+#
+# Wrapper-owned flags:
+#   --session-name NAME   exports CLAUDE_SESSION_NAME (regex-validated)
+#   --endpoint NAME       exports CLAUDE_CHANNEL_ENDPOINT
+#   --cwd PATH            cd before exec (load-bearing for auto-naming
+#                         and Phase 5 programmatic spawn)
+#   --help                show this help and exit
 #
 # Env knobs:
-#   CLAUDE_BIN                Override claude binary path. Default: `command -v claude`.
-#   CLAUDE_CHANNEL_PRODUCTION If "1", omit dev-only --dangerously-* flags.
-#   CLAUDE_CHANNEL_PLUGIN_REF Override plugin ref for --dangerously-load-development-channels.
-#                             Default: plugin:redis-channel@infiquetra-plugins.
+#   CLAUDE_BIN                  override claude binary path
+#   CLAUDE_CHANNEL_PRODUCTION   if "1", omit --dangerously-* dev flags
+#   CLAUDE_CHANNEL_PLUGIN_REF   override plugin ref for the dev-channel loader
 #
-# Designed for both human terminal use AND programmatic invocation by routers
-# (e.g., Phase 5's hermes-claude-code-router LLM tool that spawns CC sessions
-# on demand).
+# Backgrounding is claude's job: pass `--bg` to claude-channel and it goes
+# straight to claude, which spawns a background agent and prints the agent
+# ID + attach/logs/stop commands. Use `claude agents` to list and
+# `claude attach <id>` to attach. The redis-channel session presence
+# registry (cc-sessions:registry + hb keys) is the canonical discovery
+# mechanism for external consumers (Phase 5+).
 #
 # Exit codes:
-#   0  success (foreground: claude's exit code; background: spawned cleanly)
-#   2  invalid argument (e.g., bad session-name regex)
+#   0  success (claude's exit code in foreground; claude --bg returns 0)
+#   2  invalid wrapper argument (e.g., bad --session-name regex)
 #   3  claude binary not found
-#   4  internal error (mkdir failed, etc.)
+#   4  internal error (cd failed, etc.)
 
 set -uo pipefail
 
@@ -31,66 +36,59 @@ set -uo pipefail
 
 SESSION_NAME=""
 ENDPOINT=""
-BACKGROUND=0
 CWD=""
-PRINT_INFO=0
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || true)}"
 PLUGIN_REF="${CLAUDE_CHANNEL_PLUGIN_REF:-plugin:redis-channel@infiquetra-plugins}"
 PRODUCTION="${CLAUDE_CHANNEL_PRODUCTION:-0}"
 
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/claude-channel/sessions"
-
 # Session-name regex matches session_id.py:_NAME_RE.
 SESSION_NAME_RE='^[a-z0-9][a-z0-9_-]{0,63}$'
 
-# Collect pass-through args after --.
+# Everything we don't claim passes through to claude.
 PASSTHRU_ARGS=()
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 usage() {
     cat <<'EOF'
-Usage: claude-channel [OPTIONS] [-- <claude args>]
+Usage: claude-channel [WRAPPER OPTS] [CLAUDE OPTS] [-- <claude args>]
 
-Launch Claude Code with a redis-channel session pre-configured.
+Launch claude with a redis-channel session pre-configured. Sets the env
+vars and dev flags the plugin needs, then exec's claude. Standard claude
+flags (--bg, --print, --resume, --model, --remote-control, etc.) pass
+straight through.
 
-Options:
+Wrapper options:
   --session-name NAME    Session name (regex: ^[a-z0-9][a-z0-9_-]{0,63}$).
                          Exports CLAUDE_SESSION_NAME. If omitted, the
                          plugin auto-generates <cwd-basename>-<8hex>.
   --endpoint NAME        Router endpoint name. Exports CLAUDE_CHANNEL_ENDPOINT.
                          If omitted, plugin resolves to registry's
                          default_endpoint.
-  --bg, --background     Detached launch via tmux (claude needs a real PTY;
-                         plain nohup doesn't work). Log mirrors at
-                         ~/.cache/claude-channel/sessions/<name>-<epoch>.log.
-                         Attach later with: tmux attach -t <name>.
-                         Requires tmux installed.
-  --cwd PATH             cd to PATH before exec/spawn. Load-bearing for
-                         programmatic callers (auto-naming uses cwd).
-  --print-info           Emit JSON {session_name, endpoint, log_path, pid,
-                         cwd, mode} for programmatic callers. Foreground
-                         prints to stderr; background prints to stdout.
+  --cwd PATH             cd to PATH before exec. Load-bearing for
+                         auto-naming and programmatic callers spawning
+                         in a target dir.
   --help                 Show this help and exit.
-  --                     Everything after is passed verbatim to claude.
+  --                     Everything after passes verbatim to claude.
 
 Env knobs:
   CLAUDE_BIN                Path to claude binary. Default: $(command -v claude).
   CLAUDE_CHANNEL_PRODUCTION If "1", omit dev-only --dangerously-* flags.
   CLAUDE_CHANNEL_PLUGIN_REF Override plugin ref for dev-channel loader.
 
-Examples:
-  # Foreground, auto-named session
-  claude-channel
+Backgrounding: use claude's native --bg flag (just pass it as a claude
+option). claude prints the background agent ID + attach/logs/stop
+commands. `claude agents` lists running sessions.
 
+Examples:
   # Foreground, named session
   claude-channel --session-name auth-feature
 
-  # Background launch with named session, print JSON metadata to stdout
-  claude-channel --bg --session-name auth-feature --cwd ~/work/myrepo --print-info
+  # Background, named, in a specific dir
+  claude-channel --session-name auth-feature --cwd ~/work/myrepo --bg
 
-  # Production mode (no dev-only flags)
-  CLAUDE_CHANNEL_PRODUCTION=1 claude-channel --endpoint mimir
+  # Production mode (no dev-only flags), one-shot prompt
+  CLAUDE_CHANNEL_PRODUCTION=1 claude-channel --print "what's the status?"
 EOF
 }
 
@@ -99,29 +97,22 @@ die() {
     exit "${2:-2}"
 }
 
-warn() {
-    printf 'claude-channel: warning: %s\n' "$*" >&2
-}
-
-# Pre-flight: claude binary present?
 require_claude_bin() {
     if [ -z "$CLAUDE_BIN" ] || [ ! -x "$CLAUDE_BIN" ]; then
         die "claude binary not found (set CLAUDE_BIN or put 'claude' in PATH)" 3
     fi
 }
 
-# Source HERMES_REDIS_PASSWORD (or whatever the deployment uses) from keychain
-# on macOS — best-effort. The actual env var name is per-deployment; the
-# plugin's source-env.sh handles it. But to keep this wrapper useful even when
-# the user hasn't set up source-env.sh, we offer a macOS-keychain fallback for
-# the common case (hermes-redis-password keychain item exporting
-# HERMES_REDIS_PASSWORD).
+# Source HERMES_REDIS_PASSWORD from macOS keychain if not already set.
+# Best-effort; the plugin's source-env.sh (sourced by .mcp.json) is the
+# primary mechanism, but this fallback covers wrapper-initiated launches
+# where the MCP server hasn't started yet.
 source_keychain_password() {
     if [ "$(uname)" != "Darwin" ]; then
         return 0
     fi
     if [ -n "${HERMES_REDIS_PASSWORD:-}" ]; then
-        return 0  # already set; respect caller
+        return 0
     fi
     if ! command -v security >/dev/null 2>&1; then
         return 0
@@ -147,30 +138,24 @@ while [ $# -gt 0 ]; do
             ENDPOINT="$2"; shift 2 ;;
         --endpoint=*)
             ENDPOINT="${1#*=}"; shift ;;
-        --bg|--background)
-            BACKGROUND=1; shift ;;
         --cwd)
             [ $# -ge 2 ] || die "--cwd requires a value"
             CWD="$2"; shift 2 ;;
         --cwd=*)
             CWD="${1#*=}"; shift ;;
-        --print-info)
-            PRINT_INFO=1; shift ;;
         --help|-h)
             usage; exit 0 ;;
         --)
             shift
             PASSTHRU_ARGS+=("$@")
             break ;;
-        --*)
-            # Unknown long flag → pass through to claude
-            PASSTHRU_ARGS+=("$1"); shift ;;
         *)
+            # Pass through everything we don't claim (flags AND positional).
             PASSTHRU_ARGS+=("$1"); shift ;;
     esac
 done
 
-# ─── Validation ─────────────────────────────────────────────────────────────
+# ─── Validation + env setup ─────────────────────────────────────────────────
 
 if [ -n "$SESSION_NAME" ]; then
     if ! [[ "$SESSION_NAME" =~ $SESSION_NAME_RE ]]; then
@@ -199,89 +184,4 @@ if [ "$PRODUCTION" != "1" ]; then
 fi
 CLAUDE_ARGS+=("${PASSTHRU_ARGS[@]}")
 
-# ─── JSON emit helper ───────────────────────────────────────────────────────
-
-emit_info() {
-    # $1 = mode ("foreground"|"background"), $2 = pid, $3 = log_path (may be empty)
-    local mode="$1"
-    local pid="$2"
-    local log_path="$3"
-    # Escape JSON strings minimally — values we control don't contain quotes
-    # or backslashes given the regex on SESSION_NAME and the safe values we
-    # accept for ENDPOINT/CWD. printf with %s is fine here.
-    local json
-    json=$(printf '{"session_name":"%s","endpoint":"%s","log_path":"%s","pid":%s,"cwd":"%s","mode":"%s"}' \
-        "${SESSION_NAME}" "${ENDPOINT}" "${log_path}" "${pid}" "$(pwd)" "${mode}")
-    if [ "$mode" = "foreground" ]; then
-        # Foreground: don't pollute claude's stdout. Send to stderr.
-        printf '%s\n' "$json" >&2
-    else
-        printf '%s\n' "$json"
-    fi
-}
-
-# ─── Launch ─────────────────────────────────────────────────────────────────
-
-if [ "$BACKGROUND" -eq 1 ]; then
-    mkdir -p "$CACHE_DIR" || die "mkdir -p '$CACHE_DIR' failed" 4
-    NAME_FOR_LOG="${SESSION_NAME:-auto-$(date +%s)}"
-    LOG_PATH="${CACHE_DIR}/${NAME_FOR_LOG}-$(date +%s).log"
-
-    # Claude requires a TTY on stdout — without one it auto-falls into --print
-    # mode and expects a prompt argument, then exits immediately. Plain
-    # `nohup ... > log 2>&1 &` reproduces this failure ("Input must be
-    # provided either through stdin or as a prompt argument when using
-    # --print"). Solution: spawn claude inside a detached tmux session
-    # which provides a real PTY. Bonuses: the user can `tmux attach -t
-    # <name>` later to inspect the live session, and the tmux session name
-    # naturally maps to the redis-channel session name. Trade-off: requires
-    # tmux installed.
-    if ! command -v tmux >/dev/null 2>&1; then
-        die "background mode requires tmux (install via 'brew install tmux' on macOS or your package manager on Linux)" 4
-    fi
-
-    # tmux session name must be unique among live tmux sessions; suffix with
-    # epoch to allow re-spawn after a previous session ends (or use a stable
-    # name if the caller supplied --session-name and there's no collision).
-    TMUX_SESSION="$NAME_FOR_LOG"
-    if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
-        TMUX_SESSION="${TMUX_SESSION}-$(date +%s)"
-    fi
-
-    # Build a single-string command for tmux to run. Quote each arg so spaces
-    # / special chars survive the shell that tmux invokes.
-    quoted=""
-    for arg in "$CLAUDE_BIN" "${CLAUDE_ARGS[@]}"; do
-        printf -v escaped '%q' "$arg"
-        quoted+="$escaped "
-    done
-
-    # Start the detached tmux session.
-    if ! tmux new-session -d -s "$TMUX_SESSION" "$quoted" 2>>"$LOG_PATH"; then
-        die "tmux new-session failed (see $LOG_PATH)" 4
-    fi
-
-    # Mirror the pane's output to the log file so the user can `tail -f` it
-    # without needing to attach. `-o` only opens; pane output is duplicated
-    # to the pipe target. `cat` keeps the log file open for appending.
-    tmux pipe-pane -t "$TMUX_SESSION" -o "cat >> '$LOG_PATH'" 2>/dev/null || true
-
-    # Capture the pane's process PID (claude's PID, as a child of tmux's shell).
-    PID=$(tmux list-panes -t "$TMUX_SESSION" -F '#{pane_pid}' 2>/dev/null | head -1)
-    PID=${PID:-0}
-
-    if [ "$PRINT_INFO" -eq 1 ]; then
-        emit_info "background" "$PID" "$LOG_PATH"
-    else
-        printf 'claude-channel: spawned tmux session=%s pid=%s log=%s\n' \
-            "$TMUX_SESSION" "$PID" "$LOG_PATH"
-        printf '  attach with: tmux attach -t %s\n' "$TMUX_SESSION"
-    fi
-    exit 0
-else
-    # Foreground: replace wrapper with claude. PID stays the same.
-    if [ "$PRINT_INFO" -eq 1 ]; then
-        emit_info "foreground" "$$" ""
-    fi
-    exec "$CLAUDE_BIN" "${CLAUDE_ARGS[@]}"
-fi
+exec "$CLAUDE_BIN" "${CLAUDE_ARGS[@]}"

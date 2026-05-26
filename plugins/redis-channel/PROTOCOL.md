@@ -252,15 +252,16 @@ This section documents how an external router (or any tool, e.g. a CLI test harn
 ### Spawn a new session
 
 ```
-claude-channel --bg --session-name <NAME> --cwd <ABS_PATH> --print-info -- <claude args...>
+claude-channel --session-name <NAME> --cwd <ABS_PATH> --bg
 ```
 
-- `--session-name <NAME>` — required for programmatic use. Validated against `^[a-z0-9][a-z0-9_-]{0,63}$`.
+- `--session-name <NAME>` — required for programmatic use. Validated against `^[a-z0-9][a-z0-9_-]{0,63}$`. Wrapper exports it as `CLAUDE_SESSION_NAME` for the plugin.
 - `--cwd <ABS_PATH>` — sets the spawned session's working dir. Load-bearing: the auto-name and registry-recorded `cwd` field both derive from this.
-- `--bg` — detached launch. Wrapper exits immediately after spawn.
-- `--print-info` — wrapper emits one JSON line on stdout (background mode) with `{session_name, endpoint, log_path, pid, cwd, mode}`.
+- `--bg` — claude's native background-agent flag. Passes through the wrapper to claude. Claude prints the agent ID + attach/logs/stop hints to stdout, then returns. The agent runs detached with a native PTY managed by claude.
 
-The wrapper sets `CLAUDE_CHANNEL_AUTO_CONNECT=1`, so the spawned CC session auto-registers presence + creates the consumer group at startup. After parsing the JSON, the caller MUST poll `EXISTS cc-sessions:hb:<NAME>` with backoff (100ms) up to a 15s timeout before XADD'ing inbound. Once `hb` exists, the session is live; XADD-ed inbound will not be lost (the consumer group was created BEFORE presence published — XREADGROUP `>` picks up anything in the gap once the consumer thread starts on first MCP tool dispatch).
+The wrapper sets `CLAUDE_CHANNEL_AUTO_CONNECT=1`, so the spawned CC session auto-registers presence + creates the inbound consumer group at startup. The caller MUST poll `EXISTS cc-sessions:hb:<NAME>` with backoff (100ms) up to a 15s timeout before XADD'ing inbound. Once `hb` exists, the session is live; XADD-ed inbound will not be lost (the consumer group was created BEFORE presence published — XREADGROUP `>` picks up anything in the gap once the consumer thread starts on first MCP tool dispatch).
+
+Discovering the spawned agent's claude-side ID (if needed): `claude agents --json` returns all live background sessions including the new one. For redis-channel purposes, `cc-sessions:registry`'s entry for `<NAME>` is the canonical source — it carries `pid`, `host`, `cwd`, `git_branch`, `started_at` — and is the only handle the protocol promises.
 
 ### Verify session readiness
 
@@ -275,6 +276,18 @@ HGETALL cc-sessions:registry
 For each `<NAME> -> <JSON>` pair, filter by `EXISTS cc-sessions:hb:<NAME>` to drop stale entries. See §Presence for full details.
 
 ### Tear down a session
+
+Two equivalent paths:
+
+**Via claude-native stop** (when claude knows the agent ID — i.e., the spawn captured it from claude's stdout):
+
+```
+claude stop <agent-id>
+```
+
+This is the cleanest path: claude's process manager handles the SIGTERM + cleanup, and the redis-channel plugin's signal handlers fire to disconnect cleanly.
+
+**Via redis-channel presence registry** (when only the redis-channel session name is known):
 
 ```
 HGET cc-sessions:registry <NAME>  →  parse JSON  →  read `pid` and `host`

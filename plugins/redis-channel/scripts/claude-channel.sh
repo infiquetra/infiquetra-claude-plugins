@@ -176,12 +176,55 @@ require_claude_bin
 source_keychain_password
 export CLAUDE_CHANNEL_AUTO_CONNECT=1
 
-# Compose claude argv: dev flags (unless production) + plugin-ref + passthru.
+# Detect --bg / --background in the passthru args. Background-dispatched
+# claude sessions do NOT inherit env from this wrapper's invocation —
+# they're spawned by claude's agent-dispatch IPC, which gives them a
+# fresh env. To get our env vars (CLAUDE_CHANNEL_AUTO_CONNECT etc.) into
+# the dispatched session, we must inject them via --settings JSON.
+# Pattern verified against ~/bin/claude-codex which uses the same
+# mechanism for proxy env vars.
+bg_mode=0
+has_user_settings=0
+for arg in "${PASSTHRU_ARGS[@]}"; do
+    case "$arg" in
+        --bg|--background) bg_mode=1 ;;
+        --settings|--settings=*) has_user_settings=1 ;;
+    esac
+done
+
+# Compose claude argv: dev flags (unless production) + --settings env
+# injection (if --bg) + passthru.
 CLAUDE_ARGS=()
 if [ "$PRODUCTION" != "1" ]; then
     CLAUDE_ARGS+=(--allow-dangerously-skip-permissions)
     CLAUDE_ARGS+=(--dangerously-load-development-channels "$PLUGIN_REF")
 fi
+
+if [ "$bg_mode" -eq 1 ]; then
+    if [ "$has_user_settings" -eq 1 ]; then
+        printf 'claude-channel: warning: --bg + user-supplied --settings detected. ' >&2
+        printf 'Make sure your settings include env: {CLAUDE_CHANNEL_AUTO_CONNECT="1"' >&2
+        if [ -n "$SESSION_NAME" ]; then
+            printf ', CLAUDE_SESSION_NAME="%s"' "$SESSION_NAME" >&2
+        fi
+        if [ -n "$ENDPOINT" ]; then
+            printf ', CLAUDE_CHANNEL_ENDPOINT="%s"' "$ENDPOINT" >&2
+        fi
+        printf '} so redis-channel auto-connect fires in the dispatched session.\n' >&2
+    else
+        # Build {"env":{...}} JSON. Values are regex-validated (session_name)
+        # or simple strings (endpoint); no JSON-escape needed for these.
+        env_entries='"CLAUDE_CHANNEL_AUTO_CONNECT":"1"'
+        if [ -n "$SESSION_NAME" ]; then
+            env_entries="${env_entries},\"CLAUDE_SESSION_NAME\":\"${SESSION_NAME}\""
+        fi
+        if [ -n "$ENDPOINT" ]; then
+            env_entries="${env_entries},\"CLAUDE_CHANNEL_ENDPOINT\":\"${ENDPOINT}\""
+        fi
+        CLAUDE_ARGS+=(--settings "{\"env\":{${env_entries}}}")
+    fi
+fi
+
 CLAUDE_ARGS+=("${PASSTHRU_ARGS[@]}")
 
 exec "$CLAUDE_BIN" "${CLAUDE_ARGS[@]}"

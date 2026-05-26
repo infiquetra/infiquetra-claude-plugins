@@ -42,9 +42,24 @@ The `text` argument is **the user-facing message body**, full stop. The recipien
 - Tool-call narration ("calling reply", "I responded with…", "Reply sent on the outbound stream…")
 - Internal reasoning or chain-of-thought
 - Terminal-only commentary
-- Status updates that the user already saw via the tool result
+- Status updates the developer already saw
 
-If you have something to say to the developer watching the terminal but NOT to the user on the channel side, just don't say it — the tool's natural echo of `text` is the only thing the terminal needs to render. (The `debug` flag on `/redis-channel-connect` is reserved for future opt-in dev verbosity but currently has no effect.)
+## How the back-and-forth renders in the terminal
+
+When a `<channel>` event arrives, the terminal shows the inbound tag automatically. The OUTBOUND side (your reply) does NOT auto-render from the tool result content — Claude Code's UI shows the tool was called, but doesn't surface its result body as chat content.
+
+To make the conversation look chat-like in the local terminal (closer to Remote Control's experience), **write the same answer in two places**:
+
+1. As your normal conversational reply in the terminal (the text that appears in your assistant turn).
+2. As the `text` argument to the `reply` tool.
+
+Both contain the **same words** — your single answer, rendered in both surfaces:
+- Terminal user sees it as your natural response.
+- Channel user (Discord/voice/etc.) sees/hears it via the reply XADD'd to the outbound stream.
+
+Do not write the same answer twice in different forms ("Replying to user: <text>" + the tool call). Just compose your one answer, type it as your terminal response, and call `reply(text=<that same answer>, chat_id=<from inbound>)`. Skip any "I responded with…" / "Sent reply…" narration entirely — the tool call + your one-time text in the terminal are enough.
+
+(The `debug` flag on `/redis-channel-connect` is reserved for future opt-in dev verbosity but currently has no effect.)
 
 ## Other rules
 

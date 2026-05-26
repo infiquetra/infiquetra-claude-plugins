@@ -7,6 +7,25 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — coach asks Claude to write the reply text twice: terminal + tool (v0.4.5)
+
+Live testing of v0.4.4 surfaced that **Claude Code does not render MCP tool result text content as visible chat output** — even when the tool returns `CallToolResult(content=[TextContent(text="…")])`. The debug log confirms:
+```
+[ERROR] Tool mcp__plugin_redis-channel_redis-channel__reply not found in render-time tools
+```
+This is internal to Claude Code's render pipeline, not something we can change from the plugin side. The v0.4.4 tool-echo approach still works for programmatic clients (the integration test still parses the structured result correctly), but it doesn't surface anything to the human reading the terminal.
+
+So the coach is updated to ask Claude to write the reply text **in two places**:
+
+1. As the natural conversational response in the terminal turn — this is what the local user sees as the chat history.
+2. As the `text` argument to the `reply` tool — this is what the channel-side user reads (or hears via TTS).
+
+Both contain the **same words**. Composed once, rendered in both surfaces. No "I responded with…" wrappers, no double-typing of the same content in different forms. Just compose your answer naturally; output it as your turn text; call `reply` with that text.
+
+This is the closest channels can get to Remote-Control-style chat-merging without the framework's render-time pipeline doing more for us.
+
+The v0.4.4 `CallToolResult` machinery stays in place — useful for programmatic clients and harmless when Claude Code chooses not to render it.
+
 ### Changed — `reply` tool echoes sent text as natural MCP result content (v0.4.4)
 
 The reply tool's MCP wrapper now returns a `CallToolResult` with the sent `text` as the unstructured `content` element + the existing `{ok, session_name, chat_id, msg_id}` as `structuredContent`. The result: the terminal automatically renders the reply text as the tool's natural output — no model-side narration ("Reply sent on the outbound stream…", "I responded with…") needed to make the back-and-forth visible.

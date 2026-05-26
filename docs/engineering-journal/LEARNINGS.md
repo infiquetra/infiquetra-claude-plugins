@@ -25,6 +25,51 @@
 
 ---
 
+## 2026-05-26
+
+### Claude Code Channels split terminal + channel surfaces *by design* — stop trying to mirror them  {#cc-channels-surface-split}
+
+**Context.** After Phase 2 text-bridge worked end-to-end (PRs #128-138), the local-terminal UX bothered Jeff: the inbound `<channel>` notification rendered as `↳ redis-channel: <text>`, but Claude's reply rendered only as `Called plugin:redis-channel:...` — no visible reply text in the terminal. Drove five iterative attempts (v0.4.5–v0.4.10) to make Claude emit a text_block alongside the `reply` tool call. None worked. Turns out we were fighting documented Claude Code Channels design intent, not a bug.
+
+**Evidence.**
+- Discord plugin source (`~/.claude/plugins/cache/claude-plugins-official/discord/0.0.4/server.ts:456`):
+  ```
+  instructions: [
+    'The sender reads Discord, not this session. Anything you want them to see
+     must go through the reply tool — your transcript output never reaches their chat.',
+    ...
+  ]
+  ```
+  No "MANDATORY mirror text in both places" guidance. The Discord plugin *embraces* the surface split.
+- Anthropic docs Jeff surfaced: *"When using Claude Code Channels (for Discord or Telegram), it is normal behavior that messages sent within the terminal session are not visible in the Discord channel, and vice-versa. This design is intended to separate remote task execution from active local terminal work."*
+- Cheap self-report test (v0.4.9 turn at 14:06): asked Claude to repeat its prior reply verbatim. Claude replied: `'no text block, only tool call.'` — confirming via self-report that Claude is intentionally not emitting transcript text for channel-triggered turns.
+- Five coaching iterations (v0.4.5 soft framing, v0.4.7 MANDATORY, v0.4.8 echo-removal, v0.4.9 two-user reframe, v0.4.10 coaching delivered via `instructions=` instead of inert agent file) produced **zero observable behavior change**.
+
+**Mechanism.** Claude Code Channels (`notifications/claude/channel` capability) are architected as a *separation* feature: the channel surface is a router endpoint where remote users live; the local terminal is for the developer driving the session. Mirroring the channel content into the terminal would defeat the point ("active local terminal work" gets cluttered with remote chatter the developer didn't initiate). Claude's training reflects this — notification-triggered turns produce `[tool_use(reply)]` without a text_block because the inbound is treated as a remote-user event, not a local prompt. Coaching to override this loses to training every time.
+
+**Fix.** Stop chasing it. Three of the five versions were dead-end coaching iterations — net zero behavioral change but we kept v0.4.10's architectural move (coaching into `instructions=`) because it's the *right place* for any future coaching independent of this question. v0.4.6 stream cleanup + v0.4.10 instructions-delivery are real correctness fixes; the coaching wordsmithing in 0.4.7/0.4.8/0.4.9 was chasing a non-bug.
+
+**Validation.** Discord plugin source confirms intent; Anthropic docs confirm design; Claude's own self-report confirms the model isn't going to comply with mirror coaching. Three convergent evidence sources.
+
+**What surprised.**
+1. `agents/*.md` files in a Claude Code plugin are **subagent definitions invoked via the `Agent` tool — they are NOT auto-loaded into the system prompt.** I'd assumed `agents/coach.md` was an always-on context document. Empirical proof: editing the agent file four times (v0.4.5/0.4.7/0.4.9) produced no behavior change; moving the same content into FastMCP's `instructions=` field (v0.4.10) finally landed it in the system prompt as visible "MCP Server Instructions". The discord/imessage/telegram official plugins have **no `agents/` directory at all** — all their runtime coaching lives in `instructions=`. That's the canonical pattern.
+2. Claude's self-report when asked about its own prior output was honest and useful (`'no text block, only tool call.'`). I'd half-expected a hallucination; instead the model accurately reported what it did. Worth remembering: ask the model itself when you want to know what just happened.
+3. The Discord plugin doesn't try to fix this gap because it isn't a gap from Anthropic's POV — the channel surface and terminal surface are intentionally distinct audiences with distinct content.
+
+**Generalizable rules.**
+- **For Claude Code plugins, runtime behavior coaching belongs in the MCP server's `instructions=` field, not in `agents/*.md`.** Agent files define subagents invokable via the `Agent` tool — they are not auto-loaded into the active conversation context. Coaching that must apply on *every* turn (especially notification-triggered ones, where no Agent invocation happens) must live in `instructions=` to actually reach Claude.
+- **Before chasing a "Claude isn't doing X" issue, check whether X is intended design.** Read what the official plugins (`claude-plugins-official/discord`, `imessage`, `telegram`) actually do in their `instructions=` strings. If they don't try to do X either, X probably isn't expected. Anthropic's official plugins are the canonical reference for "what behavior Claude Code intends with this feature."
+- **When you've made three coaching changes with no observable effect, stop and verify the coaching is even being delivered to the model.** "I changed the coach four times and Claude still does the same thing" is strong evidence the coaching isn't reaching Claude — go check the delivery mechanism (`instructions=`, `system_prompt`, `CLAUDE.md` scope, agent activation conditions) before changing the words again.
+- **Claude can self-report on its own prior output reliably for simple yes/no factual questions about message structure.** "Did you emit X in your previous turn?" → useful diagnostic. Don't confuse this with "what were you thinking?" (that one's unreliable).
+
+**Refs.**
+- `plugins/redis-channel/CHANGELOG.md` (v0.4.5 → v0.4.10 entries trace the chase)
+- PRs #137 (v0.4.5), #139 (v0.4.7), #140 (v0.4.8), #141 (v0.4.9), #142 (v0.4.10)
+- Discord plugin source: `~/.claude/plugins/cache/claude-plugins-official/discord/0.0.4/server.ts:455-465`
+- Plan: `~/.claude/plans/i-would-like-to-distributed-hanrahan.md` — terminal-UX expectations were unstated in the original plan; this learning clarifies for Phase 3+ that voice-routing UX matters but local-terminal mirroring is out of reach.
+
+---
+
 ## 2026-05-25
 
 ### Channel-plugin naming: noun-channel, not noun-bridge  {#redis-channel-rename}

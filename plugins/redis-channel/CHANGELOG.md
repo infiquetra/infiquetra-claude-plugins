@@ -7,6 +7,25 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — `claude-channel --bg` spawns via tmux to give claude a real PTY (v0.4.15)
+
+Jeff tested v0.4.14's wrapper, got an immediate crash with the log showing:
+```
+Error: Input must be provided either through stdin or as a prompt argument when using --print
+```
+
+Root cause: `claude --help` documents that "non-interactive mode (via -p, or **when stdout is not a TTY**, e.g. piped or redirected output)" auto-engages. The v0.4.13 `--bg` path used `nohup ... > log 2>&1 &`, which redirects stdout to a file → claude detects no-TTY → enters `--print` mode → no prompt arg present → exits immediately.
+
+Fix: spawn claude inside a detached **tmux** session, which provides a real PTY headlessly. Tested empirically: `tmux new-session -d` works from non-TTY contexts (verified from a stdio-only shell), the spawned process gets a working PTY, and the pane's output mirrors to the log file via `tmux pipe-pane -o`.
+
+Bonus: `tmux attach -t <session-name>` lets the user inspect a backgrounded session interactively. The tmux session name = the redis-channel session name (natural mapping).
+
+Trade-off: requires tmux installed. Wrapper now hard-fails with a clear error if tmux is missing: `background mode requires tmux (install via 'brew install tmux' on macOS or your package manager on Linux)`. macOS users with Homebrew, most Linux distros, and Jeff's setup all have tmux already; for environments that don't, foreground mode still works without it. Linux fallback to `script(1)` or Python `pty` was considered and rejected — `script` errors with `tcgetattr/ioctl: Operation not supported on socket` when called from a non-TTY context (e.g., Phase 5's Mimir-spawn from Hermes), and Python `pty` adds an interpreter dependency that tmux doesn't need.
+
+Output format unchanged. `--print-info` JSON still reports `pid` (now the tmux pane's claude PID) and `log_path` (now mirrored from tmux pipe-pane). New stderr line on spawn when not using `--print-info`: `attach with: tmux attach -t <session-name>`.
+
+Manual smoke-tested with `CLAUDE_BIN=/bin/sleep CLAUDE_CHANNEL_PRODUCTION=1` to confirm tmux session is created, pane_pid is captured correctly, log file mirroring is set up. Existing tests still pass; no unit tests added for the wrapper here (it's bash; subprocess.run tests deferred to a follow-up).
+
 ### Added — `/redis-channel-setup` self-service install + MCP startup nag (v0.4.14)
 
 Jeff flagged that v0.4.13's `install-claude-channel.sh` requires the user to remember to run a shell script after every plugin update — bad UX. Claude Code plugins don't expose a `postinstall` hook (verified by surveying the official plugins; Discord uses skills for setup, no install lifecycle hook exists), so the best fix is a self-service slash command + a passive startup check that nags when state drifts out of date.

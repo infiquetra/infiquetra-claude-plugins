@@ -25,6 +25,35 @@
 
 ---
 
+## 2026-05-27
+
+### Setup commands must prove every bundled asset path exists  {#team-setup-asset-drift}
+
+**Context.** The `team-execution` v2 validator port reworked `/team-setup` and exposed that the
+existing command referenced `docs/example_tmux.conf` and `docs/agent-overflow.sh`, but the plugin
+did not actually ship those files.
+
+**Evidence.** `tests/test_team_execution_plugin.py::test_team_setup_references_existing_assets`
+failed before the port because `plugins/team-execution/docs/example_tmux.conf` was absent. The
+fix adds both files under `plugins/team-execution/docs/` and keeps `/team-setup` pointing at those
+packaged paths.
+
+**Mechanism.** The setup command evolved as operational documentation, but no repository check tied
+its copy commands to real plugin assets. The command could therefore promise an install path that
+worked only in a developer's local config, not from a fresh plugin package.
+
+**Fix.** Add packaged setup assets and a contract test that every `/team-setup` asset reference
+resolves in the plugin tree (commit pending).
+
+**Validation.** `uv run pytest tests/test_team_execution_plugin.py -q` now passes.
+
+**Generalizable rule.** Any plugin command that copies, installs, or references bundled files needs
+a manifest-style test proving those paths exist in the package, not just in a developer's machine.
+
+**Refs.** DECISIONS [team-execution validators](DECISIONS.md#team-execution-v2-validators).
+
+---
+
 ## 2026-05-26
 
 ### Channel-plugin notifications don't reach `--bg` / `/bg` sessions: Claude Code's carry-through set excludes channels  {#cc-channels-bg-not-supported}

@@ -1,62 +1,49 @@
 ---
 name: team-execute
-description: Execute a plan with automatic multi-reviewer consensus workflow
+description: Execute a plan with reviewer consensus, validator gates, and guarded nonprod automation
 argument-hint: "[plan text or file path]"
 ---
 
-Handle this command as follows based on what's available:
+Handle this command based on available input.
 
 ## Case 1: No plan provided
 
-If `$ARGUMENTS` is empty and there is no plan in the current conversation context:
+If `$ARGUMENTS` is empty and there is no plan in the current conversation context, ask the
+user to describe the work or provide a plan.
 
-Ask the user:
-```
-Please describe what you want to build or provide a plan to execute.
+Then enter plan mode and invoke:
 
-Once you share the details, I'll enter plan mode to structure the work, then the
-team-execution skill will embed a Team Structure into the plan. When you exit plan mode,
-TeamCreate will fire automatically.
-```
+`team-execution/skills/team-execution/SKILL.md`
 
-## Case 2: Plan exists but has no `## Team Structure` section
+## Case 2: Plan exists but has no `## Team Structure`
 
-If a plan is present (from `$ARGUMENTS`, a file path, or the current conversation) but it
-does NOT contain a `## Team Structure` section:
+If a plan is present from `$ARGUMENTS`, a file path, or the current conversation, and it does
+not contain `## Team Structure`, enter plan mode and invoke Phase A of:
 
-Enter plan mode and invoke Phase A of the `team-execution` skill:
 `team-execution/skills/team-execution/SKILL.md`
 
 Phase A will:
-1. Classify the plan (code/docs/mixed)
-2. Run the triage escape hatch check
-3. Detect optional reviewers from plan keywords
-4. Derive workers from plan phases
-5. Get user confirmation
-6. Embed `## Team Structure` into the plan
 
-After Phase A completes, the plan is ready. When the user exits plan mode, the global
-CLAUDE.md rule will detect `## Team Structure` and fire TeamCreate automatically.
+1. Inspect plan and repository signals.
+2. Read optional `.team-execution.json`.
+3. Derive workers from plan phases.
+4. Select reviewers.
+5. Select context-appropriate validators.
+6. Decide whether nonprod automation is eligible.
+7. Embed `## Team Structure`, validator gates, and reference files into the plan.
 
 ## Case 3: Plan already has `## Team Structure`
 
-If the plan already contains a `## Team Structure` section (e.g., the user ran Phase A in
-a prior session and saved the plan):
+If the plan already contains `## Team Structure`, announce that it is ready for execution and
+then follow Phase B of:
 
-Announce:
-```
-✅ This plan already has a Team Structure defined. Ready to begin execution.
+`team-execution/skills/team-execution/SKILL.md`
 
-Exiting plan mode now — TeamCreate will fire and you'll orchestrate workers and reviewers
-directly following Phase B of the team-execution skill.
-```
-
-Then exit plan mode so the CLAUDE.md rule triggers TeamCreate.
-
----
+Phase B order is worker completion, reviewer consensus, scanners, CI/nonprod coordination,
+testers, monitors, and final evidence report.
 
 ## Quick Reference
 
-The plan to execute (if provided):
+The plan to execute, if provided:
 
 $ARGUMENTS

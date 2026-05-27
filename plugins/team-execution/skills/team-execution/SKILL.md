@@ -1,555 +1,406 @@
 ---
 name: team-execution
 description: |
-  Two-phase structured plan execution with automatic multi-reviewer consensus workflow.
+  Two-phase structured plan execution with reviewer consensus, validator gates,
+  and guarded nonprod automation for Infiquetra repositories.
 
-  Phase A runs DURING plan mode: reads the plan, derives workers from plan phases, detects
-  optional reviewers from keywords, embeds a ## Team Structure section, and calls
-  ExitPlanMode itself. The plan is a single atomic artifact — implementation steps, team
-  roster, and review protocol approved together in one unit.
+  Phase A runs during planning: inspect the requested work, derive workers,
+  reviewers, and selected validators, then embed the team plan into the user-approved
+  plan artifact.
 
-  Phase B is the orchestration protocol that Claude follows directly after plan approval:
-  TeamCreate fires immediately (ONLY permitted first action), then plan approval gates,
-  parallel execution, max-3-iteration review cycle with 9/10 consensus threshold, and
-  completion reporting.
-
-  Pattern source: adapted from a structured team review cycle for code/plan execution.
+  Phase B runs after approval: workers complete changes, reviewers reach consensus,
+  scanners run, PR/CI/nonprod coordination happens only after gates pass, and
+  testers plus monitors validate the deployed nonprod result.
 when_to_use: |
-  Use this skill PROACTIVELY when in plan mode and ANY of these are true:
-  - The plan has 3+ steps, touches 3+ files, or involves docs/specs
-  - The plan involves multiple parallel work streams
-  - The user says: "agent team", "agentic team", "team of agents", "use agents",
-    "set up a team", "use team-execution", "who should review this?", "what team
-    do I need?", "agentic approach", "run this with agents"
-  - The user asks for code review as part of a plan
+  Use this skill proactively when in plan mode and any of these are true:
+  - The plan has 3+ steps, touches 3+ files, or involves docs/specs.
+  - The plan involves multiple work streams, repositories, contracts, workflows, or deployments.
+  - The user asks for agent teams, team-execution, validator gates, nonprod automation,
+    review consensus, or automated checks.
+  - The user asks for code review as part of a plan.
 
-  When auto-suggesting on a non-trivial plan, ask:
-    "This plan has [N] steps across [M] files. Would you like to set up an agent
-     team with workers and reviewers?
-       A) Yes, run team planning
-       B) No, I'll handle this myself"
-
-  Do NOT use when:
-  - The plan already has a ## Team Structure section (TeamCreate will fire automatically)
-  - The change is trivially simple (single file, no security surface, < 3 steps)
-  - The user has already declined team planning for this plan in this session
+  Do not use when:
+  - The plan already has a ## Team Structure section.
+  - The change is trivially simple and the user declines team planning.
+  - The user has already declined team planning for this plan in this session.
 ---
 
 # Team Execution Skill
 
 This skill has two phases:
 
-- **Phase A** runs DURING plan mode. You read the current plan, classify it, derive workers
-  from plan phases, detect optional reviewers, get user confirmation, embed the
-  `## Team Structure` section, and then call `ExitPlanMode` yourself. The plan is a single
-  atomic artifact — the user approves the implementation plan, team roster, and review
-  protocol in one unit. You do NOT spawn agents or call TeamCreate during Phase A.
+- **Phase A** runs during planning. You inspect the plan and repository signals, derive
+  workers, reviewers, selected validators, and automation eligibility, then embed the
+  `## Team Structure` section into the plan before plan approval.
+- **Phase B** is the orchestration protocol. It is followed directly by the main agent after
+  the user approves the plan.
 
-- **Phase B** is the orchestration protocol for Claude to follow directly. It is NOT
-  invoked as a separate agent. When Phase A calls ExitPlanMode and the plan contains
-  `## Team Structure`, your ONLY permitted next action is TeamCreate. Read Phase B as your
-  operating instructions and orchestrate workers and reviewers directly.
+Validators are selected by task context. Do not spawn the full validator roster by default.
 
 ---
 
-# Phase A: Team Planning (runs DURING plan mode)
+# Phase A: Team Planning
 
 ## Step A0: Environment Pre-flight
 
-Before doing anything else, validate that the user's environment is ready for team execution.
-Run these checks silently using bash commands. Only show output if something needs attention.
+Run pre-flight checks silently. Show only actionable gaps.
 
-### A0a. CLAUDE.md Auto-Handoff Rule (always checked)
+### A0a. Handoff Rule
 
-Run:
+Check for the handoff rule:
+
 ```bash
 grep -q "Team Execution Auto-Handoff" ~/.claude/CLAUDE.md 2>/dev/null && echo "FOUND" || echo "MISSING"
 ```
 
-If **MISSING**: this is critical — the skill will not work properly without it. Show:
-```
-⚠️  CLAUDE.md auto-handoff rule not found.
+If missing, tell the user to run `/team-setup` or add the rule manually. Do not block plan
+creation.
 
-The team-execution skill requires a rule in ~/.claude/CLAUDE.md to trigger TeamCreate
-automatically after plan approval. Without it, the handoff from planning to execution
-will not fire.
+### A0b. Setup Assets
 
-Run /team-setup to install it, or add this to ~/.claude/CLAUDE.md manually:
+If setup is requested, `/team-setup` must reference packaged assets that exist in this plugin:
 
-  ## Team Execution Auto-Handoff
+- `team-execution/docs/example_tmux.conf`
+- `team-execution/docs/agent-overflow.sh`
 
-  When a plan exits plan mode and contains an explicit ## Team Structure section:
-  1. Your ONLY next action is TeamCreate — no exceptions
-  2. Do NOT use the Agent tool for implementation work
-  3. Parse the Team Structure table for workers and reviewers
-  4. Call TeamCreate immediately
-  5. Then follow Phase B orchestration from team-execution SKILL.md
-
-  This rule takes priority over any other agent-spawning behavior.
-```
-
-Proceed to A1 after showing the warning — do not block.
-
-### A0b. tmux Environment (skipped if opted out)
-
-First check if the user has dismissed tmux setup:
-```bash
-cat ~/.claude/team-execution.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print('DISMISSED' if d.get('tmux_setup_dismissed') else 'CHECK')" 2>/dev/null || echo "CHECK"
-```
-
-If **DISMISSED**: skip all tmux checks silently. Proceed to A1.
-
-If **CHECK**: run these checks and collect results:
-```bash
-# 1. tmux installed?
-command -v tmux >/dev/null 2>&1 && echo "tmux:OK" || echo "tmux:MISSING"
-
-# 2. Running inside tmux?
-[ -n "$TMUX" ] && echo "session:OK" || echo "session:MISSING"
-
-# 3. tmux.conf exists?
-[ -f ~/.tmux.conf ] && echo "config:OK" || echo "config:MISSING"
-
-# 4. Overflow script installed?
-[ -x ~/.config/tmux/agent-overflow.sh ] && echo "overflow:OK" || echo "overflow:MISSING"
-
-# 5. Claude settings: teammateMode set?
-cat ~/.claude.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); m=d.get('teammateMode','unset'); print(f'teammateMode:{m}')" 2>/dev/null || echo "teammateMode:unset"
-
-# 6. Claude settings: agent teams feature enabled?
-cat ~/.claude/settings.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('env',{}).get('CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS','unset'); print(f'agentTeams:{v}')" 2>/dev/null || echo "agentTeams:unset"
-```
-
-If **all OK** (tmux installed, in session, config present, overflow installed, teammateMode is "tmux" or "auto", agentTeams is "1"): proceed silently to A1.
-
-If **any MISSING or misconfigured**: show the results table and offer options:
-```
-tmux environment check:
-  ✅ tmux installed          (or ⚠️  tmux not installed)
-  ✅ Running in tmux session (or ⚠️  Not in tmux session)
-  ✅ ~/.tmux.conf present    (or ⚠️  ~/.tmux.conf not found)
-  ✅ Overflow script ready   (or ⚠️  agent-overflow.sh not installed)
-  ✅ teammateMode: tmux      (or ⚠️  teammateMode not set — agents won't use split panes)
-  ✅ Agent teams enabled     (or ⚠️  CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS not set)
-
-Options:
-  A) Run /team-setup to configure tmux for agent teams
-  B) Skip tmux setup — I have my own terminal config
-  C) Don't ask again — dismiss tmux checks permanently
-```
-
-If user picks **B**: proceed to A1.
-If user picks **C**: write the dismissal file and proceed:
-```bash
-mkdir -p ~/.claude && echo '{"tmux_setup_dismissed": true}' > ~/.claude/team-execution.json
-```
-If user picks **A**: tell them to run `/team-setup` after this session, then proceed to A1.
+If either asset is unavailable in the installed plugin, fail loud with manual setup guidance.
 
 ---
 
-## Step A1: Plan Intake & Triage
+## Step A1: Plan and Repository Intake
 
-### A1a. Locate the Plan
+Derive the plan from all available signals:
 
-The plan is already in the current plan-mode session. If multiple plans are in context,
-ask the user to confirm which one to annotate with a team structure.
+- User plan text and acceptance criteria.
+- Repo type and language/tooling.
+- Changed files, staged files, and branch state.
+- GitHub workflows under `.github/workflows/`.
+- API contracts such as OpenAPI, AsyncAPI, protobuf, GraphQL schemas, or SDK fixtures.
+- Documentation, runbooks, architecture docs, and issue specs.
+- Test suites and existing quality commands.
+- Optional `.team-execution.json`.
 
-### A1b. Classify Plan Type
+The `.team-execution.json` file is optional. Absence means infer from the repo. Supported keys:
 
-Read the plan and classify it:
+```json
+{
+  "required_validators": ["security-scanner", "smoke-tester"],
+  "disabled_validators": ["performance-tester"],
+  "nonprod_workflows": ["publish-nonprod.yml"],
+  "scenario_hints": ["checkout flow", "webhook replay"],
+  "smoke_targets": ["https://example-nonprod.internal/health"]
+}
+```
+
+If present:
+
+- `required_validators` must be selected unless explicitly impossible.
+- `disabled_validators` must not run unless the user overrides.
+- `nonprod_workflows` limits deployment/publish workflow candidates.
+- `scenario_hints` inform scenario and event-flow testers.
+- `smoke_targets` inform smoke tests.
+
+---
+
+## Step A2: Classify Work
+
+Classify the plan:
 
 | Type | Definition |
 |------|------------|
-| **code** | Primarily code changes: implementations, refactors, bug fixes, infrastructure |
-| **docs/specs** | Primarily documentation: README, specs, issue templates, SKILL.md, ADRs |
-| **mixed** | Both code AND documentation/spec content |
+| code | Primarily code changes, refactors, bug fixes, or infrastructure |
+| docs/specs | Primarily documentation, issue specs, skill docs, or runbooks |
+| mixed | Both code and documentation/spec content |
 
-This classification determines which optional reviewers are suggested in Step A2.
+Also classify repository signals:
 
-### A1c. Run Triage Check
-
-A plan qualifies for the **triage escape hatch** ONLY if ALL four criteria are true:
-
-1. Single config file change (version bump, env var, flag toggle)
-2. No security surface affected (no auth, secrets, permissions, PII)
-3. Fewer than 3 files modified
-4. No specification or documentation content
-
-**Docs-only plans do NOT qualify** — documentation is specs for code and deserves full review.
-
-If all criteria are met, offer:
-```
-This looks like a trivial config change. How would you like to proceed?
-
-A) Skip team planning (recommended for this change)
-B) Full review team anyway
-C) Devil's Advocate only (lightweight check)
-```
-
-If the user picks A, stop here — do not embed a Team Structure section.
-If any criterion is not met, proceed directly to Step A2.
+| Repo Signal | Examples |
+|-------------|----------|
+| Python service | `pyproject.toml`, `requirements.txt`, `pytest`, FastAPI, Lambda handlers |
+| AWS/CDK service | `cdk.json`, `template.yaml`, CloudFormation, SAM, Lambda, IAM |
+| API contract repo | OpenAPI, AsyncAPI, protobuf, GraphQL schema |
+| SDK repo | `sdk`, generated clients, package publishing workflows |
+| Frontend repo | React, Next.js, Vite, Playwright, browser smoke targets |
+| Home-lab/observability | Ansible, Prometheus, Grafana, Docker Compose, local infra |
 
 ---
 
-## Step A2: Reviewer Detection & Team Proposal
+## Step A3: Reviewer Selection
 
-### A2a. Detect Optional Reviewers
+Read:
 
-Read `team-execution/skills/team-execution/references/reviewer-registry.md`.
+- `team-execution/skills/team-execution/references/reviewer-registry.md`
+- `team-execution/skills/team-execution/references/review-criteria.md`
+- `team-execution/skills/team-execution/references/consensus-protocol.md`
 
-Scan the plan content for keywords in the optional reviewer trigger table. Based on plan type:
-- **code** plans: check code-focused keyword triggers
-- **docs/specs** plans: check doc-focused keyword triggers
-- **mixed** plans: check both trigger sets
+Base reviewers always included:
 
-### A2b. Present Reviewer Proposal
+- `devils-advocate-reviewer`
+- `security-reviewer`
+- `architecture-reviewer`
 
-Show the user:
-```
-Base reviewers (always included):
-  🔴 Devil's Advocate — assumptions, edge cases, failure modes
-  🟠 Security Reviewer — OWASP, secrets, auth/authZ, PII
-  🟣 Architecture Reviewer — design patterns, separation of concerns, convention adherence
+Optional reviewers are suggested from plan and repo signals.
 
-Suggested optional reviewers (detected from plan content):
-  [e.g., 🔵 Infra Reviewer — CDK/Lambda/cloud infrastructure detected]
-  [e.g., 🟢 API Reviewer — new endpoint patterns detected]
-
-Confirm, skip optional reviewers, or add custom reviewers?
-```
-
-**Hard gate**: Wait for user confirmation before proceeding to Step A3.
+Reviewer non-consensus blocks validators unless the user explicitly overrides.
 
 ---
 
-## Step A3: Worker Derivation
+## Step A4: Validator Selection
 
-For each major phase or parallel work stream in the plan, propose a named worker:
+Read:
 
-- Worker names should reflect the phase: `worker-docs`, `worker-api`, `worker-infra`, etc.
-- Each worker maps to one parallel group (`[P1]`, `[P2]`) or one major sequential phase
-- If the plan has only one phase, propose a single `worker-1`
+- `team-execution/skills/team-execution/references/validator-registry.md`
+- `team-execution/skills/team-execution/references/validator-criteria.md`
+- `team-execution/skills/team-execution/references/validator-execution-order.md`
+- `team-execution/skills/team-execution/references/validator-evidence-state.md`
+- `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
+- `team-execution/skills/team-execution/references/validator-pane-behavior.md`
 
-Present the worker proposal alongside the reviewer confirmation:
+Select validators by context:
 
-```
-Workers (derived from plan phases):
-  worker-1 — [Phase 1 name]: [key tasks]
-  worker-2 — [Phase 2 name]: [key tasks]
-  [etc.]
+| Group | Agents |
+|-------|--------|
+| Scanners | `security-scanner`, `iac-cost-scanner`, `api-compat-scanner`, `dependency-scanner` |
+| Testers | `smoke-tester`, `scenario-tester`, `api-contract-tester`, `sdk-regression-tester`, `event-flow-tester`, `ui-regression-tester`, `performance-tester`, `concurrency-tester` |
+| Monitors | `github-actions-monitor`, `runtime-monitor` |
+| Operational | `deploy-watcher` |
 
-Reviewers confirmed above.
+Tool candidates are OSS/free where available:
 
-Proceed to embed Team Structure into the plan?
-```
+- Semgrep
+- Bandit
+- pip-audit
+- Trivy
+- Gitleaks
+- detect-secrets
+- Checkov
+- oasdiff
+- Schemathesis
+- Playwright
+- k6
 
-**Hard gate**: Wait for final user confirmation before Step A4.
+If a selected validator requires a missing tool, fail loud with setup guidance. Do not silently
+skip required validators.
 
 ---
 
-## Step A4: Embed Team Structure
+## Step A5: State and Evidence Plan
 
-After confirmation, write the following section at the END of the plan (before any existing
-`## Notes` or `## Review` sections, or at the very end if those don't exist):
+Validator run state is JSON under:
+
+```text
+.claude/team-execution/validators/
+```
+
+Before planning validator state, check whether `.claude/` is ignored in the target repo. If it is
+not ignored, instruct the user to add an ignore rule or use the user-local fallback:
+
+```text
+~/.claude/team-execution/state/<repo>/
+```
+
+Each validator state record includes:
+
+- Validator name and group.
+- Selection reason.
+- Required tool commands and availability.
+- Inputs inspected.
+- Evidence paths.
+- Findings and severity.
+- Gate result: pass, warn, hard-fail, skipped-by-config, or blocked.
+- Remediation loop count.
+
+---
+
+## Step A6: Automation Eligibility
+
+Automation is allowed only when all conditions are true:
+
+- Remote matches `github.com/infiquetra/*`.
+- The plan follows the repo default branch model.
+- Reviewers, selected scanners, CI, and required testers pass.
+- Workflow is explicitly nonprod or publish-nonprod.
+- The action does not touch production, staging, force-push, branch deletion, or credentials.
+
+Any ambiguous or missing signal blocks automation.
+
+---
+
+## Step A7: Embed Team Structure
+
+Append a plan section like this:
 
 ```markdown
 ## Team Structure
 
+### Workers
 | Agent | Role | Mode | Responsibilities |
 |-------|------|------|------------------|
-| `worker-1` | [Phase 1 name] | bypassPermissions | [Tasks from plan] |
-| `worker-2` | [Phase 2 name] | bypassPermissions | [Tasks from plan] |
-| `security-reviewer` | Security Reviewer | general-purpose | OWASP, secrets, auth/authZ, PII |
-| `devils-advocate` | Devil's Advocate | general-purpose | Assumptions, edge cases, failure modes |
-| `architecture-reviewer` | Architecture Reviewer | general-purpose | Design patterns, separation of concerns, conventions |
-[optional reviewers if confirmed...]
+| `worker-1` | [Phase name] | bypassPermissions | [Tasks from plan] |
 
-### Review Protocol
-- Consensus threshold: **>= 9.0/10** from every reviewer
-- Maximum **3 review iterations**
-- Security/auth < 5.0 is a **blocking stop**
-- Workers run in `bypassPermissions` mode — no permission prompts, quality enforced by review cycle
+### Reviewers
+| Agent | Role | Required | Selection Reason |
+|-------|------|----------|------------------|
+| `devils-advocate-reviewer` | Devil's Advocate Reviewer | yes | Base reviewer |
+| `security-reviewer` | Security Reviewer | yes | Base reviewer |
+| `architecture-reviewer` | Architecture Reviewer | yes | Base reviewer |
+
+### Validators
+| Agent | Group | Required | Selection Reason | Blocking |
+|-------|-------|----------|------------------|----------|
+| `security-scanner` | Scanner | yes/no | [Why selected] | hard-fail blocks automation |
+
+### Execution Gates
+- Reviewer consensus threshold: >= 9.0/10 from every reviewer.
+- Reviewer non-consensus blocks validators unless the user explicitly overrides.
+- Scanners run before PR/CI/merge/nonprod coordination.
+- Tester hard-fail blocks completion.
+- Maximum 3 remediation loops before escalation.
 
 ### Reference Files
 - `team-execution/skills/team-execution/references/reviewer-registry.md`
 - `team-execution/skills/team-execution/references/review-criteria.md`
 - `team-execution/skills/team-execution/references/consensus-protocol.md`
+- `team-execution/skills/team-execution/references/validator-registry.md`
+- `team-execution/skills/team-execution/references/validator-criteria.md`
+- `team-execution/skills/team-execution/references/validator-execution-order.md`
+- `team-execution/skills/team-execution/references/validator-evidence-state.md`
+- `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
+- `team-execution/skills/team-execution/references/validator-pane-behavior.md`
 ```
 
-After writing the section, announce:
-
-```
-✅ Team Structure embedded in the plan.
-
-This plan is now complete — it contains the implementation steps, the full team roster,
-and the review protocol. Submitting for your approval now.
-```
-
-**Do NOT call TeamCreate here.**
-**Do NOT spawn any agents here.**
+Then submit the plan for approval. Do not start implementation during Phase A.
 
 ---
 
-## Step A5: Submit the Plan for Approval
+# Phase B: Orchestration Protocol
 
-Call `ExitPlanMode` now.
+Phase B starts only after plan approval.
 
-The plan is the single artifact the user approves. It contains:
-- The implementation plan (phases, tasks, files)
-- The team roster (workers + confirmed reviewers)
-- The review protocol (consensus threshold, blocking rules)
+## Step B0: Parse the Approved Team Plan
 
-When the user approves, your ONLY next action is TeamCreate. See Phase B constraints.
+Read the approved `## Team Structure`, selected validators, reference files, automation
+eligibility, and state location.
 
----
-
-# Phase B: Orchestration Protocol (Claude/Gemini acts as the Team Lead)
-
-> **Phase B is not invoked as a separate agent.** When Phase A calls ExitPlanMode and the
-> user approves, Claude/Gemini reads this section as its operating instructions and acts as the **Team Lead** to orchestrate directly.
-> 
-> **Consensus Role Definition**:
-> - The **Team Lead** (main orchestrator agent) is responsible for the overall execution, routing fixes, and verifying changes.
-> - The **Reviewers** (subagents) evaluate implementation quality.
-> - **Consensus** is strictly a mutual agreement between the **Team Lead** and the **Reviewers** (max 3 rounds, achieving a score of >= 9.0/10).
-> - The **Human User** is a passive stakeholder who is **not** part of the consensus agreement loop or review-revise iterations. Do not prompt the user for approvals or consensus sign-offs between cycles.
+If the plan has no `## Team Structure`, stop and tell the user to run `/team-execute`.
 
 ---
 
-## ⚠️ Critical Constraints — Phase B Entry
+## Step B1: Workers Complete Changes
 
-These rules apply the moment the user approves the plan and ExitPlanMode returns:
-
-1. **Your ONLY permitted next action is TeamCreate.** No exceptions.
-2. **Do NOT use the Agent tool for any implementation work.** All work goes through TeamCreate workers listed in the `## Team Structure` table.
-3. **Do NOT spawn Explore, Plan, or general-purpose agents** for work that belongs to a worker.
-4. **Do NOT read files, analyze code, or do any preparatory work** before calling TeamCreate.
-5. **Parse the `## Team Structure` table → call TeamCreate → THEN proceed to B0.**
-
-If you find yourself about to use the Agent tool to implement something, stop. Route that work to the appropriate worker instead.
+Workers execute approved tasks. Coordinate dependencies and keep work scoped to the plan.
+When all worker tasks are complete, capture changed files and git diff summary for reviewers.
 
 ---
 
-## Step B0: Read the Plan's Team Structure
+## Step B2: Reviewers Reach Consensus
 
-Parse the `## Team Structure` table to identify:
+Run reviewers according to `consensus-protocol.md`.
 
-1. **Workers**: rows with `bypassPermissions` in the Mode column — your implementation
-   agents. Note each worker's name and assigned responsibilities.
-2. **Reviewers**: rows with reviewer role names (Security Reviewer, Devil's Advocate, etc.) —
-   your review agents. Note which are base vs optional.
-3. **Reference files**: the paths listed under `### Reference Files` in the plan — load these
-   before running the review cycle.
-
-If the plan does NOT have a `## Team Structure` section, stop and tell the user:
-```
-The plan does not have a ## Team Structure section. Please run /team-execute to enter
-plan mode and have the team-execution skill embed the team structure first.
-```
+- All confirmed reviewers score the implementation.
+- Consensus requires overall score >= 9.0/10 and no dimension < 7.0.
+- Security/auth/secrets dimension < 5.0 is a blocking stop.
+- Reviewer non-consensus blocks validators unless the user explicitly overrides.
+- Maximum 3 review cycles.
 
 ---
 
-## Step B1: Worker Kickoff
+## Step B3: Scanners Run
 
-Workers are spawned in `mode: "bypassPermissions"` — they have full permissions and begin
-implementing immediately. No permission prompts reach the user; quality is enforced by the
-review cycle in Step B3.
+Run selected scanner validators only after reviewer consensus or explicit user override.
 
-### B1a. Worker Start
+Scanners inspect local artifacts, code, dependency manifests, contracts, and infrastructure.
+Hard-fail scanner findings block auto-merge, nonprod deploy, and completion.
 
-Each worker:
-1. Reads its assigned tasks from the plan's `## Team Structure` table
-2. Reads relevant codebase context (existing files, patterns, conventions)
-3. Implements the assigned work directly
-4. Sends a brief summary to the orchestrator via SendMessage when complete (or if blocked)
-
-### B1b. Orchestrator Oversight
-
-Monitor worker progress via team messages and task status updates. If a worker's approach
-seems off-track, redirect via SendMessage before the work goes too far. Workers should
-acknowledge and adjust.
-
-**No hard approval gate** — the user approved the full plan in Phase A. Workers execute
-their assigned scope. The review cycle (Step B3) is the quality gate.
-
-### B1c. Parallelism
-
-Workers with no dependencies begin simultaneously. Workers with dependencies wait for
-their upstream tasks to reach `completed` status before starting.
+Missing required scanner tools fail loud with setup guidance. Optional scanner tools may be
+reported as skipped only if the validator is not required.
 
 ---
 
-## Step B2: Execution
+## Step B4: PR, CI, Merge, and Nonprod Coordination
 
-Workers implement their approved plans.
+Coordinate automation only if gates pass and automation is eligible:
 
-### B2a. Task Tracking
+1. Confirm remote matches `github.com/infiquetra/*`.
+2. Confirm default branch model.
+3. Confirm no production, staging, force-push, branch deletion, or credential-changing action.
+4. Run or monitor allowed `nonprod` or `publish-nonprod` workflows only.
 
-Workers update task status via `TaskUpdate`:
-- `in_progress` when starting a task
-- `completed` when done
-
-Monitor the task list and:
-- Unblock downstream workers when upstream tasks complete
-- Surface blockers to the user if a worker is stuck
-- Do NOT implement code directly — delegate to workers
-
-### B2b. Parallel Execution
-
-For plans with parallel work streams (marked `[P1]`, `[P2]`, etc. in the plan), workers
-operate simultaneously. Coordinate dependencies between streams.
-
-### B2c. Completion Signal
-
-When all tasks are `completed`, signal readiness for Step B3.
+If any signal is ambiguous, stop automation and report what is missing.
 
 ---
 
-## Step B3: Review Cycle (Team Lead & Reviewer Consensus)
+## Step B5: Testers Validate Deployed Nonprod Result
 
-Read `team-execution/skills/team-execution/references/consensus-protocol.md`
-for the full protocol. Summary below:
-- The **Team Lead** coordinates the review-revise cycles entirely autonomously.
-- Do not request the human user's approval or validation between cycles. 
-- Iteratively apply fixes and re-run reviews until consensus (score >= 9.0/10) is achieved or the 3-cycle cap is met.
+Run selected tester validators after a deploy or publish target is available.
 
-### B3a. Spawn Reviewers in Parallel
+Testers validate smoke targets, scenarios, contracts, SDK compatibility, event flows, UI
+regressions, performance thresholds, and concurrency behavior as applicable.
 
-Spawn ALL confirmed reviewers simultaneously. Provide each with:
-```
-Plan context: [1-3 sentence summary of what was built]
-Intended outcome: [what success looks like]
-Changes made: [git diff or list of changed files]
-Review rubrics: team-execution/skills/team-execution/references/review-criteria.md
-```
-
-### B3b. Collect and Display Scores
-
-After all reviewers complete, display:
-
-```
-## Review Cycle [N] Results
-
-| Reviewer | Score | Verdict | Issues |
-|----------|-------|---------|--------|
-| Devil's Advocate | X.X/10 | ACCEPT / NEEDS REVISION | N fixes |
-| Security Reviewer | X.X/10 | ACCEPT / NEEDS REVISION | N fixes |
-| Architecture Reviewer | X.X/10 | ACCEPT / NEEDS REVISION | N fixes |
-[Optional reviewers...]
-
-Consensus: [REACHED / NOT REACHED]
-```
-
-### B3c. Consensus Check
-
-**If ALL >= 9.0** → consensus reached → proceed to Step B4.
-
-**If any < 9.0**:
-1. Consolidate fix requests from all reviewers scoring < 9.0 (deduplicate overlaps)
-2. Route consolidated fixes to the responsible worker(s)
-3. Workers implement fixes
-4. Re-run Step B3a for ONLY the reviewers that scored < 9.0
-   (reviewers that already ACCEPTED do not re-review)
-5. Increment cycle counter
-
-### B3d. Cycle Cap
-
-After **3 iterations**: proceed to Step B4 regardless of scores. Document final scores and
-any unresolved fix requests in the completion report.
-
-### B3e. Blocking Issues
-
-If any security or auth dimension scores < 5.0:
-- Immediately flag to user
-- Do not wait for cycle to complete
-- Treat as a hard stop until that dimension reaches >= 7.0
+Hard-fail tester findings block completion. Run a maximum 3 remediation loops before escalating
+to the user.
 
 ---
 
-## Step B4: Completion
+## Step B6: Monitors Verify Runtime Signals
 
-### B4a. Final Report
+Run monitor validators:
 
-Present the completion summary:
+- `github-actions-monitor` checks workflow status and relevant logs.
+- `runtime-monitor` checks repository-appropriate observability: CloudWatch for AWS repos,
+  Prometheus/Grafana-style checks for home-lab/local-infra repos, and app health endpoints
+  where configured.
 
-```
-## Team Execution Complete
-
-Plan: [Plan name]
-Date: [Date]
-Iterations: [N] review cycle(s)
-
-### Final Review Scores
-| Reviewer | Score | Status |
-|----------|-------|--------|
-| Devil's Advocate | X.X/10 | ACCEPT |
-| Security Reviewer | X.X/10 | ACCEPT |
-| Architecture Reviewer | X.X/10 | ACCEPT |
-[Optional reviewers...]
-
-Consensus: [REACHED / NOT REACHED after 3 cycles]
-
-### Unresolved Issues
-[List if consensus not reached, otherwise "None"]
-
-### Changes Made
-[Summary of files changed and what was implemented]
-```
-
-### B4b. Commit (if applicable)
-
-If the plan involved code changes and commits are appropriate, prompt:
-```
-Ready to commit. Suggested message:
-  [type(scope): description based on plan]
-
-Proceed with commit, or would you like to adjust the message?
-```
-
-### B4c. Shutdown Team
-
-Gracefully shut down all teammates:
-1. Send `shutdown_request` to each worker
-2. Send `shutdown_request` to each reviewer
+If monitors cannot reach an expected signal, mark the gate blocked or warn based on whether
+the signal was required.
 
 ---
 
-## Error Handling
+## Step B7: Completion
 
-**Worker plan rejected 3+ times**: Escalate to user — the worker may need clarification on scope.
+Report:
 
-**Reviewer cannot access git diff**: Ask user to provide the changes as a summary or file list.
+- Worker changes.
+- Reviewer scores.
+- Scanner, tester, and monitor gate results.
+- Validator state location.
+- Evidence paths.
+- Automation actions taken or blocked.
+- Residual risks.
 
-**Architecture context not found**: Architecture Reviewer scores Architecture Documentation Coverage
-as N/A (8.0 default), notes that no ADR/architecture directory was found.
-
-**Worker stuck / blocked**: Notify user with the blocker details. Do not spin.
-
-**Review cycle > 3 iterations**: Proceed with best version, document scores. Never loop indefinitely.
+Do not claim completion while required validators are hard-failing or blocked unless the user
+explicitly accepts the residual risk.
 
 ---
 
-## Quick Reference: File Paths
+# Quick Reference: File Paths
 
-```
+```text
 team-execution/
 ├── .claude-plugin/plugin.json
-├── skills/team-execution/
-│   ├── SKILL.md                          ← this file (Phase A + Phase B)
-│   └── references/
-│       ├── reviewer-registry.md          ← keyword triggers, base/optional reviewer list
-│       ├── review-criteria.md            ← scoring rubrics for all reviewer types
-│       └── consensus-protocol.md         ← 3-iteration loop, re-review scoping
+├── docs/
+│   ├── agent-overflow.sh
+│   └── example_tmux.conf
+├── skills/
+│   ├── appsec-audit/SKILL.md
+│   └── team-execution/
+│       ├── SKILL.md
+│       └── references/
+│           ├── consensus-protocol.md
+│           ├── review-criteria.md
+│           ├── reviewer-registry.md
+│           ├── validator-criteria.md
+│           ├── validator-evidence-state.md
+│           ├── validator-execution-order.md
+│           ├── validator-pane-behavior.md
+│           ├── validator-registry.md
+│           └── validator-spawn-quirks.md
 ├── agents/
-│   ├── devils-advocate-reviewer.md       ← base (red)
-│   ├── security-reviewer.md              ← base (orange)
-│   ├── architecture-reviewer.md          ← base (purple)
-│   ├── infra-reviewer.md                 ← optional (blue)
-│   ├── api-reviewer.md                   ← optional (green)
-│   ├── testing-reviewer.md               ← optional (yellow)
-│   ├── code-quality-reviewer.md          ← optional (cyan)
-│   ├── privacy-reviewer.md               ← optional (pink)
-│   ├── clarity-reviewer.md               ← optional (teal)
-│   └── ai-usefulness-reviewer.md         ← optional (gold)
-└── commands/team-execute.md              ← /team-execute slash command
+│   ├── devils-advocate-reviewer.md
+│   ├── security-reviewer.md
+│   ├── architecture-reviewer.md
+│   └── [reviewer and validator agents]
+└── commands/
+    ├── team-execute.md
+    └── team-setup.md
 ```

@@ -1,7 +1,7 @@
 {
   "name": "team-execution",
-  "version": "1.5.0",
-  "description": "Two-phase plan execution with multi-reviewer consensus. Auto-suggests on non-trivial plans, plus /team-setup wizard for tmux + Claude settings.",
+  "version": "2.0.0",
+  "description": "Two-phase plan execution with reviewer consensus, validator gates, and guarded nonprod automation for Infiquetra repositories.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
@@ -12,6 +12,9 @@
     "plan-execution",
     "code-review",
     "consensus",
-    "reviewers"
+    "reviewers",
+    "validators",
+    "automation",
+    "nonprod"
   ]
 }

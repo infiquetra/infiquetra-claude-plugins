@@ -152,7 +152,7 @@ The 10-step flow:
 
 ### Added
 - Initial release of sdlc-manager plugin for the Mount Olympus agent team
-- Adapted from vecu-sdlc-manager, made organization-agnostic for Infiquetra
+- Updated wording to use Infiquetra conventions consistently
 - 6 skills: sdlc-board, sdlc-issues, sdlc-labels, sdlc-metrics, sdlc-milestones, sdlc-rollout
 - 4 commands: /sdlc-board, /sdlc-create, /sdlc-metrics, /sdlc-triage
 - 1 agent: sdlc-operator

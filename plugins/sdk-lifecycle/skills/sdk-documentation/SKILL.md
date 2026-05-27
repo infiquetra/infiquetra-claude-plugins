@@ -249,12 +249,12 @@ Use JSDoc comments:
  *
  * @example
  * ```typescript
- * const client = new VECUServiceClient({ apiKey: 'your-key' });
+ * const client = new InfiquetraServiceClient({ apiKey: 'your-key' });
  * const resource = await client.getResource('res-123');
  * console.log(resource.name);
  * ```
  */
-export class VECUServiceClient {
+export class InfiquetraServiceClient {
   /**
    * Gets a resource by ID.
    *
@@ -296,7 +296,7 @@ This example demonstrates:
 """
 
 import asyncio
-from vecu_service_sdk import Client, SDKError
+from infiquetra_service_sdk import Client, SDKError
 
 
 async def main():

@@ -665,7 +665,7 @@ class DIDAuthentication:
     "kid": "key-1"
   },
   "payload": {
-    "iss": "https://auth.vecu.com",
+    "iss": "https://auth.infiquetra.com",
     "sub": "user-123",
     "aud": "wallet-service",
     "exp": 1735689600,

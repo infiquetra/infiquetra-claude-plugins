@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# create-plugin.sh - Create a new VECU Claude plugin from template
+# create-plugin.sh - Create a new Infiquetra Claude plugin from template
 #
 # Usage: ./tools/create-plugin.sh <plugin-id> <plugin-name>
-# Example: ./tools/create-plugin.sh api-tester "VECU API Tester"
+# Example: ./tools/create-plugin.sh api-tester "Infiquetra API Tester"
 
 set -euo pipefail
 
@@ -41,8 +41,8 @@ if [ $# -lt 2 ]; then
     print_error "Usage: $0 <plugin-id> <plugin-name>"
     echo ""
     echo "Examples:"
-    echo "  $0 api-tester \"VECU API Tester\""
-    echo "  $0 log-analyzer \"VECU Log Analyzer\""
+    echo "  $0 api-tester \"Infiquetra API Tester\""
+    echo "  $0 log-analyzer \"Infiquetra Log Analyzer\""
     exit 1
 fi
 
@@ -55,7 +55,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if ! [[ "$PLUGIN_ID" =~ ^[a-z0-9-]+$ ]]; then
     print_error "Plugin ID must be in kebab-case (lowercase letters, numbers, and hyphens only)"
     echo "  Valid: api-tester, log-analyzer"
-    echo "  Invalid: VecuApiTester, vecu_api_tester"
+    echo "  Invalid: InfiquetraApiTester, infiquetra_api_tester"
     exit 1
 fi
 
@@ -65,7 +65,7 @@ if [ -d "$REPO_ROOT/$PLUGIN_DIR" ]; then
     exit 1
 fi
 
-print_header "🚀 Creating new VECU Claude plugin: $PLUGIN_NAME"
+print_header "🚀 Creating new Infiquetra Claude plugin: $PLUGIN_NAME"
 
 # Create directory structure
 print_info "Creating directory structure..."
@@ -82,7 +82,7 @@ cat > "$PLUGIN_DIR/.claude-plugin/plugin.json" <<EOF
   "name": "$PLUGIN_NAME",
   "description": "Description for $PLUGIN_NAME - update this!",
   "author": {
-    "name": "VECU Team",
+    "name": "Infiquetra Team",
     "email": "hello@infiquetra.com",
     "organization": "your organization"
   },
@@ -110,7 +110,7 @@ cat > "$PLUGIN_DIR/.claude-plugin/plugin.json" <<EOF
     "mypy": ">=1.8.0"
   },
   "keywords": [
-    "vecu"
+    "infiquetra"
   ],
   "config": {},
   "permissions": [],
@@ -124,7 +124,7 @@ print_info "Generating main script..."
 cat > "$PLUGIN_DIR/src/main.py" <<'EOF'
 #!/usr/bin/env python3
 """
-Main script for VECU Claude plugin.
+Main script for Infiquetra Claude plugin.
 
 This is a template - customize it for your plugin's functionality.
 """
@@ -137,7 +137,7 @@ from pathlib import Path
 def main():
     """Main entry point for the plugin."""
     parser = argparse.ArgumentParser(
-        description="VECU Claude Plugin"
+        description="Infiquetra Claude Plugin"
     )
     parser.add_argument(
         "--verbose",
@@ -148,7 +148,7 @@ def main():
 
     args = parser.parse_args()
 
-    print("Hello from your VECU plugin!")
+    print("Hello from your Infiquetra plugin!")
     print("Implement your plugin logic here.")
 
     if args.verbose:
@@ -204,16 +204,16 @@ python3 src/main.py --verbose
 ### Example 1: Basic Usage
 \`\`\`bash
 $ python3 src/main.py
-Hello from your VECU plugin!
+Hello from your Infiquetra plugin!
 \`\`\`
 
 ## Configuration
 
 Describe any configuration options or environment variables.
 
-## Integration with VECU Workflows
+## Integration with Infiquetra Workflows
 
-Describe how this plugin integrates with VECU development workflows.
+Describe how this plugin integrates with Infiquetra development workflows.
 
 ## Troubleshooting
 

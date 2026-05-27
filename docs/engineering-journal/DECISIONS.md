@@ -22,6 +22,38 @@
 
 ---
 
+## 2026-05-27
+
+### `team-execution` v2 uses context-selected validators and guarded nonprod automation (commit pending)  {#team-execution-v2-validators}
+
+**Decision.** Evolve `team-execution` from reviewer-only orchestration into a reviewer plus
+validator workflow. Validators are a maximum available roster, selected by repository context,
+changed files, workflows, contracts, docs, tests, and optional `.team-execution.json`. Automation
+is allowed only for `github.com/infiquetra/*`, only after gates pass, and only for nonprod or
+publish-nonprod workflows.
+
+**Rejected alternatives.**
+- *Spawn every validator on every plan.* Rejected: creates noise, cost, and false blockers for
+  validators unrelated to the change.
+- *Let validators run before reviewer consensus.* Rejected: reviewer non-consensus means the
+  implementation is still unstable; validator findings would be stale or duplicated.
+- *Allow generic deployment automation once checks pass.* Rejected: production, staging, branch
+  deletion, force-push, and credential changes carry a higher operational risk than this plugin
+  should automate.
+
+**Rationale.** Context selection keeps validator evidence proportional to risk while still making
+the approved roster available. Gating validators after reviewer consensus creates a stable artifact
+to scan and test. Nonprod-only automation gives useful end-to-end validation without turning a
+planning plugin into a production deployment system.
+
+**Revisit when.** We have repeated evidence that a validator category is always selected together
+with another category and should be merged, or when production deployment safety is owned by a
+separate audited release plugin.
+
+**Refs.** LEARNINGS [team setup asset drift](LEARNINGS.md#team-setup-asset-drift).
+
+---
+
 ## 2026-05-25
 
 ### `redis-channel` plugin: Hermes-agnostic Claude Code channel over Redis Streams (commit pending)  {#redis-bridge-decoupled}

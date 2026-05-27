@@ -41,7 +41,7 @@ service-sdk/
 
 ```json
 {
-  "name": "@vecu/service-sdk",
+  "name": "@infiquetra/service-sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for Infiquetra Service API",
   "main": "dist/index.js",
@@ -62,7 +62,7 @@ service-sdk/
     "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
-    "vecu",
+    "infiquetra",
     "sdk",
     "vehicle-custody",
     "typescript"
@@ -73,7 +73,7 @@ service-sdk/
     "type": "git",
     "url": "https://github.com/infiquetra/service-sdk"
   },
-  "homepage": "https://documentation portal.vecu.example.com/service-sdk",
+  "homepage": "https://documentation portal.infiquetra.example.com/service-sdk",
   "engines": {
     "node": ">=18.0.0"
   },
@@ -160,17 +160,17 @@ export interface ClientConfig {
  *
  * @example
  * ```typescript
- * const client = new VECUServiceClient({ apiKey: 'your-api-key' });
+ * const client = new InfiquetraServiceClient({ apiKey: 'your-api-key' });
  * const resource = await client.getResource('resource-id');
  * console.log(resource.name);
  * ```
  */
-export class VECUServiceClient {
+export class InfiquetraServiceClient {
   private readonly axios: AxiosInstance;
 
   constructor(config: ClientConfig) {
     const {
-      baseUrl = 'https://api.service.vecu.example.com',
+      baseUrl = 'https://api.service.infiquetra.example.com',
       apiKey,
       timeout = 30000,
       maxRetries = 3,
@@ -423,18 +423,18 @@ export class ValidationError extends SDKError {
 ## Testing Pattern (Jest)
 
 ```typescript
-import { VECUServiceClient } from '../client';
+import { InfiquetraServiceClient } from '../client';
 import { Resource } from '../models';
 import axios from 'axios';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
-describe('VECUServiceClient', () => {
-  let client: VECUServiceClient;
+describe('InfiquetraServiceClient', () => {
+  let client: InfiquetraServiceClient;
 
   beforeEach(() => {
-    client = new VECUServiceClient({ apiKey: 'test-key' });
+    client = new InfiquetraServiceClient({ apiKey: 'test-key' });
     jest.clearAllMocks();
   });
 

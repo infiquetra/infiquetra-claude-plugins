@@ -42,7 +42,7 @@ Before scaffolding, verify:
 ### Step 1: Gather Project Information
 
 Ask the user for:
-- **SDK name** (e.g., "my-sdk", "infiquetra.SDK", "@vecu/identity-sdk")
+- **SDK name** (e.g., "my-sdk", "infiquetra.SDK", "@infiquetra/identity-sdk")
 - **Language** (.NET, Python, or TypeScript)
 - **Description** (brief description of SDK purpose)
 - **Target API** (base URL of the service this SDK will wrap)
@@ -67,7 +67,7 @@ The script will create:
 ```
 my-sdk/
 ├── src/
-│   └── vecu_my_sdk/
+│   └── infiquetra_my_sdk/
 │       ├── __init__.py
 │       ├── client.py
 │       ├── models.py
@@ -189,7 +189,7 @@ target-version = "py312"
 #### TypeScript (package.json)
 ```json
 {
-  "name": "@vecu/my-sdk",
+  "name": "@infiquetra/my-sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for Infiquetra Wallet Service",
   "main": "dist/index.js",

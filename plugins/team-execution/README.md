@@ -1,13 +1,18 @@
 # team-execution
 
-Two-phase plan execution with automatic multi-reviewer consensus workflow.
+Two-phase plan execution with reviewer consensus, validator gates, and guarded nonprod
+automation for Infiquetra repositories.
 
-**Phase A** runs during plan mode: reads the plan, derives workers from phases, detects optional
-reviewers by keyword, and embeds a `## Team Structure` section into the plan.
+**Phase A** runs during planning. It reads the requested work, inspects repository signals,
+classifies the repo and risk profile, derives workers, reviewers, and selected validators, and
+embeds a `## Team Structure` plus validator plan into the approved plan.
 
-**Phase B** runs after plan exit: a global CLAUDE.md rule sees `## Team Structure` and fires
-TeamCreate automatically. Claude orchestrates workers through plan approval gates, parallel
-execution, and a max-3-iteration review cycle with >= 9.0 consensus threshold.
+**Phase B** runs after plan approval. Workers complete the change, reviewers reach consensus,
+scanners validate the local result, CI and optional nonprod automation are coordinated, and
+testers/monitors validate the deployed nonprod result.
+
+Validators are available as a roster. They are selected by task context; they are not spawned
+all at once.
 
 ---
 
@@ -17,184 +22,147 @@ execution, and a max-3-iteration review cycle with >= 9.0 consensus threshold.
 /team-execute
 ```
 
-Or describe what you want to build — Claude enters plan mode, the skill embeds the Team
-Structure, and execution begins automatically when you exit plan mode.
+Or provide an existing plan:
 
-If you already have a written plan:
 ```
 /team-execute [paste plan here or provide file path]
 ```
 
----
-
-## Setup: CLAUDE.md Handoff Rule
-
-This plugin requires one rule in your global `~/.claude/CLAUDE.md` to enable the automatic
-Phase A → Phase B handoff:
-
-```markdown
-## Team Execution Auto-Handoff
-
-When a plan exits plan mode and contains an explicit **## Team Structure** section with named
-agents, skip all skill invocations and go directly to TeamCreate. Parse the Team Structure
-table for workers and reviewers, then follow the Phase B orchestration protocol from
-`team-execution/skills/team-execution/SKILL.md`.
-```
-
-Without this rule, Phase A will embed the Team Structure but execution won't start automatically
-on plan exit.
-
----
-
-## How It Works
+Run setup checks:
 
 ```
-Phase A: During Plan Mode
-  → /team-execute enters plan mode
-  → Skill reads plan, classifies type (code/docs/mixed)
-  → Triage check: trivial config? offer to skip
-  → Detect optional reviewers from plan keywords
-  → Derive workers from plan phases
-  → User confirms team lineup
-  → Skill embeds ## Team Structure into the plan
-  → User exits plan mode
-
-                    ↓ CLAUDE.md handoff ↓
-
-Phase B: After Plan Exit (automatic)
-  → CLAUDE.md rule sees ## Team Structure → fires TeamCreate
-  → Claude parses Team Structure, starts 4-step protocol:
-
-  Step 1: Worker Kickoff
-    → Workers execute (bypassPermissions — no user prompts)
-    → Claude monitors progress via messaging
-    → Redirects if a worker goes off-track
-
-  Step 2: Execution
-    → Workers implement in parallel where tasks allow
-    → Claude monitors + unblocks dependencies
-
-  Step 3: Review Cycle (max 3 iterations)
-    → All reviewers score in parallel (5 dimensions each, 0-10)
-    → If all >= 9.0 → consensus → done
-    → Else: fixes routed to workers → only failed reviewers re-run
-
-  Step 4: Completion
-    → Final score report
-    → Commit if needed
-    → Team shutdown
+/team-setup
 ```
-
----
-
-## The CLAUDE.md Handoff Mechanism
-
-The transition from Phase A to Phase B works through the rule in your global `~/.claude/CLAUDE.md`.
-
-When the plan exits plan mode with a `## Team Structure` section embedded, this rule fires
-automatically — no explicit `/team-execute` needed post-planning. This is why the skill
-must embed the section BEFORE ExitPlanMode, not after.
 
 ---
 
 ## What You Get
 
-### Always Included
+### Base Reviewers
 
-| Reviewer | Color | Focus |
-|----------|-------|-------|
-| Devil's Advocate | 🔴 Red | Assumptions, edge cases, failure modes, scope creep |
-| Security Reviewer | 🟠 Orange | OWASP Top 10, secrets, auth/authZ, PII |
-| Architecture Reviewer | 🟣 Purple | Design patterns, separation of concerns, convention adherence |
+Always included:
 
-### Automatically Suggested (by keyword detection)
+| Reviewer | Focus |
+|----------|-------|
+| `devils-advocate-reviewer` | Assumptions, edge cases, failure modes, scope creep |
+| `security-reviewer` | OWASP Top 10, secrets, auth/authZ, PII, supply chain |
+| `architecture-reviewer` | Design patterns, separation of concerns, convention adherence |
 
-| Trigger Keywords | Reviewer |
-|-----------------|----------|
-| CDK, Lambda, DynamoDB, S3, IAM, KMS, AWS | 🔵 Infra Reviewer |
-| API, endpoint, REST, OpenAPI, versioning | 🟢 API Reviewer |
-| pytest, test, coverage, mock, fixture | 🟡 Testing Reviewer |
-| refactor, DRY, SOLID, complexity, patterns | 🩵 Code Quality Reviewer |
-| PII, GDPR, consent, retention, privacy | 🩷 Privacy Reviewer |
-| docs, README, specification, guide, runbook | 🩵 Clarity Reviewer |
-| SKILL.md, GitHub issue, acceptance criteria | 🟡 AI Usefulness Reviewer |
+Optional reviewers are still available for infrastructure, API, testing, code quality,
+privacy, clarity, and AI-usefulness review.
+
+### Validators
+
+Validators run after worker completion and reviewer consensus. They are grouped by the signal
+they provide:
+
+| Group | Agents |
+|-------|--------|
+| Scanners | `security-scanner`, `iac-cost-scanner`, `api-compat-scanner`, `dependency-scanner` |
+| Testers | `smoke-tester`, `scenario-tester`, `api-contract-tester`, `sdk-regression-tester`, `event-flow-tester`, `ui-regression-tester`, `performance-tester`, `concurrency-tester` |
+| Monitors | `github-actions-monitor`, `runtime-monitor` |
+| Operational | `deploy-watcher` |
+
+Selected validators use OSS/free tools when applicable: Semgrep, Bandit, pip-audit, Trivy,
+Gitleaks, detect-secrets, Checkov, oasdiff, Schemathesis, Playwright, and k6. Missing selected
+tools fail loud with setup guidance.
 
 ---
 
-## Team Structure Format
+## Optional Configuration
 
-The canonical format embedded into plans:
+Target repositories may define `.team-execution.json`. Absence is valid; the skill infers from
+changed files, workflows, contracts, docs, tests, and repository layout.
 
-```markdown
-## Team Structure
+```json
+{
+  "required_validators": ["security-scanner", "smoke-tester"],
+  "disabled_validators": ["performance-tester"],
+  "nonprod_workflows": ["publish-nonprod.yml"],
+  "scenario_hints": ["checkout flow", "webhook replay"],
+  "smoke_targets": ["https://example-nonprod.internal/health"]
+}
+```
 
-| Agent | Role | Mode | Responsibilities |
-|-------|------|------|------------------|
-| `worker-1` | [Phase 1 name] | bypassPermissions | [Tasks from plan] |
-| `worker-2` | [Phase 2 name] | bypassPermissions | [Tasks from plan] |
-| `security-reviewer` | Security Reviewer | general-purpose | OWASP, secrets, auth/authZ, PII |
-| `devils-advocate` | Devil's Advocate | general-purpose | Assumptions, edge cases, failure modes |
-| `architecture-reviewer` | Architecture Reviewer | general-purpose | Design patterns, separation of concerns, conventions |
+The config may require or disable validators, name nonprod workflows, and provide scenario or
+smoke-test hints. Required validators that cannot run block automation and completion until the
+missing setup is resolved or the user explicitly changes the plan.
 
-### Review Protocol
-- Consensus threshold: **>= 9.0/10** from every reviewer
-- Maximum **3 review iterations**
-- Security/auth < 5.0 is a **blocking stop**
-- Workers run in `bypassPermissions` mode — no permission prompts, quality enforced by review cycle
+---
 
-### Reference Files
+## Phase B Order
+
+1. Workers complete approved implementation tasks.
+2. Reviewers run the consensus protocol.
+3. Reviewer non-consensus blocks validators unless the user explicitly overrides.
+4. Scanners run against the local result.
+5. PR, CI, merge, and nonprod deployment are coordinated only after gates pass.
+6. Testers validate the deployed nonprod result.
+7. Monitors verify GitHub Actions and runtime signals.
+8. Completion reports evidence, state paths, residual risks, and blocked automation.
+
+Hard-fail scanner or tester findings block auto-merge, nonprod deployment, and completion.
+The orchestrator may run a maximum of 3 remediation loops before escalating to the user.
+
+---
+
+## Automation Guardrails
+
+Automation is allowed only when all of these are true:
+
+- Repository remote matches `github.com/infiquetra/*`.
+- The work follows the repo default branch model.
+- Reviewer, scanner, CI, and required tester gates passed.
+- The workflow is explicitly nonprod or publish-nonprod.
+- No production, staging, force-push, branch deletion, or credential-changing action is involved.
+
+Any ambiguous signal blocks automation.
+
+---
+
+## Validator State
+
+Validator run state is JSON under ignored repo-local:
+
+```
+.claude/team-execution/validators/
+```
+
+If `.claude/` is not ignored in the target repository, the skill instructs the user to add an
+ignore rule or use a user-local fallback:
+
+```
+~/.claude/team-execution/state/<repo>/
+```
+
+State files record selected validators, commands, tool availability, evidence paths, findings,
+remediation loops, and final gate status.
+
+---
+
+## Setup Assets
+
+`/team-setup` validates the handoff rule, tmux display configuration, and bundled assets:
+
+- `docs/example_tmux.conf`
+- `docs/agent-overflow.sh`
+
+The setup command copies these assets only after user confirmation and reports manual setup
+instructions if it cannot find them.
+
+---
+
+## Reference Files
+
 - `team-execution/skills/team-execution/references/reviewer-registry.md`
 - `team-execution/skills/team-execution/references/review-criteria.md`
 - `team-execution/skills/team-execution/references/consensus-protocol.md`
-```
-
-Note: No `lead` row — Claude orchestrates directly.
-
----
-
-## Consensus Protocol
-
-All reviewers must score **>= 9.0/10** to reach consensus.
-
-If consensus is not reached, fix requests are consolidated and routed to workers. Only reviewers
-that scored < 9.0 re-run in the next iteration. Maximum 3 iterations.
-
-After 3 cycles, execution proceeds with the best available version and documents any
-unresolved issues.
-
-**Hard stop**: Any security or auth dimension scoring < 5.0 is treated as a blocking issue
-and flagged immediately.
-
----
-
-## Triage Escape Hatch
-
-For trivial changes (single config file, no security surface, < 3 files, no docs content),
-Phase A offers:
-
-- **A)** Skip team planning entirely (recommended for trivial changes)
-- **B)** Full review team anyway
-- **C)** Devil's Advocate only (lightweight check)
-
-Docs-only plans **do not qualify** for the escape hatch — documentation is specifications
-for code and deserves full review.
-
----
-
-## Architecture Reviewer Context Loading
-
-The Architecture Reviewer searches for project-local architecture docs:
-
-```
-1. ./docs/adrs/
-2. ./docs/architecture/
-3. ./architecture-decisions/
-4. ./architecture/
-5. ./docs/decisions/
-```
-
-It keyword-matches the plan against any docs found, then loads only relevant ones. If no
-architecture docs exist, it scores based on observable codebase patterns.
+- `team-execution/skills/team-execution/references/validator-registry.md`
+- `team-execution/skills/team-execution/references/validator-criteria.md`
+- `team-execution/skills/team-execution/references/validator-execution-order.md`
+- `team-execution/skills/team-execution/references/validator-evidence-state.md`
+- `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
+- `team-execution/skills/team-execution/references/validator-pane-behavior.md`
 
 ---
 
@@ -203,24 +171,35 @@ architecture docs exist, it scores based on observable codebase patterns.
 ```
 team-execution/
 ├── .claude-plugin/plugin.json
-├── skills/team-execution/
-│   ├── SKILL.md                    # Phase A (plan mode) + Phase B (orchestration protocol)
-│   └── references/
-│       ├── reviewer-registry.md    # Keyword triggers + reviewer list
-│       ├── review-criteria.md      # Scoring rubrics for all reviewers
-│       └── consensus-protocol.md  # 3-iteration loop, re-review scoping
+├── docs/
+│   ├── agent-overflow.sh
+│   └── example_tmux.conf
+├── skills/
+│   ├── appsec-audit/
+│   │   └── SKILL.md
+│   └── team-execution/
+│       ├── SKILL.md
+│       └── references/
+│           ├── consensus-protocol.md
+│           ├── review-criteria.md
+│           ├── reviewer-registry.md
+│           ├── validator-criteria.md
+│           ├── validator-evidence-state.md
+│           ├── validator-execution-order.md
+│           ├── validator-pane-behavior.md
+│           ├── validator-registry.md
+│           └── validator-spawn-quirks.md
 ├── agents/
-│   ├── devils-advocate-reviewer.md # Base (red)
-│   ├── security-reviewer.md        # Base (orange)
-│   ├── architecture-reviewer.md    # Base (purple)
-│   ├── infra-reviewer.md           # Optional (blue)
-│   ├── api-reviewer.md             # Optional (green)
-│   ├── testing-reviewer.md         # Optional (yellow)
-│   ├── code-quality-reviewer.md    # Optional (cyan)
-│   ├── privacy-reviewer.md         # Optional (pink)
-│   ├── clarity-reviewer.md         # Optional (teal)
-│   └── ai-usefulness-reviewer.md   # Optional (gold)
-├── commands/team-execute.md        # /team-execute slash command
+│   ├── devils-advocate-reviewer.md
+│   ├── security-reviewer.md
+│   ├── architecture-reviewer.md
+│   ├── security-scanner.md
+│   ├── smoke-tester.md
+│   ├── github-actions-monitor.md
+│   └── ... validator and optional reviewer agents
+├── commands/
+│   ├── team-execute.md
+│   └── team-setup.md
 ├── README.md
 └── CHANGELOG.md
 ```

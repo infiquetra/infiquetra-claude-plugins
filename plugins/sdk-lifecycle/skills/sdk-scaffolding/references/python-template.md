@@ -7,7 +7,7 @@ Complete structure and patterns for Python SDK projects.
 ```
 service-sdk/
 ├── src/
-│   └── vecu_service_sdk/
+│   └── infiquetra_service_sdk/
 │       ├── __init__.py          # Package exports
 │       ├── client.py            # Main SDK client
 │       ├── models.py            # Pydantic data models
@@ -54,7 +54,7 @@ authors = [
 requires-python = ">=3.12"
 readme = "README.md"
 license = {text = "MIT"}
-keywords = ["vecu", "sdk", "vehicle-custody"]
+keywords = ["infiquetra", "sdk", "vehicle-custody"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -86,7 +86,7 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/infiquetra/service-sdk"
-Documentation = "https://documentation portal.vecu.example.com/service-sdk"
+Documentation = "https://documentation portal.infiquetra.example.com/service-sdk"
 Repository = "https://github.com/infiquetra/service-sdk"
 
 [build-system]
@@ -190,13 +190,13 @@ from .exceptions import (
 )
 
 
-class VECUServiceClient:
+class InfiquetraServiceClient:
     """
     Client for interacting with Infiquetra Service API.
 
     Example:
         ```python
-        async with VECUServiceClient(api_key="your-key") as client:
+        async with InfiquetraServiceClient(api_key="your-key") as client:
             resource = await client.get_resource("resource-id")
             print(resource.name)
         ```
@@ -204,7 +204,7 @@ class VECUServiceClient:
 
     def __init__(
         self,
-        base_url: str = "https://api.service.vecu.example.com",
+        base_url: str = "https://api.service.infiquetra.example.com",
         api_key: Optional[str] = None,
         timeout: float = 30.0,
         max_retries: int = 3,
@@ -401,14 +401,14 @@ class RateLimitError(SDKError):
 
 import pytest
 from unittest.mock import AsyncMock, patch
-from vecu_service_sdk import VECUServiceClient
-from vecu_service_sdk.models import Resource
+from infiquetra_service_sdk import InfiquetraServiceClient
+from infiquetra_service_sdk.models import Resource
 
 
 @pytest.fixture
 async def client():
     """Create test client."""
-    async with VECUServiceClient(api_key="test-key") as client:
+    async with InfiquetraServiceClient(api_key="test-key") as client:
         yield client
 
 

@@ -30,9 +30,14 @@ Each of the four core files has a block-quote intro at the top with its own form
 
 ## Quick navigation by topic
 
+- Channel plugins are foreground-only; `--bg` / `/bg` strips `--dangerously-load-development-channels` → [LEARNINGS](LEARNINGS.md#cc-channels-bg-not-supported)
+- Claude Code Channels split terminal/channel surfaces by design (don't try to mirror) → [LEARNINGS](LEARNINGS.md#cc-channels-surface-split)
+- Plugin runtime coaching belongs in MCP `instructions=`, NOT `agents/*.md` → [LEARNINGS](LEARNINGS.md#cc-channels-surface-split)
 - Marketplace registry drift (PRs #110/#111 missed registration) → [LEARNINGS](LEARNINGS.md#marketplace-drift)
 - `marketplace.json` `Edit` requires `]` in `old_string` → [LEARNINGS](LEARNINGS.md#marketplace-edit-guard)
 - Gitignore `.claude/` and skip `uv.lock` → [DECISIONS](DECISIONS.md#gitignore-claude-and-no-uv-lock)
 - CI guard for plugins/marketplace drift → [QUEUED](QUEUED.md#marketplace-ci-guard)
 - Future `plugins/engineering-journal/` plugin → [QUEUED](QUEUED.md#engineering-journal-plugin)
+- Phase 5 spawn primitive: tmux-wrapped foreground (replaces `--bg` from current plan) → [QUEUED](QUEUED.md#phase5-spawn-via-tmux)
+- File feature request with Anthropic re channels-in-bg → [QUEUED](QUEUED.md#channels-in-bg-feature-request)
 - PR #112 marketplace fix (SHIPPED) → [ARCHIVE](ARCHIVE.md#pr-112-marketplace-fix)

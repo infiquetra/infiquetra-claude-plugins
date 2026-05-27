@@ -511,7 +511,7 @@ class TestPagerDutyClient:
         assert output["data"][0]["name"] == "Jeff Cox"
 
     @patch("pagerduty_client.requests.request")
-    def test_vecu_defaults(self, mock_request, monkeypatch, capsys):
+    def test_infiquetra_defaults(self, mock_request, monkeypatch, capsys):
         """Test default team ID is loaded from environment variable."""
         monkeypatch.setenv("PAGERDUTY_API_KEY", "test-token")
         monkeypatch.setenv("PAGERDUTY_DEFAULT_TEAM_ID", "TEST_TEAM_ID")

@@ -140,7 +140,7 @@ Copyright © 2024 your organization Inc.
 ## Overview
 REST API for {self.service_name.replace("-", " ").title()} service.
 
-**Base URL**: `https://{self.service_name}.vecu.example.com`
+**Base URL**: `https://{self.service_name}.infiquetra.example.com`
 **Authentication**: JWT Bearer token
 
 ## Authentication
@@ -262,7 +262,7 @@ headers = {{"Authorization": f"Bearer {{token}}"}}
 
 # List resources
 response = requests.get(
-    "https://{self.service_name}.vecu.example.com/resources",
+    "https://{self.service_name}.infiquetra.example.com/resources",
     headers=headers
 )
 resources = response.json()

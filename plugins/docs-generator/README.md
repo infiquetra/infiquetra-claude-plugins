@@ -183,7 +183,7 @@ $ python3 scripts/docs_generator.py generate --type api-spec --service wallet
 ## Overview
 Digital wallet service for vehicle custody platform.
 
-**Base URL**: `https://wallet.vecu.example.com`
+**Base URL**: `https://wallet.infiquetra.example.com`
 **Authentication**: JWT Bearer token
 
 ## Endpoints
@@ -332,7 +332,7 @@ fi
 service:
   name: wallet-service
   description: Digital wallet service for vehicle custody
-  base_url: https://wallet.vecu.example.com
+  base_url: https://wallet.infiquetra.example.com
 
 documentation:
   output_dir: docs
@@ -422,7 +422,7 @@ python3 scripts/docs_generator.py generate --template custom-readme.md.j2
 ### Diagram Customization
 ```bash
 # Generate diagrams with custom styling
-python3 scripts/docs_generator.py diagrams --style vecu --output docs/images/
+python3 scripts/docs_generator.py diagrams --style infiquetra --output docs/images/
 ```
 
 ## Notes

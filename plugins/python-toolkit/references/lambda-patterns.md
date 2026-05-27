@@ -27,7 +27,7 @@ from aws_lambda_powertools.metrics import MetricUnit
 
 logger = Logger()
 tracer = Tracer()
-metrics = Metrics(namespace="VECUWalletService")
+metrics = Metrics(namespace="InfiquetraWalletService")
 
 
 @logger.inject_lambda_context(log_event=True)
@@ -224,7 +224,7 @@ def handler(event, context):
 from aws_lambda_powertools import Metrics
 from aws_lambda_powertools.metrics import MetricUnit
 
-metrics = Metrics(namespace="VECUWalletService", service="wallet-api")
+metrics = Metrics(namespace="InfiquetraWalletService", service="wallet-api")
 
 
 @metrics.log_metrics(capture_cold_start_metric=True)
@@ -514,16 +514,16 @@ def batch_write_transactions(transactions: list[dict]) -> None:
 from aws_lambda_powertools.utilities import parameters
 
 # Get SSM parameter
-api_key = parameters.get_parameter("/vecu/wallet/api-key")
+api_key = parameters.get_parameter("/infiquetra/wallet/api-key")
 
 # Get secret from Secrets Manager
-db_credentials = parameters.get_secret("vecu/wallet/db-creds")
+db_credentials = parameters.get_secret("infiquetra/wallet/db-creds")
 
 # Get multiple parameters with caching
 @parameters.clear_cache  # Clear cache after function execution
 def handler(event, context):
     # Cached for 5 minutes by default
-    config = parameters.get_parameters("/vecu/wallet/config")
+    config = parameters.get_parameters("/infiquetra/wallet/config")
 
     return {"statusCode": 200}
 ```
@@ -597,7 +597,7 @@ from aws_lambda_powertools.metrics import MetricUnit
 # Initialize Powertools
 logger = Logger(service="wallet-service")
 tracer = Tracer(service="wallet-service")
-metrics = Metrics(namespace="VECUWalletService", service="wallet-api")
+metrics = Metrics(namespace="InfiquetraWalletService", service="wallet-api")
 app = APIGatewayRestResolver()
 
 # DynamoDB setup

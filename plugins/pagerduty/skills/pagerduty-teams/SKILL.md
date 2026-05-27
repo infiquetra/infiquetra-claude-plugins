@@ -35,7 +35,7 @@ echo $PAGERDUTY_API_KEY
 python plugins/pagerduty/skills/pagerduty-incidents/scripts/pagerduty_client.py teams list
 
 # Search teams by name
-python plugins/pagerduty/skills/pagerduty-incidents/scripts/pagerduty_client.py teams list --query "vecu"
+python plugins/pagerduty/skills/pagerduty-incidents/scripts/pagerduty_client.py teams list --query "infiquetra"
 ```
 
 #### Get Team Details
@@ -213,7 +213,7 @@ Returns:
 **User**: "Show me all Infiquetra teams"
 
 **Response**:
-1. List teams with `--query "vecu"`
+1. List teams with `--query "infiquetra"`
 2. Display team names, IDs, member counts
 3. Show associated services per team
 4. Highlight primary contact/manager

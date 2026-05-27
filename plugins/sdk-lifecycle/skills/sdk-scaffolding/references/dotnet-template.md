@@ -59,7 +59,7 @@ infiquetra.Service.SDK/
     <Company>your organization</Company>
     <Product>Infiquetra Service SDK</Product>
     <Description>C# SDK for Infiquetra Service API</Description>
-    <PackageTags>vecu;sdk;vehicle-custody</PackageTags>
+    <PackageTags>infiquetra;sdk;vehicle-custody</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/infiquetra/service-sdk</PackageProjectUrl>
     <RepositoryUrl>https://github.com/infiquetra/service-sdk</RepositoryUrl>
@@ -117,7 +117,7 @@ public class ServiceClient : IDisposable
     {
         _apiKey = apiKey ?? throw new ArgumentNullException(nameof(apiKey));
         _httpClient = httpClient ?? new HttpClient();
-        _httpClient.BaseAddress = new Uri(baseUrl ?? "https://api.service.vecu.example.com");
+        _httpClient.BaseAddress = new Uri(baseUrl ?? "https://api.service.infiquetra.example.com");
         _httpClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", _apiKey);
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "service-sdk/0.1.0");

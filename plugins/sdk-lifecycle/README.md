@@ -40,7 +40,7 @@ python plugins/sdk-lifecycle/skills/sdk-scaffolding/scripts/scaffold_sdk.py \
   --name "my-sdk" \
   --language "python" \
   --description "Python SDK for Infiquetra Wallet Service" \
-  --api-url "https://wallet.vecu.example.com"
+  --api-url "https://wallet.infiquetra.example.com"
 ```
 
 **Output:**
@@ -367,7 +367,7 @@ git push --tags
 - [Infiquetra Test Suite](../test-suite) - Parallel quality checks
 - [Infiquetra Docs Generator](../docs-generator) - Service documentation
 - [your organization package registry (PyPI/npm)](https://registry.example.com)
-- [Infiquetra documentation portal](https://documentation portal.vecu.example.com)
+- [Infiquetra documentation portal](https://documentation portal.infiquetra.example.com)
 
 ## Contributing
 

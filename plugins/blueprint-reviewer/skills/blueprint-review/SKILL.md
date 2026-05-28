@@ -11,7 +11,7 @@ when_to_use: |
 
   Direct invocation:
   - "review this blueprint section"
-  - "review section 4 of campps-blueprint"
+  - "review section 4 of campps-context-library"
   - "review adr-001"
   - "review the executive-summary section"
   - "/blueprint-review path/to/file.md"

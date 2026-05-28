@@ -132,7 +132,7 @@ python "$SCRIPT" issue create --repo <repo> --type <capability|enhancement|defec
 
 # With pre-supplied parent (skips the sub-issue prompt):
 python "$SCRIPT" issue create --repo <repo> --type capability \
-    --parent-ref campps-blueprint#1
+    --parent-ref campps-context-library#1
 ```
 
 This is a 10-step flow (full details in `issue_create` docstring):
@@ -178,7 +178,7 @@ python "$SCRIPT" flow set-field --project mount-olympus --repo <repo> --number <
 
 # 5. Link as native sub-issue (cross-repo, idempotent)
 python "$SCRIPT" flow link-sub-issue \
-    --parent-repo campps-blueprint --parent-number <P> \
+    --parent-repo campps-context-library --parent-number <P> \
     --child-repo <repo> --child-number <N>
 
 # 6. (Optional) Link to milestone if the parent Objective has one
@@ -282,7 +282,7 @@ python "$SCRIPT" milestones progress --repo <repo> --milestone <N>
 ### Blueprint-Driven Issue Creation (batched)
 
 ```
-1. Read relevant blueprint sections (campps-blueprint, mimir-blueprint, etc.)
+1. Read relevant blueprint sections (campps-context-library, mimir-context-library, etc.)
 2. Identify work items needed (capabilities, enhancements, context updates)
 3. Map each item to the appropriate consumer repo
 4. For each item:
@@ -396,7 +396,7 @@ Step 2: Applied labels (hermes-task, capability, needs-analysis)
 Step 3: Added to Mount Olympus board
 Step 4: Set Initiative=olympus-quality on #142 (project field, not label)
 Step 5: Set Objective=Auth Pilot on #142
-Step 6: Linked as sub-issue of campps-blueprint#1
+Step 6: Linked as sub-issue of campps-context-library#1
 Step 7: Validated card body: PASSED
 ```
 

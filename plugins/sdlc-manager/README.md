@@ -202,7 +202,7 @@ python3 $SCRIPT flow discover-project --repo athena-service
 
 # Link child as native sub-issue of parent (cross-repo, idempotent)
 python3 $SCRIPT flow link-sub-issue \
-    --parent-repo campps-blueprint --parent-number 1 \
+    --parent-repo campps-context-library --parent-number 1 \
     --child-repo campps-mvp --child-number 42
 
 # Self-healing label create (404 → create; exists → no-op; auth/server errors raise)

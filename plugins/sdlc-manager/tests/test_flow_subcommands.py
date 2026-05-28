@@ -43,7 +43,7 @@ def test_link_sub_issue_idempotent_on_already_exists() -> None:
             status_code=422,
         )
 
-        sdlc_manager.flow_link_sub_issue("campps-blueprint", 1, "campps-mvp", 42, fmt="text")
+        sdlc_manager.flow_link_sub_issue("campps-context-library", 1, "campps-mvp", 42, fmt="text")
 
         # Should NOT have raised; should have called _out with idempotent message
         msgs = [c.args[0] for c in mock_out.call_args_list]
@@ -66,7 +66,9 @@ def test_link_sub_issue_raises_on_real_error() -> None:
         mock_post.side_effect = RuntimeError("API call failed: 500 Internal Server Error")
 
         with pytest.raises(RuntimeError, match="500"):
-            sdlc_manager.flow_link_sub_issue("campps-blueprint", 1, "campps-mvp", 42, fmt="text")
+            sdlc_manager.flow_link_sub_issue(
+                "campps-context-library", 1, "campps-mvp", 42, fmt="text"
+            )
 
 
 def test_link_sub_issue_rejects_pr_as_parent() -> None:

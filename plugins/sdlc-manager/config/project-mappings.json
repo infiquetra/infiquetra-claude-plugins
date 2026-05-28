@@ -9,7 +9,7 @@
       "name": "Olympus",
       "_id_note": "Project node id captured 2026-05-04. If it rotates (project rename/recreate), re-fetch via: gh project view 1 --owner infiquetra --format json -q .id",
       "repositories": [
-        "campps-blueprint",
+        "campps-context-library",
         "campps-mvp",
         "github-actions-runners",
         "hermes-extensions",
@@ -17,7 +17,7 @@
         "infiquetra-claude-plugins",
         "infiquetra-sdlc",
         "mimir",
-        "mimir-blueprint"
+        "mimir-context-library"
       ]
     }
   },

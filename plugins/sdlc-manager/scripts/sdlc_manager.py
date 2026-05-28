@@ -2535,7 +2535,7 @@ def _prompt_parent_issue() -> tuple[str, int] | None:
     'free-floating' / 'no parent'. Default is 'yes — paste a ref'; the
     operator types 'no' (or 'n') to skip."""
     print("\nSub-issue first: every new card has a parent by default.")
-    print("Paste a parent ref like 'campps-blueprint#42' or type 'no' to skip.")
+    print("Paste a parent ref like 'campps-context-library#42' or type 'no' to skip.")
     raw = _safe_input("Parent issue? (yes/no/<repo#N>) [yes]: ")
     if raw is None:
         return None  # Ctrl+D / Ctrl+C → treat as no-parent
@@ -2545,7 +2545,7 @@ def _prompt_parent_issue() -> tuple[str, int] | None:
         return None
     if answer in ("yes", "y", ""):
         # Operator confirmed but didn't paste a ref — re-prompt for the ref
-        ref = _safe_input("Parent ref (e.g., campps-blueprint#42): ")
+        ref = _safe_input("Parent ref (e.g., campps-context-library#42): ")
         if ref is None:
             return None
         match = _PARENT_REF_RE.match(ref)

@@ -15,7 +15,7 @@ appended to the spec's section-embedded review log.
 ## Arguments
 
 - `path` — Path to a spec file (e.g.
-  `campps-blueprint/specs/registration/spec.md`). If omitted, the
+  `campps-context-library/specs/registration/spec.md`). If omitted, the
   skill will ask.
 - `--reviewers <slug,slug,...>` — Run only named reviewers.
 - `--cores-only` — Skip conditional extras.

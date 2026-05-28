@@ -236,7 +236,9 @@ def test_flow_link_sub_issue_raises_on_non_duplicate_422() -> None:
             status_code=422,
         )
         with pytest.raises(sdlc_manager.GhApiError) as exc_info:
-            sdlc_manager.flow_link_sub_issue("campps-context-library", 1, "campps-mvp", 42, fmt="text")
+            sdlc_manager.flow_link_sub_issue(
+                "campps-context-library", 1, "campps-mvp", 42, fmt="text"
+            )
         # Confirm it's not the ApiAlreadyExists subclass
         assert not isinstance(exc_info.value, sdlc_manager.ApiAlreadyExists)
 

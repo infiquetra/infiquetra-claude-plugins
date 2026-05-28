@@ -125,7 +125,7 @@ def test_vendored_project_mappings_has_expected_canonical_state() -> None:
     # file needs updating + this test needs updating in the same PR — the
     # symmetry forces the operator to re-verify.
     expected_repos = {
-        "campps-blueprint",
+        "campps-context-library",
         "campps-mvp",
         "github-actions-runners",
         "hermes-extensions",
@@ -133,7 +133,7 @@ def test_vendored_project_mappings_has_expected_canonical_state() -> None:
         "infiquetra-claude-plugins",
         "infiquetra-sdlc",
         "mimir",
-        "mimir-blueprint",
+        "mimir-context-library",
     }
     actual_repos = set(olympus["repositories"])
     assert actual_repos == expected_repos, (

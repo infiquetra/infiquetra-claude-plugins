@@ -26,7 +26,7 @@ when_to_use: |
 
   Link a child issue as a sub-issue of a parent:
   - "Link #43 as a sub-issue of #42"
-  - "Make this a child of campps-blueprint#1"
+  - "Make this a child of campps-context-library#1"
   - "Set up the parent/child relationship between these issues"
 
   Self-heal missing labels (so other operations don't fail mid-flow):
@@ -71,7 +71,7 @@ sdlc_manager.py flow discover-project --repo athena-service
 
 # Link child as native sub-issue of parent (cross-repo OK; idempotent)
 sdlc_manager.py flow link-sub-issue \
-  --parent-repo campps-blueprint --parent-number 1 \
+  --parent-repo campps-context-library --parent-number 1 \
   --child-repo campps-mvp --child-number 42
 
 # Self-healing label: 404 → create; exists → no-op; other errors raise

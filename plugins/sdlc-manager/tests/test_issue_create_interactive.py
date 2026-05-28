@@ -47,9 +47,9 @@ def test_select_issue_type_handles_eof_returns_default() -> None:
 
 
 def test_parent_prompt_parses_direct_ref() -> None:
-    """Operator pastes 'campps-blueprint#42' directly at the prompt."""
-    with patch("builtins.input", return_value="campps-blueprint#42"):
-        assert sdlc_manager._prompt_parent_issue() == ("campps-blueprint", 42)
+    """Operator pastes 'campps-context-library#42' directly at the prompt."""
+    with patch("builtins.input", return_value="campps-context-library#42"):
+        assert sdlc_manager._prompt_parent_issue() == ("campps-context-library", 42)
 
 
 def test_parent_prompt_yes_then_ref() -> None:
@@ -234,7 +234,7 @@ def test_metadata_applies_hermes_not_actionable_for_objective() -> None:
         patch.object(sdlc_manager, "load_config", return_value={}),
     ):
         sdlc_manager._apply_post_create_metadata(
-            repo="campps-blueprint",
+            repo="campps-context-library",
             issue_number=1,
             issue_type="objective",
             project_name=None,
@@ -270,7 +270,7 @@ def test_metadata_label_failure_does_not_abort_other_steps() -> None:
             issue_number=42,
             issue_type="capability",
             project_name="mount-olympus",
-            parent=("campps-blueprint", 1),
+            parent=("campps-context-library", 1),
             field_values={"Initiative": "olympus-quality"},
             fmt="text",
         )
@@ -297,7 +297,7 @@ def test_metadata_skips_field_apply_when_no_project() -> None:
             issue_number=42,
             issue_type="capability",
             project_name=None,
-            parent=("campps-blueprint", 1),
+            parent=("campps-context-library", 1),
             field_values={"Initiative": "olympus-quality"},
             fmt="text",
         )
@@ -313,7 +313,7 @@ def test_parent_ref_regex_accepts_realistic_refs() -> None:
     def parse(s: str):
         return sdlc_manager._PARENT_REF_RE.match(s)
 
-    assert parse("campps-blueprint#42") is not None
+    assert parse("campps-context-library#42") is not None
     assert parse("infiquetra-sdlc#7") is not None
     assert parse("a.b.c#99") is not None  # dots allowed for completeness
     assert parse("repo#0") is not None  # not pretty but valid syntactically

@@ -54,7 +54,7 @@ should I review?" Specs live at:
 
 - `<blueprint-repo>/specs/<area>/<spec>.md`
 
-E.g. `campps-blueprint/specs/testing/testing-strategy.md`.
+E.g. `campps-context-library/specs/testing/testing-strategy.md`.
 
 ### 2. Read the spec + its parent blueprint section
 
@@ -132,7 +132,7 @@ Notes specific to spec-phase reviewers:
 Same summary-table-first format as blueprint review. Example:
 
 ```
-## Review summary — campps-blueprint/specs/registration/spec.md
+## Review summary — campps-context-library/specs/registration/spec.md
 
 | Reviewer | Score | Verdict | Headline |
 |---|---|---|---|

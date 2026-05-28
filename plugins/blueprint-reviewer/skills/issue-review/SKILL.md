@@ -71,7 +71,7 @@ no spec is named, that's already a `spec_fidelity` finding.
 
 For repos in the working set (e.g. `infiquetra/campps-mvp`), the
 parent spec typically lives in the corresponding blueprint repo
-(e.g. `infiquetra/campps-blueprint/specs/...`).
+(e.g. `infiquetra/campps-context-library/specs/...`).
 
 ### 3. Read existing comments
 

@@ -10,6 +10,28 @@
 
 ## Shipped
 
+### Add Infiquetra loop `/doc-review` command  {#infiquetra-loop-doc-review}
+
+**SHIPPED 2026-05-29** (commit pending).
+
+**Summary.** Added `/doc-review` to `infiquetra-loop` as an implementation-readiness review
+surface for plans, requirements documents, formal SDLC artifacts, and strategy/scope documents
+that are about to drive implementation.
+
+**What shipped.**
+- `/doc-review` command and skill.
+- Safe in-place fixes, P-level findings, durable `docs/reviews/` artifact triggers, and a
+  review-result contract.
+- Formal SDLC routing through `blueprint-reviewer` delegates followed by readiness review.
+- `/work` prompt/block guidance and issue-progress rendering fields for doc-review summaries.
+- README, changelog, marketplace/plugin metadata, and contract tests.
+
+**Refs.**
+- Idea doc: [2026-05-29-infiquetra-loop-doc-review.md](../ideation/2026-05-29-infiquetra-loop-doc-review.md).
+- Requirements: [2026-05-29-infiquetra-loop-doc-review-requirements.md](../brainstorms/2026-05-29-infiquetra-loop-doc-review-requirements.md).
+- Plan: [2026-05-29-001-feat-infiquetra-doc-review-plan.md](../plans/2026-05-29-001-feat-infiquetra-doc-review-plan.md).
+- Plan review: [2026-05-29-infiquetra-doc-review-plan-review.md](../reviews/2026-05-29-infiquetra-doc-review-plan-review.md).
+
 ### PR #112 — register `blueprint-reviewer` in marketplace + gitignore `.claude/`  {#pr-112-marketplace-fix}
 
 **SHIPPED 2026-05-01** (commit `4da5705`, squash-merged from `fix/marketplace-register-blueprint-reviewer`).
@@ -28,7 +50,15 @@
 
 ## Rejected
 
-*(none yet — this section will populate as ideas in `QUEUED.md` get explicitly declined with their reason.)*
+### `/ce-doc-review` compatibility alias for `infiquetra-loop`  {#rejected-ce-doc-review-alias}
+
+**REJECTED 2026-05-29.**
+
+**Reason.** During requirements discussion, the user chose not to preserve the CE command name.
+The Infiquetra command surface should be `/doc-review`.
+
+**Revisit when.** Multiple users migrate from Compound Engineering and repeatedly fail to find
+the Infiquetra command after normal README and marketplace documentation.
 
 ---
 

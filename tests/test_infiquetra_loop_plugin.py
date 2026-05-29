@@ -43,7 +43,7 @@ def test_infiquetra_loop_metadata_and_marketplace_entry_match() -> None:
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-loop"
     assert "lifecycle" in plugin_json["description"]
-    assert {"loop", "lifecycle", "strategy", "code-review", "optimize"} <= set(
+    assert {"loop", "lifecycle", "strategy", "doc-review", "code-review", "optimize"} <= set(
         plugin_json["keywords"]
     )
 
@@ -62,6 +62,7 @@ def test_infiquetra_loop_commands_are_packaged() -> None:
         "resume",
         "founder-review",
         "ceo-review",
+        "doc-review",
         "code-review",
         "optimize",
     ):
@@ -81,6 +82,7 @@ def test_infiquetra_loop_skills_document_required_lifecycle_behavior() -> None:
         "retro",
         "resume",
         "founder-review",
+        "doc-review",
         "code-review",
         "optimize",
     }
@@ -97,6 +99,7 @@ def test_infiquetra_loop_skills_document_required_lifecycle_behavior() -> None:
         "infiquetra-deploy",
         "sdlc-manager",
         "issue progress",
+        "doc-review",
         "engineering-journal",
     ):
         assert required in loop_doc
@@ -107,8 +110,28 @@ def test_infiquetra_loop_skills_document_required_lifecycle_behavior() -> None:
         "find_inflight_work.py",
         "load_saga_context.py",
         "discover_subissues.py",
+        "issue_progress.py",
     ):
         assert (PLUGIN_ROOT / "scripts" / script).exists()
+
+    doc_review_doc = _read(PLUGIN_ROOT / "skills" / "doc-review" / "SKILL.md")
+    for required in (
+        "/blueprint-review",
+        "/spec-review",
+        "/issue-review",
+        "/founder-review",
+        "classification",
+        "review-result contract",
+        "target path",
+        "reviewed revision",
+        "blocked status",
+        "override rationale",
+        "any `P0` or `P1`",
+        "safe fixes",
+        "docs/reviews/",
+    ):
+        assert required in doc_review_doc
+    assert not (PLUGIN_ROOT / "commands" / "ce-doc-review.md").exists()
 
 
 def test_destination_selector_and_escalation_helpers() -> None:
@@ -168,6 +191,24 @@ def test_issue_progress_comments_include_required_evidence() -> None:
     assert "docs/work-sessions/2026-05-29-phase-1.md" in phase
     assert "abc1234" in phase
     assert "uv run pytest tests/test_service.py -q" in phase
+
+    review = issue_progress.render_issue_comment(
+        event="phase",
+        issue_ref="infiquetra/campps-service#42",
+        destination="pr",
+        doc_review_artifact="docs/reviews/2026-05-29-doc-review.md",
+        doc_review_blocked=True,
+        doc_review_fixes=["Added missing gate."],
+        doc_review_findings=["P1 Missing rollback evidence."],
+        doc_review_override="Proceeding after owner accepted risk.",
+    )
+    assert "doc review artifact: docs/reviews/2026-05-29-doc-review.md" in review
+    assert "doc review blocked: yes" in review
+    assert "doc review override: Proceeding after owner accepted risk." in review
+    assert "doc review fixes:" in review
+    assert "Added missing gate." in review
+    assert "doc review findings:" in review
+    assert "P1 Missing rollback evidence." in review
 
 
 def test_deploy_strategy_detection_matches_infiquetra_policy() -> None:

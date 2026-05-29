@@ -9,6 +9,8 @@ Infiquetra lifecycle workflow plugin for day-to-day engineering work.
 - `/strategy` maintains the root `STRATEGY.md`.
 - `/plan`, `/work`, `/qa`, `/retro`, and `/resume` run the durable work loop.
 - `/founder-review` and `/ceo-review` review ambition, scope, and operator risk.
+- `/doc-review` reviews plans, requirements, and formal SDLC artifacts for implementation
+  readiness.
 - `/code-review` runs a structured pre-PR review.
 - `/optimize` runs metric-driven improvement loops.
 
@@ -43,3 +45,4 @@ Ignored local state belongs under `.claude/infiquetra-loop/`.
 - `scripts/load_saga_context.py` reconstructs prior issue, PR, checkpoint, and journal context.
 - `scripts/discover_subissues.py` discovers GitHub sub-issues through GraphQL.
 - `scripts/detect_deploy_strategy.py` classifies tag-promotion workflow coverage.
+- `scripts/issue_progress.py` renders issue comments, including doc-review status when present.

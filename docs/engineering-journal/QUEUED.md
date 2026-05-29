@@ -41,6 +41,38 @@
 
 ## P2 — important
 
+### Evaluate joined `doc-review` plus `blueprint-reviewer` review flow  {#doc-review-blueprint-unification}
+
+**Priority.** P2.
+
+**Effort.** Half-day to 1 day after v1 has real examples.
+
+**Worth it when.** `/doc-review` and `blueprint-reviewer` are both being used on the same
+formal SDLC artifacts often enough that the sequential handoff feels repetitive or findings
+start duplicating each other.
+
+**Context.**
+- Shipped v1 keeps ownership clear: `blueprint-reviewer` owns formal rubric quality;
+  `/doc-review` owns implementation-readiness skepticism.
+- Revisit whether a unified review flow or shared artifact schema is better once there are
+  real `docs/reviews/` examples to compare.
+
+### Consider deterministic `doc-review` classification helper  {#doc-review-classifier}
+
+**Priority.** P2.
+
+**Effort.** Half-day.
+
+**Worth it when.** Real `/doc-review` runs route the same kind of artifact differently across
+sessions, or formal SDLC artifacts miss `blueprint-reviewer` delegation because instruction-only
+classification is too variable.
+
+**Context.**
+- v1 uses explicit classification precedence and representative examples in the skill instead
+  of a helper script.
+- A future helper could return `blueprint`, `spec`, `issue`, `plan`, `requirements`, or
+  `strategy-scope` from path and content-shape signals.
+
 ### Phase 5 spawn primitive: tmux-wrapped foreground sessions (replaces `--bg` from current plan)  {#phase5-spawn-via-tmux}
 
 **Priority.** P2. Blocks Phase 5 implementation but Phase 5 hasn't started yet.

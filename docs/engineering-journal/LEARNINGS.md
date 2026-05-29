@@ -25,6 +25,37 @@
 
 ---
 
+## 2026-05-29
+
+### Schema migrations need legacy fallback contract tests  {#schema-migration-legacy-fallbacks}
+
+**Context.** Updating the doc-review PR branch from `main` pulled in the sdlc-manager schema
+migration and exposed a CI failure in `board_wip`: mocked legacy WIP limits were ignored when no
+`sdlc_schema` was present.
+
+**Evidence.** PR #158 CI failed
+`tests/test_sdlc_manager.py::TestWipLimitsConfigurable::test_uses_config_wip_limits`; local
+`uv run python -m pytest -q` reproduced the same `Ready 0/10` output instead of the configured
+`Ready 0/5`.
+
+**Mechanism.** `_wip_limits()` was changed to read schema-backed board limits first, but the
+migration removed the previous `legacy_rollout_config.wip_limits` fallback path. Test fixtures and
+older operator configs that intentionally inject only legacy config then silently fell through to
+defaults.
+
+**Fix.** Keep the schema as canonical when present, and restore the Mount Olympus legacy fallback
+only when schema limits are absent.
+
+**Validation.** `uv run python -m pytest tests/test_sdlc_manager.py::TestWipLimitsConfigurable -q`
+and `uv run python -m ruff format --check .` pass after the fix.
+
+**Generalizable rule.** When migrating plugin runtime config from a legacy source to a canonical
+schema, encode the fallback contract directly in tests before deleting old read paths.
+
+**Refs.** PR #158.
+
+---
+
 ## 2026-05-27
 
 ### Setup commands must prove every bundled asset path exists  {#team-setup-asset-drift}

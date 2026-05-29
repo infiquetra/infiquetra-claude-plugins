@@ -227,9 +227,7 @@ def load_config() -> dict[str, Any]:
 _VENDORED_PROJECT_MAPPINGS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "project-mappings.json"
 )
-_VENDORED_SDLC_SCHEMA_PATH = (
-    Path(__file__).resolve().parent.parent / "config" / "sdlc-schema.json"
-)
+_VENDORED_SDLC_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "config" / "sdlc-schema.json"
 PROJECT_CHOICES = ("mount-olympus", "asgard", "jeff-intent")
 LIVE_LEGACY_STATUS_ALIASES = {
     "In Progress": "Assigned",
@@ -375,9 +373,19 @@ def _wip_limits(config: dict, project_name: str, proj: dict) -> dict[str, Any]:
     schema = config.get("sdlc_schema", {})
     board_key = _project_board_key(project_name, proj)
     limits = schema.get("wip_limits", {}).get(board_key, {})
-    if not limits:
-        return {"Ready": 10, "In Progress": 10 if project_name == "mount-olympus" else 5}
-    return cast(dict[str, Any], limits)
+    if limits:
+        return cast(dict[str, Any], limits)
+
+    legacy_limits = config.get("legacy_rollout_config", {}).get("wip_limits", {})
+    if project_name == "mount-olympus" and isinstance(legacy_limits, dict) and legacy_limits:
+        return {
+            "Ready": legacy_limits.get("ready", 10),
+            "In Development": legacy_limits.get("in_development", 10),
+            "E2E Testing": legacy_limits.get("e2e_testing", 3),
+            "Deployment Ready": legacy_limits.get("deployment_ready", 5),
+        }
+
+    return {"Ready": 10, "In Progress": 10 if project_name == "mount-olympus" else 5}
 
 
 def _terminal_statuses(config: dict, project_name: str, proj: dict) -> list[str]:

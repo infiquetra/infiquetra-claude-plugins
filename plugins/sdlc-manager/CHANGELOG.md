@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Changed
+- Added vendored `config/sdlc-schema.json` and taught board/metric helpers to consume schema-backed boards, workflows, WIP limits, and terminal statuses.
+- Added live Jeff Intent (#3) and Asgard (#2) project mappings plus explicit `--project` targeting for board add/move.
+- Refreshed board, metrics, milestones, labels, rollout, and operator guidance around Jeff Intent, Asgard, Olympus, direct project fields, and deployment-state separation.
+- Preserved read compatibility for live/legacy Olympus statuses such as `In Progress`, `In Development`, and `Deployed` while guiding new movement to the current schema.
 - Synced `sdlc-issues` template guidance with canonical issue forms in `infiquetra-sdlc`, including current Hermes actionable labels and required card sections.
 - Added a deterministic template documentation generator plus drift guard tests for `templates-reference.md`.
 

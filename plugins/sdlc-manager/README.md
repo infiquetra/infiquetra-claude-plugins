@@ -1,12 +1,12 @@
 # sdlc-manager
 
-SDLC management for the Infiquetra Mount Olympus agent team. This plugin provides a complete interface for managing the development lifecycle — from issue creation to flow metrics — reading all configuration dynamically from the local `infiquetra-sdlc` repository.
+SDLC management for Infiquetra's Jeff Intent, Asgard, and Mount Olympus boards. This plugin provides a complete interface for managing the development lifecycle — from issue creation to flow metrics — reading board and workflow configuration from `infiquetra-sdlc` and vendored fallbacks.
 
 ## Overview
 
 All operations run locally via the `gh` CLI, providing:
 
-- **Project board operations** — view, move, add, archive, WIP analysis, standup prep
+- **Project board operations** — view, move, add, archive, WIP analysis, standup prep across Jeff Intent, Asgard, and Olympus
 - **Issue creation** — guided workflow with templates, auto-labeling, and project board integration
 - **Label management** — deploy, audit, sync initiative/objective fields, auto-label rules
 - **Flow metrics** — cycle time, throughput, WIP age using GitHub timeline events
@@ -67,7 +67,7 @@ The `sdlc-operator` agent orchestrates complex multi-step operations:
 - New initiative/objective setup (labels + field options + milestone)
 - Objective progress tracking across repos
 - Batch triage of untriaged issues
-- Project field assignment via `flow set-field` (Initiative, Objective, Status — single-select fields on the Olympus board per the 2026-05-03 DECISION)
+- Project field assignment via `flow set-field` (Initiative, Objective, Status, Target Team, Mode, and other live single-select fields)
 - Native sub-issue linking via `flow link-sub-issue` (cross-repo, idempotent)
 - Card body pre-flight validation via `flow validate-card`
 
@@ -83,21 +83,24 @@ sdlc-manager uses a single shared CLI (`scripts/sdlc_manager.py`) at the plugin 
 # View board by column
 python3 $SCRIPT board view --project mount-olympus
 
-# Add issue to project board
+# Add issue to its default repo-mapped board
 python3 $SCRIPT board add --repo athena-service --number 42
 
-# Move item to different column
-python3 $SCRIPT board move --repo athena-service --number 42 --status "E2E Testing"
+# Add or move issue on a specific board
+python3 $SCRIPT board add --project asgard --repo infiquetra-sdlc --number 42
+python3 $SCRIPT board move --project asgard --repo infiquetra-sdlc --number 42 --status "Active"
+python3 $SCRIPT board move --repo athena-service --number 42 --status "Assigned"
 
-# Archive deployed items (use --dry-run first)
+# Archive terminal workflow items (use --dry-run first)
 python3 $SCRIPT board archive --project mount-olympus --dry-run
-python3 $SCRIPT board archive --project mount-olympus
+python3 $SCRIPT board archive --project asgard --dry-run
 
 # Check WIP counts vs limits
 python3 $SCRIPT board wip --project mount-olympus
 
 # Standup prep (right-to-left board review)
 python3 $SCRIPT board standup --project mount-olympus
+python3 $SCRIPT board standup --project jeff-intent
 
 # Discover all project fields and options
 python3 $SCRIPT board discover-fields --project mount-olympus
@@ -106,8 +109,10 @@ python3 $SCRIPT board discover-fields --project mount-olympus
 ### Label Operations
 
 ```bash
-# Sync initiative/objective labels to project fields
-python3 $SCRIPT labels sync-fields --repo athena-service --number 42
+# Set initiative/objective project fields directly
+python3 $SCRIPT flow set-field --project mount-olympus \
+  --repo athena-service --number 42 \
+  --field Objective --option "platform-launch"
 
 # Audit repo labels
 python3 $SCRIPT labels audit --repo athena-service
@@ -226,6 +231,7 @@ python3 $SCRIPT flow validate-card --repo campps-mvp --number 42
 | File | Purpose |
 |------|---------|
 | `config/project-mappings.json` | Project IDs, field IDs, repo-to-project mapping |
+| `config/sdlc-schema.json` | Canonical board/team/workflow/WIP/deployment-state schema |
 | `config/labels.json` | Label definitions and auto-label rules |
 | `config/beads-config.json` | (legacy — file removed from infiquetra-sdlc on 2026-04-26; reads degrade gracefully to `{}`. The `legacy_rollout_config` key in `load_config` documents the migration.) |
 
@@ -233,17 +239,21 @@ python3 $SCRIPT flow validate-card --repo campps-mvp --number 42
 
 | Project | Team | Purpose |
 |---------|------|---------|
-| Strategic Direction | Mount Olympus | High-level objectives and roadmap |
-| Mount Olympus Operations | Mount Olympus | Day-to-day kanban board |
+| Jeff Intent | Jeff | Raw intent, approvals, personal/operator work, and shaping before team execution |
+| Asgard | Asgard | Rapid action, incubation, and mission-mode work close to Jeff |
+| Olympus | Mount Olympus | Primary engineering execution pipeline |
 
 ## WIP Limits
 
-| Column | Limit |
+| Board / Column | Limit |
 |--------|-------|
-| Ready | 10 |
-| In Development | 3 per agent |
-| E2E Testing | 3 |
-| Deployment Ready | 5 |
+| Jeff Intent / Shaping | 10 |
+| Jeff Intent / Active | 5 |
+| Asgard / Active | 5 |
+| Olympus / Ready | 10 |
+| Olympus / Planning | 3 |
+| Olympus / Assigned | 3 per assigned agent |
+| Olympus / In Review | 5 |
 
 ## Metric Targets
 

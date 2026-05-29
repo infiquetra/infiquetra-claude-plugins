@@ -118,8 +118,8 @@ These labels follow a naming convention and are created on-demand rather than pr
 
 ### `initiative:*` and `objective:*`
 
-Applied to issues to associate them with a program-level initiative or delivery objective.
-Synced to project board single-select fields via `labels sync-fields`.
+Legacy convention labels that may appear on older issues. New work should use the
+project board's `Initiative` and `Objective` fields directly via `flow set-field`.
 
 | Pattern | Color | Example |
 |---------|-------|---------|
@@ -184,17 +184,23 @@ Applied by `labels auto-label` command. Rules match patterns in issue title or b
 
 ---
 
-## Initiative and Objective Labels
+## Initiative and Objective Fields
 
-These labels are not defined in `labels.json` but are used as a convention:
+These values are project field options. Legacy labels may exist, but they are not the
+canonical source of truth:
 
-- `initiative:<name>` — maps to the "Initiative" single-select field on the project board
-- `objective:<name>` — maps to the "Objective" single-select field on the project board
+- `Initiative` project field - strategic grouping
+- `Objective` project field - delivery target or parent objective
 
-When applied to an issue, run `labels sync-fields` to propagate the value to the board field.
+Set fields directly:
 
-The mount-olympus board maintains the full set of initiative and objective options. When
-creating a new initiative or objective, add the field option using `fields create-option`.
+```bash
+python3 sdlc_manager.py flow set-field --project mount-olympus \
+  --repo <repo> --number <N> \
+  --field Objective --option "platform-launch"
+```
+
+When creating a new initiative or objective, add the field option using `fields create-option`.
 
 Example label names:
 - `initiative:olympus-v1`

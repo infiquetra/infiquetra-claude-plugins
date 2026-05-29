@@ -23,8 +23,8 @@ Triage an existing issue by analyzing its content, recommending appropriate labe
 4. Recommends initiative/objective labels based on context
 5. Applies auto-label rules
 6. Adds to project board if not already there
-7. Syncs project field values from labels
-8. Recommends initial board status (Ready if context complete, stays in analysis if missing context)
+7. Sets project fields when the target board exposes them
+8. Recommends initial board status (Ready if context complete, Backlog or Shaping if missing context)
 
 ## Examples
 
@@ -45,8 +45,10 @@ python3 $SCRIPT labels auto-label --repo athena-service --number 42
 # Add to project
 python3 $SCRIPT board add --repo athena-service --number 42
 
-# Sync fields after labeling
-python3 $SCRIPT labels sync-fields --repo athena-service --number 42
+# Set project fields directly when needed
+python3 $SCRIPT flow set-field --project mount-olympus \
+  --repo athena-service --number 42 \
+  --field Status --option Ready
 ```
 
 ## Instructions
@@ -58,21 +60,22 @@ When the user invokes `/sdlc-triage repo#number`:
 3. Analyze content:
    - Is there already a type label? If not, recommend one using the decision tree
    - Is it a defect without a priority? Ask user for priority (critical/high/medium/low)
-   - Does title/body mention an initiative or objective? Suggest those labels
+   - Does title/body mention an initiative or objective? Suggest project field values
 4. Apply auto-label rules:
    - `python3 $SCRIPT labels auto-label --repo <repo> --number <N>`
 5. Manually apply recommended labels:
    - `gh issue edit <N> --repo infiquetra/<repo> --add-label "capability,needs-analysis"`
 6. Add to project board:
    - `python3 $SCRIPT board add --repo <repo> --number <N>`
-7. Sync initiative/objective fields:
-   - `python3 $SCRIPT labels sync-fields --repo <repo> --number <N>`
+7. Set initiative/objective fields when applicable:
+   - `python3 $SCRIPT flow set-field --project mount-olympus --repo <repo> --number <N> --field Initiative --option <name>`
+   - `python3 $SCRIPT flow set-field --project mount-olympus --repo <repo> --number <N> --field Objective --option <name>`
 8. Recommend status:
-   - Defect (critical/high): Move directly to In Development
+   - Defect (critical/high): Move directly to Assigned on Olympus, or Active on Asgard
    - Has complete context: Ready
-   - Needs more context: Add `needs-analysis` label, leave in backlog
+   - Needs more context: Add `needs-analysis` label, leave in Backlog or Shaping
 9. Show summary of all actions taken
 
-If the issue is a defect with `critical` label, flag urgency: "This is a critical defect with a 4-hour SLA. Moving to In Development now."
+If the issue is a defect with `critical` label, flag urgency: "This is a critical defect with a 4-hour SLA. Moving to active ownership now."
 
 Use the `sdlc-operator` agent for batch triage of multiple issues.

@@ -30,6 +30,14 @@ def _checks_lines(checks_run: Sequence[str] | None) -> list[str]:
     return lines
 
 
+def _list_lines(label: str, values: Sequence[str] | None) -> list[str]:
+    if not values:
+        return []
+    lines = [f"- {label}:"]
+    lines.extend(f"  - {value}" for value in values)
+    return lines
+
+
 def render_issue_comment(
     *,
     event: str,
@@ -43,6 +51,11 @@ def render_issue_comment(
     blockers: str | None = None,
     pr_url: str | None = None,
     review_status: str | None = None,
+    doc_review_artifact: str | None = None,
+    doc_review_blocked: bool | None = None,
+    doc_review_fixes: Sequence[str] | None = None,
+    doc_review_findings: Sequence[str] | None = None,
+    doc_review_override: str | None = None,
     deploy_status: str | None = None,
     workflow_url: str | None = None,
     evidence_link: str | None = None,
@@ -58,6 +71,12 @@ def render_issue_comment(
         _line("commit", commit_sha),
         _line("PR", pr_url),
         _line("review status", review_status),
+        _line("doc review artifact", doc_review_artifact),
+        _line(
+            "doc review blocked",
+            None if doc_review_blocked is None else ("yes" if doc_review_blocked else "no"),
+        ),
+        _line("doc review override", doc_review_override),
         _line("deployment status", deploy_status),
         _line("workflow", workflow_url),
         _line("evidence", evidence_link),
@@ -65,6 +84,8 @@ def render_issue_comment(
     ):
         if candidate:
             lines.append(candidate)
+    lines.extend(_list_lines("doc review fixes", doc_review_fixes))
+    lines.extend(_list_lines("doc review findings", doc_review_findings))
     lines.extend(_checks_lines(checks_run))
     return "\n".join(lines).rstrip() + "\n"
 

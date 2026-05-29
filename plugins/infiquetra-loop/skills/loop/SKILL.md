@@ -59,6 +59,9 @@ movement at Infiquetra SDLC phase boundaries.
 
 - Behavior, security, infra, API, deployment, and data changes require tests.
 - Docs, config, and trivial changes may skip tests only with an explicit rationale.
+- Before `/work` executes from a plan or requirements document, ask whether to run `/doc-review`.
+  If review runs and reports unresolved `P0` or `P1` findings, block execution unless the user
+  explicitly overrides and gives a rationale.
 - Run an engineering review before execution on risky plans and before shipping gates.
 - Suggest founder review for strategy, scope, product, or user-facing work.
 

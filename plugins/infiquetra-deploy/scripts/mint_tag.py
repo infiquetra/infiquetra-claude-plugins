@@ -41,15 +41,11 @@ def _remote_to_repo(remote_url: str) -> str:
     elif "github.com/" in remote:
         path = remote.split("github.com/", 1)[1]
     else:
-        raise SystemExit(
-            f"ERROR: expected github.com/infiquetra/* remote, got {remote_url!r}"
-        )
+        raise SystemExit(f"ERROR: expected github.com/infiquetra/* remote, got {remote_url!r}")
 
     parts = path.strip("/").split("/")
     if len(parts) < 2:
-        raise SystemExit(
-            f"ERROR: expected github.com/infiquetra/* remote, got {remote_url!r}"
-        )
+        raise SystemExit(f"ERROR: expected github.com/infiquetra/* remote, got {remote_url!r}")
     return f"{parts[0]}/{parts[1]}"
 
 
@@ -63,9 +59,7 @@ def resolve_repo(repo: str | None) -> str:
 
     owner, _, name = resolved.partition("/")
     if owner.lower() != "infiquetra" or not name:
-        raise SystemExit(
-            f"ERROR: expected github.com/infiquetra/* repository, got {resolved!r}"
-        )
+        raise SystemExit(f"ERROR: expected github.com/infiquetra/* repository, got {resolved!r}")
     return f"infiquetra/{name}"
 
 
@@ -79,9 +73,7 @@ def build_tag_name(env: str, version: str, *, rollback: bool = False) -> str:
 
     normalized_version = version.strip().removeprefix("v")
     if not VERSION_RE.match(normalized_version):
-        raise SystemExit(
-            "ERROR: version must look like 1.2.3 or hotfix form 1.2.3.1"
-        )
+        raise SystemExit("ERROR: version must look like 1.2.3 or hotfix form 1.2.3.1")
 
     prefix = ENV_TO_PREFIX[normalized_env]
     if rollback:

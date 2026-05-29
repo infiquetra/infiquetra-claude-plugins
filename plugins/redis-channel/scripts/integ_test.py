@@ -46,7 +46,9 @@ REDIS_PORT = int(os.environ.get("REDIS_CHANNEL_INTEG_PORT", "6379"))
 # HERMES_REDIS_PASSWORD for legacy compatibility. Example:
 #   REDIS_CHANNEL_INTEG_PASSWORD="$(security find-generic-password -s my-redis-password -w)" \
 #     uv run python plugins/redis-channel/scripts/integ_test.py
-REDIS_PASSWORD = os.environ.get("REDIS_CHANNEL_INTEG_PASSWORD") or os.environ["HERMES_REDIS_PASSWORD"]
+REDIS_PASSWORD = (
+    os.environ.get("REDIS_CHANNEL_INTEG_PASSWORD") or os.environ["HERMES_REDIS_PASSWORD"]
+)
 TEST_SESSION_NAME = "integ-test-headless"
 NOTIFICATION_WAIT_S = 5.0
 SHUTDOWN_WAIT_S = 5.0

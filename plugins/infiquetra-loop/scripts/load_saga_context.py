@@ -124,9 +124,7 @@ def main() -> int:
     checkpoint = latest_checkpoint(args.issue)
     prs = prior_prs(owner, repo, args.issue)
     adrs = adr_refs_from_text(checkpoint["content_preview"] if checkpoint else None)
-    rounds_seen = sorted(
-        {int(pr["round"]) for pr in prs if pr.get("round") is not None}
-    )
+    rounds_seen = sorted({int(pr["round"]) for pr in prs if pr.get("round") is not None})
     print(
         json.dumps(
             {

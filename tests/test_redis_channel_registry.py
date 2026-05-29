@@ -218,9 +218,7 @@ def test_resolve_default_endpoint_raises_when_multi_and_unresolvable(
         },
     )
     r = registry.load_registry(cfg)
-    with pytest.raises(
-        registry.EndpointNotFoundError, match="no default endpoint resolvable"
-    ):
+    with pytest.raises(registry.EndpointNotFoundError, match="no default endpoint resolvable"):
         r.resolve_default_endpoint()
 
 

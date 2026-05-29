@@ -74,10 +74,7 @@ def test_mint_tag_uses_infiquetra_environments_and_tag_prefixes() -> None:
         mint_tag.build_tag_name("production", "1.2.3", rollback=True)
         == "rollback-production-v1.2.3"
     )
-    assert (
-        mint_tag.build_tag_name("production", "1.2.3.1", rollback=False)
-        == "production-v1.2.3.1"
-    )
+    assert mint_tag.build_tag_name("production", "1.2.3.1", rollback=False) == "production-v1.2.3.1"
 
 
 def test_mint_tag_resolves_and_rejects_repository_owners(monkeypatch) -> None:

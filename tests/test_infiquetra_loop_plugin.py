@@ -119,22 +119,28 @@ def test_destination_selector_and_escalation_helpers() -> None:
     assert lifecycle.destination_includes_deploy("nonprod-deploy")
     assert not lifecycle.destination_includes_deploy("pr")
 
-    assert lifecycle.should_offer_team_execution(
-        file_count=2,
-        phase_count=2,
-        has_security=False,
-        has_infra=False,
-        cross_repo=False,
-        deployment_sensitive=False,
-    ) is False
-    assert lifecycle.should_offer_team_execution(
-        file_count=1,
-        phase_count=1,
-        has_security=True,
-        has_infra=False,
-        cross_repo=False,
-        deployment_sensitive=False,
-    ) is True
+    assert (
+        lifecycle.should_offer_team_execution(
+            file_count=2,
+            phase_count=2,
+            has_security=False,
+            has_infra=False,
+            cross_repo=False,
+            deployment_sensitive=False,
+        )
+        is False
+    )
+    assert (
+        lifecycle.should_offer_team_execution(
+            file_count=1,
+            phase_count=1,
+            has_security=True,
+            has_infra=False,
+            cross_repo=False,
+            deployment_sensitive=False,
+        )
+        is True
+    )
 
 
 def test_issue_progress_comments_include_required_evidence() -> None:
@@ -167,9 +173,12 @@ def test_issue_progress_comments_include_required_evidence() -> None:
 def test_deploy_strategy_detection_matches_infiquetra_policy() -> None:
     deploy_strategy = _load_module("detect_deploy_strategy.py")
 
-    assert deploy_strategy.classify(
-        ["deploy-nonprod.yml", "deploy-staging.yml", "deploy-production.yml"]
-    )["strategy"] == "tag-promotion"
+    assert (
+        deploy_strategy.classify(
+            ["deploy-nonprod.yml", "deploy-staging.yml", "deploy-production.yml"]
+        )["strategy"]
+        == "tag-promotion"
+    )
     partial = deploy_strategy.classify(["post-merge.yml", "deploy-staging.yml"])
     assert partial["strategy"] == "tag-promotion-partial"
     assert partial["envs_available"] == ["staging"]
@@ -178,9 +187,7 @@ def test_deploy_strategy_detection_matches_infiquetra_policy() -> None:
 def test_issue_parser_extracts_infiquetra_context_and_risk_flags() -> None:
     parse_issue = _load_module("parse_issue.py")
 
-    extracted = parse_issue.extract(
-        "ADR-0004 Round 2\n\nAC-1 Add OpenAPI endpoint with IAM auth."
-    )
+    extracted = parse_issue.extract("ADR-0004 Round 2\n\nAC-1 Add OpenAPI endpoint with IAM auth.")
 
     assert extracted["adr_refs"] == ["ADR-0004"]
     assert extracted["ac_refs"] == ["AC-1"]

@@ -80,7 +80,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--id", required=True, help="Issue number or task slug")
     parser.add_argument("--round", type=int)
     parser.add_argument("--phase", type=int, required=True)
-    parser.add_argument("--status", choices=["pending", "in_progress", "complete"], default="pending")
+    parser.add_argument(
+        "--status", choices=["pending", "in_progress", "complete"], default="pending"
+    )
     parser.add_argument("--phase-title", default="")
     parser.add_argument("--issue-ref", default="")
     parser.add_argument("--destination", default="plan-only")

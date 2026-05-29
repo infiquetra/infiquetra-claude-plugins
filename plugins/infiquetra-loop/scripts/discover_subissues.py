@@ -61,11 +61,7 @@ def fetch_subissues(owner: str, repo: str, number: int) -> dict[str, object]:
 
 
 def normalize(payload: dict[str, object]) -> dict[str, object]:
-    issue = (
-        payload.get("data", {})
-        .get("repository", {})
-        .get("issue", {})
-    )
+    issue = payload.get("data", {}).get("repository", {}).get("issue", {})
     subissues = issue.get("subIssues", {}) if isinstance(issue, dict) else {}
     nodes = subissues.get("nodes", []) if isinstance(subissues, dict) else []
     return {
@@ -82,8 +78,7 @@ def normalize(payload: dict[str, object]) -> dict[str, object]:
                 "state": node.get("state"),
                 "url": node.get("url"),
                 "labels": [
-                    label.get("name")
-                    for label in (node.get("labels", {}).get("nodes") or [])
+                    label.get("name") for label in (node.get("labels", {}).get("nodes") or [])
                 ],
                 "assignees": [
                     assignee.get("login")

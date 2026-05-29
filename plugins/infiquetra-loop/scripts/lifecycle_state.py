@@ -31,9 +31,7 @@ def normalize_destination(value: str) -> str:
     key = key.replace("nonprod-deployment", "nonprod-deploy")
     if key in DESTINATION_ALIASES:
         return DESTINATION_ALIASES[key]
-    raise ValueError(
-        "destination must be one of: plan-only, pr, merge, nonprod-deploy"
-    )
+    raise ValueError("destination must be one of: plan-only, pr, merge, nonprod-deploy")
 
 
 def destination_includes_deploy(destination: str) -> bool:

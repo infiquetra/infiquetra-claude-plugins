@@ -31,6 +31,13 @@ def fake_vendored_path(tmp_path, monkeypatch):
     return fake_path
 
 
+@pytest.fixture
+def fake_schema_path(tmp_path, monkeypatch):
+    fake_path = tmp_path / "vendored-sdlc-schema.json"
+    monkeypatch.setattr(sdlc_manager, "_VENDORED_SDLC_SCHEMA_PATH", fake_path)
+    return fake_path
+
+
 def test_external_override_wins_over_vendored(tmp_path, fake_vendored_path) -> None:
     """If $INFIQUETRA_SDLC_PATH/config/project-mappings.json exists, it
     takes precedence over the vendored copy. This lets a developer test
@@ -117,8 +124,12 @@ def test_vendored_project_mappings_has_expected_canonical_state() -> None:
     data = json.loads(vendored.read_text())
     assert data["organization"] == "infiquetra"
     assert "mount-olympus" in data["projects"]
+    assert "asgard" in data["projects"]
+    assert "jeff-intent" in data["projects"]
     olympus = data["projects"]["mount-olympus"]
     assert olympus["number"] == 1
+    assert data["projects"]["asgard"]["number"] == 2
+    assert data["projects"]["jeff-intent"]["number"] == 3
 
     # Exact repo set from `gh repo list infiquetra --json name --jq '.[].name'`
     # captured 2026-05-04. If the org adds/removes a repo, the vendored
@@ -141,3 +152,79 @@ def test_vendored_project_mappings_has_expected_canonical_state() -> None:
         f"Missing: {expected_repos - actual_repos}; "
         f"Unexpected: {actual_repos - expected_repos}"
     )
+
+
+def test_sdlc_schema_external_override_wins(tmp_path, fake_schema_path) -> None:
+    sdlc_path = tmp_path / "infiquetra-sdlc"
+    cfg_dir = sdlc_path / "config"
+    cfg_dir.mkdir(parents=True)
+    override_data = {"schema_version": "override", "workflows": {}}
+    (cfg_dir / "sdlc-schema.json").write_text(json.dumps(override_data))
+    fake_schema_path.write_text(json.dumps({"schema_version": "vendored"}))
+
+    result = sdlc_manager._resolve_sdlc_schema(sdlc_path)
+
+    assert result == override_data
+
+
+def test_sdlc_schema_vendored_used_when_no_override(tmp_path, fake_schema_path) -> None:
+    fake_schema_path.write_text(
+        json.dumps({"schema_version": "vendored", "workflows": {"intent_flow": {}}})
+    )
+
+    result = sdlc_manager._resolve_sdlc_schema(tmp_path / "missing-sdlc")
+
+    assert result["schema_version"] == "vendored"
+
+
+def test_vendored_sdlc_schema_declares_current_live_boards() -> None:
+    vendored = sdlc_manager._VENDORED_SDLC_SCHEMA_PATH
+    assert vendored.exists(), f"Vendored schema missing at {vendored}"
+    data = json.loads(vendored.read_text())
+
+    assert data["boards"]["jeff_intent"]["status"] == "active"
+    assert data["boards"]["jeff_intent"]["live_creation"] == "created_2026-05-29_project_3"
+    assert data["boards"]["asgard"]["status"] == "active"
+    assert data["boards"]["asgard"]["live_creation"] == "created_2026-05-29_project_2"
+    assert data["workflows"]["intent_flow"]["statuses"] == [
+        "Idea",
+        "Shaping",
+        "Ready",
+        "Active",
+        "Verify",
+        "Done",
+    ]
+
+
+def test_schema_backed_status_order_includes_live_olympus_in_progress() -> None:
+    config = {
+        "sdlc_schema": {
+            "boards": {"olympus": {"workflow": "olympus_execution"}},
+            "workflows": {
+                "olympus_execution": {
+                    "statuses": [
+                        "Backlog",
+                        "Ready",
+                        "Planning",
+                        "Assigned",
+                        "In Review",
+                        "Done",
+                        "Closed",
+                    ],
+                    "pause_states": ["Blocked"],
+                }
+            },
+        }
+    }
+    proj = {"board_key": "olympus", "workflow": "olympus_execution"}
+
+    order = sdlc_manager._status_order(config, "mount-olympus", proj)
+
+    assert order.index("Assigned") < order.index("In Progress") < order.index("In Review")
+    assert "Blocked" in order
+
+
+def test_legacy_status_hint_points_to_current_status() -> None:
+    hint = sdlc_manager._legacy_status_hint("E2E Testing", ["Assigned", "In Review", "Done"])
+
+    assert hint == "'E2E Testing' is legacy; use 'In Review' on this board."

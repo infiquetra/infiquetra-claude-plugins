@@ -1,10 +1,10 @@
 ---
 name: sdlc-labels
 description: |
-  Manage GitHub labels and project board field synchronization for Infiquetra repositories.
-  Handles applying SDLC labels to issues, syncing initiative/objective labels to project board
-  fields, auditing repos for missing labels, deploying the full label taxonomy, auto-labeling
-  issues based on title/body patterns, and creating new field options when new initiatives or
+  Manage GitHub labels and project field options for Infiquetra repositories.
+  Handles applying SDLC labels to issues, auditing repos for missing labels, deploying the
+  full label taxonomy, auto-labeling issues based on title/body patterns, and creating
+  new field options when new initiatives or
   objectives are introduced.
 when_to_use: |
   Use this skill when the user wants to:
@@ -14,16 +14,14 @@ when_to_use: |
     "tag this as high priority", "mark this as an enhancement", "add the blocked label")
   - Set or correct issue type, priority, or status labels
 
-  Syncing project board fields from labels:
-  - Sync board fields after labels change ("sync the initiative field",
-    "the objective field doesn't match the label", "sync fields for this issue",
-    "update the board field to match the label")
-  - Ensure initiative:* and objective:* labels are reflected in project board single-select fields
+  Setting project fields:
+  - Set Initiative, Objective, or other project fields directly after label or card changes
+  - Discover available fields and options on Jeff Intent, Asgard, or Mount Olympus
 
   Assigning initiatives and objectives:
   - "this belongs to olympus-v1", "assign to the platform-launch objective",
     "this issue is part of the core-platform initiative", "tag this with the Q1 objective"
-  - Adding initiative:* or objective:* labels and syncing the corresponding board fields
+  - Setting the corresponding project field option
 
   Auditing label coverage:
   - "check if this repo has all the SDLC labels", "audit labels on infiquetra-core",
@@ -65,18 +63,18 @@ $INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/sdlc-manager/scripts/
 
 ## Core Operations
 
-### Sync Label Fields to Project Board
+### Set Project Fields
 
-When initiative or objective labels are applied to an issue, the corresponding project board
-single-select fields must be updated to match.
+Initiative and Objective are project fields, not label-derived state. Set them directly:
 
 ```bash
-# Sync initiative/objective labels -> project board fields for an issue
-python3 sdlc_manager.py labels sync-fields --repo infiquetra-core --number 42
+python3 sdlc_manager.py flow set-field --project mount-olympus \
+  --repo infiquetra-core --number 42 \
+  --field Objective --option "platform-launch"
 ```
 
-This reads the issue's current labels, finds any `initiative:*` or `objective:*` labels, and
-updates the corresponding single-select fields on the mount-olympus project.
+The older `labels sync-fields` command remains for compatibility, but new work should prefer
+`flow set-field` because it uses live project field discovery.
 
 ### Audit Repo Labels
 
@@ -147,17 +145,16 @@ verifying that an initiative/objective option exists before trying to sync.
 - **Status labels** (`ready`, `blocked`, `needs-analysis`, `needs-triage`): may be
   auto-managed as issues progress
 
-### Initiative and Objective Synchronization
+### Initiative and Objective Fields
 
-`initiative:*` and `objective:*` labels on an issue drive the project board's single-select
-fields. Workflow:
+Initiative and Objective are project fields. Workflow:
 
-1. Apply `initiative:olympus-v1` label to the issue
-2. Run `labels sync-fields --repo <repo> --number <N>` to update the board field
-3. The board's "Initiative" single-select field is updated to "olympus-v1"
+1. Confirm the field exists with `fields discover --project <project>`.
+2. Create a missing option with `fields create-option` when needed.
+3. Set the field with `flow set-field`.
 
-When a new initiative or objective label is applied that doesn't yet exist as a board field
-option, you must first create the option with `fields create-option`.
+Convention labels such as `initiative:*` and `objective:*` may still exist in old issues,
+but they are not the canonical source of truth.
 
 ## Natural Language Examples
 
@@ -168,11 +165,10 @@ option, you must first create the option with `fields create-option`.
 -> `gh issue edit 88 --add-label high-priority --repo Infiquetra/infiquetra-core`
 
 **"This issue belongs to the Olympus v1 initiative"**
--> Apply `initiative:olympus-v1` label, then:
-  `labels sync-fields --repo <repo> --number <N>`
+-> `flow set-field --project mount-olympus --repo <repo> --number <N> --field Initiative --option "olympus-v1"`
 
 **"Sync the initiative field for issue #42"**
--> `python3 sdlc_manager.py labels sync-fields --repo infiquetra-core --number 42`
+-> `python3 sdlc_manager.py flow set-field --project mount-olympus --repo infiquetra-core --number 42 --field Initiative --option <name>`
 
 **"Audit labels on infiquetra-core"**
 -> `python3 sdlc_manager.py labels audit --repo infiquetra-core`

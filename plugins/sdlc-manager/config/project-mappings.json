@@ -1,12 +1,14 @@
 {
   "_comment": "Vendored canonical project mapping for the Infiquetra org. Plugin reads this by default. Override at $INFIQUETRA_SDLC_PATH/config/project-mappings.json (per the resolution order in load_config). Project node IDs and field/option IDs are NOT cached here — they rotate on rename/recreate; fetched live via _resolve_project_field and discover_project_field_options.",
-  "_provenance": "Verified 2026-05-04: `gh project list --owner infiquetra` (Olympus is the only project, #1); `gh repo list infiquetra --json name --jq '.[].name'` (the 9 repos listed below are the canonical org-wide set as of this date). The id field is captured for board_add convenience; if it rotates, re-run `gh project view 1 --owner infiquetra --format json -q .id` and update.",
+  "_provenance": "Verified 2026-05-29: `gh project list --owner infiquetra` shows Olympus #1, Asgard #2, and Jeff Intent #3. `gh repo list infiquetra --json name --jq '.[].name'` repo list below remains the canonical Olympus repo set for default board_add routing. The id field is captured for board_add convenience; if it rotates, re-run `gh project view N --owner infiquetra --format json -q .id` and update.",
   "organization": "infiquetra",
   "projects": {
     "mount-olympus": {
       "number": 1,
       "id": "PVT_kwDODdfJoc4BVHOl",
       "name": "Olympus",
+      "board_key": "olympus",
+      "workflow": "olympus_execution",
       "_id_note": "Project node id captured 2026-05-04. If it rotates (project rename/recreate), re-fetch via: gh project view 1 --owner infiquetra --format json -q .id",
       "repositories": [
         "campps-context-library",
@@ -19,6 +21,24 @@
         "mimir",
         "mimir-context-library"
       ]
+    },
+    "asgard": {
+      "number": 2,
+      "id": "PVT_kwDODdfJoc4BZLMH",
+      "name": "Asgard",
+      "board_key": "asgard",
+      "workflow": "intent_flow",
+      "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 2 --owner infiquetra --format json -q .id",
+      "repositories": []
+    },
+    "jeff-intent": {
+      "number": 3,
+      "id": "PVT_kwDODdfJoc4BZLMK",
+      "name": "Jeff Intent",
+      "board_key": "jeff_intent",
+      "workflow": "intent_flow",
+      "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 3 --owner infiquetra --format json -q .id",
+      "repositories": []
     }
   },
   "excluded_repositories": []

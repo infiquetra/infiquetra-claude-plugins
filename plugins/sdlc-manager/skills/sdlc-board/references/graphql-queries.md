@@ -50,7 +50,7 @@ mutation($projectId: ID!, $contentId: ID!) {
 
 ## Mutation: Archive Item
 
-**Purpose**: Archive a project item (typically Deployed items after 2 weeks).
+**Purpose**: Archive a project item, typically after it reaches a terminal workflow status.
 
 **Constant**: `QUERY_ARCHIVE_ITEM`
 
@@ -209,8 +209,8 @@ query($org: String!, $repo: String!, $number: Int!) {
 }
 ```
 
-**Usage**: Called in `labels sync-fields` to read current labels before determining
-which project field values to set.
+**Usage**: Legacy helper for `labels sync-fields`. New field updates should prefer
+`flow set-field` with explicit project field values.
 
 ---
 
@@ -311,7 +311,7 @@ while True:
 
 ### Field ID vs. Option ID
 - `fieldId`: the node ID of the field itself (e.g., the "Status" field)
-- `optionId`: the node ID of a specific option within that field (e.g., "In Development")
+- `optionId`: the node ID of a specific option within that field (e.g., "Assigned")
 - Both are opaque strings — discover them via `QUERY_GET_PROJECT_FIELDS` or
   `board discover-fields`
 

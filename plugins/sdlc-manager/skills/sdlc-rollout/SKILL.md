@@ -3,7 +3,7 @@ name: sdlc-rollout
 description: |
   Track and drive SDLC rollout across Infiquetra organization repositories. Provides rollout
   status dashboards, gap analysis per repo, label and template deployment, and progress tracking.
-  Integrates with Beads/Dolt for agent-driven rollout coordination.
+  Uses GitHub repos, issue templates, labels, project mapping, and rollout-status tracking.
 when_to_use: |
   Use this skill when the user wants to:
 
@@ -82,23 +82,11 @@ Each repo tracks four fields in `rollout-status.json`:
 
 Status values: `pending`, `complete`, `n/a` (for Tier 3 repos where project board is excluded)
 
-## Beads/Dolt Integration
+## Coordination
 
-Rollout tasks can be tracked in Beads for agent-driven coordination:
-
-```bash
-# Create a rollout task for a repo
-bd ready sdlc-rollout-infiquetra-core
-
-# An agent claims the rollout task
-bd claim sdlc-rollout-infiquetra-core
-
-# Agent completes the rollout
-bd complete sdlc-rollout-infiquetra-core
-```
-
-When a Beads rollout task is completed, the corresponding `rollout-status.json` entry
-should be updated to reflect completion.
+Rollout work is tracked through GitHub issues, project fields, and
+`rollout-status.json`. When a rollout task completes, update the corresponding
+`rollout-status.json` entry so later gap reports do not re-open finished work.
 
 ## Core Operations
 

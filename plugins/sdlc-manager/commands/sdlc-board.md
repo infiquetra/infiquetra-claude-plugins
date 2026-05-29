@@ -3,60 +3,58 @@ name: sdlc-board
 description: Quick board status view with WIP check for Infiquetra project boards
 ---
 
-Show the current status of an Infiquetra project board (mount-olympus or strategic) including WIP counts, aging items, and blockers.
+Show current status for an Infiquetra project board, including WIP counts, aging items,
+and blockers.
 
 ## Usage
 
 ```
-/sdlc-board [mount-olympus|strategic]
+/sdlc-board [jeff-intent|asgard|mount-olympus]
 ```
 
 ## Arguments
 
-- `mount-olympus` — Show Mount Olympus Operations board (default)
-- `strategic` — Show Strategic Direction board
+- `mount-olympus` - Show Olympus engineering execution board (default)
+- `asgard` - Show Asgard rapid-action/incubation board
+- `jeff-intent` - Show Jeff's intent and shaping board
 
 ## What This Does
 
-1. Fetches all items from the specified project board
-2. Groups items by status column (Ready, In Development, E2E Testing, Deployment Ready, Deployed)
-3. Shows WIP counts vs. limits with violation warnings
-4. Flags aging items (>3 days in development, >1 day in E2E)
-5. Highlights blocked items
+1. Fetches items from the selected GitHub Project.
+2. Groups items by schema-backed Status.
+3. Shows WIP counts and violations where configured.
+4. Flags aging and blocked items.
+5. Keeps deployment state separate from workflow Status.
 
 ## Examples
 
 ```
 /sdlc-board
 /sdlc-board mount-olympus
-/sdlc-board strategic
+/sdlc-board asgard
+/sdlc-board jeff-intent
 ```
 
-## Script Command
+## Script Commands
 
 ```bash
-python3 ~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.0.0/scripts/sdlc_manager.py \
-  board view --project mount-olympus
+SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.0.0/scripts/sdlc_manager.py
+
+python3 $SCRIPT board view --project mount-olympus
+python3 $SCRIPT board wip --project mount-olympus
 ```
 
-For WIP check only:
-```bash
-python3 ~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.0.0/scripts/sdlc_manager.py \
-  board wip --project mount-olympus
-```
+Replace `mount-olympus` with `asgard` or `jeff-intent` for those boards.
 
 ## Instructions
 
 When the user invokes `/sdlc-board [project]`:
 
-1. Determine target project (default: mount-olympus)
-2. Run the board view command
-3. Run the WIP check command
-4. Present a clean summary with:
-   - Items by column with age
-   - WIP violations (if any)
-   - Blocked items highlighted
-   - Aging items flagged
-5. Offer follow-up actions: standup prep, move items, archive deployed
+1. Determine target project, defaulting to `mount-olympus`.
+2. Run `board view --project <project>`.
+3. Run `board wip --project <project>`.
+4. Summarize items by status, WIP violations, blockers, and aging work.
+5. Suggest concrete follow-up actions when useful: standup prep, move cards, or dry-run archive.
 
-Use the `sdlc-board` skill for detailed board operations or the `sdlc-operator` agent for multi-step workflows.
+Use the `sdlc-board` skill for detailed board operations or the `sdlc-operator` agent for
+multi-step workflows.

@@ -1,52 +1,42 @@
 ---
 name: sdlc-milestones
 description: |
-  Manage GitHub Milestones for Infiquetra Objectives. Creates, lists, and tracks progress on
-  milestones across Infiquetra repositories. Handles the full Objective lifecycle: creation,
-  Capability linking, progress tracking, risk assessment, cross-repo coordination, and completion.
-  Objectives are tracked as both GitHub Milestones and Beads parent tasks.
+  Manage GitHub Milestones for Infiquetra Objectives. Creates, lists, links, and tracks
+  milestone progress when an Objective needs due-date rollup across one or more repos.
 when_to_use: |
   Use this skill when the user wants to:
 
   Creating objectives and milestones:
-  - "create an objective for the platform launch", "set up a new objective",
-    "we're starting a new pilot program", "create a milestone for this objective"
-  - "let's set up the v1.0 release milestone"
-  - "create a program milestone for Q1 KR1"
+  - "create an objective for the platform launch", "set up a new objective"
+  - "create a milestone for this objective", "set up the v1.0 release milestone"
 
   Progress and status:
-  - "how's the platform-launch going", "objective progress",
-    "milestone completion", "what's the status of the platform MVP"
-  - "how many capabilities have been deployed toward this objective"
-  - "are we on track for the release date"
+  - "objective progress", "milestone completion", "are we on track for the release date"
 
   Milestone management:
-  - "when is this objective due", "list all open milestones",
-    "show me objectives for infiquetra-core"
+  - "when is this objective due", "list all open milestones"
   - "which milestones are at risk", "show upcoming deadlines"
 
   Linking issues to objectives:
-  - "add this capability to the platform-launch objective",
-    "link issue #42 to the platform MVP milestone",
-    "assign this to the current objective"
-
-  Completion and review:
-  - "mark this objective as complete", "close the milestone",
-    "show me all active objectives", "which objectives are at risk"
+  - "link issue #42 to the platform MVP milestone"
+  - "assign this to the current objective"
 ---
 
 # SDLC Milestones
 
-Manage GitHub Milestones for Infiquetra Objectives. Covers the full Objective lifecycle from
-creation through completion, including progress tracking and cross-repo coordination.
+Manage GitHub Milestones as an optional Objective progress surface. The canonical hierarchy
+is still Initiative -> Objective -> work item, with Initiative and Objective represented as
+project fields when the board exposes them. Milestones are useful for repo-level due dates,
+GitHub progress rollups, and release coordination.
 
 ## Script Location
 
-```
+```bash
 $INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/sdlc-manager/scripts/sdlc_manager.py
 ```
 
-> If `$INFIQUETRA_SDLC_PATH` is unset, use `~/workspace/infiquetra/infiquetra-sdlc` as the default base path.
+If `$INFIQUETRA_SDLC_PATH` is unset, use `~/workspace/infiquetra/infiquetra-sdlc` as the default base path.
+Always run the script with `python3`.
 
 ## Core Operations
 
@@ -55,260 +45,123 @@ $INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/sdlc-manager/scripts/
 ```bash
 python3 sdlc_manager.py milestones create \
   --repo infiquetra-core \
-  --title "Pilot: Platform Launch" \
+  --title "Pilot: Platform Launch (2026-04-15)" \
   --due-date 2026-04-15 \
-  --description "Platform launch pilot — validate core workflows with early adopters"
+  --description "Validate core workflows with early adopters"
 ```
-
-The `--title` should follow the naming convention (see below). The `--description` can be brief;
-full details live in the Objective issue.
 
 ### List Milestones
 
 ```bash
-# List open milestones
 python3 sdlc_manager.py milestones list --repo infiquetra-core
-
-# List all (open and closed)
 python3 sdlc_manager.py milestones list --repo infiquetra-core --state all
-
-# List closed milestones
 python3 sdlc_manager.py milestones list --repo infiquetra-core --state closed
 ```
 
 ### Track Progress
 
 ```bash
-# Show completion % for a specific milestone
 python3 sdlc_manager.py milestones progress --repo infiquetra-core --milestone 3
 ```
 
-Output shows: total issues, open issues, closed issues, completion %, and due date.
-Issues are from all types linked to the milestone (Capabilities, Enhancements, Defects).
+Progress uses GitHub's open/closed issue counts for issues linked to that milestone.
 
-### Link Issue to Milestone
+### Link Issue To Milestone
 
 ```bash
-# Link a capability to its parent objective milestone
 python3 sdlc_manager.py milestones link \
   --repo infiquetra-core \
   --issue 42 \
   --milestone 3
 ```
 
-Also do this via gh CLI:
+Equivalent gh CLI:
+
 ```bash
-gh issue edit 42 --repo Infiquetra/infiquetra-core --milestone "Pilot: Platform Launch"
+gh issue edit 42 --repo infiquetra/infiquetra-core --milestone "Pilot: Platform Launch (2026-04-15)"
 ```
 
 ## Naming Convention
 
-### Milestone Title Format
+Milestone title:
 
-```
+```text
 {Type}: {Name} ({YYYY-MM-DD})
 ```
 
-| Type | Example Milestone Title |
-|------|------------------------|
+| Type | Example |
+|------|---------|
 | Pilot | `Pilot: Platform Launch (2026-04-15)` |
 | MVP | `MVP: Core Integration (2026-02-28)` |
 | Release | `Release: Olympus v1.0 (2026-05-30)` |
 | Program | `Program: Q1 KR1 - User Adoption (2026-03-31)` |
 
-### Label Format
-
-The Objective issue gets a label `objective:{short-kebab-case}`:
-
-| Milestone Title | Label |
-|----------------|-------|
-| `Pilot: Platform Launch (2026-04-15)` | `objective:platform-launch` |
-| `Release: Olympus v1.0 (2026-05-30)` | `objective:olympus-v1` |
-| `MVP: Core Integration (2026-02-28)` | `objective:core-integration` |
-| `Program: Q1 KR1 - User Adoption (2026-03-31)` | `objective:q1-kr1` |
-
-## Beads/Dolt Integration
-
-Objectives are tracked in two systems:
-
-1. **GitHub Milestones** — the backing store for progress tracking and issue linking
-2. **Beads parent tasks** — the coordination layer for Mount Olympus agents
-
-`bd` is the Beads/Dolt CLI for structured agent task coordination (see `docs/tools/index.md` for install instructions).
-
-When creating an Objective:
-```bash
-# Create the Beads parent task
-bd ready <objective-task-id>
-
-# Child capabilities are Beads subtasks
-bd claim <capability-task-id>  # An agent claims the capability
-bd update <capability-task-id> in-progress
-bd complete <capability-task-id>  # Syncs to GitHub Issue close
-```
-
-Beads tasks sync to GitHub Issues automatically. When a Beads subtask is completed,
-the corresponding GitHub Issue is closed and the Milestone completion % updates.
-
 ## Objective Creation Workflow
 
-When a user says "create an objective", run through these steps:
+1. Create the Objective issue.
+2. Create the GitHub Milestone if due-date rollup is useful.
+3. Add the Objective issue to the target board.
+4. Set `Initiative`, `Objective`, and `Status` project fields when those fields exist.
+5. Create child work items just in time.
+6. Link child issues as native GitHub sub-issues and, when useful, to the milestone.
 
-### Step 1: Create the Objective Issue
-
-```bash
-python3 sdlc_manager.py issue create --repo <repo> --type objective
-```
-
-Gather during template:
-- Objective Name (descriptive, e.g., "Platform Launch MVP")
-- Objective Type: Pilot / MVP / Release / Program
-- Target Date (YYYY-MM-DD)
-- Success Criteria (testable checkboxes)
-- Included Capabilities list (even if not yet created)
-- Stakeholders
-- Risk Level
-
-### Step 2: Create the GitHub Milestone
+Example field update:
 
 ```bash
-python3 sdlc_manager.py milestones create \
-  --repo <repo> \
-  --title "{Type}: {Name}" \
-  --due-date {YYYY-MM-DD} \
-  --description "{Brief description}"
+python3 sdlc_manager.py flow set-field --project mount-olympus \
+  --repo <repo> --number <N> \
+  --field Objective --option "<Objective name>"
 ```
-
-Note the milestone number returned — you'll need it for linking.
-
-### Step 3: Apply Labels to the Objective Issue
-
-```bash
-# Apply objective label
-gh issue edit <N> --repo Infiquetra/<repo> --add-label "objective:{short-name}"
-
-# Apply initiative label if applicable
-gh issue edit <N> --repo Infiquetra/<repo> --add-label "initiative:{name}"
-```
-
-### Step 4: Link the Objective Issue to the Milestone
-
-```bash
-python3 sdlc_manager.py milestones link --repo <repo> --issue <N> --milestone <M>
-```
-
-### Step 5: Add to Project Board and Sync Fields
-
-```bash
-# Add to project board
-python3 sdlc_manager.py board add --repo <repo> --number <N>
-
-# Sync labels to project fields
-python3 sdlc_manager.py labels sync-fields --repo <repo> --number <N>
-```
-
-### Step 6: Create Capabilities
-
-Create individual Capability issues for the work inside the Objective.
-For each capability:
-1. `python3 sdlc_manager.py issue create --repo <repo> --type capability`
-2. Apply `objective:{name}` and `initiative:{name}` labels
-3. Link to the milestone: `milestones link --repo <repo> --issue <N> --milestone <M>`
-4. Add to project board: `board add --repo <repo> --number <N>`
 
 ## Risk Assessment
 
-Flag objectives as at-risk when:
-- Due date is **< 7 days away** AND milestone completion is **< 80%**
-- Any Capability in the milestone is **blocked**
-- Capabilities are **aging in development** (> 3 days in In Development)
+Flag Objectives as at-risk when:
 
-Check progress and calculate risk:
+- Due date is less than 7 days away and milestone completion is below 80%.
+- Any linked work item is blocked.
+- Linked work is aging in `Assigned`, `In Review`, `Active`, or `Verify`.
+- A required Jeff decision is still in `Needs Question` or equivalent state.
+
+Check progress:
+
 ```bash
 python3 sdlc_manager.py milestones progress --repo <repo> --milestone <N>
 ```
 
-When flagging at-risk: surface the due date, current completion %, and identify which
-specific issues are blocking progress.
-
 ## Cross-Repo Coordination
 
-For Objectives that span multiple repositories:
+For Objectives spanning multiple repositories:
 
-1. **Create identical milestones in each affected repo**:
-   ```bash
-   python3 sdlc_manager.py milestones create \
-     --repo infiquetra-core \
-     --title "Pilot: Platform Launch (2026-04-15)" \
-     --due-date 2026-04-15
-
-   python3 sdlc_manager.py milestones create \
-     --repo infiquetra-auth \
-     --title "Pilot: Platform Launch (2026-04-15)" \
-     --due-date 2026-04-15
-   ```
-
-2. **Apply consistent labels across all repos** — same `objective:*` and `initiative:*` labels
-
-3. **Link each repo's Capability issues to its local milestone**
-
-4. **Track aggregate progress** by checking progress across all repos:
-   ```bash
-   python3 sdlc_manager.py milestones progress --repo infiquetra-core --milestone <M>
-   python3 sdlc_manager.py milestones progress --repo infiquetra-auth --milestone <M>
-   ```
-
-## Natural Language Examples
-
-**"Create an objective for the platform launch"**
--> Run `issue create --type objective`, then `milestones create`, apply labels, link issue to milestone
-
-**"How's the platform launch going?"**
--> Find the milestone number, run `milestones progress --repo <repo> --milestone <N>`
-
-**"Add capability #42 to the platform-launch objective"**
--> Find milestone number for `objective:platform-launch`, then `milestones link --repo <repo> --issue 42 --milestone <M>`
-
-**"Show me all active objectives"**
--> `milestones list --repo <repo>` for each active repo; look for open milestones
-
-**"Which objectives are at risk?"**
--> Run progress for each open milestone, flag those with < 80% completion and < 7 days remaining
-
-**"Mark the platform launch as complete"**
--> Close the GitHub milestone via gh CLI:
-   ```bash
-   gh api repos/Infiquetra/<repo>/milestones/<N> -X PATCH -f state=closed
-   ```
-
-**"Create a release milestone for Olympus v1.0"**
--> `milestones create --repo infiquetra-core --title "Release: Olympus v1.0" --due-date 2026-05-30`
+1. Create matching milestone titles in each affected repo when milestone rollup is useful.
+2. Use the same Objective project field option across boards where available.
+3. Link each repo's work items to its local milestone.
+4. Use native sub-issues for parent/child structure.
+5. Track aggregate progress through project fields plus per-repo milestone progress.
 
 ## Objective Completion Criteria
 
 An Objective is complete when:
-- All Capabilities are in **Deployed** status on the board
-- Success criteria in the Objective issue are validated
-- GitHub Milestone is closed
-- Beads parent task is marked complete (`bd complete <objective-task-id>`)
 
-Completion checklist:
-1. Confirm all linked Capabilities are Deployed
-2. Review success criteria — mark each as complete
-3. Close milestone: `gh api repos/Infiquetra/<repo>/milestones/<N> -X PATCH -f state=closed`
-4. Update Objective issue with completion notes and close it
-5. Notify stakeholders via #mount-olympus Discord channel
+- Linked work items are in a terminal workflow status (`Done`, `Closed`, or equivalent).
+- Success criteria in the Objective issue are validated.
+- No critical/high defects remain open against the Objective.
+- The GitHub Milestone is closed if one was created.
+- The Objective issue has completion notes and is closed.
 
-## Key Behaviors
+## Natural Language Examples
 
-- **Always create a milestone when creating an Objective** — the milestone is how progress is tracked
-- **Milestone title includes the date** — format: `{Type}: {Name} ({YYYY-MM-DD})`
-- **Issue label uses short-name** — format: `objective:{short-kebab-case}` (no date)
-- **Cross-repo objectives** need milestones in every affected repo with identical titles
-- **At-risk flag** triggers at < 7 days + < 80% completion — surface proactively
-- **Capabilities are linked just-in-time** — 2-3 weeks before work starts, not all upfront
-- **Beads parent tasks** mirror Objectives for agent coordination
+**"Create an objective for the platform launch"**
+-> Create the Objective issue, create a milestone if useful, add to board, and set fields.
+
+**"How's the platform launch going?"**
+-> Find the milestone number and run `milestones progress`.
+
+**"Add capability #42 to the platform-launch objective"**
+-> Set the Objective field, link as a sub-issue, and link to the milestone if one exists.
+
+**"Which objectives are at risk?"**
+-> Run progress for each open milestone and check linked board status / WIP age.
 
 ## Reference Documents
 
-- `references/objective-workflow.md` — Complete Objective lifecycle, types, sizing, and examples
+- `references/objective-workflow.md` - Objective lifecycle, types, sizing, and examples

@@ -15,6 +15,8 @@ Claude Code plugins for Infiquetra development workflows.
 | [docs-generator](plugins/docs-generator/) | Automated README, API spec, and architecture documentation generation | Development |
 | [python-toolkit](plugins/python-toolkit/) | Python patterns for serverless apps: Lambda Powertools, DynamoDB, error handling | Development |
 | [sdk-lifecycle](plugins/sdk-lifecycle/) | SDK scaffolding, documentation, security review, and registry publishing | Development |
+| [infiquetra-deploy](plugins/infiquetra-deploy/) | Tag-promotion deploy, status, rollback, hotfix, and release-note workflows | Operations |
+| [infiquetra-loop](plugins/infiquetra-loop/) | Infiquetra lifecycle loop for strategy, planning, work, review, QA, retro, and resume | Development |
 
 ## Installation
 
@@ -80,6 +82,19 @@ python3 plugins/test-suite/skills/run-quality-checks/scripts/test_runner.py \
 # Generate all documentation
 python3 plugins/docs-generator/skills/generate-docs/scripts/docs_generator.py generate --all --service my-service
 ```
+
+### Infiquetra Deploy
+```bash
+python3 plugins/infiquetra-deploy/scripts/mint_tag.py \
+    --env nonprod \
+    --version 1.2.3 \
+    --dry-run
+```
+
+### Infiquetra Loop
+Use `/loop` to route work to plan only, PR, merge, or nonprod deploy. Durable artifacts live in
+repo docs such as `docs/plans/`, `docs/work-sessions/`, and `docs/engineering-journal/`; raw
+runtime state stays under ignored `.claude/infiquetra-loop/`.
 
 ### Splunk
 ```bash

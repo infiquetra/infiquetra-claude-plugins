@@ -148,9 +148,7 @@ class ServerState:
             with self._lock:
                 if self._presence is not None:
                     return {"ok": True, "was_already_connected": True}
-                result = self._register_locked(
-                    endpoint=endpoint, session_name=None, debug=False
-                )
+                result = self._register_locked(endpoint=endpoint, session_name=None, debug=False)
                 result["consumer_attached"] = False
                 result["notifier_kind"] = None
                 return result
@@ -364,9 +362,7 @@ class ServerState:
                 }
             session_name = self._presence.session_name
             uptime = (
-                int(time.time() - self._connected_at)
-                if self._connected_at is not None
-                else None
+                int(time.time() - self._connected_at) if self._connected_at is not None else None
             )
             # Count pending inbound messages on the consumer group via XLEN-
             # like introspection. XPENDING gives unacked count for the group;
@@ -377,9 +373,7 @@ class ServerState:
             pending: int | None = None
             try:
                 if self._client is not None:
-                    pending = int(
-                        self._client.xlen(inbound_stream(session_name))
-                    )
+                    pending = int(self._client.xlen(inbound_stream(session_name)))
             except Exception:  # noqa: BLE001
                 pending = None
             return {
@@ -488,18 +482,14 @@ def _check_setup() -> dict[str, Any]:
     return {
         "plugin_root": str(_plugin_root()) if _plugin_root() else None,
         "wrapper_symlink_path": str(WRAPPER_SYMLINK),
-        "wrapper_symlink_expected_target": (
-            str(wrapper_target) if wrapper_target else None
-        ),
+        "wrapper_symlink_expected_target": (str(wrapper_target) if wrapper_target else None),
         "wrapper_symlink_status": symlink_status,
         "source_env_path": str(source_env),
         "source_env_exists": source_env.exists(),
         "registry_path": str(registry_json),
         "registry_exists": registry_json.exists(),
         "all_ready": (
-            symlink_status == "current"
-            and source_env.exists()
-            and registry_json.exists()
+            symlink_status == "current" and source_env.exists() and registry_json.exists()
         ),
     }
 
@@ -678,10 +668,7 @@ def _do_setup(*, link_wrapper: bool, scaffold_configs: bool) -> dict[str, Any]:
                     {
                         "target": str(dest),
                         "status": "skipped",
-                        "reason": (
-                            f"example not found at {example} — is the plugin "
-                            f"installed?"
-                        ),
+                        "reason": (f"example not found at {example} — is the plugin installed?"),
                     }
                 )
                 continue
@@ -896,9 +883,7 @@ def build_app() -> FastMCP:
     async def redis_channel_setup(
         link_wrapper: bool = True, scaffold_configs: bool = True
     ) -> dict[str, Any]:
-        return _do_setup(
-            link_wrapper=link_wrapper, scaffold_configs=scaffold_configs
-        )
+        return _do_setup(link_wrapper=link_wrapper, scaffold_configs=scaffold_configs)
 
     @app.tool(
         name="redis_channel_configure",
@@ -1106,8 +1091,7 @@ def _maybe_auto_connect() -> None:
         )
     else:
         log.warning(
-            "auto-connect failed: %s. Server continuing; use "
-            "/redis-channel-connect manually.",
+            "auto-connect failed: %s. Server continuing; use /redis-channel-connect manually.",
             result,
         )
 
@@ -1205,8 +1189,7 @@ def _log_setup_nag() -> None:
         issues.append(f"missing: {state.get('registry_path')}")
     if issues:
         log.warning(
-            "redis-channel setup is incomplete — run /redis-channel-setup. "
-            "Issues: %s",
+            "redis-channel setup is incomplete — run /redis-channel-setup. Issues: %s",
             "; ".join(issues),
         )
 

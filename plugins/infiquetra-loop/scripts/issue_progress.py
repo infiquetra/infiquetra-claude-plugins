@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Render Infiquetra lifecycle issue progress comments."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from collections.abc import Sequence
+
+EVENT_TITLES = {
+    "start": "Loop started",
+    "phase": "Phase completed",
+    "pr": "PR ready",
+    "deploy": "Nonprod deployment",
+    "completion": "Loop completed",
+}
+
+
+def _line(label: str, value: object | None) -> str | None:
+    if value is None or value == "":
+        return None
+    return f"- {label}: {value}"
+
+
+def _checks_lines(checks_run: Sequence[str] | None) -> list[str]:
+    if not checks_run:
+        return []
+    lines = ["- checks run:"]
+    lines.extend(f"  - `{check}`" for check in checks_run)
+    return lines
+
+
+def render_issue_comment(
+    *,
+    event: str,
+    issue_ref: str,
+    destination: str,
+    summary: str | None = None,
+    plan_path: str | None = None,
+    work_session_path: str | None = None,
+    commit_sha: str | None = None,
+    checks_run: Sequence[str] | None = None,
+    blockers: str | None = None,
+    pr_url: str | None = None,
+    review_status: str | None = None,
+    deploy_status: str | None = None,
+    workflow_url: str | None = None,
+    evidence_link: str | None = None,
+) -> str:
+    """Render a concise markdown issue progress update."""
+
+    title = EVENT_TITLES.get(event, event.replace("-", " ").title())
+    lines = [f"### {title}", "", f"- issue: {issue_ref}", f"- selected destination: {destination}"]
+    for candidate in (
+        _line("summary", summary),
+        _line("plan", plan_path),
+        _line("work session", work_session_path),
+        _line("commit", commit_sha),
+        _line("PR", pr_url),
+        _line("review status", review_status),
+        _line("deployment status", deploy_status),
+        _line("workflow", workflow_url),
+        _line("evidence", evidence_link),
+        _line("blockers", blockers),
+    ):
+        if candidate:
+            lines.append(candidate)
+    lines.extend(_checks_lines(checks_run))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--event", required=True)
+    parser.add_argument("--issue-ref", required=True)
+    parser.add_argument("--destination", required=True)
+    parser.add_argument("--summary")
+    parser.add_argument("--plan-path")
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    print(
+        render_issue_comment(
+            event=args.event,
+            issue_ref=args.issue_ref,
+            destination=args.destination,
+            summary=args.summary,
+            plan_path=args.plan_path,
+        ),
+        end="",
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

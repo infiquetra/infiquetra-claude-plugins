@@ -22,6 +22,42 @@
 
 ---
 
+## 2026-05-29
+
+### Split Infiquetra lifecycle orchestration from deployment mutation (commit pending)  {#infiquetra-loop-deploy-boundary}
+
+**Decision.** Add `infiquetra-loop` as the daily lifecycle orchestration plugin and
+`infiquetra-deploy` as a separate deployment plugin. `infiquetra-loop` owns office-hours,
+strategy, ideation, brainstorm, planning, work execution, code review, optimization, QA, SDLC
+issue progress, engineering-journal prompts, retro, and resume. `infiquetra-deploy` owns
+tag-promotion deployment, status, release notes, rollback, and hotfix helpers. `team-execution`
+remains independent and is offered only when risk, size, or parallelism justify the cost.
+
+**Rejected alternatives.**
+- *One merged super-plugin.* Rejected: deployment mutation has a higher blast radius than
+  lifecycle coaching and should keep a hard operational boundary.
+- *Copy Superpowers, Compound Engineering, gstack, and VECU workflows wholesale.* Rejected:
+  the useful pieces need to be adapted to Infiquetra docs, SDLC, and context-library references;
+  generic cleanup, GitHub helper, and plugin-management utilities are intentionally out of scope.
+- *Version raw loop state as repo artifacts.* Rejected: durable plans and work-session summaries
+  belong in repo docs, but raw checkpoint state, API caches, validator JSON, and resume scratch
+  are local session data and already covered by the `.claude/` ignore convention.
+
+**Rationale.** The split lets the daily loop replace recurring Superpowers and Compound
+Engineering lifecycle use while still enforcing a clear deployment safety boundary. Durable docs
+give session-to-session continuity without committing stale runtime state. Keeping `team-execution`
+separate preserves its validator and nonprod automation contract without forcing every loop to pay
+that token or coordination cost.
+
+**Revisit when.** Deployment policy moves out of tag-promotion, loop usage shows deployment
+handoff friction dominates safety value, or `team-execution` becomes cheap enough to run by
+default on normal work.
+
+**Refs.** `plugins/infiquetra-loop/`, `plugins/infiquetra-deploy/`,
+[team-execution v2 decision](#team-execution-v2-validators).
+
+---
+
 ## 2026-05-27
 
 ### `team-execution` v2 uses context-selected validators and guarded nonprod automation (commit pending)  {#team-execution-v2-validators}

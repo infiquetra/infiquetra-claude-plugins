@@ -38,10 +38,13 @@ Ignored local state belongs under `.claude/infiquetra-loop/`.
 - `sdlc-manager` owns SDLC issue creation, issue comments, and board movement.
 - `infiquetra-loop` owns only the handoff envelope; `sdlc-manager` owns issue bodies, readiness,
   sidecars, labels, project fields, and GitHub mutation.
+- `/plan <issue>` consumes `idea-ready` and `requirements-ready` handoff issues.
+- `/work <issue>` consumes `plan-ready` and `resume-ready` handoff issues.
 
 ## Deterministic Helpers
 
-- `scripts/parse_issue.py` extracts ADR, acceptance-criteria, round, and risk hints.
+- `scripts/parse_issue.py` extracts ADR, acceptance-criteria, handoff maturity, source context,
+  round, and risk hints.
 - `scripts/scaffold_checkpoint.py` writes ignored resume checkpoints under
   `.claude/infiquetra-loop/`.
 - `scripts/find_inflight_work.py` ranks resumable loop state.

@@ -143,6 +143,12 @@ def test_infiquetra_loop_skills_document_required_lifecycle_behavior() -> None:
     assert "/create-issue --prepare" in handoff_doc
     assert "Do not suggest `/loop`" in handoff_doc
 
+    plan_doc = _read(PLUGIN_ROOT / "skills" / "plan" / "SKILL.md")
+    work_doc = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    assert "`idea-ready` or `requirements-ready`" in plan_doc
+    assert "`plan-ready` or `resume-ready`" in work_doc
+    assert "/plan <issue>" in work_doc
+
 
 def test_destination_selector_and_escalation_helpers() -> None:
     lifecycle = _load_module("lifecycle_state.py")
@@ -206,6 +212,9 @@ def test_issue_progress_comments_include_required_evidence() -> None:
         event="phase",
         issue_ref="infiquetra/campps-service#42",
         destination="pr",
+        handoff_maturity="plan-ready",
+        handoff_source="docs/plans/example.md",
+        next_action="/work <issue>",
         doc_review_artifact="docs/reviews/2026-05-29-doc-review.md",
         doc_review_blocked=True,
         doc_review_fixes=["Added missing gate."],
@@ -213,6 +222,9 @@ def test_issue_progress_comments_include_required_evidence() -> None:
         doc_review_override="Proceeding after owner accepted risk.",
     )
     assert "doc review artifact: docs/reviews/2026-05-29-doc-review.md" in review
+    assert "handoff maturity: plan-ready" in review
+    assert "handoff source: docs/plans/example.md" in review
+    assert "next action: /work <issue>" in review
     assert "doc review blocked: yes" in review
     assert "doc review override: Proceeding after owner accepted risk." in review
     assert "doc review fixes:" in review
@@ -245,6 +257,39 @@ def test_issue_parser_extracts_infiquetra_context_and_risk_flags() -> None:
     assert extracted["round_refs"] == [2]
     assert extracted["flags"]["has_api"] is True
     assert extracted["flags"]["has_security"] is True
+    assert extracted["handoff"]["maturity"] == ""
+
+
+def test_issue_parser_extracts_handoff_maturity_and_source_context() -> None:
+    parse_issue = _load_module("parse_issue.py")
+
+    body = """### Objective
+Build the thing.
+
+### Handoff maturity
+plan-ready
+
+### Suggested next action
+Use `/work <issue>` to execute from the plan-grade context.
+
+### Source context
+- Source: docs/plans/example.md
+- Source type: plan
+- Source title: Example Plan
+"""
+
+    extracted = parse_issue.extract(body)
+
+    assert extracted["handoff"] == {
+        "maturity": "plan-ready",
+        "suggested_next_action": "Use `/work <issue>` to execute from the plan-grade context.",
+        "source": "docs/plans/example.md",
+        "source_type": "plan",
+        "source_title": "Example Plan",
+        "can_plan": False,
+        "can_work": True,
+        "requires_clarification": False,
+    }
 
 
 def test_handoff_envelope_routes_to_sdlc_manager_without_issue_body_ownership(tmp_path) -> None:

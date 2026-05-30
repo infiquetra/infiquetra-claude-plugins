@@ -4,8 +4,9 @@ description: Execute an approved Infiquetra plan with checkpoints, issue updates
 argument-hint: "[plan path or issue]"
 ---
 
-Load `infiquetra-loop/skills/work/SKILL.md`. Execute from durable plan artifacts, update issue
-progress, write work-session summaries, and run risk-based test gates.
+Load `infiquetra-loop/skills/work/SKILL.md`. Execute from durable plan artifacts or handoff issues
+marked `plan-ready` or `resume-ready`, update issue progress, write work-session summaries, and
+run risk-based test gates.
 
 Arguments provided to the command:
 

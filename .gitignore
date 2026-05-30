@@ -53,3 +53,6 @@ Thumbs.db
 
 # Claude Code (per-user settings and session state)
 .claude/
+
+# Antigravity CLI (per-user settings and session state)
+.antigravitycli/

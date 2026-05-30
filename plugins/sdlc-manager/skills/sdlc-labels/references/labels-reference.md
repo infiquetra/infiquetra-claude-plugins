@@ -25,10 +25,15 @@ Applied automatically or manually as issues progress through the workflow.
 
 | Label | Color | Description |
 |-------|-------|-------------|
+| `needs-plan` | `#FBCA04` (yellow) | Current actionable-template planning label read by Hermes |
 | `needs-analysis` | `#FBCA04` (yellow) | Requires context gathering and specification |
 | `needs-triage` | `#FBCA04` (yellow) | Needs priority and impact assessment |
 | `ready` | `#0E8A16` (green) | Context complete, ready for development |
 | `blocked` | `#B60205` (dark red) | Work is blocked by external dependency |
+
+`needs-analysis` and `needs-triage` are legacy fallback labels. Current capability,
+enhancement, and defect templates apply `needs-plan`; the older labels may still appear when
+`labels auto-label` runs against title-pattern rules from `labels.json`.
 
 ---
 
@@ -147,6 +152,8 @@ Organizational and process labels.
 ## Auto-Label Rules
 
 Applied by `labels auto-label` command. Rules match patterns in issue title or body.
+These are legacy fallback rules, not the current GitHub Issue Form template defaults. For current
+template labels, use `../sdlc-issues/references/templates-reference.md`.
 
 | Rule | Pattern (regex) | Labels Applied |
 |------|----------------|----------------|
@@ -155,6 +162,7 @@ Applied by `labels auto-label` command. Rules match patterns in issue title or b
 | `title_contains_defect` | `\[DEFECT\]` in title | `defect`, `needs-triage` |
 | `title_contains_exploration` | `\[EXPLORATION\]` in title | `exploration` |
 | `title_contains_context` | `\[CONTEXT\]` in title | `context-update`, `documentation` |
+| `title_contains_objective` | `\[OBJECTIVE\]` in title | `objective` |
 | `mentions_security` | `security\|vulnerability\|CVE` in title/body | `security` |
 | `mentions_performance` | `performance\|latency\|slow\|timeout` in title/body | `performance` |
 | `mentions_breaking` | `breaking change\|breaking\|backwards incompatible` in title/body | `breaking-change` |
@@ -177,8 +185,9 @@ Applied by `labels auto-label` command. Rules match patterns in issue title or b
 
 6. **Risk labels**: Add during Analysis phase. One per capability.
 
-7. **Status labels** (`ready`, `blocked`, `needs-analysis`, `needs-triage`): May be
-   auto-managed by the system as issues progress through workflow columns.
+7. **Planning/status labels**: current actionable templates apply `needs-plan`; `ready` and
+   `blocked` may be managed as issues progress. `needs-analysis` and `needs-triage` are legacy
+   fallback labels from older auto-label rules.
 
 8. **Technical area, workflow, and meta labels**: Apply as many as relevant. Not exclusive.
 

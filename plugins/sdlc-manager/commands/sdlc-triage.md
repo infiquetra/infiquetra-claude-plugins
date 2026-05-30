@@ -20,7 +20,7 @@ Triage an existing issue by analyzing its content, recommending appropriate labe
 1. Reads the issue content (title, body, existing labels)
 2. Recommends issue type label if missing
 3. Recommends priority label for defects
-4. Recommends initiative/objective labels based on context
+4. Recommends Initiative/Objective project field values based on context
 5. Applies auto-label rules
 6. Adds to project board if not already there
 7. Sets project fields when the target board exposes them
@@ -37,7 +37,7 @@ Triage an existing issue by analyzing its content, recommending appropriate labe
 ## Script Commands
 
 ```bash
-SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.0.0/scripts/sdlc_manager.py
+SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.6.0/scripts/sdlc_manager.py
 
 # Auto-label based on content
 python3 $SCRIPT labels auto-label --repo athena-service --number 42
@@ -63,8 +63,8 @@ When the user invokes `/sdlc-triage repo#number`:
    - Does title/body mention an initiative or objective? Suggest project field values
 4. Apply auto-label rules:
    - `python3 $SCRIPT labels auto-label --repo <repo> --number <N>`
-5. Manually apply recommended labels:
-   - `gh issue edit <N> --repo infiquetra/<repo> --add-label "capability,needs-analysis"`
+5. Manually apply recommended labels when the template did not apply them:
+   - `gh issue edit <N> --repo infiquetra/<repo> --add-label "capability,hermes-task,needs-plan"`
 6. Add to project board:
    - `python3 $SCRIPT board add --repo <repo> --number <N>`
 7. Set initiative/objective fields when applicable:
@@ -73,7 +73,8 @@ When the user invokes `/sdlc-triage repo#number`:
 8. Recommend status:
    - Defect (critical/high): Move directly to Assigned on Olympus, or Active on Asgard
    - Has complete context: Ready
-   - Needs more context: Add `needs-analysis` label, leave in Backlog or Shaping
+   - Needs more context: keep `needs-plan` on actionable cards, optionally add `needs-context`,
+     and leave in Backlog or Shaping
 9. Show summary of all actions taken
 
 If the issue is a defect with `critical` label, flag urgency: "This is a critical defect with a 4-hour SLA. Moving to active ownership now."

@@ -25,6 +25,73 @@
 
 ---
 
+## 2026-05-30
+
+### Prepared issue creation needs an artifact boundary before mutation  {#prepared-issue-artifact-boundary}
+
+**Context.** `sdlc-manager` needed to turn rough source text into Asgard or Mount Olympus issues
+without creating cards that fail team readiness checks or require hidden board/label repair.
+
+**Evidence.** The new workflow in `plugins/sdlc-manager/scripts/sdlc_manager.py` writes markdown
+drafts plus JSON sidecars, re-runs readiness in `issue create-prepared`, and records created issue
+state back onto the draft. Tests in `plugins/sdlc-manager/tests/test_issue_prepare.py` and
+`plugins/sdlc-manager/tests/test_issue_create_prepared.py` cover blocked drafts, safe statuses,
+mapping PR stop, override creation, and draft-created state.
+
+**Mechanism.** A direct "source text -> GitHub issue" command mixes interpretation, validation,
+and side effects. Splitting the workflow into a durable draft/sidecar artifact and a confirmed
+mutation step lets agents shape prose while deterministic code owns readiness, repair ordering,
+and idempotent recovery.
+
+**Fix.** Added prepared drafts, readiness profiles, mutation planning, repo prerequisite repair,
+mapping PR handling, natural-language prompt guidance, and plugin metadata for `sdlc-manager`
+1.6.0.
+
+**Validation.** `uv run pytest -q`, `uv run ruff check .`, `uv run python
+marketplace/validator/validate.py`, `uv run python
+plugins/sdlc-manager/scripts/sync_template_docs.py --check`, and `git diff --check` pass.
+
+**Generalizable rule.** When a plugin command turns ambiguous human or agent text into external
+side effects, make a reviewable artifact the boundary and re-validate it at mutation time.
+
+**Refs.** DECISIONS [prepared issue workflow boundary](DECISIONS.md#prepared-issue-workflow-boundary);
+ARCHIVE [Asgard/Olympus issue readiness workflow](ARCHIVE.md#asgard-olympus-issue-readiness).
+
+### Prompt docs need their own drift guards  {#prompt-docs-need-drift-guards}
+
+**Context.** `sdlc-manager` had already learned to consume the current `infiquetra-sdlc`
+board schema and generated template reference, but handwritten prompts and references still taught
+old label behavior.
+
+**Evidence.** `plugins/sdlc-manager/config/sdlc-schema.json` matched
+`../infiquetra-sdlc/config/sdlc-schema.json`, and
+`uv run python plugins/sdlc-manager/scripts/sync_template_docs.py --check` passed. The remaining
+drift was in handwritten files such as
+`plugins/sdlc-manager/agents/sdlc-operator.md`,
+`plugins/sdlc-manager/commands/sdlc-triage.md`, and
+`plugins/sdlc-manager/skills/sdlc-issues/references/issue-types.md`.
+
+**Mechanism.** Generated docs can stay correct while nearby prompt text keeps stale duplicated
+facts. Agents read both surfaces, so a correct generated reference is insufficient if the operator
+prompt still says exploration/context-update are `hermes-task` or examples still apply
+`needs-analysis` as a current template label.
+
+**Fix.** Aligned the handwritten prompts/references with the generated template contract and added
+`plugins/sdlc-manager/tests/test_prompt_alignment.py` to pin the current metadata,
+Hermes-actionability, and label wording.
+
+**Validation.** `uv run python plugins/sdlc-manager/scripts/sync_template_docs.py --check`,
+`uv run ruff check plugins/sdlc-manager/tests/test_prompt_alignment.py`, and
+`uv run pytest plugins/sdlc-manager/tests tests/test_sdlc_manager.py -q` pass.
+
+**Generalizable rule.** When a plugin mixes generated references with human-authored prompts, add
+drift guards for the human-authored prompts too; otherwise agents can keep following stale
+instructions even while generated docs are correct.
+
+**Refs.** ARCHIVE [sdlc-manager prompt alignment](ARCHIVE.md#sdlc-manager-prompt-alignment).
+
+---
+
 ## 2026-05-29
 
 ### Schema migrations need legacy fallback contract tests  {#schema-migration-legacy-fallbacks}

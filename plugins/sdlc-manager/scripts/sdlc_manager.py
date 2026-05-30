@@ -17,6 +17,8 @@ Usage:
     sdlc_manager.py board discover-fields --project mount-olympus
 
     sdlc_manager.py issue create --repo athena-service --type capability
+    sdlc_manager.py issue prepare --repo athena-service --type capability --team olympus --project mount-olympus "source text"
+    sdlc_manager.py issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 
     sdlc_manager.py labels sync-fields --repo athena-service --number 42
     sdlc_manager.py labels audit --repo athena-service
@@ -61,6 +63,8 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -2646,13 +2650,24 @@ _ISSUE_TYPES = (
     "context-update",
     "objective",
 )
+_TEAM_CHOICES = ("asgard", "olympus")
+_TEAM_SAFE_STATUSES = {"asgard": "Shaping", "olympus": "Backlog"}
+_DISPATCH_ACTIONABLE_TYPES = frozenset({"capability", "enhancement", "defect"})
+_ISSUE_TYPE_LABELS = {
+    "capability": ["capability", "hermes-task", "needs-plan"],
+    "enhancement": ["enhancement", "hermes-task", "needs-plan"],
+    "defect": ["defect", "hermes-task", "needs-plan"],
+    "objective": ["objective", "hermes-not-actionable"],
+    "exploration": ["exploration", "research", "hermes-not-actionable"],
+    "context-update": ["context-update", "documentation", "hermes-not-actionable"],
+}
+_PREPARED_DRAFT_DIR = Path("docs") / "sdlc-issue-drafts"
+
 _HERMES_ACTIONABLE_TYPES = frozenset(
     {
         "capability",
         "enhancement",
         "defect",
-        "exploration",
-        "context-update",
     }
 )
 # Issue types where the capability-adaptive fields are relevant (size,
@@ -2671,6 +2686,665 @@ _HERMES_ACTIONABLE_TYPES = frozenset(
 # `infiquetra-sdlc/docs/operations/operational-reference.md`, the
 # additional prompts light up automatically.
 _CAPABILITY_ADAPTIVE_TYPES = frozenset({"capability", "objective"})
+
+
+@dataclass
+class PreparedReadiness:
+    profile: str
+    passed: bool
+    blocking_gaps: list[str]
+    warnings: list[str]
+
+
+@dataclass
+class PreparedIssue:
+    title: str
+    repo: str
+    issue_type: str
+    team: str
+    project: str
+    status: str
+    labels: list[str]
+    risk: str | None
+    mode: str | None
+    body: str
+    draft_path: str | None = None
+    sidecar_path: str | None = None
+
+
+@dataclass
+class MutationStep:
+    action: str
+    detail: str
+
+
+@dataclass
+class MutationPlan:
+    draft_path: str
+    repo: str
+    issue_type: str
+    team: str
+    project: str
+    status: str
+    steps: list[MutationStep]
+    mapping_missing: bool = False
+
+
+def _issue_expected_labels(issue_type: str) -> list[str]:
+    return list(_ISSUE_TYPE_LABELS.get(issue_type, [issue_type]))
+
+
+def _normalize_label_list(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    if isinstance(raw, str):
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return []
+
+
+def _parse_draft_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}, text
+    metadata: dict[str, str] = {}
+    for line in text[4:end].splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        metadata[key.strip()] = value.strip()
+    return metadata, text[end + 5 :].lstrip()
+
+
+def _strip_draft_h1(body: str) -> tuple[str | None, str]:
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("# "):
+            title = line[2:].strip()
+            remaining = "\n".join(lines[index + 1 :]).lstrip()
+            return title, remaining
+        if line.strip():
+            break
+    return None, body
+
+
+def _render_draft_markdown(issue: PreparedIssue) -> str:
+    labels = ", ".join(issue.labels)
+    frontmatter = [
+        "---",
+        f"title: {issue.title}",
+        f"repo: {issue.repo}",
+        f"type: {issue.issue_type}",
+        f"team: {issue.team}",
+        f"project: {issue.project}",
+        f"status: {issue.status}",
+        f"labels: {labels}",
+    ]
+    if issue.risk:
+        frontmatter.append(f"risk: {issue.risk}")
+    if issue.mode:
+        frontmatter.append(f"mode: {issue.mode}")
+    frontmatter.append("---")
+    return "\n".join(frontmatter) + f"\n\n# {issue.title}\n\n{issue.body.rstrip()}\n"
+
+
+def _source_to_issue_body(source: str, team: str, repo: str, mode: str | None) -> str:
+    stripped = source.strip()
+    if "### " in stripped:
+        return stripped
+    if team == "asgard":
+        return f"""### Intent
+{stripped}
+
+### Target repo / surface
+{repo}
+
+### Mode
+{mode or "TBD"}
+
+### Constraints
+TBD
+
+### Risk
+TBD
+
+### Promotion gaps
+- [ ] Identify any Olympus promotion gaps
+"""
+    return f"""### Objective
+{stripped}
+
+### Acceptance criteria
+- [ ] TBD
+
+### Out-of-scope / non-goals
+TBD
+
+### Files expected to change
+TBD
+
+### Tests to add or update
+TBD
+
+### Verification
+TBD
+"""
+
+
+def _safe_slug(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return slug[:48].strip("-") or "issue"
+
+
+def _unique_draft_path(draft_dir: Path, title: str) -> Path:
+    date_prefix = datetime.now(UTC).strftime("%Y-%m-%d")
+    base = f"{date_prefix}-{_safe_slug(title)}"
+    candidate = draft_dir / f"{base}.md"
+    index = 2
+    while candidate.exists() or candidate.with_suffix(".json").exists():
+        candidate = draft_dir / f"{base}-{index}.md"
+        index += 1
+    return candidate
+
+
+def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
+    text = draft_path.read_text(encoding="utf-8")
+    metadata, body_with_title = _parse_draft_frontmatter(text)
+    h1_title, body = _strip_draft_h1(body_with_title)
+    sidecar_path = draft_path.with_suffix(".json")
+    if not sidecar_path.exists():
+        raise RuntimeError(f"Missing prepared issue sidecar: {sidecar_path}")
+    try:
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Malformed prepared issue sidecar {sidecar_path}: {e}") from e
+    if not isinstance(sidecar, dict):
+        raise RuntimeError(f"Prepared issue sidecar {sidecar_path} is not a JSON object")
+
+    def field(name: str, sidecar_name: str | None = None) -> str:
+        value = metadata.get(name) or sidecar.get(sidecar_name or name)
+        return str(value).strip() if value is not None else ""
+
+    issue = PreparedIssue(
+        title=field("title") or h1_title or draft_path.stem,
+        repo=field("repo"),
+        issue_type=field("type", "issue_type"),
+        team=field("team"),
+        project=field("project"),
+        status=field("status"),
+        labels=_normalize_label_list(metadata.get("labels") or sidecar.get("labels")),
+        risk=field("risk") or None,
+        mode=field("mode") or None,
+        body=body.strip(),
+        draft_path=str(draft_path),
+        sidecar_path=str(sidecar_path),
+    )
+
+    for key, value in {
+        "repo": issue.repo,
+        "type": issue.issue_type,
+        "team": issue.team,
+        "project": issue.project,
+    }.items():
+        sidecar_key = "issue_type" if key == "type" else key
+        if metadata.get(key) and sidecar.get(sidecar_key) and metadata[key] != sidecar[sidecar_key]:
+            raise RuntimeError(
+                f"Draft metadata {key}={metadata[key]!r} conflicts with sidecar "
+                f"{sidecar_key}={sidecar[sidecar_key]!r}"
+            )
+        if not value:
+            raise RuntimeError(f"Prepared issue draft is missing required metadata: {key}")
+    if issue.issue_type not in _ISSUE_TYPES:
+        raise RuntimeError(f"Unknown issue type in prepared draft: {issue.issue_type}")
+    if issue.team not in _TEAM_CHOICES:
+        raise RuntimeError(f"Unknown team in prepared draft: {issue.team}")
+    return issue
+
+
+def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
+    blocking: list[str] = []
+    warnings: list[str] = []
+
+    expected_status = _TEAM_SAFE_STATUSES.get(issue.team)
+    if issue.status == "Ready":
+        blocking.append("Prepared issues must not start in Ready")
+    elif expected_status and issue.status != expected_status:
+        blocking.append(
+            f"Prepared {issue.team} issues must start in {expected_status!r}, not {issue.status!r}"
+        )
+
+    if issue.project not in PROJECT_CHOICES:
+        blocking.append(f"Unknown project {issue.project!r}")
+
+    expected_labels = set(_issue_expected_labels(issue.issue_type))
+    missing_labels = sorted(expected_labels - set(issue.labels))
+    if missing_labels:
+        blocking.append(f"Missing expected labels: {missing_labels}")
+
+    sections = _split_sections(issue.body)
+    if issue.team == "olympus":
+        if issue.issue_type not in _DISPATCH_ACTIONABLE_TYPES:
+            blocking.append(
+                f"Issue type {issue.issue_type!r} is not an Olympus dispatch-ready task type"
+            )
+        valid_body, body_errors = validate_card_body(issue.body)
+        if not valid_body:
+            blocking.extend(body_errors)
+        if not issue.project:
+            blocking.append("Missing target project")
+        if not issue.risk:
+            blocking.append("Missing author-visible risk metadata")
+    elif issue.team == "asgard":
+        required = {
+            "Intent": "intent",
+            "Target repo / surface": "target repo/surface",
+            "Mode": "mode",
+            "Constraints": "constraints",
+            "Risk": "risk",
+            "Promotion gaps": "promotion gaps",
+        }
+        for header, label in required.items():
+            text = sections.get(header, "").strip()
+            if not text or text.upper() == "TBD":
+                blocking.append(f"Missing Asgard {label}")
+        if not issue.mode:
+            blocking.append("Missing Asgard mode metadata")
+        if not issue.risk:
+            blocking.append("Missing Asgard risk metadata")
+        olympus_valid, olympus_errors = validate_card_body(issue.body)
+        if not olympus_valid:
+            warnings.append("Olympus promotion gaps: " + "; ".join(olympus_errors))
+
+    return PreparedReadiness(
+        profile=issue.team,
+        passed=not blocking,
+        blocking_gaps=blocking,
+        warnings=warnings,
+    )
+
+
+def _sidecar_payload(
+    issue: PreparedIssue, readiness: PreparedReadiness, state: str
+) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "state": state,
+        "title": issue.title,
+        "repo": issue.repo,
+        "issue_type": issue.issue_type,
+        "team": issue.team,
+        "project": issue.project,
+        "status": issue.status,
+        "labels": issue.labels,
+        "risk": issue.risk,
+        "mode": issue.mode,
+        "draft_path": issue.draft_path,
+        "sidecar_path": issue.sidecar_path,
+        "readiness": asdict(readiness),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def issue_prepare(
+    repo: str,
+    issue_type: str,
+    team: str,
+    project: str,
+    source: str,
+    title: str | None,
+    status: str | None,
+    risk: str | None,
+    mode: str | None,
+    draft_dir: Path | None = None,
+    fmt: str = "text",
+) -> Path:
+    if not source.strip():
+        raise RuntimeError("issue prepare requires non-empty source text")
+    if team not in _TEAM_CHOICES:
+        raise RuntimeError(f"Unknown team {team!r}; expected one of {', '.join(_TEAM_CHOICES)}")
+    if issue_type not in _ISSUE_TYPES:
+        raise RuntimeError(f"Unknown issue type {issue_type!r}")
+    if project not in PROJECT_CHOICES:
+        raise RuntimeError(
+            f"Unknown project {project!r}; expected one of {', '.join(PROJECT_CHOICES)}"
+        )
+
+    safe_status = status or _TEAM_SAFE_STATUSES[team]
+    draft_title = title or f"{issue_type}: {repo} {team} work"
+    issue = PreparedIssue(
+        title=draft_title,
+        repo=repo,
+        issue_type=issue_type,
+        team=team,
+        project=project,
+        status=safe_status,
+        labels=_issue_expected_labels(issue_type),
+        risk=risk,
+        mode=mode,
+        body=_source_to_issue_body(source, team, repo, mode),
+    )
+    readiness = _readiness_for_prepared_issue(issue)
+
+    target_dir = draft_dir or _PREPARED_DRAFT_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    draft_path = _unique_draft_path(target_dir, draft_title)
+    sidecar_path = draft_path.with_suffix(".json")
+    issue.draft_path = str(draft_path)
+    issue.sidecar_path = str(sidecar_path)
+
+    draft_path.write_text(_render_draft_markdown(issue), encoding="utf-8")
+    state = "ready_to_create" if readiness.passed else "blocked"
+    sidecar_path.write_text(
+        json.dumps(_sidecar_payload(issue, readiness, state), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    if fmt == "json":
+        _out(
+            {
+                "draft": str(draft_path),
+                "sidecar": str(sidecar_path),
+                "readiness": asdict(readiness),
+            },
+            fmt,
+        )
+    else:
+        print(f"Prepared draft: {draft_path}")
+        print(f"Readiness: {'passed' if readiness.passed else 'blocked'}")
+        for gap in readiness.blocking_gaps:
+            print(f"  - BLOCKING: {gap}")
+        for warning in readiness.warnings:
+            print(f"  - WARNING: {warning}")
+    return draft_path
+
+
+def _known_template_names() -> list[str]:
+    return [f"{issue_type}.yml" for issue_type in _ISSUE_TYPES]
+
+
+def _repo_missing_labels(repo: str, required_labels: list[str]) -> list[str]:
+    existing_raw = _rest_get(f"/repos/{ORG}/{repo}/labels?per_page=100")
+    existing = {label.get("name") for label in existing_raw if isinstance(label, dict)}
+    return [label for label in required_labels if label not in existing]
+
+
+def _repo_missing_templates(repo: str) -> list[str]:
+    template_names = _known_template_names()
+    try:
+        existing_raw = _rest_get(f"/repos/{ORG}/{repo}/contents/.github/ISSUE_TEMPLATE")
+    except ApiNotFoundError:
+        return template_names
+    existing = {template.get("name") for template in existing_raw if isinstance(template, dict)}
+    return [template for template in template_names if template not in existing]
+
+
+def _project_mapping_contains_repo(config: dict[str, Any], repo: str, project_name: str) -> bool:
+    projects = config.get("project_mappings", {}).get("projects", {})
+    project = projects.get(project_name, {})
+    return repo in project.get("repositories", [])
+
+
+def _mapping_update_target() -> tuple[Path, Path, str, str | None]:
+    sdlc_path = get_sdlc_path()
+    external = sdlc_path / "config" / "project-mappings.json"
+    if external.exists():
+        return external, sdlc_path, "infiquetra-sdlc", None
+    warning = (
+        "No external infiquetra-sdlc project-mappings.json found; updating vendored "
+        "sdlc-manager mapping instead."
+    )
+    repo_root = Path(__file__).resolve().parents[3]
+    return _VENDORED_PROJECT_MAPPINGS_PATH, repo_root, "infiquetra-claude-plugins", warning
+
+
+def _write_mapping_update(mapping_path: Path, repo: str, project_name: str) -> None:
+    data = json.loads(mapping_path.read_text(encoding="utf-8"))
+    projects = data.setdefault("projects", {})
+    if project_name not in projects:
+        raise RuntimeError(f"Project {project_name!r} not found in {mapping_path}")
+    repositories = projects[project_name].setdefault("repositories", [])
+    if repo not in repositories:
+        repositories.append(repo)
+        projects[project_name]["repositories"] = sorted(repositories)
+    mapping_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _run_git_command(args: list[str], cwd: Path) -> str:
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"{args[0]} failed")
+    return result.stdout.strip()
+
+
+def _open_mapping_pr(repo: str, project_name: str) -> str:
+    mapping_path, worktree_root, gh_repo, warning = _mapping_update_target()
+    if warning:
+        _warn(warning)
+    branch = (
+        f"sdlc-map-{_safe_slug(repo)}-{_safe_slug(project_name)}-"
+        f"{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+    )
+    rel_mapping_path = mapping_path.relative_to(worktree_root)
+    with tempfile.TemporaryDirectory(prefix="sdlc-mapping-") as tmp_parent:
+        temp_worktree = Path(tmp_parent) / "repo"
+        _run_git_command(
+            ["git", "worktree", "add", "-b", branch, str(temp_worktree), "HEAD"],
+            cwd=worktree_root,
+        )
+        try:
+            _write_mapping_update(temp_worktree / rel_mapping_path, repo, project_name)
+            _run_git_command(["git", "add", str(rel_mapping_path)], cwd=temp_worktree)
+            _run_git_command(
+                ["git", "commit", "-m", f"chore(sdlc): map {repo} to {project_name}"],
+                cwd=temp_worktree,
+            )
+            _run_git_command(["git", "push", "-u", "origin", branch], cwd=temp_worktree)
+            return _gh(
+                [
+                    "pr",
+                    "create",
+                    "--repo",
+                    f"{ORG}/{gh_repo}",
+                    "--title",
+                    f"chore(sdlc): map {repo} to {project_name}",
+                    "--body",
+                    f"Adds `{repo}` to the `{project_name}` project mapping for sdlc-manager routing.",
+                ]
+            )
+        finally:
+            try:
+                _run_git_command(
+                    ["git", "worktree", "remove", "--force", str(temp_worktree)], cwd=worktree_root
+                )
+            except RuntimeError as e:
+                _warn(f"Could not remove temporary mapping worktree {temp_worktree}: {e}")
+
+
+def _issue_body_for_github(issue: PreparedIssue) -> str:
+    return issue.body.strip() + "\n"
+
+
+def _create_github_issue(issue: PreparedIssue) -> tuple[str, int]:
+    args = [
+        "issue",
+        "create",
+        "--repo",
+        f"{ORG}/{issue.repo}",
+        "--title",
+        issue.title,
+        "--body",
+        _issue_body_for_github(issue),
+    ]
+    if issue.labels:
+        args.extend(["--label", ",".join(issue.labels)])
+    url = _gh(args).strip()
+    match = re.search(r"/issues/(\d+)\b", url)
+    if not match:
+        raise RuntimeError(f"Could not parse created issue number from gh output: {url!r}")
+    return url, int(match.group(1))
+
+
+def _append_created_issue_to_draft(draft_path: Path, url: str, number: int) -> None:
+    text = draft_path.read_text(encoding="utf-8").rstrip()
+    created_at = datetime.now(UTC).isoformat()
+    marker = "\n\n## Created Issue\n"
+    if marker in text:
+        text = text.split(marker, 1)[0].rstrip()
+    text += f"{marker}\n- URL: {url}\n- Number: {number}\n- Created at: {created_at}\n"
+    draft_path.write_text(text + "\n", encoding="utf-8")
+
+
+def _update_sidecar_state(draft_path: Path, updates: dict[str, Any]) -> None:
+    sidecar_path = draft_path.with_suffix(".json")
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    payload.update(updates)
+    payload["updated_at"] = datetime.now(UTC).isoformat()
+    sidecar_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _build_mutation_plan(issue: PreparedIssue, config: dict[str, Any]) -> MutationPlan:
+    if not issue.draft_path:
+        raise RuntimeError("Prepared issue is missing draft_path")
+    steps: list[MutationStep] = []
+    missing_labels = _repo_missing_labels(issue.repo, issue.labels)
+    missing_templates = _repo_missing_templates(issue.repo)
+    mapping_missing = not _project_mapping_contains_repo(config, issue.repo, issue.project)
+
+    if missing_labels:
+        steps.append(
+            MutationStep("deploy-labels", f"Deploy missing labels: {', '.join(missing_labels)}")
+        )
+    if missing_templates:
+        steps.append(
+            MutationStep(
+                "deploy-templates", f"Deploy missing templates: {', '.join(missing_templates)}"
+            )
+        )
+    if mapping_missing:
+        steps.append(
+            MutationStep(
+                "mapping-pr",
+                f"Open mapping PR for {issue.repo} -> {issue.project}",
+            )
+        )
+    steps.extend(
+        [
+            MutationStep("create-issue", f"Create {issue.issue_type} in {ORG}/{issue.repo}"),
+            MutationStep("board-add", f"Add issue to {issue.project}"),
+            MutationStep("set-status", f"Set Status to {issue.status}"),
+            MutationStep("mark-draft", "Record created issue on draft and sidecar"),
+        ]
+    )
+    return MutationPlan(
+        draft_path=issue.draft_path,
+        repo=issue.repo,
+        issue_type=issue.issue_type,
+        team=issue.team,
+        project=issue.project,
+        status=issue.status,
+        steps=steps,
+        mapping_missing=mapping_missing,
+    )
+
+
+def _print_mutation_plan(plan: MutationPlan) -> None:
+    print("\nMutation plan:")
+    for step in plan.steps:
+        print(f"  - {step.action}: {step.detail}")
+
+
+def issue_create_prepared(
+    draft_path: Path,
+    fmt: str,
+    auto_confirm: bool = False,
+    override_mapping: bool = False,
+) -> dict[str, Any]:
+    issue = _read_prepared_issue(draft_path)
+    readiness = _readiness_for_prepared_issue(issue)
+    if not readiness.passed:
+        if fmt == "json":
+            _out({"created": False, "readiness": asdict(readiness)}, fmt)
+        else:
+            print("Prepared issue is blocked:")
+            for gap in readiness.blocking_gaps:
+                print(f"  - {gap}")
+        raise RuntimeError("Prepared issue has blocking readiness gaps")
+
+    config = load_config()
+    plan = _build_mutation_plan(issue, config)
+    plan_payload = asdict(plan)
+    if fmt != "json":
+        _print_mutation_plan(plan)
+
+    if not auto_confirm:
+        confirm = _safe_input("Apply this mutation plan? (y/N): ")
+        if confirm is None or confirm.lower() not in ("y", "yes"):
+            result = {"created": False, "reason": "declined"}
+            if fmt == "json":
+                _out({**result, "mutation_plan": plan_payload}, fmt)
+            else:
+                print("No mutations applied.")
+            return result
+
+    labels_missing = any(step.action == "deploy-labels" for step in plan.steps)
+    templates_missing = any(step.action == "deploy-templates" for step in plan.steps)
+    if labels_missing:
+        labels_deploy(issue.repo, fmt="text")
+    if templates_missing:
+        rollout_deploy_templates(issue.repo, fmt="text")
+
+    mapping_pr_url: str | None = None
+    if plan.mapping_missing:
+        mapping_pr_url = _open_mapping_pr(issue.repo, issue.project)
+        if not override_mapping:
+            _update_sidecar_state(
+                draft_path,
+                {
+                    "state": "mapping_pending",
+                    "mapping_pr_url": mapping_pr_url,
+                    "pending_mapping": {"repo": issue.repo, "project": issue.project},
+                },
+            )
+            if fmt != "json":
+                print(f"Mapping PR opened; issue creation stopped: {mapping_pr_url}")
+            result = {"created": False, "mapping_pr_url": mapping_pr_url}
+            if fmt == "json":
+                _out({**result, "mutation_plan": plan_payload}, fmt)
+            return result
+
+    url, number = _create_github_issue(issue)
+    board_add(issue.repo, number, fmt="text", config=config, project_name=issue.project)
+    flow_set_field(issue.project, issue.repo, number, "Status", issue.status, fmt="text")
+    _append_created_issue_to_draft(draft_path, url, number)
+    _update_sidecar_state(
+        draft_path,
+        {
+            "state": "created",
+            "created_issue_url": url,
+            "created_issue_number": number,
+            "created_at": datetime.now(UTC).isoformat(),
+            "mutation_summary": [asdict(step) for step in plan.steps],
+            "mapping_pr_url": mapping_pr_url,
+            "pending_mapping": bool(mapping_pr_url and override_mapping),
+        },
+    )
+    result = {"created": True, "url": url, "number": number, "mapping_pr_url": mapping_pr_url}
+    if fmt == "json":
+        _out({**result, "mutation_plan": plan_payload}, fmt)
+    else:
+        print(f"Created issue: {url}")
+    return result
+
+
+def _read_prepare_source(source_parts: list[str], source_file: str | None) -> str:
+    if source_file:
+        return Path(source_file).read_text(encoding="utf-8")
+    if source_parts:
+        return " ".join(source_parts)
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    raise RuntimeError("Provide source text as an argument, stdin, or --source-file")
 
 
 def _safe_input(prompt: str) -> str | None:
@@ -2884,7 +3558,7 @@ def _apply_post_create_metadata(
     cached_config = load_config()
 
     # 1. Hermes-actionability label (only types we want the orchestrator
-    # to act on — capability/enhancement/defect/exploration/context-update)
+    # to act on — capability/enhancement/defect)
     if issue_type in _HERMES_ACTIONABLE_TYPES:
         try:
             _gh(
@@ -3273,6 +3947,47 @@ def main() -> None:
         help="Skip post-create metadata (labels, project fields, sub-issue link, "
         "paired-card prompt). Useful for testing or scripted setup.",
     )
+    issue_prepare_p = issue_sp.add_parser(
+        "prepare",
+        help="Prepare a team-aware issue draft and readiness sidecar without GitHub mutation",
+    )
+    issue_prepare_p.add_argument("--repo", required=True)
+    issue_prepare_p.add_argument(
+        "--type",
+        required=True,
+        choices=[
+            "capability",
+            "enhancement",
+            "defect",
+            "exploration",
+            "context-update",
+            "objective",
+        ],
+    )
+    issue_prepare_p.add_argument("--team", required=True, choices=_TEAM_CHOICES)
+    issue_prepare_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    issue_prepare_p.add_argument("--title", default=None)
+    issue_prepare_p.add_argument("--status", default=None)
+    issue_prepare_p.add_argument("--risk", default=None)
+    issue_prepare_p.add_argument("--mode", default=None)
+    issue_prepare_p.add_argument("--source-file", default=None)
+    issue_prepare_p.add_argument("source", nargs="*")
+
+    issue_create_prepared_p = issue_sp.add_parser(
+        "create-prepared",
+        help="Create a prepared issue draft after readiness checks and final confirmation",
+    )
+    issue_create_prepared_p.add_argument("draft")
+    issue_create_prepared_p.add_argument(
+        "--yes",
+        action="store_true",
+        help="Apply the rendered mutation plan without an interactive prompt",
+    )
+    issue_create_prepared_p.add_argument(
+        "--override-mapping",
+        action="store_true",
+        help="Create the issue before a missing project-mapping PR merges",
+    )
 
     # ===========================
     # LABELS
@@ -3505,6 +4220,26 @@ def main() -> None:
                     fmt,
                     parent_ref=args.parent_ref,
                     skip_metadata=args.skip_metadata,
+                )
+            elif args.action == "prepare":
+                issue_prepare(
+                    repo=args.repo,
+                    issue_type=args.type,
+                    team=args.team,
+                    project=args.project,
+                    source=_read_prepare_source(args.source, args.source_file),
+                    title=args.title,
+                    status=args.status,
+                    risk=args.risk,
+                    mode=args.mode,
+                    fmt=fmt,
+                )
+            elif args.action == "create-prepared":
+                issue_create_prepared(
+                    Path(args.draft),
+                    fmt=fmt,
+                    auto_confirm=args.yes,
+                    override_mapping=args.override_mapping,
                 )
 
         elif args.resource == "labels":

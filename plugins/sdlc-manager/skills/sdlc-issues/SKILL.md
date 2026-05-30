@@ -30,6 +30,11 @@ when_to_use: |
   Batch creation:
   - "create issues for all the capabilities in this objective"
   - "set up the issues for the platform launch objective"
+
+  Prepared issue creation:
+  - "create an Olympus issue from this text"
+  - "create an Asgard issue from these notes"
+  - "turn this queue entry into an issue for the router repo"
 ---
 
 # SDLC Issues
@@ -93,6 +98,45 @@ these as Hermes task cards or dispatch them directly to agents. Use them for coo
 research, or documentation context.
 
 ## Core Operations
+
+### Prepared Issue Draft from Source Text
+
+Use the prepared workflow when the user starts from rough text, notes, copied queue entries, or
+asks for an Asgard/Olympus issue that should be reviewed before mutation.
+
+```bash
+python3 sdlc_manager.py issue prepare \
+  --repo hermes-claude-code-router \
+  --type capability \
+  --team olympus \
+  --project mount-olympus \
+  --risk medium \
+  --title "Prepared issue workflow" \
+  "source text..."
+
+python3 sdlc_manager.py issue create-prepared docs/sdlc-issue-drafts/<draft>.md
+```
+
+The prepared workflow writes a markdown draft and JSON sidecar under
+`docs/sdlc-issue-drafts/`. `issue create-prepared` re-runs readiness checks, renders the mutation
+plan, asks for confirmation, repairs missing labels/templates after confirmation, opens a mapping
+PR when needed, and only then creates the issue.
+
+Natural-language routing rules:
+
+- "Create an Olympus issue from this text" -> prepare with `--team olympus --project mount-olympus`,
+  then create-prepared after review.
+- "Create an Asgard issue from this text" -> prepare with `--team asgard --project asgard`, then
+  create-prepared after review.
+- If team or project is ambiguous, ask. Do not guess.
+- Do not bypass prepared readiness checks with ad hoc `gh issue create` when the prompt asks to
+  create from source text.
+
+Safe starting statuses:
+
+- Asgard starts in `Shaping`.
+- Mount Olympus starts in `Backlog`.
+- Never auto-move a prepared issue to `Ready`.
 
 ### Create Issue with Template
 
@@ -249,6 +293,14 @@ still uses milestones for that repository.
 
 **"Create an exploration to research biometric SDK options"**
 -> `issue create --repo infiquetra-blueprint --type exploration`
+
+**"Create an Olympus issue from this text for the router repo"**
+-> Prepare an Olympus draft with `issue prepare --team olympus --project mount-olympus`, review
+readiness gaps, then use `issue create-prepared`.
+
+**"Create an Asgard issue from these notes"**
+-> Ask for the target repo if missing, prepare an Asgard draft with
+`issue prepare --team asgard --project asgard`, review gaps, then use `issue create-prepared`.
 
 **"Is this a capability or enhancement?"**
 -> Walk through decision tree: Is it new end-to-end deployable functionality? If yes -> capability.

@@ -96,6 +96,8 @@ You are deeply familiar with the Infiquetra SDLC process as documented in the
 **Subcommand groups** (full list: `sdlc_manager.py --help`):
 - `board {view,add,move,archive,wip,standup,discover-fields}` — project board operations
 - `issue create` — sub-issue-first interactive issue creation (Phase C; see "Issue creation flow" below)
+- `issue prepare` / `issue create-prepared` — source-text to reviewed Asgard/Olympus issue draft,
+  then confirmed creation with readiness checks and repo prerequisite repair
 - `flow {set-field,field-options,discover-project,link-sub-issue,verify-label,validate-card}` —
   operator-facing GraphQL/REST helpers (Phase C minimum-viable). **`flow set-field` failure modes**:
   if the field doesn't exist on the project, raises `RuntimeError` with the available field list +
@@ -153,6 +155,32 @@ see only the prompts the selected board actually exposes. When fields get create
 runbook in `infiquetra-sdlc/docs/operations/operational-reference.md`, the additional prompts
 light up automatically.
 
+### Prepared Asgard/Olympus Issue Creation
+
+Use this path when the user says "create an Olympus issue from this text", "create an Asgard issue
+from these notes", or provides rough queue/source text that should become an issue only after
+review.
+
+```bash
+python3 "$SCRIPT" issue prepare \
+    --repo <repo> \
+    --type <capability|enhancement|defect|exploration|context-update|objective> \
+    --team <asgard|olympus> \
+    --project <asgard|mount-olympus> \
+    --risk <low|medium|high> \
+    --mode "Rapid Action" \
+    --title "..." \
+    "source text..."
+
+python3 "$SCRIPT" issue create-prepared docs/sdlc-issue-drafts/<draft>.md
+```
+
+Prepared drafts are durable markdown files with JSON sidecars under `docs/sdlc-issue-drafts/`.
+`issue create-prepared` re-runs readiness, renders every side effect before mutation, repairs
+missing labels/templates after confirmation, opens a mapping PR for unmapped repos, and starts new
+cards in safe statuses: Asgard `Shaping`, Olympus `Backlog`. If team or project is ambiguous,
+ask the operator; do not guess or bypass this path with direct `gh issue create`.
+
 For batch issue creation from a blueprint, prefer the manual lifecycle below over the
 interactive flow:
 
@@ -160,8 +188,8 @@ interactive flow:
 # 1. Create the issue (use --web or non-interactive form)
 gh issue create --repo infiquetra/<repo> --template <type>.yml --title "..." --body "..."
 
-# 2. Apply hermes-task / hermes-not-actionable label
-gh issue edit <N> --repo infiquetra/<repo> --add-label hermes-task
+# 2. Apply template labels if the issue form did not apply them
+gh issue edit <N> --repo infiquetra/<repo> --add-label "hermes-task,needs-plan,<type-label>"
 
 # 3. Add to the default repo-mapped board, or pass --project for Jeff Intent / Asgard
 python3 "$SCRIPT" board add --repo <repo> --number <N>
@@ -283,7 +311,8 @@ python "$SCRIPT" milestones progress --repo <repo> --milestone <N>
 3. Map each item to the appropriate consumer repo
 4. For each item:
    a. Create the issue with the right template + sub-issue parent
-   b. Apply hermes-task label
+   b. Apply template labels: `hermes-task` + `needs-plan` + type label for actionable cards,
+      or `hermes-not-actionable` + context labels for non-actionable cards
    c. Add to the target board
    d. Set Initiative + Objective + Status fields
    e. Link as sub-issue of the Objective
@@ -295,9 +324,10 @@ flow — the interactive flow is one-at-a-time by design.
 
 ### Triage Batch
 
-"Triage" here means assigning a priority label + ensuring the card is on the Mount Olympus
-board, for issues filed without one. The `needs-triage` label is added when an issue is
-created without a priority. To find them:
+"Triage" here means assigning a priority label when needed, ensuring the card is on the
+right board, and filling project fields. Current actionable issue templates use `needs-plan`.
+The older `needs-triage` label can still appear from legacy auto-label fallback rules; treat it
+as a compatibility queue signal, not a current template default. To find legacy triage items:
 
 ```bash
 gh issue list --label needs-triage --state open --repo infiquetra/<repo>
@@ -305,7 +335,7 @@ gh issue list --label needs-triage --state open --repo infiquetra/<repo>
 gh search issues "label:needs-triage state:open org:infiquetra"
 ```
 
-For each `needs-triage` issue:
+For each issue that needs triage:
 
 ```bash
 # 1. Read issue content
@@ -358,8 +388,9 @@ targeting Jeff Intent or Asgard.
 
 ### How to handle Hermes-actionability?
 - Auto-applied by issue templates: `hermes-task` for actionable types
-  (capability/enhancement/defect/exploration/context-update); `hermes-not-actionable` for
-  objective
+  (capability/enhancement/defect); `hermes-not-actionable` for non-actionable types
+  (objective/exploration/context-update)
+- Current actionable templates also apply `needs-plan` and the type label
 - The orchestrator silently skips cards without `hermes-task`
 
 ### Initiative + Objective: NEVER use labels
@@ -390,7 +421,7 @@ For multi-step operations, report progress clearly:
 
 ```
 Step 1: Created capability issue #142 in athena-service
-Step 2: Applied labels (hermes-task, capability, needs-analysis)
+Step 2: Applied labels (hermes-task, capability, needs-plan)
 Step 3: Added to Mount Olympus board
 Step 4: Set Initiative=olympus-quality on #142 (project field, not label)
 Step 5: Set Objective=Auth Pilot on #142

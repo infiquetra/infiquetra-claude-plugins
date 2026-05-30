@@ -105,8 +105,10 @@ Apply labels based on pattern matching against the issue title and body:
 python3 sdlc_manager.py labels auto-label --repo infiquetra-core --number 42
 ```
 
-See auto-label rules in `references/labels-reference.md`. Common patterns: `[CAPABILITY]` in
-title adds `capability` + `needs-analysis`; `[DEFECT]` adds `defect` + `needs-triage`.
+See auto-label rules in `references/labels-reference.md`. Current GitHub issue templates apply
+`needs-plan` to actionable cards. The older title-pattern auto-label rules in `labels.json` are
+legacy fallback behavior and may still add `needs-analysis` or `needs-triage`.
+Treat those as legacy fallback labels, not current template defaults.
 
 ### Create a New Field Option
 
@@ -142,8 +144,9 @@ verifying that an initiative/objective option exists before trying to sync.
 - **AI usage labels**: Add when a PR is created — one per PR, tracks AI generation %
 - **Size labels**: Add during Analysis phase — one per capability/enhancement
 - **Risk labels**: Add during Analysis phase — one per capability
-- **Status labels** (`ready`, `blocked`, `needs-analysis`, `needs-triage`): may be
-  auto-managed as issues progress
+- **Planning/status labels**: current actionable templates use `needs-plan`; `ready` and
+  `blocked` may be managed as work progresses; `needs-analysis` and `needs-triage` are legacy
+  fallback labels from older auto-label rules
 
 ### Initiative and Objective Fields
 

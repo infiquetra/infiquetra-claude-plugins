@@ -56,6 +56,9 @@ def render_issue_comment(
     doc_review_fixes: Sequence[str] | None = None,
     doc_review_findings: Sequence[str] | None = None,
     doc_review_override: str | None = None,
+    handoff_maturity: str | None = None,
+    handoff_source: str | None = None,
+    next_action: str | None = None,
     deploy_status: str | None = None,
     workflow_url: str | None = None,
     evidence_link: str | None = None,
@@ -72,6 +75,9 @@ def render_issue_comment(
         _line("PR", pr_url),
         _line("review status", review_status),
         _line("doc review artifact", doc_review_artifact),
+        _line("handoff maturity", handoff_maturity),
+        _line("handoff source", handoff_source),
+        _line("next action", next_action),
         _line(
             "doc review blocked",
             None if doc_review_blocked is None else ("yes" if doc_review_blocked else "no"),
@@ -97,6 +103,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--destination", required=True)
     parser.add_argument("--summary")
     parser.add_argument("--plan-path")
+    parser.add_argument("--handoff-maturity")
+    parser.add_argument("--handoff-source")
+    parser.add_argument("--next-action")
     return parser.parse_args(argv)
 
 
@@ -109,6 +118,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             destination=args.destination,
             summary=args.summary,
             plan_path=args.plan_path,
+            handoff_maturity=args.handoff_maturity,
+            handoff_source=args.handoff_source,
+            next_action=args.next_action,
         ),
         end="",
     )

@@ -24,6 +24,33 @@
 
 ## 2026-05-30
 
+### SDLC handoff issue artifacts belong to `sdlc-manager` (commit `2fc317e`)  {#sdlc-handoff-ownership-boundary}
+
+**Decision.** Put handoff issue drafting, source artifact resolution, handoff maturity metadata,
+prepared-draft sidecars, mutation plans, labels, board placement, and create-after-confirmation in
+`sdlc-manager`. Keep `infiquetra-loop` responsible for lifecycle context and future `/handoff`
+routing only.
+
+**Rejected alternatives.**
+- *Generate handoff issue bodies inside `infiquetra-loop`.* Rejected: it would duplicate SDLC
+  issue semantics and make two plugins responsible for labels, project fields, and readiness.
+- *Add a separate handoff artifact format.* Rejected: prepared issue drafts already provide the
+  markdown plus JSON sidecar boundary needed for review before mutation.
+- *Require recipient teams to have `infiquetra-loop` installed.* Rejected: handoff issues must be
+  self-contained for agent teams or humans working only from GitHub.
+
+**Rationale.** This keeps the lifecycle plugin thin at the exit point while centralizing SDLC
+mutation rules in the plugin that already owns issue readiness. The prepared draft remains useful
+without mutation, and `issue create-prepared` remains the single place where side effects are
+rendered and confirmed.
+
+**Revisit when.** Multiple non-SDLC destinations need the same handoff source resolver, or
+`infiquetra-loop` grows durable lifecycle state that cannot be represented cleanly in the
+prepared issue sidecar.
+
+**Refs.** Plan [Add SDLC handoff flow](../plans/2026-05-30-002-feat-sdlc-handoff-flow-plan.md);
+requirements [Infiquetra Loop SDLC Handoff](../brainstorms/2026-05-30-infiquetra-loop-sdlc-handoff-requirements.md).
+
 ### Prepared issue workflow uses draft/sidecar boundary plus confirmed mutation (commit `74cd372`)  {#prepared-issue-workflow-boundary}
 
 **Decision.** Add `sdlc-manager issue prepare` and `issue create-prepared` as separate steps.

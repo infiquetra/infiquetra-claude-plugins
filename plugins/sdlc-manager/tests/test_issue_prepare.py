@@ -50,8 +50,8 @@ Keep issue creation separate from draft review.
 ### Risk
 Low operational risk.
 
-### Promotion gaps
-- [ ] Add strict verification before Olympus promotion.
+### Transfer notes
+- [ ] No cross-team transfer requested.
 """
 
 
@@ -76,6 +76,8 @@ def test_prepare_olympus_writes_ready_draft_and_sidecar(tmp_path) -> None:
     assert sidecar["repo"] == "hermes-claude-code-router"
     assert sidecar["readiness"]["passed"] is True
     assert sidecar["labels"] == ["capability", "hermes-task", "needs-plan"]
+    assert sidecar["handoff_maturity"] == "requirements-ready"
+    assert "### Handoff maturity" in draft.read_text()
 
 
 def test_prepare_olympus_blocks_missing_verification(tmp_path) -> None:
@@ -117,7 +119,7 @@ def test_prepare_asgard_accepts_shaping_quality_input(tmp_path) -> None:
 
     assert sidecar["state"] == "ready_to_create"
     assert sidecar["readiness"]["passed"] is True
-    assert any("Olympus promotion gaps" in warning for warning in sidecar["readiness"]["warnings"])
+    assert sidecar["readiness"]["warnings"] == []
 
 
 def test_ready_status_blocks_prepared_draft(tmp_path) -> None:
@@ -138,6 +140,29 @@ def test_ready_status_blocks_prepared_draft(tmp_path) -> None:
 
     assert sidecar["state"] == "blocked"
     assert "Prepared issues must not start in Ready" in sidecar["readiness"]["blocking_gaps"]
+
+
+def test_prepare_records_explicit_handoff_maturity(tmp_path) -> None:
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="olympus",
+        project="mount-olympus",
+        source=OLYMPUS_BODY,
+        title="Plan handoff",
+        status=None,
+        risk="medium",
+        mode=None,
+        handoff_maturity="plan-ready",
+        draft_dir=tmp_path,
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    body = draft.read_text()
+
+    assert sidecar["handoff_maturity"] == "plan-ready"
+    assert "### Handoff maturity\nplan-ready" in body
+    assert "Use `/work <issue>`" in body
 
 
 def test_non_default_status_blocks_prepared_draft(tmp_path) -> None:

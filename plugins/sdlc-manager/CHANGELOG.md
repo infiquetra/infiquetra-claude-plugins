@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+- Added `/create-issue` as the primary issue command surface, with `/sdlc-create` retained as a
+  compatibility alias.
+- Added prepared-issue handoff maturity metadata and source artifact resolution for local files,
+  GitHub issue/PR URLs, branch refs, and natural hints such as "from the brainstorm".
+
+### Changed
+- Synced the vendored SDLC schema and Asgard prepared-issue readiness with the corrected
+  Asgard/Olympus model: sibling target boards with explicit cross-team transfer, not an
+  implied Asgard-to-Olympus promotion path.
+
 ## [1.6.0] — 2026-05-30
 
 ### Added
@@ -11,7 +22,7 @@
   confirmation, repair missing labels/templates, add issues to the requested project, set safe
   starting status, and record the created issue back onto the draft.
 - Added Asgard and Olympus readiness profiles. Asgard accepts shaping-quality drafts with mode,
-  constraints, risk, and promotion gaps; Olympus requires the strict actionable card body,
+  constraints, risk, and transfer notes; Olympus requires the strict actionable card body,
   expected labels, project presence, author-visible risk, and safe `Backlog` status.
 - Added mocked tests for blocked create, declined confirmation, direct create, missing
   labels/templates, missing mapping PR stop, and mapping override creation.

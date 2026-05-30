@@ -19,3 +19,5 @@ Use this when a session ended, context was lost, or the user asks to continue a 
 3. Reconstruct current phase, selected destination, blockers, checks run, and next step.
 4. Continue from the durable source of truth rather than chat memory alone.
 5. If evidence conflicts, prefer committed docs and issue state over raw local cache.
+6. If the user wants another team or later session to pick up the recovered work, route to
+   `/handoff` instead of continuing locally.

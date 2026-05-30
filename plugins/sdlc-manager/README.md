@@ -7,7 +7,7 @@ SDLC management for Infiquetra's Jeff Intent, Asgard, and Mount Olympus boards. 
 All operations run locally via the `gh` CLI, providing:
 
 - **Project board operations** — view, move, add, archive, WIP analysis, standup prep across Jeff Intent, Asgard, and Olympus
-- **Issue creation** — guided interactive creation plus prepared Asgard/Olympus issue drafts with readiness checks and confirmed creation
+- **Issue creation** — primary `/create-issue` command plus prepared Asgard/Olympus handoff drafts with readiness checks, source artifact resolution, and confirmed creation
 - **Label management** — deploy, audit, sync initiative/objective fields, auto-label rules
 - **Flow metrics** — cycle time, throughput, WIP age using GitHub timeline events
 - **Rollout tracking** — gap analysis and full SDLC deployment to any Infiquetra repo
@@ -52,22 +52,25 @@ python3 $SCRIPT issue prepare \
   --project mount-olympus \
   --risk medium \
   --title "Router prepared issue workflow" \
-  "Add the prepared issue workflow described in the design notes."
+  --from docs/plans/example.md \
+  --maturity plan-ready
 
 python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 ```
 
-Prepared drafts are written under `docs/sdlc-issue-drafts/` with a JSON sidecar. Creation renders a
-mutation plan before side effects, repairs missing labels/templates after confirmation, opens a
-mapping PR when the repo is not mapped to the requested project, and starts issues in safe statuses:
-Asgard `Shaping`, Mount Olympus `Backlog`.
+Prepared drafts are written under `docs/sdlc-issue-drafts/` with a JSON sidecar. The sidecar
+includes handoff maturity and source artifact metadata when available. Creation renders a mutation
+plan before side effects, repairs missing labels/templates after confirmation, opens a mapping PR
+when the repo is not mapped to the requested project, and starts issues in safe statuses: Asgard
+`Shaping`, Mount Olympus `Backlog`.
 
 ## Slash Commands
 
 | Command | Description |
 |---------|-------------|
 | `/sdlc-board [mount-olympus]` | Quick board status with WIP check |
-| `/sdlc-create [type] [--repo repo]` | Interactive issue creation |
+| `/create-issue [type] [--repo repo] [--prepare|--draft] [--from artifact]` | Primary issue creation and prepared handoff |
+| `/sdlc-create [type] [--repo repo]` | Compatibility alias for `/create-issue` |
 | `/sdlc-triage repo#number` | Triage existing issue |
 | `/sdlc-metrics [project] [--type metric]` | Flow metrics dashboard |
 
@@ -244,7 +247,7 @@ python3 $SCRIPT flow validate-card --repo campps-mvp --number 42
 ### Prepared Issue Workflow
 
 ```bash
-# Draft from source text without GitHub mutation
+# Draft from a source artifact without GitHub mutation
 python3 $SCRIPT issue prepare \
     --repo hermes-claude-code-router \
     --type capability \
@@ -252,7 +255,8 @@ python3 $SCRIPT issue prepare \
     --project mount-olympus \
     --risk medium \
     --title "Prepared issue workflow" \
-    "Create issue drafts that pass Olympus readiness before mutation."
+    --from docs/brainstorms/example.md \
+    --maturity requirements-ready
 
 # Create after reviewing the markdown draft and sidecar
 python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md

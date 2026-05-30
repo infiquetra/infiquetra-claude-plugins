@@ -24,7 +24,7 @@
 
 ## 2026-05-30
 
-### SDLC handoff issue artifacts belong to `sdlc-manager` (commit pending)  {#sdlc-handoff-ownership-boundary}
+### SDLC handoff issue artifacts belong to `sdlc-manager` (commit `2fc317e`)  {#sdlc-handoff-ownership-boundary}
 
 **Decision.** Put handoff issue drafting, source artifact resolution, handoff maturity metadata,
 prepared-draft sidecars, mutation plans, labels, board placement, and create-after-confirmation in

@@ -12,7 +12,7 @@
 
 ### Correct Asgard/Olympus model before SDLC handoff work  {#asgard-olympus-model-before-handoff}
 
-**SHIPPED 2026-05-30** (`infiquetra-sdlc` commit `5fe5d91`; plugin sync commit pending).
+**SHIPPED 2026-05-30** (`infiquetra-sdlc` commit `5fe5d91`; plugin sync commit `90956a4`).
 
 **Summary.** Removed the stale assumption that Asgard feeds or promotes work into Mount Olympus
 before building the SDLC handoff flow.

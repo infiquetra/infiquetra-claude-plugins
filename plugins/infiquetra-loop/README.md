@@ -8,6 +8,7 @@ Infiquetra lifecycle workflow plugin for day-to-day engineering work.
 - `/office-hours`, `/ideate`, and `/brainstorm` support early thinking.
 - `/strategy` maintains the root `STRATEGY.md`.
 - `/plan`, `/work`, `/qa`, `/retro`, and `/resume` run the durable work loop.
+- `/handoff` routes durable lifecycle artifacts to `sdlc-manager` prepared issue drafts.
 - `/founder-review` and `/ceo-review` review ambition, scope, and operator risk.
 - `/doc-review` reviews plans, requirements, and formal SDLC artifacts for implementation
   readiness.
@@ -35,6 +36,8 @@ Ignored local state belongs under `.claude/infiquetra-loop/`.
 - `infiquetra-deploy` owns deployment mutation.
 - `team-execution` stays independent and is offered when risk, size, or parallelism justify it.
 - `sdlc-manager` owns SDLC issue creation, issue comments, and board movement.
+- `infiquetra-loop` owns only the handoff envelope; `sdlc-manager` owns issue bodies, readiness,
+  sidecars, labels, project fields, and GitHub mutation.
 
 ## Deterministic Helpers
 
@@ -46,3 +49,4 @@ Ignored local state belongs under `.claude/infiquetra-loop/`.
 - `scripts/discover_subissues.py` discovers GitHub sub-issues through GraphQL.
 - `scripts/detect_deploy_strategy.py` classifies tag-promotion workflow coverage.
 - `scripts/issue_progress.py` renders issue comments, including doc-review status when present.
+- `scripts/handoff_envelope.py` builds the thin source envelope for `/handoff`.

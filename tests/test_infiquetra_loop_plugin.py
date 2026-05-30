@@ -43,7 +43,7 @@ def test_infiquetra_loop_metadata_and_marketplace_entry_match() -> None:
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-loop"
     assert "lifecycle" in plugin_json["description"]
-    assert {"loop", "lifecycle", "strategy", "doc-review", "code-review", "optimize"} <= set(
+    assert {"loop", "lifecycle", "strategy", "handoff", "doc-review", "code-review"} <= set(
         plugin_json["keywords"]
     )
 
@@ -55,6 +55,7 @@ def test_infiquetra_loop_commands_are_packaged() -> None:
         "strategy",
         "ideate",
         "brainstorm",
+        "handoff",
         "plan",
         "work",
         "qa",
@@ -76,6 +77,7 @@ def test_infiquetra_loop_skills_document_required_lifecycle_behavior() -> None:
         "strategy",
         "ideate",
         "brainstorm",
+        "handoff",
         "plan",
         "work",
         "qa",
@@ -98,6 +100,7 @@ def test_infiquetra_loop_skills_document_required_lifecycle_behavior() -> None:
         "team-execution",
         "infiquetra-deploy",
         "sdlc-manager",
+        "/handoff",
         "issue progress",
         "doc-review",
         "engineering-journal",
@@ -111,6 +114,7 @@ def test_infiquetra_loop_skills_document_required_lifecycle_behavior() -> None:
         "load_saga_context.py",
         "discover_subissues.py",
         "issue_progress.py",
+        "handoff_envelope.py",
     ):
         assert (PLUGIN_ROOT / "scripts" / script).exists()
 
@@ -132,6 +136,12 @@ def test_infiquetra_loop_skills_document_required_lifecycle_behavior() -> None:
     ):
         assert required in doc_review_doc
     assert not (PLUGIN_ROOT / "commands" / "ce-doc-review.md").exists()
+
+    handoff_doc = _read(PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md")
+    assert "sdlc-manager" in handoff_doc
+    assert "Do not copy SDLC issue templates" in handoff_doc
+    assert "/create-issue --prepare" in handoff_doc
+    assert "Do not suggest `/loop`" in handoff_doc
 
 
 def test_destination_selector_and_escalation_helpers() -> None:
@@ -235,3 +245,45 @@ def test_issue_parser_extracts_infiquetra_context_and_risk_flags() -> None:
     assert extracted["round_refs"] == [2]
     assert extracted["flags"]["has_api"] is True
     assert extracted["flags"]["has_security"] is True
+
+
+def test_handoff_envelope_routes_to_sdlc_manager_without_issue_body_ownership(tmp_path) -> None:
+    handoff = _load_module("handoff_envelope.py")
+    plan = tmp_path / "docs" / "plans" / "example.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("# Example Plan\n")
+
+    envelope = handoff.build_handoff_envelope(
+        "docs/plans/example.md",
+        target_team="Asgard",
+        target_repo="infiquetra-claude-plugins",
+        issue_type="capability",
+        reason="another team should pick this up",
+        root=tmp_path,
+    )
+
+    assert envelope["source"] == "docs/plans/example.md"
+    assert envelope["lifecycle_phase"] == "plan"
+    assert envelope["handoff_maturity"] == "plan-ready"
+    assert envelope["loop_owner"] == "infiquetra-loop"
+    assert envelope["issue_artifact_owner"] == "sdlc-manager"
+    assert envelope["body_template_owner"] == "sdlc-manager"
+    assert envelope["suggested_command"].startswith("/create-issue --prepare")
+    assert "--from docs/plans/example.md" in envelope["suggested_command"]
+    assert "--maturity plan-ready" in envelope["suggested_command"]
+    assert "/loop" not in envelope["suggested_command"]
+
+
+def test_handoff_envelope_discovers_active_plan_from_loop_state(tmp_path) -> None:
+    handoff = _load_module("handoff_envelope.py")
+    state = tmp_path / ".claude" / "infiquetra-loop" / "state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(
+        json.dumps({"current_work": {"plan_path": "docs/plans/active.md"}}),
+        encoding="utf-8",
+    )
+
+    envelope = handoff.build_handoff_envelope(root=tmp_path)
+
+    assert envelope["source"] == "docs/plans/active.md"
+    assert envelope["handoff_maturity"] == "plan-ready"

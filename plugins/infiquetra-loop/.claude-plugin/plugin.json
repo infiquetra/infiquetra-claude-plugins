@@ -1,7 +1,7 @@
 {
   "name": "infiquetra-loop",
   "version": "0.1.0",
-  "description": "Infiquetra lifecycle workflow plugin for strategy, planning, work execution, review, QA, and resume.",
+  "description": "Infiquetra lifecycle workflow plugin for strategy, planning, SDLC handoff, work execution, review, QA, and resume.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
@@ -13,6 +13,7 @@
     "strategy",
     "ideation",
     "brainstorm",
+    "handoff",
     "doc-review",
     "code-review",
     "optimize",

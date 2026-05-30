@@ -2,7 +2,8 @@
 name: loop
 description: |
   Infiquetra lifecycle router for strategy, ideation, planning, work execution, QA, issue
-  progress, engineering-journal updates, review, deployment handoff, retro, and resume.
+  progress, engineering-journal updates, review, SDLC handoff, deployment handoff, retro, and
+  resume.
 ---
 
 # Loop
@@ -22,6 +23,9 @@ clear:
 Use `scripts/lifecycle_state.py` for destination normalization and escalation decisions.
 Use `scripts/parse_issue.py` for ADR, acceptance-criteria, round, and risk hints when an issue
 body is available.
+
+When the lifecycle reaches a branch point, ask whether to carry the work forward in the current
+thread or hand it off. If handing off, route to `/handoff`.
 
 ## Durable Artifacts
 
@@ -43,6 +47,8 @@ pointers, raw checkpoint state, API caches, validator JSON, and resume scratch d
 ## SDLC Issue Behavior
 
 For non-trivial ad-hoc work, ask whether to file an SDLC issue first through `sdlc-manager`.
+For lifecycle artifacts that another team or session should pick up, use `/handoff` to prepare a
+source envelope and route to `sdlc-manager` `/create-issue --prepare`.
 If an issue exists, keep issue progress current:
 
 - Start comment: selected destination, plan link, and scope summary.
@@ -70,6 +76,8 @@ movement at Infiquetra SDLC phase boundaries.
 - Use `infiquetra-deploy` only when the selected destination includes deployment.
 - Offer or invoke `team-execution` for cross-repo, security, infra, large, deployment-sensitive,
   or high-parallelism work.
+- Use `/handoff` for SDLC issue handoff. `sdlc-manager` owns issue bodies, prepared drafts,
+  readiness, labels, board fields, and GitHub mutation.
 - Fall back cleanly when `infiquetra-deploy`, `team-execution`, or `sdlc-manager` is unavailable:
   explain the missing integration and continue with manual evidence where safe.
 

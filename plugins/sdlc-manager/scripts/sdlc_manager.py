@@ -2809,8 +2809,8 @@ TBD
 ### Risk
 TBD
 
-### Promotion gaps
-- [ ] Identify any Olympus promotion gaps
+### Transfer notes
+- [ ] Record any explicit cross-team transfer target, or leave as none.
 """
     return f"""### Objective
 {stripped}
@@ -2942,7 +2942,7 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
             "Mode": "mode",
             "Constraints": "constraints",
             "Risk": "risk",
-            "Promotion gaps": "promotion gaps",
+            "Transfer notes": "transfer notes",
         }
         for header, label in required.items():
             text = sections.get(header, "").strip()
@@ -2952,9 +2952,6 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
             blocking.append("Missing Asgard mode metadata")
         if not issue.risk:
             blocking.append("Missing Asgard risk metadata")
-        olympus_valid, olympus_errors = validate_card_body(issue.body)
-        if not olympus_valid:
-            warnings.append("Olympus promotion gaps: " + "; ".join(olympus_errors))
 
     return PreparedReadiness(
         profile=issue.team,

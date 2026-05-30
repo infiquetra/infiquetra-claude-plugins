@@ -1,5 +1,5 @@
 {
-  "schema_version": "2026-05-29",
+  "schema_version": "2026-05-30",
   "status": "active",
   "description": "Canonical Infiquetra SDLC board, team, routing, review, approval, and deployment-state schema. This file intentionally contains no live GitHub Projects field option IDs; tooling must resolve those from GitHub at runtime.",
   "teams": {
@@ -12,11 +12,12 @@
     },
     "asgard": {
       "kind": "agent_team",
-      "status": "active_defining",
-      "role": "Jeff-proximal rapid-action team biased toward reversible work, shaping, incubation, and mission-mode execution",
+      "status": "active",
+      "role": "Jeff-proximal rapid-action, incubation, and mission-mode team with an issue-backed feed and lightweight proof model",
       "board": "asgard",
       "modes": ["Rapid Action", "Incubator", "Mission"],
-      "review_model": "team_owned_review"
+      "review_model": "team_owned_review",
+      "operating_model_doc": "docs/process/asgard-operating-model.md"
     },
     "olympus": {
       "kind": "agent_team",
@@ -91,7 +92,7 @@
   "fields": {
     "common": ["Status", "Owner", "Priority", "Risk", "Initiative", "Objective"],
     "jeff_intent": ["Status", "Target Team", "Jeff Needed", "Context Pack", "Decision Needed"],
-    "asgard": ["Status", "Mode", "Jeff Needed", "Target Repository", "Risk", "Promotion Target"],
+    "asgard": ["Status", "Mode", "Jeff Needed", "Target Repository", "Risk", "Transfer Target"],
     "olympus": ["Status", "Assigned Agent", "Initiative", "Objective", "Capability Size", "Risk", "Deploy Target", "Deploy State", "Snapshot Version", "Promotion Pending", "Release Risk", "Last Deployment"]
   },
   "pause_states": {
@@ -145,7 +146,8 @@
   "team_routing": {
     "target_team_values": ["Asgard", "Olympus", "Jeff", "External/Deferred"],
     "jeff_intent_ready_rule": "A Ready Jeff Intent card must name one target team before moving to another board or workflow.",
-    "asgard_to_olympus_rule": "Asgard may seed Olympus when work is repeatable, engineering-pipeline-shaped, and has acceptance criteria clear enough for autonomous execution.",
+    "asgard_issue_feed_rule": "Asgard-bound work enters through Jeff Intent Target Team=Asgard, a direct issue added to Asgard, or a context/issue pack. Before Active, set Mode, target repository or surface, risk, approval state, proof path, and transfer target when a cross-team handoff is expected.",
+    "cross_team_transfer_rule": "Asgard and Olympus are sibling target boards. Cross-team movement happens only when an operator explicitly routes, transfers, clones, or links work to another board; readiness checks may warn about target fit but must not infer movement.",
     "default_pressure_valve": "Prefer project views over new boards unless scale, automation, or reporting needs justify a separate board."
   },
   "review_model": {

@@ -50,8 +50,8 @@ Keep issue creation separate from draft review.
 ### Risk
 Low operational risk.
 
-### Promotion gaps
-- [ ] Add strict verification before Olympus promotion.
+### Transfer notes
+- [ ] No cross-team transfer requested.
 """
 
 
@@ -117,7 +117,7 @@ def test_prepare_asgard_accepts_shaping_quality_input(tmp_path) -> None:
 
     assert sidecar["state"] == "ready_to_create"
     assert sidecar["readiness"]["passed"] is True
-    assert any("Olympus promotion gaps" in warning for warning in sidecar["readiness"]["warnings"])
+    assert sidecar["readiness"]["warnings"] == []
 
 
 def test_ready_status_blocks_prepared_draft(tmp_path) -> None:

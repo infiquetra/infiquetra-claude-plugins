@@ -17,27 +17,6 @@
 
 ---
 
-## P0 - must ship before handoff implementation
-
-### Correct Asgard/Olympus model before SDLC handoff work  {#asgard-olympus-model-before-handoff}
-
-**Priority.** P0 (must ship before `/create-issue` + `/handoff` handoff implementation).
-
-**Effort.** Multi-day. Canonical SDLC docs/config update, synced `sdlc-manager` material update,
-prepared-issue wording/readiness/test updates, and follow-on implementation planning.
-
-**Worth it when.** Before planning or implementing the Infiquetra Loop to SDLC handoff flow.
-
-**Context.**
-- Requirements: [Infiquetra Loop SDLC Handoff](../brainstorms/2026-05-30-infiquetra-loop-sdlc-handoff-requirements.md).
-- The stale model currently frames Asgard as a feeder or promotion lane for Mount Olympus. The
-  corrected model is that Asgard and Olympus are sibling target teams/boards; cross-team movement
-  is explicit operator action only.
-- The same plan should then implement `/create-issue`, `--prepare`/`--draft`, `--from` source
-  discovery, handoff maturity, and thin `/handoff` routing.
-
----
-
 ## P1 — urgent
 
 ### CI guard: assert plugin directories match marketplace.json entries  {#marketplace-ci-guard}

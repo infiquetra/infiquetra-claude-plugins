@@ -119,13 +119,13 @@ Ask:
 1. Capture on Jeff Intent as `Idea`.
 2. Shape until target team and context pack are clear.
 3. Move to `Ready`.
-4. Promote to Asgard, Olympus, Jeff, or External/Deferred based on target team.
+4. Route to Asgard, Olympus, Jeff, or External/Deferred based on target team.
 
-### Asgard Seeds Olympus
+### Explicit Cross-Team Transfer
 
-1. Incubate or act in Asgard.
-2. Verify the result or direction.
-3. Promote to Olympus only when the work is repeatable, well-shaped, and has acceptance criteria clear enough for autonomous execution.
+1. Treat Asgard and Olympus as sibling target boards, not stages in a default funnel.
+2. Keep work on the selected board unless an operator explicitly routes, transfers, clones, or links it elsewhere.
+3. When a transfer is requested, make the receiving issue self-contained: target repo or surface, acceptance criteria, verification, risk, approvals, and context links must be clear.
 
 ### Olympus Engineering Flow
 

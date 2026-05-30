@@ -10,6 +10,26 @@
 
 ## Shipped
 
+### Correct Asgard/Olympus model before SDLC handoff work  {#asgard-olympus-model-before-handoff}
+
+**SHIPPED 2026-05-30** (`infiquetra-sdlc` commit `5fe5d91`; plugin sync commit pending).
+
+**Summary.** Removed the stale assumption that Asgard feeds or promotes work into Mount Olympus
+before building the SDLC handoff flow.
+
+**What shipped.**
+- Canonical `infiquetra-sdlc` docs and schema now define Asgard and Olympus as sibling target
+  boards.
+- Cross-team movement is explicit operator transfer, route, clone, or link action only.
+- `sdlc-manager` now vendors the corrected schema, renders Asgard transfer notes, and no longer
+  warns that every Asgard draft has Olympus readiness gaps.
+- Prompt-alignment tests now reject the stale Asgard-to-Olympus promotion language in active
+  plugin surfaces.
+
+**Refs.**
+- Requirements: [Infiquetra Loop SDLC Handoff](../brainstorms/2026-05-30-infiquetra-loop-sdlc-handoff-requirements.md).
+- Plan: [Add SDLC handoff flow](../plans/2026-05-30-002-feat-sdlc-handoff-flow-plan.md).
+
 ### Asgard/Olympus issue readiness workflow for `sdlc-manager`  {#asgard-olympus-issue-readiness}
 
 **SHIPPED 2026-05-30** (PR #159, commit `74cd372`).

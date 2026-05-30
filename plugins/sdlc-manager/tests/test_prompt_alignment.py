@@ -92,3 +92,39 @@ def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
     assert "Never auto-move a prepared issue to `Ready`" in skill
     assert "create an Olympus issue from this text" in command
     assert "prepared-draft path" in command
+
+
+def test_asgard_olympus_model_uses_explicit_transfer_language() -> None:
+    schema = json.loads(_read(PLUGIN_ROOT / "config/sdlc-schema.json"))
+
+    assert schema["schema_version"] == "2026-05-30"
+    assert schema["teams"]["asgard"]["status"] == "active"
+    assert "Transfer Target" in schema["fields"]["asgard"]
+    assert "Promotion Target" not in schema["fields"]["asgard"]
+    assert "cross_team_transfer_rule" in schema["team_routing"]
+    assert "asgard_to_olympus_rule" not in schema["team_routing"]
+    assert "sibling target boards" in schema["team_routing"]["cross_team_transfer_rule"]
+
+    active_surfaces = [
+        PLUGIN_ROOT / "config/sdlc-schema.json",
+        PLUGIN_ROOT / "scripts/sdlc_manager.py",
+        PLUGIN_ROOT / "skills/sdlc-board/references/kanban-workflow.md",
+        PLUGIN_ROOT / "skills/sdlc-issues/SKILL.md",
+        PLUGIN_ROOT / "commands/sdlc-create.md",
+        PLUGIN_ROOT / "agents/sdlc-operator.md",
+        PLUGIN_ROOT / "README.md",
+    ]
+    stale_phrases = [
+        "asgard_to_olympus",
+        "Promotion Target",
+        "Promotion gaps",
+        "Olympus promotion gaps",
+        "Asgard Seeds Olympus",
+        "seed Olympus",
+        "promote to Olympus",
+    ]
+
+    for path in active_surfaces:
+        text = _read(path)
+        for phrase in stale_phrases:
+            assert phrase not in text, f"{path.relative_to(ROOT)} contains stale phrase {phrase!r}"

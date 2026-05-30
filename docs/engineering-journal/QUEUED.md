@@ -73,6 +73,26 @@ classification is too variable.
 - A future helper could return `blueprint`, `spec`, `issue`, `plan`, `requirements`, or
   `strategy-scope` from path and content-shape signals.
 
+### Delegate agents plugin for Codex and Antigravity  {#delegate-agents-plugin}
+
+**Priority.** P2.
+
+**Effort.** Spike: half-day. Minimal plugin v1: 1-2 days.
+
+**Worth it when.** We want `team-execution` reviewers/explorers, or other parallel agents, to run
+through local Codex or Antigravity accounts instead of Claude Code subagents, especially for
+independent read-only review, exploration, or implementation-plan critique.
+
+**Context.**
+- Ideation doc: [delegate-agent plugin feasibility](../ideation/2026-05-30-delegate-agent-plugin-ideation.md).
+- Recommended path: create a separate `delegate-agents` plugin first, prove read-only Codex and
+  Antigravity delegates with structured results, then add optional `team-execution` routing.
+- Follow-up route analysis changed the spike shape: compare Codex `exec`, Codex App Server, and
+  `codex mcp-server`; compare Antigravity CLI, SDK, and any documented Antigravity 2.0 app control
+  surface.
+- Do not start with write-capable coder agents. Coder delegation should wait for worktree or strict
+  file-ownership mechanics plus explicit consent.
+
 ### Phase 5 spawn primitive: tmux-wrapped foreground sessions (replaces `--bg` from current plan)  {#phase5-spawn-via-tmux}
 
 **Priority.** P2. Blocks Phase 5 implementation but Phase 5 hasn't started yet.

@@ -5,6 +5,7 @@
 import json
 import sys
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -37,32 +38,38 @@ uv run pytest plugins/sdlc-manager/tests/test_issue_create_prepared.py
 
 
 def _ready_draft(tmp_path: Path) -> Path:
-    return sdlc_manager.issue_prepare(
-        repo="hermes-claude-code-router",
-        issue_type="capability",
-        team="olympus",
-        project="mount-olympus",
-        source=OLYMPUS_BODY,
-        title="Prepared issue workflow",
-        status=None,
-        risk="medium",
-        mode=None,
-        draft_dir=tmp_path,
+    return cast(
+        Path,
+        sdlc_manager.issue_prepare(
+            repo="hermes-claude-code-router",
+            issue_type="capability",
+            team="olympus",
+            project="mount-olympus",
+            source=OLYMPUS_BODY,
+            title="Prepared issue workflow",
+            status=None,
+            risk="medium",
+            mode=None,
+            draft_dir=tmp_path,
+        ),
     )
 
 
 def _blocked_draft(tmp_path: Path) -> Path:
-    return sdlc_manager.issue_prepare(
-        repo="hermes-claude-code-router",
-        issue_type="capability",
-        team="olympus",
-        project="mount-olympus",
-        source="Implement it.",
-        title="Blocked issue workflow",
-        status=None,
-        risk="medium",
-        mode=None,
-        draft_dir=tmp_path,
+    return cast(
+        Path,
+        sdlc_manager.issue_prepare(
+            repo="hermes-claude-code-router",
+            issue_type="capability",
+            team="olympus",
+            project="mount-olympus",
+            source="Implement it.",
+            title="Blocked issue workflow",
+            status=None,
+            risk="medium",
+            mode=None,
+            draft_dir=tmp_path,
+        ),
     )
 
 

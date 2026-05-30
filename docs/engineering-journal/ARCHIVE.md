@@ -10,6 +10,30 @@
 
 ## Shipped
 
+### Asgard/Olympus issue readiness workflow for `sdlc-manager`  {#asgard-olympus-issue-readiness}
+
+**SHIPPED 2026-05-30** (commit pending).
+
+**Summary.** Added a prepared issue workflow that turns source text into reviewable Asgard or
+Mount Olympus drafts, then creates issues only after readiness checks and a confirmed mutation
+plan.
+
+**What shipped.**
+- `issue prepare` writes markdown drafts and JSON sidecars under `docs/sdlc-issue-drafts/`.
+- `issue create-prepared` re-runs readiness, shows a mutation plan, repairs missing
+  labels/templates, handles missing project mappings through PR flow, and records created issue
+  state back onto drafts.
+- Asgard and Mount Olympus readiness profiles with safe starting statuses.
+- Natural-language skill/command/operator guidance for Asgard/Olympus issue creation from text.
+- Plugin and marketplace metadata bumped to `1.6.0`.
+- Unit, mocked mutation, and prompt alignment tests.
+
+**Refs.**
+- Ideation doc: [SDLC Manager Asgard/Olympus issue readiness](../ideation/2026-05-30-sdlc-manager-asgard-olympus-issue-readiness.md).
+- Requirements: [SDLC Manager Issue Prepare Requirements](../brainstorms/2026-05-30-sdlc-manager-issue-prepare-requirements.md).
+- Plan: [Add SDLC issue prepare workflow](../plans/2026-05-30-001-feat-sdlc-issue-prepare-workflow-plan.md).
+- Learning: [Prepared issue creation needs an artifact boundary before mutation](LEARNINGS.md#prepared-issue-artifact-boundary).
+
 ### Align sdlc-manager prompts with current SDLC schema and release metadata  {#sdlc-manager-prompt-alignment}
 
 **SHIPPED 2026-05-30** (commit pending).

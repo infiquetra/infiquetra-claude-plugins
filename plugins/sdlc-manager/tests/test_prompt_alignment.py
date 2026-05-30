@@ -19,7 +19,7 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "sdlc-manager")
 
     assert plugin_json["name"] == "sdlc-manager"
-    assert plugin_json["version"] == "1.5.0"
+    assert plugin_json["version"] == "1.6.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/sdlc-manager"
     assert "Jeff Intent" in entry["description"]
@@ -51,6 +51,9 @@ def test_operator_prompt_honors_hermes_actionability_contract() -> None:
     assert "(capability/enhancement/defect/exploration/context-update)" not in operator
     assert "Step 2: Applied labels (hermes-task, capability, needs-plan)" in operator
     assert "Step 2: Applied labels (hermes-task, capability, needs-analysis)" not in operator
+    assert "issue prepare" in operator
+    assert "issue create-prepared" in operator
+    assert "Asgard `Shaping`, Olympus `Backlog`" in operator
 
 
 def test_triage_command_uses_project_fields_and_current_actionable_labels() -> None:
@@ -72,3 +75,20 @@ def test_label_docs_mark_legacy_auto_label_rules_as_fallback() -> None:
     assert "legacy fallback labels" in reference
     assert "legacy fallback rules" in reference
     assert "Current capability,\nenhancement, and defect templates apply `needs-plan`" in reference
+
+
+def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
+    skill = _read(PLUGIN_ROOT / "skills/sdlc-issues/SKILL.md")
+    command = _read(PLUGIN_ROOT / "commands/sdlc-create.md")
+    readme = _read(PLUGIN_ROOT / "README.md")
+
+    for text in (skill, command, readme):
+        assert "issue prepare" in text
+        assert "issue create-prepared" in text
+
+    assert "Create an Olympus issue from this text" in skill
+    assert "Create an Asgard issue from these notes" in skill
+    assert "If team or project is ambiguous, ask" in skill
+    assert "Never auto-move a prepared issue to `Ready`" in skill
+    assert "create an Olympus issue from this text" in command
+    assert "prepared-draft path" in command

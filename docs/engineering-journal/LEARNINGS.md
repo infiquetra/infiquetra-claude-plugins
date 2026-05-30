@@ -27,6 +27,36 @@
 
 ## 2026-05-30
 
+### Prepared issue creation needs an artifact boundary before mutation  {#prepared-issue-artifact-boundary}
+
+**Context.** `sdlc-manager` needed to turn rough source text into Asgard or Mount Olympus issues
+without creating cards that fail team readiness checks or require hidden board/label repair.
+
+**Evidence.** The new workflow in `plugins/sdlc-manager/scripts/sdlc_manager.py` writes markdown
+drafts plus JSON sidecars, re-runs readiness in `issue create-prepared`, and records created issue
+state back onto the draft. Tests in `plugins/sdlc-manager/tests/test_issue_prepare.py` and
+`plugins/sdlc-manager/tests/test_issue_create_prepared.py` cover blocked drafts, safe statuses,
+mapping PR stop, override creation, and draft-created state.
+
+**Mechanism.** A direct "source text -> GitHub issue" command mixes interpretation, validation,
+and side effects. Splitting the workflow into a durable draft/sidecar artifact and a confirmed
+mutation step lets agents shape prose while deterministic code owns readiness, repair ordering,
+and idempotent recovery.
+
+**Fix.** Added prepared drafts, readiness profiles, mutation planning, repo prerequisite repair,
+mapping PR handling, natural-language prompt guidance, and plugin metadata for `sdlc-manager`
+1.6.0.
+
+**Validation.** `uv run pytest -q`, `uv run ruff check .`, `uv run python
+marketplace/validator/validate.py`, `uv run python
+plugins/sdlc-manager/scripts/sync_template_docs.py --check`, and `git diff --check` pass.
+
+**Generalizable rule.** When a plugin command turns ambiguous human or agent text into external
+side effects, make a reviewable artifact the boundary and re-validate it at mutation time.
+
+**Refs.** DECISIONS [prepared issue workflow boundary](DECISIONS.md#prepared-issue-workflow-boundary);
+ARCHIVE [Asgard/Olympus issue readiness workflow](ARCHIVE.md#asgard-olympus-issue-readiness).
+
 ### Prompt docs need their own drift guards  {#prompt-docs-need-drift-guards}
 
 **Context.** `sdlc-manager` had already learned to consume the current `infiquetra-sdlc`

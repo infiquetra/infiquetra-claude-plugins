@@ -93,26 +93,6 @@ independent read-only review, exploration, or implementation-plan critique.
 - Do not start with write-capable coder agents. Coder delegation should wait for worktree or strict
   file-ownership mechanics plus explicit consent.
 
-### Asgard/Olympus issue readiness workflow for `sdlc-manager`  {#asgard-olympus-issue-readiness}
-
-**Priority.** P2.
-
-**Effort.** Spike: half-day. Minimal dry-run workflow: 1 day. Mutation-capable creation flow:
-1-2 additional days.
-
-**Worth it when.** We want to turn source text, including copied engineering-journal entries or
-repo notes, into GitHub issue drafts that match either Asgard shaping expectations or Mount
-Olympus dispatch expectations without manual board/label repair.
-
-**Context.**
-- Ideation doc: [SDLC Manager Asgard/Olympus issue readiness](../ideation/2026-05-30-sdlc-manager-asgard-olympus-issue-readiness.md).
-- Current `sdlc-manager` covers the strict actionable issue-body shape partially, but not a full
-  team-aware label/author/project/status readiness check.
-- Recommended path: add a dry-run `issue prepare` or equivalent first, then layer
-  mutation-capable creation once the draft/readiness shape is trusted.
-- Keep shared issue templates human-facing. Put team-specific risk, authority, promotion, and
-  definition-of-done details in generated body sections or readiness output.
-
 ### Phase 5 spawn primitive: tmux-wrapped foreground sessions (replaces `--bg` from current plan)  {#phase5-spawn-via-tmux}
 
 **Priority.** P2. Blocks Phase 5 implementation but Phase 5 hasn't started yet.

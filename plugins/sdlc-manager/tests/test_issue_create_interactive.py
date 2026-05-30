@@ -198,8 +198,7 @@ def test_paired_card_recursion_guard() -> None:
 
 
 def test_metadata_applies_hermes_task_for_actionable_types() -> None:
-    """Capability/enhancement/defect/exploration/context-update get
-    `hermes-task`; objective gets `hermes-not-actionable`."""
+    """Capability/enhancement/defect get `hermes-task`."""
     with (
         patch.object(sdlc_manager, "_gh") as mock_gh,
         patch.object(sdlc_manager, "board_add"),
@@ -251,6 +250,29 @@ def test_metadata_applies_hermes_not_actionable_for_objective() -> None:
     # Verify hermes-task is NOT applied to objective
     actionable_calls = [c for c in cmd_calls if "hermes-task" in str(c)]
     assert actionable_calls == []
+
+
+def test_metadata_applies_hermes_not_actionable_for_exploration() -> None:
+    """Exploration/context-update are non-actionable template types."""
+    with (
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+        patch.object(sdlc_manager, "flow_link_sub_issue"),
+        patch.object(sdlc_manager, "load_config", return_value={}),
+    ):
+        sdlc_manager._apply_post_create_metadata(
+            repo="campps-context-library",
+            issue_number=2,
+            issue_type="exploration",
+            project_name=None,
+            parent=None,
+            field_values={},
+            fmt="text",
+        )
+    cmd_calls = [c.args[0] for c in mock_gh.call_args_list]
+    assert any("hermes-not-actionable" in str(call) for call in cmd_calls)
+    assert not any("hermes-task" in str(call) for call in cmd_calls)
 
 
 def test_metadata_label_failure_does_not_abort_other_steps() -> None:

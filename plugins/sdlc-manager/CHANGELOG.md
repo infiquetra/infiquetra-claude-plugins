@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## [1.6.0] — 2026-05-30
+
+### Added
+- Added `issue prepare` to write team-aware Asgard or Mount Olympus issue drafts under
+  `docs/sdlc-issue-drafts/` with JSON readiness sidecars.
+- Added `issue create-prepared` to re-run readiness, render a full mutation plan, ask for final
+  confirmation, repair missing labels/templates, add issues to the requested project, set safe
+  starting status, and record the created issue back onto the draft.
+- Added Asgard and Olympus readiness profiles. Asgard accepts shaping-quality drafts with mode,
+  constraints, risk, and promotion gaps; Olympus requires the strict actionable card body,
+  expected labels, project presence, author-visible risk, and safe `Backlog` status.
+- Added mocked tests for blocked create, declined confirmation, direct create, missing
+  labels/templates, missing mapping PR stop, and mapping override creation.
+
+### Changed
+- Updated `sdlc-issues`, `/sdlc-create`, `sdlc-operator`, README, and release metadata so
+  natural-language requests like "create an Olympus issue from this text" route through prepared
+  drafts instead of bypassing readiness checks.
+- Bumped plugin and marketplace metadata to `1.6.0`.
+
 ## [1.5.0] — 2026-05-30
 
 ### Migration notes

@@ -7,7 +7,7 @@ SDLC management for Infiquetra's Jeff Intent, Asgard, and Mount Olympus boards. 
 All operations run locally via the `gh` CLI, providing:
 
 - **Project board operations** — view, move, add, archive, WIP analysis, standup prep across Jeff Intent, Asgard, and Olympus
-- **Issue creation** — guided workflow with templates, auto-labeling, and project board integration
+- **Issue creation** — guided interactive creation plus prepared Asgard/Olympus issue drafts with readiness checks and confirmed creation
 - **Label management** — deploy, audit, sync initiative/objective fields, auto-label rules
 - **Flow metrics** — cycle time, throughput, WIP age using GitHub timeline events
 - **Rollout tracking** — gap analysis and full SDLC deployment to any Infiquetra repo
@@ -25,7 +25,7 @@ All operations run locally via the `gh` CLI, providing:
 ### Script Location (after plugin install)
 
 ```bash
-SCRIPT="$HOME/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.5.0/scripts/sdlc_manager.py"
+SCRIPT="$HOME/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.6.0/scripts/sdlc_manager.py"
 ```
 
 Or from source:
@@ -38,6 +38,29 @@ SCRIPT="$HOME/workspace/infiquetra/infiquetra-claude-plugins/plugins/sdlc-manage
 ```bash
 python3 $SCRIPT config show
 ```
+
+### Prepare an Issue Draft
+
+Use prepared drafts when starting from rough source text, notes, or an agent prompt that must be
+reviewed before GitHub mutation:
+
+```bash
+python3 $SCRIPT issue prepare \
+  --repo hermes-claude-code-router \
+  --type capability \
+  --team olympus \
+  --project mount-olympus \
+  --risk medium \
+  --title "Router prepared issue workflow" \
+  "Add the prepared issue workflow described in the design notes."
+
+python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md
+```
+
+Prepared drafts are written under `docs/sdlc-issue-drafts/` with a JSON sidecar. Creation renders a
+mutation plan before side effects, repairs missing labels/templates after confirmation, opens a
+mapping PR when the repo is not mapped to the requested project, and starts issues in safe statuses:
+Asgard `Shaping`, Mount Olympus `Backlog`.
 
 ## Slash Commands
 
@@ -216,6 +239,26 @@ python3 $SCRIPT flow verify-label --repo campps-mvp \
 
 # Pre-flight card body against the card_validator schema
 python3 $SCRIPT flow validate-card --repo campps-mvp --number 42
+```
+
+### Prepared Issue Workflow
+
+```bash
+# Draft from source text without GitHub mutation
+python3 $SCRIPT issue prepare \
+    --repo hermes-claude-code-router \
+    --type capability \
+    --team olympus \
+    --project mount-olympus \
+    --risk medium \
+    --title "Prepared issue workflow" \
+    "Create issue drafts that pass Olympus readiness before mutation."
+
+# Create after reviewing the markdown draft and sidecar
+python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md
+
+# Explicit override when a mapping PR was opened but creation must continue
+python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md --override-mapping
 ```
 
 ## Configuration

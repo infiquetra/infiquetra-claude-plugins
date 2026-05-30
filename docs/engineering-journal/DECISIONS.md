@@ -22,6 +22,34 @@
 
 ---
 
+## 2026-05-30
+
+### Prepared issue workflow uses draft/sidecar boundary plus confirmed mutation (commit pending)  {#prepared-issue-workflow-boundary}
+
+**Decision.** Add `sdlc-manager issue prepare` and `issue create-prepared` as separate steps.
+`issue prepare` writes a markdown draft and JSON sidecar; `issue create-prepared` re-runs
+readiness, renders a mutation plan, asks for confirmation, repairs repo prerequisites, handles
+mapping PRs, creates the issue, and records the result back onto the draft.
+
+**Rejected alternatives.**
+- *Direct source-text to `gh issue create`.* Rejected: bypasses review and makes readiness failures
+  visible only after the external issue exists.
+- *Put LLM interpretation inside `sdlc_manager.py`.* Rejected: the CLI should stay deterministic;
+  skills and agents own rough-source interpretation.
+- *Create new issue types for Asgard/Olympus.* Rejected: the six SDLC issue types remain
+  canonical; team differences belong in readiness profiles and board/status routing.
+
+**Rationale.** The split gives operators a durable review point before GitHub mutation while still
+letting the final create flow perform repo repair and board placement as one visible plan.
+Sidecars keep deterministic metadata and lifecycle state out of prose-only markdown, and
+re-validation prevents stale edited drafts from bypassing team readiness.
+
+**Revisit when.** Multiple non-agent callers need deterministic text-to-body generation inside the
+CLI, or when prepared drafts become common enough to justify a richer review UI or batch create
+surface.
+
+**Refs.** LEARNINGS [prepared issue artifact boundary](LEARNINGS.md#prepared-issue-artifact-boundary).
+
 ## 2026-05-29
 
 ### Split Infiquetra lifecycle orchestration from deployment mutation (commit pending)  {#infiquetra-loop-deploy-boundary}

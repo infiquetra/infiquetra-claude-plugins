@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- Added `/create-issue` as the primary issue command surface, with `/sdlc-create` retained as a
+  compatibility alias.
+- Added prepared-issue handoff maturity metadata and source artifact resolution for local files,
+  GitHub issue/PR URLs, branch refs, and natural hints such as "from the brainstorm".
+
 ### Changed
 - Synced the vendored SDLC schema and Asgard prepared-issue readiness with the corrected
   Asgard/Olympus model: sibling target boards with explicit cross-team transfer, not an

@@ -96,8 +96,9 @@ You are deeply familiar with the Infiquetra SDLC process as documented in the
 **Subcommand groups** (full list: `sdlc_manager.py --help`):
 - `board {view,add,move,archive,wip,standup,discover-fields}` — project board operations
 - `issue create` — sub-issue-first interactive issue creation (Phase C; see "Issue creation flow" below)
-- `issue prepare` / `issue create-prepared` — source-text to reviewed Asgard/Olympus issue draft,
-  then confirmed creation with readiness checks and repo prerequisite repair
+- `issue prepare` / `issue create-prepared` — source text or source artifact to reviewed
+  Asgard/Olympus issue draft, then confirmed creation with readiness checks, handoff maturity,
+  and repo prerequisite repair
 - `flow {set-field,field-options,discover-project,link-sub-issue,verify-label,validate-card}` —
   operator-facing GraphQL/REST helpers (Phase C minimum-viable). **`flow set-field` failure modes**:
   if the field doesn't exist on the project, raises `RuntimeError` with the available field list +
@@ -158,8 +159,8 @@ light up automatically.
 ### Prepared Asgard/Olympus Issue Creation
 
 Use this path when the user says "create an Olympus issue from this text", "create an Asgard issue
-from these notes", or provides rough queue/source text that should become an issue only after
-review.
+from these notes", "create an issue from the brainstorm", "handoff the plan", or provides rough
+queue/source text that should become an issue only after review.
 
 ```bash
 python3 "$SCRIPT" issue prepare \
@@ -170,16 +171,22 @@ python3 "$SCRIPT" issue prepare \
     --risk <low|medium|high> \
     --mode "Rapid Action" \
     --title "..." \
-    "source text..."
+    --from docs/plans/example.md \
+    --maturity plan-ready
 
 python3 "$SCRIPT" issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 ```
 
 Prepared drafts are durable markdown files with JSON sidecars under `docs/sdlc-issue-drafts/`.
-`issue create-prepared` re-runs readiness, renders every side effect before mutation, repairs
-missing labels/templates after confirmation, opens a mapping PR for unmapped repos, and starts new
-cards in safe statuses: Asgard `Shaping`, Olympus `Backlog`. If team or project is ambiguous,
-ask the operator; do not guess or bypass this path with direct `gh issue create`.
+`issue prepare --from` accepts local paths, GitHub issue/PR URLs, branch refs, and natural search
+hints such as "from the brainstorm" or "handoff the plan". Prepared drafts include
+`handoff_maturity` and source metadata so the receiving team can execute without
+`infiquetra-loop`. `issue create-prepared` re-runs readiness, renders every side effect before
+mutation, repairs missing labels/templates after confirmation, opens a mapping PR for unmapped
+repos, and starts new cards in safe statuses: Asgard `Shaping`, Olympus `Backlog`. If team,
+project, or source artifact is ambiguous, ask the operator; do not guess or bypass this path with
+direct `gh issue create`. Suggest `/plan <issue>` or `/work <issue>` only as optional
+`infiquetra-loop` follow-up commands; do not suggest `/loop` for team recipients.
 
 For batch issue creation from a blueprint, prefer the manual lifecycle below over the
 interactive flow:

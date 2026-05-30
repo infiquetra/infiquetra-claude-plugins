@@ -32,6 +32,7 @@ when_to_use: |
   - "set up the issues for the platform launch objective"
 
   Prepared issue creation:
+  - "create an issue from the brainstorm", "handoff the plan as an issue"
   - "create an Olympus issue from this text"
   - "create an Asgard issue from these notes"
   - "turn this queue entry into an issue for the router repo"
@@ -104,6 +105,11 @@ research, or documentation context.
 Use the prepared workflow when the user starts from rough text, notes, copied queue entries, or
 asks for an Asgard/Olympus issue that should be reviewed before mutation.
 
+`/create-issue` is the primary user-facing command for this path. `/sdlc-create` remains a
+compatibility alias. `--prepare` is the canonical non-mutating mode; `--draft` means the same
+thing. `--from` accepts a local path, GitHub issue/PR URL, branch ref, or natural search hint.
+`--maturity` overrides inferred handoff maturity.
+
 ```bash
 python3 sdlc_manager.py issue prepare \
   --repo hermes-claude-code-router \
@@ -112,7 +118,8 @@ python3 sdlc_manager.py issue prepare \
   --project mount-olympus \
   --risk medium \
   --title "Prepared issue workflow" \
-  "source text..."
+  --from docs/plans/example.md \
+  --maturity plan-ready
 
 python3 sdlc_manager.py issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 ```
@@ -122,8 +129,28 @@ The prepared workflow writes a markdown draft and JSON sidecar under
 plan, asks for confirmation, repairs missing labels/templates after confirmation, opens a mapping
 PR when needed, and only then creates the issue.
 
+Prepared handoff drafts include `handoff_maturity` in the sidecar and a body section with the
+suggested next action. Maturity values are:
+
+- `idea-ready` -> suggest `/plan <issue>`.
+- `requirements-ready` -> suggest `/plan <issue>`.
+- `plan-ready` -> suggest `/work <issue>`.
+- `resume-ready` -> suggest `/work <issue>`.
+- `deferred-context` -> preserve context and clarify before execution.
+
+Source artifact resolution:
+
+- Explicit local path: `--from docs/brainstorms/example.md`.
+- GitHub issue or PR URL: fetched through `gh issue view` or `gh pr view`.
+- Branch ref: `--from branch:current` or `--from branch:<name>` captures resume context.
+- Natural language such as "from the brainstorm" or "handoff the plan" searches durable
+  lifecycle artifact directories before asking for a path.
+- Ambiguous matches must be shown to the user; do not pick one silently.
+
 Natural-language routing rules:
 
+- "Create an issue from the brainstorm" -> search `docs/brainstorms/`, prepare, then
+  create-prepared after review.
 - "Create an Olympus issue from this text" -> prepare with `--team olympus --project mount-olympus`,
   then create-prepared after review.
 - "Create an Asgard issue from this text" -> prepare with `--team asgard --project asgard`, then
@@ -131,6 +158,8 @@ Natural-language routing rules:
 - If team or project is ambiguous, ask. Do not guess.
 - Do not bypass prepared readiness checks with ad hoc `gh issue create` when the prompt asks to
   create from source text.
+- Do not suggest `/loop` to a team recipient. Use `/plan <issue>` or `/work <issue>` only when the
+  recipient has `infiquetra-loop`.
 
 Safe starting statuses:
 
@@ -293,6 +322,11 @@ still uses milestones for that repository.
 
 **"Create an exploration to research biometric SDK options"**
 -> `issue create --repo infiquetra-blueprint --type exploration`
+
+**"Create an issue from the plan"**
+-> Search `docs/plans/`; if one plan matches, prepare with
+`issue prepare --from <plan> --maturity plan-ready`. If multiple plans match, ask the user to
+choose.
 
 **"Create an Olympus issue from this text for the router repo"**
 -> Prepare an Olympus draft with `issue prepare --team olympus --project mount-olympus`, review

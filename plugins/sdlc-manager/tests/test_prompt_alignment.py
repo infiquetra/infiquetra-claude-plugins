@@ -79,19 +79,32 @@ def test_label_docs_mark_legacy_auto_label_rules_as_fallback() -> None:
 
 def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
     skill = _read(PLUGIN_ROOT / "skills/sdlc-issues/SKILL.md")
+    create_command = _read(PLUGIN_ROOT / "commands/create-issue.md")
     command = _read(PLUGIN_ROOT / "commands/sdlc-create.md")
     readme = _read(PLUGIN_ROOT / "README.md")
 
-    for text in (skill, command, readme):
+    for text in (skill, create_command, command, readme):
         assert "issue prepare" in text
         assert "issue create-prepared" in text
 
+    assert "name: create-issue" in create_command
+    assert "--prepare" in create_command
+    assert "--draft" in create_command
+    assert "--from" in create_command
+    assert "--maturity" in create_command
+    assert "compatibility alias" in command.lower()
+    assert "`/create-issue` is the primary user-facing command" in skill
+    assert "/create-issue [type]" in readme
     assert "Create an Olympus issue from this text" in skill
     assert "Create an Asgard issue from these notes" in skill
+    assert "Create an issue from the brainstorm" in skill
+    assert "handoff_maturity" in skill
     assert "If team or project is ambiguous, ask" in skill
     assert "Never auto-move a prepared issue to `Ready`" in skill
-    assert "create an Olympus issue from this text" in command
+    assert "from the brainstorm" in create_command
+    assert "handoff the plan" in create_command
     assert "prepared-draft path" in command
+    assert "/loop <issue>" not in create_command
 
 
 def test_asgard_olympus_model_uses_explicit_transfer_language() -> None:
@@ -110,6 +123,7 @@ def test_asgard_olympus_model_uses_explicit_transfer_language() -> None:
         PLUGIN_ROOT / "scripts/sdlc_manager.py",
         PLUGIN_ROOT / "skills/sdlc-board/references/kanban-workflow.md",
         PLUGIN_ROOT / "skills/sdlc-issues/SKILL.md",
+        PLUGIN_ROOT / "commands/create-issue.md",
         PLUGIN_ROOT / "commands/sdlc-create.md",
         PLUGIN_ROOT / "agents/sdlc-operator.md",
         PLUGIN_ROOT / "README.md",

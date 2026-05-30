@@ -17,7 +17,8 @@ Usage:
     sdlc_manager.py board discover-fields --project mount-olympus
 
     sdlc_manager.py issue create --repo athena-service --type capability
-    sdlc_manager.py issue prepare --repo athena-service --type capability --team olympus --project mount-olympus "source text"
+    sdlc_manager.py issue prepare --repo athena-service --type capability --team olympus \
+      --project mount-olympus --from docs/plans/example.md
     sdlc_manager.py issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 
     sdlc_manager.py labels sync-fields --repo athena-service --number 42
@@ -2662,6 +2663,33 @@ _ISSUE_TYPE_LABELS = {
     "context-update": ["context-update", "documentation", "hermes-not-actionable"],
 }
 _PREPARED_DRAFT_DIR = Path("docs") / "sdlc-issue-drafts"
+_HANDOFF_MATURITY_CHOICES = (
+    "idea-ready",
+    "requirements-ready",
+    "plan-ready",
+    "resume-ready",
+    "deferred-context",
+)
+_SOURCE_SEARCH_DIRS = (
+    Path(".claude") / "infiquetra-loop",
+    Path("docs") / "plans",
+    Path("docs") / "brainstorms",
+    Path("docs") / "ideation",
+    Path("docs") / "reviews",
+    Path("docs") / "work-sessions",
+    Path("docs") / "sdlc-issue-drafts",
+)
+_SOURCE_HINT_DIRS = {
+    "plan": (Path("docs") / "plans",),
+    "brainstorm": (Path("docs") / "brainstorms",),
+    "requirements": (Path("docs") / "brainstorms",),
+    "idea": (Path("docs") / "ideation",),
+    "ideation": (Path("docs") / "ideation",),
+    "review": (Path("docs") / "reviews",),
+    "work": (Path("docs") / "work-sessions",),
+    "resume": (Path("docs") / "work-sessions", Path(".claude") / "infiquetra-loop"),
+    "draft": (Path("docs") / "sdlc-issue-drafts",),
+}
 
 _HERMES_ACTIONABLE_TYPES = frozenset(
     {
@@ -2697,6 +2725,18 @@ class PreparedReadiness:
 
 
 @dataclass
+class SourceArtifact:
+    ref: str
+    kind: str
+    title: str
+    content: str
+    inferred_maturity: str
+    path: str | None = None
+    url: str | None = None
+    branch: str | None = None
+
+
+@dataclass
 class PreparedIssue:
     title: str
     repo: str
@@ -2708,6 +2748,8 @@ class PreparedIssue:
     risk: str | None
     mode: str | None
     body: str
+    handoff_maturity: str | None = None
+    source_artifact: dict[str, Any] | None = None
     draft_path: str | None = None
     sidecar_path: str | None = None
 
@@ -2740,6 +2782,267 @@ def _normalize_label_list(raw: Any) -> list[str]:
     if isinstance(raw, str):
         return [item.strip() for item in raw.split(",") if item.strip()]
     return []
+
+
+def _source_artifact_payload(artifact: SourceArtifact | None) -> dict[str, Any] | None:
+    if not artifact:
+        return None
+    payload = asdict(artifact)
+    content = str(payload.pop("content", "")).strip()
+    if content:
+        payload["content_excerpt"] = content[:1200]
+    return payload
+
+
+def _markdown_title(text: str, fallback: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip() or fallback
+    return fallback
+
+
+def _infer_maturity_from_path(path: Path) -> str:
+    normalized = path.as_posix()
+    if "docs/ideation/" in normalized:
+        return "idea-ready"
+    if "docs/brainstorms/" in normalized:
+        return "requirements-ready"
+    if "docs/plans/" in normalized or "docs/reviews/" in normalized:
+        return "plan-ready"
+    if "docs/work-sessions/" in normalized or "docs/sdlc-issue-drafts/" in normalized:
+        return "resume-ready"
+    if ".claude/infiquetra-loop/" in normalized:
+        return "resume-ready"
+    return "requirements-ready"
+
+
+def _infer_kind_from_path(path: Path) -> str:
+    normalized = path.as_posix()
+    if "docs/ideation/" in normalized:
+        return "ideation"
+    if "docs/brainstorms/" in normalized:
+        return "brainstorm"
+    if "docs/plans/" in normalized:
+        return "plan"
+    if "docs/reviews/" in normalized:
+        return "review"
+    if "docs/work-sessions/" in normalized:
+        return "work-session"
+    if "docs/sdlc-issue-drafts/" in normalized:
+        return "prepared-draft"
+    if ".claude/infiquetra-loop/" in normalized:
+        return "loop-state"
+    return "local-file"
+
+
+def _source_from_local_path(path: Path, root: Path | None = None) -> SourceArtifact:
+    root = root or Path.cwd()
+    resolved = path.expanduser()
+    if not resolved.is_absolute():
+        resolved = root / resolved
+    if not resolved.exists() or not resolved.is_file():
+        raise RuntimeError(f"Source artifact path does not exist or is not a file: {path}")
+    content = resolved.read_text(encoding="utf-8")
+    try:
+        display_path = resolved.relative_to(root).as_posix()
+    except ValueError:
+        display_path = resolved.as_posix()
+    return SourceArtifact(
+        ref=display_path,
+        kind=_infer_kind_from_path(Path(display_path)),
+        title=_markdown_title(content, resolved.stem),
+        content=content,
+        inferred_maturity=_infer_maturity_from_path(Path(display_path)),
+        path=display_path,
+    )
+
+
+def _source_from_github_url(url: str) -> SourceArtifact:
+    match = re.match(
+        r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/"
+        r"(?P<kind>issues|pull)/(?P<number>\d+)(?:\b|/|$)",
+        url.strip(),
+    )
+    if not match:
+        raise RuntimeError(f"Unsupported GitHub source URL: {url}")
+
+    owner = match.group("owner")
+    repo = match.group("repo")
+    number = match.group("number")
+    is_pr = match.group("kind") == "pull"
+    resource = "pr" if is_pr else "issue"
+    try:
+        raw = _gh(
+            [
+                resource,
+                "view",
+                number,
+                "--repo",
+                f"{owner}/{repo}",
+                "--json",
+                "title,body,url",
+            ]
+        )
+        data = json.loads(raw)
+    except Exception as e:
+        raise RuntimeError(f"Could not fetch GitHub source artifact {url}: {e}") from e
+
+    title = str(data.get("title") or f"{repo}#{number}").strip()
+    body = str(data.get("body") or "").strip()
+    content = f"# {title}\n\n{body}".strip()
+    return SourceArtifact(
+        ref=f"{owner}/{repo}#{number}",
+        kind="github-pr" if is_pr else "github-issue",
+        title=title,
+        content=content,
+        inferred_maturity="resume-ready" if is_pr else "requirements-ready",
+        url=str(data.get("url") or url),
+    )
+
+
+def _source_from_branch_ref(ref: str, root: Path | None = None) -> SourceArtifact:
+    root = root or Path.cwd()
+    branch = ref.removeprefix("branch:").strip() or "HEAD"
+    if branch in {"current", "current-branch", "current branch"}:
+        branch = _run_git_command(["git", "branch", "--show-current"], root) or "HEAD"
+    head = _run_git_command(["git", "rev-parse", branch], root)
+    try:
+        upstream = _run_git_command(["git", "rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}"], root)
+    except RuntimeError:
+        upstream = "none"
+    status = _run_git_command(["git", "status", "--short", "--branch"], root)
+    content = (
+        f"# Branch handoff: {branch}\n\n"
+        f"- Branch: {branch}\n"
+        f"- HEAD: {head}\n"
+        f"- Upstream: {upstream}\n\n"
+        "## Working tree\n\n"
+        f"```text\n{status}\n```\n"
+    )
+    return SourceArtifact(
+        ref=f"branch:{branch}",
+        kind="branch",
+        title=f"Branch handoff: {branch}",
+        content=content,
+        inferred_maturity="resume-ready",
+        branch=branch,
+    )
+
+
+def _hint_search_dirs(hint: str) -> tuple[Path, ...]:
+    lower = hint.lower()
+    dirs: list[Path] = []
+    for word, paths in _SOURCE_HINT_DIRS.items():
+        if word in lower:
+            dirs.extend(paths)
+    if dirs:
+        return tuple(dict.fromkeys(dirs))
+    return _SOURCE_SEARCH_DIRS
+
+
+def _source_matches_hint(path: Path, text: str, hint: str) -> bool:
+    lower = hint.lower()
+    ignored_terms = set(_SOURCE_HINT_DIRS) | {
+        "from",
+        "the",
+        "this",
+        "that",
+        "issue",
+        "handoff",
+        "hand",
+        "off",
+        "create",
+        "using",
+        "use",
+        "based",
+        "for",
+    }
+    terms = [
+        term
+        for term in re.findall(r"[a-z0-9][a-z0-9-]{2,}", lower)
+        if term not in ignored_terms
+    ]
+    if not terms:
+        return True
+    haystack = f"{path.stem}\n{text[:2000]}".lower()
+    return all(term in haystack for term in terms[:4])
+
+
+def find_source_artifacts(hint: str, root: Path | None = None) -> list[SourceArtifact]:
+    root = root or Path.cwd()
+    matches: list[tuple[float, SourceArtifact]] = []
+    for rel_dir in _hint_search_dirs(hint):
+        search_dir = root / rel_dir
+        if not search_dir.exists():
+            continue
+        for candidate in search_dir.rglob("*.md"):
+            if not candidate.is_file():
+                continue
+            text = candidate.read_text(encoding="utf-8")
+            if _source_matches_hint(candidate, text, hint):
+                artifact = _source_from_local_path(candidate, root)
+                matches.append((candidate.stat().st_mtime, artifact))
+    matches.sort(key=lambda item: item[0], reverse=True)
+    return [artifact for _, artifact in matches]
+
+
+def resolve_source_artifact(ref_or_hint: str, root: Path | None = None) -> SourceArtifact:
+    root = root or Path.cwd()
+    ref = ref_or_hint.strip()
+    if not ref:
+        raise RuntimeError("Source artifact reference is empty")
+
+    path = Path(ref).expanduser()
+    if path.exists() or (not path.is_absolute() and (root / path).exists()):
+        return _source_from_local_path(path, root)
+    if ref.startswith("https://github.com/"):
+        return _source_from_github_url(ref)
+    if ref.startswith("branch:") or ref in {"current-branch", "current branch"}:
+        return _source_from_branch_ref(ref, root)
+
+    matches = find_source_artifacts(ref, root)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        searched = ", ".join(str(path) for path in _hint_search_dirs(ref))
+        raise RuntimeError(f"No source artifact matched {ref!r}. Searched: {searched}")
+    choices = ", ".join(artifact.ref for artifact in matches[:10])
+    raise RuntimeError(f"Ambiguous source artifact hint {ref!r}. Matches: {choices}")
+
+
+def _natural_language_source_hint(text: str) -> str | None:
+    lower = text.lower()
+    if not any(word in lower for word in _SOURCE_HINT_DIRS):
+        return None
+    if re.search(r"\b(from|handoff|hand off|using|use|based on)\b", lower):
+        return text
+    return None
+
+
+def _resolve_prepare_source(
+    source_parts: list[str],
+    source_file: str | None,
+    from_ref: str | None,
+    root: Path | None = None,
+) -> tuple[str, SourceArtifact | None]:
+    root = root or Path.cwd()
+    if from_ref:
+        artifact = resolve_source_artifact(from_ref, root)
+        return artifact.content, artifact
+    if source_file:
+        artifact = _source_from_local_path(Path(source_file), root)
+        return artifact.content, artifact
+    if source_parts:
+        source = " ".join(source_parts)
+        natural_hint = _natural_language_source_hint(source)
+        if natural_hint:
+            artifact = resolve_source_artifact(natural_hint, root)
+            return artifact.content, artifact
+        return source, None
+    if not sys.stdin.isatty():
+        return sys.stdin.read(), None
+    raise RuntimeError("Provide source text as an argument, stdin, --source-file, or --from")
 
 
 def _parse_draft_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -2785,14 +3088,66 @@ def _render_draft_markdown(issue: PreparedIssue) -> str:
         frontmatter.append(f"risk: {issue.risk}")
     if issue.mode:
         frontmatter.append(f"mode: {issue.mode}")
+    if issue.handoff_maturity:
+        frontmatter.append(f"handoff_maturity: {issue.handoff_maturity}")
     frontmatter.append("---")
     return "\n".join(frontmatter) + f"\n\n# {issue.title}\n\n{issue.body.rstrip()}\n"
 
 
-def _source_to_issue_body(source: str, team: str, repo: str, mode: str | None) -> str:
+def _suggested_next_action(handoff_maturity: str) -> str:
+    return {
+        "idea-ready": "Use `/plan <issue>` to shape requirements before implementation.",
+        "requirements-ready": "Use `/plan <issue>` to create an implementation plan.",
+        "plan-ready": "Use `/work <issue>` to execute from the plan-grade context.",
+        "resume-ready": "Use `/work <issue>` to resume from the captured work state.",
+        "deferred-context": "Clarify current intent before planning or working this issue.",
+    }[handoff_maturity]
+
+
+def _render_handoff_context(
+    handoff_maturity: str | None,
+    source_artifact: SourceArtifact | None,
+) -> str:
+    if not handoff_maturity and not source_artifact:
+        return ""
+    maturity = handoff_maturity or "requirements-ready"
+    lines = [
+        "### Handoff maturity",
+        maturity,
+        "",
+        "### Suggested next action",
+        _suggested_next_action(maturity),
+    ]
+    if source_artifact:
+        lines.extend(
+            [
+                "",
+                "### Source context",
+                f"- Source: {source_artifact.ref}",
+                f"- Source type: {source_artifact.kind}",
+                f"- Source title: {source_artifact.title}",
+            ]
+        )
+        if source_artifact.url:
+            lines.append(f"- Source URL: {source_artifact.url}")
+        if source_artifact.branch:
+            lines.append(f"- Source branch: {source_artifact.branch}")
+    return "\n\n" + "\n".join(lines) + "\n"
+
+
+def _source_to_issue_body(
+    source: str,
+    team: str,
+    repo: str,
+    mode: str | None,
+    handoff_maturity: str | None = None,
+    source_artifact: SourceArtifact | None = None,
+) -> str:
     stripped = source.strip()
     if "### " in stripped:
-        return stripped
+        if "### Handoff maturity" in stripped:
+            return stripped
+        return stripped + _render_handoff_context(handoff_maturity, source_artifact)
     if team == "asgard":
         return f"""### Intent
 {stripped}
@@ -2811,7 +3166,7 @@ TBD
 
 ### Transfer notes
 - [ ] Record any explicit cross-team transfer target, or leave as none.
-"""
+""" + _render_handoff_context(handoff_maturity, source_artifact)
     return f"""### Objective
 {stripped}
 
@@ -2829,7 +3184,7 @@ TBD
 
 ### Verification
 TBD
-"""
+""" + _render_handoff_context(handoff_maturity, source_artifact)
 
 
 def _safe_slug(text: str) -> str:
@@ -2877,6 +3232,10 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         risk=field("risk") or None,
         mode=field("mode") or None,
         body=body.strip(),
+        handoff_maturity=field("handoff_maturity") or None,
+        source_artifact=sidecar.get("source_artifact")
+        if isinstance(sidecar.get("source_artifact"), dict)
+        else None,
         draft_path=str(draft_path),
         sidecar_path=str(sidecar_path),
     )
@@ -2921,6 +3280,12 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     missing_labels = sorted(expected_labels - set(issue.labels))
     if missing_labels:
         blocking.append(f"Missing expected labels: {missing_labels}")
+
+    if issue.handoff_maturity and issue.handoff_maturity not in _HANDOFF_MATURITY_CHOICES:
+        allowed = ", ".join(_HANDOFF_MATURITY_CHOICES)
+        blocking.append(f"Unknown handoff maturity {issue.handoff_maturity!r}; expected {allowed}")
+    elif not issue.handoff_maturity:
+        warnings.append("Missing handoff maturity metadata")
 
     sections = _split_sections(issue.body)
     if issue.team == "olympus":
@@ -2976,6 +3341,8 @@ def _sidecar_payload(
         "labels": issue.labels,
         "risk": issue.risk,
         "mode": issue.mode,
+        "handoff_maturity": issue.handoff_maturity,
+        "source_artifact": issue.source_artifact,
         "draft_path": issue.draft_path,
         "sidecar_path": issue.sidecar_path,
         "readiness": asdict(readiness),
@@ -2993,6 +3360,8 @@ def issue_prepare(
     status: str | None,
     risk: str | None,
     mode: str | None,
+    handoff_maturity: str | None = None,
+    source_artifact: SourceArtifact | None = None,
     draft_dir: Path | None = None,
     fmt: str = "text",
 ) -> Path:
@@ -3009,6 +3378,12 @@ def issue_prepare(
 
     safe_status = status or _TEAM_SAFE_STATUSES[team]
     draft_title = title or f"{issue_type}: {repo} {team} work"
+    maturity = handoff_maturity or (
+        source_artifact.inferred_maturity if source_artifact else "requirements-ready"
+    )
+    if maturity not in _HANDOFF_MATURITY_CHOICES:
+        allowed = ", ".join(_HANDOFF_MATURITY_CHOICES)
+        raise RuntimeError(f"Unknown handoff maturity {maturity!r}; expected {allowed}")
     issue = PreparedIssue(
         title=draft_title,
         repo=repo,
@@ -3019,7 +3394,9 @@ def issue_prepare(
         labels=_issue_expected_labels(issue_type),
         risk=risk,
         mode=mode,
-        body=_source_to_issue_body(source, team, repo, mode),
+        body=_source_to_issue_body(source, team, repo, mode, maturity, source_artifact),
+        handoff_maturity=maturity,
+        source_artifact=_source_artifact_payload(source_artifact),
     )
     readiness = _readiness_for_prepared_issue(issue)
 
@@ -3334,14 +3711,13 @@ def issue_create_prepared(
     return result
 
 
-def _read_prepare_source(source_parts: list[str], source_file: str | None) -> str:
-    if source_file:
-        return Path(source_file).read_text(encoding="utf-8")
-    if source_parts:
-        return " ".join(source_parts)
-    if not sys.stdin.isatty():
-        return sys.stdin.read()
-    raise RuntimeError("Provide source text as an argument, stdin, or --source-file")
+def _read_prepare_source(
+    source_parts: list[str],
+    source_file: str | None,
+    from_ref: str | None = None,
+) -> str:
+    source, _ = _resolve_prepare_source(source_parts, source_file, from_ref)
+    return source
 
 
 def _safe_input(prompt: str) -> str | None:
@@ -3968,6 +4344,19 @@ def main() -> None:
     issue_prepare_p.add_argument("--risk", default=None)
     issue_prepare_p.add_argument("--mode", default=None)
     issue_prepare_p.add_argument("--source-file", default=None)
+    issue_prepare_p.add_argument(
+        "--from",
+        dest="from_ref",
+        default=None,
+        help="Source artifact ref: local path, GitHub issue/PR URL, branch ref, or search hint",
+    )
+    issue_prepare_p.add_argument(
+        "--maturity",
+        dest="handoff_maturity",
+        default=None,
+        choices=_HANDOFF_MATURITY_CHOICES,
+        help="Override inferred handoff maturity",
+    )
     issue_prepare_p.add_argument("source", nargs="*")
 
     issue_create_prepared_p = issue_sp.add_parser(
@@ -4219,16 +4608,23 @@ def main() -> None:
                     skip_metadata=args.skip_metadata,
                 )
             elif args.action == "prepare":
+                source, source_artifact = _resolve_prepare_source(
+                    args.source,
+                    args.source_file,
+                    args.from_ref,
+                )
                 issue_prepare(
                     repo=args.repo,
                     issue_type=args.type,
                     team=args.team,
                     project=args.project,
-                    source=_read_prepare_source(args.source, args.source_file),
+                    source=source,
                     title=args.title,
                     status=args.status,
                     risk=args.risk,
                     mode=args.mode,
+                    handoff_maturity=args.handoff_maturity,
+                    source_artifact=source_artifact,
                     fmt=fmt,
                 )
             elif args.action == "create-prepared":

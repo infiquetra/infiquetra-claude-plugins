@@ -157,9 +157,10 @@ def test_non_default_status_blocks_prepared_draft(tmp_path) -> None:
     sidecar = json.loads(draft.with_suffix(".json").read_text())
 
     assert sidecar["state"] == "blocked"
-    assert "Prepared olympus issues must start in 'Backlog', not 'In Progress'" in sidecar[
-        "readiness"
-    ]["blocking_gaps"]
+    assert (
+        "Prepared olympus issues must start in 'Backlog', not 'In Progress'"
+        in sidecar["readiness"]["blocking_gaps"]
+    )
 
 
 def test_olympus_requires_actionable_labels_and_risk(tmp_path) -> None:
@@ -177,7 +178,9 @@ def test_olympus_requires_actionable_labels_and_risk(tmp_path) -> None:
     )
 
     draft.write_text(
-        draft.read_text().replace("labels: capability, hermes-task, needs-plan", "labels: capability")
+        draft.read_text().replace(
+            "labels: capability, hermes-task, needs-plan", "labels: capability"
+        )
     )
     sidecar_path = draft.with_suffix(".json")
     sidecar = json.loads(sidecar_path.read_text())

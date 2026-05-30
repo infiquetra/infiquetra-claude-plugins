@@ -253,7 +253,9 @@ def test_mapping_pr_uses_temporary_worktree(tmp_path) -> None:
         ),
         patch.object(sdlc_manager, "_run_git_command", return_value="ok") as mock_git,
         patch.object(sdlc_manager, "_write_mapping_update") as mock_write,
-        patch.object(sdlc_manager, "_gh", return_value="https://github.com/infiquetra/infiquetra-sdlc/pull/1"),
+        patch.object(
+            sdlc_manager, "_gh", return_value="https://github.com/infiquetra/infiquetra-sdlc/pull/1"
+        ),
     ):
         url = sdlc_manager._open_mapping_pr("hermes-claude-code-router", "mount-olympus")
 

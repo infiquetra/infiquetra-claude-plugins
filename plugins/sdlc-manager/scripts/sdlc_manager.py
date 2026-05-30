@@ -2801,7 +2801,7 @@ def _source_to_issue_body(source: str, team: str, repo: str, mode: str | None) -
 {repo}
 
 ### Mode
-{mode or 'TBD'}
+{mode or "TBD"}
 
 ### Constraints
 TBD
@@ -2964,7 +2964,9 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     )
 
 
-def _sidecar_payload(issue: PreparedIssue, readiness: PreparedReadiness, state: str) -> dict[str, Any]:
+def _sidecar_payload(
+    issue: PreparedIssue, readiness: PreparedReadiness, state: str
+) -> dict[str, Any]:
     return {
         "schema_version": "1.0",
         "state": state,
@@ -3004,7 +3006,9 @@ def issue_prepare(
     if issue_type not in _ISSUE_TYPES:
         raise RuntimeError(f"Unknown issue type {issue_type!r}")
     if project not in PROJECT_CHOICES:
-        raise RuntimeError(f"Unknown project {project!r}; expected one of {', '.join(PROJECT_CHOICES)}")
+        raise RuntimeError(
+            f"Unknown project {project!r}; expected one of {', '.join(PROJECT_CHOICES)}"
+        )
 
     safe_status = status or _TEAM_SAFE_STATUSES[team]
     draft_title = title or f"{issue_type}: {repo} {team} work"
@@ -3037,7 +3041,14 @@ def issue_prepare(
     )
 
     if fmt == "json":
-        _out({"draft": str(draft_path), "sidecar": str(sidecar_path), "readiness": asdict(readiness)}, fmt)
+        _out(
+            {
+                "draft": str(draft_path),
+                "sidecar": str(sidecar_path),
+                "readiness": asdict(readiness),
+            },
+            fmt,
+        )
     else:
         print(f"Prepared draft: {draft_path}")
         print(f"Readiness: {'passed' if readiness.passed else 'blocked'}")
@@ -3143,7 +3154,9 @@ def _open_mapping_pr(repo: str, project_name: str) -> str:
             )
         finally:
             try:
-                _run_git_command(["git", "worktree", "remove", "--force", str(temp_worktree)], cwd=worktree_root)
+                _run_git_command(
+                    ["git", "worktree", "remove", "--force", str(temp_worktree)], cwd=worktree_root
+                )
             except RuntimeError as e:
                 _warn(f"Could not remove temporary mapping worktree {temp_worktree}: {e}")
 
@@ -3178,12 +3191,7 @@ def _append_created_issue_to_draft(draft_path: Path, url: str, number: int) -> N
     marker = "\n\n## Created Issue\n"
     if marker in text:
         text = text.split(marker, 1)[0].rstrip()
-    text += (
-        f"{marker}\n"
-        f"- URL: {url}\n"
-        f"- Number: {number}\n"
-        f"- Created at: {created_at}\n"
-    )
+    text += f"{marker}\n- URL: {url}\n- Number: {number}\n- Created at: {created_at}\n"
     draft_path.write_text(text + "\n", encoding="utf-8")
 
 
@@ -3204,10 +3212,14 @@ def _build_mutation_plan(issue: PreparedIssue, config: dict[str, Any]) -> Mutati
     mapping_missing = not _project_mapping_contains_repo(config, issue.repo, issue.project)
 
     if missing_labels:
-        steps.append(MutationStep("deploy-labels", f"Deploy missing labels: {', '.join(missing_labels)}"))
+        steps.append(
+            MutationStep("deploy-labels", f"Deploy missing labels: {', '.join(missing_labels)}")
+        )
     if missing_templates:
         steps.append(
-            MutationStep("deploy-templates", f"Deploy missing templates: {', '.join(missing_templates)}")
+            MutationStep(
+                "deploy-templates", f"Deploy missing templates: {', '.join(missing_templates)}"
+            )
         )
     if mapping_missing:
         steps.append(

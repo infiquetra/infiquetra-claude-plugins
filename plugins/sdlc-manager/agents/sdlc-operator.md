@@ -160,8 +160,8 @@ interactive flow:
 # 1. Create the issue (use --web or non-interactive form)
 gh issue create --repo infiquetra/<repo> --template <type>.yml --title "..." --body "..."
 
-# 2. Apply hermes-task / hermes-not-actionable label
-gh issue edit <N> --repo infiquetra/<repo> --add-label hermes-task
+# 2. Apply template labels if the issue form did not apply them
+gh issue edit <N> --repo infiquetra/<repo> --add-label "hermes-task,needs-plan,<type-label>"
 
 # 3. Add to the default repo-mapped board, or pass --project for Jeff Intent / Asgard
 python3 "$SCRIPT" board add --repo <repo> --number <N>
@@ -283,7 +283,8 @@ python "$SCRIPT" milestones progress --repo <repo> --milestone <N>
 3. Map each item to the appropriate consumer repo
 4. For each item:
    a. Create the issue with the right template + sub-issue parent
-   b. Apply hermes-task label
+   b. Apply template labels: `hermes-task` + `needs-plan` + type label for actionable cards,
+      or `hermes-not-actionable` + context labels for non-actionable cards
    c. Add to the target board
    d. Set Initiative + Objective + Status fields
    e. Link as sub-issue of the Objective
@@ -295,9 +296,10 @@ flow — the interactive flow is one-at-a-time by design.
 
 ### Triage Batch
 
-"Triage" here means assigning a priority label + ensuring the card is on the Mount Olympus
-board, for issues filed without one. The `needs-triage` label is added when an issue is
-created without a priority. To find them:
+"Triage" here means assigning a priority label when needed, ensuring the card is on the
+right board, and filling project fields. Current actionable issue templates use `needs-plan`.
+The older `needs-triage` label can still appear from legacy auto-label fallback rules; treat it
+as a compatibility queue signal, not a current template default. To find legacy triage items:
 
 ```bash
 gh issue list --label needs-triage --state open --repo infiquetra/<repo>
@@ -305,7 +307,7 @@ gh issue list --label needs-triage --state open --repo infiquetra/<repo>
 gh search issues "label:needs-triage state:open org:infiquetra"
 ```
 
-For each `needs-triage` issue:
+For each issue that needs triage:
 
 ```bash
 # 1. Read issue content
@@ -358,8 +360,9 @@ targeting Jeff Intent or Asgard.
 
 ### How to handle Hermes-actionability?
 - Auto-applied by issue templates: `hermes-task` for actionable types
-  (capability/enhancement/defect/exploration/context-update); `hermes-not-actionable` for
-  objective
+  (capability/enhancement/defect); `hermes-not-actionable` for non-actionable types
+  (objective/exploration/context-update)
+- Current actionable templates also apply `needs-plan` and the type label
 - The orchestrator silently skips cards without `hermes-task`
 
 ### Initiative + Objective: NEVER use labels
@@ -390,7 +393,7 @@ For multi-step operations, report progress clearly:
 
 ```
 Step 1: Created capability issue #142 in athena-service
-Step 2: Applied labels (hermes-task, capability, needs-analysis)
+Step 2: Applied labels (hermes-task, capability, needs-plan)
 Step 3: Added to Mount Olympus board
 Step 4: Set Initiative=olympus-quality on #142 (project field, not label)
 Step 5: Set Objective=Auth Pilot on #142

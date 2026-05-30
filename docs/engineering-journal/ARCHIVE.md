@@ -10,6 +10,26 @@
 
 ## Shipped
 
+### Align sdlc-manager prompts with current SDLC schema and release metadata  {#sdlc-manager-prompt-alignment}
+
+**SHIPPED 2026-05-30** (commit pending).
+
+**Summary.** Aligned `sdlc-manager` operator prompts, command docs, issue/label references,
+release metadata, and marketplace registration with the current Jeff Intent, Asgard, and Mount
+Olympus operating model.
+
+**What shipped.**
+- Updated handwritten prompt/reference docs to use current actionable labels:
+  `hermes-task`, `needs-plan`, and the type label.
+- Kept `needs-analysis` and `needs-triage` documented only as legacy auto-label fallback labels.
+- Fixed `sdlc-operator` Hermes-actionability wording and output examples.
+- Bumped `sdlc-manager` plugin and marketplace metadata to `1.5.0`.
+- Added prompt/reference drift guards for metadata, labels, and actionability claims.
+
+**Refs.**
+- Ideation doc: [2026-05-30-sdlc-manager-alignment-pass.md](../ideation/2026-05-30-sdlc-manager-alignment-pass.md).
+- Learning: [Prompt docs need their own drift guards](LEARNINGS.md#prompt-docs-need-drift-guards).
+
 ### Add Infiquetra loop `/doc-review` command  {#infiquetra-loop-doc-review}
 
 **SHIPPED 2026-05-29** (commit pending).

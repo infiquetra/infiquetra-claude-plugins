@@ -87,14 +87,14 @@ has optional `Capability size (human planning hint)`.
 ## Script Command
 
 ```bash
-python3 ~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.0.0/scripts/sdlc_manager.py \
+python3 ~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.5.0/scripts/sdlc_manager.py \
   issue create --repo athena-service --type capability
 ```
 
 Then add to project:
 
 ```bash
-python3 ~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.0.0/scripts/sdlc_manager.py \
+python3 ~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.5.0/scripts/sdlc_manager.py \
   board add --repo athena-service --number <new-issue-number>
 ```
 

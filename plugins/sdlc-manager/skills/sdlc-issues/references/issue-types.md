@@ -81,10 +81,12 @@ If > 10 Capabilities: consider breaking into multiple Objectives or extending th
 | **Release** | Versioned delivery requiring coordination | "Release: Olympus v1.0" |
 | **Program** | OKR milestone or initiative phase | "Program: Q1 KR1 - User Adoption" |
 
-### Required Labels
-- `objective` (auto-applied by template)
-- `objective:{short-name}` (applied after creation, e.g., `objective:platform-launch`)
-- `initiative:{name}` (if part of a strategic initiative)
+### Template Labels and Project Fields
+- Current template labels: `objective`, `hermes-not-actionable`
+- Use the board's `Initiative` and `Objective` project fields for strategic grouping.
+- Do not apply `initiative:*` or `objective:*` labels to new work; those are legacy convention
+  labels only.
+- See `templates-reference.md` for the generated label and field contract.
 
 ### Examples
 **Good**:
@@ -126,8 +128,11 @@ or technical value. The primary unit of work in AI-native development.
 | M | 1-2 weeks | Notification system with message queue + workers |
 | L | 2-4 weeks | Identity verification service with multiple providers |
 
-### Required Labels
-- `capability`, `needs-analysis` (auto-applied by template)
+### Template Labels
+- Current template labels: `capability`, `hermes-task`, `needs-plan`
+- Do not use `needs-analysis` as the current template default; it may still appear from legacy
+  auto-label fallback rules.
+- See `templates-reference.md` for the generated label and field contract.
 
 ### Examples
 **Good**:
@@ -170,8 +175,11 @@ For optimization, refinement, refactoring, and incremental improvements.
 | 2-3 days | Moderate | Add caching, improve error handling |
 | 4-5 days | Complex | Significant refactor, performance optimization |
 
-### Required Labels
-- `enhancement`, `needs-analysis` (auto-applied by template)
+### Template Labels
+- Current template labels: `enhancement`, `hermes-task`, `needs-plan`
+- Do not use `needs-analysis` as the current template default; it may still appear from legacy
+  auto-label fallback rules.
+- See `templates-reference.md` for the generated label and field contract.
 
 ### Examples
 **Good**:
@@ -212,9 +220,13 @@ Hours to 2 days. Priority determines SLA:
 | Medium | 3 days | Minor functionality broken | Validation too strict, UI glitch |
 | Low | When capacity | Cosmetic or rare edge case | Typo, rare race condition |
 
-### Required Labels
-- `defect`, `needs-triage` (auto-applied by template)
-- `critical` / `high-priority` / `medium-priority` / `low-priority` (add manually)
+### Template Labels
+- Current template labels: `defect`, `hermes-task`, `needs-plan`
+- Add exactly one priority label manually when the defect severity is known:
+  `critical`, `high-priority`, `medium-priority`, or `low-priority`.
+- Do not use `needs-triage` as the current template default; it may still appear from legacy
+  auto-label fallback rules.
+- See `templates-reference.md` for the generated label and field contract.
 
 ### Examples
 **Good**:
@@ -247,8 +259,10 @@ decisions. Produces knowledge, not production code.
 ### Size / Duration
 1-3 days maximum (timebox strictly).
 
-### Required Labels
-- `exploration`, `research` (auto-applied by template)
+### Template Labels
+- Current template labels: `exploration`, `research`, `hermes-not-actionable`
+- Exploration cards are context for research and decisions, not Hermes task cards.
+- See `templates-reference.md` for the generated label and field contract.
 
 ### Exploration Outcomes
 - **Clear Recommendation**: Document in Blueprint, create ADR, create follow-up Capability
@@ -286,8 +300,10 @@ AI effectiveness — Claude Code relies on up-to-date context in the blueprint r
 ### Size / Duration
 Hours to 1 day. Should accompany every Capability.
 
-### Required Labels
-- `context-update`, `documentation` (auto-applied by template)
+### Template Labels
+- Current template labels: `context-update`, `documentation`, `hermes-not-actionable`
+- Context Update cards are documentation/context work items, not Hermes task cards.
+- See `templates-reference.md` for the generated label and field contract.
 
 ### Where to Document
 | Content Type | Location |

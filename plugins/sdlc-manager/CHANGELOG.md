@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## [1.5.0] — 2026-05-30
+
+### Migration notes
+- **No breaking CLI changes.** Existing commands continue to work. Operators should update
+  installed cache paths from `sdlc-manager/1.0.0` or `1.4.0` to `sdlc-manager/1.5.0` after
+  installing this release.
+- Current actionable issue templates use `hermes-task`, `needs-plan`, and the type label.
+  `needs-analysis` and `needs-triage` remain documented only as legacy auto-label fallback
+  labels from `labels.json`.
+
 ### Changed
 - Added vendored `config/sdlc-schema.json` and taught board/metric helpers to consume schema-backed boards, workflows, WIP limits, and terminal statuses.
 - Added live Jeff Intent (#3) and Asgard (#2) project mappings plus explicit `--project` targeting for board add/move.
@@ -9,6 +19,10 @@
 - Preserved read compatibility for live/legacy Olympus statuses such as `In Progress`, `In Development`, and `Deployed` while guiding new movement to the current schema.
 - Synced `sdlc-issues` template guidance with canonical issue forms in `infiquetra-sdlc`, including current Hermes actionable labels and required card sections.
 - Added a deterministic template documentation generator plus drift guard tests for `templates-reference.md`.
+- Restored legacy rollout WIP-limit fallback when schema-backed limits are absent.
+- Aligned `sdlc-operator`, `/sdlc-triage`, and issue/label references so prompts no longer teach
+  stale actionable labels or initiative/objective labels as current practice.
+- Bumped plugin and marketplace metadata to `1.5.0`.
 
 ## [1.4.0] — 2026-05-04
 

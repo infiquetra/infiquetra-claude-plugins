@@ -1,11 +1,11 @@
 {
   "name": "sdlc-manager",
-  "version": "1.4.0",
-  "description": "SDLC management for Mount Olympus: Kanban boards, issues, labels, flow metrics, milestones, project fields, sub-issues, and card validation.",
+  "version": "1.5.0",
+  "description": "SDLC management for Jeff Intent, Asgard, and Mount Olympus: board schemas, issues, labels, flow metrics, milestones, project fields, sub-issues, and card validation.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
   "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-  "keywords": ["sdlc", "github-projects", "kanban", "issues", "labels", "metrics", "milestones", "sub-issues", "card-validator", "mount-olympus"]
+  "keywords": ["sdlc", "github-projects", "kanban", "issues", "labels", "metrics", "milestones", "sub-issues", "card-validator", "mount-olympus", "asgard", "jeff-intent"]
 }

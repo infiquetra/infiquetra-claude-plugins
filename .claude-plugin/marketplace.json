@@ -345,8 +345,8 @@
     {
       "name": "sdlc-manager",
       "source": "./plugins/sdlc-manager",
-      "version": "1.0.0",
-      "description": "SDLC workflow manager for the Mount Olympus all-agent team. Kanban board management, issue lifecycle, flow metrics, and Beads coordination via Python CLI. Skills: sdlc-board, sdlc-issues, sdlc-labels, sdlc-metrics, sdlc-milestones, sdlc-rollout.",
+      "version": "1.5.0",
+      "description": "SDLC workflow manager for Infiquetra's Jeff Intent, Asgard, and Mount Olympus boards. Schema-backed board management, issue lifecycle, project fields, sub-issues, labels, flow metrics, milestones, and rollout helpers via Python CLI.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -358,8 +358,10 @@
         "kanban",
         "project-management",
         "github-projects",
-        "beads",
         "mount-olympus",
+        "asgard",
+        "jeff-intent",
+        "project-fields",
         "workflow"
       ],
       "category": "development"

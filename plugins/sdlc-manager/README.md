@@ -25,7 +25,7 @@ All operations run locally via the `gh` CLI, providing:
 ### Script Location (after plugin install)
 
 ```bash
-SCRIPT="$HOME/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.0.0/scripts/sdlc_manager.py"
+SCRIPT="$HOME/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.5.0/scripts/sdlc_manager.py"
 ```
 
 Or from source:

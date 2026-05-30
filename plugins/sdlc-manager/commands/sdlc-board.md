@@ -38,7 +38,7 @@ and blockers.
 ## Script Commands
 
 ```bash
-SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.0.0/scripts/sdlc_manager.py
+SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/sdlc-manager/1.5.0/scripts/sdlc_manager.py
 
 python3 $SCRIPT board view --project mount-olympus
 python3 $SCRIPT board wip --project mount-olympus

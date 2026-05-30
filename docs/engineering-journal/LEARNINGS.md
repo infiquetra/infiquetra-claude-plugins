@@ -25,6 +25,43 @@
 
 ---
 
+## 2026-05-30
+
+### Prompt docs need their own drift guards  {#prompt-docs-need-drift-guards}
+
+**Context.** `sdlc-manager` had already learned to consume the current `infiquetra-sdlc`
+board schema and generated template reference, but handwritten prompts and references still taught
+old label behavior.
+
+**Evidence.** `plugins/sdlc-manager/config/sdlc-schema.json` matched
+`../infiquetra-sdlc/config/sdlc-schema.json`, and
+`uv run python plugins/sdlc-manager/scripts/sync_template_docs.py --check` passed. The remaining
+drift was in handwritten files such as
+`plugins/sdlc-manager/agents/sdlc-operator.md`,
+`plugins/sdlc-manager/commands/sdlc-triage.md`, and
+`plugins/sdlc-manager/skills/sdlc-issues/references/issue-types.md`.
+
+**Mechanism.** Generated docs can stay correct while nearby prompt text keeps stale duplicated
+facts. Agents read both surfaces, so a correct generated reference is insufficient if the operator
+prompt still says exploration/context-update are `hermes-task` or examples still apply
+`needs-analysis` as a current template label.
+
+**Fix.** Aligned the handwritten prompts/references with the generated template contract and added
+`plugins/sdlc-manager/tests/test_prompt_alignment.py` to pin the current metadata,
+Hermes-actionability, and label wording.
+
+**Validation.** `uv run python plugins/sdlc-manager/scripts/sync_template_docs.py --check`,
+`uv run ruff check plugins/sdlc-manager/tests/test_prompt_alignment.py`, and
+`uv run pytest plugins/sdlc-manager/tests tests/test_sdlc_manager.py -q` pass.
+
+**Generalizable rule.** When a plugin mixes generated references with human-authored prompts, add
+drift guards for the human-authored prompts too; otherwise agents can keep following stale
+instructions even while generated docs are correct.
+
+**Refs.** ARCHIVE [sdlc-manager prompt alignment](ARCHIVE.md#sdlc-manager-prompt-alignment).
+
+---
+
 ## 2026-05-29
 
 ### Schema migrations need legacy fallback contract tests  {#schema-migration-legacy-fallbacks}

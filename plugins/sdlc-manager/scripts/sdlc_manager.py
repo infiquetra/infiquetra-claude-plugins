@@ -2908,7 +2908,9 @@ def _source_from_branch_ref(ref: str, root: Path | None = None) -> SourceArtifac
         branch = _run_git_command(["git", "branch", "--show-current"], root) or "HEAD"
     head = _run_git_command(["git", "rev-parse", branch], root)
     try:
-        upstream = _run_git_command(["git", "rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}"], root)
+        upstream = _run_git_command(
+            ["git", "rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}"], root
+        )
     except RuntimeError:
         upstream = "none"
     status = _run_git_command(["git", "status", "--short", "--branch"], root)
@@ -2959,9 +2961,7 @@ def _source_matches_hint(path: Path, text: str, hint: str) -> bool:
         "for",
     }
     terms = [
-        term
-        for term in re.findall(r"[a-z0-9][a-z0-9-]{2,}", lower)
-        if term not in ignored_terms
+        term for term in re.findall(r"[a-z0-9][a-z0-9-]{2,}", lower) if term not in ignored_terms
     ]
     if not terms:
         return True

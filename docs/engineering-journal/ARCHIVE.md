@@ -12,7 +12,7 @@
 
 ### Asgard/Olympus issue readiness workflow for `sdlc-manager`  {#asgard-olympus-issue-readiness}
 
-**SHIPPED 2026-05-30** (commit pending).
+**SHIPPED 2026-05-30** (PR #159, commit `74cd372`).
 
 **Summary.** Added a prepared issue workflow that turns source text into reviewable Asgard or
 Mount Olympus drafts, then creates issues only after readiness checks and a confirmed mutation
@@ -36,7 +36,7 @@ plan.
 
 ### Align sdlc-manager prompts with current SDLC schema and release metadata  {#sdlc-manager-prompt-alignment}
 
-**SHIPPED 2026-05-30** (commit pending).
+**SHIPPED 2026-05-30** (PR #159, commit `74cd372`).
 
 **Summary.** Aligned `sdlc-manager` operator prompts, command docs, issue/label references,
 release metadata, and marketplace registration with the current Jeff Intent, Asgard, and Mount

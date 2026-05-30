@@ -45,11 +45,13 @@ and idempotent recovery.
 
 **Fix.** Added prepared drafts, readiness profiles, mutation planning, repo prerequisite repair,
 mapping PR handling, natural-language prompt guidance, and plugin metadata for `sdlc-manager`
-1.6.0.
+1.6.0 in PR #159, commit `74cd372`.
 
-**Validation.** `uv run pytest -q`, `uv run ruff check .`, `uv run python
-marketplace/validator/validate.py`, `uv run python
-plugins/sdlc-manager/scripts/sync_template_docs.py --check`, and `git diff --check` pass.
+**Validation.** `uv run pytest -q`, `uv run ruff check .`, `uv run python -m mypy plugins/
+scripts/ tests/ --ignore-missing-imports`, `uv run python -m ruff format --check .`,
+`uv run python marketplace/validator/validate.py`, `uv run python
+plugins/sdlc-manager/scripts/sync_template_docs.py --check`, and `git diff --check` pass. The
+post-merge `main` CI run `26685668123` also passed.
 
 **Generalizable rule.** When a plugin command turns ambiguous human or agent text into external
 side effects, make a reviewable artifact the boundary and re-validate it at mutation time.

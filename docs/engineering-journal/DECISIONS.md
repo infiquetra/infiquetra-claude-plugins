@@ -24,7 +24,7 @@
 
 ## 2026-05-30
 
-### Prepared issue workflow uses draft/sidecar boundary plus confirmed mutation (commit pending)  {#prepared-issue-workflow-boundary}
+### Prepared issue workflow uses draft/sidecar boundary plus confirmed mutation (commit `74cd372`)  {#prepared-issue-workflow-boundary}
 
 **Decision.** Add `sdlc-manager issue prepare` and `issue create-prepared` as separate steps.
 `issue prepare` writes a markdown draft and JSON sidecar; `issue create-prepared` re-runs

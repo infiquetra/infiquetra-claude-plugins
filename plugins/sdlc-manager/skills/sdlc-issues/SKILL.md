@@ -159,7 +159,7 @@ Natural-language routing rules:
 - Do not bypass prepared readiness checks with ad hoc `gh issue create` when the prompt asks to
   create from source text.
 - Do not suggest `/loop` to a team recipient. Use `/plan <issue>` or `/work <issue>` only when the
-  recipient has `infiquetra-loop`.
+  recipient has `infiquetra-lifecycle`.
 
 Safe starting statuses:
 

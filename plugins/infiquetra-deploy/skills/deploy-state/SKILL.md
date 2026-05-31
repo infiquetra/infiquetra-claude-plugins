@@ -8,7 +8,7 @@ description: |
 # Deploy State
 
 Use this skill for Infiquetra repository deployment work. It is intentionally separate from
-`infiquetra-loop` because deployment mutation deserves a hard boundary.
+`infiquetra-lifecycle` because deployment mutation deserves a hard boundary.
 
 ## Source Of Truth
 
@@ -52,7 +52,7 @@ Durable evidence belongs in the repository:
 - Issue comments through `sdlc-manager` when an SDLC issue exists.
 - PR comments when deployment is tied to a PR.
 
-Runtime scratch belongs under ignored local state such as `.claude/infiquetra-loop/` or a
+Runtime scratch belongs under ignored local state such as `.claude/infiquetra-lifecycle/` or a
 deployment-specific cache. Do not commit raw API responses or validator JSON.
 
 ## Script Helpers

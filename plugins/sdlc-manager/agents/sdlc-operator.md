@@ -181,12 +181,12 @@ Prepared drafts are durable markdown files with JSON sidecars under `docs/sdlc-i
 `issue prepare --from` accepts local paths, GitHub issue/PR URLs, branch refs, and natural search
 hints such as "from the brainstorm" or "handoff the plan". Prepared drafts include
 `handoff_maturity` and source metadata so the receiving team can execute without
-`infiquetra-loop`. `issue create-prepared` re-runs readiness, renders every side effect before
+`infiquetra-lifecycle`. `issue create-prepared` re-runs readiness, renders every side effect before
 mutation, repairs missing labels/templates after confirmation, opens a mapping PR for unmapped
 repos, and starts new cards in safe statuses: Asgard `Shaping`, Olympus `Backlog`. If team,
 project, or source artifact is ambiguous, ask the operator; do not guess or bypass this path with
 direct `gh issue create`. Suggest `/plan <issue>` or `/work <issue>` only as optional
-`infiquetra-loop` follow-up commands; do not suggest `/loop` for team recipients.
+`infiquetra-lifecycle` follow-up commands; do not suggest `/loop` for team recipients.
 
 For batch issue creation from a blueprint, prefer the manual lifecycle below over the
 interactive flow:

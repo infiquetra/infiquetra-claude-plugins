@@ -1,5 +1,12 @@
 # Changelog — sdlc-manager
 
+## 1.6.1 - 2026-05-31
+
+### Changed
+- Tracked the `infiquetra-loop` → `infiquetra-lifecycle` rename: updated the ignored runtime-state
+  path to `.claude/infiquetra-lifecycle/` and refreshed plugin references in `/create-issue`, the
+  `sdlc-operator` agent, and the `sdlc-issues` skill.
+
 ## Unreleased
 
 ### Added

@@ -1,0 +1,22 @@
+{
+  "name": "infiquetra-lifecycle",
+  "version": "0.2.0",
+  "description": "Infiquetra engineering lifecycle plugin spanning Think (office-hours, ideate, brainstorm, strategy), Plan & execute (plan, work, qa, retro, resume), Hand off (handoff to sdlc-manager), Review (founder, ceo, doc, code), and Improve & route (optimize, loop).",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": [
+    "lifecycle",
+    "sdlc-workflow",
+    "strategy",
+    "ideation",
+    "brainstorm",
+    "handoff",
+    "doc-review",
+    "code-review",
+    "optimize",
+    "sdlc"
+  ]
+}

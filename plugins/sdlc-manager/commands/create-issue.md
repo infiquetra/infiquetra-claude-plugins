@@ -69,5 +69,5 @@ When the user invokes `/create-issue`:
 5. If the user gives `--maturity`, pass it through to `issue prepare --maturity`.
 6. If creating from an existing prepared draft, run `issue create-prepared`; show the mutation plan and require confirmation unless the user explicitly requested the confirmed mutation.
 7. If target team or project is ambiguous, ask. Do not guess between Asgard and Mount Olympus.
-8. Ensure the prepared issue is self-contained for a recipient without `infiquetra-loop`.
-9. If the recipient does have `infiquetra-loop`, suggest `/plan <issue>` for `idea-ready` or `requirements-ready`, and `/work <issue>` for `plan-ready` or `resume-ready`.
+8. Ensure the prepared issue is self-contained for a recipient without `infiquetra-lifecycle`.
+9. If the recipient does have `infiquetra-lifecycle`, suggest `/plan <issue>` for `idea-ready` or `requirements-ready`, and `/work <issue>` for `plan-ready` or `resume-ready`.

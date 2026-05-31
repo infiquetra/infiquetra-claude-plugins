@@ -19,7 +19,7 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "sdlc-manager")
 
     assert plugin_json["name"] == "sdlc-manager"
-    assert plugin_json["version"] == "1.6.0"
+    assert plugin_json["version"] == "1.6.1"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/sdlc-manager"
     assert "Jeff Intent" in entry["description"]

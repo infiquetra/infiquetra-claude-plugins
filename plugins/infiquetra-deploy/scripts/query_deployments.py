@@ -83,20 +83,42 @@ def detect_drift(tags_by_env: Mapping[str, str | None]) -> list[str]:
     return [f"{env}: {version}" for env, version in versions.items()]
 
 
+def is_tag_ref(ref: str | None) -> bool:
+    """True when ``ref`` is an Infiquetra deployment tag, not a branch/SHA ref.
+
+    GitHub Actions ``environment:`` job keys auto-create Deployment records whose ref is a
+    branch name or SHA (e.g. ``main``). Only records whose ref matches a known tag prefix
+    followed by a version digit are real tag-promotion deployments.
+    """
+
+    if not ref:
+        return False
+    for prefix in TAG_PREFIXES:
+        if ref.startswith(prefix):
+            remainder = ref[len(prefix) :]
+            return bool(remainder) and remainder[0].isdigit()
+    return False
+
+
 def latest_deployment(repo: str, env: str) -> dict[str, Any] | None:
     payload = run(
         [
             "gh",
             "api",
+            "--method",
+            "GET",
             f"repos/{repo}/deployments",
             "-f",
             f"environment={env}",
             "-f",
-            "per_page=1",
+            "per_page=20",
         ]
     )
-    data = json.loads(payload or "[]")
-    return data[0] if data else None
+    data: list[dict[str, Any]] = json.loads(payload or "[]")
+    for record in data:  # GitHub returns deployment records newest-first
+        if is_tag_ref(str(record.get("ref") or "")):
+            return record
+    return None
 
 
 def render_status(repo: str, deployments: Mapping[str, dict[str, Any] | None]) -> str:

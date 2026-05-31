@@ -16,7 +16,7 @@ Claude Code plugins for Infiquetra development workflows.
 | [python-toolkit](plugins/python-toolkit/) | Python patterns for serverless apps: Lambda Powertools, DynamoDB, error handling | Development |
 | [sdk-lifecycle](plugins/sdk-lifecycle/) | SDK scaffolding, documentation, security review, and registry publishing | Development |
 | [infiquetra-deploy](plugins/infiquetra-deploy/) | Tag-promotion deploy, status, rollback, hotfix, and release-note workflows | Operations |
-| [infiquetra-loop](plugins/infiquetra-loop/) | Infiquetra lifecycle loop for strategy, planning, work, review, QA, retro, and resume | Development |
+| [infiquetra-lifecycle](plugins/infiquetra-lifecycle/) | Engineering lifecycle: Think, Plan & execute, Hand off, Review, and Improve & route | Development |
 
 ## Installation
 
@@ -91,10 +91,18 @@ python3 plugins/infiquetra-deploy/scripts/mint_tag.py \
     --dry-run
 ```
 
-### Infiquetra Loop
+### Infiquetra Lifecycle
+Commands carry work through five lifecycle phases:
+
+- **Think:** `/office-hours`, `/ideate`, `/brainstorm`, `/strategy`
+- **Plan & execute:** `/plan`, `/work`, `/qa`, `/retro`, `/resume`
+- **Hand off:** `/handoff` → `sdlc-manager`
+- **Review:** `/founder-review`, `/ceo-review`, `/doc-review`, `/code-review`
+- **Improve & route:** `/optimize`, `/loop`
+
 Use `/loop` to route work to plan only, PR, merge, or nonprod deploy. Durable artifacts live in
 repo docs such as `docs/plans/`, `docs/work-sessions/`, and `docs/engineering-journal/`; raw
-runtime state stays under ignored `.claude/infiquetra-loop/`.
+runtime state stays under ignored `.claude/infiquetra-lifecycle/`.
 
 ### Splunk
 ```bash

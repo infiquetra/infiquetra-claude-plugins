@@ -1,6 +1,6 @@
 {
   "name": "sdlc-manager",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "SDLC management for Jeff Intent, Asgard, and Mount Olympus: prepared issue drafts, board schemas, labels, project fields, sub-issues, metrics, and card validation.",
   "author": {
     "name": "Infiquetra",

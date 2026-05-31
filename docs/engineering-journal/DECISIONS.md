@@ -22,7 +22,36 @@
 
 ---
 
-## 2026-05-30
+## 2026-05-31
+
+### Rename `infiquetra-loop` → `infiquetra-lifecycle` (commit `f300fd9`)  {#rename-loop-to-lifecycle}
+
+**Decision.** Rename the plugin to `infiquetra-lifecycle`. "Loop" named only the `/loop` router
+command, not the idea-to-ship lifecycle the plugin actually spans (Think → Plan & execute → Hand
+off → Review → Improve & route). Renamed the ignored runtime-state dir to
+`.claude/infiquetra-lifecycle/` and the handoff-envelope field `loop_owner` → `lifecycle_owner`,
+with `sdlc-manager` updated in lockstep (its 4 hardcoded state-path references). Kept the `/loop`
+command name unchanged — it's one verb in the lifecycle, not the whole thing. Surfaced the
+five-phase command grouping in the plugin description, both READMEs, and the changelog so users see
+the categorization.
+
+**Rejected alternatives.**
+- *`infiquetra-flow`.* Rejected: still reads too close to "loop" and is vaguer about scope.
+- *`infiquetra-sdlc`.* Rejected: collides conceptually with the existing `sdlc-manager` plugin,
+  blurring the boundary (lifecycle workflow vs GitHub issue/board ownership).
+- *`infiquetra-cadence` / `-forge` / `-workbench`.* Rejected: evocative but less self-describing
+  than "lifecycle".
+- *Rewrite the old name in dated historical docs (brainstorms, ideation, plans, reviews,
+  work-sessions, `ARCHIVE.md`).* Rejected per the journal rule "never silently overwrite history" —
+  those artifacts record what the plugin was called at the time.
+
+**Rationale.** The name should describe what the plugin does to a first-time user. "Lifecycle"
+matches the description and command taxonomy; "loop" undersold it.
+
+**Revisit when.** The plugin's scope narrows back to pure routing/iteration, or a clearer
+single-word name for "full engineering lifecycle" emerges.
+
+**Refs.** Plugin `0.2.0`, `sdlc-manager` `1.6.1`, marketplace metadata `2.3.0`.
 
 ### SDLC handoff issue artifacts belong to `sdlc-manager` (commit `2fc317e`)  {#sdlc-handoff-ownership-boundary}
 

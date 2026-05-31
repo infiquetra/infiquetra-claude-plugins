@@ -1,0 +1,22 @@
+{
+  "name": "infiquetra-lifecycle",
+  "version": "0.2.0",
+  "description": "Infiquetra engineering lifecycle plugin spanning five phases: Think, Plan & execute, Hand off to sdlc-manager, Review, and Improve & route (covers office-hours through resume, plus /loop routing).",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": [
+    "lifecycle",
+    "sdlc-workflow",
+    "strategy",
+    "ideation",
+    "brainstorm",
+    "handoff",
+    "doc-review",
+    "code-review",
+    "optimize",
+    "sdlc"
+  ]
+}

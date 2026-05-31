@@ -294,10 +294,10 @@
       "category": "automation"
     },
     {
-      "name": "infiquetra-loop",
-      "source": "./plugins/infiquetra-loop",
-      "version": "0.1.0",
-      "description": "Infiquetra lifecycle workflow plugin for strategy, planning, SDLC handoff, work execution, review, QA, and resume.",
+      "name": "infiquetra-lifecycle",
+      "source": "./plugins/infiquetra-lifecycle",
+      "version": "0.2.0",
+      "description": "Infiquetra engineering lifecycle plugin spanning five phases: Think, Plan & execute, Hand off to sdlc-manager, Review, and Improve & route (covers office-hours through resume, plus /loop routing).",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -305,8 +305,8 @@
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
       "keywords": [
-        "loop",
         "lifecycle",
+        "sdlc-workflow",
         "strategy",
         "ideation",
         "brainstorm",
@@ -345,7 +345,7 @@
     {
       "name": "sdlc-manager",
       "source": "./plugins/sdlc-manager",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "description": "SDLC workflow manager for Infiquetra's Jeff Intent, Asgard, and Mount Olympus boards. Adds prepared issue drafts, board management, project fields, labels, flow metrics, milestones, and rollout helpers via Python CLI.",
       "author": {
         "name": "Infiquetra",
@@ -414,5 +414,5 @@
       "category": "development"
     }
   ],
-  "version": "2.2.0"
+  "version": "2.3.0"
 }

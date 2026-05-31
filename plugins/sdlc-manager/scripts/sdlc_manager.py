@@ -2671,7 +2671,7 @@ _HANDOFF_MATURITY_CHOICES = (
     "deferred-context",
 )
 _SOURCE_SEARCH_DIRS = (
-    Path(".claude") / "infiquetra-loop",
+    Path(".claude") / "infiquetra-lifecycle",
     Path("docs") / "plans",
     Path("docs") / "brainstorms",
     Path("docs") / "ideation",
@@ -2687,7 +2687,7 @@ _SOURCE_HINT_DIRS = {
     "ideation": (Path("docs") / "ideation",),
     "review": (Path("docs") / "reviews",),
     "work": (Path("docs") / "work-sessions",),
-    "resume": (Path("docs") / "work-sessions", Path(".claude") / "infiquetra-loop"),
+    "resume": (Path("docs") / "work-sessions", Path(".claude") / "infiquetra-lifecycle"),
     "draft": (Path("docs") / "sdlc-issue-drafts",),
 }
 
@@ -2812,7 +2812,7 @@ def _infer_maturity_from_path(path: Path) -> str:
         return "plan-ready"
     if "docs/work-sessions/" in normalized or "docs/sdlc-issue-drafts/" in normalized:
         return "resume-ready"
-    if ".claude/infiquetra-loop/" in normalized:
+    if ".claude/infiquetra-lifecycle/" in normalized:
         return "resume-ready"
     return "requirements-ready"
 
@@ -2831,7 +2831,7 @@ def _infer_kind_from_path(path: Path) -> str:
         return "work-session"
     if "docs/sdlc-issue-drafts/" in normalized:
         return "prepared-draft"
-    if ".claude/infiquetra-loop/" in normalized:
+    if ".claude/infiquetra-lifecycle/" in normalized:
         return "loop-state"
     return "local-file"
 

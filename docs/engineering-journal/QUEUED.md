@@ -161,3 +161,23 @@ independent read-only review, exploration, or implementation-plan critique.
 - This plan's adoption of the journal in `infiquetra-claude-plugins` is **not** the plugin — it's a hand-built journal for this repo's own meta-work. The plugin work is downstream and uses this repo + home-lab as proven references when it's built.
 
 ---
+
+## P3 — nice-to-have
+
+### `deploy-status` per_page lookback can miss old tag refs  {#deploy-status-perpage-cap}
+
+**Priority.** P3.
+
+**Effort.** ~1 hour.
+
+**Worth it when.** A tag-promotion repo accrues more than 20 CI-auto `environment:`-key
+Deployment records (branch/SHA refs) since its last real tag promotion. Then
+`latest_deployment()` (which fetches `per_page=20` and filters to the newest tag-ref record)
+scrolls the real tag off the page and reports "no deployment found".
+
+**Context.**
+- Introduced by the #161 fix (`query_deployments.py latest_deployment()`): GET + `is_tag_ref()`
+  filtering on a single 20-record page.
+- Current behavior degrades gracefully (no crash, just a missing env line).
+- Fix options when triggered: paginate until a tag-ref is found or N pages exhausted, or use the
+  `environment` filter combined with a larger page. See [LEARNINGS.md#gh-api-f-defaults-post](LEARNINGS.md#gh-api-f-defaults-post).

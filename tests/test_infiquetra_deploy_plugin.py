@@ -105,3 +105,89 @@ def test_query_deployments_strips_infiquetra_tag_prefixes() -> None:
     assert query_deployments.strip_prefix("staging-v1.2.3") == "1.2.3"
     assert query_deployments.strip_prefix("production-v1.2.3") == "1.2.3"
     assert query_deployments.strip_prefix("rollback-production-v1.2.3") == "1.2.3"
+
+
+def test_is_tag_ref_accepts_tags_and_rejects_branches() -> None:
+    query_deployments = _load_module("query_deployments.py")
+
+    assert query_deployments.is_tag_ref("v0.1.0")
+    assert query_deployments.is_tag_ref("nonprod-v1.2.3")
+    assert query_deployments.is_tag_ref("staging-v1.2.3")
+    assert query_deployments.is_tag_ref("production-v1.2.3")
+    assert query_deployments.is_tag_ref("rollback-production-v1.2.3")
+
+    # Branch/SHA refs and loose v-prefixed branch names are rejected.
+    assert not query_deployments.is_tag_ref("main")
+    assert not query_deployments.is_tag_ref("feature/deploy")
+    assert not query_deployments.is_tag_ref("version-bump")
+    assert not query_deployments.is_tag_ref("9f8c1de")
+    assert not query_deployments.is_tag_ref("")
+    assert not query_deployments.is_tag_ref(None)
+
+
+def test_latest_deployment_issues_get_and_selects_newest_tag_ref(monkeypatch) -> None:
+    query_deployments = _load_module("query_deployments.py")
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        captured["cmd"] = cmd
+        # GitHub returns newest-first: a branch-ref CI deployment newer than the real tag.
+        return json.dumps(
+            [
+                {"ref": "main", "sha": "9f8c1de"},
+                {"ref": "v0.1.0", "sha": "abc1234"},
+            ]
+        )
+
+    monkeypatch.setattr(query_deployments, "run", fake_run)
+
+    deployment = query_deployments.latest_deployment("infiquetra/campps-identity-access", "nonprod")
+
+    assert deployment is not None
+    assert deployment["ref"] == "v0.1.0"
+
+    # AC6: the gh call must be a GET so the HTTP 422 (POST create) cannot regress.
+    cmd = captured["cmd"]
+    assert cmd[:2] == ["gh", "api"]
+    method_index = cmd.index("--method")
+    assert cmd[method_index + 1] == "GET"
+    assert "environment=nonprod" in cmd
+    assert "per_page=20" in cmd
+
+
+def test_latest_deployment_returns_none_without_tag_refs(monkeypatch) -> None:
+    query_deployments = _load_module("query_deployments.py")
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        return json.dumps([{"ref": "main"}, {"ref": "dependabot/pip/foo"}])
+
+    monkeypatch.setattr(query_deployments, "run", fake_run)
+
+    assert query_deployments.latest_deployment("infiquetra/x", "nonprod") is None
+
+
+def test_render_status_reports_and_omits_drift() -> None:
+    query_deployments = _load_module("query_deployments.py")
+
+    drifted = query_deployments.render_status(
+        "infiquetra/x",
+        {
+            "nonprod": {"ref": "nonprod-v0.1.1"},
+            "staging": {"ref": "staging-v0.1.0"},
+            "production": {"ref": "production-v0.1.0"},
+        },
+    )
+    assert "drift:" in drifted
+    assert "drift: none detected" not in drifted
+    assert "0.1.1" in drifted
+
+    aligned = query_deployments.render_status(
+        "infiquetra/x",
+        {
+            "nonprod": {"ref": "nonprod-v0.1.0"},
+            "staging": {"ref": "staging-v0.1.0"},
+            "production": {"ref": "production-v0.1.0"},
+        },
+    )
+    assert "drift: none detected" in aligned

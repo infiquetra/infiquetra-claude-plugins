@@ -27,6 +27,16 @@
 
 ## 2026-05-30
 
+### `gh api` with `-f` silently defaults to POST — breaks read-only queries  {#gh-api-f-defaults-post}
+
+**Context.** `/deploy-status` was non-functional: `query_deployments.py` `latest_deployment()` called `gh api repos/{repo}/deployments -f environment={env} -f per_page=1` and got `HTTP 422 "ref wasn't supplied"`. The intent was to *read* the deployments list; the API was rejecting it as a malformed *create*.
+**Evidence.** Issue #161; `plugins/infiquetra-deploy/scripts/query_deployments.py:86` (pre-fix). Live repro against `infiquetra/campps-identity-access` returned 422; the GET form `gh api --method GET repos/infiquetra/campps-identity-access/deployments -f environment=nonprod -f per_page=1 --jq '.[0].ref'` returns `v0.1.0`.
+**Mechanism.** `gh api` chooses the HTTP method by *inference*: with no `--method`, the presence of any `-f`/`-F` field flag flips the default from GET to **POST** (the flags are assumed to be a request body). `POST repos/{repo}/deployments` is the create-deployment endpoint, which requires a `ref` — hence 422. With `--method GET` explicit, `gh` instead serializes `-f` params into the query string.
+**Fix.** Added `--method GET` and a tag-ref filter; commit on `fix/deploy-status-query-deployments`. Validated: live smoke prints `nonprod: v0.1.0`, no 422; regression test asserts `--method GET` is present so it can't silently revert to POST.
+**Second defect (same fix).** Even as a GET, taking the newest record per env was wrong — GitHub Actions `environment:` job keys auto-create Deployment objects with branch/SHA refs (`main`, PR branches) that interleave with real tag refs. Fixed by `is_tag_ref()` (known prefix + version digit) selecting the newest *tag-ref* record. See [QUEUED: per_page lookback cap](QUEUED.md#deploy-status-perpage-cap).
+**Generalizable rule.** Any `gh api` call meant to *read* must pass `--method GET` explicitly the moment it also passes `-f`/`-F` (e.g. for query params) — otherwise gh turns it into a POST. When asserting against an external API in tests, assert the *method*, not just the URL/params.
+**Refs.** Issue #161; [QUEUED.md#deploy-status-perpage-cap](QUEUED.md#deploy-status-perpage-cap).
+
 ### Prepared issue creation needs an artifact boundary before mutation  {#prepared-issue-artifact-boundary}
 
 **Context.** `sdlc-manager` needed to turn rough source text into Asgard or Mount Olympus issues

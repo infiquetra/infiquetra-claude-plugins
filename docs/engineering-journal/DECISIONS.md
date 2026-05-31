@@ -24,7 +24,7 @@
 
 ## 2026-05-31
 
-### Rename `infiquetra-loop` → `infiquetra-lifecycle` (commit `f300fd9`)  {#rename-loop-to-lifecycle}
+### Rename `infiquetra-loop` → `infiquetra-lifecycle` (commit `0ed70f2`)  {#rename-loop-to-lifecycle}
 
 **Decision.** Rename the plugin to `infiquetra-lifecycle`. "Loop" named only the `/loop` router
 command, not the idea-to-ship lifecycle the plugin actually spans (Think → Plan & execute → Hand

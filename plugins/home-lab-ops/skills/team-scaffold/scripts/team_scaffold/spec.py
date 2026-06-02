@@ -10,6 +10,7 @@ The full per-profile RUNTIME config (model, skills, voice, fallback_providers,
 is authored not generated — see profiles_validate.py). The spec deliberately
 does NOT duplicate it.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -66,8 +67,7 @@ class TeamSpec:
         if not self.name or "/" in self.name or self.name != self.name.lower():
             problems.append(f"team.name must be a lowercase slug, got {self.name!r}")
         if self.host_group not in HOST_GROUPS:
-            problems.append(
-                f"team.host_group {self.host_group!r} not in {sorted(HOST_GROUPS)}")
+            problems.append(f"team.host_group {self.host_group!r} not in {sorted(HOST_GROUPS)}")
         if not self.roles:
             problems.append("team.roles is empty")
         role_names = [r for r, _ in self.roles]
@@ -76,13 +76,11 @@ class TeamSpec:
         # ollama is a per-team dependency on Linux hosts (not macOS).
         linux = self.host_group in {"agent_vms", "orchestrator_vms"}
         if linux and "ollama" not in role_names:
-            problems.append(
-                "Linux host_group requires the 'ollama' role (per-team inference dep)")
+            problems.append("Linux host_group requires the 'ollama' role (per-team inference dep)")
         if not linux and "ollama" in role_names:
             problems.append("macOS (mac_minis) teams must NOT include the 'ollama' role")
         if self.host_group == "orchestrator_vms" and "hermes_orchestrator" not in role_names:
-            problems.append(
-                "orchestrator_vms host_group expects the 'hermes_orchestrator' role")
+            problems.append("orchestrator_vms host_group expects the 'hermes_orchestrator' role")
         return problems
 
 

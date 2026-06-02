@@ -4,15 +4,28 @@ Each step probes live state (repo exists? token vaulted? host in inventory?) and
 skips if satisfied; this file just records which steps completed so a resumed run
 can narrate progress. A lost state file costs only re-probing, not re-doing.
 """
+
 from __future__ import annotations
 
 import json
 import pathlib
 
 STEPS = [
-    "validate-spec", "repo-create", "stamp", "author-soul", "gen-profiles",
-    "gen-harness", "discord-app", "vault-token", "vault-wire", "github-app",
-    "identity", "discord-topology", "push", "register-host", "dry-run-deploy",
+    "validate-spec",
+    "repo-create",
+    "stamp",
+    "author-soul",
+    "gen-profiles",
+    "gen-harness",
+    "discord-app",
+    "vault-token",
+    "vault-wire",
+    "github-app",
+    "identity",
+    "discord-topology",
+    "push",
+    "register-host",
+    "dry-run-deploy",
 ]
 
 

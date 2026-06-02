@@ -11,6 +11,7 @@ template. config.yaml / distribution.yaml are labeled DEFERRED placeholders.
 Idempotent: existing files are never overwritten (so re-runs + hand edits are
 safe). Returns the list of paths actually created.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -102,15 +103,16 @@ hermes_team_profiles:
 
 def _profiles_block(spec: TeamSpec) -> str:
     if not spec.profiles:
-        return ("  - name: {n}\n"
-                "    persona: {n}\n"
-                "    role: olympian_agent\n"
-                "    model: gemini-3-flash-preview:cloud\n"
-                "    reasoning_effort: medium\n"
-                "    max_turns: 90\n"
-                "    worker_pool: 1\n"
-                "    discord_token_var: vault_discord_bot_token_{n}\n"
-                ).format(n=spec.name)
+        return (
+            "  - name: {n}\n"
+            "    persona: {n}\n"
+            "    role: olympian_agent\n"
+            "    model: gemini-3-flash-preview:cloud\n"
+            "    reasoning_effort: medium\n"
+            "    max_turns: 90\n"
+            "    worker_pool: 1\n"
+            "    discord_token_var: vault_discord_bot_token_{n}\n"
+        ).format(n=spec.name)
     out = []
     for p in spec.profiles:
         out.append(f"  - name: {p.name}")
@@ -160,8 +162,9 @@ def _copy_if_absent(src: pathlib.Path, dst: pathlib.Path, created: list[str]) ->
     created.append(str(dst))
 
 
-def stamp(spec: TeamSpec, out_dir: str | pathlib.Path,
-          context_library: str | pathlib.Path) -> list[str]:
+def stamp(
+    spec: TeamSpec, out_dir: str | pathlib.Path, context_library: str | pathlib.Path
+) -> list[str]:
     root = pathlib.Path(out_dir)
     cl = pathlib.Path(context_library).expanduser()
     tmpl = cl / "templates"
@@ -174,8 +177,11 @@ def stamp(spec: TeamSpec, out_dir: str | pathlib.Path,
     _copy_if_absent(ai / "AGENTS.template.md", root / "AGENTS.md", created)
     _copy_if_absent(ai / "CLAUDE.template.md", root / "CLAUDE.md", created)
     _copy_if_absent(ai / "GEMINI.template.md", root / "GEMINI.md", created)
-    _copy_if_absent(ai / "copilot-instructions.template.md",
-                    root / ".github" / "copilot-instructions.md", created)
+    _copy_if_absent(
+        ai / "copilot-instructions.template.md",
+        root / ".github" / "copilot-instructions.md",
+        created,
+    )
     _copy_if_absent(ai / "llms.template.txt", root / "llms.txt", created)
 
     # engineering journal (full seed, verbatim)
@@ -187,12 +193,15 @@ def stamp(spec: TeamSpec, out_dir: str | pathlib.Path,
                 _copy_if_absent(f, root / "docs" / "engineering-journal" / rel, created)
 
     # team-specific stubs
-    _write_if_absent(root / "README.md",
-                     f"# {spec.repo}\n\n{spec.display} (polyrepo).\n\n"
-                     "## Source of truth\n- Org standards: `infiquetra-context-library`\n"
-                     "- Agent instructions: [AGENTS.md](AGENTS.md)\n"
-                     "- Engineering journal: [docs/engineering-journal/]"
-                     "(docs/engineering-journal/README.md)\n", created)
+    _write_if_absent(
+        root / "README.md",
+        f"# {spec.repo}\n\n{spec.display} (polyrepo).\n\n"
+        "## Source of truth\n- Org standards: `infiquetra-context-library`\n"
+        "- Agent instructions: [AGENTS.md](AGENTS.md)\n"
+        "- Engineering journal: [docs/engineering-journal/]"
+        "(docs/engineering-journal/README.md)\n",
+        created,
+    )
     _write_if_absent(root / ".gitignore", GITIGNORE, created)
     _write_if_absent(root / ".github" / "PULL_REQUEST_TEMPLATE.md", PR_TEMPLATE, created)
     _write_if_absent(root / "constitution.md", CONSTITUTION_TMPL.format(**sub), created)
@@ -204,9 +213,11 @@ def stamp(spec: TeamSpec, out_dir: str | pathlib.Path,
     persona_for = {p.name: (p.persona or p.name) for p in spec.profiles}
     for pname in profile_names:
         pdir = root / "profiles" / pname
-        _write_if_absent(pdir / "SOUL.md",
-                         SOUL_PLACEHOLDER.format(persona=persona_for.get(pname, pname)),
-                         created)
+        _write_if_absent(
+            pdir / "SOUL.md",
+            SOUL_PLACEHOLDER.format(persona=persona_for.get(pname, pname)),
+            created,
+        )
         _write_if_absent(pdir / "skills" / ".gitkeep", "", created)
         _write_if_absent(pdir / "config.yaml", CONFIG_STUB, created)
         _write_if_absent(pdir / "distribution.yaml", DISTRIBUTION_STUB, created)
@@ -215,7 +226,9 @@ def stamp(spec: TeamSpec, out_dir: str | pathlib.Path,
     harness = harness_gen.render_harness(spec.as_cfg())
     for fname, content in harness.items():
         _write_if_absent(root / "deploy" / fname, content, created)
-    _write_if_absent(root / "deploy" / "team_profiles.yml",
-                     TEAM_PROFILES_TMPL.format(name=spec.name,
-                                               profiles=_profiles_block(spec)), created)
+    _write_if_absent(
+        root / "deploy" / "team_profiles.yml",
+        TEAM_PROFILES_TMPL.format(name=spec.name, profiles=_profiles_block(spec)),
+        created,
+    )
     return created

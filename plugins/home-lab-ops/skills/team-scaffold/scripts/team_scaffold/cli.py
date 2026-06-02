@@ -12,6 +12,7 @@ Everything here is scriptable + idempotent:
   team-scaffold register-host      team-spec.yaml [--hosts PATH] [--apply]
   team-scaffold golden             # re-derive 12 known teams vs frozen fixtures
 """
+
 from __future__ import annotations
 
 import argparse
@@ -71,6 +72,7 @@ def _cmd_stamp(args: argparse.Namespace) -> int:
 
 def _cmd_vault_wire(args: argparse.Namespace) -> int:
     from . import vault_wire
+
     ts = load_spec(args.spec)
     target = pathlib.Path(args.out) / "ansible/inventory/group_vars/all/vault.yml"
     var_names = [p.discord_token_var for p in ts.profiles if p.discord_token_var]
@@ -89,13 +91,16 @@ def _cmd_register_host(args: argparse.Namespace) -> int:
         print("✗ spec has no inventory block (ansible_host/ansible_user) — cannot register")
         return 1
     changed, diff = inventory_register.register(
-        args.hosts, ts.host_group, ts.limit_host, attrs, apply=args.apply)
+        args.hosts, ts.host_group, ts.limit_host, attrs, apply=args.apply
+    )
     if not changed:
         print(f"· {ts.limit_host} already in inventory — no change")
         return 0
     print(diff)
-    print(f"{'APPLIED' if args.apply else 'DRY-RUN (use --apply to write)'}: "
-          f"{ts.limit_host} -> group {ts.host_group}")
+    print(
+        f"{'APPLIED' if args.apply else 'DRY-RUN (use --apply to write)'}: "
+        f"{ts.limit_host} -> group {ts.host_group}"
+    )
     return 0
 
 

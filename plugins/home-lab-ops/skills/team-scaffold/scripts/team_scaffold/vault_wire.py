@@ -12,6 +12,7 @@ the encrypted blob + the single ~/.vault_pass.txt keep working. Two entry points
 
 Both are idempotent: a var already present in the target is left untouched.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -50,8 +51,9 @@ def _write(target: pathlib.Path, blocks: dict[str, str], order: list[str]) -> No
     target.write_text(body)
 
 
-def copy_blocks_from(source_vault: pathlib.Path, target: pathlib.Path,
-                     var_names: list[str]) -> list[str]:
+def copy_blocks_from(
+    source_vault: pathlib.Path, target: pathlib.Path, var_names: list[str]
+) -> list[str]:
     """Copy named blocks verbatim from source into target (skip already-present).
 
     Returns the list of vars actually added.
@@ -71,8 +73,7 @@ def copy_blocks_from(source_vault: pathlib.Path, target: pathlib.Path,
     return added
 
 
-def append_encrypted_block(target: pathlib.Path, var_name: str,
-                           encrypted_block: str) -> bool:
+def append_encrypted_block(target: pathlib.Path, var_name: str, encrypted_block: str) -> bool:
     """Splice one freshly-encrypted block into target. Returns True if added.
 
     ``encrypted_block`` is the full ``var_name: !vault |\\n  $ANSIBLE_VAULT;...``

@@ -7,6 +7,7 @@ text-based insertion so the file's comments + formatting survive (PyYAML round
 
 Emit it as a single revertible commit (the caller's job); abort == git checkout.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -85,8 +86,9 @@ def add_host(text: str, group: str, host_key: str, attrs: dict) -> tuple[str, bo
     return "".join(new_lines), True
 
 
-def register(hosts_yml: str | pathlib.Path, group: str, host_key: str,
-             attrs: dict, apply: bool = False) -> tuple[bool, str]:
+def register(
+    hosts_yml: str | pathlib.Path, group: str, host_key: str, attrs: dict, apply: bool = False
+) -> tuple[bool, str]:
     """Return (changed, unified_diff). Writes the file only when apply=True."""
     path = pathlib.Path(hosts_yml).expanduser()
     text = path.read_text()
@@ -94,9 +96,15 @@ def register(hosts_yml: str | pathlib.Path, group: str, host_key: str,
     if not changed:
         return False, ""
     import difflib
-    diff = "".join(difflib.unified_diff(
-        text.splitlines(keepends=True), new_text.splitlines(keepends=True),
-        fromfile=str(path), tofile=str(path) + " (new)"))
+
+    diff = "".join(
+        difflib.unified_diff(
+            text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=str(path),
+            tofile=str(path) + " (new)",
+        )
+    )
     if apply:
         path.write_text(new_text)
     return True, diff

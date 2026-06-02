@@ -13,6 +13,7 @@ Usage:
       --fixtures   $CLAUDE_JOB_DIR/tmp/live-fixtures \
       --hosts      ~/workspace/infiquetra/home-lab/ansible/inventory/hosts.yml
 """
+
 from __future__ import annotations
 
 import argparse
@@ -83,7 +84,7 @@ def main() -> int:
     hosts_yml = args.hosts.expanduser()
 
     for repo, cfg in teams.items():
-        short = repo[len("team-"):]
+        short = repo[len("team-") :]
         spec = {
             "team": {
                 "name": short,

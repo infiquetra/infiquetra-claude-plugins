@@ -1,4 +1,5 @@
 """Unit tests for vault_wire, inventory_register, and repo_stamp."""
+
 from __future__ import annotations
 
 import pathlib
@@ -93,8 +94,11 @@ mac_minis:
 
 def test_add_host_appends_under_group_and_preserves_comments():
     new, changed = inventory_register.add_host(
-        HOSTS, "agent_vms", "nyx.infiquetra.com",
-        {"ansible_host": "10.220.1.71", "ansible_user": "agent"})
+        HOSTS,
+        "agent_vms",
+        "nyx.infiquetra.com",
+        {"ansible_host": "10.220.1.71", "ansible_user": "agent"},
+    )
     assert changed
     assert "# a comment inside the group" in new  # comments survive
     # new host lands inside agent_vms, before the mac_minis group
@@ -107,8 +111,11 @@ def test_add_host_appends_under_group_and_preserves_comments():
 
 def test_add_host_idempotent():
     new, changed = inventory_register.add_host(
-        HOSTS, "agent_vms", "zeus.infiquetra.com",
-        {"ansible_host": "10.220.1.50", "ansible_user": "agent"})
+        HOSTS,
+        "agent_vms",
+        "zeus.infiquetra.com",
+        {"ansible_host": "10.220.1.50", "ansible_user": "agent"},
+    )
     assert not changed
     assert new == HOSTS
 
@@ -122,13 +129,21 @@ def test_register_dryrun_does_not_write(tmp_path: pathlib.Path):
     f = tmp_path / "hosts.yml"
     f.write_text(HOSTS)
     changed, diff = inventory_register.register(
-        f, "mac_minis", "freki.infiquetra.com",
-        {"ansible_host": "10.220.1.197", "ansible_user": "jefcox"}, apply=False)
+        f,
+        "mac_minis",
+        "freki.infiquetra.com",
+        {"ansible_host": "10.220.1.197", "ansible_user": "jefcox"},
+        apply=False,
+    )
     assert changed and diff
     assert f.read_text() == HOSTS  # unchanged on dry-run
     changed2, _ = inventory_register.register(
-        f, "mac_minis", "freki.infiquetra.com",
-        {"ansible_host": "10.220.1.197", "ansible_user": "jefcox"}, apply=True)
+        f,
+        "mac_minis",
+        "freki.infiquetra.com",
+        {"ansible_host": "10.220.1.197", "ansible_user": "jefcox"},
+        apply=True,
+    )
     assert changed2 and "freki.infiquetra.com:" in f.read_text()
 
 
@@ -139,55 +154,90 @@ CL = pathlib.Path("~/workspace/infiquetra/infiquetra-context-library").expanduse
 
 @pytest.mark.skipif(not CL.exists(), reason="context-library not checked out")
 def test_stamp_new_single_profile_team(tmp_path: pathlib.Path):
-    spec = from_dict({
-        "team": {
-            "name": "nyx", "display": "Nyx (night monitor)",
-            "host_group": "agent_vms", "limit_host": "nyx.infiquetra.com",
-            "pin_runtime": False, "coresident": None,
-            "roles": [
-                {"role": "ollama", "tags": "ollama,nyx"},
-                {"role": "hermes", "tags": "hermes,nyx"},
-                {"role": "hermes_dm_listener", "tags": "dm_listener,nyx"},
+    spec = from_dict(
+        {
+            "team": {
+                "name": "nyx",
+                "display": "Nyx (night monitor)",
+                "host_group": "agent_vms",
+                "limit_host": "nyx.infiquetra.com",
+                "pin_runtime": False,
+                "coresident": None,
+                "roles": [
+                    {"role": "ollama", "tags": "ollama,nyx"},
+                    {"role": "hermes", "tags": "hermes,nyx"},
+                    {"role": "hermes_dm_listener", "tags": "dm_listener,nyx"},
+                ],
+            },
+            "profiles": [
+                {
+                    "name": "nyx",
+                    "persona": "nyx",
+                    "discord_token_var": "vault_discord_bot_token_nyx",
+                }
             ],
-        },
-        "profiles": [{"name": "nyx", "persona": "nyx",
-                      "discord_token_var": "vault_discord_bot_token_nyx"}],
-    })
+        }
+    )
     created = repo_stamp.stamp(spec, tmp_path, CL)
     assert created
     # archetype-required artifacts exist
-    for rel in ("README.md", "AGENTS.md", ".gitignore",
-                ".github/PULL_REQUEST_TEMPLATE.md", "identity/README.md",
-                "orchestration/README.md", "profiles/nyx/SOUL.md",
-                "profiles/nyx/skills/.gitkeep", "profiles/nyx/config.yaml",
-                "profiles/nyx/distribution.yaml", "deploy/nyx.yml",
-                "deploy/requirements.yml", "deploy/README.md",
-                "deploy/team_profiles.yml",
-                "docs/engineering-journal/LEARNINGS.md"):
+    for rel in (
+        "README.md",
+        "AGENTS.md",
+        ".gitignore",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        "identity/README.md",
+        "orchestration/README.md",
+        "profiles/nyx/SOUL.md",
+        "profiles/nyx/skills/.gitkeep",
+        "profiles/nyx/config.yaml",
+        "profiles/nyx/distribution.yaml",
+        "deploy/nyx.yml",
+        "deploy/requirements.yml",
+        "deploy/README.md",
+        "deploy/team_profiles.yml",
+        "docs/engineering-journal/LEARNINGS.md",
+    ):
         assert (tmp_path / rel).exists(), f"missing {rel}"
     # identity records the token var NAME, never a secret value
     ident = (tmp_path / "identity/README.md").read_text()
     assert "vault_discord_bot_token_nyx" in ident
     # generated harness matches harness_gen exactly
     from team_scaffold import harness_gen
-    assert (tmp_path / "deploy/nyx.yml").read_text() == \
-        harness_gen.render_harness(spec.as_cfg())["nyx.yml"]
+
+    assert (tmp_path / "deploy/nyx.yml").read_text() == harness_gen.render_harness(spec.as_cfg())[
+        "nyx.yml"
+    ]
     # the stamped team_profiles.yml validates
     from team_scaffold import profiles_validate
+
     errors, _ = profiles_validate.validate_file(tmp_path / "deploy/team_profiles.yml")
     assert errors == []
 
 
 @pytest.mark.skipif(not CL.exists(), reason="context-library not checked out")
 def test_stamp_is_idempotent(tmp_path: pathlib.Path):
-    spec = from_dict({
-        "team": {"name": "nyx", "display": "Nyx", "host_group": "agent_vms",
-                 "limit_host": "nyx.infiquetra.com",
-                 "roles": [{"role": "ollama", "tags": "ollama,nyx"},
-                           {"role": "hermes", "tags": "hermes,nyx"}]},
-        "profiles": [{"name": "nyx", "persona": "nyx",
-                      "discord_token_var": "vault_discord_bot_token_nyx"}],
-    })
+    spec = from_dict(
+        {
+            "team": {
+                "name": "nyx",
+                "display": "Nyx",
+                "host_group": "agent_vms",
+                "limit_host": "nyx.infiquetra.com",
+                "roles": [
+                    {"role": "ollama", "tags": "ollama,nyx"},
+                    {"role": "hermes", "tags": "hermes,nyx"},
+                ],
+            },
+            "profiles": [
+                {
+                    "name": "nyx",
+                    "persona": "nyx",
+                    "discord_token_var": "vault_discord_bot_token_nyx",
+                }
+            ],
+        }
+    )
     repo_stamp.stamp(spec, tmp_path, CL)
     second = repo_stamp.stamp(spec, tmp_path, CL)
     assert second == []  # nothing re-created

@@ -13,6 +13,7 @@ The only change from the migration script is the data source: instead of a
 hardcoded ``TEAMS`` dict it takes a spec ``cfg`` dict (see ``spec.py``), so new
 teams render from a ``team-spec.yaml`` rather than a code edit.
 """
+
 from __future__ import annotations
 
 REQUIREMENTS = """---
@@ -30,14 +31,14 @@ def render_play(name: str, cfg: dict) -> str:
     """Render deploy/<team>.yml. ``name`` is the play filename (e.g. themis.yml)."""
     coresident = cfg.get("coresident")
     coresident_note = (
-        f" Co-resident team on this host ({coresident}) is NOT in the filter "
-        f"and is left untouched." if coresident else
-        " Only this team's profiles are touched.")
-    pin = ("    hermes_update: false  # runtime pinned (shared host)\n" if cfg["pin"] else "")
-    roles = "\n".join(
-        f"    - {{ role: {r}, tags: ['{t}'] }}" for r, t in cfg["roles"])
+        f" Co-resident team on this host ({coresident}) is NOT in the filter and is left untouched."
+        if coresident
+        else " Only this team's profiles are touched."
+    )
+    pin = "    hermes_update: false  # runtime pinned (shared host)\n" if cfg["pin"] else ""
+    roles = "\n".join(f"    - {{ role: {r}, tags: ['{t}'] }}" for r, t in cfg["roles"])
     return f"""---
-# Deploy the {cfg['team']} — and ONLY this team — from this repo.
+# Deploy the {cfg["team"]} — and ONLY this team — from this repo.
 #
 # Reuses the home-lab hermes role via the per-team-deploy hooks (2026-05-31):
 #   hermes_team_profiles_filter : narrows the host's profiles to this team's
@@ -46,12 +47,12 @@ def render_play(name: str, cfg: dict) -> str:
 #
 # Usage (see deploy/README.md):
 #   cd deploy && ansible-playbook -i <home-lab-inventory> \\
-#     --limit {cfg['limit']} {name} --vault-password-file ~/.vault_pass.txt
+#     --limit {cfg["limit"]} {name} --vault-password-file ~/.vault_pass.txt
 #
 # Native distribution packaging (`hermes profile install`) is DEFERRED.
 
-- name: Deploy {cfg['team']} (profile-scoped)
-  hosts: {cfg['hosts']}
+- name: Deploy {cfg["team"]} (profile-scoped)
+  hosts: {cfg["hosts"]}
   gather_facts: true
   vars:
     # realpath normalizes the .. so the control-node find() gets an absolute dir.
@@ -153,10 +154,12 @@ def render_readme(cfg: dict) -> str:
     coresident_line = (
         f"\n\n**Note:** this team shares its host with {cfg['coresident']}; "
         f"the filter ensures {cfg['coresident']} is never touched by this deploy."
-        if cfg.get("coresident") else "")
+        if cfg.get("coresident")
+        else ""
+    )
     return README_TMPL.format(
-        team=cfg["team"], limit=cfg["limit"], play=cfg["play"],
-        coresident_line=coresident_line)
+        team=cfg["team"], limit=cfg["limit"], play=cfg["play"], coresident_line=coresident_line
+    )
 
 
 def render_harness(cfg: dict) -> dict[str, str]:

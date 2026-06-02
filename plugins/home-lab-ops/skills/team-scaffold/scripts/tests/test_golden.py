@@ -6,6 +6,7 @@ fixtures under specs/golden/ are frozen copies of the live infiquetra/team-*
 repos (fetched 2026-06-01); all 36 (3 files x 12 teams) matched the migration
 generator byte-for-byte at promotion time.
 """
+
 from __future__ import annotations
 
 import pathlib

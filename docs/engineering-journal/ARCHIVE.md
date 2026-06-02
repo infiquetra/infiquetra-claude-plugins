@@ -10,6 +10,24 @@
 
 ## Shipped
 
+### Operator-choice framework — execution-backend decision contract (doc-only)  {#operator-choice-framework-shipped}
+
+**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.5.0`, commit pending). Was QUEUED P1 `#operator-choice-orchestration-framework`.
+
+**Summary.** Shipped the operator-choice framework as a **doc-only foundation** of the engine-merge campaign: the canonical decision contract for the three execution backends — `inline` | `team-execution` | `cc-workflows-ultracode` — that lifecycle commands cite when they ask the operator which backend to run work through. Lifecycle owns the **choice**, not execution. Schema and rationale (auto-recommend + always-confirm, the `should_offer_team_execution`-plus-consensus / parallel-fan-out triggers, offer-BOTH-on-overlap, the hide-when-Workflow-absent capability gate, `/loop` + `/work` scope) recorded in DECISIONS [#operator-choice-framework](DECISIONS.md#operator-choice-framework).
+
+**Scope — a consumed doc + two offer hooks (deliberate).** This ships the reference doc, the two prose offer hooks, and a `saga-spec` cross-reference fix. The CLI-backed `recommend_execution_backend()` helper is **DEFERRED to the `/work` rebuild**, where it gets a real caller — adding it now would create an uncallable helper that drifts against the doc (the verified state of the existing `should_offer_team_execution`, defined but never called outside its test). The originally-queued sizing was "M / no scripts"; this ship honors that.
+
+**What shipped.**
+- `plugins/infiquetra-lifecycle/references/operator-choice.md` — the decision contract (the three backend enum strings, when each is offered, the always-confirm posture, the capability gate, graceful fallback). Complements `references/saga-spec.md` (storage contract).
+- Short prose offer hooks in `/loop` and `/work` SKILLs that cite the doc and inline the choices (referencing the brainstorm channel-inline convention — redis-channel sessions cannot call AskUserQuestion — rather than copying it).
+- `saga-spec.md` cross-reference fix tying `orchestration_mode` storage to the decision contract.
+- Version bumps: plugin `0.5.0`, marketplace entry `0.5.0`; CHANGELOG.
+
+**Consumers.** `/loop` and `/work` carry the offer hooks now; the other command rebuilds cite this doc as they land. The CLI-backed helper lands with the `/work` rebuild — see QUEUED [#rebuild-work-engine-merge](QUEUED.md#rebuild-work-engine-merge).
+
+**Refs.** DECISIONS [#operator-choice-framework](DECISIONS.md#operator-choice-framework), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Decision contract: `plugins/infiquetra-lifecycle/references/operator-choice.md`.
+
 ### Saga foundation — durable, resumable work-state envelope (P0)  {#saga-foundation-shipped}
 
 **SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.4.0`, PR `#170`). Was QUEUED P0 `#saga-concept-vecu-durable-resumable-work-state`.

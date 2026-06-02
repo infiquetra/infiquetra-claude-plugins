@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 - 2026-06-02
+
+- Add the operator-choice framework: a new contract document, `references/operator-choice.md`, that
+  codifies the 3-way execution-backend choice — `inline` / `team-execution` / `cc-workflows-ultracode`
+  (the canonical `ORCHESTRATION_MODES` enum strings). Lifecycle owns the *choice* of backend; it does
+  not own execution.
+- Add short prose offer hooks to `/loop` and `/work` that surface the operator-choice when work
+  warrants a non-inline backend, pointing at the decision contract.
+- Fix the `saga-spec.md` `orchestration_mode` cross-ref: it pointed at §7 (the save/restore/scan
+  operation contract) instead of the decision contract; it now references
+  `references/operator-choice.md`.
+- Doc-only foundation. No code or helper is added in this release — the CLI-backed
+  orchestration-choice helper is deferred to the `/work` rebuild.
+
 ## 0.4.0 - 2026-06-02
 
 - Add a unified saga engine (`scripts/saga.py`): one source of truth for durable, resumable

@@ -296,7 +296,7 @@
     {
       "name": "infiquetra-lifecycle",
       "source": "./plugins/infiquetra-lifecycle",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "description": "Infiquetra engineering lifecycle plugin spanning five phases: Think, Plan & execute, Hand off to sdlc-manager, Review, and Improve & route (covers office-hours through resume, plus /loop routing).",
       "author": {
         "name": "Infiquetra",

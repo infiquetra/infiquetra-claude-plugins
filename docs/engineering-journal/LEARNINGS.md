@@ -27,6 +27,35 @@
 
 ## 2026-06-01
 
+### A plugin version bump must update its metadata test's hardcoded version — and `UNSTABLE` is not a green CI gate  {#version-bump-test-pin}
+
+**Context.** Bumping `infiquetra-lifecycle` 0.2.0 → 0.3.0 turned `main` red: CI's Tests job failed on a
+hardcoded assertion. The PR (#167) had been squash-merged while `mergeStateStatus` was `UNSTABLE`.
+
+**Evidence.** `tests/test_infiquetra_lifecycle_plugin.py:42` asserts `plugin_json["version"] == "0.2.0"`
+— a literal pin (line 43 then checks the marketplace entry matches it dynamically). Pre-merge local
+checks — `marketplace/validator/validate.py` (0 errors) and `python3 -m json.tool` — both passed
+because neither runs pytest. `gh pr checks` showed `Tests (Python 3.12) fail` while Lint / Type Check /
+Security / Validate Plugins passed; the merge still completed because Tests is not a *required* status
+check, so the PR was `UNSTABLE` (mergeable) rather than `BLOCKED`.
+
+**Mechanism.** Each `test_<plugin>_plugin.py` pins the plugin's current version as a literal so version,
+`plugin.json`, and the marketplace entry cannot silently drift. A version bump is therefore a
+**three-file change**: `plugin.json`, the `marketplace.json` entry, AND the test's literal. The
+marketplace validator only checks semver *shape* + entry/source existence, not the pinned value.
+Separately, `gh pr checks --watch` exiting 0 and `mergeable: MERGEABLE` are NOT proof of green — only
+every check showing `pass` is.
+
+**Fix.** Updated the test literal to `0.3.0` (this follow-up commit).
+
+**Generalizable rule.** (1) When bumping a plugin version in this repo, grep `tests/` for the old
+version string and update the metadata-test literal in the same change. (2) Gate a merge on `gh pr
+checks` showing every check `pass` — never on `--watch`'s exit code or on `mergeStateStatus: UNSTABLE`,
+which permits merging over a non-required failing check. Run `uv run pytest` (or at least the affected
+`test_<plugin>_plugin.py`) as part of pre-merge validation, not just the marketplace validator.
+
+**Refs.** DECISIONS `{#ce-ideation-engine-restore}`. Surfaced fixing PR #167's red `main`.
+
 ### Porting a skill's name without its engine — including its tuned sub-agent prompts — silently changes its behavior  {#stub-port-drops-engine}
 
 **Context.** `infiquetra-lifecycle`'s `/ideate` and `/brainstorm` were derived from
@@ -48,9 +77,12 @@ reintroduces the same facilitate-instead-of-generate failure one level down. An 
 workflow over the rebuild caught exactly this risk plus functional gaps it would have masked (a
 soft-promote loophole in revival; a gate promising multi-repo grounding no Phase 1 source delivered).
 
-**Fix (commit pending).** Rebuilt both engines self-contained with verbatim tuned prompts for every
+**Fix (commit `30c9099`).** Rebuilt both engines self-contained with verbatim tuned prompts for every
 sub-agent; ran an author→adversarially-verify→remediate ultracode workflow (5 major findings fixed, 0
-blocking); plugin `0.3.0`.
+blocking); plugin `0.3.0`. Follow-up fix: the version bump tripped a hardcoded
+`assert plugin_json["version"] == "0.2.0"` in `tests/test_infiquetra_lifecycle_plugin.py` — caught by
+CI, not by the marketplace validator or `json.tool`, because the plugin-metadata test pins the literal
+version. Lesson reinforced below.
 
 **Generalizable rule.** When you "port" or "slim" a skill, diff the *mechanics and the sub-agent
 prompt bodies*, not just the prose intent. A skill that keeps the name and the goal but drops the

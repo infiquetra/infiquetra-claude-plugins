@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.0] - 2026-06-01
+
+### Added
+- `team-scaffold` skill — stands up a new infiquetra agent-team repo end-to-end
+  (context-library-compliant skeleton + Discord/GitHub identity gates + split-vault
+  wiring + Ansible deploy harness). Promotes the polyrepo-migration generators
+  (`gen_harness.py`, `vault_split.py`) into a tested `team_scaffold` Python package
+  with a golden test that reproduces all 12 live `infiquetra/team-*` repos
+  byte-for-byte, plus a `team_profiles.yml` validator calibrated against every
+  live team config. Closes acceptance criterion #7 of the home-lab polyrepo migration.
+
 ## [1.0.0] - 2026-03-17
 
 ### Added

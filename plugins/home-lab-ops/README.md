@@ -21,6 +21,7 @@ The home-lab commit history shows a ~1:1 fix:feat ratio — half of all commits 
 | `inventory-sync` | Hardware adds/removes/IP changes | Full checklist of every file that needs updating |
 | `monitoring-guard` | Exporter updates, dashboard edits | Prevents silent metric/dashboard breakage |
 | `vault-helper` | Adding/rotating secrets | Streamlines multi-commit vault workflows |
+| `team-scaffold` | Standing up a new agent team | Automates repo + identity + vault + deploy harness; golden-tested generator |
 
 ## Agent
 

@@ -1,0 +1,8 @@
+---
+# Reuse the home-lab roles (native distribution packaging deferred; this Ansible
+# path is the supported independent-deploy mechanism). See deploy/README.md for
+# the roles-path setup (local checkout recommended).
+roles:
+  - name: hermes
+    src: git+https://github.com/namredips/home-lab.git
+    version: main

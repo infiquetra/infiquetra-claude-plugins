@@ -25,6 +25,41 @@
 
 ---
 
+## 2026-06-01
+
+### Porting a skill's name without its engine — including its tuned sub-agent prompts — silently changes its behavior  {#stub-port-drops-engine}
+
+**Context.** `infiquetra-lifecycle`'s `/ideate` and `/brainstorm` were derived from
+compound-engineering (CE) but had been reduced to ~13–20 line facilitative stubs. In use they felt
+like the operator supplied all the ideas, and once Claude declared `/ideate` "too lightweight" and
+improvised its own fan-out.
+
+**Evidence.** Pre-rebuild `skills/ideate/SKILL.md` (13 lines) said "produce a small option set; lead
+the user through choices" — facilitation, not generation. CE's `ce-ideate` (~400-line SKILL + 3
+reference files) runs 6 parallel frame agents → adversarial filter → survivors. A home-lab artifact
+(`home-lab/docs/ideation/2026-05-31-card-sizing-...-ideation.md`) was labeled
+`/infiquetra-lifecycle:ideate` but used a hand-rolled decision-axis structure — Claude improvising a
+substitute engine because the skill had none.
+
+**Mechanism.** CE's repeatability does not live in the phase *structure* alone; it lives in the
+*verbatim, separately-tuned sub-agent prompts* (the codebase-scan prompt, the frame-generator prompt,
+the critique rubric). Porting the structure but reducing the sub-agents to "dispatch an Explore agent"
+reintroduces the same facilitate-instead-of-generate failure one level down. An adversarial-review
+workflow over the rebuild caught exactly this risk plus functional gaps it would have masked (a
+soft-promote loophole in revival; a gate promising multi-repo grounding no Phase 1 source delivered).
+
+**Fix (commit pending).** Rebuilt both engines self-contained with verbatim tuned prompts for every
+sub-agent; ran an author→adversarially-verify→remediate ultracode workflow (5 major findings fixed, 0
+blocking); plugin `0.3.0`.
+
+**Generalizable rule.** When you "port" or "slim" a skill, diff the *mechanics and the sub-agent
+prompt bodies*, not just the prose intent. A skill that keeps the name and the goal but drops the
+engine — or reduces its sub-agents to generic dispatch — will silently behave like a stub, and the
+degradation won't surface until someone notices the AI stopped doing the work.
+
+**Refs.** DECISIONS `{#ce-ideation-engine-restore}`. Plan
+`.claude/plans/can-you-review-the-inherited-lantern.md`.
+
 ## 2026-05-30
 
 ### `gh api` with `-f` silently defaults to POST — breaks read-only queries  {#gh-api-f-defaults-post}

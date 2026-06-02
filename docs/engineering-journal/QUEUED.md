@@ -164,6 +164,25 @@ independent read-only review, exploration, or implementation-plan critique.
 
 ## P3 — nice-to-have
 
+### Symmetric `/ideate` → `/brainstorm` handoff field contract  {#ideate-brainstorm-handoff-symmetry}
+
+**Priority.** P3.
+
+**Effort.** ~1 hour (tighten `/ideate` Phase 6.6 wording).
+
+**Worth it when.** The `/ideate` → `/brainstorm` handoff starts dropping survivor context in practice
+— e.g. a brainstorm opens missing the axis / basis / ideation-doc path it should have inherited.
+
+**Context.** `/ideate` Phase 6.6 (`skills/ideate/references/convergence-and-partnership.md`) hands off
+by loading `brainstorm/SKILL.md` "with the chosen idea as the seed" without enumerating which SURVIVOR
+SCHEMA fields and the ideation-doc path travel. The brainstorm side is already robust (Phase 0.2 pulls
+from the named SURVIVOR SCHEMA and asks once for the doc path if absent), so this is a symmetry/clarity
+improvement, not a correctness bug. Surfaced by the rebuild's adversarial review (the brainstorm-side
+mismatch was fixed; the producer side was left as-is). See DECISIONS
+[#ce-ideation-engine-restore](DECISIONS.md#ce-ideation-engine-restore).
+
+---
+
 ### `deploy-status` per_page lookback can miss old tag refs  {#deploy-status-perpage-cap}
 
 **Priority.** P3.

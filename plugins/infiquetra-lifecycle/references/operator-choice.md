@@ -1,0 +1,188 @@
+# Operator-Choice Framework
+
+**Status:** canonical contract · **plugin version:** 0.5.0
+**Companion:** [`references/saga-spec.md`](./saga-spec.md) — the **STORAGE** contract for the chosen value.
+**Audience:** every lifecycle command that runs work or routes work (`/loop`, `/work`, and the rest as they
+rebuild) implements against this file when deciding *how* work executes.
+
+This is the **DECISION contract** for choosing an execution backend in infiquetra-lifecycle. Where
+`saga-spec.md` says *how the choice is stored* (the `orchestration_mode` / `orchestration_ref` fields), this
+document says *how the choice is made and offered*. Lifecycle owns the **CHOICE**, not the execution: it
+recommends a backend, surfaces it, and records what the operator picked. The backends themselves do the
+work.
+
+> This is a **doc-only foundation.** As of 0.5.0 no code helper exists; the prose offer hooks in `/loop` and
+> `/work` cite this file. The CLI-backed execution-backend helper is **deferred to the `/work` rebuild**.
+> This spec exists so the contract is settled **before** consumers calcify against it.
+
+---
+
+## 1. The three execution backends
+
+There are exactly three backends. The recorded value is **EXACTLY one of** `inline | team-execution |
+cc-workflows-ultracode` — these strings are the contract (they match `ORCHESTRATION_MODES` in
+[`scripts/saga.py`](../scripts/saga.py) and §4 of `saga-spec.md`). Prose labels people say out loud
+("CC workflows", "ultracode", "team mode") are **not** the contract; only the enum strings are.
+
+| Backend (enum) | What it is | Owns execution? | Availability |
+|---|---|---|---|
+| `inline` | The agent does the work itself, single-context / serial. **The default.** | the agent | always |
+| `team-execution` | The team-execution plugin: a `## Team Structure` plan section + worker / reviewer / validator agents with consensus + gates. | yes — team-execution owns its own run | plugin installed |
+| `cc-workflows-ultracode` | The Claude Code **Workflow** tool: deterministic multi-agent fan-out (ultracode). | yes — the Workflow runtime owns its own run | **Claude Code only** (§4) |
+
+**Ownership boundary.** Lifecycle **chooses**; the backends **execute**. `team-execution` and
+`infiquetra-deploy` are **offered, not vendored** — lifecycle never reimplements their machinery, it points
+to them and records the pointer. A saga holds the choice (`orchestration_mode`) and a pointer into the
+backend (`orchestration_ref`); it is never the execution authority.
+
+---
+
+## 2. Who decides
+
+The operator decides; lifecycle makes the cheapest-correct path one keystroke away.
+
+- **inline by default.** Absent any escalation signal, work runs `inline`. No ceremony.
+- **Auto-recommend the fitting backend.** Lifecycle reads the work shape (§3) and pre-selects the backend it
+  judges best. This is a recommendation, not an imposition.
+- **ALWAYS surface the choice.** Even when the recommendation is `inline`, the offer names the alternatives
+  so escalation is **one step**. The pairing is *explicit default + cheap escalation*: the operator never
+  has to know the backend names cold to reach for a heavier one.
+- **Operator confirms or overrides.** The recorded value is whatever the operator picked, not what lifecycle
+  guessed.
+
+---
+
+## 3. When to escalate (triggers)
+
+### 3.1 `inline` -> `team-execution`
+
+This mirrors `should_offer_team_execution` in
+[`scripts/lifecycle_state.py`](../scripts/lifecycle_state.py) — **that function is the canonical trigger
+source; keep these numbers identical to its constants.** Offer `team-execution` when **ANY** of:
+
+| Signal | Threshold |
+|---|---|
+| `file_count` | `>= 8` |
+| `phase_count` | `>= 4` |
+| `has_security` | true |
+| `has_infra` | true |
+| `cross_repo` | true |
+| `deployment_sensitive` | true |
+
+**PLUS** a needs-consensus signal: multiple reviewer lenses are warranted, a decision is contested, or
+validator gates should bound the work. team-execution's whole value is *review consensus + gates*, so a job
+that wants those is a team-execution job even if it is small.
+
+### 3.2 `inline` -> `cc-workflows-ultracode` (Claude Code only)
+
+Offer when the work is **broad and independent** — breadth **WITHOUT** elevated risk:
+
+- high-parallelism — many independent units of work that do not share output;
+- broad independent fan-out — the same operation applied across many targets;
+- exhaustive sweep — search-all / probe-all style coverage where missing a target is the failure mode.
+
+ultracode's value is deterministic fan-out, not review depth. If the work is risky rather than merely wide,
+that is a `team-execution` signal (§3.1), not an ultracode one.
+
+### 3.3 Overlap (both fire)
+
+A large security audit is legitimately *both* risky **and** parallel — both triggers fire. When that
+happens, **OFFER BOTH** and let the operator pick. List `team-execution` first (a mild risk-lean), but there
+is **no hard precedence rule**: because the offer always confirms with the operator, any precedence would be
+cosmetic. The operator resolves the overlap.
+
+Recommended-default rule of thumb (which one to pre-select):
+
+| Work shape | Lean |
+|---|---|
+| risky **and** parallel | `team-execution` |
+| parallel **and** not risky | `cc-workflows-ultracode` |
+| neither | `inline` |
+
+---
+
+## 4. Capability gate (`cc-workflows-ultracode` is Claude Code only)
+
+This plugin runs on hosts **without** the Workflow tool (e.g. redis-channel sessions, other runners). Two
+rules keep the contract honest across hosts:
+
+- **Document all three backends ALWAYS.** This file is the full map; an off-host reader needs to understand
+  `cc-workflows-ultracode` even though they cannot run it.
+- **At the offer, prefer to omit `cc-workflows-ultracode` when the Workflow tool is observably absent in
+  this session.** Don't offer a path the operator cannot take here.
+
+**Regardless of the offer:** if `cc-workflows-ultracode` is chosen but turns out to be unavailable, **fall
+back to `team-execution` or `inline` with a one-line note** rather than failing. This is the same
+*attempt + graceful fallback* pattern `/ideate` and `/brainstorm` already use for `AskUserQuestion` (try the
+rich path; degrade cleanly when it isn't there). `/loop`'s own phase-walk is the cross-host fallback when no
+heavier backend is reachable.
+
+---
+
+## 5. How to offer (dual form)
+
+The offer renders differently depending on the surface, because not every surface can call
+`AskUserQuestion`:
+
+- **Claude Code session** — use `AskUserQuestion` with the **recommended backend pre-selected** (§2, §3.3).
+- **redis-channel session** — `AskUserQuestion` **cannot** be called; inline **lettered choices** in the
+  reply text instead ("Which backend? A) inline … B) team-execution … C) cc-workflows-ultracode …"). Follow
+  the canonical channel-inline convention documented in
+  [`skills/brainstorm/SKILL.md`](../skills/brainstorm/SKILL.md) — **reference it; do not duplicate its
+  wording here.** That doc is the single source for how channel-inline choices are phrased.
+
+---
+
+## 6. Recording the choice
+
+**Durable home:** the saga envelope — `orchestration_mode` (the enum value, §1) plus `orchestration_ref` (a
+pointer into the chosen backend). See [`references/saga-spec.md`](./saga-spec.md) for the storage contract
+(field table §3.1, enum domain §4).
+
+**Until `/work` and `/loop` write sagas** (saga is currently an *unconsumed primitive* — see saga-spec
+§"primitive, not yet a consumer"), record the chosen backend **NARRATIVELY** in the work-session writeup /
+engineering journal. The offer hooks shipped in this PR **MUST NOT** call `saga.save` — that wiring belongs
+to the consuming-command rebuilds, not to a doc-only offer hook.
+
+`orchestration_ref` by backend:
+
+| `orchestration_mode` | `orchestration_ref` |
+|---|---|
+| `inline` | empty string `""` |
+| `team-execution` | the team name |
+| `cc-workflows-ultracode` | the workflow id |
+
+---
+
+## 7. Consumer contract (who cites this, when)
+
+Each command cites this file at its own rebuild. None ship a code helper in this foundation PR — the
+CLI-backed execution-backend helper lands with the **`/work`** rebuild (deferred from here).
+
+| Command | Cites operator-choice |
+|---|---|
+| `/loop` | **now** (prose offer hook) |
+| `/work` | **now** (prose offer hook; CLI-backed helper lands with the `/work` rebuild) |
+| `/plan` | at its rebuild |
+| `/resume` | at its rebuild |
+| `/code-review` | at its rebuild |
+| `/founder-review` | at its rebuild |
+| `/qa` | at its rebuild |
+| `/investigate` | at its rebuild |
+| `/retro` | at its rebuild |
+| `/spec` | at its rebuild |
+| `/optimize` | at its rebuild |
+| `/doc-review` | at its rebuild |
+| `/strategy` | **never offers** — a single durable doc, no parallelism to escalate |
+
+---
+
+## 8. References
+
+- Storage contract (where the choice lives): [`references/saga-spec.md`](./saga-spec.md)
+  (`orchestration_mode` / `orchestration_ref`, enum domain §4).
+- Canonical team-execution trigger constants: [`scripts/lifecycle_state.py`](../scripts/lifecycle_state.py)
+  (`should_offer_team_execution`).
+- Channel-inline offer convention (do not duplicate): [`skills/brainstorm/SKILL.md`](../skills/brainstorm/SKILL.md).
+- Decision record: [`docs/engineering-journal/DECISIONS.md`](../../../docs/engineering-journal/DECISIONS.md)
+  `#operator-choice-framework`.

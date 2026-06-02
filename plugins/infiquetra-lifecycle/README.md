@@ -43,7 +43,8 @@ Durable artifacts are repo docs:
 Ignored local state belongs under `.claude/infiquetra-lifecycle/`. Durable, resumable work-state is
 tracked as sagas: append-only, timestamped envelope logs under
 `.claude/infiquetra-lifecycle/sagas/<saga_id>/`, plus a derived `state.json` index. See
-[`references/saga-spec.md`](references/saga-spec.md) for the contract.
+[`references/saga-spec.md`](references/saga-spec.md) for the storage contract and
+[`references/operator-choice.md`](references/operator-choice.md) for the execution-backend decision contract (`inline` / `team-execution` / `cc-workflows-ultracode`).
 
 ## Boundaries
 

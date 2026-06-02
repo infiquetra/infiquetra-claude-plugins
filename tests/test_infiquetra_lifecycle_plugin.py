@@ -39,7 +39,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.4.0"
+    assert plugin_json["version"] == "0.5.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -149,6 +149,19 @@ def test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior() -> N
     assert "`idea-ready` or `requirements-ready`" in plan_doc
     assert "`plan-ready` or `resume-ready`" in work_doc
     assert "/plan <issue>" in work_doc
+
+
+def test_operator_choice_framework_is_documented_and_cited() -> None:
+    operator_choice_path = PLUGIN_ROOT / "references" / "operator-choice.md"
+    assert operator_choice_path.exists()
+    operator_choice_doc = _read(operator_choice_path)
+    for enum_value in ("inline", "team-execution", "cc-workflows-ultracode"):
+        assert enum_value in operator_choice_doc
+
+    loop_doc = _read(PLUGIN_ROOT / "skills" / "loop" / "SKILL.md")
+    work_doc = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    assert "references/operator-choice.md" in loop_doc
+    assert "references/operator-choice.md" in work_doc
 
 
 def test_destination_selector_and_escalation_helpers() -> None:

@@ -76,8 +76,10 @@ movement at Infiquetra SDLC phase boundaries.
 ## Integrations
 
 - Use `infiquetra-deploy` only when the selected destination includes deployment.
-- Offer or invoke `team-execution` for cross-repo, security, infra, large, deployment-sensitive,
-  or high-parallelism work.
+- Offer an execution backend before running work: `inline` for small focused changes,
+  `team-execution` for cross-repo, security, infra, large, deployment-sensitive, or
+  high-parallelism work, and `cc-workflows-ultracode` for many independent parallel streams.
+  Use `references/operator-choice.md` as the selection rubric.
 - Use `/handoff` for SDLC issue handoff. `sdlc-manager` owns issue bodies, prepared drafts,
   readiness, labels, board fields, and GitHub mutation.
 - Fall back cleanly when `infiquetra-deploy`, `team-execution`, or `sdlc-manager` is unavailable:

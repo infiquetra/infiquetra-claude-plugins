@@ -20,14 +20,18 @@ Use this after a plan is approved or when resuming execution from a durable plan
 6. When executing from a plan or requirements document, ask whether to run `/doc-review` first.
    If review runs and returns unresolved `P0` or `P1` findings, block execution unless the user
    explicitly overrides and provides a rationale.
-7. Execute one meaningful phase at a time.
-8. After each phase, write a concise summary under `docs/work-sessions/`.
-9. Comment issue progress through `sdlc-manager` with plan path, work-session path, commit SHA,
-   checks run, blockers, handoff maturity/source, and any doc-review artifact, findings, block
-   status, or override rationale.
-10. Run hard test gates for behavior, security, infra, API, deployment, or data changes.
-11. Run `/code-review` before PR or shipping gates.
-12. If the destination includes nonprod deploy, hand off deployment mutation to `infiquetra-deploy`.
+7. Before executing, pick an execution backend: `inline` for small focused changes,
+   `team-execution` for cross-repo, security, infra, large, or deployment-sensitive work, and
+   `cc-workflows-ultracode` for many independent parallel streams.
+   Use `references/operator-choice.md` as the selection rubric.
+8. Execute one meaningful phase at a time.
+9. After each phase, write a concise summary under `docs/work-sessions/`.
+10. Comment issue progress through `sdlc-manager` with plan path, work-session path, commit SHA,
+    checks run, blockers, handoff maturity/source, and any doc-review artifact, findings, block
+    status, or override rationale.
+11. Run hard test gates for behavior, security, infra, API, deployment, or data changes.
+12. Run `/code-review` before PR or shipping gates.
+13. If the destination includes nonprod deploy, hand off deployment mutation to `infiquetra-deploy`.
 
 Do not close or move the issue until acceptance criteria and the selected destination are satisfied.
 

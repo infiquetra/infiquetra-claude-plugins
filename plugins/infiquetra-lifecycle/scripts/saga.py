@@ -458,9 +458,7 @@ def parse_envelope(text: str) -> Saga:
 # ---------------------------------------------------------------------------
 
 
-def current_git_state(
-    root: Path, *, runner: Callable[..., Any] = subprocess.run
-) -> dict[str, str]:
+def current_git_state(root: Path, *, runner: Callable[..., Any] = subprocess.run) -> dict[str, str]:
     """Best-effort git snapshot. Returns empty strings if git is unavailable."""
 
     def run(args: list[str]) -> str:
@@ -866,9 +864,7 @@ def prior_prs(
     return sorted(records, key=lambda record: int(record.get("round") or 0))
 
 
-def journal_entries(
-    root: Path, issue: int, adr_refs: list[str]
-) -> dict[str, list[dict[str, str]]]:
+def journal_entries(root: Path, issue: int, adr_refs: list[str]) -> dict[str, list[dict[str, str]]]:
     """Find journal sections referencing the issue or its ADRs."""
     output: dict[str, list[dict[str, str]]] = {"learnings": [], "decisions": []}
     journal_dir = root / "docs" / "engineering-journal"
@@ -1026,7 +1022,9 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--issue-ref", default="")
     p.add_argument("--next-step", default="")
     p.add_argument("--plan-path", default="")
-    p.add_argument("--work-session-paths", default=None, help="pipe-separated; omit = carry forward")
+    p.add_argument(
+        "--work-session-paths", default=None, help="pipe-separated; omit = carry forward"
+    )
     p.add_argument("--review-paths", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--qa-paths", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--files-modified", default=None, help="pipe-separated; omit = carry forward")

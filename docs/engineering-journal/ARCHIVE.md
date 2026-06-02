@@ -12,7 +12,7 @@
 
 ### Saga foundation — durable, resumable work-state envelope (P0)  {#saga-foundation-shipped}
 
-**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.4.0`, commit `TODO(commit)`). Was QUEUED P0 `#saga-concept-vecu-durable-resumable-work-state`.
+**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.4.0`, PR `#170`). Was QUEUED P0 `#saga-concept-vecu-durable-resumable-work-state`.
 
 **Summary.** Shipped the first foundation of the engine-merge campaign: a unified `saga` durable/resumable work-state primitive — a stable-id `save`/`restore`/`scan` engine writing gstack-style timestamped envelope files, plus the canonical spec the four consumers implement against when they're rebuilt. Schema and rationale (derived `kind-id` identity, append-only envelope log + derived index, three stored state axes + derived maturity, snapshot list semantics, plugin-level `references/` convention) recorded in DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation).
 

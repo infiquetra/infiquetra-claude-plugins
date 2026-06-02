@@ -24,7 +24,7 @@
 
 ## 2026-06-02
 
-### Saga schema: derived `kind-id` identity + append-only envelope log + three-axis state (commit `TODO(commit)`)  {#saga-schema-foundation}
+### Saga schema: derived `kind-id` identity + append-only envelope log + three-axis state (PR `#170`)  {#saga-schema-foundation}
 
 **Decision.** Define `saga` — the durable, resumable work-state envelope — as the first foundation of the engine-merge campaign, with this schema:
 

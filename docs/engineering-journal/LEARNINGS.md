@@ -25,6 +25,40 @@
 
 ---
 
+## 2026-06-02
+
+### `infiquetra-lifecycle` is a thin reskin of gstack + CE; engine-loss is systemic, not isolated to `/ideate`  {#lifecycle-thin-reskin-systemic}
+
+**Context.** After rebuilding `/ideate` (0.3.0), audited the remaining lifecycle commands against their source arts. The plugin was derived from compound-engineering (CE) **and** [gstack](https://github.com/garrytan/gstack) — gstack was the source missed in the first audit pass; Jeff named it. Most commands kept the source's name + intent but dropped its engine.
+
+**Evidence.** A 19-agent `lifecycle-engine-audit-queue` workflow read each command's gstack + CE engine vs the current stub. Representative gaps: `office-hours` 23-line stub vs gstack's two-mode YC diagnostic; `code-review` 20 lines vs gstack's 7-specialist review army + CE's persona/findings/validator engine; `founder-review` 20 lines vs gstack ceo-review's 4 scope modes + 18 CEO patterns; `plan` 27 lines vs CE's R-ID/KTD/U-ID artifact engine + gstack's spec interrogation; `qa`/`strategy`/`optimize`/`work`/`resume`/`retro` similarly stubbed. Only `/doc-review` carried its CE engine. Briefs → QUEUED [#lifecycle-engine-merge initiative](QUEUED.md).
+
+**Mechanism.** Porting a skill's **name + intent** without its tuned engine (sub-agent prompts, rubrics, state machines, findings schemas) silently reverts it to a facilitative stub — the same mechanism as [#stub-port-drops-engine](#stub-port-drops-engine), but repo-wide: ~10 of 13 commands affected, because the initial port applied the same lossy transform uniformly.
+
+**Fix (queued).** The engine-merge initiative in [QUEUED.md](QUEUED.md) — rebuild each command by merging CE + gstack into a self-contained infiquetra engine, 1-by-1, interview-driven. Decision: DECISIONS [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign).
+
+**What surprised.** gstack's `cso/` skill is **Chief SECURITY Officer** (a 14-phase security audit), not Chief Strategy Officer — so the pre-audit table's "`/strategy` ← gstack cso" mapping was wrong. `/strategy`'s engine source is **CE `ce-strategy` only**; gstack has no strategy engine. (Corrected in the queue.) Lesson within the lesson: a plausible name match (`cso` ≈ "Chief Strategy Officer") is not a verified mapping.
+
+**Generalizable rule.** When a plugin is "based on" upstreams, audit **every** command against **all** named upstreams before trusting any mapping — a derived plugin tends to inherit the upstream's *structure* while uniformly dropping its *engine*, and a name that looks like a match (`cso`) may not be one. Verify the engine, not the label.
+
+**Refs.** DECISIONS [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign); QUEUED engine-merge initiative; LEARNINGS [#stub-port-drops-engine](#stub-port-drops-engine); DECISIONS [#ce-ideation-engine-restore](DECISIONS.md#ce-ideation-engine-restore).
+
+### Schema-output workflow agents that over-read + over-write fail to call `StructuredOutput` — budget exhaustion, not rate limits  {#workflow-structuredoutput-budget}
+
+**Context.** Ran a 19-agent `Workflow` to produce the engine-merge queue briefs. Each agent read large gstack engine files (some 2000+ lines) and was required to emit a schema-validated brief via the `StructuredOutput` tool.
+
+**Evidence.** Run `wf_4a5f04b6-c00`: **16 of 19** agents failed with `subagent completed without calling StructuredOutput (after 2 in-conversation nudges)` — not API-error kills. The 3 that succeeded produced verbose briefs (one ~31K chars). Re-run `wf_577148f3-749` with the fix below: **16 of 16** succeeded (846K subagent tokens, 0 failures).
+
+**Mechanism.** Heavy reading + essay-length synthesis consumed the agents' turn/context budget, leaving nothing to make the final `StructuredOutput` tool call; the failure presents as "completed in prose." Transient 429s seen in the live `/workflows` view ate retry budget but were **not** the fatal cause — the recorded failure reason was non-emission, not a rate-limit error. (Jeff's initial read — "rate limits" — was the visible symptom, not the root cause.)
+
+**Fix.** Re-ran the 16 with four changes: (1) **hard brevity** — each schema field 1-3 sentences, "this is a stub not the design"; (2) **explicit emit rule** — "the ONLY accepted output is the StructuredOutput tool call; prose = lost work"; (3) **light reading** — Grep to the engine heading + skim ~150 lines, don't full-read 2000-line files; (4) **batched concurrency** (5 at a time) to dodge the 429 retries that wasted budget.
+
+**Validation.** Re-run produced all 16 missing briefs cleanly; combined with the 3 banked from run 1 = 19 total, synthesized into QUEUED.md.
+
+**Generalizable rule.** For schema-output workflow fan-outs over large inputs: cap output length, make the `StructuredOutput` call mandatory + explicit, instruct skim-not-full-read, and batch concurrency. "Completed without calling StructuredOutput" almost always means **budget exhaustion** (over-reading + over-writing), not rate limits — fix the budget, not (only) the throughput. Keep the same script's successful agents and re-run only the failures with the tightened prompt.
+
+**Refs.** QUEUED engine-merge initiative (the briefs this produced); the audit workflow `lifecycle-engine-audit-queue`.
+
 ## 2026-06-01
 
 ### A plugin version bump must update its metadata test's hardcoded version — and `UNSTABLE` is not a green CI gate  {#version-bump-test-pin}

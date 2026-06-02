@@ -24,7 +24,7 @@
 
 ## 2026-06-01
 
-### Restore the CE ideation engine into `/ideate` + `/brainstorm`, self-contained (commit pending)  {#ce-ideation-engine-restore}
+### Restore the CE ideation engine into `/ideate` + `/brainstorm`, self-contained (commit `30c9099`)  {#ce-ideation-engine-restore}
 
 **Decision.** Rebuild `infiquetra-lifecycle`'s `/ideate` and `/brainstorm` from thin facilitative
 stubs into full divergent→convergent engines ported from compound-engineering (CE) and adapted to the

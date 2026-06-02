@@ -1,11 +1,14 @@
 ---
 name: ideate
-description: Generate and evaluate grounded Infiquetra implementation or product ideas
+description: Generate, critique, and surface surviving grounded Infiquetra ideas — a multi-agent divergent→convergent engine
 argument-hint: "[topic]"
 ---
 
-Load `infiquetra-lifecycle/skills/ideate/SKILL.md`. Produce a small set of options, lead the user
-through tradeoffs one at a time when useful, and persist chosen directions under `docs/ideation/`.
+Load `infiquetra-lifecycle/skills/ideate/SKILL.md` and run its full engine: ground in the repo,
+journal, and relevant context-libraries; generate many candidates across parallel frames (the
+operator's seed ideas enter the same pool and face the same critique); critique all; and present only
+the survivors, with their rejection reasons preserved and revivable. Persist to `docs/ideation/` on
+request.
 
 Arguments provided to the command:
 

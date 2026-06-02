@@ -22,6 +22,43 @@
 
 ---
 
+## 2026-06-01
+
+### Restore the CE ideation engine into `/ideate` + `/brainstorm`, self-contained (commit pending)  {#ce-ideation-engine-restore}
+
+**Decision.** Rebuild `infiquetra-lifecycle`'s `/ideate` and `/brainstorm` from thin facilitative
+stubs into full divergent→convergent engines ported from compound-engineering (CE) and adapted to the
+infiquetra world — self-contained, no runtime dependency on CE. `/ideate` generates many candidates
+across parallel frame agents, critiques all, and presents only survivors; cut ideas stay revivable.
+Two deliberate improvements over CE: (1) a two-way partnership — operator seeds feed *into* the frame
+agents and face the same critique; (2) a revival state machine that re-enters the filter with new
+evidence (and adjudicates novelty) so revival cannot soft-promote a categorically-cut idea. Added
+infiquetra grounding CE never had: context-library reader (`*-context-library` via `gh`), named-repo
+reader, grounding-fit gate, read-only `gh` issue-theme clustering. Dropped CE's Proof/HITL,
+HTML/output-mode, elsewhere/non-software modes, Slack, and web-research-cache.
+
+**Rejected alternatives.**
+- *Delegate to CE at runtime (load `ce-ideate` when present).* Rejected: couples lifecycle to CE
+  being installed at a compatible version and drags in CE's ecosystem (Proof, modes, conventions);
+  contradicts the plugin's standalone Boundaries.
+- *Keep the thin facilitative stubs.* Rejected: "produce a small option set; lead the user through
+  choices" biases toward facilitation, which is why ideation felt like the operator supplied all the
+  ideas. See LEARNINGS `{#stub-port-drops-engine}`.
+- *Issue themes via `sdlc-manager`.* Rejected: `sdlc-manager` has no theme-clustering and issue
+  *reads* are not its boundary (it owns mutation). `/ideate` reads issues read-only via `gh` and
+  clusters them itself.
+
+**Rationale.** The operator wanted CE's generative engine + survivors back, plus a genuine
+partnership where their ideas also enter the pool and rejected ideas are revivable. Self-contained
+keeps the plugin's ownership boundaries clean. Forked from CE 3.9.2; authored and adversarially
+verified via an ultracode workflow (13 agents; 5 major findings remediated, 0 blocking).
+
+**Revisit when.** CE ships a materially better ideation engine worth re-syncing, or the parallel-fork
+maintenance cost exceeds the value of staying self-contained.
+
+**Refs.** Plugin `0.3.0`, marketplace metadata `2.4.0`. LEARNINGS `{#stub-port-drops-engine}`. Plan
+`.claude/plans/can-you-review-the-inherited-lantern.md`.
+
 ## 2026-05-31
 
 ### Rename `infiquetra-loop` → `infiquetra-lifecycle` (commit `0ed70f2`)  {#rename-loop-to-lifecycle}

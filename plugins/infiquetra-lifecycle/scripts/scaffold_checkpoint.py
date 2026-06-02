@@ -1,77 +1,35 @@
 #!/usr/bin/env python3
-"""Scaffold ignored Infiquetra loop checkpoint state."""
+"""Write a saga tick (thin wrapper over the unified saga engine).
+
+This was the per-phase *checkpoint* scaffolder. Under the 0.4.0 saga model it is
+a thin wrapper over ``saga.py``: a "checkpoint" is now one immutable, timestamped
+saga *tick* written to ``.claude/infiquetra-lifecycle/sagas/<saga_id>/<YYYYMMDD-
+HHMMSS>.md`` (append-only — never overwritten), and the derived ``state.json``
+index is refreshed atomically. The legacy CLI flags and the four printed JSON
+keys (``checkpoint_path`` / ``state_path`` / ``phase`` / ``status``) are
+preserved; ``checkpoint_path`` now points at the new immutable tick (the saga
+``envelope_path``) instead of a name-encoded checkpoint file.
+
+The legacy ``--status`` flag here means *phase completion* (pending |
+in_progress | complete); the saga engine calls that ``phase_status`` (its own
+``status`` is thread disposition), so this wrapper remaps ``--status`` ->
+``phase_status`` and reports the phase status back under the legacy ``status``
+key.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
-STATE_DIR = Path(".claude/infiquetra-lifecycle")
-CHECKPOINT_DIR = STATE_DIR / "checkpoints"
+# Ensure the sibling ``saga.py`` engine is importable whether this script is run
+# directly (its dir is already ``sys.path[0]``) or loaded via importlib from an
+# arbitrary cwd (the test harness does not add the script dir to ``sys.path``).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-DEFAULT_TEMPLATE = """# {{phase_title}}
-
-- Date: {{date}}
-- Issue: {{issue_ref}}
-- Destination: {{destination}}
-- Phase: {{phase_number}}
-- Status: {{phase_status}}
-- Plan: {{plan_path}}
-- Work session: {{work_session_path}}
-- Commit: {{last_commit_sha}}
-- Progress: {{progress_pct}}%
-- Blockers: {{blockers}}
-
-## Current Work
-
-{{current_work}}
-
-## Important Context
-
-{{important_context}}
-"""
-
-
-def render_template(template: str, context: dict[str, object]) -> str:
-    def render_var(match: re.Match[str]) -> str:
-        return str(context.get(match.group(1), ""))
-
-    return re.sub(r"\{\{(\w+)\}\}", render_var, template)
-
-
-def checkpoint_path(args: argparse.Namespace) -> Path:
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = f"-round-{args.round}" if args.round else ""
-    name = f"{args.kind}-{args.id}{suffix}-phase{args.phase}-{args.status}.md"
-    return CHECKPOINT_DIR / name
-
-
-def update_state_json(context: dict[str, object], args: argparse.Namespace) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    state_path = STATE_DIR / "state.json"
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
-    except json.JSONDecodeError:
-        state = {}
-
-    state["last_updated"] = datetime.now(UTC).isoformat()
-    state["current_work"] = {
-        "kind": args.kind,
-        "id": args.id,
-        "round": args.round,
-        "phase": args.phase,
-        "phase_status": args.status,
-        "destination": args.destination,
-        "plan_path": args.plan_path,
-        "work_session_path": args.work_session_path,
-    }
-    if args.next_steps:
-        state["current_work"]["next_steps"] = args.next_steps.split("|")
-    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+import saga  # noqa: E402  (path bootstrap must run before this import)
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,32 +55,47 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _build_saga(args: argparse.Namespace) -> saga.Saga:
+    """Map the legacy checkpoint flags onto a ``Saga`` tick."""
+    saga_id = saga.derive_saga_id(args.kind, str(args.id))
+    # A single --work-session-path becomes a one-item snapshot list; an empty
+    # string clears (snapshot semantics), preserving the legacy "set it now" feel.
+    work_sessions: saga.ListOrAbsent = [args.work_session_path] if args.work_session_path else []
+    summary = args.phase_title or f"Phase {args.phase}"
+    # Fold the free-form checkpoint prose into the saga body so it is not lost.
+    notes_parts = [part for part in (args.current_work, args.important_context) if part]
+    return saga.Saga(
+        saga_id=saga_id,
+        kind=args.kind,
+        id=str(args.id),
+        lifecycle_phase="work",
+        phase_status=args.status,
+        next_step=args.next_steps.split("|", 1)[0] if args.next_steps else "",
+        issue_ref=args.issue_ref,
+        destination=args.destination,
+        round=args.round or 0,
+        phase=args.phase,
+        progress_pct=args.progress_pct,
+        plan_path=args.plan_path,
+        work_session_paths=work_sessions,
+        last_commit_sha=args.last_commit_sha,
+        blockers=args.blockers,
+        summary=summary,
+        remaining="\n".join(args.next_steps.split("|")) if args.next_steps else "",
+        notes="\n\n".join(notes_parts),
+    )
+
+
 def main() -> int:
     args = parse_args()
-    context = {
-        "date": datetime.now(UTC).strftime("%Y-%m-%d %H:%M"),
-        "phase_title": args.phase_title or f"Phase {args.phase}",
-        "phase_number": args.phase,
-        "phase_status": args.status,
-        "issue_ref": args.issue_ref,
-        "destination": args.destination,
-        "progress_pct": args.progress_pct,
-        "plan_path": args.plan_path,
-        "work_session_path": args.work_session_path,
-        "last_commit_sha": args.last_commit_sha,
-        "current_work": args.current_work,
-        "blockers": args.blockers,
-        "important_context": args.important_context,
-    }
-    out_path = checkpoint_path(args)
-    out_path.write_text(render_template(DEFAULT_TEMPLATE, context), encoding="utf-8")
-    update_state_json(context, args)
+    result = saga.save(Path.cwd(), _build_saga(args))
     print(
         json.dumps(
             {
-                "checkpoint_path": str(out_path),
-                "state_path": str(STATE_DIR / "state.json"),
-                "phase": args.phase,
+                "checkpoint_path": result["envelope_path"],
+                "state_path": result["state_path"],
+                "phase": result["phase"],
+                # Legacy "status" was the phase-completion status fed in.
                 "status": args.status,
             },
             indent=2,

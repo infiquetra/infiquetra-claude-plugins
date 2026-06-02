@@ -40,7 +40,10 @@ Durable artifacts are repo docs:
 - `docs/retros/`
 - `docs/engineering-journal/`
 
-Ignored local state belongs under `.claude/infiquetra-lifecycle/`.
+Ignored local state belongs under `.claude/infiquetra-lifecycle/`. Durable, resumable work-state is
+tracked as sagas: append-only, timestamped envelope logs under
+`.claude/infiquetra-lifecycle/sagas/<saga_id>/`, plus a derived `state.json` index. See
+[`references/saga-spec.md`](references/saga-spec.md) for the contract.
 
 ## Boundaries
 
@@ -56,10 +59,12 @@ Ignored local state belongs under `.claude/infiquetra-lifecycle/`.
 
 - `scripts/parse_issue.py` extracts ADR, acceptance-criteria, handoff maturity, source context,
   round, and risk hints.
-- `scripts/scaffold_checkpoint.py` writes ignored resume checkpoints under
-  `.claude/infiquetra-lifecycle/`.
-- `scripts/find_inflight_work.py` ranks resumable loop state.
-- `scripts/load_saga_context.py` reconstructs prior issue, PR, checkpoint, and journal context.
+- `scripts/saga.py` is the saga engine: stable derived identity, save/restore/scan over the
+  append-only envelope log, and gh-context aggregation.
+- `scripts/scaffold_checkpoint.py` saves a saga envelope tick under
+  `.claude/infiquetra-lifecycle/sagas/<saga_id>/` (thin wrapper over `saga.py`).
+- `scripts/find_inflight_work.py` ranks resumable saga state.
+- `scripts/load_saga_context.py` reconstructs prior issue, PR, saga, and journal context.
 - `scripts/discover_subissues.py` discovers GitHub sub-issues through GraphQL.
 - `scripts/detect_deploy_strategy.py` classifies tag-promotion workflow coverage.
 - `scripts/issue_progress.py` renders issue comments, including doc-review status when present.

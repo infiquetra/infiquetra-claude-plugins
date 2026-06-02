@@ -1,6 +1,6 @@
 ---
 name: work
-description: Execute an approved Infiquetra plan with checkpoints, issue updates, and test gates
+description: Execute an approved Infiquetra plan with per-phase saga saves, issue updates, and test gates
 argument-hint: "[plan path or issue]"
 ---
 

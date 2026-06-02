@@ -15,7 +15,8 @@ Use this when a session ended, context was lost, or the user asks to continue a 
    - `docs/qa/`
    - `docs/retros/`
    - issue and PR comments
-2. Read `.claude/infiquetra-lifecycle/` only for raw scratch state and active pointers.
+2. Read `.claude/infiquetra-lifecycle/` for durable saga envelope state plus raw scratch state and
+   active pointers. See `references/saga-spec.md` for the saga contract that restore/scan implement.
 3. Reconstruct current phase, selected destination, blockers, checks run, and next step.
 4. Continue from the durable source of truth rather than chat memory alone.
 5. If evidence conflicts, prefer committed docs and issue state over raw local cache.

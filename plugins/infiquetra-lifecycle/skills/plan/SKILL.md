@@ -19,7 +19,8 @@ Use this for multi-step work where chat history is not a reliable source of trut
 6. Ask whether to file an SDLC issue first for non-trivial ad-hoc work.
 7. Write concise plans under `docs/plans/`.
 8. Include acceptance criteria, scope, files likely to change, checks, issue updates, review gates,
-   deploy gates when relevant, and resume notes.
+   deploy gates when relevant, and resume notes. Durable work-state is recorded as a saga; see
+   `references/saga-spec.md` for the saga contract that plan save/scan implement.
 9. Comment compact progress back to the issue with plan path, handoff maturity, and source link
    when an issue is available.
 10. Offer `team-execution` when risk, size, or parallelism justify the cost.

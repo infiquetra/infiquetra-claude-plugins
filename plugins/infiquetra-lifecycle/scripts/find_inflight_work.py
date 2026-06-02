@@ -1,73 +1,42 @@
 #!/usr/bin/env python3
-"""Find recent ignored Infiquetra loop checkpoints and active state."""
+"""Find in-flight saga work (thin wrapper over the unified saga engine).
+
+This was the checkpoint scanner. Under the 0.4.0 saga model it is a thin wrapper
+over ``saga.py``: candidates come from ``saga.scan`` (one per saga, the latest
+immutable tick of each, ordered by FILENAME descending — never ``mtime``),
+appended with any flagged legacy ``checkpoints/`` entries for one back-compat
+version. The derived ``state.json`` index is read for the active-work signal.
+
+The legacy CLI flag (``--max-candidates``) and the three printed JSON keys
+(``found`` / ``state`` / ``candidates``) are preserved. Candidate dicts now carry
+the richer saga scan shape (``saga_id``, ``lifecycle_phase``, ``status``,
+``next_step``, ``updated_at`` ...) instead of the old mtime/age fields.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
-import time
 from pathlib import Path
 
-STATE_DIR = Path(".claude/infiquetra-lifecycle")
-CHECKPOINT_RE = re.compile(
-    r"^(?P<kind>issue|task)-(?P<id>[a-zA-Z0-9_-]+?)"
-    r"(?:-round-(?P<round>\d+))?"
-    r"-phase(?P<phase>\d+)(?:-(?P<status>complete|pending|in_progress))?\.md$"
-)
+# Ensure the sibling ``saga.py`` engine is importable whether this script is run
+# directly (its dir is already ``sys.path[0]``) or loaded via importlib from an
+# arbitrary cwd (the test harness does not add the script dir to ``sys.path``).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import saga  # noqa: E402  (path bootstrap must run before this import)
 
 
-def read_state_json() -> dict[str, object] | None:
-    state_path = STATE_DIR / "state.json"
+def read_state_json(root: Path) -> dict[str, object] | None:
+    state_path = root / saga.STATE_DIR / "state.json"
     if not state_path.exists():
         return None
     try:
-        return json.loads(state_path.read_text(encoding="utf-8"))
+        loaded: dict[str, object] = json.loads(state_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
-
-
-def humanize_age(mtime: float) -> str:
-    delta = time.time() - mtime
-    if delta < 60:
-        return f"{int(delta)} seconds ago"
-    if delta < 3600:
-        return f"{int(delta // 60)} minutes ago"
-    if delta < 86400:
-        return f"{int(delta // 3600)} hours ago"
-    return f"{int(delta // 86400)} days ago"
-
-
-def next_phase(checkpoint: dict[str, object]) -> int:
-    phase = int(checkpoint.get("phase", 0))
-    return phase + 1 if checkpoint.get("phase_status") == "complete" else phase
-
-
-def scan_checkpoints() -> list[dict[str, object]]:
-    checkpoint_dir = STATE_DIR / "checkpoints"
-    if not checkpoint_dir.exists():
-        return []
-    candidates: list[dict[str, object]] = []
-    for path in checkpoint_dir.glob("*.md"):
-        match = CHECKPOINT_RE.match(path.name)
-        if not match:
-            continue
-        status = match.group("status") or "pending"
-        record = {
-            "path": str(path),
-            "name": path.name,
-            "mtime": path.stat().st_mtime,
-            "kind": match.group("kind"),
-            "id": match.group("id"),
-            "round": int(match.group("round")) if match.group("round") else None,
-            "phase": int(match.group("phase")),
-            "phase_status": status,
-        }
-        record["next_phase"] = next_phase(record)
-        record["age"] = humanize_age(float(record["mtime"]))
-        candidates.append(record)
-    return sorted(candidates, key=lambda candidate: float(candidate["mtime"]), reverse=True)
+    return loaded
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,14 +47,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    state = read_state_json()
-    checkpoints = scan_checkpoints()
+    root = Path.cwd()
+    state = read_state_json(root)
+    candidates = saga.scan(root, max_candidates=args.max_candidates)
     print(
         json.dumps(
             {
-                "found": bool(state and state.get("current_work")) or bool(checkpoints),
+                "found": bool(state and state.get("current_work")) or bool(candidates),
                 "state": state,
-                "candidates": checkpoints[: args.max_candidates],
+                "candidates": candidates,
             },
             indent=2,
         )

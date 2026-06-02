@@ -1,6 +1,6 @@
 ---
 name: work
-description: Execute an Infiquetra plan with phase checkpoints, issue updates, test gates, and work-session summaries.
+description: Execute an Infiquetra plan with per-phase saga saves, issue updates, test gates, and work-session summaries.
 ---
 
 # Work
@@ -15,7 +15,8 @@ Use this after a plan is approved or when resuming execution from a durable plan
    plan-grade execution context or linked source context.
 4. For `idea-ready` or `requirements-ready` handoff issues, route to `/plan <issue>` unless the
    user explicitly overrides the missing plan step.
-5. Record the active pointer in `.claude/infiquetra-lifecycle/`.
+5. Save a saga tick under `.claude/infiquetra-lifecycle/sagas/<saga_id>/` to record the active pointer.
+   See `references/saga-spec.md` for the saga envelope contract.
 6. When executing from a plan or requirements document, ask whether to run `/doc-review` first.
    If review runs and returns unresolved `P0` or `P1` findings, block execution unless the user
    explicitly overrides and provides a rationale.

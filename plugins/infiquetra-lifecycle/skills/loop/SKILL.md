@@ -42,7 +42,9 @@ Repository docs are the source of truth:
 - `docs/engineering-journal/`
 
 Ignored local runtime state lives under `.claude/infiquetra-lifecycle/`. Use it only for active session
-pointers, raw checkpoint state, API caches, validator JSON, and resume scratch data.
+pointers, durable saga envelope state, API caches, validator JSON, and resume scratch data.
+Durable work-state is tracked as sagas; see `references/saga-spec.md` for the saga contract that
+`/plan`, `/work`, `/resume`, and `/loop` implement against.
 
 ## SDLC Issue Behavior
 
@@ -84,6 +86,6 @@ movement at Infiquetra SDLC phase boundaries.
 ## Resume
 
 Resume from durable artifacts first: plan, issue, PR, work sessions, QA notes, retros, and
-engineering-journal entries. Use `.claude/infiquetra-lifecycle/` only to recover raw scratch state.
-For recovery mechanics, use `scripts/find_inflight_work.py`, `scripts/load_saga_context.py`, and
-`scripts/scaffold_checkpoint.py`.
+engineering-journal entries. Use `.claude/infiquetra-lifecycle/` only to recover saga state and raw
+scratch data. For recovery mechanics, use `scripts/find_inflight_work.py`,
+`scripts/load_saga_context.py`, and `scripts/scaffold_checkpoint.py`.

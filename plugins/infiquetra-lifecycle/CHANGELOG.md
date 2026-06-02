@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.0 - 2026-06-02
+
+- Add a unified saga engine (`scripts/saga.py`): one source of truth for durable, resumable
+  work-state with a stable derived identity (`issue-<N>` / `task-<slug>`, sticky for the life of
+  the work), save/restore/scan, and gh-context aggregation. Sagas are written as an append-only,
+  timestamped envelope log under `.claude/infiquetra-lifecycle/sagas/<saga_id>/<YYYYMMDD-HHMMSS>.md`
+  (gstack-style YAML frontmatter + `Summary`/`Decisions`/`Remaining`/`Notes` body), plus a derived,
+  rebuildable `state.json` index. Envelopes are immutable; each save appends a new tick.
+- The three legacy scripts — `scaffold_checkpoint.py`, `find_inflight_work.py`, and
+  `load_saga_context.py` — are now thin wrappers that delegate to `saga.py`. Every CLI flag and JSON
+  output key is preserved, so existing callers keep working.
+- Behavior changes from this unification:
+  - Storage moved from per-phase `checkpoints/` files to per-saga `sagas/<saga_id>/` envelope
+    directories.
+  - Ordering is now by envelope filename (the timestamped name **is** the canonical order), never by
+    filesystem `mtime`. This makes ordering deterministic and robust under rsync/backup/snapshot
+    restore.
+  - Saves are append-only (a new immutable tick per save) instead of overwriting a single checkpoint.
+  - Three stored state axes — `lifecycle_phase` (CE flow position), `phase_status` (phase
+    completion, drives the next phase), and `status` (thread disposition) — replace the prior
+    ad-hoc fields; `maturity` is derived at `/handoff` time, not stored. Frontmatter lists use
+    full-snapshot replace semantics (a tick's lists replace; absent carries forward; empty clears).
+- Add a plugin-level contract document, `references/saga-spec.md`, that the lifecycle consumers
+  (`/plan`, `/work`, `/resume`, `/loop`) implement against.
+- **Upgrade warning:** complete any in-flight `/loop` work before upgrading. Legacy
+  `.claude/infiquetra-lifecycle/checkpoints/` state is read as a low-priority `scan` fallback for one
+  version only and then dropped — finish or re-save active loops so they migrate into the new
+  `sagas/` layout.
+
 ## 0.3.0 - 2026-06-01
 
 - Rebuild `/ideate` from a thin facilitative stub into a full divergent→convergent engine ported from

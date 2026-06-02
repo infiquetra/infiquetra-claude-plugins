@@ -10,6 +10,25 @@
 
 ## Shipped
 
+### Saga foundation — durable, resumable work-state envelope (P0)  {#saga-foundation-shipped}
+
+**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.4.0`, PR `#170`). Was QUEUED P0 `#saga-concept-vecu-durable-resumable-work-state`.
+
+**Summary.** Shipped the first foundation of the engine-merge campaign: a unified `saga` durable/resumable work-state primitive — a stable-id `save`/`restore`/`scan` engine writing gstack-style timestamped envelope files, plus the canonical spec the four consumers implement against when they're rebuilt. Schema and rationale (derived `kind-id` identity, append-only envelope log + derived index, three stored state axes + derived maturity, snapshot list semantics, plugin-level `references/` convention) recorded in DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation).
+
+**Scope — an unconsumed primitive (deliberate).** This ships the engine, the three legacy scripts refactored into thin wrappers, and the spec. **No command actually calls `restore`/`scan` after this PR** — consumer wiring is each consumer's own queued item. The new engine is validated by its own unit tests + manual smoke; the wrappers keep every legacy CLI flag and JSON key. The originally-queued sizing was "M / spec-only"; the user chose full-unify-now + characterize-first testing, making it realistically effort L — an accepted, deliberate growth, one PR not a doc.
+
+**What shipped.**
+- `plugins/infiquetra-lifecycle/scripts/saga.py` — the engine: derived `kind-id` (`issue-<N>`/`task-<slug>`, sticky), append-only `sagas/<saga_id>/<YYYYMMDD-HHMMSS>.md` envelope log (filename-as-order, never mtime), derived atomic `state.json` index, gstack frontmatter+body envelope, `save`/`restore`/`scan`/`context` ops with `root:Path` + `now`/`runner` injection.
+- The three legacy scripts (`scaffold_checkpoint.py`, `find_inflight_work.py`, `load_saga_context.py`) refactored into thin wrappers delegating to `saga.py` (zero CLI-flag/JSON-key removals).
+- `plugins/infiquetra-lifecycle/references/saga-spec.md` — the canonical contract (new plugin-level `references/` convention).
+- Tests `tests/test_infiquetra_lifecycle_saga.py` (characterize-first → intended-behavior); plugin-version + `saga.py`-existence updates in `tests/test_infiquetra_lifecycle_plugin.py`.
+- Version bumps: plugin `0.4.0`, marketplace entry `0.4.0`; CHANGELOG with the behavior-change + upgrade warning (complete in-flight loops before upgrading; legacy `checkpoints/` read as fallback for one version).
+
+**Consumers remain queued.** `/plan`, `/work`, `/resume`, `/loop` implement against this spec when rebuilt — see QUEUED [#rebuild-plan-engine-merge](QUEUED.md#rebuild-plan-engine-merge), [#rebuild-work-engine-merge](QUEUED.md#rebuild-work-engine-merge), [#resume-engine-merge-saga](QUEUED.md#resume-engine-merge-saga), [#loop-engine-merge-saga-workflow-offload](QUEUED.md#loop-engine-merge-saga-workflow-offload).
+
+**Refs.** DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`.
+
 ### Correct Asgard/Olympus model before SDLC handoff work  {#asgard-olympus-model-before-handoff}
 
 **SHIPPED 2026-05-30** (`infiquetra-sdlc` commit `5fe5d91`; plugin sync commit `90956a4`).

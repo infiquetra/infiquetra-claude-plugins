@@ -1,114 +1,33 @@
 #!/usr/bin/env python3
-"""Load prior issue, PR, checkpoint, and journal context for loop resume."""
+"""Load prior issue, PR, saga, and journal context (thin wrapper).
+
+This aggregated prior issue/PR/checkpoint/journal context for loop resume. Under
+the 0.4.0 saga model it is a thin wrapper over ``saga.py``: the durable local
+context comes from ``saga.aggregate_context`` (which ``restore``\\s the issue's
+saga from its latest immutable tick, gathers round-tagged prior PRs via ``gh``,
+and matches journal sections by issue/ADR refs).
+
+The legacy CLI flags (``--repo`` / ``--issue``) and the eight printed JSON keys
+are preserved. The engine returns the local-context summary under ``saga``; this
+wrapper exposes it under the legacy ``checkpoint`` key (same role: "the latest
+durable local artifact for this issue"). It now resolves the issue's saga
+directory (``sagas/issue-<N>/``) by FILENAME order rather than globbing
+``checkpoints/issue-<N>-*.md`` by ``mtime``.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
-import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
-STATE_DIR = Path(".claude/infiquetra-lifecycle")
-ROUND_RE = re.compile(r"round-(\d+)", re.IGNORECASE)
+# Ensure the sibling ``saga.py`` engine is importable whether this script is run
+# directly (its dir is already ``sys.path[0]``) or loaded via importlib from an
+# arbitrary cwd (the test harness does not add the script dir to ``sys.path``).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-
-def parse_repo(value: str) -> tuple[str, str]:
-    if "/" in value:
-        owner, repo = value.split("/", 1)
-        return owner, repo
-    return "infiquetra", value
-
-
-def latest_checkpoint(issue: int) -> dict[str, object] | None:
-    checkpoint_dir = STATE_DIR / "checkpoints"
-    if not checkpoint_dir.exists():
-        return None
-    matches = sorted(
-        checkpoint_dir.glob(f"issue-{issue}-*.md"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    if not matches:
-        return None
-    latest = matches[0]
-    content = latest.read_text(encoding="utf-8")
-    return {
-        "path": str(latest),
-        "name": latest.name,
-        "mtime": latest.stat().st_mtime,
-        "content_preview": content[:2000],
-    }
-
-
-def prior_prs(owner: str, repo: str, issue: int) -> list[dict[str, object]]:
-    cmd = [
-        "gh",
-        "pr",
-        "list",
-        "--repo",
-        f"{owner}/{repo}",
-        "--state",
-        "all",
-        "--search",
-        f"in:title #{issue} round",
-        "--json",
-        "number,title,state,mergedAt,url,reviewDecision,body",
-        "--limit",
-        "50",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)  # nosec B603
-    if result.returncode != 0:
-        return []
-    records: list[dict[str, object]] = []
-    for pr in json.loads(result.stdout or "[]"):
-        round_match = ROUND_RE.search(pr.get("title", "") or "")
-        records.append(
-            {
-                "number": pr.get("number"),
-                "title": pr.get("title"),
-                "state": pr.get("state"),
-                "mergedAt": pr.get("mergedAt"),
-                "url": pr.get("url"),
-                "reviewDecision": pr.get("reviewDecision"),
-                "round": int(round_match.group(1)) if round_match else None,
-                "body_preview": (pr.get("body") or "")[:500],
-            }
-        )
-    return sorted(records, key=lambda record: int(record.get("round") or 0))
-
-
-def journal_entries(issue: int, adr_refs: list[str]) -> dict[str, list[dict[str, str]]]:
-    output: dict[str, list[dict[str, str]]] = {"learnings": [], "decisions": []}
-    journal_dir = Path("docs/engineering-journal")
-    if not journal_dir.exists():
-        return output
-
-    refs_to_search = [f"#{issue}", *adr_refs]
-    for filename, key in (("LEARNINGS.md", "learnings"), ("DECISIONS.md", "decisions")):
-        path = journal_dir / filename
-        if not path.exists():
-            continue
-        content = path.read_text(encoding="utf-8")
-        sections = re.split(r"^## ", content, flags=re.MULTILINE)
-        for section in sections[1:]:
-            if any(ref in section for ref in refs_to_search):
-                output[key].append(
-                    {
-                        "file": str(path),
-                        "title": section.splitlines()[0].strip() if section else "",
-                        "preview": section[:600],
-                    }
-                )
-    return output
-
-
-def adr_refs_from_text(content: str | None) -> list[str]:
-    if not content:
-        return []
-    matches = re.findall(r"\bADR[-\s]?(\d{2,4})\b", content, flags=re.IGNORECASE)
-    return [f"ADR-{int(number):04d}" for number in matches]
+import saga  # noqa: E402  (path bootstrap must run before this import)
 
 
 def parse_args() -> argparse.Namespace:
@@ -120,22 +39,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    owner, repo = parse_repo(args.repo)
-    checkpoint = latest_checkpoint(args.issue)
-    prs = prior_prs(owner, repo, args.issue)
-    adrs = adr_refs_from_text(checkpoint["content_preview"] if checkpoint else None)
-    rounds_seen = sorted({int(pr["round"]) for pr in prs if pr.get("round") is not None})
+    owner, repo = saga.parse_repo(args.repo)
+    context = saga.aggregate_context(Path.cwd(), owner, repo, args.issue)
     print(
         json.dumps(
             {
-                "repo": f"{owner}/{repo}",
-                "issue": args.issue,
-                "rounds_seen": rounds_seen,
-                "next_round": (max(rounds_seen) + 1) if rounds_seen else 1,
-                "checkpoint": checkpoint,
-                "prior_prs": prs,
-                "adr_refs": adrs,
-                "journal": journal_entries(args.issue, adrs),
+                "repo": context["repo"],
+                "issue": context["issue"],
+                "rounds_seen": context["rounds_seen"],
+                "next_round": context["next_round"],
+                # Legacy "checkpoint" == the latest durable local artifact for
+                # this issue, now the issue's restored saga summary.
+                "checkpoint": context["saga"],
+                "prior_prs": context["prior_prs"],
+                "adr_refs": context["adr_refs"],
+                "journal": context["journal"],
             },
             indent=2,
         )

@@ -12,7 +12,7 @@
 
 ### Operator-choice framework — execution-backend decision contract (doc-only)  {#operator-choice-framework-shipped}
 
-**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.5.0`, commit pending). Was QUEUED P1 `#operator-choice-orchestration-framework`.
+**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.5.0`, PR `#171`, squash `e935bd4`). Was QUEUED P1 `#operator-choice-orchestration-framework`.
 
 **Summary.** Shipped the operator-choice framework as a **doc-only foundation** of the engine-merge campaign: the canonical decision contract for the three execution backends — `inline` | `team-execution` | `cc-workflows-ultracode` — that lifecycle commands cite when they ask the operator which backend to run work through. Lifecycle owns the **choice**, not execution. Schema and rationale (auto-recommend + always-confirm, the `should_offer_team_execution`-plus-consensus / parallel-fan-out triggers, offer-BOTH-on-overlap, the hide-when-Workflow-absent capability gate, `/loop` + `/work` scope) recorded in DECISIONS [#operator-choice-framework](DECISIONS.md#operator-choice-framework).
 

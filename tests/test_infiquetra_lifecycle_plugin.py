@@ -39,7 +39,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.6.0"
+    assert plugin_json["version"] == "0.7.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -184,6 +184,66 @@ def test_office_hours_two_mode_and_hard_gate_contract() -> None:
 
     # Frame-note home is its own directory.
     assert "docs/office-hours/" in skill_doc
+
+
+def test_plan_engine_merge_contract() -> None:
+    """Structural contract for the rebuilt engine-merge /plan engine.
+
+    Tokens are chosen from the actual authored SKILL.md / plan-sections.md / interrogation.md
+    so the assertions track the contract, not fragile prose. See E1-authored plan skill (0.7.0).
+    """
+    skill_doc = _read(PLUGIN_ROOT / "skills" / "plan" / "SKILL.md")
+    sections_doc = _read(PLUGIN_ROOT / "skills" / "plan" / "references" / "plan-sections.md")
+    interrogation_doc = _read(PLUGIN_ROOT / "skills" / "plan" / "references" / "interrogation.md")
+
+    # Position-in-lifecycle: /plan owns the HOW.
+    assert '`/plan` answers: "How should it be built?"' in skill_doc
+
+    # CE plan skeleton: the durable artifact carries the hard-floor section markers and IDed units.
+    # /doc-review and /work parse these tokens, so they must appear verbatim in SKILL + contract ref.
+    for marker in ("Implementation Units", "Key Technical Decisions", "Requirements"):
+        assert marker in skill_doc
+        assert marker in sections_doc
+    # Stable U-ID prefix (the marker /doc-review keys on to recognize the doc as a plan).
+    assert "U1" in skill_doc
+    assert "U-ID" in sections_doc
+
+    # Warranted-gate: not every invocation produces a plan doc; the gate is named in both files.
+    assert "warranted" in skill_doc
+    assert "warranted" in sections_doc
+    assert "Warranted-gate" in skill_doc or "warranted-gate" in skill_doc
+
+    # HOW-only interrogation: the register pins the HOW and assumes the WHAT is settled upstream.
+    assert "HOW-interrogation" in skill_doc or "HOW register" in interrogation_doc
+    assert "Failure-mode" in skill_doc and "failure-mode" in interrogation_doc.lower()
+
+    # /brainstorm bounce: when interrogation reveals the WHAT is unsettled, route back to /brainstorm,
+    # without claiming /brainstorm "accepts" a handoff (the explicit guard).
+    assert "recommend the operator run `/brainstorm` first" in skill_doc
+    assert "recommend the operator run\n`/brainstorm` first" in interrogation_doc or (
+        "recommend the operator run `/brainstorm` first" in interrogation_doc
+    )
+    assert '`/brainstorm` "accepts" a handoff' in skill_doc
+
+    # Saga CLI write: Phase 5 emits a runnable saga save with the orchestration-mode flag.
+    assert "saga.py" in skill_doc
+    assert "--orchestration-mode" in skill_doc
+    assert "--lifecycle-phase plan" in skill_doc
+
+    # Operator-choice citation: the doc-only decision contract plus the 3 backend enum strings.
+    assert "references/operator-choice.md" in skill_doc
+    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+        assert backend in skill_doc
+
+    # Deepening / confidence pass: Phase 4 conditional strengthening, with the rubric in the ref.
+    assert "confidence" in skill_doc.lower()
+    assert "Confidence pass (deepening)" in sections_doc
+
+    # Routing: /plan recommends /doc-review (the review phase) before /work, and emits the origin:
+    # frontmatter token so the review phase can trace the plan to its source.
+    assert "/doc-review" in skill_doc
+    assert "/work" in skill_doc
+    assert "origin:" in skill_doc
 
 
 def test_operator_choice_framework_is_documented_and_cited() -> None:

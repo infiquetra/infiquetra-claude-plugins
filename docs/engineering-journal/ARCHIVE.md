@@ -10,6 +10,27 @@
 
 ## Shipped
 
+### `/plan` rebuild — CE `ce-plan` artifact engine + gstack `spec` HOW-interrogation  {#plan-engine-rebuild-shipped}
+
+**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.7.0`, PR #___, squash ___). Was QUEUED P1 `#rebuild-plan-engine-merge`.
+
+**Summary.** Second **command** rebuild of the engine-merge campaign (after `/office-hours`). Rebuilt `/plan` from a 27-line stub into a real **implementation-plan engine that merges CE's `ce-plan` structured-artifact engine (Jeff-preferred spine) with gstack `spec`'s code-grounded HOW-interrogation front end** — a self-contained infiquetra engine. Position in the lifecycle: `/plan` answers "How should it be built?". Schema, the four interview answers, the review-phase rationale, and rejected alternatives recorded in DECISIONS [#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild).
+
+**Engine — six numbered phases.** Enter + warranted-gate → ground (HOW) → interrogate (HOW) → synthesize the plan artifact → condensed deepening pass (conditional) → saga + route + operator-choice.
+
+**What shipped.**
+- Rebuilt `/plan` SKILL (`skills/plan/SKILL.md`): the six-phase engine. **HOW-only interrogation** (assumes the WHAT settled upstream; open WHAT-ambiguity bounces with a one-way recommendation to run `/brainstorm` first, with a "do not claim `/brainstorm` accepts a handoff" guard). **Warranted-gate** + scope classes. **Condensed deepening** self-review (not CE's full 248-line pass). Routes to `/doc-review` (recommended next) before `/work`. Hard boundary: does NOT implement, does NOT file SDLC issues (`sdlc-manager`), does NOT run the full review gauntlet (`/doc-review`).
+- `skills/plan/references/plan-sections.md` — the artifact contract (R-ID / KTD / U-ID + per-unit test scenarios + explicit test-file paths; three-audience; `origin:` / `Implementation Units` / `Key Technical Decisions` / `U1` markers so `/doc-review` recognizes the doc) + the condensed deepening rubric.
+- `skills/plan/references/interrogation.md` — the gstack HOW-interrogation register (code-grounded, cite `path:line`).
+- `commands/plan.md` — thin launcher (preserves the handoff-maturity note).
+- One **plan saga** via the saga CLI (`scripts/saga.py save --lifecycle-phase plan`, runnable, with a "never `git add` the tick" boundary); epic/multi-unit splits hand to `sdlc-manager`.
+- **Operator-choice** offer — all three backends (`inline` | `team-execution` | `cc-workflows-ultracode`) cited by path (`references/operator-choice.md`), offered not defaulted.
+- Version bumps: plugin `0.7.0`, marketplace entry `0.7.0`; CHANGELOG.
+
+**Seam left queued.** The `/brainstorm` ↔ gstack `spec` WHAT-interrogation ownership seam (where the relentless WHAT-rigor lands — fold into `/brainstorm` vs the standalone `/spec`) is a deliberate downstream decision-point — see QUEUED [#brainstorm-spec-interrogation-seam](QUEUED.md#brainstorm-spec-interrogation-seam).
+
+**Refs.** DECISIONS [#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Operator-choice contract: `plugins/infiquetra-lifecycle/references/operator-choice.md`. Saga foundation: DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation).
+
 ### `/office-hours` rebuild — two-mode gstack diagnostic as the frame-finding front door  {#office-hours-engine-rebuild-shipped}
 
 **SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.6.0`, PR `#173`, squash `aec888c`). Was QUEUED P1 `#rebuild-office-hours-engine`.

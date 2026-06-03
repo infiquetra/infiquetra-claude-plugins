@@ -7,6 +7,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 PLUGIN_ROOT = ROOT / "plugins" / "infiquetra-lifecycle"
 
@@ -40,7 +42,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.9.0"
+    assert plugin_json["version"] == "0.10.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -438,6 +440,113 @@ def test_founder_review_engine_port_contract() -> None:
         assert len(_read(ref_path).splitlines()) >= 60
 
 
+def test_work_engine_merge_contract() -> None:
+    """Mechanism-floor contract for the rebuilt engine-merge /work engine (0.10.0).
+
+    These are MECHANISM floors, not noun-lists (DA-M10): a vibes reskin of the prior
+    39-line facilitator stub MUST fail. Each floor pins a runnable wiring the rebuild
+    exists to land — a literal saga write with the work-phase + round flags, the runnable
+    backend-recommendation CLI, the total PR-state read, the computed staleness command,
+    the extended issue-progress CLI call, and the saga-identity handoff into /code-review.
+    Presence-of-phrase checks are demoted to a secondary block at the end.
+
+    Tokens are taken from the actual E1-authored SKILL.md + its 3 references on disk.
+    """
+    work = PLUGIN_ROOT / "skills" / "work"
+    skill_doc = _read(work / "SKILL.md")
+    exec_doc = _read(work / "references" / "execution-strategy.md")
+    gates_doc = _read(work / "references" / "test-and-gates.md")
+    loop_doc = _read(work / "references" / "pr-continuation-loop.md")
+    # The runnable backend CLI line lives in the execution-strategy ref; the SKILL points
+    # at it. Mechanism floors are asserted against whichever surface actually carries them.
+    corpus = "\n".join((skill_doc, exec_doc, gates_doc, loop_doc))
+
+    # --- MECHANISM FLOOR 1: a literal runnable saga write minting the work-thread saga ---
+    # /work is the saga's primary writer; the minted thread must carry the work lifecycle
+    # phase AND the round axis (--rounds-seen, never the derived next_round). A stub names
+    # neither. Pin a single literal `saga.py save` invocation that contains both flags so a
+    # bare "writes a saga" mention cannot satisfy the floor.
+    save_blocks = re.findall(r"saga\.py save.*?(?=\n#|\n```|\Z)", skill_doc, flags=re.DOTALL)
+    assert any(
+        "--lifecycle-phase work" in block and "--rounds-seen" in block for block in save_blocks
+    ), (
+        "SKILL must contain a runnable `saga.py save` carrying --lifecycle-phase work AND --rounds-seen"
+    )
+
+    # --- MECHANISM FLOOR 2: a literal recommend-backend CLI invocation with >= 1 flag ---
+    # The deferred helper lands here; the engine must EMIT a runnable CLI call, not just name
+    # the function. Require the subcommand followed (same or continued line) by >= 1 --flag.
+    assert re.search(
+        r"recommend-backend(?:[^\n]*\\\n[^\n]*|[^\n]*)--\w",
+        corpus,
+    ), "engine must emit a runnable `recommend-backend` CLI invocation with at least one flag"
+
+    # --- MECHANISM FLOOR 3: the total PR --json read (state + reviewDecision + check status) ---
+    # The round-N loop is driven by a TOTAL read of live PR state. A `gh pr view --json` that
+    # omits reviewDecision or the check-status field cannot drive the transition table.
+    pr_json_lines = [
+        line for line in corpus.splitlines() if "gh pr view" in line and "--json" in line
+    ]
+    assert pr_json_lines, "engine must read live PR state via `gh pr view --json`"
+    assert any("state" in line for line in pr_json_lines)
+    assert any("reviewDecision" in line for line in pr_json_lines)
+    assert any(
+        ("mergeStateStatus" in line or "statusCheckRollup" in line) for line in pr_json_lines
+    ), (
+        "the PR --json read must include a check-status field (mergeStateStatus or statusCheckRollup)"
+    )
+
+    # --- MECHANISM FLOOR 4: the computed staleness check (git rev-list ...HEAD) ---
+    # Staleness is computed, not stored (DA-H6): commits since the reviewed SHA via
+    # `git rev-list <sha>..HEAD`. A stub has no such computation.
+    assert re.search(r"git rev-list\s+\S*\.\.HEAD", corpus), (
+        "engine must compute review staleness via `git rev-list <reviewed_sha>..HEAD`"
+    )
+
+    # --- MECHANISM FLOOR 5: the EXTENDED issue_progress.py CLI call (--commit-sha + --checks-run) ---
+    # DA-C1: the Phase-4 comment must invoke the now-extended CLI with the real evidence flags.
+    progress_blocks = re.findall(r"issue_progress\.py.*?(?=\n#|\n```|\Z)", corpus, flags=re.DOTALL)
+    assert any("--commit-sha" in block and "--checks-run" in block for block in progress_blocks), (
+        "engine must call the extended issue_progress.py CLI with --commit-sha AND --checks-run"
+    )
+
+    # --- MECHANISM FLOOR 6: the forward-coupling write + the in-loop gate ---
+    # The corrected coupling (DA-C3, hardened after the build review): /work mints a FINDABLE saga
+    # (sets --issue-ref, the saga-spec §11 issue_ref-adoption write + a code-review match key) that a
+    # standalone /code-review can append to; for its OWN gate /work runs /code-review programmatically and
+    # reads the envelope directly, capturing the reviewed SHA itself (git rev-parse HEAD) — no dependency
+    # on code-review writing an artifact (it writes none in programmatic mode).
+    assert any("--issue-ref" in block for block in save_blocks), (
+        "the mint must set --issue-ref (the saga-spec §11 issue_ref-adoption write + code-review match key)"
+    )
+    assert "/code-review" in skill_doc
+    assert "programmatic" in skill_doc, (
+        "the /code-review call must be the programmatic/report-only mode"
+    )
+    assert "git rev-parse HEAD" in corpus, (
+        "/work must capture the reviewed SHA itself (git rev-parse HEAD) for the staleness gate"
+    )
+
+    # --- MECHANISM FLOOR 7: each of the 3 reference files carries real content (>= 60 lines) ---
+    # Blunt thin-port tripwire — a vibes reskin would leave the refs as stubs.
+    for ref in ("execution-strategy.md", "test-and-gates.md", "pr-continuation-loop.md"):
+        ref_path = work / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+
+    # --- SECONDARY (presence-of-phrase, demoted): boundary + adapted-source markers ---
+    # Hard boundary negatives: merge under confirmation, no deploy/canary ownership, no
+    # lifecycle advance past work. These are intent markers, not mechanism floors.
+    assert "infiquetra-deploy" in corpus  # deploy mutation is delegated, not owned
+    assert "sdlc-manager" in corpus  # issue comments routed out, not filed by /work
+    assert "Parallel Safety Check" in corpus  # CE execution mechanics carried
+    assert "requires_hard_test_gate" in corpus  # the canonical change-kind gate is named
+    assert "merge-base" in corpus.lower()  # gstack merge-base-before-tests carried
+    # qa/resume routing is advisory and lifecycle does not advance past work.
+    assert "advisor" in corpus.lower()  # advisory qa/resume routing
+    assert "lifecycle_phase" in corpus  # the phase the engine deliberately does not advance
+
+
 def test_operator_choice_framework_is_documented_and_cited() -> None:
     operator_choice_path = PLUGIN_ROOT / "references" / "operator-choice.md"
     assert operator_choice_path.exists()
@@ -481,6 +590,108 @@ def test_destination_selector_and_escalation_helpers() -> None:
         )
         is True
     )
+
+
+def test_recommend_execution_backend_precedence_and_overlap() -> None:
+    """Unit-level contract for the deferred-from-0.5.0 backend helper that lands with /work.
+
+    Precedence is the lean operator-choice section 3.3 ladder: a size/risk OR consensus
+    signal -> team-execution; broad independent fan-out without elevated risk ->
+    cc-workflows-ultracode; neither -> inline. The load-bearing case is the OVERLAP one:
+    alternatives is computed independently of which backend won precedence, so a job that
+    is both contested AND broadly parallel recommends team-execution yet still LISTS
+    cc-workflows-ultracode as a one-keystroke escalation.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+
+    # Precedence: a size/risk trigger (file_count >= 8) -> team-execution. The helper
+    # reuses should_offer_team_execution's thresholds, so the >= 8 boundary must carry.
+    risky_by_size = lifecycle.recommend_execution_backend(file_count=9)
+    assert risky_by_size["recommended"] == "team-execution"
+    risky_by_security = lifecycle.recommend_execution_backend(has_security=True)
+    assert risky_by_security["recommended"] == "team-execution"
+
+    # Reuses should_offer_team_execution thresholds: file_count == 8 trips, 7 does not.
+    assert lifecycle.recommend_execution_backend(file_count=8)["recommended"] == "team-execution"
+    assert lifecycle.recommend_execution_backend(file_count=7)["recommended"] == "inline"
+
+    # Precedence: broad independent fan-out without elevated risk -> cc-workflows-ultracode.
+    fanout = lifecycle.recommend_execution_backend(broad_independent_fanout=True)
+    assert fanout["recommended"] == "cc-workflows-ultracode"
+
+    # An elevated-risk signal suppresses the ultracode branch (it must not run risky
+    # work through deterministic fan-out) and falls back to team-execution.
+    risky_fanout = lifecycle.recommend_execution_backend(
+        broad_independent_fanout=True, has_infra=True
+    )
+    assert risky_fanout["recommended"] == "team-execution"
+
+    # Precedence: neither signal -> inline.
+    assert lifecycle.recommend_execution_backend()["recommended"] == "inline"
+
+    # OVERLAP: consensus (-> team wins precedence) AND broad fan-out (-> ultracode reachable).
+    # Recommended is team-execution, but cc-workflows-ultracode MUST still be an alternative.
+    overlap = lifecycle.recommend_execution_backend(
+        broad_independent_fanout=True, needs_consensus=True
+    )
+    assert overlap["recommended"] == "team-execution"
+    assert "cc-workflows-ultracode" in overlap["alternatives"]
+    # The recommended backend is never echoed back into its own alternatives.
+    assert "team-execution" not in overlap["alternatives"]
+
+    # omit_ultracode when the Workflow tool is unavailable: the flag is set AND
+    # cc-workflows-ultracode is dropped from alternatives (it is no longer reachable).
+    no_workflow = lifecycle.recommend_execution_backend(
+        broad_independent_fanout=True, needs_consensus=True, workflow_available=False
+    )
+    assert no_workflow["omit_ultracode"] is True
+    assert "cc-workflows-ultracode" not in no_workflow["alternatives"]
+    # With ultracode capability-gated out, a pure-fan-out job degrades to inline.
+    assert (
+        lifecycle.recommend_execution_backend(
+            broad_independent_fanout=True, workflow_available=False
+        )["recommended"]
+        == "inline"
+    )
+    # When workflow IS available, omit_ultracode stays false.
+    assert lifecycle.recommend_execution_backend()["omit_ultracode"] is False
+
+
+def test_lifecycle_state_cli_subcommands(capsys: pytest.CaptureFixture[str]) -> None:
+    """The main() subcommand refactor: normalize + recommend-backend exist; bare positional fails.
+
+    The CLI was refactored from a bare positional ``destination`` into subcommands so the
+    deferred helper gets a real markdown caller. recommend-backend emits JSON; normalize
+    preserves today's behavior; a bare ``deploy`` (the old positional usage) must now exit
+    non-zero via argparse instead of silently succeeding.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+
+    # recommend-backend subcommand -> JSON on stdout, parsed and asserted.
+    assert lifecycle.main(["recommend-backend", "--file-count", "9"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["recommended"] == "team-execution"
+
+    # The overlap escalation survives the CLI surface end-to-end.
+    assert lifecycle.main(["recommend-backend", "--broad-fanout", "--needs-consensus"]) == 0
+    overlap = json.loads(capsys.readouterr().out)
+    assert overlap["recommended"] == "team-execution"
+    assert "cc-workflows-ultracode" in overlap["alternatives"]
+
+    # --no-workflow flows through to omit_ultracode via the CLI.
+    assert lifecycle.main(["recommend-backend", "--broad-fanout", "--no-workflow"]) == 0
+    no_workflow = json.loads(capsys.readouterr().out)
+    assert no_workflow["omit_ultracode"] is True
+
+    # normalize subcommand preserves the legacy alias resolution.
+    assert lifecycle.main(["normalize", "deploy"]) == 0
+    assert capsys.readouterr().out.strip() == "nonprod-deploy"
+
+    # The bare positional (old behavior) is now an invalid subcommand: argparse raises
+    # SystemExit instead of silently succeeding. This is the M8 caller-safety contract.
+    with pytest.raises(SystemExit) as exc_info:
+        lifecycle.main(["deploy"])
+    assert exc_info.value.code != 0
 
 
 def test_issue_progress_comments_include_required_evidence() -> None:
@@ -532,6 +743,57 @@ def test_issue_progress_comments_include_required_evidence() -> None:
     assert "Added missing gate." in review
     assert "doc review findings:" in review
     assert "P1 Missing rollback evidence." in review
+
+
+def test_issue_progress_cli_renders_extended_work_fields(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """DA-C1: the CLI must expose the fields /work's Phase-4 comment passes.
+
+    render_issue_comment() already accepted these fields, but the argparse surface only
+    exposed 8 — so /work's markdown call was uninvokable. The rebuild extends parse_args/main
+    to forward the function's full field set. Drive main() with a faked argv (the helper's
+    main() takes argv directly) and assert each new flag's value lands in the rendered output.
+    """
+    issue_progress = _load_module("issue_progress.py")
+
+    rc = issue_progress.main(
+        [
+            "--event",
+            "phase",
+            "--issue-ref",
+            "infiquetra/campps-service#42",
+            "--destination",
+            "pr",
+            "--work-session-path",
+            "docs/work-sessions/2026-06-03-phase-2.md",
+            "--commit-sha",
+            "deadbeef",
+            "--checks-run",
+            "pytest|ruff",
+            "--blockers",
+            "None",
+            "--pr-url",
+            "https://github.com/infiquetra/campps-service/pull/7",
+            "--review-status",
+            "APPROVED",
+            "--doc-review-artifact",
+            "docs/reviews/2026-06-03-doc-review.md",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    # Each new CLI flag's value renders into the comment.
+    assert "docs/work-sessions/2026-06-03-phase-2.md" in out
+    assert "deadbeef" in out
+    # --checks-run is pipe-split; each check renders on its own indented bullet.
+    assert "`pytest`" in out
+    assert "`ruff`" in out
+    assert "blockers: None" in out
+    assert "https://github.com/infiquetra/campps-service/pull/7" in out
+    assert "review status: APPROVED" in out
+    assert "doc review artifact: docs/reviews/2026-06-03-doc-review.md" in out
 
 
 def test_deploy_strategy_detection_matches_infiquetra_policy() -> None:

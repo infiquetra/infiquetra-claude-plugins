@@ -96,6 +96,12 @@ def render_issue_comment(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _split_pipe(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    return [item.strip() for item in value.split("|") if item.strip()]
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--event", required=True)
@@ -106,6 +112,29 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--handoff-maturity")
     parser.add_argument("--handoff-source")
     parser.add_argument("--next-action")
+    parser.add_argument("--work-session-path")
+    parser.add_argument("--commit-sha")
+    parser.add_argument("--checks-run", help="pipe-separated list of checks run")
+    parser.add_argument("--blockers")
+    parser.add_argument("--pr-url")
+    parser.add_argument("--review-status")
+    parser.add_argument("--doc-review-artifact")
+    parser.add_argument(
+        "--doc-review-blocked",
+        dest="doc_review_blocked",
+        action="store_true",
+        default=None,
+    )
+    parser.add_argument(
+        "--no-doc-review-blocked",
+        dest="doc_review_blocked",
+        action="store_false",
+    )
+    parser.add_argument("--doc-review-findings", help="pipe-separated list of doc review findings")
+    parser.add_argument("--doc-review-override")
+    parser.add_argument("--deploy-status")
+    parser.add_argument("--workflow-url")
+    parser.add_argument("--evidence-link")
     return parser.parse_args(argv)
 
 
@@ -118,9 +147,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             destination=args.destination,
             summary=args.summary,
             plan_path=args.plan_path,
+            work_session_path=args.work_session_path,
+            commit_sha=args.commit_sha,
+            checks_run=_split_pipe(args.checks_run),
+            blockers=args.blockers,
+            pr_url=args.pr_url,
+            review_status=args.review_status,
+            doc_review_artifact=args.doc_review_artifact,
+            doc_review_blocked=args.doc_review_blocked,
+            doc_review_findings=_split_pipe(args.doc_review_findings),
+            doc_review_override=args.doc_review_override,
             handoff_maturity=args.handoff_maturity,
             handoff_source=args.handoff_source,
             next_action=args.next_action,
+            deploy_status=args.deploy_status,
+            workflow_url=args.workflow_url,
+            evidence_link=args.evidence_link,
         ),
         end="",
     )

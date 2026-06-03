@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.8.0 - 2026-06-03
+
+- Rebuild `/code-review` from a 20-line stub into a real pre-PR code-quality review engine — the third
+  command rebuild of the engine-merge campaign (after `/office-hours` and `/plan`). Merges CE's
+  `ce-code-review` findings/validator/judgment-lens spine (the Jeff-preferred backbone) with gstack
+  `/review`'s scope-drift detection + plan-completion audit + high-signal checklist categories into a
+  self-contained infiquetra engine. Fires at the work→PR boundary (after `/work` produces code, before
+  PR/merge) — it is a within-work gate, NOT the saga `review` lifecycle slot (`/doc-review` owns that).
+  Six numbered phases: enter + scope → intent + built-vs-planned audit → select lenses (judgment) →
+  review fan-out → merge + validate → report + route + saga.
+- **Gate-only boundary** — `/code-review` reports + classifies + routes; it never mutates code, commits,
+  pushes, opens PRs, or files SDLC issues (`/work` / `infiquetra-deploy` / `sdlc-manager` own those).
+  Adopts CE's full findings schema (`autofix_class` / `owner` / anchored `confidence` / `suggested_fix` /
+  `pre_existing` / `evidence`) as agent-consumable routing metadata; fixer dispatch is offered, never
+  auto-run. The programmatic mode (for `/work`'s future call) is zero-write to reviewed code.
+- **Judgment-based lenses** — read the diff, spawn only lenses with real work, announce the team with a
+  one-line justification each. Four always-on lenses (correctness, security, testing,
+  maintainability/conventions) plus conditional-by-judgment lenses including a distinct
+  deploy/migration-verification lens (DynamoDB/IaC/Ansible checklist) and a reliability lens. gstack's
+  Rails/Swift/Stimulus specialists dropped; its high-signal checklist categories (enum-completeness,
+  LLM-output-trust-boundary, SQL/shell-injection, race conditions) fold into the lens checklists.
+- **Built-vs-planned audit** — scope-drift detection (informational: CLEAN / DRIFT / REQUIREMENTS-MISSING)
+  plus the 5-state plan-completion audit (DONE / PARTIAL / NOT-DONE / CHANGED / UNVERIFIABLE) with the
+  three verification modes (DIFF / CROSS-REPO / EXTERNAL-STATE) and the honesty rule, reading the
+  `docs/plans/` artifact + the journal. The audit always emits findings; the normal P0/P1 findings gate
+  is what blocks the PR.
+- **Independent validator pass, right-sized by MODE** — programmatic/headless runs a fresh per-finding
+  validator over all Stage-A survivors (capped 15, ordered P0→P3, validator-reject/failure → drop);
+  interactive mode lets the operator be the per-finding validator. The cost control is the upstream
+  suppress-<75 confidence gate + the 15-cap, not a severity carve-out.
+- `/code-review` becomes **saga's first review-track consumer** — append-only to an EXISTING work-thread
+  saga (found via `saga.py scan`): appends the artifact path to `review_paths` + records the backend in
+  `orchestration_mode`, preserving `lifecycle_phase` (it does NOT advance the phase). If no saga exists it
+  skips the saga write — never mints, never invents `--kind/--id`. Never `git add` the tick.
+- Durable artifacts land in their own `docs/code-reviews/` dir (NOT `docs/reviews/` — avoids the
+  handoff/sdlc-manager plan-ready classifier collision), carrying the reviewed SHA + a review-result
+  contract. **Operator-choice** offer — all three execution backends (`inline` | `team-execution` |
+  `cc-workflows-ultracode`) cited by path (`references/operator-choice.md`) for the fan-out + validator
+  pass.
+- Four new references: `skills/code-review/references/{lens-catalog,findings-schema,validator,built-vs-planned}.md`.
+  Thin `commands/code-review.md` launcher reflecting the engine (gate-only + saga append + the hard
+  boundary). Self-contained: ports both source engines, no gstack vendoring, no runtime dep on CE.
+
 ## 0.7.0 - 2026-06-02
 
 - Rebuild `/plan` from a 27-line stub into a real implementation-plan engine — the second command

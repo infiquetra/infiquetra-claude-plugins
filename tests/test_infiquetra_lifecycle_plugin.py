@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -39,7 +40,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.8.0"
+    assert plugin_json["version"] == "0.9.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -306,6 +307,132 @@ def test_code_review_engine_merge_contract() -> None:
 
     # Blunt thin-port tripwire: each of the 4 reference files carries real content.
     for ref in ("lens-catalog.md", "findings-schema.md", "validator.md", "built-vs-planned.md"):
+        ref_path = review / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+
+
+def test_founder_review_engine_port_contract() -> None:
+    """Mechanism-floor contract for the ported /founder-review engine (0.9.0).
+
+    Floors are calibrated to E1's actual authored tokens but structural enough that a
+    vibes-y reskin (the prior 20-line stub) fails: a stub names neither the 4 committed
+    scope modes, the 18 CEO patterns / 9 Prime Directives, the commit-no-drift rule, the
+    FLAT->EXPANSIVE framing, the A/B/C capped opt-in, the target-conditional ceremonies,
+    nor the CLOSED-LOOP artifact handback. It also pins the no-saga-write mechanism (the
+    one thing that separates /founder-review from its saga-writing sibling /code-review).
+    See E1-authored founder-review skill + its 2 references.
+    """
+    review = PLUGIN_ROOT / "skills" / "founder-review"
+    skill_doc = _read(review / "SKILL.md")
+    cognition_doc = _read(review / "references" / "ceo-cognition.md")
+    modes_doc = _read(review / "references" / "review-modes.md")
+
+    # All 4 committed scope-mode names (the engine spine) — present in SKILL + modes ref.
+    for mode in ("SCOPE EXPANSION", "SELECTIVE EXPANSION", "HOLD SCOPE", "SCOPE REDUCTION"):
+        assert mode in skill_doc
+        assert mode in modes_doc
+
+    # >= 8 of the 18 CEO cognitive patterns named in ceo-cognition.md (internalized roster).
+    ceo_patterns = (
+        "Classification instinct",
+        "Paranoid scanning",
+        "Inversion reflex",
+        "Focus as subtraction",
+        "People-first sequencing",
+        "Speed calibration",
+        "Proxy skepticism",
+        "Narrative coherence",
+        "Temporal depth",
+        "Founder-mode bias",
+        "Wartime awareness",
+        "Courage accumulation",
+        "Willfulness as strategy",
+        "Leverage obsession",
+        "Hierarchy as service",
+        "Edge case paranoia",
+        "Subtraction default",
+        "Design for trust",
+    )
+    assert sum(1 for p in ceo_patterns if p in cognition_doc) >= 8
+
+    # >= 6 of the 9 Prime Directives named in ceo-cognition.md (scope-level lenses).
+    prime_directives = (
+        "Zero silent failures",
+        "Every error has a name",
+        "shadow paths",
+        "Interactions have edge cases",
+        "Observability is scope",
+        "Diagrams are mandatory",
+        "deferred must be written",
+        "6-month future",
+        'permission to say "scrap it',
+    )
+    assert sum(1 for d in prime_directives if d in cognition_doc) >= 6
+
+    # Commit-no-drift literal: once a mode is chosen it is committed for the whole review.
+    assert "commit" in skill_doc
+    assert "no silent drift" in skill_doc
+
+    # Expansion-framing mechanism: lead with felt experience, close with effort + impact.
+    assert "FLAT" in skill_doc and "EXPANSIVE" in skill_doc
+    assert "felt experience" in skill_doc
+    assert "FLAT" in modes_doc and "EXPANSIVE" in modes_doc
+
+    # The 3 opt-in options (A add / B defer / C skip) + the cap (top 5-6 if > 8 candidates).
+    for option in ("A) add", "B) defer", "C) skip"):
+        assert option in skill_doc
+    assert "top 5-6" in skill_doc
+    assert "than 8" in skill_doc
+
+    # Target-conditional gating: 0C-bis + 0E conditional on plan vs strategy/scope-question.
+    assert "0C-bis" in skill_doc
+    assert "0E" in skill_doc
+    assert "TARGET-CONDITIONAL" in skill_doc
+    assert "TARGET-CONDITIONAL" in modes_doc
+    # The conditional pivots on the target type the gating keys off.
+    for target in ("plan", "strategy", "scope-question"):
+        assert target in skill_doc
+
+    # CLOSED-LOOP handback token: the expanded-plan PATH is handed to /doc-review, not just
+    # a bare "/doc-review" mention. This is the mechanism that prevents the rigor evaporating.
+    assert "/doc-review docs/plans/" in skill_doc
+    assert "/doc-review docs/plans/" in modes_doc
+    assert "/code-review" in skill_doc
+
+    # Own-dir scope-decision artifact (NOT docs/reviews/, NOT docs/code-reviews/).
+    assert "docs/founder-reviews/" in skill_doc
+    assert "docs/founder-reviews/" in modes_doc
+
+    # Boundary: it CHALLENGES direction (not "records" it — /strategy records).
+    assert "challenges" in skill_doc
+    assert "record" in skill_doc  # the "does not record strategy" / "/strategy records" boundary
+    # Gate-only negatives — E1 bolds the NOT.
+    for negative in (
+        "does **NOT** implement",
+        "does **NOT** commit",
+        "does **NOT** file",
+        "does **NOT** make code",
+    ):
+        assert negative in skill_doc
+
+    # Operator-choice citation at the plugin-root path + the 3 backend enums.
+    assert "references/operator-choice.md" in skill_doc
+    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+        assert backend in skill_doc
+
+    # NO SAGA WRITE (the mechanism that separates /founder-review from /code-review):
+    # /founder-review runs upstream of the work thread and must NOT emit a runnable saga
+    # write. E1 mentions the tokens only inside explicit negations ("never writes the saga
+    # (no saga.py call, no --review-paths)"), so a literal token-absence assertion would
+    # fail a FAITHFUL engine. Pin the mechanism instead: no runnable `saga.py save` command
+    # and no `--review-paths <value>` assignment (the exact pattern /code-review uses).
+    assert "saga.py save" not in skill_doc
+    assert not re.search(r"--review-paths\s+\S", skill_doc)
+    assert not re.search(r"python3?\s+\S*saga\.py", skill_doc)
+
+    # Blunt thin-port tripwire: each reference file carries real content (>= 60 lines).
+    for ref in ("ceo-cognition.md", "review-modes.md"):
         ref_path = review / "references" / ref
         assert ref_path.exists()
         assert len(_read(ref_path).splitlines()) >= 60

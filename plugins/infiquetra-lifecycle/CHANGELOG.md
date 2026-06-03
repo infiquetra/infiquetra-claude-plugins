@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.9.0 - 2026-06-03
+
+- Rebuild `/founder-review` (alias `/ceo-review`) from a 20-line stub into a real scope/ambition/direction
+  review engine — the fourth command rebuild of the engine-merge campaign (after `/office-hours`, `/plan`,
+  and `/code-review`). A **port, not a merge**: gstack `plan-ceo-review` is the sole engine source (4
+  user-selected scope modes + 18 internalized CEO cognitive patterns + 9 Prime Directives + an adapted
+  pre-review system audit), with only CE `product-pulse`'s sharpened no-false-precision posture stolen.
+  Fires upstream of execution on a `/plan` artifact, a `STRATEGY.md`, a `/brainstorm` output, or an ad-hoc
+  scope question — the third member of the review trio (`/doc-review` = plan-readiness, `/code-review` =
+  code quality, **`/founder-review` = is this the right, ambitious-enough thing to build at all?**).
+- **Four scope modes, committed for the whole review (no silent drift)** — SCOPE EXPANSION (cathedral) /
+  SELECTIVE EXPANSION (hold + cherry-pick) / HOLD SCOPE (bulletproof) / SCOPE REDUCTION (surgeon), selected
+  via `AskUserQuestion` with context-defaults (greenfield→Expansion, enhancement→Selective, bugfix/refactor
+  →Hold, >15 files→suggest Reduction). Each is distinct; all relevant pre-traction.
+- **Review-only boundary** — `/founder-review` challenges scope/ambition/direction + captures a scope
+  decision; it never makes code changes, never commits/pushes/opens PRs, never files SDLC issues, and never
+  *records* the direction (`/strategy` records; founder-review challenges). On a `STRATEGY.md`, founder-review
+  is the *ambition lens* and `/doc-review` the *readiness lens* — complementary, not a collision.
+- **CLOSED-LOOP routing (not a hand-wave)** — accepted scope routes to `/plan` to re-plan; the (re-)expanded
+  plan artifact is written/updated and handed **back** to `/doc-review` (readiness) + `/code-review` (code)
+  **with the concrete path**, so expanding scope re-rigors that scope rather than dropping it. Phase 3
+  applies the directives + patterns as scope-level lenses producing **named scope findings**, not vibes.
+- **Target-conditional Step-0 ceremonies** — gstack's 0C-bis (implementation alternatives) + 0E (temporal
+  interrogation) are plan-specific, so they run on a plan target and are skipped/recast on a
+  strategy/brainstorm/scope-question target (0A/0B/0C/0F always run). An **office-hours escape** in 0A
+  offers `/office-hours` when the session is vague/unframed, resuming after.
+- **NO saga write** — founder-review runs upstream/pre-saga and its output is a scope decision, not a
+  readiness/code-review artifact; `saga.py`'s `review_paths` is the wrong home and the guard would skip
+  ~always. Cross-session persistence = the `docs/founder-reviews/` scope-decision artifact + the journal ADR.
+- Durable artifacts land in their own `docs/founder-reviews/` scope-decision dir (intentionally NOT a
+  `/handoff` source and NOT `docs/reviews/`), carrying the Mode + Vision + a Scope-Decisions table
+  (ACCEPTED/DEFERRED/SKIPPED) + the founder verdict (ship / sharpen / scrap-and-rethink) + the next-command
+  handback. **Operator-choice** offer — all three backends (`inline` | `team-execution` |
+  `cc-workflows-ultracode`) cited by path (`references/operator-choice.md`) on a scope-expansion/scrap verdict.
+- Two new references: `skills/founder-review/references/{ceo-cognition,review-modes}.md` (the 18 patterns + 9
+  directives + sharpened posture; the 4 modes + ceremonies + adapted audit + target-conditional gating).
+  Thin `commands/founder-review.md` + `commands/ceo-review.md` (alias) launchers (review-only, no saga
+  mention). Self-contained: ports the gstack engine, no gstack vendoring, no runtime dep on CE.
+
 ## 0.8.0 - 2026-06-03
 
 - Rebuild `/code-review` from a 20-line stub into a real pre-PR code-quality review engine — the third

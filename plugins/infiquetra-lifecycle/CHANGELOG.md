@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.10.0 - 2026-06-03
+
+- Rebuild `/work` from a 39-line facilitator stub into a real execution-loop engine — the **fifth command
+  rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`)
+  and the most architecturally entangled, because it lands two deferred foundations at once. A genuine
+  **merge**: CE `ce-work`'s execution engine (Phase-0 complexity triage, task-list from plan U-IDs, the
+  Execution-Strategy table + Parallel Safety Check, test discovery + scenario-completeness + system-wide
+  check, incremental-commit heuristic, "already shipped → verify don't reimplement") + gstack `ship` /
+  `land-and-deploy`'s autonomy contract, Review-Readiness + staleness gate, and merge-base-before-tests.
+  Five numbered phases: enter + scan saga + triage + detect round-N → setup + task-list + backend → execute
+  phase-by-phase → record (saga tick + work-session + issue progress) → code-review gate + PR-ready +
+  continuation routing.
+- **Saga becomes first-class — `/work` is its primary writer (saga-spec §11).** `/work` `scan`s/`restore`s on
+  re-entry (rehydrate round/phase/checks_run/next_step), mints/advances the work-thread saga to
+  `lifecycle_phase=work` with `--plan-path` set + saved on-branch, and writes a tick per phase boundary
+  (round bump via `--rounds-seen`, never `next_round`). Crucially it **mints + names the exact saga that
+  `/code-review` (shipped 0.8.0, append-only/never-mint) appends `review_paths` to** — and passes the saga
+  identity (`kind`+`id`) into the programmatic `/code-review` call so code-review hits that thread instead of
+  scan-guessing. This closes the forward-coupling for both issue AND ad-hoc task work.
+- **The deferred `recommend_execution_backend()` helper lands here** — its first real caller (a library-only
+  helper would be uncallable from markdown). A pure function in `scripts/lifecycle_state.py` next to
+  `should_offer_team_execution` (reused), plus a `recommend-backend` CLI subcommand returning
+  `{recommended, rationale, alternatives, omit_ultracode}`. `alternatives` is computed independently of the
+  precedence winner so an overlap case (consensus AND broad fan-out) still offers `cc-workflows-ultracode` as
+  a one-keystroke escalation. `main()` refactored into `normalize` + `recommend-backend` subcommands.
+  Closes the operator-choice 0.5.0 deferral.
+- **`issue_progress.py`'s CLI extended** to forward the full field set the function already accepts
+  (`--work-session-path --commit-sha --checks-run` [pipe-separated] `--blockers --pr-url --review-status
+  --doc-review-artifact --doc-review-blocked --doc-review-findings` [pipe-separated] `--doc-review-override
+  --deploy-status --workflow-url --evidence-link`) — the Phase-4 progress comment was previously
+  uninvokable from markdown (only 8 of the function's fields had argparse flags).
+- **PR-ready boundary + round-N PR continuation loop (`/work` owns it, NOT `/resume`).** `/work` executes to
+  PR-ready, then on re-entry reads PR state with a total `gh pr view --json
+  state,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup,isDraft,mergedAt` and walks a total
+  transition table (draft → mark-ready; review-required → pause; changes-requested/conflicting/failing-checks
+  → round N+1; approved+clean+fresh → offer merge). **Merge is a confirmed git op `/work` owns**
+  (`gh pr merge` only under explicit operator confirmation, never silent); only deploy mutation is delegated
+  to `infiquetra-deploy`.
+- **Hard review gate + honest override + computed staleness.** PR-ready blocks on unresolved P0/P1 (read from
+  `/code-review`'s programmatic envelope + the saga `review_paths`) OR a stale review (parse the reviewed SHA
+  from the newest review artifact → `git rev-list <reviewed_sha>..HEAD --count > 0`). Override only with a
+  recorded rationale, never silent. `requires_hard_test_gate` blocks risky change-kinds at the test gate.
+- **Boundary.** `/work` builds, gates, records, and coordinates the PR loop (merge under confirmation); it does
+  NOT silently mutate GitHub, own deploy/canary (gstack's canary-verify + offer-revert are **relocated** to
+  `infiquetra-deploy`, queued there), file SDLC issues (`sdlc-manager`), or advance `lifecycle_phase` past
+  `work` (the `qa` advance is honestly deferred to the `/qa` rebuild — the saga sits at `work` post-merge;
+  `/qa`/`/resume` routing is advisory).
+- Three new references: `skills/work/references/{execution-strategy,test-and-gates,pr-continuation-loop}.md`
+  (CE execution strategy + the `recommend_execution_backend()` integration; test discovery + hard-gate +
+  computed-staleness + the gstack autonomy contract; the total PR-state transition table). Thin
+  `commands/work.md` launcher (saga-primary-writer + PR-ready boundary + hard review gate +
+  merge-under-confirmation; no deploy/canary ownership). Surgical flip of `references/operator-choice.md`'s
+  deferred-helper notes now that the helper has shipped. Self-contained: merges the CE + gstack engines, no
+  vendoring, no runtime dep.
+
 ## 0.9.0 - 2026-06-03
 
 - Rebuild `/founder-review` (alias `/ceo-review`) from a 20-line stub into a real scope/ambition/direction

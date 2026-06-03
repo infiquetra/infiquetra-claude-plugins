@@ -7,9 +7,11 @@ file when they are rebuilt. They MUST treat the field names, enum values, and op
 the single source of truth. If code and this document disagree, that is a bug in one of them — fix it, do
 not work around it.
 
-> This is a **primitive**, not yet a consumer. As of 0.4.0 the engine ships with unit tests + manual smoke;
-> no command calls `restore`/`scan`/`save` yet. Consumer wiring is each consumer's own queued item. This
-> spec exists so the contract is settled **before** consumers calcify against it.
+> The engine shipped as a primitive in 0.4.0 (unit tests + manual smoke) and is now **consumed**: `/plan`
+> (0.7.0) writes a plan saga via `save`, `/code-review` (0.8.0) is the first review-track consumer
+> (append-only/never-mint to an existing thread's `review_paths`), and `/work` (0.10.0) is the **primary
+> writer** — it `scan`s/`restore`s on re-entry and writes a tick per phase. `/resume` + `/loop` wiring
+> remains queued. This spec is the single source of truth those consumers implement against.
 
 ---
 

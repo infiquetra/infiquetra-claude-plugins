@@ -11,9 +11,10 @@ document says *how the choice is made and offered*. Lifecycle owns the **CHOICE*
 recommends a backend, surfaces it, and records what the operator picked. The backends themselves do the
 work.
 
-> This is a **doc-only foundation.** As of 0.5.0 no code helper exists; the prose offer hooks in `/loop` and
-> `/work` cite this file. The CLI-backed execution-backend helper is **deferred to the `/work` rebuild**.
-> This spec exists so the contract is settled **before** consumers calcify against it.
+> The CLI-backed execution-backend helper **shipped with the `/work` rebuild**: `recommend_execution_backend()`
+> lives in [`scripts/lifecycle_state.py`](../scripts/lifecycle_state.py) (the `recommend-backend` subcommand).
+> The prose offer hooks in `/loop` and `/work` cite this file; `/work` calls the helper. This spec was settled
+> as a doc-only foundation in 0.5.0 **before** consumers calcified against it, then the helper landed here.
 
 ---
 
@@ -139,10 +140,11 @@ The offer renders differently depending on the surface, because not every surfac
 pointer into the chosen backend). See [`references/saga-spec.md`](./saga-spec.md) for the storage contract
 (field table §3.1, enum domain §4).
 
-**Until `/work` and `/loop` write sagas** (saga is currently an *unconsumed primitive* — see saga-spec
-§"primitive, not yet a consumer"), record the chosen backend **NARRATIVELY** in the work-session writeup /
-engineering journal. The offer hooks shipped in this PR **MUST NOT** call `saga.save` — that wiring belongs
-to the consuming-command rebuilds, not to a doc-only offer hook.
+**Saga writers.** `/plan` (0.7.0) and `/work` (0.10.0) write sagas — they record the chosen backend durably
+via the saga's `--orchestration-mode` field. `/loop`'s saga wiring is **queued** (it still records the choice
+narratively in the work-session writeup / engineering journal until its rebuild lands). A command that does
+not yet write a saga records the backend **NARRATIVELY**; it must not call `saga.save` until its rebuild
+wires it as a real consumer.
 
 `orchestration_ref` by backend:
 
@@ -156,13 +158,13 @@ to the consuming-command rebuilds, not to a doc-only offer hook.
 
 ## 7. Consumer contract (who cites this, when)
 
-Each command cites this file at its own rebuild. None ship a code helper in this foundation PR — the
-CLI-backed execution-backend helper lands with the **`/work`** rebuild (deferred from here).
+Each command cites this file at its own rebuild. The CLI-backed execution-backend helper
+(`recommend_execution_backend()`) **shipped with the `/work` rebuild** (0.10.0); `/work` is its first caller.
 
 | Command | Cites operator-choice |
 |---|---|
 | `/loop` | **now** (prose offer hook) |
-| `/work` | **now** (prose offer hook; CLI-backed helper lands with the `/work` rebuild) |
+| `/work` | **now** (prose offer hook + the CLI-backed `recommend_execution_backend()` helper, shipped 0.10.0) |
 | `/plan` | at its rebuild |
 | `/resume` | at its rebuild |
 | `/code-review` | at its rebuild |

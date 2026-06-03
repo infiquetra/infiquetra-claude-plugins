@@ -39,7 +39,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.7.0"
+    assert plugin_json["version"] == "0.8.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -244,6 +244,71 @@ def test_plan_engine_merge_contract() -> None:
     assert "/doc-review" in skill_doc
     assert "/work" in skill_doc
     assert "origin:" in skill_doc
+
+
+def test_code_review_engine_merge_contract() -> None:
+    """Richness-floor contract for the rebuilt engine-merge /code-review engine (0.8.0).
+
+    Floors are calibrated to E1's actual authored tokens but structural enough that a thin
+    port (the prior 20-line stub) fails: a stub names neither the 5 plan-completion states,
+    the 5 confidence anchors, the 4 autofix classes / owners, nor the judgment-lens roster.
+    See E1-authored code-review skill + its 4 references.
+    """
+    review = PLUGIN_ROOT / "skills" / "code-review"
+    skill_doc = _read(review / "SKILL.md")
+    built_doc = _read(review / "references" / "built-vs-planned.md")
+    schema_doc = _read(review / "references" / "findings-schema.md")
+    lens_doc = _read(review / "references" / "lens-catalog.md")
+
+    # built-vs-planned.md: all 5 plan-completion states + all 3 verification modes.
+    # E1 used the hyphenated "NOT-DONE" token (not "NOT DONE").
+    for state in ("DONE", "PARTIAL", "NOT-DONE", "CHANGED", "UNVERIFIABLE"):
+        assert state in built_doc
+    for mode in ("DIFF", "CROSS-REPO", "EXTERNAL-STATE"):
+        assert mode in built_doc
+
+    # findings-schema.md: all 5 confidence anchors + all 4 autofix_class + all 4 owner.
+    for anchor in ("0", "25", "50", "75", "100"):
+        assert f"**{anchor}**" in schema_doc
+    for klass in ("safe_auto", "gated_auto", "manual", "advisory"):
+        assert klass in schema_doc
+    for owner in ("review-fixer", "downstream-resolver", "human", "release"):
+        assert owner in schema_doc
+
+    # lens-catalog.md: the 4 always-on lenses + >= 4 conditional lenses, incl.
+    # the distinct deploy/migration-verification lens (never folded away).
+    for always_on in ("correctness", "security", "testing", "maintainability"):
+        assert always_on in lens_doc
+    conditional = (
+        "deploy/migration-verification",
+        "reliability",
+        "performance",
+        "api-contract",
+        "adversarial",
+        "agent-native",
+    )
+    assert sum(1 for lens in conditional if lens in lens_doc) >= 4
+    assert "deploy/migration-verification" in lens_doc
+
+    # SKILL.md: gate-only negatives (does not commit / push / file). E1 bolds the NOT.
+    for negative in ("does **NOT** commit", "does **NOT** push", "does **NOT** file"):
+        assert negative in skill_doc
+    # Saga literals: an append-only review-track write with both flags.
+    assert "saga.py" in skill_doc
+    assert "--review-paths" in skill_doc
+    assert "--orchestration-mode" in skill_doc
+    # Own-dir durable artifact path (NOT docs/reviews/).
+    assert "docs/code-reviews/" in skill_doc
+    # Operator-choice citation at the plugin-root path + the 3 backend enums.
+    assert "references/operator-choice.md" in skill_doc
+    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+        assert backend in skill_doc
+
+    # Blunt thin-port tripwire: each of the 4 reference files carries real content.
+    for ref in ("lens-catalog.md", "findings-schema.md", "validator.md", "built-vs-planned.md"):
+        ref_path = review / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
 
 
 def test_operator_choice_framework_is_documented_and_cited() -> None:

@@ -10,6 +10,26 @@
 
 ## Shipped
 
+### `/code-review` rebuild — CE `ce-code-review` spine + gstack `/review` scope/plan audit  {#code-review-engine-rebuild-shipped}
+
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.8.0`, SHA via post-merge follow-up). Was QUEUED P1 `#rebuild-code-review-engine-merge`.
+
+**Summary.** Third **command** rebuild of the engine-merge campaign (after `/office-hours` and `/plan`). Rebuilt `/code-review` from a 20-line stub into a real **pre-PR code-quality review engine that merges CE's `ce-code-review` findings/validator/judgment-lens spine (Jeff-preferred backbone) with gstack `/review`'s scope-drift detection + plan-completion audit + high-signal checklist categories** — a self-contained infiquetra engine. Position in the lifecycle: a within-work gate at the **work→PR boundary** (after `/work` produces code, before PR/merge) — NOT the saga `LIFECYCLE_PHASES` `review` slot (that's `/doc-review`'s plan→work gate). Schema, the four interview answers, the gate-only / saga-append-only / mode-based-validator / own-dir decisions, and rejected alternatives recorded in DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild).
+
+**Engine — six numbered phases.** Enter + scope → intent + built-vs-planned audit → select lenses (judgment) → review fan-out → merge + validate → report + route + saga.
+
+**What shipped.**
+- Rebuilt `/code-review` SKILL (`skills/code-review/SKILL.md`): the six-phase engine. **Gate-only** — reports + classifies + routes; never mutates code, commits, pushes, opens PRs, or files SDLC issues; the programmatic mode (for `/work`'s future call) is zero-write to reviewed code. **Judgment-based lenses** — 4 always-on (correctness, security, testing, maintainability/conventions) + conditional-by-judgment including a distinct deploy/migration-verification lens + reliability lens; gstack Rails/Swift/Stimulus specialists dropped, its high-signal checklist categories folded into the lens checklists. **Built-vs-planned audit** — informational scope-drift (CLEAN/DRIFT/REQUIREMENTS-MISSING) + the 5-state plan-completion audit (DONE/PARTIAL/NOT-DONE/CHANGED/UNVERIFIABLE) + the 3 verification modes, reading `docs/plans/` + journal. **Mode-based validator** — programmatic validates all Stage-A survivors (capped 15); interactive lets the operator validate. **Saga's first review-track consumer** — append-only to an EXISTING work-thread saga (scan-first, never mint), appending `review_paths` + `orchestration_mode`, preserving `lifecycle_phase`; never `git add` the tick.
+- Four new references: `skills/code-review/references/{lens-catalog,findings-schema,validator,built-vs-planned}.md` (lens set + distinct deploy/migration lens; severity/anchored-confidence/autofix_class/owner findings schema; the independent validator template; the scope-drift + 5-state plan-completion audit).
+- `commands/code-review.md` — thin launcher reflecting the engine (gate-only + the saga `review_paths` append + no `git add` + the hard boundary).
+- Durable artifacts land in their own `docs/code-reviews/` dir (NOT `docs/reviews/` — avoids the `handoff_envelope.py`/`sdlc_manager.py` plan-ready classifier collision), carrying the reviewed SHA + a review-result contract. **Operator-choice** offer — all three backends (`inline` | `team-execution` | `cc-workflows-ultracode`) cited at the plugin-root path (`references/operator-choice.md`).
+- Richness-floor contract tests (state/mode/anchor/class/owner counts + min line counts a thin port fails) + version pin → `0.8.0`; all 3 existing code-review test assertions preserved.
+- Version bumps: plugin `0.8.0`, marketplace entry `0.8.0`; CHANGELOG.
+
+**Follow-ups.** The safe-autofix *apply* mode is a deliberate future add (gate-only ships first). The `/work` rebuild must mint/advance the work-thread saga code-review appends to AND read code-review's `review_paths`/blocked-status as a gate input — see QUEUED [#rebuild-work-engine-merge](QUEUED.md#rebuild-work-engine-merge). `/founder-review` is the next review-lens rebuild.
+
+**Refs.** DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Operator-choice contract: `plugins/infiquetra-lifecycle/references/operator-choice.md`. Saga foundation: DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation). Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`.
+
 ### `/plan` rebuild — CE `ce-plan` artifact engine + gstack `spec` HOW-interrogation  {#plan-engine-rebuild-shipped}
 
 **SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.7.0`, PR #175, squash a13ba68). Was QUEUED P1 `#rebuild-plan-engine-merge`.

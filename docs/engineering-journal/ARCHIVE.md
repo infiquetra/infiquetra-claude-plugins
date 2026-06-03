@@ -12,7 +12,7 @@
 
 ### `/code-review` rebuild — CE `ce-code-review` spine + gstack `/review` scope/plan audit  {#code-review-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.8.0`, SHA via post-merge follow-up). Was QUEUED P1 `#rebuild-code-review-engine-merge`.
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.8.0`, PR #177, squash 0a9d8cd). Was QUEUED P1 `#rebuild-code-review-engine-merge`.
 
 **Summary.** Third **command** rebuild of the engine-merge campaign (after `/office-hours` and `/plan`). Rebuilt `/code-review` from a 20-line stub into a real **pre-PR code-quality review engine that merges CE's `ce-code-review` findings/validator/judgment-lens spine (Jeff-preferred backbone) with gstack `/review`'s scope-drift detection + plan-completion audit + high-signal checklist categories** — a self-contained infiquetra engine. Position in the lifecycle: a within-work gate at the **work→PR boundary** (after `/work` produces code, before PR/merge) — NOT the saga `LIFECYCLE_PHASES` `review` slot (that's `/doc-review`'s plan→work gate). Schema, the four interview answers, the gate-only / saga-append-only / mode-based-validator / own-dir decisions, and rejected alternatives recorded in DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild).
 

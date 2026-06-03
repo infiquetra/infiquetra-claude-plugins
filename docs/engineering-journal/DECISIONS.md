@@ -24,7 +24,7 @@
 
 ## 2026-06-03
 
-### Port `/founder-review` (alias `/ceo-review`) from gstack `plan-ceo-review` as the scope/ambition review lens  {#founder-review-engine-rebuild}
+### Port `/founder-review` (alias `/ceo-review`) from gstack `plan-ceo-review` as the scope/ambition review lens (PR #179, squash e4eedf2)  {#founder-review-engine-rebuild}
 
 **Decision.** Rebuild `/founder-review` (alias `/ceo-review`) — the **fourth command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`) — from a 20-line stub into a **self-contained infiquetra scope/ambition/direction review engine ported from gstack `plan-ceo-review`** (the 4 scope modes + 18 internalized CEO cognitive patterns + 9 Prime Directives + an adapted pre-review system audit). Unlike `/code-review`'s genuine two-source merge, this is a **PORT, not a merge**: the brief scopes THIS command as **gstack-sole-engine + a single CE posture steal** (the sharpened no-false-precision fragment of `ce-product-pulse`), not a reduced merge. (The brief's "ceo-review" label is loose — the real gstack path is `plan-ceo-review`, verified.) Position in the lifecycle: `/founder-review` is the third member of the review trio — `/doc-review` = plan-readiness, `/code-review` = code quality, **`/founder-review` = is this the right, ambitious-enough thing to build at all?** — firing **upstream of execution** on a `/plan` artifact, a `STRATEGY.md`, a `/brainstorm` output, or an ad-hoc scope question. Its output is a **scope decision** (challenge direction; `/strategy` records it). The four interview answers settled with Jeff:
 
@@ -53,7 +53,7 @@
 
 **Revisit when.** A real mid-work-thread founder-review need emerges (revisit no-saga-write); Infiquetra reaches a live product with real telemetry (build the queued `/pulse` and revisit whether founder-review should consume it); the closed-loop handback to `/doc-review`/`/code-review` proves awkward on real expansions; or `/strategy` and founder-review's boundary blurs in practice.
 
-**Refs.** Plugin `0.9.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Sibling review-lens rebuild: [#code-review-engine-rebuild](#code-review-engine-rebuild). Operator-choice contract: [#operator-choice-framework](#operator-choice-framework). Ship record: ARCHIVE [#founder-review-engine-rebuild-shipped](ARCHIVE.md#founder-review-engine-rebuild-shipped). Queued `/pulse` component: QUEUED [#pulse-live-telemetry-component](QUEUED.md#pulse-live-telemetry-component). Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`. Shipped via PR (squash SHA TBD — post-merge follow-up).
+**Refs.** Plugin `0.9.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Sibling review-lens rebuild: [#code-review-engine-rebuild](#code-review-engine-rebuild). Operator-choice contract: [#operator-choice-framework](#operator-choice-framework). Ship record: ARCHIVE [#founder-review-engine-rebuild-shipped](ARCHIVE.md#founder-review-engine-rebuild-shipped). Queued `/pulse` component: QUEUED [#pulse-live-telemetry-component](QUEUED.md#pulse-live-telemetry-component). Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`. Shipped via PR #179 (squash e4eedf2).
 
 ### Rebuild `/code-review` by merging CE `ce-code-review` spine + gstack `/review` scope/plan audit (PR #177, squash 0a9d8cd)  {#code-review-engine-rebuild}
 

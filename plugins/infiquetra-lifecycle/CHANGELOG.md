@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.7.0 - 2026-06-02
+
+- Rebuild `/plan` from a 27-line stub into a real implementation-plan engine — the second command
+  rebuild of the engine-merge campaign. Merges CE's `ce-plan` structured-artifact engine (the
+  Jeff-preferred spine) with gstack `spec`'s code-grounded HOW-interrogation front end into a
+  self-contained infiquetra engine. Six numbered phases: enter + warranted-gate → ground (HOW) →
+  interrogate (HOW) → synthesize the plan artifact → condensed deepening pass → saga + route +
+  operator-choice.
+- Artifact contract (CE wholesale): stable **R-IDs** (requirements), **KTDs** (Key Technical
+  Decisions), independently-landable **U-IDs** with per-unit enumerated **test scenarios** + explicit
+  test-file paths; requirements traceability; "decisions not code"; three-audience design (human +
+  agent + `/work` consumer). The plan doc carries `origin:` + `Implementation Units` +
+  `Key Technical Decisions` + `U1` markers so `/doc-review` recognizes it.
+- **Warranted-gate** + scope classes up front — a `/plan` invocation that doesn't warrant a durable
+  plan is named and routed, not force-fit into the artifact.
+- **HOW-only interrogation** — `/plan` assumes the WHAT (requirements/scope) settled upstream
+  (`/ideate` → `/brainstorm` → `/office-hours`); open WHAT-ambiguity bounces back with a recommendation
+  to run `/brainstorm` first (it does NOT claim `/brainstorm` "accepts" a handoff). The interrogation
+  register grounds in code (cite `path:line`) before asking.
+- **Condensed deepening pass** — a conditional confidence self-review (not CE's full 248-line
+  deepening), kept proportional. The full review gauntlet is NOT dropped — it's the `review` phase
+  (`/doc-review` + `/code-review` + `/founder-review`); `/plan` keeps the condensed self-review and
+  routes to `/doc-review` (the recommended next step) before `/work`.
+- One **plan saga** via the saga CLI (`scripts/saga.py save`, `--lifecycle-phase plan`) — runnable,
+  with an explicit "never `git add` the tick" boundary; epic/multi-unit splits hand to `sdlc-manager`.
+- **Operator-choice** offer: all three execution backends (`inline` | `team-execution` |
+  `cc-workflows-ultracode`) cited by path (`references/operator-choice.md`), offered not defaulted.
+- Hard boundary: `/plan` does NOT implement, does NOT file SDLC issues (`sdlc-manager` owns that), and
+  does NOT run the full review gauntlet (`/doc-review` owns that). Position: `/plan` answers
+  "How should it be built?".
+
 ## 0.6.0 - 2026-06-02
 
 - Rebuild `/office-hours` from a 23-line facilitative stub into a real two-mode thought-partner

@@ -32,6 +32,7 @@ thread or hand it off. If handing off, route to `/handoff`.
 Repository docs are the source of truth:
 
 - `STRATEGY.md`
+- `docs/office-hours/`
 - `docs/ideation/`
 - `docs/brainstorms/`
 - `docs/plans/`

@@ -10,6 +10,21 @@
 
 ## Shipped
 
+### `/office-hours` rebuild — two-mode gstack diagnostic as the frame-finding front door  {#office-hours-engine-rebuild-shipped}
+
+**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.6.0`; SHA via post-merge follow-up). Was QUEUED P1 `#rebuild-office-hours-engine`.
+
+**Summary.** First **command** rebuild of the engine-merge campaign (the two prior ships — saga, operator-choice — were foundations). Rebuilt `/office-hours` from a 23-line facilitative stub into a real **two-mode thought-partner diagnostic faithfully ported from gstack** and adapted to infiquetra: the Think-phase frame-finding front door that `/ideate` routes unframed asks to and `/brainstorm` bounces open thought-partner work back to. Self-contained — ports the gstack engine, no gstack vendoring, no runtime dep on CE. Schema, the four interview answers, adaptations, and rejected alternatives recorded in DECISIONS [#office-hours-engine-rebuild](DECISIONS.md#office-hours-engine-rebuild).
+
+**Two modes.** **Startup mode** — gstack's six market/customer forcing questions, made **stage-aware** with a pre-traction hypothesis-forming register (Infiquetra is pre-revenue greenfield, so questions form hypotheses rather than audit non-existent traction). **Builder mode** — discovery/shaping for infra/workflow/internal-tooling, infiquetra's high-frequency mode, carrying a real depth floor (not a one-liner). Modes switch mid-session.
+
+**What shipped.**
+- Rebuilt `/office-hours` SKILL: two-mode engine (Startup [stage-aware] + Builder [depth floor]), anti-sycophancy + pushback re-targeted (hard on vagueness/ungrounded assumptions, not operator judgment; push-twice + escape hatches), **HARD GATE** (never implement/plan/file-SDLC-issue — frame-finding only), route-always + plural clean exits (`/brainstorm`, `/plan`, `/strategy`).
+- New artifact dir `docs/office-hours/` for the optional frame note (frontmatter `kind: frame-note`) — kept out of `docs/ideation/` to avoid the `/ideate` resume-scan collision; wired into the `/loop` SKILL + README artifact lists.
+- Version bumps: plugin `0.6.0`, marketplace entry `0.6.0`; CHANGELOG.
+
+**Refs.** DECISIONS [#office-hours-engine-rebuild](DECISIONS.md#office-hours-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Frame-note home: `docs/office-hours/`.
+
 ### Operator-choice framework — execution-backend decision contract (doc-only)  {#operator-choice-framework-shipped}
 
 **SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.5.0`, PR `#171`, squash `e935bd4`). Was QUEUED P1 `#operator-choice-orchestration-framework`.

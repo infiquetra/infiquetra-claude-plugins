@@ -12,7 +12,7 @@
 
 ### `/founder-review` rebuild — gstack `plan-ceo-review` port (scope/ambition review lens)  {#founder-review-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.9.0`, PR TBD, squash SHA TBD — post-merge follow-up). Was QUEUED P1 `#founder-review-engine-merge`.
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.9.0`, PR #179, squash e4eedf2). Was QUEUED P1 `#founder-review-engine-merge`.
 
 **Summary.** Fourth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`). Rebuilt `/founder-review` (alias `/ceo-review`) from a 20-line stub into a real **scope/ambition/direction review engine ported from gstack `plan-ceo-review`** — a **PORT, not a merge**: gstack is the sole engine source (4 scope modes + 18 internalized CEO cognitive patterns + 9 Prime Directives + an adapted pre-review system audit), with only CE `ce-product-pulse`'s sharpened no-false-precision posture stolen. Position in the lifecycle: the third member of the review trio (`/doc-review` = plan-readiness, `/code-review` = code quality, **`/founder-review` = is this the right, ambitious-enough thing to build at all?**), firing **upstream of execution** on a `/plan` artifact, a `STRATEGY.md`, a `/brainstorm` output, or an ad-hoc scope question. Schema, the four interview answers, the scope-layer + closed-loop-routing / target-conditional-ceremonies / no-saga-write / scope-decision-dir / sharpened-posture-steal / office-hours-escape / port-not-merge decisions, and rejected alternatives recorded in DECISIONS [#founder-review-engine-rebuild](DECISIONS.md#founder-review-engine-rebuild).
 

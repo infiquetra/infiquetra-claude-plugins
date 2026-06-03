@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.12.0 - 2026-06-03
+
+- Rebuild `/resume` from a 23-line "read committed docs first" doc into the lifecycle's **heavy
+  forensic reconstruction engine** — the **seventh command rebuild** of the engine-merge campaign
+  (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`) and the
+  **unblocked heavy partner** the `/loop` rebuild (0.11.0) explicitly deferred to it. `/loop` owns the
+  **lightweight** scan → restore → route + inline cold-reconstruction; `/resume` owns the **heavy**
+  forensic half. Unlike `/loop` (the campaign's native rebuild against a phantom brief source),
+  `/resume` is a **real CE `ce-sessions` PORT** — verified TRUE and portable against the actual
+  upstream, the positive counterpart to the `/loop` phantom-source lesson.
+- **Two-tier design.** **Tier 1** (the common path) = saga-anchored deep reconstruction: a NEW saga
+  **all-ticks reader** (`saga.py` `read_ticks`) that walks the full append-only tick-chain trajectory —
+  the trajectory `/loop`'s latest-tick-only `restore` cannot see — plus PR archaeology and conflict
+  reconciliation. **Tier 2** (FALLBACK ONLY, when there is **no saga AND no resolvable issue**) = a slim
+  Claude-only port of CE `ce-sessions`: discover → file-mediated skeleton extract to scratch → **generic
+  agent synthesis**, never reading multi-MB session JSONL into context (context-safety by construction).
+- **The all-ticks reader lives in `saga.py`, NOT `load_saga_context.py`.** A brief deviation: the
+  `load_saga_context.py` wrapper is **issue-locked** (its `--issue` arg is required), so it is the wrong
+  layer for a cold-no-issue trajectory read. The all-ticks capability belongs in the saga engine itself
+  (`read_ticks`); `load_saga_context.py` stays the shared issue-keyed substrate `/loop` and `/resume`
+  both use.
+- **Generic-agent synthesis — no `agents/` dir.** Tier-2 synthesis uses generic agents, honoring the
+  shipped `/code-review` convention (no plugin `agents/` dir → generic agents, SKILL:164) rather than
+  adding a structural first.
+- **Drop the `[gstack-context]` commit trailer.** `/resume` does NOT adopt gstack's WIP-commit trailer —
+  the saga's append-only tick log already IS the durable trajectory; a parallel trailer would duplicate
+  it. Corrected Tier-2 trigger: same-machine work that never wrote a saga (NOT fresh-clone).
+- **Routing + the one re-entry tick.** Routes to any phase via the **shared**
+  `loop/references/dispatch-table.md` (referenced, never duplicated — no `/loop` ↔ `/resume` ping-pong).
+  Writes exactly **one** git-ignored re-entry saga tick, **reusing the restored `saga_id`** (never-mint
+  discipline — `/resume` is a reader/restorer, not a saga primary writer).
+- **Recency-MVP ranking** for Tier-2 candidate sessions; keyword/branch relevance ranking deferred
+  (QUEUED `#resume-session-relevance-ranking`).
+- Version bumps: plugin `0.12.0`, marketplace entry `0.12.0`. keywords stay at 10.
+
 ## 0.11.0 - 2026-06-03
 
 - Rebuild `/loop` from a router stub into a native router engine — the **sixth command rebuild** of the

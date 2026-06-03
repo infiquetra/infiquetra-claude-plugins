@@ -639,6 +639,26 @@ def _saga_summary(saga: Saga) -> dict[str, Any]:
     }
 
 
+def _tick_snapshot(saga: Saga) -> dict[str, Any]:
+    """A per-tick dict for the ``ticks`` reader: the summary fields PLUS the
+
+    trajectory fields that differ across the chain (blockers / summary /
+    open_questions / rounds_seen), so the full work-state evolution is visible
+    where ``restore`` (latest-only) would only surface the final values. Builds
+    on ``_saga_summary`` so the two readers share the machine-field shape.
+    """
+    snapshot = _saga_summary(saga)
+    snapshot.update(
+        {
+            "blockers": saga.blockers,
+            "summary": saga.summary,
+            "open_questions": _materialize(saga.open_questions),
+            "rounds_seen": _materialize(saga.rounds_seen),
+        }
+    )
+    return snapshot
+
+
 def update_index(root: Path, saga: Saga, *, now: datetime | None = None) -> Path:
     """Refresh the derived ``state.json`` index atomically.
 
@@ -730,6 +750,23 @@ def restore(root: Path, saga_id: str) -> Saga | None:
     if latest is None:
         return None
     return parse_envelope(latest.read_text(encoding="utf-8"))
+
+
+def read_ticks(root: Path, saga_id: str) -> list[Saga]:
+    """Return EVERY tick of a saga, oldest -> newest by FILENAME (never mtime).
+
+    The full tick-chain trajectory that ``restore`` (latest-tick-only) cannot
+    see: ``/resume``'s heavy forensic tier reads this to replay how the work
+    state evolved (early ``next_step``s, blockers that later cleared, etc.).
+    Reuses ``_envelope_files`` + ``envelope_sort_key`` + ``parse_envelope`` —
+    same ordering contract as ``restore``, just the whole chain instead of the
+    tail. Returns ``[]`` for an unknown/empty saga (NEVER calls git/subprocess).
+    """
+    files = sorted(
+        _envelope_files(root / SAGAS_DIR / saga_id),
+        key=lambda p: envelope_sort_key(p.name),
+    )
+    return [parse_envelope(p.read_text(encoding="utf-8")) for p in files]
 
 
 def _scan_legacy(root: Path) -> list[dict[str, Any]]:
@@ -1059,6 +1096,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     restore_p = sub.add_parser("restore", help="Read the latest tick for a saga")
     restore_p.add_argument("--saga-id", required=True)
 
+    ticks_p = sub.add_parser("ticks", help="Read EVERY tick for a saga (oldest->newest)")
+    ticks_p.add_argument("--saga-id", required=True)
+
     scan_p = sub.add_parser("scan", help="List one candidate per saga (newest first)")
     scan_p.add_argument("--max-candidates", type=int, default=None)
 
@@ -1091,6 +1131,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         # maturity is intentionally NOT emitted here: per saga-spec.md it is DERIVED
         # at /handoff time (via PHASE_TO_MATURITY) and never surfaced by the generic engine.
         print(json.dumps(payload, indent=2))
+        return 0
+
+    if args.command == "ticks":
+        chain = read_ticks(root, args.saga_id)
+        ticks = [_tick_snapshot(tick) for tick in chain]
+        print(json.dumps({"ticks": ticks, "count": len(ticks)}, indent=2))
         return 0
 
     if args.command == "scan":

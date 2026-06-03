@@ -526,6 +526,168 @@ def test_scan_still_works_with_corrupt_state_json(
 
 
 # ===========================================================================
+# Engine: read_ticks / ticks subcommand (the heavy-forensic ALL-ticks reader)
+# ===========================================================================
+
+
+def test_saga_read_ticks_returns_full_chain(
+    saga: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """read_ticks surfaces the WHOLE tick chain (oldest->newest by FILENAME).
+
+    restore() sees only the latest tick, so the early ``next_step`` (and an
+    early blocker that a later tick replaced via a snapshot list) are invisible
+    to it. The ALL-ticks reader is the forensic view /resume needs: every tick
+    is a full snapshot, in filename order. A regression guard pins restore() to
+    still return ONLY the latest.
+    """
+    _stub_no_git(saga, monkeypatch)
+    t1 = FIXED_NOW
+    t2 = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    t3 = datetime(2026, 6, 2, 14, 20, 0, tzinfo=UTC)
+    # Tick 1: an early step with an open blocker (open_questions = snapshot list).
+    saga.save(
+        tmp_path,
+        _make_saga(saga, phase=1, next_step="early step", open_questions=["blocked: review"]),
+        now=t1,
+    )
+    # Tick 2: mid-flight, blocker cleared (explicit [] snapshot-clears the list).
+    saga.save(tmp_path, _make_saga(saga, phase=2, next_step="mid step", open_questions=[]), now=t2)
+    # Tick 3: the late step (this is all restore() ever sees).
+    saga.save(tmp_path, _make_saga(saga, phase=3, next_step="late step"), now=t3)
+
+    chain = saga.read_ticks(tmp_path, "issue-42")
+    assert len(chain) == 3
+    # FILENAME order, oldest -> newest (NOT mtime, NOT insertion-into-dict).
+    assert [t.phase for t in chain] == [1, 2, 3]
+    assert [t.next_step for t in chain] == ["early step", "mid step", "late step"]
+    # Each tick is a FULL snapshot, not a delta.
+    assert all(t.saga_id == "issue-42" for t in chain)
+    assert all(t.kind == "issue" for t in chain)
+
+    # The tick-1 content restore() DROPS (the early step + the blocker that
+    # tick 2 later cleared) is recoverable from the chain head.
+    assert chain[0].next_step == "early step"
+    assert chain[0].open_questions == ["blocked: review"]
+
+    # Regression guard: restore() still returns ONLY the latest tick.
+    latest = saga.restore(tmp_path, "issue-42")
+    assert latest is not None
+    assert latest.phase == 3
+    assert latest.next_step == "late step"
+    assert latest.open_questions == []  # the cleared list, not the tick-1 blocker
+
+
+def test_saga_ticks_subcommand_emits_full_chain_oldest_first(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The ``ticks`` CLI emits {"ticks": [...], "count": N}, oldest->newest.
+
+    Each tick dict carries the trajectory fields (next_step / blockers /
+    open_questions / rounds_seen) so the SKILL's all-ticks reader can replay the
+    work-state evolution. Drives main() in-process (matches the harness's
+    no-shell, fixed-cwd discipline).
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    t1 = FIXED_NOW
+    t2 = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    saga.save(
+        tmp_path,
+        _make_saga(saga, phase=1, next_step="early step", open_questions=["q-early"]),
+        now=t1,
+    )
+    saga.save(
+        tmp_path,
+        _make_saga(saga, phase=2, next_step="late step", open_questions=["q-late"]),
+        now=t2,
+    )
+
+    rc, payload = _run_main(saga, ["ticks", "--saga-id", "issue-42"], capsys, monkeypatch)
+    assert rc == 0
+    assert payload["count"] == 2
+    ticks = payload["ticks"]
+    assert [t["phase"] for t in ticks] == [1, 2]  # oldest -> newest
+    assert [t["next_step"] for t in ticks] == ["early step", "late step"]
+    # Per-tick trajectory fields are present in the emitted dict.
+    assert ticks[0]["open_questions"] == ["q-early"]
+    assert ticks[1]["open_questions"] == ["q-late"]
+    for key in ("saga_id", "lifecycle_phase", "phase_status", "status", "blockers", "updated_at"):
+        assert key in ticks[0]
+
+
+def test_saga_ticks_subcommand_empty_for_unknown_saga(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unknown saga yields an empty chain, never an error."""
+    monkeypatch.chdir(tmp_path)
+    assert saga.read_ticks(tmp_path, "issue-999") == []
+    rc, payload = _run_main(saga, ["ticks", "--saga-id", "issue-999"], capsys, monkeypatch)
+    assert rc == 0
+    assert payload == {"ticks": [], "count": 0}
+
+
+# ===========================================================================
+# Engine: re-entry tick reuse (the /resume C2 mint-safety smoke test)
+# ===========================================================================
+
+
+def test_resume_reentry_tick_reuses_saga_id_no_mint(
+    saga: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A re-entry tick that REUSES the restored saga_id APPENDS — never mints.
+
+    save() mints a new saga dir unconditionally for a *new* saga_id (no
+    scan-first guard), so /resume MUST write its re-entry tick with the
+    RESTORED saga_id, not a paraphrase. This pins that: an existing task saga
+    gains a 2nd envelope and the SAGAS_DIR still holds exactly ONE saga dir.
+    """
+    _stub_no_git(saga, monkeypatch)
+    # Existing task saga with one tick.
+    saga.save(
+        tmp_path,
+        _make_saga(saga, kind="task", id="foo", lifecycle_phase="work", next_step="first"),
+        now=FIXED_NOW,
+    )
+    saga_id = saga.derive_saga_id("task", "foo")
+    assert saga_id == "task-foo"
+    sagas_root = tmp_path / SAGAS_DIR
+    assert [p.name for p in sagas_root.iterdir() if p.is_dir()] == ["task-foo"]
+
+    # The /resume re-entry tick: reuse the restored saga_id verbatim.
+    restored = saga.restore(tmp_path, saga_id)
+    assert restored is not None
+    later = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    saga.save(
+        tmp_path,
+        saga.Saga(
+            saga_id=restored.saga_id,  # reuse, never re-derive from a paraphrase
+            kind=restored.kind,
+            id=restored.id,
+            status="paused",
+            next_step="resumed: re-entered loop",
+        ),
+        now=later,
+    )
+
+    # APPENDED to task-foo (now 2 ticks), and NO second saga dir was minted.
+    saga_dirs = [p.name for p in sagas_root.iterdir() if p.is_dir()]
+    assert saga_dirs == ["task-foo"]
+    tick_files = sorted(p.name for p in (sagas_root / "task-foo").glob("*.md"))
+    assert tick_files == ["20260602-140510.md", "20260602-141233.md"]
+    # The re-entry tick is the latest and carries the paused disposition.
+    latest = saga.restore(tmp_path, saga_id)
+    assert latest.status == "paused"
+    assert latest.next_step == "resumed: re-entered loop"
+
+
+# ===========================================================================
 # Engine: aggregate_context
 # ===========================================================================
 

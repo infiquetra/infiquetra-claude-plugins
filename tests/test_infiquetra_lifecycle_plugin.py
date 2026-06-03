@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.11.0"
+    assert plugin_json["version"] == "0.12.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -607,6 +607,131 @@ def test_loop_engine_merge_contract() -> None:
     # --- blunt thin-port tripwire: each of the 2 reference files carries real content. ---
     for ref in ("dispatch-table.md", "drive-and-resume.md"):
         ref_path = loop / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+
+
+def test_resume_engine_merge_contract() -> None:
+    """Presence FLOORS for the rebuilt /resume heavy forensic engine (0.12.0).
+
+    HONEST SCOPE: these are presence floors over the authored SKILL + 2 refs. Each floor
+    proves the SKILL/refs EMIT a runnable line or boundary sentence the engine stands on —
+    NOT that the logic is correct and NOT that the dig is actually context-safe at runtime.
+    Token-presence != runtime context-safety. The real mitigation for the Tier-2 dig is the
+    generic-agent-reads-paths pattern (the orchestrator never holds bulk session content) +
+    the parent E6 grounding pass; this test only checks the contract was authored, not
+    reskinned away. Tokens are taken from the actual E1-authored files on disk.
+    """
+    resume = PLUGIN_ROOT / "skills" / "resume"
+    skill_doc = _read(resume / "SKILL.md")
+    forensic_doc = _read(resume / "references" / "forensic-reconstruction.md")
+    sessions_doc = _read(resume / "references" / "session-forensics.md")
+    corpus = "\n".join((skill_doc, forensic_doc, sessions_doc))
+
+    # --- Tier-1 saga reconstruction CLI lines: scan + restore + the NEW all-ticks read. ---
+    assert "saga.py scan" in corpus
+    assert "saga.py restore --saga-id" in corpus
+    # The all-ticks reader is the differentiator /loop's latest-tick-only restore cannot see.
+    assert "saga.py ticks --saga-id" in corpus
+
+    # --- the shared issue-backed archaeology substrate: both context loaders, with --repo/--issue. ---
+    context_lines = [
+        line
+        for line in corpus.splitlines()
+        if ("load_saga_context.py" in line or "saga.py context" in line)
+    ]
+    assert any("load_saga_context.py" in line for line in context_lines)
+    assert any("saga.py context" in line for line in context_lines)
+    assert any("--repo" in line and "--issue" in line for line in context_lines)
+
+    # --- the one re-entry tick: a runnable `saga.py save` carrying --status paused + --next-step. ---
+    save_blocks = re.findall(r"saga\.py save.*?(?=\n#|\n```|\Z)", skill_doc, flags=re.DOTALL)
+    assert any("--status paused" in block and "--next-step" in block for block in save_blocks), (
+        "SKILL must emit a runnable re-entry `saga.py save` with --status paused AND --next-step"
+    )
+
+    # --- the reuse-saga_id rule: the re-entry tick REUSES the restored id, never a paraphrase.
+    # save() mints a new dir unconditionally for a new id, so a paraphrase forks a phantom thread. ---
+    assert "REUSE" in skill_doc
+    assert "saga_id" in skill_doc
+    # The rule sits near the re-entry tick (Phase 5) — assert the reuse prose mentions the restored id.
+    assert re.search(r"REUSE the\s+restored `saga_id`", skill_doc) or (
+        "REUSE the restored `saga_id`" in skill_doc
+    )
+
+    # --- Tier-2 context-safety set (the fallback dig over local JSONL). ---
+    assert "discover_sessions.py" in corpus
+    # extraction is file-mediated to scratch via --output (never read into the orchestrator).
+    assert re.search(r"extract_session_skeleton\.py[^\n]*--output", corpus)
+    # throwaway machine-local scratch dir.
+    assert "mktemp -d" in corpus
+    # GENERIC agent dispatch (Explore / Task) — this plugin has NO agents/ dir.
+    assert "Explore" in skill_doc and "Task" in skill_doc
+    assert "GENERIC" in skill_doc or "generic" in skill_doc
+    # cap of 5 sessions + exclude the current session.
+    assert "5" in skill_doc  # the cap appears ("Cap 5" / "capped at 5")
+    assert ("Cap 5" in skill_doc) or ("capped at 5" in skill_doc)
+    assert "current session" in skill_doc
+
+    # --- named-agent guardrail (DA convention): NO custom subagent, mirror /code-review line 164.
+    # ce-session-historian must be ABSENT entirely. resume-session-historian + ce-* appear ONLY
+    # inside the negation prose ("do **not** reference a named `ce-*` / `resume-session-historian`"),
+    # so a flat token-absence assertion would fail a FAITHFUL SKILL (the founder-review no-saga-write
+    # pattern). Pin the mechanism: the negation is present AND there is no POSITIVE dispatch-to-a-
+    # named-agent instruction. ---
+    assert "ce-session-historian" not in corpus
+    assert "do **not** reference a named" in skill_doc
+    # Every occurrence of the named agent is part of the "(do NOT) reference a named <agent>"
+    # negation — never a POSITIVE "Dispatch <named-agent>" / "use the <named-agent>" / "spawn
+    # <named-agent>" instruction. The negation "NOT" can wrap to the previous line ("do **NOT**\n
+    # reference a named ..."), so normalize whitespace and check a small window before each match
+    # rather than line-by-line.
+    flat = re.sub(r"\s+", " ", corpus)
+    for match in re.finditer(r"resume-session-historian", flat):
+        window = flat[max(0, match.start() - 60) : match.start()]
+        assert re.search(r"\bnot\b", window, flags=re.IGNORECASE), (
+            f"named agent must only appear inside a negation, found positive use near: "
+            f"{flat[match.start() - 60 : match.start() + 40]!r}"
+        )
+    # No positive dispatch verb immediately targets the named agent.
+    assert not re.search(
+        r"(?:Dispatch|spawn|use the|invoke)\s+(?:a\s+)?[`']?resume-session-historian",
+        flat,
+        flags=re.IGNORECASE,
+    )
+    # And the dispatch step names a GENERIC agent, not a custom one.
+    assert "Dispatch a GENERIC synthesis agent" in skill_doc
+
+    # --- NEGATIVE context-safety assertion (DA-M1): the orchestrator-never-reads-bulk guardrail
+    # is PRESENT, and there is NO orchestrator step that Reads/cats a $SCRATCH skeleton file
+    # (only the generic agent reads skeletons, via paths). ---
+    assert "orchestrator NEVER Reads or cats" in skill_doc  # the guardrail sentence is present
+    assert not re.search(r"(?:Read|cat)\s+\"?\$SCRATCH", corpus), (
+        "the orchestrator must NEVER Read/cat a $SCRATCH skeleton file (only the generic agent does)"
+    )
+
+    # --- dispatch table is REFERENCED but NOT restated (one source of truth, no /loop<->/resume
+    # duplication). The path is cited; the table's own unique title/header (which lives ONLY in
+    # loop/references/dispatch-table.md) must NOT appear in the resume corpus. ---
+    assert "dispatch-table.md" in corpus
+    # "# Dispatch Table" (the H1 title) and the table's lead sentence live only in the loop ref.
+    assert "# Dispatch Table" not in corpus
+    assert "The designed routing map for `/loop`" not in corpus
+
+    # --- boundary negatives: read-only on the world; no build/test/PR, no file-issues, no deploy,
+    # and NO ping-pong back to /loop. ---
+    assert "does **NOT**" in skill_doc
+    assert "open / merge a PR" in skill_doc or "merge a PR" in skill_doc
+    assert "file SDLC issues" in skill_doc
+    assert "deploy" in skill_doc.lower()
+    assert "read-only on the world" in skill_doc.lower()
+    # never route back to /loop (the no-ping-pong rule).
+    assert "ping-pong" in skill_doc
+    assert ("never route back to" in skill_doc.lower()) and ("/loop" in skill_doc)
+
+    # --- ref-floor: both reference files exist and carry real content (>= 60 lines). ---
+    for ref in ("forensic-reconstruction.md", "session-forensics.md"):
+        ref_path = resume / "references" / ref
         assert ref_path.exists()
         assert len(_read(ref_path).splitlines()) >= 60
 

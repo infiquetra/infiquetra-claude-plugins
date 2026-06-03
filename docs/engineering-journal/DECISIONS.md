@@ -24,7 +24,7 @@
 
 ## 2026-06-03
 
-### Rebuild `/code-review` by merging CE `ce-code-review` spine + gstack `/review` scope/plan audit  {#code-review-engine-rebuild}
+### Rebuild `/code-review` by merging CE `ce-code-review` spine + gstack `/review` scope/plan audit (PR #177, squash 0a9d8cd)  {#code-review-engine-rebuild}
 
 **Decision.** Rebuild `/code-review` — the third command rebuild of the engine-merge campaign (after `/office-hours` and `/plan`) — from a 20-line stub into a **self-contained infiquetra pre-PR review engine that merges CE's `ce-code-review` findings/validator/judgment-lens spine (the Jeff-preferred backbone) with gstack `/review`'s scope-drift detection + plan-completion audit + high-signal checklist categories**. Six numbered phases: enter + scope → intent + built-vs-planned audit → select lenses (judgment) → review fan-out → merge + validate → report + route + saga. Position in the lifecycle: `/code-review` is a **within-work gate at the work→PR boundary** (after `/work` produces code, before PR/merge) — it is a code-quality review LENS, a sibling of `/doc-review` and `/founder-review`, but NOT the saga `LIFECYCLE_PHASES` `review` slot (that slot is `/doc-review`'s plan→work gate). The four interview answers settled with Jeff:
 
@@ -53,7 +53,7 @@
 
 **Revisit when.** A real PR run shows the gate-only stance is too passive and the safe-autofix *apply* mode earns its weight (add the apply mode behind operator-choice); the mode-based validator cap (15) proves too tight or too loose on real diffs; the `/work` rebuild lands and wants code-review to mint/advance the saga rather than append-only (revisit the never-mint guard); or the distinct deploy/migration lens proves redundant with a rebuilt `/qa`.
 
-**Refs.** Plugin `0.8.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Builds on the `/plan` rebuild [#plan-engine-rebuild](#plan-engine-rebuild), the operator-choice contract [#operator-choice-framework](#operator-choice-framework), and the saga foundation [#saga-schema-foundation](#saga-schema-foundation). Ship record: ARCHIVE [#code-review-engine-rebuild-shipped](ARCHIVE.md#code-review-engine-rebuild-shipped). `/work` forward-coupling: QUEUED [#rebuild-work-engine-merge](QUEUED.md#rebuild-work-engine-merge). SHA via post-merge follow-up.
+**Refs.** Plugin `0.8.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Builds on the `/plan` rebuild [#plan-engine-rebuild](#plan-engine-rebuild), the operator-choice contract [#operator-choice-framework](#operator-choice-framework), and the saga foundation [#saga-schema-foundation](#saga-schema-foundation). Ship record: ARCHIVE [#code-review-engine-rebuild-shipped](ARCHIVE.md#code-review-engine-rebuild-shipped). `/work` forward-coupling: QUEUED [#rebuild-work-engine-merge](QUEUED.md#rebuild-work-engine-merge). Shipped via PR #177 (squash 0a9d8cd).
 
 ## 2026-06-02
 

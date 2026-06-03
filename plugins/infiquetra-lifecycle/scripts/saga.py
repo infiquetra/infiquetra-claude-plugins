@@ -631,6 +631,9 @@ def _saga_summary(saga: Saga) -> dict[str, Any]:
         "destination": saga.destination,
         "issue_ref": saga.issue_ref,
         "plan_path": saga.plan_path,
+        "branch": saga.branch,
+        "orchestration_mode": saga.orchestration_mode,
+        "orchestration_ref": saga.orchestration_ref,
         "next_step": saga.next_step,
         "updated_at": saga.updated_at,
     }
@@ -790,6 +793,12 @@ def scan(root: Path, *, max_candidates: int | None = None) -> list[dict[str, Any
                     "next_phase": _next_phase(saga.phase, saga.phase_status),
                     "next_step": saga.next_step,
                     "updated_at": saga.updated_at,
+                    "destination": saga.destination,
+                    "issue_ref": saga.issue_ref,
+                    "plan_path": saga.plan_path,
+                    "branch": saga.branch,
+                    "orchestration_mode": saga.orchestration_mode,
+                    "orchestration_ref": saga.orchestration_ref,
                     "legacy": False,
                 }
             )

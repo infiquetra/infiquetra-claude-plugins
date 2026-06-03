@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-06-03
+
+### A budget-exhausted brief workflow asserted a SOURCE artifact that does not exist — verify a brief's upstream claims before building on them  {#brief-source-claim-phantom-artifact}
+
+**Context.** Starting the `/loop` rebuild (sixth command of the engine-merge campaign). The QUEUED brief for `/loop` (`#loop-engine-merge-saga-workflow-offload`) named the engine source as gstack's "top-level SKILL = a proactive **dispatch table**" — i.e. it framed `/loop` as a port/merge of a gstack router engine, the same shape as every prior rebuild. Before building on that framing, checked the actual upstream.
+
+**Evidence.** `gh api repos/garrytan/gstack/contents/` lists no `router`/`dispatch`/`loop` directory; `gh api repos/garrytan/gstack/contents/SKILL.md` decodes to `description: Fast headless browser for QA testing and site dogfooding` (a browser-testing skill, not a router/dispatch table). gstack's actual routing-adjacent engine is `context-save`/`context-restore` — which is the already-shipped **saga** primitive plus the queued `/resume`'s scope, **not** a `/loop` router. The brief that asserted the "dispatch table SKILL" was produced by the budget-exhausted brief workflow documented in [#workflow-structuredoutput-budget](#workflow-structuredoutput-budget) (16/19 agents over-read + failed to emit; the survivors synthesized from skim-level reads).
+
+**Mechanism.** The brief-generation agents skimmed engine files under a tight budget (the very fix that made them *emit* — skim-not-full-read — also made them *summarize from headings*), so a heading-level impression ("gstack has a top-level SKILL that dispatches") hardened into a confident SOURCE claim ("dispatch table SKILL") in the brief. The brief's *intent* was sound (`/loop` should route + resume); its *provenance claim* (a gstack engine to port) was a hallucinated artifact. Trusting the brief's source claim uncritically would have sent the rebuild chasing a phantom merge.
+
+**Fix.** Treated `/loop` as the campaign's **one native rebuild** — authored fresh against the lifecycle's own saga + operator-choice contracts, with **no upstream port/merge** — and recorded the phantom-source distinction in the ADR. DECISIONS [#loop-engine-rebuild](DECISIONS.md#loop-engine-rebuild); shipped 0.11.0, ARCHIVE [#loop-engine-rebuild-shipped](ARCHIVE.md#loop-engine-rebuild-shipped).
+
+**What surprised.** Every prior rebuild brief had a real, verifiable upstream engine — so the campaign's working assumption was "the brief names a real source." `/loop` was the first brief whose named source did not exist, and it looked exactly as authoritative as the true ones.
+
+**Generalizable rule.** A brief produced by a budget-constrained skim workflow can assert a SOURCE artifact that does not exist — its *intent* may be sound while its *provenance* is hallucinated. Before building on a brief, verify its **source claims against the actual upstream** (here: a one-line `gh api .../contents/` + a SKILL.md decode), exactly as you would verify any system-state claim. A confident-sounding source citation is not evidence the source exists.
+
+**Refs.** Upstream cause: LEARNINGS [#workflow-structuredoutput-budget](#workflow-structuredoutput-budget). The rebuild it informed: DECISIONS [#loop-engine-rebuild](DECISIONS.md#loop-engine-rebuild), ARCHIVE [#loop-engine-rebuild-shipped](ARCHIVE.md#loop-engine-rebuild-shipped). Campaign: DECISIONS [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign).
+
 ## 2026-06-02
 
 ### `infiquetra-lifecycle` is a thin reskin of gstack + CE; engine-loss is systemic, not isolated to `/ideate`  {#lifecycle-thin-reskin-systemic}

@@ -5,7 +5,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.10.0"
+    assert plugin_json["version"] == "0.11.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -95,20 +98,9 @@ def test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior() -> N
         skill_path = PLUGIN_ROOT / "skills" / skill / "SKILL.md"
         assert _frontmatter_name(skill_path) == skill
 
-    loop_doc = _read(PLUGIN_ROOT / "skills" / "loop" / "SKILL.md")
-    for required in (
-        "STRATEGY.md",
-        "docs/work-sessions/",
-        ".claude/infiquetra-lifecycle/",
-        "team-execution",
-        "infiquetra-deploy",
-        "sdlc-manager",
-        "/handoff",
-        "issue progress",
-        "doc-review",
-        "engineering-journal",
-    ):
-        assert required in loop_doc
+    # The rebuilt /loop (0.11.0) router/resume-substrate contract is asserted by the
+    # dedicated test_loop_engine_merge_contract against the new SKILL.md + its two
+    # references; the old inline loop_doc token block here was superseded by it.
 
     for script in (
         "parse_issue.py",
@@ -547,6 +539,78 @@ def test_work_engine_merge_contract() -> None:
     assert "lifecycle_phase" in corpus  # the phase the engine deliberately does not advance
 
 
+def test_loop_engine_merge_contract() -> None:
+    """Mechanism FLOORS for the rebuilt /loop router + resume substrate (0.11.0).
+
+    These floors prove the SKILL/refs EMIT the real runnable lines the router stands on
+    (saga scan/restore, the routing-tick save with both routing flags, the offload
+    orchestration pointer, the runnable recommend-backend CLI, the inline cold path) and
+    that the boundary prose is present. They do NOT prove the routing LOGIC is correct —
+    only that the contract tokens are authored, not vibes-reskinned away. `/loop` is the
+    one native rebuild (no upstream engine to port), so the floors track the designed
+    contract: it routes/sequences/resumes and never executes a phase or its mutations.
+
+    Tokens are taken from the actual E1-authored SKILL.md + its 2 references on disk.
+    """
+    loop = PLUGIN_ROOT / "skills" / "loop"
+    skill_doc = _read(loop / "SKILL.md")
+    dispatch_doc = _read(loop / "references" / "dispatch-table.md")
+    resume_doc = _read(loop / "references" / "drive-and-resume.md")
+    corpus = "\n".join((skill_doc, dispatch_doc, resume_doc))
+
+    # --- saga resume substrate: scan at entry + restore a thread by id ---
+    assert "saga.py scan" in corpus
+    assert "saga.py restore --saga-id" in corpus
+
+    # --- the routing-tick saga write carries BOTH the destination class and the resume
+    # anchor (--next-step). A bare "ticks the saga" mention cannot satisfy this floor. ---
+    save_blocks = re.findall(r"saga\.py save.*?(?=\n#|\n```|\Z)", corpus, flags=re.DOTALL)
+    assert any("--destination" in block and "--next-step" in block for block in save_blocks), (
+        "a runnable routing-tick `saga.py save` must carry both --destination and --next-step"
+    )
+
+    # --- the offload pointer: orchestration mode + ref (only on a /loop-owned offload) ---
+    assert "--orchestration-mode" in corpus
+    assert "--orchestration-ref" in corpus
+
+    # --- the runnable backend-recommendation CLI with at least one --flag (the helper /loop
+    # uses ONLY for its own Drive/router-owned offload, not for routed commands). ---
+    assert re.search(
+        r"recommend-backend(?:[^\n]*\\\n[^\n]*|[^\n]*)--\w",
+        corpus,
+    ), "engine must emit a runnable `recommend-backend` CLI invocation with at least one flag"
+
+    # --- the inline cold path: load_saga_context.py reconstructs from committed artifacts. ---
+    assert "load_saga_context.py" in corpus
+
+    # --- the across-vs-within boundary with /work (robust: substring + either word). ---
+    assert "/work" in skill_doc
+    assert ("across" in skill_doc.lower()) and ("within" in skill_doc.lower())
+
+    # --- the opt-in /resume discipline: advisory/opt-in, never auto-route / never block. ---
+    assert "/resume" in skill_doc
+    assert ("opt-in" in skill_doc) or ("advisory" in skill_doc)
+    assert ("never" in skill_doc.lower()) and (
+        ("block" in skill_doc.lower()) or ("auto-route" in skill_doc)
+    )
+
+    # --- durability statement: the volatile cache path AND the committed-artifacts notion. ---
+    assert ".claude/infiquetra-lifecycle/" in corpus
+    assert "docs/" in corpus
+
+    # --- boundary negatives: /loop does NOT implement / file issues / deploy. ---
+    assert "does **NOT**" in skill_doc
+    assert "implement" in skill_doc
+    assert "file SDLC issues" in skill_doc
+    assert "deploy" in skill_doc
+
+    # --- blunt thin-port tripwire: each of the 2 reference files carries real content. ---
+    for ref in ("dispatch-table.md", "drive-and-resume.md"):
+        ref_path = loop / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+
+
 def test_operator_choice_framework_is_documented_and_cited() -> None:
     operator_choice_path = PLUGIN_ROOT / "references" / "operator-choice.md"
     assert operator_choice_path.exists()
@@ -895,3 +959,70 @@ def test_handoff_envelope_discovers_active_plan_from_loop_state(tmp_path) -> Non
 
     assert envelope["source"] == "docs/plans/active.md"
     assert envelope["handoff_maturity"] == "plan-ready"
+
+
+def _load_saga_module():
+    """Load saga.py REGISTERED in sys.modules.
+
+    saga.py defines a frozen @dataclass; on Python 3.12+ the dataclass build
+    looks the class's __module__ up in sys.modules, so an unregistered import
+    raises during exec. (The module-level ``_load_module`` here does not
+    register, so it cannot load saga.py.)
+    """
+    path = PLUGIN_ROOT / "scripts" / "saga.py"
+    spec = importlib.util.spec_from_file_location("saga", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["saga"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_scan_exposes_picker_fields(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """scan() candidates surface the five groundable picker fields /loop needs.
+
+    Mirrors the `saga save --kind task --id loop-picker-probe ...` CLI call by
+    building the same Saga the CLI would and driving save/scan directly (the way
+    the engine tests do), then asserts the candidate dict carries the saved
+    destination / issue_ref / plan_path / orchestration_mode / orchestration_ref.
+    """
+    saga = _load_saga_module()
+    # Stub the git seam so the offline test never shells out and the cached git
+    # snapshot stays empty (deterministic). Patch both the attribute and the
+    # keyword-only ``runner`` default captured on save/current_git_state. Use
+    # monkeypatch so every patch reverts on teardown: ``saga.subprocess`` is the
+    # shared global ``subprocess`` module singleton, so an unrestored
+    # ``subprocess.run`` reassignment leaks into every other module that calls
+    # ``subprocess.run`` (e.g. redis-channel presence.detect_git_branch).
+    no_git = lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="", stderr="")  # noqa: E731
+    monkeypatch.setattr(saga.subprocess, "run", no_git)
+    for fn_name in ("save", "current_git_state"):
+        fn = getattr(saga, fn_name)
+        new_kwdefaults = dict(fn.__kwdefaults__ or {})
+        new_kwdefaults["runner"] = no_git
+        monkeypatch.setattr(fn, "__kwdefaults__", new_kwdefaults)
+
+    probe = saga.Saga(
+        saga_id=saga.derive_saga_id("task", "loop-picker-probe"),
+        kind="task",
+        id="loop-picker-probe",
+        destination="pr",
+        issue_ref="owner/repo#7",
+        plan_path="docs/plans/x.md",
+        branch="feat/loop-probe",
+        orchestration_mode="cc-workflows-ultracode",
+        orchestration_ref="wf_probe123",
+    )
+    saga.save(tmp_path, probe, now=datetime(2026, 6, 2, 14, 5, 10, tzinfo=UTC))
+
+    candidates = saga.scan(tmp_path)
+    candidate = next(c for c in candidates if c["saga_id"] == "task-loop-picker-probe")
+
+    assert candidate["destination"] == "pr"
+    assert candidate["issue_ref"] == "owner/repo#7"
+    assert candidate["plan_path"] == "docs/plans/x.md"
+    # branch is the third #code-review-saga-scan-touchups match key (Defect 1).
+    assert candidate["branch"] == "feat/loop-probe"
+    assert candidate["orchestration_mode"] == "cc-workflows-ultracode"
+    assert candidate["orchestration_ref"] == "wf_probe123"

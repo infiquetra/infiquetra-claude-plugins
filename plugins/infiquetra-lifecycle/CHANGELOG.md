@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.11.0 - 2026-06-03
+
+- Rebuild `/loop` from a router stub into a native router engine — the **sixth command rebuild** of the
+  engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`) and the
+  campaign's **one native rebuild**: there is no upstream engine to port or merge. CE ships no router; the
+  gstack "dispatch table" the QUEUED brief named is **phantom** (gstack's root SKILL is browser-testing, no
+  router dir), and gstack's context-save/restore is the shipped saga + the queued `/resume`'s engine, not
+  `/loop`'s. Three modes: **Route** (classify intent → hand to the right lifecycle command), **Drive**
+  (inline phase walk with a per-decision operator-choice offer for `/loop`-owned work), **Resume** (scan →
+  restore → route a durable work-thread).
+- **Saga resume wiring.** `/loop` `scan`s for the matching work-thread saga, `tick`s a routing event, and
+  `restore`s state on re-entry — plus inline cold-reconstruction via `load_saga_context.py` when re-entering
+  without a live session. The routing tick carries the existing saga fields plus an offload pointer only for
+  `/loop`-owned offloads (no schema change).
+- **Operator-choice offer for `/loop`-owned work.** `/loop` offers the three execution backends
+  (`inline` / `team-execution` / `cc-workflows-ultracode`) per decision point in Drive mode for work it owns.
+  The offload pointer is scoped to `/loop`-owned work only — `/loop` does **not** instruct a routed command's
+  backend (`/work` writes but never reads `orchestration_mode`).
+- **Additive saga picker-field extension.** `saga.py` `scan()` / `_saga_summary` gained the issue_ref /
+  plan_path / branch picker fields so a resuming `/loop` (and `/code-review`) can match the right thread —
+  closing the `#code-review-saga-scan-touchups` queued item.
+
 ## 0.10.0 - 2026-06-03
 
 - Rebuild `/work` from a 39-line facilitator stub into a real execution-loop engine — the **fifth command

@@ -12,7 +12,7 @@
 
 ### `/office-hours` rebuild — two-mode gstack diagnostic as the frame-finding front door  {#office-hours-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.6.0`; SHA via post-merge follow-up). Was QUEUED P1 `#rebuild-office-hours-engine`.
+**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.6.0`, PR `#173`, squash `aec888c`). Was QUEUED P1 `#rebuild-office-hours-engine`.
 
 **Summary.** First **command** rebuild of the engine-merge campaign (the two prior ships — saga, operator-choice — were foundations). Rebuilt `/office-hours` from a 23-line facilitative stub into a real **two-mode thought-partner diagnostic faithfully ported from gstack** and adapted to infiquetra: the Think-phase frame-finding front door that `/ideate` routes unframed asks to and `/brainstorm` bounces open thought-partner work back to. Self-contained — ports the gstack engine, no gstack vendoring, no runtime dep on CE. Schema, the four interview answers, adaptations, and rejected alternatives recorded in DECISIONS [#office-hours-engine-rebuild](DECISIONS.md#office-hours-engine-rebuild).
 

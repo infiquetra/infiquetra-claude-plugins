@@ -12,7 +12,7 @@
 
 ### `/work` rebuild — CE `ce-work` execution engine + gstack `ship`/`land-and-deploy` (saga-primary-writer execution loop)  {#work-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.10.0`, PR #TBD, squash TBD — post-merge follow-up fills them). Was QUEUED P1 `#rebuild-work-engine-merge`.
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.10.0`, PR #181, squash d398055). Was QUEUED P1 `#rebuild-work-engine-merge`.
 
 **Summary.** Fifth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`) and the **execution-loop track** — the most architecturally entangled, landing two deferred foundations at once. Rebuilt `/work` from a 39-line facilitator stub into a real **execution-loop engine that merges CE's `ce-work` execution engine (Jeff-preferred spine) with gstack `ship`/`land-and-deploy`'s autonomy + readiness/staleness gates** — a genuine two-source merge (like `/code-review`), self-contained (no vendoring, no runtime dep). Position in the lifecycle: the loop's execution hub — every real build runs through it. Schema, the four interview answers, the PR-ready-boundary / saga-primary-writer / code-review-identity-handshake / computed-staleness / canary-relocation / qa-resume-advisory decisions, and rejected alternatives recorded in DECISIONS [#work-engine-rebuild](DECISIONS.md#work-engine-rebuild).
 

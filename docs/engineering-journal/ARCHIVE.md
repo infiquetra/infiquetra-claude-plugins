@@ -12,7 +12,7 @@
 
 ### `/resume` rebuild — the lifecycle's heavy forensic reconstruction engine (Tier-1 saga all-ticks + Tier-2 CE `ce-sessions` port)  {#resume-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.12.0`, PR #TBD, squash TBD). Was QUEUED P1 `#resume-engine-merge-saga`.
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.12.0`, PR #185, squash 73975ec). Was QUEUED P1 `#resume-engine-merge-saga`.
 
 **Summary.** Seventh **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`) and the **unblocked heavy partner** the `/loop` rebuild (0.11.0) explicitly deferred to it — completing the lightweight/heavy resume split (`/loop` = lightweight scan→restore→route + inline cold-reconstruction; `/resume` = heavy forensic dig). Rebuilt `/resume` from a 23-line "read committed docs first" doc into the lifecycle's **heavy forensic reconstruction engine**. Unlike `/loop` (the campaign's native rebuild against a **phantom** brief source), `/resume` is a **real CE `ce-sessions` PORT** — its named upstream was verified to exist and be portable, the positive counterpart to the `/loop` phantom-source lesson (LEARNINGS [#resume-port-source-verified-true](LEARNINGS.md#resume-port-source-verified-true)). Schema, the four interview answers (port CE now staged behind Tier 1 / drop the `[gstack-context]` trailer / any-phase routing via the referenced dispatch-table no-ping-pong / one git-ignored re-entry tick reusing the restored saga_id), the two-tier design, and rejected alternatives recorded in DECISIONS [#resume-engine-rebuild](DECISIONS.md#resume-engine-rebuild).
 

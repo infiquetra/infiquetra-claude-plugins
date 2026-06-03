@@ -12,7 +12,7 @@
 
 ### `/plan` rebuild — CE `ce-plan` artifact engine + gstack `spec` HOW-interrogation  {#plan-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.7.0`, PR #___, squash ___). Was QUEUED P1 `#rebuild-plan-engine-merge`.
+**SHIPPED 2026-06-02** (`infiquetra-lifecycle` `0.7.0`, PR #175, squash a13ba68). Was QUEUED P1 `#rebuild-plan-engine-merge`.
 
 **Summary.** Second **command** rebuild of the engine-merge campaign (after `/office-hours`). Rebuilt `/plan` from a 27-line stub into a real **implementation-plan engine that merges CE's `ce-plan` structured-artifact engine (Jeff-preferred spine) with gstack `spec`'s code-grounded HOW-interrogation front end** — a self-contained infiquetra engine. Position in the lifecycle: `/plan` answers "How should it be built?". Schema, the four interview answers, the review-phase rationale, and rejected alternatives recorded in DECISIONS [#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild).
 

@@ -13,8 +13,10 @@ work.
 
 > The CLI-backed execution-backend helper **shipped with the `/work` rebuild**: `recommend_execution_backend()`
 > lives in [`scripts/lifecycle_state.py`](../scripts/lifecycle_state.py) (the `recommend-backend` subcommand).
-> The prose offer hooks in `/loop` and `/work` cite this file; `/work` calls the helper. This spec was settled
-> as a doc-only foundation in 0.5.0 **before** consumers calcified against it, then the helper landed here.
+> The prose offer hooks in `/loop` and `/work` cite this file; both call the helper (`/work` since 0.10.0,
+> `/loop` since 0.11.0 — `/loop` offers a backend per decision point for `/loop`-owned work and writes the
+> choice to the saga). This spec was settled as a doc-only foundation in 0.5.0 **before** consumers calcified
+> against it, then the helper landed with `/work` and `/loop` became its second caller.
 
 ---
 
@@ -140,11 +142,13 @@ The offer renders differently depending on the surface, because not every surfac
 pointer into the chosen backend). See [`references/saga-spec.md`](./saga-spec.md) for the storage contract
 (field table §3.1, enum domain §4).
 
-**Saga writers.** `/plan` (0.7.0) and `/work` (0.10.0) write sagas — they record the chosen backend durably
-via the saga's `--orchestration-mode` field. `/loop`'s saga wiring is **queued** (it still records the choice
-narratively in the work-session writeup / engineering journal until its rebuild lands). A command that does
-not yet write a saga records the backend **NARRATIVELY**; it must not call `saga.save` until its rebuild
-wires it as a real consumer.
+**Saga writers.** `/plan` (0.7.0), `/work` (0.10.0), and `/loop` (0.11.0) write sagas — they record the chosen
+backend durably via the saga's `--orchestration-mode` field. `/loop` records the backend for **`/loop`-owned
+work only**: in Drive mode it ticks the chosen backend onto the work-thread saga (the routing tick carries the
+offload pointer only for `/loop`-owned offloads); when `/loop` *routes* to another command it does **not**
+instruct or record that command's backend (each command owns its own backend decision — `/work`, e.g., writes
+but never reads `orchestration_mode`). A command that does not yet write a saga records the backend
+**NARRATIVELY**; it must not call `saga.save` until its rebuild wires it as a real consumer.
 
 `orchestration_ref` by backend:
 
@@ -163,7 +167,7 @@ Each command cites this file at its own rebuild. The CLI-backed execution-backen
 
 | Command | Cites operator-choice |
 |---|---|
-| `/loop` | **now** (prose offer hook) |
+| `/loop` | **now** (prose offer hook + saga writer for `/loop`-owned work + the CLI-backed `recommend_execution_backend()` helper, since 0.11.0) |
 | `/work` | **now** (prose offer hook + the CLI-backed `recommend_execution_backend()` helper, shipped 0.10.0) |
 | `/plan` | at its rebuild |
 | `/resume` | at its rebuild |

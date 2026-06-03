@@ -12,7 +12,7 @@
 
 ### `/loop` rebuild — the campaign's one NATIVE router engine (Route/Drive/Resume; no upstream port/merge)  {#loop-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.11.0`, PR #TBD, squash TBD). Was QUEUED P1 `#loop-engine-merge-saga-workflow-offload`.
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.11.0`, PR #183, squash 1fca13a). Was QUEUED P1 `#loop-engine-merge-saga-workflow-offload`.
 
 **Summary.** Sixth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`) and the campaign's **ONE native rebuild** — unlike every prior rebuild there was **no upstream engine to port or merge**: CE ships no router, the gstack "dispatch table SKILL" the QUEUED brief named is **phantom** (gstack's root SKILL is browser-testing, there is no router dir — verified, LEARNINGS [#brief-source-claim-phantom-artifact](LEARNINGS.md#brief-source-claim-phantom-artifact)), and gstack's context-save/restore is the already-shipped saga plus the queued `/resume`'s engine, not `/loop`'s. So `/loop` was authored fresh against the lifecycle's own saga + operator-choice contracts. Rebuilt from a router stub into a native router engine with three modes: **Route** (classify intent → hand to the right lifecycle command), **Drive** (inline phase walk + per-decision operator-choice offer for `/loop`-owned work), **Resume** (scan → restore → route a durable work-thread + inline cold-reconstruction). Schema, the four interview answers (offload model / routing tick / durable substrate / lightweight-vs-heavy resume split), the no-upstream-port distinction, and rejected alternatives recorded in DECISIONS [#loop-engine-rebuild](DECISIONS.md#loop-engine-rebuild).
 
@@ -29,7 +29,7 @@
 
 ### `saga.py scan` match-key extension — Defect 1 of the touch-ups (shipped with the `/loop` rebuild; Defect 2 remains queued)  {#code-review-saga-scan-touchups-shipped}
 
-**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.11.0`, PR #TBD, squash TBD). Partially closes QUEUED P2 `#code-review-saga-scan-touchups` — **Defect 1 only**.
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.11.0`, PR #183, squash 1fca13a). Partially closes QUEUED P2 `#code-review-saga-scan-touchups` — **Defect 1 only**.
 
 **Summary.** The cross-skill scan defect surfaced (not introduced) by the `/work` rebuild's adversarial review had **two** parts. **Defect 1 (scan match keys) — SHIPPED HERE:** `saga.py` `scan()` / `_saga_summary` exposed `saga_id`/`kind`/`id`/`round`/`phase`/`status`/`lifecycle_phase`/`next_step` but **not** the `issue_ref`/`plan_path`/`branch` match keys that `/code-review` Phase 5.1 (and a resuming `/loop`) say they match on — so a standalone matcher had to `restore` every candidate to read them, contradicting the prose. Fixed as a **purely additive** extension to both the `scan()` candidate dict and `_saga_summary` (all three match keys `issue_ref`/`plan_path`/`branch`, plus `destination` + the `orchestration_mode`/`orchestration_ref` pair the `/loop` picker needs), alongside the `/loop` rebuild — the first consumer that needs them. Asserted by `test_scan_exposes_picker_fields`. **Defect 2 (the `/code-review` Phase-5.4 programmatic-mode append contradiction) — NOT shipped here:** that is a `/code-review` SKILL change, out of scope for the `/loop` rebuild (which deliberately touched no other skill), and **REMAINS QUEUED** (re-scoped to Defect 2 only — QUEUED [#code-review-saga-scan-touchups](QUEUED.md#code-review-saga-scan-touchups)).
 

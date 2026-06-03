@@ -31,6 +31,7 @@ What each command does:
 Durable artifacts are repo docs:
 
 - `STRATEGY.md`
+- `docs/office-hours/`
 - `docs/ideation/`
 - `docs/brainstorms/`
 - `docs/plans/`

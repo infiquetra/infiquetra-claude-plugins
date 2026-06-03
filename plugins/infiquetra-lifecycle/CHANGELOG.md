@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.0 - 2026-06-02
+
+- Rebuild `/office-hours` from a 23-line facilitative stub into a real two-mode thought-partner
+  diagnostic ported from gstack and adapted to infiquetra — the Think-phase frame-finding front
+  door that `/ideate` routes unframed asks to and `/brainstorm` bounces open thought-partner work
+  back to. Keeps that handshake.
+- Two modes: **Startup mode** — gstack's six market/customer forcing questions, made
+  **stage-aware** (a pre-traction / pre-revenue greenfield operator gets a hypothesis-forming
+  register, not an evidence-audit of customers that don't exist yet); **Builder mode** —
+  discovery/shaping for infra, workflow, and internal-tooling asks, infiquetra's high-frequency
+  mode, carrying real depth (not a one-liner). Modes can switch mid-session.
+- Anti-sycophancy + pushback re-targeted: hard on vagueness and ungrounded assumptions, not on
+  the operator's judgment; push-twice with escape hatches. **HARD GATE** (absolute): never
+  implement, plan, or file an SDLC issue — frame-finding only. Stops the moment it can name the
+  problem and a route, with plural clean exits (`/brainstorm`, `/plan`, `/strategy`).
+- Route always (close by naming a next command); an optional **frame note** lands in its own
+  `docs/office-hours/<date>-<topic>-frame.md` (frontmatter `kind: frame-note`) — kept out of
+  `docs/ideation/` to avoid colliding with the `/ideate` resume scan.
+- Self-contained: ports the gstack engine, sheds its runtime boilerplate (brain-context preflight,
+  gbrain sync, learnings-search, telemetry, `~/.gstack` path conventions). No gstack vendoring, no
+  runtime dependency on compound-engineering.
+
 ## 0.5.0 - 2026-06-02
 
 - Add the operator-choice framework: a new contract document, `references/operator-choice.md`, that

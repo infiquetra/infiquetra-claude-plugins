@@ -39,7 +39,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.5.0"
+    assert plugin_json["version"] == "0.6.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -149,6 +149,41 @@ def test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior() -> N
     assert "`idea-ready` or `requirements-ready`" in plan_doc
     assert "`plan-ready` or `resume-ready`" in work_doc
     assert "/plan <issue>" in work_doc
+
+
+def test_office_hours_two_mode_and_hard_gate_contract() -> None:
+    """Structural contract for the rebuilt two-mode frame-finding office-hours engine.
+
+    Tokens are chosen from the actual authored SKILL.md / frame-diagnostic.md so the
+    assertions track the contract, not fragile prose. See E1-authored office-hours skill.
+    """
+    skill_doc = _read(PLUGIN_ROOT / "skills" / "office-hours" / "SKILL.md")
+    diagnostic_doc = _read(
+        PLUGIN_ROOT / "skills" / "office-hours" / "references" / "frame-diagnostic.md"
+    )
+    combined = skill_doc + "\n" + diagnostic_doc
+
+    # Both modes are present as named modes in the SKILL or its reference.
+    assert "Startup mode" in combined
+    assert "Builder mode" in combined
+
+    # HARD GATE intent: office-hours diagnoses and routes; it never implements/plans/
+    # scaffolds/files an SDLC issue. Both the stable token and the no-implementation
+    # phrasing the author used must be present.
+    assert "HARD GATE" in skill_doc
+    assert "never file an SDLC issue" in skill_doc
+
+    # Office-hours must NOT name "SDLC issue" as one of ITS outputs (the old 23-line stub
+    # did: "End with the next useful artifact: ... SDLC issue"). The rebuild must not carry
+    # that artifact-list phrasing.
+    assert "next useful artifact" not in skill_doc
+
+    # Routing targets are present (these are not the only exits, but all must appear).
+    for route in ("/ideate", "/brainstorm", "/plan", "/strategy"):
+        assert route in skill_doc
+
+    # Frame-note home is its own directory.
+    assert "docs/office-hours/" in skill_doc
 
 
 def test_operator_choice_framework_is_documented_and_cited() -> None:

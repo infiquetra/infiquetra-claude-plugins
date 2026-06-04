@@ -12,7 +12,7 @@
 
 ### `/retro` rebuild — the meta-improvement engine (3-source merge gstack `retro`+`learn` + CE `ce-compound`, tiered self-edit gate, saga read-only)  {#retro-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.15.0`, PR #TBD, squash TBD). Was QUEUED P1 `#retro-meta-improvement-engine`.
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.15.0`, PR #191, squash f6faae2). Was QUEUED P1 `#retro-meta-improvement-engine`.
 
 **Summary.** Tenth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`). Rebuilt `/retro` from a 19-line stub into the lifecycle's **meta-improvement engine** — the pass that captures lifecycle learnings, curates durable journal knowledge, and proposes improvements to the workflow itself (up to and including the lifecycle plugin's own SKILLs). A **real 3-source merge**: gstack `retro` (forensics + the stale-base/wrong-"today" BLOCK guard) + gstack `learn` (the typed/confidence/source curation loop — staleness + contradiction + dedup) + CE `ce-compound` (the compounding "leave the system smarter" frame, agent-consumable findings not a 4500-word essay). Schema, the four interview answers, the folded-in deferred sub-items, and rejected alternatives recorded in DECISIONS [#retro-engine-rebuild](DECISIONS.md#retro-engine-rebuild).
 

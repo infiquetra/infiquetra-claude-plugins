@@ -177,7 +177,7 @@ Each command cites this file at its own rebuild. The CLI-backed execution-backen
 | `/investigate` | **now** (saga read-only; offers a backend for large/parallel fixes + parallel hypothesis-probes, since 0.16.0) |
 | `/retro` | at its rebuild |
 | `/spec` | **never offers** — a single durable spec artifact; size/risk lives in its scope sections, and the downstream executor (/plan / /work) owns backend selection |
-| `/optimize` | at its rebuild |
+| `/optimize` | **now** — offers a backend for independent experiment fan-out (default serial inline); records the choice NARRATIVELY (saga-untouched); since 0.18.0 |
 | `/doc-review` | at its rebuild |
 | `/strategy` | **never offers** — a single durable doc, no parallelism to escalate |
 

@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.18.0 - 2026-06-04
+
+- Rebuild `/optimize` from a 20-line stub into a **metric-driven optimization engine** — the
+  **thirteenth and final command rebuild** of the engine-merge campaign (after `/office-hours`,
+  `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`,
+  `/retro`, `/investigate`, `/spec`). It runs a **bounded-experiment loop** toward a measurable
+  target: pick a metric, baseline it, hypothesize, run a bounded experiment, measure the delta,
+  keep or discard, repeat until the target is hit or the budget is spent.
+- **Honest attribution — single source, no merge.** `/optimize` is a **CE `ce-optimize`
+  single-source PORT**. The **agent-usability** metric class is an **infiquetra-native** angle
+  (Jeff's), **NOT a gstack port** — a full-file grep of gstack `plan-tune` for the agent-usability
+  terms returned **zero**; `plan-tune` is a developer-psychographic question-coach that supplies
+  nothing portable and is not ported. This is **NOT a merge** of any kind, and gstack is credited
+  with **no insight**.
+- **Off-chain, saga UNTOUCHED.** `/optimize` writes no saga, advances no `lifecycle_phase`, and
+  makes **no `saga.py` edit** (mirrors `/strategy` / `/spec`). **No new Python** — no
+  `handoff_envelope.py` edit either; the `docs/optimize/` handoff source dir is deliberately
+  **deferred**.
+- **Eight metric classes (the maximal v1 taxonomy):** performance, cost, reliability,
+  **agent-usability**, security, quality, developer-experience, maintainability.
+- **OFFERS operator-choice** for independent experiment fan-out (default serial inline); the choice
+  is recorded **narratively** (saga-untouched) — not via an `orchestration_mode` saga field.
+- **Campaign-closer.** With `/optimize` shipped, **all 13 command rebuilds of the engine-merge
+  campaign are complete.** (Scope: this closes the *command-rebuild* campaign; `/pulse` live
+  telemetry and other enhancements remain separate, queued items.)
+- **Periphery** — version bumps (plugin `0.18.0`, marketplace entry `0.18.0`; keywords stay at 10);
+  dispatch-table `/optimize` row flipped stub → shipped (metric-loop engine, advisory + off-chain),
+  routing-rubric row updated, plus a `/qa`-vs-`/optimize` boundary note (gate-to-ship vs
+  loop-toward-target); `operator-choice.md` `/optimize` row "at its rebuild" → "now, offers";
+  README `/optimize` command-summary line tightened to the bounded-experiment loop + 8 metric
+  classes. Dispatch-table command count stays **17** (`/optimize` was already counted).
+- Documented in the engineering journal (PR #TBD): DECISIONS `#optimize-engine-rebuild`, ARCHIVE
+  `#optimize-engine-rebuild-shipped` + the campaign-complete capstone (closes
+  `#lifecycle-engine-merge-campaign`), LEARNINGS `#shipped-on-origin-not-in-stale-local-tree` +
+  the third firing of `#campaign-brief-merge-is-a-provenance-hypothesis`; consumed
+  `#optimize-engine-merge` from QUEUED, added `#optimize-log-helper`.
+
 ## 0.17.0 - 2026-06-04
 
 - Add `/spec` — the lifecycle's net-new **spec-interrogation engine** and the **twelfth command

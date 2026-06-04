@@ -35,7 +35,7 @@ A route to a **stub** target is **advisory**: `/loop` names it as the next comma
 | `/retro` | shipped (meta-improvement engine) | **advisory + terminal** — never block |
 | `/resume` | **stub (24L)** | **advisory / opt-in** — never auto-route |
 | `/strategy` | shipped (STRATEGY.md engine) | **advisory** — never block |
-| `/optimize` | **stub (20L)** | **advisory** — never block |
+| `/optimize` | **shipped (metric-loop engine)** | **advisory + off-chain** — never block |
 
 ---
 
@@ -92,7 +92,7 @@ For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `i
 | A vague ask / under-specified issue that needs a precise, formal WHAT (five-Why, scope/MVP/out-of-scope lock, failure modes) before planning or handoff | `/spec` | advisory, shipped (off-chain) |
 | Bug / defect / root-cause question, a failing or flaky test, "why is this broken" | `/investigate` | advisory, shipped (off-chain) |
 | Strategic-direction ask, STRATEGY.md maintenance | `/strategy` | advisory, shipped |
-| "Improve / route / optimize this metric" | `/optimize` | advisory stub |
+| "Improve / route / optimize this metric" | `/optimize` | advisory, shipped (off-chain) |
 | Scope / ambition question ("is this ambitious enough", "think bigger") on a plan / strategy / brainstorm | `/founder-review` | shipped |
 | Post-completion learnings capture, workflow self-improvement | `/retro` | advisory, shipped (terminal) |
 | Hand a durable artifact to an SDLC issue | `/handoff` | shipped (+ envelope) |
@@ -117,6 +117,17 @@ defect** (not fixing now) → `/handoff`; a
 root cause that is really a **design problem** → `/brainstorm`. `/qa` routes deep post-merge
 root-cause failures here (clear/trackable defects still go to `/handoff`); there is **no
 `/investigate` → `/qa` verify loop` — `/investigate` carries its own minimal verification.
+
+`/optimize` is the **off-chain metric-driven optimization engine** and is **saga-UNTOUCHED**: it
+runs a **bounded-experiment loop** toward a measurable target across 8 metric classes (perf / cost /
+reliability / agent-usability / security / quality / DX / maintainability). It never enters the work
+thread and never blocks `/loop`.
+
+**`/optimize` vs `/qa` — don't confuse the gate with the loop.** `/qa` **gates a shipped change**
+(ship-or-not: "good / secure enough to ship?") — it runs once and returns a verdict. `/optimize`
+**loops toward a measurable target** by bounded experiment ("drive this metric toward a target?") —
+it iterates until the target is hit or the budget is spent. Route a ship/no-ship question to `/qa`;
+route a "make this metric better" question to `/optimize`.
 
 ---
 

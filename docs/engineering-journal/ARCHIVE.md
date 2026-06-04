@@ -10,6 +10,40 @@
 
 ## Shipped
 
+### `/optimize` — the metric-driven optimization engine (CE `ce-optimize` single-source port + infiquetra-native agent-usability metric class, NOT a merge, off-chain, saga UNTOUCHED) — and the engine-merge campaign CAPSTONE  {#optimize-engine-rebuild-shipped}
+
+**SHIPPED 2026-06-04** (`infiquetra-lifecycle` `0.18.0`, PR #TBD, squash #TBD). Was QUEUED `#optimize-engine-merge`.
+
+**Summary.** Thirteenth and **FINAL command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`, `/investigate`, `/spec`). Rebuilt `/optimize` from a 20-line stub into the lifecycle's **metric-driven optimization engine** — a **bounded-experiment loop** toward a measurable target: pick a metric, baseline, hypothesize, run a bounded experiment, measure the delta, keep or discard, repeat until the target is hit or the budget is spent. A **CE `ce-optimize` SINGLE-SOURCE PORT** (NOT a merge); the agent-usability metric class is an infiquetra-native angle. Off-chain, saga-UNTOUCHED; the run is recorded narratively. The five settled Qs, decisions a–e, the honest single-source attribution, and rejected alternatives are recorded in DECISIONS [#optimize-engine-rebuild](DECISIONS.md#optimize-engine-rebuild).
+
+**The five settled answers (+ a–e).** (Q1) **Saga UNTOUCHED** — no saga write, no `lifecycle_phase` advance, **no `saga.py` edit at all** (mirrors `/strategy` / `/spec`); off-chain, never blocks `/loop`; the run is recorded narratively. (Q2) **ZERO new Python** — the engine is SKILL-resident; no new script. (Q3) **Eight metric classes** (the maximal v1 taxonomy): performance, cost, reliability, **agent-usability**, security, quality, developer-experience, maintainability. (Q4) **Handoff DEFERRED** — no `docs/optimize/` in `SOURCE_DIRS`, **no `handoff_envelope.py` edit**; an optimization run's output is narrative, not yet a `/handoff` source. (Q5) **Operator-choice OFFERS** — independent experiments fan out across backends (default serial inline), the choice recorded narratively (saga-untouched). (a) **One engine, no profile-coach sibling.** (b) **Serial default + shed CE's worktree/parallel machinery.** (c) **Offers operator-choice, narrative record.** (d) **`/qa` boundary = gate vs loop** (ship-or-not vs loop-toward-target). (e) **`/pulse` boundary = bounded vs continuous, not a gate.**
+
+**Honest attribution (load-bearing).** **CE `ce-optimize` SINGLE-SOURCE PORT.** The **agent-usability** metric class is **infiquetra-native** (Jeff's), **NOT a gstack contribution** — a **full-file grep of gstack `plan-tune` for the agent-usability terms returned ZERO**. gstack `plan-tune` is a developer-psychographic question-coach that supplies **nothing portable** and is **not ported**. This is **NOT a merge**; gstack is credited with **no insight**.
+
+**What shipped.**
+- **REBUILT `/optimize` SKILL + references + command** (owned by the engine agent): the CE `ce-optimize` bounded-experiment metric loop across 8 metric classes, with the infiquetra-native agent-usability class. Shed CE's in-engine worktree spawn / parallel-runner plumbing (parallelism offered via operator-choice instead); no gstack `plan-tune` content (nothing portable).
+- **OFFERS operator-choice** for independent experiment fan-out (default serial inline), recorded narratively (saga-untouched).
+- **Periphery** — version bumps (plugin `0.18.0`, marketplace entry `0.18.0`, CHANGELOG new `## 0.18.0` block; keywords stay at 10); dispatch-table `/optimize` row flipped stub → shipped (metric-loop engine, advisory + off-chain), routing-rubric row updated, plus a `/qa`-vs-`/optimize` boundary note (gate-to-ship vs loop-toward-target) — command count stays **17** (`/optimize` was already counted); `operator-choice.md` `/optimize` row "at its rebuild" → "now, offers"; README `/optimize` command-summary line tightened (bounded-experiment loop + 8 metric classes).
+- **ZERO new Python; `saga.py` UNTOUCHED; `handoff_envelope.py` UNTOUCHED (handoff deferred); `references/saga-spec.md` UNTOUCHED (no §11 row).**
+
+**Follow-ups.** Post-merge follow-up fills the PR # + squash SHA into DECISIONS + this entry + the capstone. A tiny `optimize_log.py` append+verify helper is deferred (QUEUED [#optimize-log-helper](QUEUED.md), P3) — add it only if the prose-only experiment log demonstrably drifts across context compaction in real runs.
+
+**Refs.** DECISIONS [#optimize-engine-rebuild](DECISIONS.md#optimize-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign) (now COMPLETE — see the capstone below). Off-chain / saga-untouched twins — DECISIONS [#strategy-engine-rebuild](DECISIONS.md#strategy-engine-rebuild), [#spec-interrogation-engine-rebuild](DECISIONS.md#spec-interrogation-engine-rebuild). The `/qa` gate-vs-loop boundary pattern — DECISIONS [#investigate-systematic-debugging-engine-rebuild](DECISIONS.md#investigate-systematic-debugging-engine-rebuild). LEARNINGS [#shipped-on-origin-not-in-stale-local-tree](LEARNINGS.md#shipped-on-origin-not-in-stale-local-tree), [#campaign-brief-merge-is-a-provenance-hypothesis](LEARNINGS.md#campaign-brief-merge-is-a-provenance-hypothesis) (third firing). Consumed from QUEUED `#optimize-engine-merge`; added QUEUED `#optimize-log-helper`.
+
+### Engine-merge campaign — COMPLETE (all 13 command rebuilds shipped; `#lifecycle-engine-merge-campaign` closed)  {#lifecycle-engine-merge-campaign-complete}
+
+**COMPLETE 2026-06-04** (`infiquetra-lifecycle` `0.18.0`, PR #TBD, squash #TBD). Closes the campaign decision DECISIONS [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign).
+
+**What this closes.** The **command-rebuild** half of the engine-merge campaign is **done**: all **13 lifecycle commands** have been rebuilt from thin stubs (or adopted net-new) into self-contained infiquetra engines, each an interview-driven design settled 1-by-1:
+
+1. `/office-hours` (0.6.0) — `/plan` (0.7.0) — `/code-review` (0.8.0) — `/founder-review` (0.9.0) — `/work` (0.10.0, saga primary writer) — `/loop` (0.11.0, the one native rebuild) — `/resume` (0.12.0) — `/qa` (0.13.0, gate-only acceptance) — `/strategy` (0.14.0) — `/retro` (0.15.0, meta-improvement) — `/investigate` (0.16.0, net-new) — `/spec` (0.17.0, net-new) — **`/optimize` (0.18.0, the closer).**
+
+Two shared foundations underpinned the campaign: the `saga` durable work-state envelope (`saga.py` + `references/saga-spec.md` §11 consumer contract) and the `operator-choice` 3-backend doc-contract.
+
+**Scope qualifier (load-bearing).** "Complete" = the **COMMAND-rebuild campaign**. It does **NOT** mean the lifecycle is feature-frozen. Separate, still-open queued items remain — notably **`/pulse`** (a future continuous-live-telemetry command, distinct from `/optimize`'s bounded loop — see the `/optimize` decision's `/pulse` boundary) and other enhancements in QUEUED. The `#lifecycle-engine-merge-campaign` decision is the thing being closed; future lifecycle work is tracked as its own items, not under this campaign.
+
+**Refs.** DECISIONS [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign) (the closed campaign decision), [#optimize-engine-rebuild](DECISIONS.md#optimize-engine-rebuild) (the closer). The shipped closer — ARCHIVE [#optimize-engine-rebuild-shipped](#optimize-engine-rebuild-shipped). The prior rebuilds' shipped entries are above in this section.
+
 ### `/spec` — the spec-interrogation engine (gstack `spec` single-source WHAT-interrogation port, the WHAT-rigor sibling of `/plan`'s HOW-rigor, off-chain, saga UNTOUCHED)  {#spec-interrogation-engine-shipped}
 
 **SHIPPED 2026-06-04** (`infiquetra-lifecycle` `0.17.0`, PR #195, squash 9a61e5b). Was QUEUED P1 `#spec-interrogation-engine`.

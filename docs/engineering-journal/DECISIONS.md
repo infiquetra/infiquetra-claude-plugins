@@ -24,7 +24,7 @@
 
 ## 2026-06-04
 
-### Add `/spec` as the lifecycle's spec-interrogation engine — gstack `spec` SINGLE-SOURCE WHAT-interrogation port (the WHAT-rigor sibling of `/plan`'s HOW-rigor), off-chain, saga UNTOUCHED (PR #TBD)  {#spec-interrogation-engine-rebuild}
+### Add `/spec` as the lifecycle's spec-interrogation engine — gstack `spec` SINGLE-SOURCE WHAT-interrogation port (the WHAT-rigor sibling of `/plan`'s HOW-rigor), off-chain, saga UNTOUCHED (PR #195)  {#spec-interrogation-engine-rebuild}
 
 **Decision.** Add `/spec` — the **twelfth command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`, `/investigate`) and the campaign's **spec-interrogation engine**: the pass that owns relentless **WHAT-rigor** — the sibling of `/plan`'s HOW-rigor. A **gstack `spec` SINGLE-SOURCE port** of the WHAT-interrogation half: the principal-engineer-who-refuses-ambiguous-work persona, the HARD GATE (no spec after message 1 — always start the interview), Phase-1 five-Why, Phase-2 scope / MVP / out-of-scope / failure-mode lock, Phase-3 read-code-first grounding, quantify-everything, and a draft-review pass. The four settled Qs + decisions a–d:
 

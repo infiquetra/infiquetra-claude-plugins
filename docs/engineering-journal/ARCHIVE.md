@@ -12,7 +12,7 @@
 
 ### `/spec` — the spec-interrogation engine (gstack `spec` single-source WHAT-interrogation port, the WHAT-rigor sibling of `/plan`'s HOW-rigor, off-chain, saga UNTOUCHED)  {#spec-interrogation-engine-shipped}
 
-**SHIPPED 2026-06-04** (`infiquetra-lifecycle` `0.17.0`, PR #TBD, squash #TBD). Was QUEUED P1 `#spec-interrogation-engine`.
+**SHIPPED 2026-06-04** (`infiquetra-lifecycle` `0.17.0`, PR #195, squash 9a61e5b). Was QUEUED P1 `#spec-interrogation-engine`.
 
 **Summary.** Twelfth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`, `/investigate`) and the campaign's **spec-interrogation engine** — the pass that owns relentless **WHAT-rigor**, the sibling of `/plan`'s HOW-rigor. A **gstack `spec` SINGLE-SOURCE port** of the WHAT-interrogation half (NOT a merge): persona + HARD GATE + five-Why + scope/MVP/out-of-scope/failure-mode lock + read-code-first grounding + quantify-everything + draft-review. Off-chain, saga-untouched; its only durable output is a sharp WHAT artifact under `docs/specs/`. The four settled Qs, decisions a–d, the honest single-source attribution, and rejected alternatives are recorded in DECISIONS [#spec-interrogation-engine-rebuild](DECISIONS.md#spec-interrogation-engine-rebuild).
 
@@ -32,7 +32,7 @@
 
 ### `/brainstorm` ↔ gstack `spec` WHAT-interrogation seam — RESOLVED in favor of a standalone `/spec`  {#brainstorm-spec-interrogation-seam-resolved}
 
-**RESOLVED 2026-06-04** (`infiquetra-lifecycle` `0.17.0`, PR #TBD, squash #TBD). Was QUEUED P2 `#brainstorm-spec-interrogation-seam`.
+**RESOLVED 2026-06-04** (`infiquetra-lifecycle` `0.17.0`, PR #195, squash 9a61e5b). Was QUEUED P2 `#brainstorm-spec-interrogation-seam`.
 
 **Resolution.** Resolved in favor of **option (b)**: ship the **standalone `/spec`** as the single owner of relentless WHAT-rigor (five-Why, scope/MVP/out-of-scope/failure-mode lock, read-code-first grounding, quantify-everything), and keep `/brainstorm` as the **divergent-exploration** engine. Option (a) — folding the WHAT-interrogation rigor into `/brainstorm` — was rejected: the relentless ambiguity-killing lands in exactly one place (the convergent `/spec`), and `/brainstorm` stays divergent. The two are wired, not merged: `/brainstorm`'s Phase-4 handoff menu now offers **Sharpen with `/spec`** (divergent `/brainstorm` → convergent `/spec`).
 

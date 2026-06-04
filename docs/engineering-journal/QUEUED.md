@@ -135,22 +135,6 @@
 **Decision-point.** Either (a) **fold** gstack `spec`'s WHAT-interrogation rigor into the shipped `/brainstorm` (one Think-phase engine owns ambiguity-killing), or (b) **ship the standalone `/spec`** as a distinct pre-handoff sharpening pass and keep `/brainstorm` as the divergent-exploration engine. Do NOT build both with overlapping interrogation — pick the owner first.
 **Context.** Cross-ref [#spec-interrogation-engine](#spec-interrogation-engine) (the queued standalone `/spec`); DECISIONS [#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild) (where the seam was named — `/plan` is HOW-only and bounces WHAT-ambiguity to `/brainstorm`); DECISIONS [#ce-ideation-engine-restore](DECISIONS.md#ce-ideation-engine-restore) (the current `/brainstorm` engine). This entry is the gate the `/spec` build must pass through.
 
-### P2 — Rebuild `/strategy`: CE `ce-strategy` interview into a self-contained STRATEGY.md engine  {#rebuild-strategy-engine-merge}
-
-**Priority.** P2. **Effort.** M (~half day: port CE interview + template + Phase 0-3 flow, adapt for agents, swap downstream names). **Category.** engine-merge.
-**Worth it when.** A repo needs a real STRATEGY.md and the stub produces shapeless prose, or `/ideate`/`/plan` want upstream grounding that doesn't exist.
-**Today.** 21-line stub: read STRATEGY.md, link context-library, separate from founder-review, route to `/plan`/`/loop`. No interview, template, file-state routing, or pushback.
-**Engines.** *CE* `ce-strategy` = the real engine: Rumelt-grounded (diagnosis/guiding-policy/coherent-action), Phase-0 file-state routing (new vs targeted-section vs pick-section), Phase-1 8-section interview with mandatory 2-round pushback per section, locked template (3-5 metrics, 2-4 tracks), rerunnable update-in-place. *gstack* — **none** (`cso/` is Chief SECURITY Officer, a 14-phase security audit — wrong officer; nothing strategy-specific to steal).
-**Merge.** Take the whole engine from CE; take nothing strategy-specific from gstack. Drop CE's branded downstream names. (Confirm Jeff's "gstack cso" intent was a mixup.)
-**Infiquetra.** Strategy owns durable STRATEGY.md direction; founder-review challenges it. Persona/track sections must name AI-agent actors, not just humans. Link context-library instead of embedding policy. Direction shifts → DECISIONS ADRs.
-**Operator choice.** No team-execution / workflows (single durable doc, no parallelism).
-**Shed (sign-off).** CE's literal `ce-ideate`/`ce-brainstorm`/`ce-plan` downstream names.
-**Interview (1-by-1).**
-- Your intent said "gstack cso (Chief Strategy Officer)" but that file is the Chief SECURITY Officer audit — did you mean a different file, or just build `/strategy` from CE `ce-strategy`?
-- Keep CE's Rumelt framing + 8 fixed sections, or trim?
-- Should personas/tracks explicitly name AI-agent actors alongside humans?
-- Mandatory 2-round pushback per section, or lighter touch?
-
 ### P2 — Rebuild `/optimize`: CE experiment harness + gstack profile-tuning into an infiquetra engine  {#optimize-engine-merge}
 
 **Priority.** P2. **Effort.** Medium (~1 day: infiquetra metric taxonomy + loop skeleton; trimmed spec/log schema; defer parallel harness to team-execution). **Category.** engine-merge.

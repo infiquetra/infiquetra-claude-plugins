@@ -32,7 +32,7 @@ A route to a **stub** target is **advisory**: `/loop` names it as the next comma
 | `/qa` | shipped (gate-only) | **advisory** — never block |
 | `/retro` | **stub (19L)** | **advisory** — never block |
 | `/resume` | **stub (24L)** | **advisory / opt-in** — never auto-route |
-| `/strategy` | **stub (21L)** | **advisory** — never block |
+| `/strategy` | shipped (STRATEGY.md engine) | **advisory** — never block |
 | `/optimize` | **stub (20L)** | **advisory** — never block |
 
 ---
@@ -47,7 +47,7 @@ When `scan` finds no in-flight saga and there is no issue, route by how settled 
 | "Give me ideas" / "what should I improve" / open divergent ask | `/ideate` |
 | One chosen idea, WHAT not yet pinned | `/brainstorm` |
 | Settled WHAT, ready for HOW | `/plan` |
-| Strategic-direction ask ("where are we pointed") | `/strategy` (advisory stub) |
+| Strategic-direction ask ("where are we pointed") | `/strategy` (advisory, shipped) |
 
 This mirrors `/ideate`'s and `/office-hours`'s own clean exits: `/ideate` routes an unframed ask to
 `/office-hours`; `/office-hours` routes a settled frame onward to `/ideate` / `/brainstorm` / `/plan` /
@@ -86,7 +86,7 @@ For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `i
 
 | Input / trigger | Next command | State |
 |---|---|---|
-| Strategic-direction ask, STRATEGY.md maintenance | `/strategy` | advisory stub |
+| Strategic-direction ask, STRATEGY.md maintenance | `/strategy` | advisory, shipped |
 | "Improve / route / optimize this metric" | `/optimize` | advisory stub |
 | Scope / ambition question ("is this ambitious enough", "think bigger") on a plan / strategy / brainstorm | `/founder-review` | shipped |
 | Post-completion learnings capture | `/retro` | advisory stub |

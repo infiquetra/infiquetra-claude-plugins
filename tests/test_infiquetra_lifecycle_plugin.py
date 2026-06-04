@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.14.0"
+    assert plugin_json["version"] == "0.15.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -1198,6 +1198,287 @@ def test_strategy_engine_merge_contract() -> None:
         ref_path = strategy / "references" / ref
         assert ref_path.exists()
         assert len(_read(ref_path).splitlines()) >= 60
+
+
+def test_retro_engine_merge_contract() -> None:
+    """Mechanism FLOORS for the rebuilt engine-merge /retro meta-improvement engine (0.15.0).
+
+    HONEST SCOPE: presence proves the contract was AUTHORED, not that runtime is mutation-free.
+    /retro's whole identity is to CURATE / PRUNE / PROPOSE / RECORD — so the engine-identity verbs
+    "curate"/"prune"/"propose"/"record"/"anchor"/"edit"/"refine"/"improve" are NEVER
+    negation-windowed; the engine's positive point is that it edits the journal and proposes edits.
+    The load-bearing safety contract (AUTO-APPLY only for a pure-additive new-journal-entry append;
+    everything else propose-diff-and-wait) is enforced only by Claude READING the prose at runtime —
+    the SKILL emits no runnable destructive self-edit and no runnable saga/gh mutation, but token
+    presence cannot prove a given run respects the gate. These floors prove the SKILL/refs EMIT the
+    contract the engine stands on (the 6 net-new passes, the curation sweeps, the lean solo-framed
+    metrics, the stale-base BLOCK guard, the tiered self-edit gate, saga READ-ONLY with the dropped
+    ->retro advance, the reuse-not-reimplement substrate, gh read-only, the operator-choice offer,
+    the docs/retros artifact + journal promotion, the dispatch reference-not-restate, and the
+    CE/gstack attribution window), that the boundary prose is present (with unambiguous mutation
+    VERBS only inside negation windows, like /qa, /resume, /founder-review, and /strategy), and that
+    the single hard-absence (no ce-*/gstack-* command shim) holds. A thin reskin that drops the
+    self-edit gate, the curation sweeps, or the net-new passes fails these floors.
+
+    Tokens are taken from the actual E1-authored SKILL.md + its 3 references on disk.
+    """
+    retro = PLUGIN_ROOT / "skills" / "retro"
+    skill_doc = _read(retro / "SKILL.md")
+    passes_doc = _read(retro / "references" / "retro-passes.md")
+    safety_doc = _read(retro / "references" / "self-edit-safety.md")
+    report_doc = _read(retro / "references" / "retro-report.md")
+    corpus = "\n".join((skill_doc, passes_doc, safety_doc, report_doc))
+    flat = re.sub(r"\s+", " ", corpus)
+
+    # --- MECHANISM FLOOR 1: the 6 net-new passes neither source had. Each is named in the corpus;
+    # a thin port that only re-runs gstack's forensics has none of these. ---
+    assert "interview" in corpus.lower(), "the structured-interview pass must be present"
+    assert "transcript" in corpus.lower(), "the transcript-review fan-out pass must be present"
+    assert "new-skill" in corpus, "the new-skill / plugin detection pass must be present"
+    assert "refine-lifecycle" in corpus, (
+        "the refine-lifecycle (self-refinement) pass must be present"
+    )
+    assert "refine-directives" in corpus, "the refine-directives pass must be present"
+    assert re.search(r"memory[ -]pruning|prune .*memory", corpus, re.IGNORECASE), (
+        "the memory-pruning pass must be present"
+    )
+
+    # --- MECHANISM FLOOR 2: the gstack-`learn` curation sweeps (staleness + contradiction), with
+    # dedup framed as an INFIQUETRA addition to the sweep set (in gstack it was a Stats display op,
+    # here it is a real Prune sweep). Plus the lean, solo-framed git metrics. ---
+    assert "staleness" in corpus.lower(), "the staleness curation sweep must be named"
+    assert "contradiction" in corpus.lower(), "the contradiction curation sweep must be named"
+    assert "dedup" in corpus.lower(), "the dedup curation sweep must be named"
+    assert "infiquetra addition" in corpus.lower(), (
+        "dedup must be framed as the infiquetra addition to the gstack sweep set"
+    )
+    assert re.search(r"lean[^\n]*metric|lean[^\n]*forensic", corpus, re.IGNORECASE), (
+        "the lean git-metrics pass must be named"
+    )
+    # solo-framed: the gstack team-performance framing (leaderboard / streaks / tweetable) is SHED.
+    assert "solo-framed" in corpus, "the lean metrics must be solo-framed (team-perf framing shed)"
+    assert re.search(r"\bshed\b", corpus), "the team-performance framing must be explicitly shed"
+
+    # --- MECHANISM FLOOR 3: the stale-base / wrong-today BLOCK guard, scoped to the time-windowed
+    # mode, keyed on validation discipline + compute-today-from-the-session-reminder (NOT `date`). ---
+    assert "BLOCK" in corpus, "the stale-base guard must BLOCK (not silently fabricate)"
+    assert "wrong-today" in corpus, "the guard must name the wrong-today failure mode"
+    assert "time-windowed" in corpus.lower(), "the guard is scoped to the time-windowed mode"
+    assert "validation discipline" in flat.lower(), (
+        "validation discipline must be load-bearing for the guard"
+    )
+    # Today is computed from the session reminder's currentDate, NEVER from the `date` command.
+    assert "currentDate" in corpus, "today must be computed from the session reminder's currentDate"
+    assert re.search(r"NEVER from (?:the )?`?date`?|never from .*\bdate\b", corpus), (
+        "the guard must forbid computing today from the `date` command (clock drift)"
+    )
+    # Thread-scoped retros skip the window guard (they compute no window).
+    assert "thread-scoped" in corpus.lower(), "the thread-scoped mode (no window) must be named"
+
+    # --- MECHANISM FLOOR 4 (HIGHEST-VALUE): THE TIERED SELF-EDIT GATE. AUTO-APPLY is named ONLY for
+    # a pure-additive NEW-journal-entry append; everything else (delete/modify/move + auto-memory +
+    # directives + lifecycle SKILLs) is PROPOSE-DIFF-AND-WAIT. This is the load-bearing safety
+    # contract; a flat-absence assert cannot prove it. ---
+    assert "AUTO-APPLY" in corpus, "the AUTO-APPLY tier must be named"
+    assert "PROPOSE-DIFF-AND-WAIT" in corpus, "the PROPOSE-DIFF-AND-WAIT tier must be named"
+    # The AUTO rule is scoped to a PURE ADDITIVE APPEND of a NEW journal entry ONLY.
+    assert "AUTO-APPLY is ONLY a PURE ADDITIVE APPEND of a NEW journal entry" in corpus, (
+        "AUTO-APPLY must be scoped to a pure-additive new-journal-entry append ONLY"
+    )
+    # ANY delete / modify / move of existing lines is propose-diff-and-wait.
+    assert "ANY delete, modify, or move of existing lines is PROPOSE-DIFF-AND-WAIT" in corpus, (
+        "any delete/modify/move of existing lines must be propose-diff-and-wait"
+    )
+    # The propose tier explicitly covers auto-memory, directives, and the lifecycle SKILLs
+    # (including retro's OWN skill — never self-applied).
+    assert "auto-memory" in corpus.lower(), "the .claude auto-memory must be a propose-tier target"
+    assert re.search(r"directive", corpus, re.IGNORECASE), (
+        "directive files must be a propose-tier target"
+    )
+    assert "skills/retro/SKILL.md" in corpus, (
+        "retro's own SKILL must be a propose-only target (proposed, never self-applied)"
+    )
+    assert "never self-applies" in corpus.lower() or "never self-applied" in corpus.lower(), (
+        "/retro may propose a diff to its own skill but never self-applies one"
+    )
+    # The QUEUED -> ARCHIVE move is propose (it DELETES from QUEUED even though ARCHIVE is an append).
+    assert re.search(r"QUEUED\s*(?:->|→)\s*ARCHIVE", corpus), (
+        "the QUEUED -> ARCHIVE move must be named (it deletes from QUEUED, so propose not auto)"
+    )
+    # The in-repo vs global/cross-project directive distinction + the cross-project warning.
+    assert "IN-REPO" in corpus, "the in-repo directive bucket must be named"
+    assert re.search(r"GLOBAL ?/ ?CROSS-PROJECT|cross-project", corpus, re.IGNORECASE), (
+        "the global / cross-project directive bucket must be named"
+    )
+    assert "~/.claude" in corpus, "the global directive path (~/.claude) must be named"
+    assert re.search(r"affects? (?:\*\*)?(?:ALL|EVERY) project", corpus), (
+        "a global/cross-project edit must carry the affects-EVERY-project warning"
+    )
+    # never-auto-launch a destructive self-edit or a backend.
+    assert re.search(r"[Nn]ever\*{0,2} auto-launch", corpus), (
+        "/retro must never auto-launch a destructive self-edit or an execution backend"
+    )
+    # Mechanism-pinned NO runnable destructive self-edit: no runnable git commit/push, no rm of a
+    # tracked file. (Mirrors test_qa's no-runnable-mutation pins ~:911-921.)
+    assert "git commit" not in corpus, "/retro must emit no runnable `git commit` (self-edit)"
+    assert "git push" not in corpus, "/retro must emit no runnable `git push`"
+    assert not re.search(r"\brm\s+-|\brm\s+`", corpus), (
+        "/retro must emit no runnable `rm` of a tracked file (no destructive self-edit)"
+    )
+
+    # --- MECHANISM FLOOR 5: saga is READ-ONLY — restore + ticks are evidence reads; the ->retro
+    # advance is dropped dead wiring. `saga.py save` appears ONLY inside a negation window (E1 writes
+    # "`saga.py save` is never called"), so a flat token-absence assert would FAIL the faithful
+    # engine (the /strategy + /qa pattern). Pin the mechanism: no RUNNABLE save invocation, and every
+    # `saga.py save` mention sits inside a never/no/dead-wiring negation window. ---
+    assert "saga.py restore --saga-id" in corpus, "the saga restore (read-only) CLI must be emitted"
+    assert "saga.py ticks" in corpus, "the saga ticks (read-only trajectory) CLI must be emitted"
+    assert "dead wiring" in corpus.lower(), (
+        "the dropped ->retro advance must be named as dead wiring"
+    )
+    assert not re.search(r"python3?\s+\S*saga\.py save", corpus), (
+        "/retro must emit no runnable `python saga.py save` invocation (saga READ-ONLY)"
+    )
+    for match in re.finditer(r"saga\.py save", flat):
+        window = flat[max(0, match.start() - 60) : match.end() + 40]
+        assert re.search(r"\b(not|never|no)\b|dead wiring|read-only", window, re.IGNORECASE), (
+            f"every `saga.py save` mention must sit inside a negation window (saga READ-ONLY), "
+            f"found near: {flat[max(0, match.start() - 50) : match.end() + 30]!r}"
+        )
+
+    # --- MECHANISM FLOOR 6: reuse-not-reimplement — the /resume forensic substrate is referenced by
+    # NAME (not duplicated), and zero new .py lands under skills/retro (only the test file changes). ---
+    assert "discover_sessions.py" in corpus, "the windowed session-discovery script must be reused"
+    assert "extract_session_skeleton.py" in corpus, "the skeleton-extraction script must be reused"
+    assert not list((retro).glob("**/*.py")), (
+        "no new .py may land under skills/retro — the engine reuses existing scripts by name"
+    )
+
+    # --- MECHANISM FLOOR 7: gh is READ-ONLY. The mutation commands appear ONLY inside "Never ..."
+    # negations, so a flat absence assert would fail the faithful engine. Pin: no runnable
+    # `gh issue create` / `gh pr merge`, and every mention sits inside a negation window. ---
+    assert not re.search(r"(?<!ever )(?<!ever `)gh issue create", corpus), (
+        "/retro must emit no runnable `gh issue create` (sdlc-manager owns the SDLC)"
+    )
+    assert not re.search(r"(?<!ever )(?<!ever `)gh pr merge", corpus), (
+        "/retro must emit no runnable `gh pr merge` (read-only on the world)"
+    )
+    for tok in (r"gh issue create", r"gh pr merge"):
+        for match in re.finditer(tok, flat):
+            window = flat[max(0, match.start() - 50) : match.start()]
+            assert re.search(r"\b(not|never|no)\b", window, re.IGNORECASE), (
+                f"every {tok!r} mention must sit inside a negation window (gh READ-ONLY)"
+            )
+    # The read-only gh evidence commands ARE emitted (the engine reads the PR/issue/check state).
+    assert "gh pr view" in corpus and "gh issue view" in corpus and "gh pr checks" in corpus, (
+        "the read-only gh evidence commands must be emitted"
+    )
+
+    # --- MECHANISM FLOOR 8: the operator-choice offer — a big multi-file refactor is OFFERED with a
+    # backend, never auto-run (references operator-choice.md + the 3 backend enums). ---
+    assert "operator-choice.md" in corpus, "the operator-choice contract must be cited by path"
+    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+        assert backend in corpus, f"the operator-choice backend {backend!r} must be named"
+    # generic-agent fan-out only — this plugin has no agents/ dir.
+    assert "Explore" in corpus and "Task" in corpus, "the transcript fan-out uses generic agents"
+    assert not (PLUGIN_ROOT / "agents").exists() or not list(
+        (PLUGIN_ROOT / "agents").glob("*.md")
+    ), "this plugin must have no agents/ dir (generic-agent convention)"
+
+    # --- MECHANISM FLOOR 9: the durable artifact dir (docs/retros/) + journal promotion into the
+    # four core files (the markdown journal is the durable sink). ---
+    assert "docs/retros" in corpus, "the per-thread retro doc must live under docs/retros/"
+    for journal_file in ("LEARNINGS", "DECISIONS", "QUEUED", "ARCHIVE"):
+        assert journal_file in corpus, f"journal promotion must name {journal_file}.md"
+
+    # --- MECHANISM FLOOR 10: dispatch-table is REFERENCED by path, never restated (one source of
+    # truth, no /retro<->/loop duplication). The table's unique H1 + lead sentence (which live ONLY
+    # in loop/references/dispatch-table.md) must NOT appear in the retro corpus. ---
+    assert "loop/references/dispatch-table.md" in skill_doc, (
+        "outbound routing must REFERENCE the dispatch-table by path"
+    )
+    assert "# Dispatch Table" not in corpus, "the dispatch-table H1 must not be restated in /retro"
+    assert "The designed routing map for" not in corpus, (
+        "the dispatch-table lead sentence must not be restated in /retro"
+    )
+
+    # --- MECHANISM FLOOR 11: CE/gstack ATTRIBUTION WINDOW. E1's faithful attribution names the
+    # gstack `retro`/`learn` sources and CE `ce-compound` ONLY inside an attribution window, so a
+    # flat `ce-compound not in corpus` assert would fail a FAITHFUL port (the /strategy ce-* +
+    # /resume named-agent pattern). Key it on the REAL attribution keywords E1 uses (ported / comes
+    # from / frame / sweep / forensic / CE / Compound-Engineering / first time / next time), within
+    # ~80 chars. The SINGLE hard-absence: no commands/ce-*.md and no commands/gstack-*.md shim. ---
+    attr_kw = re.compile(
+        r"(Ported|ported|comes? from|come from|\bframe\b|Compound-Engineering|\bCE\b|"
+        r"sweep|forensic|team-perf|parallel-research|first time|next time)",
+        re.IGNORECASE,
+    )
+    for match in re.finditer(r"gstack[- ]`(?:retro|learn)`|ce-compound", flat):
+        window = flat[max(0, match.start() - 80) : match.end() + 50]
+        assert attr_kw.search(window), (
+            f"gstack/CE source name must only appear inside an attribution window, "
+            f"found near: {flat[max(0, match.start() - 60) : match.end() + 20]!r}"
+        )
+    # The CE compounding FRAME is keyed on the REAL ce-compound tokens (first time / next time /
+    # knowledge compounds), NOT the paraphrase "leave the system smarter".
+    assert "first time you solve" in corpus and "next time is a lookup" in corpus, (
+        "the CE ce-compound frame must be ported with its real tokens (first time -> next time)"
+    )
+    assert "knowledge compounds" in corpus, "the compounding mechanism must be named"
+    # The SINGLE hard-absence: no ce-* / gstack-* command shim was created.
+    commands_dir = PLUGIN_ROOT / "commands"
+    assert not list(commands_dir.glob("ce-*.md")), "no commands/ce-*.md shim must exist"
+    assert not list(commands_dir.glob("gstack-*.md")), "no commands/gstack-*.md shim must exist"
+
+    # --- MECHANISM FLOOR 12: BOUNDARY NEGATIVES via POSITIVE-BOUNDARY-PROSE + NEGATION-WINDOW.
+    # The positive boundary prose (E1's Hard boundary names the NOTs). ---
+    assert "does **NOT**" in skill_doc, "the Hard boundary must bold the does-NOT clauses"
+    assert "read-only on the world" in skill_doc.lower() or "read-only" in skill_doc.lower(), (
+        "the read-only-on-the-world boundary must be present"
+    )
+    # Negation-window ONLY for the unambiguous mutation VERBS that never double as a benign noun in
+    # this corpus: the plural verb forms "deploys" / "merges" / "mutate(s)" (the Hard boundary's
+    # "never opens / edits / merges ... never deploys ... mutate the world" prose). "commit" /
+    # "deploy" (bare) / "push" are DELIBERATELY EXCLUDED — here "commit(s)" doubles as the benign
+    # noun (git commits in scope / commit date), bare "deploy" appears as a benign TRIGGER ("end of
+    # a ... PR / deploy"), and "push" is absent — exactly the /qa + /strategy carve-out for tokens
+    # that double as innocent words. The engine IDENTITY verbs curate / prune / propose / record /
+    # anchor / edit / refine / improve are NEVER windowed (the engine's positive identity). ---
+    flat_skill = re.sub(r"\s+", " ", skill_doc)
+    for verb in (r"\bdeploys\b", r"\bmerges\b", r"\bmutate[sd]?\b"):
+        for match in re.finditer(verb, flat_skill, re.IGNORECASE):
+            window = flat_skill[max(0, match.start() - 70) : match.start()]
+            assert re.search(r"\b(not|never|without|no)\b", window, re.IGNORECASE), (
+                f"mutation verb {verb!r} must only appear inside a negation window, found positive "
+                f"use near: {flat_skill[max(0, match.start() - 50) : match.start() + 25]!r}"
+            )
+    # The engine-identity verbs ARE present as positive identity (windowing them would fail the
+    # faithful engine) — assert their positive presence as the inverse tripwire.
+    for identity_verb in ("curate", "prune", "propose", "record", "anchor", "refine", "improve"):
+        assert identity_verb in corpus.lower(), (
+            f"engine-identity verb {identity_verb!r} must be present as positive identity"
+        )
+
+    # --- MECHANISM FLOOR 13: the interaction model — AskUserQuestion for routing/choices, free-form
+    # for substance, and the channel-inline fallback when redis-channel is active. ---
+    assert "AskUserQuestion" in skill_doc, "routing / choices must use AskUserQuestion"
+    assert "free-form" in skill_doc.lower(), "substantive interview questions must be free-form"
+    assert "redis-channel" in skill_doc, (
+        "the channel-inline fallback must be named for redis-channel"
+    )
+    assert re.search(r"inline the choices|channel-inline", corpus, re.IGNORECASE), (
+        "in a channel session the choices must be inlined instead of AskUserQuestion"
+    )
+
+    # --- MECHANISM FLOOR 14: thin-port tripwire — each of the 3 reference files carries real
+    # content (>= 60 lines). A vibes reskin would leave the refs as stubs. ---
+    for ref in ("retro-passes.md", "self-edit-safety.md", "retro-report.md"):
+        ref_path = retro / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+
+    # --- /retro stays in the packaged-commands list (terminal lifecycle phase). ---
+    assert (PLUGIN_ROOT / "commands" / "retro.md").exists(), "/retro must stay packaged"
 
 
 def test_operator_choice_framework_is_documented_and_cited() -> None:

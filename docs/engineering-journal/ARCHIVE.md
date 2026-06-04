@@ -10,6 +10,28 @@
 
 ## Shipped
 
+### `/retro` rebuild — the meta-improvement engine (3-source merge gstack `retro`+`learn` + CE `ce-compound`, tiered self-edit gate, saga read-only)  {#retro-engine-rebuild-shipped}
+
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.15.0`, PR #TBD, squash TBD). Was QUEUED P1 `#retro-meta-improvement-engine`.
+
+**Summary.** Tenth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`). Rebuilt `/retro` from a 19-line stub into the lifecycle's **meta-improvement engine** — the pass that captures lifecycle learnings, curates durable journal knowledge, and proposes improvements to the workflow itself (up to and including the lifecycle plugin's own SKILLs). A **real 3-source merge**: gstack `retro` (forensics + the stale-base/wrong-"today" BLOCK guard) + gstack `learn` (the typed/confidence/source curation loop — staleness + contradiction + dedup) + CE `ce-compound` (the compounding "leave the system smarter" frame, agent-consumable findings not a 4500-word essay). Schema, the four interview answers, the folded-in deferred sub-items, and rejected alternatives recorded in DECISIONS [#retro-engine-rebuild](DECISIONS.md#retro-engine-rebuild).
+
+**The four settled answers.** (Q1) **FULL engine in v1** — all 6 net-new passes (interview / transcript review / new-skill-or-plugin / refine-lifecycle-itself / refine-directives / memory-pruning) + a lean metrics snapshot; nothing deferred (the QUEUED brief's MVP-then-v2 split was rejected). (Q2) **Single `/retro` + an optional pass argument** — one engine, selectable passes, not separate sub-commands. (Q3) **Tiered self-edit gate** — pure-additive, append-only journal writes auto-apply; every delete / modify / move of existing durable state is propose-diff-and-wait. (Q4) **Full self-modification blast radius incl. the lifecycle SKILLs** — the gate's reach is the complete surface (journal, `.claude` memory, claude/agent/antigravity directive files, AND `infiquetra-lifecycle`'s own SKILLs); safety comes from the hard gate, not from narrowing reach.
+
+**The design.**
+- Rebuilt `/retro` SKILL: the meta-improvement engine — the 6 net-new passes + a lean metrics snapshot, merged from gstack `retro` + `learn` + CE `ce-compound`, behind the tiered self-edit gate.
+- **Tiered self-edit gate** — pure-additive journal appends auto-apply; everything else is propose-diff-and-wait; a **global / cross-project** edit (`~/.claude/CLAUDE.md`, auto-memory, the antigravity directive class) carries an **extra cross-project-impact warning**. The in-repo vs global/cross-project directive disambiguation routes each directive edit to the right gate tier.
+- **Saga READ-ONLY — the dead-wiring `->retro` advance dropped.** `/retro` reads saga context for evidence but writes **no** saga and advances **no** `lifecycle_phase`; the planned `work`/`qa`→`retro` saga advance was dead wiring (a terminal off-chain reflection pass has no saga-track consumer). So `saga.py` is untouched AND `saga-spec.md` gets **NO §11 change** — the campaign's first command consumer that deliberately writes nothing to the saga.
+- **ZERO new Python** — `/retro` is a markdown engine (SKILL + references + command) that reuses existing helpers (read-only `gh` evidence, the journal sink, existing saga readers); adds no `.py`. `saga.py` untouched.
+- **Stale-base guard scoped to the windowed mode** — gstack's stale-base/wrong-"today" BLOCK guard (maps onto Jeff's validation discipline) is kept but scoped to the windowed/metrics mode, not every pass.
+- **Periphery** — version bumps (plugin `0.15.0`, marketplace entry `0.15.0`, CHANGELOG new `## 0.15.0` block; keywords stay at 10); dispatch-table `/retro` rows stub→shipped (kept ADVISORY + terminal); README `/retro` description stub→shipped. `saga-spec.md` UNCHANGED (no §11 row).
+
+**Folded-in deferred sub-items (so nothing was silently dropped when the QUEUED brief was removed).** The **antigravity directive class** is folded in as one more global / cross-project directive surface under the directive-refinement pass (same cross-project warning). The **output-routing** of surfaced follow-ups (QUEUED entry vs `/handoff` vs ready-to-run ultracode/team-execution plan) is left OPEN for per-case judgment. Both recorded in DECISIONS [#retro-engine-rebuild](DECISIONS.md#retro-engine-rebuild).
+
+**Follow-ups.** Post-merge follow-up fills the PR # + squash SHA into DECISIONS + this entry + LEARNINGS [#self-modifying-engine-needs-a-gate](LEARNINGS.md#self-modifying-engine-needs-a-gate). The output-routing open question may earn a settled default once real retro runs exist. `/optimize`, plus the missing-candidate adds `/investigate` / `/spec`, remain the next likely rebuilds.
+
+**Refs.** DECISIONS [#retro-engine-rebuild](DECISIONS.md#retro-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). The self-modifying-engine safety lesson — LEARNINGS [#self-modifying-engine-needs-a-gate](LEARNINGS.md#self-modifying-engine-needs-a-gate). Saga read-only / off-chain siblings — DECISIONS [#founder-review-engine-rebuild](DECISIONS.md#founder-review-engine-rebuild), [#strategy-engine-rebuild](DECISIONS.md#strategy-engine-rebuild). Consumed the QUEUED brief `#retro-meta-improvement-engine` (removed; deferred sub-items folded into the DECISIONS entry).
+
 ### `/strategy` rebuild — the interview-driven STRATEGY.md engine (faithful single-source CE `ce-strategy` port)  {#strategy-engine-rebuild-shipped}
 
 **SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.14.0`, PR #189, squash a9d4c90). Was QUEUED P2 `#rebuild-strategy-engine-merge`.

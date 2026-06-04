@@ -30,7 +30,7 @@ A route to a **stub** target is **advisory**: `/loop` names it as the next comma
 | `/founder-review` | shipped (239L) | normal |
 | `/handoff` | shipped (68L, functional) | normal + handoff envelope |
 | `/qa` | shipped (gate-only) | **advisory** — never block |
-| `/retro` | **stub (19L)** | **advisory** — never block |
+| `/retro` | shipped (meta-improvement engine) | **advisory + terminal** — never block |
 | `/resume` | **stub (24L)** | **advisory / opt-in** — never auto-route |
 | `/strategy` | shipped (STRATEGY.md engine) | **advisory** — never block |
 | `/optimize` | **stub (20L)** | **advisory** — never block |
@@ -74,8 +74,8 @@ idea/requirements-ready ─► /plan ─► /doc-review ─► /work ─► /cod
 | `work` | `in_progress` | `resume-ready` | `/work` (resume the round-N loop) |
 | `work` | code at PR boundary | `resume-ready` | `/code-review` |
 | `work` | `complete` (merged) | `resume-ready` | `/qa` (advisory, gate-only) |
-| `qa` | any | `resume-ready` | `/handoff` or `/retro` (advisory) |
-| `retro` | any | — | done; `/handoff` if it should become an issue |
+| `qa` | any | `resume-ready` | `/handoff` or `/retro` (advisory, shipped) |
+| `retro` | any | — | **terminal** — done; `/handoff` if a learning should become an issue |
 
 For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `idea-ready` /
 `requirements-ready`, it is `/plan` (matches `parse_issue.py`'s `handoff.can_plan` / `can_work`).
@@ -89,7 +89,7 @@ For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `i
 | Strategic-direction ask, STRATEGY.md maintenance | `/strategy` | advisory, shipped |
 | "Improve / route / optimize this metric" | `/optimize` | advisory stub |
 | Scope / ambition question ("is this ambitious enough", "think bigger") on a plan / strategy / brainstorm | `/founder-review` | shipped |
-| Post-completion learnings capture | `/retro` | advisory stub |
+| Post-completion learnings capture, workflow self-improvement | `/retro` | advisory, shipped (terminal) |
 | Hand a durable artifact to an SDLC issue | `/handoff` | shipped (+ envelope) |
 | Deep forensic reconstruction (opt-in only) | `/resume` | advisory stub, never auto |
 

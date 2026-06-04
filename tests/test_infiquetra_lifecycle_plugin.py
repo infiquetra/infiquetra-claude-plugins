@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.15.0"
+    assert plugin_json["version"] == "0.16.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -72,6 +72,7 @@ def test_infiquetra_lifecycle_commands_are_packaged() -> None:
         "doc-review",
         "code-review",
         "optimize",
+        "investigate",
     ):
         assert (PLUGIN_ROOT / "commands" / f"{command}.md").exists()
 
@@ -93,6 +94,7 @@ def test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior() -> N
         "doc-review",
         "code-review",
         "optimize",
+        "investigate",
     }
     for skill in expected_skills:
         skill_path = PLUGIN_ROOT / "skills" / skill / "SKILL.md"
@@ -920,29 +922,40 @@ def test_qa_engine_merge_contract() -> None:
             "any `git add` mention must be inside a 'Never git add' negation"
         )
 
-    # --- MECHANISM FLOOR 9: MERGE-STATE FAILURE ROUTING — pre-merge -> /work, post-merge ->
-    # /handoff. /investigate is NOT on a runnable-route line (future prose only). ---
+    # --- MECHANISM FLOOR 9: MERGE-STATE FAILURE ROUTING. Pre-merge -> /work; post-merge SPLITS into
+    # a two-target branch: a clear/trackable defect -> /handoff, and a DEEP / uncertain root cause ->
+    # /investigate (NOW LIVE — /investigate shipped this rebuild, so /qa's FLOOR-9 FLIPPED from the
+    # 0.13.0 "future prose only" form to a live post-merge root-cause route). The earlier
+    # negative-route-arrow + future-prose-window loop are GONE; /investigate is now asserted PRESENT
+    # as a routable post-merge destination. ---
     assert "Pre-merge" in skill_doc and "/work" in skill_doc, "pre-merge failure routes to /work"
     assert "Post-merge" in skill_doc and "/handoff" in skill_doc, (
-        "post-merge failure routes to /handoff"
+        "post-merge clear/trackable defect failure routes to /handoff"
     )
-    # /investigate is named only as future prose, never emitted as a runnable route. Assert it is
-    # not on a route-arrow / "route ... to /investigate" line, and that its mentions sit inside a
-    # not-yet / future / not-a-route window.
-    assert not re.search(r"(?:->|→|\broute[sd]?\b[^\n]*\bto\b)[^\n]*/investigate", skill_doc), (
-        "/investigate must NOT appear as a runnable route target"
-    )
+    # /investigate is now a LIVE post-merge root-cause route. Assert (a) it appears as a route-arrow /
+    # routing target for a deep/uncertain root-cause failure, and (b) the SKILL frames it as a real
+    # routable target that ships and is on the dispatch-table's routable list.
     flat_skill_inv = re.sub(r"\s+", " ", skill_doc)
-    for match in re.finditer(r"/investigate", flat_skill_inv):
-        window = flat_skill_inv[max(0, match.start() - 90) : match.start() + 90]
-        assert re.search(
-            r"\b(future|when .*?is built|until then|not a runnable route|never emit|not\b.*\broutable|own)\b",
-            window,
-            flags=re.IGNORECASE,
-        ), (
-            f"/investigate must appear only as future/non-route prose, "
-            f"found near: {flat_skill_inv[match.start() - 50 : match.start() + 50]!r}"
-        )
+    assert re.search(
+        r"(?:->|→|\broute[sd]?\b[^\n]*\bto\b|root cause[^\n]*?)[^\n]*?/investigate", flat_skill_inv
+    ), "/investigate must now appear as a LIVE post-merge root-cause route target"
+    assert re.search(
+        r"/investigate[^\n]*?(?:real routable target|routable|ships|systematic-debugging engine)",
+        flat_skill_inv,
+        re.IGNORECASE,
+    ), "the SKILL must frame /investigate as a real, shipped, routable target"
+    # The deep/uncertain root-cause failure is the discriminator that sends a post-merge thread to
+    # /investigate rather than /handoff.
+    assert re.search(
+        r"Deep / uncertain root cause|deep[^\n]*root cause", skill_doc, re.IGNORECASE
+    ), "the post-merge split must route DEEP / uncertain root-cause failures to /investigate"
+    # But there is still NO /investigate -> /qa verify loop (/qa routes root-cause work TO
+    # /investigate, never the reverse, and /investigate does its OWN verification).
+    assert re.search(
+        r"no\b[^\n]*/investigate[^\n]*?(?:->|→)[^\n]*/qa[^\n]*verify", flat_skill_inv, re.IGNORECASE
+    ) or ("no `/investigate` → `/qa` verify" in skill_doc), (
+        "there must be no /investigate -> /qa verify loop (/qa routes TO /investigate, never reverse)"
+    )
     # PASS routes to /handoff or /retro (the clean-exit route).
     assert "/handoff" in skill_doc and "/retro" in skill_doc
 
@@ -1479,6 +1492,326 @@ def test_retro_engine_merge_contract() -> None:
 
     # --- /retro stays in the packaged-commands list (terminal lifecycle phase). ---
     assert (PLUGIN_ROOT / "commands" / "retro.md").exists(), "/retro must stay packaged"
+
+
+def test_investigate_engine_merge_contract() -> None:
+    """Mechanism FLOORS for the engine-merge /investigate systematic-debugging engine (0.16.0).
+
+    HONEST SCOPE: presence proves the contract was AUTHORED, not that runtime is mutation-free.
+    /investigate's whole identity is to INVESTIGATE / DIAGNOSE / TRACE / REPRODUCE / HYPOTHESIZE /
+    PREDICT and (gated) FIX — so those engine-identity verbs are NEVER negation-windowed; the engine
+    exists to do them. The load-bearing contracts (the Iron Law of no-fix-before-root-cause, the TWO
+    distinct numeric gates, diagnosis-as-deliverable, saga READ-ONLY, the hard no-mutation boundary)
+    are enforced only by Claude READING the prose at runtime — the SKILL emits no runnable mutation
+    and no runnable `saga.py save`, but token presence cannot prove a given run respects the gate.
+    These floors prove the SKILL/refs EMIT the contract the engine stands on (the ce-debug spine, the
+    gstack grafts, the superpowers Iron Law + boundary instrumentation, the two numeric gates kept
+    SEPARATE, the own-minimal-verification that does NOT route to /qa, real-fix->/work vs trivial
+    inline, saga read-only with no runnable save, the hard-boundary no-mutation pins, the both-split
+    learning capture that never feeds the report path to the classifier, operator-choice, the
+    docs/investigations artifact, the dispatch reference-not-restate, and the ce-debug / gstack /
+    superpowers attribution window), and that the single hard-absence (no ce-*/gstack-* shim) holds.
+    A thin reskin that drops the causal-chain gate, collapses the two numeric gates, or routes to /qa
+    to verify fails these floors.
+
+    Tokens are taken from the actual E1-authored SKILL.md + its 3 references on disk.
+    """
+    investigate = PLUGIN_ROOT / "skills" / "investigate"
+    skill_doc = _read(investigate / "SKILL.md")
+    methodology_doc = _read(investigate / "references" / "methodology.md")
+    taxonomy_doc = _read(investigate / "references" / "pattern-taxonomy.md")
+    report_doc = _read(investigate / "references" / "debug-report.md")
+    corpus = "\n".join((skill_doc, methodology_doc, taxonomy_doc, report_doc))
+    flat = re.sub(r"\s+", " ", corpus)
+
+    # --- MECHANISM FLOOR 1: the CE `ce-debug` SPINE — the causal-chain gate (no gaps),
+    # predictions-for-uncertain-links, the assumption audit, one-change-at-a-time, smart-escalation,
+    # and the trivial fast-path. A symptom-patching reskin has none of the gate discipline. ---
+    assert re.search(r"no gaps|without gaps", corpus, re.IGNORECASE), (
+        "the causal-chain gate must require the chain have no gaps (the ce-debug spine)"
+    )
+    assert "uncertain links" in corpus or "uncertain or non-obvious link" in corpus, (
+        "predictions are formed for UNCERTAIN links only (the ce-debug prediction discipline)"
+    )
+    assert re.search(r"\bprediction\b", corpus, re.IGNORECASE), (
+        "the prediction mechanic (a different-path observable) must be present"
+    )
+    assert "assumption audit" in corpus.lower(), (
+        "the assumption audit (verified-vs-assumed) must be present (evidence before hypothesis)"
+    )
+    assert "one change at a time" in corpus.lower(), (
+        "one-change-at-a-time (no shotgun debugging) must be present"
+    )
+    assert re.search(r"smart[- ]escalation", corpus, re.IGNORECASE), (
+        "the smart-escalation table (when stuck, diagnose why) must be present"
+    )
+    assert re.search(
+        r"trivial[- ]bug fast-path|trivial.* fast-path|fast-path", corpus, re.IGNORECASE
+    ), "the trivial-bug fast-path must be present"
+
+    # --- MECHANISM FLOOR 2: the gstack GRAFTS — the 6 pattern signatures + >= 1 serverless token,
+    # and the enum'd DEBUG REPORT status (all three enum members). A thin port drops the taxonomy. ---
+    for pattern_tok in ("race", "null", "state", "integration", "config", "cache"):
+        assert pattern_tok in corpus.lower(), (
+            f"gstack pattern signature {pattern_tok!r} must be in the pattern taxonomy"
+        )
+    assert re.search(r"cold-start|IAM|eventual-consistency|throttl|SSM", corpus, re.IGNORECASE), (
+        "the infiquetra serverless row must add >= 1 serverless signature (cold-start/IAM/...)"
+    )
+    # The DEBUG REPORT status is an ENUM — all three members must be named (the gstack graft).
+    for enum_member in ("DONE", "DONE_WITH_CONCERNS", "BLOCKED"):
+        assert enum_member in corpus, (
+            f"the DEBUG REPORT status enum must name {enum_member!r} (the gstack graft)"
+        )
+
+    # --- MECHANISM FLOOR 3: the superpowers BORROWS — the Iron Law (no fix before root cause) and
+    # the boundary instrumentation that captures ACTUAL (observed, not assumed) values. ---
+    assert re.search(r"Iron Law", corpus, re.IGNORECASE), (
+        "the Iron Law (no fixes before root-cause investigation) must be named"
+    )
+    assert re.search(r"no fix", corpus, re.IGNORECASE), (
+        "the Iron Law must be the no-fix-before-root-cause rule"
+    )
+    assert re.search(
+        r"instrument the boundaries|boundary instrumentation", corpus, re.IGNORECASE
+    ), "the superpowers boundary-instrumentation technique must be borrowed"
+    assert re.search(r"\bactual\b[^\n]*value|capture the[^\n]*actual", corpus, re.IGNORECASE), (
+        "boundary instrumentation must capture the ACTUAL (observed) values, not assumed ones"
+    )
+
+    # --- MECHANISM FLOOR 4 (HIGHEST-VALUE): THE TWO NUMERIC GATES, ASSERTED SEPARATELY. The engine
+    # keeps two DISTINCT counters that must NOT collapse into one "3-strike" rule: the Phase-2
+    # HYPOTHESIS-exhaustion gate (counts hypotheses) and the Phase-3 3-FAILED-FIX-attempts gate
+    # (counts applied fixes). A thin port that conflates them fails one of these two asserts. ---
+    # Gate A: hypothesis-exhaustion — exhausted hypotheses trigger STOP / escalate / architectural.
+    hyp_gate = re.search(
+        r"hypothes[ei]s[^\n]*exhaust|exhaust[^\n]*hypothes|2-3 hypotheses[^\n]*exhaust|"
+        r"\d+ hypotheses fail",
+        flat,
+        re.IGNORECASE,
+    )
+    assert hyp_gate is not None, (
+        "the HYPOTHESIS-exhaustion gate (Phase 2's numeric gate) must exist"
+    )
+    hyp_window = flat[hyp_gate.start() : min(len(flat), hyp_gate.end() + 200)]
+    assert re.search(r"\bSTOP\b|escalat|architectur", hyp_window, re.IGNORECASE), (
+        "the hypothesis-exhaustion gate must STOP / escalate / flag architectural"
+    )
+    # Gate B: 3 failed FIX attempts -> question the architecture (a DISTINCT counter from Gate A).
+    fix_gate = re.search(
+        r"3[^\n]*(?:applied )?fix(?:es|[- ]?attempts?)?[^\n]*fail|"
+        r"3-failed-fix|3 applied fixes",
+        flat,
+        re.IGNORECASE,
+    )
+    assert fix_gate is not None, (
+        "the 3-failed-fix-attempts gate (Phase 3's numeric gate) must exist, distinct from Gate A"
+    )
+    fix_window = flat[fix_gate.start() : min(len(flat), fix_gate.end() + 220)]
+    assert re.search(
+        r"architectur|root[- ]cause|root cause|question the", fix_window, re.IGNORECASE
+    ), "after 3 failed fixes the engine must question the architecture / return to root cause"
+
+    # --- MECHANISM FLOOR 5: DIAGNOSIS-PRIMARY + OWN-MINIMAL verification. The DEBUG REPORT is the
+    # deliverable; the engine runs its OWN verification (regression test fails-without/passes-with,
+    # full suite, fresh-reproduce) and does NOT route to /qa to verify. Real fixes route to /work;
+    # only trivial/single-concern fixes apply inline. ---
+    assert re.search(
+        r"diagnosis is the primary deliverable|diagnosis[- ]primary|diagnosis as the deliverable",
+        corpus,
+        re.IGNORECASE,
+    ), "the diagnosis (the DEBUG REPORT) must be the primary deliverable"
+    assert re.search(r"failing regression test", corpus, re.IGNORECASE), (
+        "own verification must write a failing regression test (fails-without)"
+    )
+    assert re.search(r"fails for the[^\n]*RIGHT reason|the test passes", corpus, re.IGNORECASE), (
+        "the regression test must fail for the right reason then pass (passes-with)"
+    )
+    assert re.search(r"full[^\n]*suite", corpus, re.IGNORECASE), (
+        "own verification must run the full suite for regressions"
+    )
+    assert "fresh-reproduce" in corpus or re.search(r"fresh-\*?\*?reproduce", corpus), (
+        "own verification must fresh-reproduce the original bug to confirm the fix"
+    )
+    # MECHANISM: the engine does NOT route to /qa to verify — its verification is its OWN.
+    assert re.search(
+        r"does \*\*NOT\*\* route to[^\n]*/qa|not route to[^\n]*/qa|NOT[^\n]*route[^\n]*/qa to verify",
+        corpus,
+        re.IGNORECASE,
+    ), "the engine must do its OWN verification, NOT route to /qa to verify"
+    # Real fixes route to /work; only trivial/single-concern fixes apply inline.
+    assert re.search(r"routes? to[^\n]*`?/work`?|route to[^\n]*`?/work`?", corpus, re.IGNORECASE), (
+        "real implementation work must route to /work"
+    )
+    assert re.search(
+        r"trivial\s*/\s*single-concern|trivial/single-concern", corpus, re.IGNORECASE
+    ), "only a trivial / single-concern fix is applied inline (the inline-vs-route discriminator)"
+
+    # --- MECHANISM FLOOR 6: saga is READ-ONLY — `restore` + `ticks` are evidence reads; there is NO
+    # runnable `saga.py save` and NO --lifecycle-phase advance (the engine is off-chain). A flat
+    # token-absence assert is avoided: the read-only CLIs ARE emitted (positive presence), and the
+    # mechanism is that no runnable save / phase-advance exists. ---
+    assert "saga.py restore --saga-id" in corpus, "the read-only saga restore CLI must be emitted"
+    assert re.search(r"saga\.py ticks|\bticks\b", corpus), (
+        "the read-only saga ticks (evidence trajectory) must be emitted"
+    )
+    assert not re.search(r"python3?\s+\S*saga\.py[^\n]*save", corpus), (
+        "/investigate must emit no runnable `python saga.py ... save` (saga READ-ONLY, off-chain)"
+    )
+    assert "--lifecycle-phase" not in corpus, (
+        "/investigate is off-chain — it must emit no --lifecycle-phase advance"
+    )
+    # Zero-new-.py: the engine reuses existing forensic scripts by name (no new script under the dir).
+    assert not list(investigate.glob("**/*.py")), (
+        "no new .py may land under skills/investigate — the engine reuses existing scripts by name"
+    )
+    assert re.search(r"discover_sessions\.py|extract_session_skeleton\.py", corpus), (
+        "the prior-session forensic substrate must be reused by name (not reimplemented)"
+    )
+
+    # --- MECHANISM FLOOR 7: HARD-BOUNDARY negatives. POSITIVE boundary prose (E1 bolds the NOTs),
+    # then a NEGATION-WINDOW for ONLY the unambiguous mutation verbs `push` and `deploy` (every
+    # occurrence must sit inside a not/never/without/no window). `commit` and `merge` are
+    # DELIBERATELY EXCLUDED from windowing (they hit "merge base" / "commit history" / "merged to
+    # main" traps) — instead the commit/merge boundary is pinned by the no-runnable-mutation asserts
+    # below. The engine-identity verbs investigate/diagnose/trace/reproduce/hypothesize/predict/fix
+    # are NEVER windowed — the engine's positive identity is to do them. ---
+    assert "does **NOT**" in skill_doc or "It does **NOT**" in skill_doc, (
+        "the Hard boundary must bold the does-NOT clauses"
+    )
+    assert re.search(r"read-only", skill_doc, re.IGNORECASE), (
+        "the read-only-on-the-world-and-saga boundary must be present"
+    )
+    flat_skill = re.sub(r"\s+", " ", skill_doc)
+    for verb in (r"\bpushe?[sd]?\b", r"\bdeploys?\b|\bdeployed\b"):
+        for match in re.finditer(verb, flat_skill, re.IGNORECASE):
+            window = flat_skill[max(0, match.start() - 70) : match.start()]
+            assert re.search(r"\b(not|never|without|no)\b", window, re.IGNORECASE), (
+                f"mutation verb {verb!r} must only appear inside a negation window, found positive "
+                f"use near: {flat_skill[max(0, match.start() - 50) : match.start() + 25]!r}"
+            )
+    # NO runnable mutation command anywhere (the commit/merge boundary, plus push/deploy/PR/issue).
+    assert not re.search(r"(?<!Never )(?<!never )`?git commit", skill_doc), (
+        "/investigate must emit no runnable `git commit`"
+    )
+    assert "git push" not in skill_doc, "/investigate must emit no runnable `git push`"
+    assert not re.search(r"(?<!Never )(?<!never )`?gh pr create", skill_doc), (
+        "/investigate must emit no runnable `gh pr create`"
+    )
+    assert not re.search(r"(?<!Never )(?<!never )`?gh pr merge", skill_doc), (
+        "/investigate must emit no runnable `gh pr merge`"
+    )
+    assert not re.search(r"(?<!Never )(?<!never )`?gh issue create", skill_doc), (
+        "/investigate must file no SDLC issue (`gh issue create`) — defects route via /handoff"
+    )
+    # The identity verbs ARE present as positive identity (windowing them would fail the engine).
+    for identity_verb in (
+        "investigate",
+        "diagnose",
+        "trace",
+        "reproduce",
+        "hypothes",
+        "predict",
+        "fix",
+    ):
+        assert identity_verb in corpus.lower(), (
+            f"engine-identity verb {identity_verb!r} must be present as positive identity"
+        )
+
+    # --- MECHANISM FLOOR 8: LEARNING CAPTURE — BOTH-SPLIT. A non-obvious root cause promotes to the
+    # journal LEARNINGS; a trackable defect routes to /handoff; the DEBUG REPORT lands under
+    # docs/investigations/. The report is EVIDENCE — it is NEVER passed to handoff_envelope as a
+    # source (the classifier does not recognize docs/investigations/). ---
+    assert "LEARNINGS" in corpus, "a non-obvious root cause promotes to the journal LEARNINGS.md"
+    assert "/handoff" in corpus, "a trackable defect routes to /handoff (descriptive DEFECT mode)"
+    assert "docs/investigations/" in corpus, (
+        "the DEBUG REPORT artifact must live under docs/investigations/"
+    )
+    # MECHANISM: no runnable handoff_envelope invocation that carries the docs/investigations report
+    # path (the report is linked as evidence, never path-classified by handoff_envelope).
+    assert not re.search(
+        r"handoff_envelope\.py[^\n]*docs/investigations|docs/investigations[^\n]*handoff_envelope\.py",
+        corpus,
+    ), "the report path must NEVER be passed to a runnable handoff_envelope.py (it mis-classifies)"
+    assert re.search(r"NEVER pass the report path to[^\n]*handoff_envelope", corpus), (
+        "the both-split must forbid passing the report to handoff_envelope's classifier"
+    )
+
+    # --- MECHANISM FLOOR 9: operator-choice — the SKILL cites the plugin-root path from its own
+    # depth, the refs cite the deeper path, the 3 backends + the >5-file blast-radius FLAG + the
+    # parallel read-only dispatch (OFFERED, never auto-spawned) are present. ---
+    assert "../../references/operator-choice.md" in skill_doc, (
+        "the SKILL must cite operator-choice.md at its own depth (../../references/)"
+    )
+    assert "../../../references/operator-choice.md" in corpus, (
+        "the refs must cite operator-choice.md at the deeper depth (../../../references/)"
+    )
+    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+        assert backend in corpus, f"the operator-choice backend {backend!r} must be named"
+    assert re.search(r">5 files|>5-file|blast-radius", corpus, re.IGNORECASE), (
+        "the >5-file blast-radius FLAG must be present (a FLAG, not the inline-vs-route discriminator)"
+    )
+    assert re.search(r"parallel read-only", corpus, re.IGNORECASE), (
+        "parallel read-only sub-agent dispatch must be OFFERED for evidence-bottlenecked subsystems"
+    )
+    # generic-agent fan-out only — this plugin has no agents/ dir.
+    assert "Explore" in corpus and "Task" in corpus, (
+        "parallel probes use generic Explore/Task agents"
+    )
+    assert not (PLUGIN_ROOT / "agents").exists() or not list(
+        (PLUGIN_ROOT / "agents").glob("*.md")
+    ), "this plugin must have no agents/ dir (generic-agent convention)"
+
+    # --- MECHANISM FLOOR 10: docs/investigations/ artifact + dispatch REFERENCED not restated +
+    # /brainstorm route (no /ce-brainstorm). The dispatch-table is one source of truth. ---
+    assert "loop/references/dispatch-table.md" in corpus, (
+        "outbound routing must REFERENCE the dispatch-table by path"
+    )
+    assert "# Dispatch Table" not in corpus, (
+        "the dispatch-table H1 title must not be restated in /investigate"
+    )
+    assert "The designed routing map for" not in corpus, (
+        "the dispatch-table lead sentence must not be restated in /investigate"
+    )
+    assert "/brainstorm" in corpus, "a design problem routes to /brainstorm"
+    assert "/ce-brainstorm" not in corpus, (
+        "the route is the Infiquetra /brainstorm, never a ce-* alias"
+    )
+
+    # --- MECHANISM FLOOR 11: ATTRIBUTION WINDOW. E1's faithful attribution names ce-debug, gstack
+    # `investigate`, and superpowers `systematic-debugging` ONLY inside an attribution window, so a
+    # flat absence assert would fail a FAITHFUL port (the /strategy ce-* + /retro CE/gstack pattern).
+    # Key it on the REAL attribution keywords E1 uses (Ported / port / PORT / CE / gstack /
+    # superpowers / borrow / BORROWED / GRAFT). The combined `superpowers systematic-debugging` form
+    # is windowed (the bare `systematic-debugging` in the frontmatter is IDENTITY prose, not an
+    # attribution claim, so it is not windowed). The SINGLE hard-absence: no ce-*/gstack-* shim. ---
+    attr_kw = re.compile(
+        r"(Ported|ported|\bport\b|\bPORT\b|\bCE\b|gstack|superpowers|borrow|BORROWED|GRAFT|GRAFTED)",
+        re.IGNORECASE,
+    )
+    for name in ("ce-debug", r"gstack `investigate`", r"superpowers `?systematic-debugging`?"):
+        matches = list(re.finditer(name, flat))
+        assert matches, f"the attribution must name {name!r}"
+        for match in matches:
+            window = flat[max(0, match.start() - 90) : match.end() + 50]
+            assert attr_kw.search(window), (
+                f"source name {name!r} must only appear inside an attribution window, "
+                f"found near: {flat[max(0, match.start() - 60) : match.end() + 20]!r}"
+            )
+    # The SINGLE hard-absence: no ce-* / gstack-* command shim was created.
+    commands_dir = PLUGIN_ROOT / "commands"
+    assert not list(commands_dir.glob("ce-*.md")), "no commands/ce-*.md shim must exist"
+    assert not list(commands_dir.glob("gstack-*.md")), "no commands/gstack-*.md shim must exist"
+
+    # --- MECHANISM FLOOR 12: thin-port tripwire — each of the 3 reference files carries real
+    # content (>= 60 lines). A vibes reskin would leave the refs as stubs. ---
+    for ref in ("methodology.md", "pattern-taxonomy.md", "debug-report.md"):
+        ref_path = investigate / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+
+    # --- /investigate is packaged as a command (the new routable diagnostic lens). ---
+    assert (PLUGIN_ROOT / "commands" / "investigate.md").exists(), "/investigate must be packaged"
 
 
 def test_operator_choice_framework_is_documented_and_cited() -> None:

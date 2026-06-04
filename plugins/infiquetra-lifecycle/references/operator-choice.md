@@ -174,7 +174,7 @@ Each command cites this file at its own rebuild. The CLI-backed execution-backen
 | `/code-review` | at its rebuild |
 | `/founder-review` | at its rebuild |
 | `/qa` | at its rebuild |
-| `/investigate` | at its rebuild |
+| `/investigate` | **now** (saga read-only; offers a backend for large/parallel fixes + parallel hypothesis-probes, since 0.16.0) |
 | `/retro` | at its rebuild |
 | `/spec` | at its rebuild |
 | `/optimize` | at its rebuild |

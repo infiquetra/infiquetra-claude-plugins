@@ -8,7 +8,7 @@ through five phases: **Think → Plan & execute → Hand off → Review → Impr
 The command set groups by lifecycle phase:
 
 - **Think:** `/office-hours`, `/ideate`, `/brainstorm`, `/strategy`
-- **Plan & execute:** `/plan`, `/work`, `/qa`, `/retro`, `/resume`
+- **Plan & execute:** `/plan`, `/work`, `/qa`, `/investigate`, `/retro`, `/resume`
 - **Hand off:** `/handoff` → `sdlc-manager`
 - **Review:** `/founder-review`, `/ceo-review`, `/doc-review`, `/code-review`
 - **Improve & route:** `/optimize`, `/loop`
@@ -26,6 +26,13 @@ What each command does:
   acceptance checks, assigns severity, derives a ship verdict and reports a ported deterministic
   0-100 health score alongside it (one signal; the banded verdict is the gate), advances the saga
   qa-track on pass, and routes by merge state — without fixing, committing, or deploying.
+- `/investigate` is the off-chain systematic-debugging engine: a CE `ce-debug` causal-chain spine
+  (falsifiable predictions for uncertain links, assumption audit, Phase-0 triage with a trivial
+  fast-path) + gstack `investigate` grafts (pattern-signature table, the two distinct numeric stop gates
+  — hypothesis-exhaustion + 3-failed-fix — and the DEBUG REPORT Status enum). It is **diagnosis-primary** — it produces a DEBUG REPORT (file:line, causal chain,
+  regression-test path) and routes the fix out (`/work` via `/handoff`, `/code-review`, `/handoff` for
+  a trackable defect, or `/brainstorm` for a design-level root cause); it carries its own minimal
+  verification and is saga read-only (advisory, never blocks `/loop`).
 - `/retro` is the meta-improvement engine: a 3-source merge of gstack's `retro` + `learn` passes with
   CE's `ce-compound` framing that captures lifecycle learnings, distills durable journal knowledge, and
   proposes improvements to the workflow itself. A **tiered self-edit gate** keeps it safe —

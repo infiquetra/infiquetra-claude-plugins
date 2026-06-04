@@ -316,15 +316,19 @@ Options:
 
 1. **Plan it with `/plan` (recommended)** — move to `/plan` for structured implementation planning.
    Pass the requirements doc path. Shown only when no "Resolve before planning" question remains.
-2. **Hand off via `/handoff`** — route the `requirements-ready` artifact to `sdlc-manager` as a
+2. **Sharpen with `/spec`** — hand the requirements doc to `/spec` for a relentless WHAT-rigor pass
+   (five-Why, scope/MVP/out-of-scope/failure-mode lock, read-code-first grounding) before planning or
+   handoff. Pass the requirements doc path. Shown when a requirements doc exists and needs precision
+   before it can drive work. (Divergent `/brainstorm` → convergent `/spec`.)
+3. **Hand off via `/handoff`** — route the `requirements-ready` artifact to `sdlc-manager` as a
    prepared issue draft for another team or a later session. Shown when a requirements doc exists.
-3. **Review with `/doc-review`** — dispatch a readiness review of the requirements doc before
+4. **Review with `/doc-review`** — dispatch a readiness review of the requirements doc before
    planning. Shown when a requirements doc exists.
-4. **More clarifying questions** — return to Phase 1.3, keep refining scope, edge cases, and
+5. **More clarifying questions** — return to Phase 1.3, keep refining scope, edge cases, and
    constraints one question at a time, then return here. Always shown.
-5. **Back to `/office-hours`** — when the topic turns out to be more open thought-partner work than a
+6. **Back to `/office-hours`** — when the topic turns out to be more open thought-partner work than a
    concrete requirements ask. Always available.
-6. **Done for now** — the requirements doc is saved and resumable later. Always shown.
+7. **Done for now** — the requirements doc is saved and resumable later. Always shown.
 
 Use `AskUserQuestion` when 4 or fewer options are visible; render a numbered list ("Pick a number or
 describe what you want.") when 5 or more are visible. Never silently skip the question.

@@ -7,7 +7,7 @@ through five phases: **Think → Plan & execute → Hand off → Review → Impr
 
 The command set groups by lifecycle phase:
 
-- **Think:** `/office-hours`, `/ideate`, `/brainstorm`, `/strategy`
+- **Think:** `/office-hours`, `/ideate`, `/brainstorm`, `/spec`, `/strategy`
 - **Plan & execute:** `/plan`, `/work`, `/qa`, `/investigate`, `/retro`, `/resume`
 - **Hand off:** `/handoff` → `sdlc-manager`
 - **Review:** `/founder-review`, `/ceo-review`, `/doc-review`, `/code-review`
@@ -16,6 +16,11 @@ The command set groups by lifecycle phase:
 What each command does:
 
 - `/office-hours`, `/ideate`, and `/brainstorm` support early thinking.
+- `/spec` is the off-chain spec-interrogation engine (gstack `spec` single-source WHAT-interrogation
+  port — the sibling of `/plan`'s HOW-rigor): a relentless five-Why → scope/MVP/out-of-scope/failure-mode
+  lock → read-code-first grounding interview that sharpens a vague ask into a precise WHAT artifact under
+  `docs/specs/` (a `requirements-ready` `/handoff` source). It records the WHAT (off-chain, no saga
+  write); `/brainstorm` diverges into it and `/plan` settles the HOW after.
 - `/strategy` is the interview-driven `STRATEGY.md` engine: a Rumelt-grounded
   (diagnosis / guiding-policy / coherent-action) 8-section interview with a mandatory 2-round
   pushback per section, file-state routing (new doc vs targeted-section update), and a locked

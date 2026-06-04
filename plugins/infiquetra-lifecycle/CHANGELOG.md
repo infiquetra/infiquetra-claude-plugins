@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.17.0 - 2026-06-04
+
+- Add `/spec` — the lifecycle's net-new **spec-interrogation engine** and the **twelfth command
+  rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`,
+  `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`, `/investigate`). It
+  owns the relentless **WHAT-rigor** — the sibling of `/plan`'s HOW-rigor. A **gstack `spec`
+  single-source port** of the WHAT-interrogation half: the principal-engineer-who-refuses-ambiguous-work
+  persona, the HARD GATE (no spec after message 1 — always start the interview), Phase-1 five-Why,
+  Phase-2 scope / MVP / out-of-scope / failure-mode lock, Phase-3 **read-code-first grounding** (cite
+  `path:line` before asking, with a non-code escape), quantify-everything, and a draft-review pass.
+- **Honest attribution — single source, no merge.** There is **NO CE spec engine** (ce-plan is
+  `/plan`'s planning engine, not ported here), **NO /ideate+/brainstorm graft** (the
+  assumption-challenge + failure-mode register is native to gstack's persona — the failure-mode bank
+  already lives in `/plan/references/interrogation.md`, itself a gstack port), and no superpowers
+  borrow. `/spec` and `/plan` split one source along the **WHAT vs HOW** altitude axis. The `/spec`
+  SKILL does not duplicate `/plan`'s interrogation register. Sheds the entire gstack preamble,
+  dedupe machinery, codex quality gate, two-layer redaction, `--execute` worktree spawn, gh issue
+  authoring/filing, and the `~/.gstack` store.
+- **Off-chain, saga UNTOUCHED.** `/spec` writes no saga, advances no `lifecycle_phase`, and makes no
+  `saga.py` edit at all (mirrors `/strategy`). Its only durable output is a sharp WHAT artifact under
+  `docs/specs/`. **No new Python.**
+- **Q2 handoff wiring — the functional edit.** `handoff_envelope.py` now treats `docs/specs/` as an
+  auto-discoverable handoff SOURCE: added `Path("docs/specs")` to `SOURCE_DIRS`, and
+  `infer_maturity()` maps `docs/specs/` → `requirements-ready` (equals the existing default — a spec
+  is a sharp WHAT, **not** plan-ready — set for consistency with the other source dirs, not a
+  behavior change). `infer_lifecycle_phase()` leaves `docs/specs/` returning `"unknown"` (off-chain,
+  no lifecycle phase). `references/saga-spec.md` §3.3 and `skills/handoff/SKILL.md` document the
+  `docs/specs/ → requirements-ready` doc-path mapping; no `spec` phase is added to `LIFECYCLE_PHASES`.
+- **Q4 + operator-choice honesty.** An offered `/doc-review` pass on a spec hits the **requirements**
+  lens (`docs/specs/ → requirements` path tie-breaker added), not the blueprint route.
+  Operator-choice **never offers** for `/spec` — a single durable spec artifact, no parallelism to
+  escalate; size/risk lives in its scope sections and the downstream executor (`/plan` / `/work`)
+  owns backend selection.
+- **Brainstorm-seam resolution (decision d).** The `#brainstorm-spec-interrogation-seam` is resolved
+  in favor of a **standalone `/spec`** that owns WHAT-rigor; `/brainstorm` stays the divergent
+  explorer. `/brainstorm`'s Phase-4 handoff menu now offers **Sharpen with `/spec`** (divergent
+  `/brainstorm` → convergent `/spec`).
+- **Periphery** — version bumps (plugin `0.17.0`, marketplace entry `0.17.0`; keywords stay at 10);
+  dispatch-table now **total over 17 routable commands** with `/spec` added (off-chain advisory route,
+  routing OUT to `/handoff` / `/plan` / optional `/doc-review`); README `/spec` command-summary line.
+  Two deferral closures: `operator-choice.md` `/spec` row "at its rebuild" → "never offers";
+  office-hours `frame-diagnostic.md` `/spec` moved from "campaign-queued" to an active routing-rubric
+  row.
+- Documented in the engineering journal (PR #TBD): DECISIONS
+  `#spec-interrogation-engine-rebuild`, ARCHIVE `#spec-interrogation-engine-shipped` +
+  `#brainstorm-spec-interrogation-seam-resolved`, LEARNINGS
+  `#campaign-brief-merge-is-a-provenance-hypothesis`; consumed both `#spec-interrogation-engine` and
+  `#brainstorm-spec-interrogation-seam` from QUEUED.
+
 ## 0.16.0 - 2026-06-04
 
 - Add `/investigate` — the lifecycle's net-new **systematic-debugging engine** and the **eleventh

@@ -43,6 +43,7 @@ Classify by explicit context first, then evidence. Use this precedence:
 4. Path tie-breakers:
    - `docs/plans/` -> plan
    - `docs/brainstorms/` -> requirements
+   - `docs/specs/` -> requirements
    - `STRATEGY.md` -> strategy/scope
 
 When classification remains ambiguous, ask before routing. Do not silently guess on a formal

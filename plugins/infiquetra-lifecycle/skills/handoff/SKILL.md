@@ -52,6 +52,7 @@ Do not copy SDLC issue templates into this skill.
 
 - `docs/ideation/` -> `idea-ready`
 - `docs/brainstorms/` -> `requirements-ready`
+- `docs/specs/` -> `requirements-ready`
 - `docs/plans/` or `docs/reviews/` -> `plan-ready`
 - `docs/work-sessions/` or branch refs -> `resume-ready`
 - explicit preserve/defer language -> `deferred-context` when the user says execution should wait

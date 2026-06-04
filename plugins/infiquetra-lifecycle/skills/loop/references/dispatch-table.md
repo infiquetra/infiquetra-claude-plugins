@@ -1,13 +1,13 @@
 # Dispatch Table
 
-The designed routing map for `/loop`. It is **total** over the 16 routable lifecycle commands: every
+The designed routing map for `/loop`. It is **total** over the 17 routable lifecycle commands: every
 input type, saga `lifecycle_phase` + `phase_status`, and handoff maturity resolves to exactly one next
 command. The table is designed from the already-shipped siblings' own clean-exit routing — there is no
 upstream router to port. `/loop` reads this table in Phase 2, then ticks the saga and dispatches
 (Phase 4).
 
-The 16 routable commands: `/office-hours`, `/ideate`, `/brainstorm`, `/plan`, `/doc-review`, `/work`,
-`/code-review`, `/qa`, `/investigate`, `/founder-review`, `/strategy`, `/optimize`, `/handoff`,
+The 17 routable commands: `/office-hours`, `/ideate`, `/brainstorm`, `/spec`, `/plan`, `/doc-review`,
+`/work`, `/code-review`, `/qa`, `/investigate`, `/founder-review`, `/strategy`, `/optimize`, `/handoff`,
 `/retro`, `/resume`, and `/loop` itself (re-entry).
 
 ---
@@ -23,6 +23,7 @@ A route to a **stub** target is **advisory**: `/loop` names it as the next comma
 | `/office-hours` | shipped (232L) | normal |
 | `/ideate` | shipped (529L) | normal |
 | `/brainstorm` | shipped (342L) | normal |
+| `/spec` | shipped (spec-interrogation engine) | **advisory + off-chain** — never block |
 | `/plan` | shipped | normal |
 | `/doc-review` | shipped (178L) | **HARD gate** (P0/P1 block, see below) |
 | `/work` | shipped | normal |
@@ -47,6 +48,7 @@ When `scan` finds no in-flight saga and there is no issue, route by how settled 
 | Bare, unframed ask ("I have an idea but don't know what it is", "what's even the right frame") | `/office-hours` |
 | "Give me ideas" / "what should I improve" / open divergent ask | `/ideate` |
 | One chosen idea, WHAT not yet pinned | `/brainstorm` |
+| A vague ask / under-specified issue that needs a precise, formal WHAT before planning or handoff | `/spec` (advisory, off-chain) |
 | Settled WHAT, ready for HOW | `/plan` |
 | Strategic-direction ask ("where are we pointed") | `/strategy` (advisory, shipped) |
 
@@ -87,6 +89,7 @@ For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `i
 
 | Input / trigger | Next command | State |
 |---|---|---|
+| A vague ask / under-specified issue that needs a precise, formal WHAT (five-Why, scope/MVP/out-of-scope lock, failure modes) before planning or handoff | `/spec` | advisory, shipped (off-chain) |
 | Bug / defect / root-cause question, a failing or flaky test, "why is this broken" | `/investigate` | advisory, shipped (off-chain) |
 | Strategic-direction ask, STRATEGY.md maintenance | `/strategy` | advisory, shipped |
 | "Improve / route / optimize this metric" | `/optimize` | advisory stub |
@@ -98,6 +101,12 @@ For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `i
 `/founder-review` fires **upstream of execution** and produces a scope decision, then routes accepted
 scope back to `/plan` and the (re-)expanded plan back to `/doc-review` — `/loop` honors that closed
 loop rather than treating founder-review as a terminal.
+
+`/spec` is the **off-chain spec-interrogation engine** (the WHAT-rigor sibling of `/plan`'s HOW-rigor)
+and is **saga-UNTOUCHED**: it writes a sharp WHAT artifact under `docs/specs/` and routes the work OUT
+— to `/handoff` (the spec becomes a `requirements-ready` SDLC issue source), to `/plan` (settle the
+HOW), or to an optional `/doc-review` pass (which reads the spec under the **requirements** lens). It
+never enters the work thread and never blocks `/loop`.
 
 `/investigate` is the **off-chain systematic-debugging engine** and is **READ-ONLY on the saga**: it
 diagnoses (it never blocks `/loop`) and routes the work OUT by what it finds — a confirmed **real fix**

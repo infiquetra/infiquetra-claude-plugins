@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.16.0"
+    assert plugin_json["version"] == "0.17.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -73,6 +73,7 @@ def test_infiquetra_lifecycle_commands_are_packaged() -> None:
         "code-review",
         "optimize",
         "investigate",
+        "spec",
     ):
         assert (PLUGIN_ROOT / "commands" / f"{command}.md").exists()
 
@@ -95,6 +96,7 @@ def test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior() -> N
         "code-review",
         "optimize",
         "investigate",
+        "spec",
     }
     for skill in expected_skills:
         skill_path = PLUGIN_ROOT / "skills" / skill / "SKILL.md"
@@ -1814,6 +1816,254 @@ def test_investigate_engine_merge_contract() -> None:
     assert (PLUGIN_ROOT / "commands" / "investigate.md").exists(), "/investigate must be packaged"
 
 
+def test_spec_engine_merge_contract() -> None:
+    """Mechanism FLOORS for the gstack `spec` WHAT-interrogation port /spec (0.17.0).
+
+    HONEST SCOPE: presence proves the contract was AUTHORED, not that a given run is mutation-free.
+    /spec's whole identity is to INTERROGATE / SPECIFY / SCOPE / SHARPEN / QUANTIFY / CLARIFY the
+    WHAT — so those engine-identity verbs are NEVER negation-windowed; the engine's positive point
+    is that it interrogates a vague ask into a sharp spec. The off-chain saga-UNTOUCHED contract is
+    enforced only by Claude reading the prose at runtime — the SKILL emits no runnable mutation and
+    no runnable `python saga.py`, but token presence cannot prove a given run respects the boundary.
+    These floors prove the SKILL/refs EMIT the prose the engine stands on (the HARD GATE, the
+    five-Why with anti-hand-waving bars, the scope-lock five, read-code-first with the non-code
+    escape, quantify-everything, the principal-engineer persona), that the durable artifact is a
+    docs/specs/ spec, that the boundary prose is present (mutation verbs only inside negation
+    windows, like /strategy / /qa / /founder-review), that gstack is the SINGLE honestly-attributed
+    source (NO fabricated ce-spec, NO /ideate or /brainstorm porting graft), and that the dispatch
+    table is referenced not restated. A thin transcribe-the-scaffold port fails these.
+
+    This is the OFF-CHAIN twin of test_strategy (saga UNTOUCHED), NOT test_investigate
+    (saga READ-ONLY) — so there is no `saga.py restore` present-assert here.
+
+    Tokens are taken from the actual E1-authored SKILL.md + its 2 references on disk.
+    """
+    spec = PLUGIN_ROOT / "skills" / "spec"
+    skill_doc = _read(spec / "SKILL.md")
+    interrogation_doc = _read(spec / "references" / "interrogation.md")
+    template_doc = _read(spec / "references" / "spec-template.md")
+    corpus = "\n".join((skill_doc, interrogation_doc, template_doc))
+    flat = re.sub(r"\s+", " ", corpus)
+    flat_skill = re.sub(r"\s+", " ", skill_doc)
+
+    # --- MECHANISM FLOOR 1: the HARD GATE — no spec artifact after the first message. A thin port
+    # that drafts on message 1 has no gate. E1 phrases it "Do NOT produce a spec artifact after
+    # message 1"; pin the do-not-produce-after-the-first-message mechanism, not a bare token. ---
+    assert re.search(r"[Dd]o NOT produce.{0,60}after message 1", flat_skill), (
+        "the HARD GATE must forbid producing the spec artifact after the first message"
+    )
+    assert re.search(r"[Ii]nterrogate first", flat), (
+        "the HARD GATE must require interrogating before drafting"
+    )
+
+    # --- MECHANISM FLOOR 2: the five-Why (Phase 1) — all five questions present. A vibes port
+    # collapses these into one "tell me more". The WHAT/WHY lock is the spine. ---
+    assert re.search(r"\*\*Who\*\* is affected|Who is affected", corpus), (
+        "five-Why: who is affected"
+    )
+    assert "current behavior" in corpus, "five-Why: what is the current behavior"
+    assert re.search(r"should the behavior be|target state", corpus), (
+        "five-Why: what should the behavior be (target)"
+    )
+    assert "Why now" in corpus, "five-Why: why now (the forcing function)"
+    assert re.search(r"How will we know|done-signal|it's done", corpus), (
+        "five-Why: how will we know it's done"
+    )
+    # The anti-hand-waving bar — the interrogation refuses vague answers and pushes twice. A thin
+    # transcription has no bar; it just records whatever weak answer it's handed.
+    assert re.search(r"anti-hand-waving|hand-waving|hand-wav", interrogation_doc, re.IGNORECASE), (
+        "the five-Why must carry an anti-hand-waving bar per question"
+    )
+
+    # --- MECHANISM FLOOR 3: the scope-lock five (Phase 2). Locking the boundary early is the
+    # highest-leverage anti-creep move; a stub drops it. ---
+    assert "out of scope" in corpus, "scope-lock: what is explicitly out of scope"
+    assert re.search(r"existing systems does this touch|systems does this touch", corpus), (
+        "scope-lock: what existing systems does this touch"
+    )
+    assert re.search(r"[Oo]rdering constraints", corpus), "scope-lock: ordering constraints"
+    assert re.search(r"MVP|smallest version", corpus), "scope-lock: the MVP / smallest-version cut"
+    assert re.search(r"[Ff]ailure mode", corpus) and re.search(r"[Rr]ollback", corpus), (
+        "scope-lock: failure modes + rollback (the native gstack register)"
+    )
+
+    # --- MECHANISM FLOOR 4: read-code-first (Phase 3, HARD) — the magical-moment grounding rule.
+    # Evidence before ANY Phase-3 question, cite `path:line`, the six categories, the non-code
+    # escape. A port that asks "what file should I look at?" first fails this. ---
+    assert re.search(
+        r"before .{0,40}any .{0,40}question|before asking ANY", corpus, re.IGNORECASE
+    ), "read-code-first must require reading evidence BEFORE any Phase-3 question"
+    assert re.search(r"\bread\b", corpus, re.IGNORECASE), "read-code-first must require reading"
+    assert re.search(r"path:line|cite", corpus), "read-code-first must require citing `path:line`"
+    for category in (
+        "data model",
+        "API",
+        "background",
+        "UI",
+        "infrastructure",
+        "testing",
+    ):
+        assert category in corpus, f"read-code-first must name the {category!r} category"
+    # The non-code / greenfield escape — without it the HARD gate would deadlock a greenfield ask.
+    assert re.search(r"no code surface", corpus) and re.search(r"greenfield", corpus), (
+        "read-code-first must carry the non-code / greenfield escape"
+    )
+
+    # --- MECHANISM FLOOR 5: quantify-everything. The "Several files" anti-example + metric/target.
+    # A weak port accepts vague magnitudes; this engine demands exact counts and numeric targets. ---
+    assert "exact count" in corpus or "Several files" in corpus, (
+        "quantify-everything must reject vague magnitudes (exact count / 'Several files')"
+    )
+    assert "metric" in corpus and re.search(r"\btarget\b", corpus), (
+        "quantify-everything must demand a metric and a target"
+    )
+
+    # --- MECHANISM FLOOR 6: the persona — a principal engineer for whom ambiguity is a bug. A thin
+    # reskin has a neutral note-taker; this engine refuses ambiguity. ---
+    assert "principal engineer" in corpus, "the persona must be a principal engineer"
+    assert re.search(r"[Aa]mbiguity is a bug", corpus) or re.search(
+        r"refuses to let an ambiguous", corpus
+    ), "the persona must treat ambiguity as a bug / refuse ambiguous WHATs"
+
+    # --- MECHANISM FLOOR 7: the durable artifact is a docs/specs/ spec with the locked template
+    # sections + frontmatter `origin`. The artifact is the only durable output; getting its path or
+    # shape wrong breaks the /handoff -> sdlc-manager source mapping. ---
+    assert "docs/specs/" in corpus, "the durable artifact must live under docs/specs/"
+    for section in (
+        "## Acceptance Criteria",
+        "## Scope Boundaries",
+        "## Failure Modes & Rollback",
+    ):
+        assert section in template_doc, f"the spec template must carry the {section!r} section"
+    assert re.search(r"^origin:", template_doc, re.MULTILINE), (
+        "the spec template frontmatter must carry an `origin` field"
+    )
+
+    # --- MECHANISM FLOOR 8: SAGA UNTOUCHED — /spec runs off-chain and never writes the work thread.
+    # This MIRRORS test_strategy (the off-chain twin), NOT test_investigate (saga READ-ONLY): there
+    # is NO `saga.py restore` present-assert. E1 names the saga tokens ONLY inside negations ("it is
+    # saga-untouched: no `saga.py`", "does **NOT** write or advance the saga (no `saga.py`, no
+    # `--lifecycle-phase`)"), so a flat `saga.py not in corpus` would fail a FAITHFUL off-chain
+    # engine. Pin the mechanism: no `saga.py save` string AND no runnable `python saga.py`. The
+    # `--lifecycle-phase` token (which the task brief asked to flat-absence) is, on the real E1
+    # file, present ONLY inside the boundary negation `no `--lifecycle-phase``; a flat
+    # absence-assert contradicts the shipped SKILL, so it is pinned by a negation-window instead
+    # (#spec-adaptation-is-a-hypothesis — the brief's flat-absence was written from the label, the
+    # file writes it in the off-chain negation exactly like /strategy writes `saga.py`). ---
+    assert "saga.py save" not in corpus, "/spec must never emit a `saga.py save` write"
+    assert not re.search(r"python3?\s+\S*saga\.py", corpus), (
+        "/spec must emit no runnable `python saga.py` invocation (it never writes the saga)"
+    )
+    for match in re.finditer(r"--lifecycle-phase", flat):
+        window = flat[max(0, match.start() - 70) : match.start()]
+        assert re.search(r"\b(not|never|without|no)\b", window, flags=re.IGNORECASE), (
+            "`--lifecycle-phase` must only appear inside a negation window (off-chain, no saga "
+            f"write), found positive use near: {flat[max(0, match.start() - 50) : match.start() + 30]!r}"
+        )
+    # The bare `saga.py` token also appears only inside off-chain negations ("saga-untouched: no
+    # `saga.py`"); window it the same way (the /strategy off-chain pattern).
+    for match in re.finditer(r"\bsaga\.py\b", flat, flags=re.IGNORECASE):
+        window = flat[max(0, match.start() - 70) : match.start()]
+        assert re.search(r"\b(not|never|without|no|untouched)\b", window, flags=re.IGNORECASE), (
+            "`saga.py` must only appear inside an off-chain negation window, found positive use "
+            f"near: {flat[max(0, match.start() - 50) : match.start() + 30]!r}"
+        )
+
+    # --- MECHANISM FLOOR 9: ZERO new Python. /spec is a skills-only port (gstack spec is a SKILL;
+    # there is no scorer to port). A stray .py under skills/spec means scope crept into code. ---
+    assert not list((PLUGIN_ROOT / "skills" / "spec").glob("**/*.py")), (
+        "/spec must add no new Python under skills/spec (it is a skills-only port)"
+    )
+
+    # --- MECHANISM FLOOR 10: BOUNDARY NEGATIVES via POSITIVE-BOUNDARY-PROSE + NEGATION-WINDOW.
+    # The positive boundary prose (E1 bolds the NOT): /spec interrogates the WHAT and reads the repo
+    # read-only; it does not file an SDLC issue, write the saga, offer operator-choice, or do
+    # /plan's HOW job. ---
+    assert "does **NOT**" in skill_doc, "boundary prose must bold what /spec does NOT do"
+    assert "read-only" in skill_doc, "/spec must declare it reads the repo read-only"
+
+    # Negation-window ONLY for the unambiguous mutation verb "deploy" (it appears once, inside the
+    # gate negation "It never commits, pushes, ... or deploys"). "push" is DELIBERATELY EXCLUDED
+    # from this window check — the persona "pushes back" / "pushback" is the engine's CORE verb (the
+    # /strategy pattern), so the push boundary is pinned by the positive prose above + the
+    # no-runnable-`git push` assert below. The identity verbs interrogate/spec/specify/scope/
+    # sharpen/quantify/clarify are NEVER windowed — they are the engine's positive identity. ---
+    for match in re.finditer(r"\bdeploys?\b|\bdeployed\b", flat_skill, flags=re.IGNORECASE):
+        window = flat_skill[max(0, match.start() - 70) : match.start()]
+        assert re.search(r"\b(not|never|without|no)\b", window, flags=re.IGNORECASE), (
+            "mutation verb 'deploy' must only appear inside a negation window, found positive use "
+            f"near: {flat_skill[max(0, match.start() - 50) : match.start() + 30]!r}"
+        )
+
+    # No runnable mutation command anywhere in the SKILL: no git commit, no git push, no gh-PR
+    # create/merge. (Pinned as substring/regex absence on skill_doc, per the /strategy model.)
+    assert "git commit" not in skill_doc, "/spec must emit no runnable `git commit`"
+    assert "git push" not in skill_doc, "/spec must emit no runnable `git push`"
+    assert not re.search(r"gh pr\s+\w+", skill_doc), (
+        "/spec must emit no runnable `gh pr ...` command (no merge/create)"
+    )
+    # THE HIGHEST-VALUE BOUNDARY: /spec never files an issue — sdlc-manager owns issue creation.
+    assert "gh issue create" not in corpus, (
+        "/spec must never file an SDLC issue (`gh issue create`); sdlc-manager owns issue creation"
+    )
+
+    # --- MECHANISM FLOOR 11: routing — /handoff, /plan, /doc-review are the named onward routes,
+    # and the dispatch table is REFERENCED by path, NOT restated (one source of truth, no
+    # /spec<->/loop duplication). operator-choice is NOT asserted (decision (c) — /spec never offers
+    # it). ---
+    for route in ("/handoff", "/plan", "/doc-review"):
+        assert route in skill_doc, f"the onward routing must name {route!r}"
+    assert "loop/references/dispatch-table.md" in skill_doc, (
+        "cross-command routing must REFERENCE the dispatch-table by path"
+    )
+    assert "# Dispatch Table" not in corpus, (
+        "the dispatch-table H1 title must not be restated in /spec"
+    )
+
+    # --- MECHANISM FLOOR 12: HONEST ATTRIBUTION / ANTI-FABRICATION. gstack is the SINGLE source,
+    # named near a port/source token. E1 wrote the explicit honesty line ruling out a CE engine.
+    # The single hard-absence: no ce-spec command shim and no gstack-spec command shim exists (the
+    # port is /spec, not a ce-* or gstack-* alias). Anti-graft: /ideate and /brainstorm are NOT
+    # required as porting sources (the assumption-challenge + failure-mode register is NATIVE to
+    # gstack's persona, not an /ideate+/brainstorm graft). ---
+    assert re.search(r"gstack", corpus, re.IGNORECASE), "attribution must name gstack"
+    assert re.search(r"(?:Ported|ported) from gstack|from gstack `spec`|gstack `spec`", corpus), (
+        "gstack must be named near a port/source token (the single-source attribution)"
+    )
+    assert "No CE spec engine exists" in corpus, (
+        "the honesty line must explicitly state no CE spec engine exists (anti-fabrication)"
+    )
+    assert not (PLUGIN_ROOT / "commands" / "ce-spec.md").exists(), (
+        "no ce-spec.md command shim must exist (the port is /spec, not a ce-* alias)"
+    )
+    assert not (PLUGIN_ROOT / "commands" / "gstack-spec.md").exists(), (
+        "no gstack-spec.md command shim must exist (the port is /spec, not a gstack-* alias)"
+    )
+
+    # --- MECHANISM FLOOR 13: AskUserQuestion routing + the channel-inline fallback. AskUserQuestion
+    # is reserved for ROUTING; substance is free-form; in a redis-channel session the choices are
+    # inlined (citing brainstorm/SKILL.md for the canonical convention, not duplicating it). ---
+    assert "AskUserQuestion" in skill_doc, "routing decisions must use AskUserQuestion"
+    assert re.search(r"routing", skill_doc), "AskUserQuestion is reserved for routing decisions"
+    assert "free-form" in skill_doc, "substantive interrogation must use free-form responses"
+    assert "redis-channel" in skill_doc and "inline" in skill_doc, (
+        "the channel-inline fallback must be named for redis-channel sessions"
+    )
+    assert "brainstorm/SKILL.md" in skill_doc, (
+        "the channel-inline convention must cite brainstorm/SKILL.md (not duplicate it)"
+    )
+
+    # --- ref-floor: both reference files exist and carry real content (>= 60 lines). A vibes
+    # reskin would leave the refs as stubs. ---
+    for ref in ("interrogation.md", "spec-template.md"):
+        ref_path = spec / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+
+    # --- /spec is packaged as a command (the new routable WHAT-interrogation lens). ---
+    assert (PLUGIN_ROOT / "commands" / "spec.md").exists(), "/spec must be packaged"
+
+
 def test_operator_choice_framework_is_documented_and_cited() -> None:
     operator_choice_path = PLUGIN_ROOT / "references" / "operator-choice.md"
     assert operator_choice_path.exists()
@@ -2147,6 +2397,12 @@ def test_handoff_envelope_routes_to_sdlc_manager_without_issue_body_ownership(tm
     assert "--from docs/plans/example.md" in envelope["suggested_command"]
     assert "--maturity plan-ready" in envelope["suggested_command"]
     assert "/loop" not in envelope["suggested_command"]
+
+    # A /spec artifact under docs/specs/ is a sharp WHAT (requirements-ready) and OFF-CHAIN:
+    # it carries no lifecycle phase (the saga-untouched /spec produces a backlog source, not a
+    # work-thread tick). These pin the docs/specs/ handoff inference E1 wired for the /spec port.
+    assert handoff.infer_maturity("docs/specs/x-spec.md") == "requirements-ready"
+    assert handoff.infer_lifecycle_phase("docs/specs/x-spec.md") == "unknown"
 
 
 def test_handoff_envelope_discovers_active_plan_from_loop_state(tmp_path) -> None:

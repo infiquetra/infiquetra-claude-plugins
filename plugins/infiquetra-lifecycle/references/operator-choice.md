@@ -176,7 +176,7 @@ Each command cites this file at its own rebuild. The CLI-backed execution-backen
 | `/qa` | at its rebuild |
 | `/investigate` | **now** (saga read-only; offers a backend for large/parallel fixes + parallel hypothesis-probes, since 0.16.0) |
 | `/retro` | at its rebuild |
-| `/spec` | at its rebuild |
+| `/spec` | **never offers** — a single durable spec artifact; size/risk lives in its scope sections, and the downstream executor (/plan / /work) owns backend selection |
 | `/optimize` | at its rebuild |
 | `/doc-review` | at its rebuild |
 | `/strategy` | **never offers** — a single durable doc, no parallelism to escalate |

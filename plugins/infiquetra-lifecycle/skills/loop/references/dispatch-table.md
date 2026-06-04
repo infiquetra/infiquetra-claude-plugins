@@ -29,7 +29,7 @@ A route to a **stub** target is **advisory**: `/loop` names it as the next comma
 | `/code-review` | shipped | normal |
 | `/founder-review` | shipped (239L) | normal |
 | `/handoff` | shipped (68L, functional) | normal + handoff envelope |
-| `/qa` | **stub (19L)** | **advisory** — never block |
+| `/qa` | shipped (gate-only) | **advisory** — never block |
 | `/retro` | **stub (19L)** | **advisory** — never block |
 | `/resume` | **stub (24L)** | **advisory / opt-in** — never auto-route |
 | `/strategy` | **stub (21L)** | **advisory** — never block |
@@ -73,7 +73,7 @@ idea/requirements-ready ─► /plan ─► /doc-review ─► /work ─► /cod
 | `review` | `complete`, P0/P1 open | — | **BLOCK** -> `/work` only on override; else back to `/plan` |
 | `work` | `in_progress` | `resume-ready` | `/work` (resume the round-N loop) |
 | `work` | code at PR boundary | `resume-ready` | `/code-review` |
-| `work` | `complete` (merged) | `resume-ready` | `/qa` (advisory stub) |
+| `work` | `complete` (merged) | `resume-ready` | `/qa` (advisory, gate-only) |
 | `qa` | any | `resume-ready` | `/handoff` or `/retro` (advisory) |
 | `retro` | any | — | done; `/handoff` if it should become an issue |
 

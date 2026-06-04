@@ -62,8 +62,10 @@ not a competitor to any of them.
    reimplements them.
 6. **Gate before routing, never block on a stub.** The one HARD gate routes to `/doc-review`
    (shipped) — block routing to `/work` on unresolved P0/P1 unless overridden with a recorded
-   rationale. Routes to **stub** targets (`/qa`, `/retro`, `/resume`, and `/strategy` / `/optimize`
-   per their state) are **advisory** and **never** block `/loop` on their output.
+   rationale. The route to shipped **`/qa`** is **advisory** (it is a gate-only node that produces a
+   verdict but never blocks the router), and routes to **stub** targets (`/retro`, `/resume`, and
+   `/strategy` / `/optimize` per their state) are **advisory** and **never** block `/loop` on their
+   output.
 
 ## Interaction method
 

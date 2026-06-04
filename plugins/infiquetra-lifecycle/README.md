@@ -18,6 +18,10 @@ What each command does:
 - `/office-hours`, `/ideate`, and `/brainstorm` support early thinking.
 - `/strategy` maintains the root `STRATEGY.md`.
 - `/plan`, `/work`, `/qa`, `/retro`, and `/resume` run the durable work loop.
+- `/qa` is the gate-only acceptance-evidence engine: it classifies the change into risk classes, runs
+  acceptance checks, assigns severity, derives a ship verdict and reports a ported deterministic
+  0-100 health score alongside it (one signal; the banded verdict is the gate), advances the saga
+  qa-track on pass, and routes by merge state — without fixing, committing, or deploying.
 - `/handoff` routes durable lifecycle artifacts to `sdlc-manager` prepared issue drafts.
 - `/founder-review` and `/ceo-review` review ambition, scope, and operator risk.
 - `/doc-review` reviews plans, requirements, and formal SDLC artifacts for implementation

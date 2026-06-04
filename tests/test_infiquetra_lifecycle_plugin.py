@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.13.0"
+    assert plugin_json["version"] == "0.14.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -971,6 +971,231 @@ def test_qa_engine_merge_contract() -> None:
     # --- ref-floor: both reference files exist and carry real content (>= 60 lines). ---
     for ref in ("risk-taxonomy.md", "qa-report.md"):
         ref_path = qa / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+
+
+def test_strategy_engine_merge_contract() -> None:
+    """Mechanism FLOORS for the rebuilt engine-merge /strategy direction anchor (0.14.0).
+
+    HONEST SCOPE: presence proves the contract was AUTHORED, not that runtime is mutation-free.
+    /strategy's identity is that it RECORDS direction (the records member of the
+    record-vs-challenge-vs-readiness trio) — so the engine-identity verbs "record"/"anchor" are
+    NEVER negation-windowed; the whole positive point of the engine is that it records direction.
+    The records-not-implements boundary is enforced only by Claude reading the prose at runtime —
+    the SKILL emits no runnable mutation command, but token presence cannot prove a given run
+    respects the boundary. These floors prove the SKILL/refs EMIT the prose the engine stands on
+    (Phase-0 file-state routing, the locked-template constraints, the pushback discipline, the
+    Infiquetra agent-as-customer / tracks-are-not-actors deltas, the downstream routing), that the
+    boundary prose is present (with mutation verbs only inside negation windows, like /qa,
+    /resume, and /founder-review), that the ce-* downstream names appear ONLY inside a faithful
+    attribution window, and that the dispatch table is referenced not restated. A thin port that
+    transcribes weak answers (no pushback, no anti-patterns, no locked constraints) fails these.
+
+    Tokens are taken from the actual E1-authored SKILL.md + its 2 references on disk.
+    """
+    strategy = PLUGIN_ROOT / "skills" / "strategy"
+    skill_doc = _read(strategy / "SKILL.md")
+    interview_doc = _read(strategy / "references" / "interview.md")
+    template_doc = _read(strategy / "references" / "strategy-template.md")
+    corpus = "\n".join((skill_doc, interview_doc, template_doc))
+
+    # --- MECHANISM FLOOR 1: Phase-0 file-state routing — the 3 distinct paths. The engine
+    # branches on the root STRATEGY.md's existence (first-run / targeted-section / ask-which),
+    # not a single linear interview. A stub has no routing. ---
+    assert "Phase 0" in skill_doc, "the engine must route by file state in a Phase 0"
+    assert re.search(r"(?:does not exist|not found|first run)", skill_doc, re.IGNORECASE), (
+        "Phase 0 must route the file-absent path (first run)"
+    )
+    assert re.search(r"File exists.*?argument", skill_doc, re.DOTALL), (
+        "Phase 0 must route the file-exists + named-section path (targeted update)"
+    )
+    assert re.search(r"File exists.*?no argument", skill_doc, re.DOTALL), (
+        "Phase 0 must route the file-exists + no-argument path (ask which section to revisit)"
+    )
+
+    # --- MECHANISM FLOOR 2: the 8 section names live in the interview / template corpus (the
+    # locked document structure), NOT in a generated STRATEGY.md (the engine writes that at
+    # runtime; the contract is over the AUTHORED skill, not its output). ---
+    sections = (
+        "Target problem",
+        "Our approach",
+        "Who it's for",
+        "Key metrics",
+        "Tracks",
+        "Milestones",
+        "Not working on",
+        "Marketing",
+    )
+    for section in sections:
+        assert section in interview_doc or section in template_doc, (
+            f"section {section!r} must be present in the interview/template corpus"
+        )
+
+    # --- MECHANISM FLOOR 3: the pushback discipline — the 2-round rule, >= 3 named anti-patterns,
+    # and the core-of-the-skill / do-not-skip enforcement. A passive transcription has none of it. ---
+    assert re.search(r"two rounds?|two-round", corpus, re.IGNORECASE), (
+        "the interview must cap pushback at two rounds per section"
+    )
+    # >= 3 named anti-patterns (one per family the interview names: vanity / feature-list /
+    # goal-as-problem). These are the canonical bad-strategy shapes Rumelt flags.
+    for anti_pattern in ("vanity", "feature-list", "goal-as-problem"):
+        assert anti_pattern in interview_doc, (
+            f"the interview must name the {anti_pattern!r} anti-pattern"
+        )
+    # The two-round pushback is explicitly framed as the core of the skill that must not be skipped.
+    assert "core of the skill" in interview_doc, (
+        "the interview must frame the pushback as the core of the skill"
+    )
+    assert re.search(r"do not skip|don't skip|never .*skip", interview_doc, re.IGNORECASE), (
+        "the interview must forbid skipping the pushback / a question"
+    )
+
+    # --- MECHANISM FLOOR 4: the locked-template constraints — 3-5 metrics AND 2-4 tracks. The
+    # template is constrained on purpose (short is a feature); a vibes port drops the ceilings. ---
+    assert "3-5 metrics" in corpus or re.search(r"3-5\b[^\n]*metric", corpus), (
+        "the locked template must constrain metrics to 3-5"
+    )
+    assert "2-4 tracks" in corpus or re.search(r"2-4\b[^\n]*track", corpus), (
+        "the locked template must constrain tracks to 2-4"
+    )
+
+    # --- MECHANISM FLOOR 5: the artifact is the ROOT STRATEGY.md, and `docs/STRATEGY.md` must
+    # NOT appear as a write target (the file is a repo-root well-known peer of README.md, not a
+    # docs/ artifact — getting the path wrong breaks every downstream grounding read). ---
+    assert "root `STRATEGY.md`" in skill_doc or "repository root `STRATEGY.md`" in skill_doc, (
+        "the durable artifact must be the repository-root STRATEGY.md"
+    )
+    assert "docs/STRATEGY.md" not in corpus, (
+        "STRATEGY.md is a repo-root well-known file, never a docs/ artifact"
+    )
+
+    # --- MECHANISM FLOOR 6: the Infiquetra deltas — the agent-as-customer persona adaptation AND
+    # tracks-are-investment-areas (no actor-naming). These are the two adaptations the port adds
+    # on top of the ported ce-strategy rulebook; a faithful port carries both. ---
+    assert "agent-as-customer" in corpus, (
+        "the persona section must carry the agent-as-customer adaptation"
+    )
+    assert re.search(r"AI-agent consumer", corpus), (
+        "the persona adaptation must allow an AI-agent consumer as the primary persona"
+    )
+    # Tracks are investment areas / domains of work, NOT the actor (agent) that does the work.
+    assert re.search(r"investment area", corpus), (
+        "tracks must be framed as investment areas / domains of work"
+    )
+    assert re.search(r"not\b[^.\n]*actor|NOT actors|not an actor", corpus, re.IGNORECASE), (
+        "tracks must be explicitly distinguished from actors (no actor-naming in tracks)"
+    )
+
+    # --- MECHANISM FLOOR 7: positive Infiquetra downstream routing — /ideate, /brainstorm, /plan
+    # pick STRATEGY.md up as grounding. This is the POSITIVE downstream edge (distinct from the
+    # ce-* attribution window below). ---
+    for route in ("/ideate", "/brainstorm", "/plan"):
+        assert route in skill_doc, (
+            f"the downstream handoff must name the Infiquetra route {route!r}"
+        )
+
+    # --- MECHANISM FLOOR 8: CE-NAMES attribution window. E1's faithful attribution names the CE
+    # downstream commands inside a single attribution sentence (the canonical engine-merge graft),
+    # so a flat `ce-ideate not in corpus` assertion would fail a FAITHFUL port (the /resume
+    # named-agent + /founder-review no-saga-write pattern). Pin the mechanism: every ce-*
+    # downstream-name occurrence sits inside an attribution/negation window (within ~80 chars of an
+    # attribution keyword — "Ported"/"CE"/"map to"); the SINGLE hard-absence is that the
+    # commands/ce-strategy.md file does NOT exist (mirror resume's ce-doc-review.md non-existence). ---
+    flat = re.sub(r"\s+", " ", corpus)
+    for name in ("ce-ideate", "ce-brainstorm", "ce-plan"):
+        for match in re.finditer(re.escape(name), flat):
+            window = flat[max(0, match.start() - 80) : match.start()]
+            assert re.search(
+                r"\b(Ported|ported|CE|map to|maps? to|Compound-Engineering)\b", window
+            ), (
+                f"CE downstream name {name!r} must only appear inside an attribution window, "
+                f"found near: {flat[max(0, match.start() - 60) : match.start() + 40]!r}"
+            )
+    # ce-strategy is the porting-attribution name (not a downstream command); it too must only
+    # appear inside a "ported from Compound-Engineering" attribution window.
+    for match in re.finditer(r"ce-strategy", flat):
+        window = flat[max(0, match.start() - 80) : match.start()]
+        assert re.search(r"\b(Ported|ported|Compound-Engineering)\b", window), (
+            f"ce-strategy must only appear inside a porting-attribution window, "
+            f"found near: {flat[max(0, match.start() - 60) : match.start() + 40]!r}"
+        )
+    # The SINGLE hard-absence: no ce-strategy command shim was created in this plugin.
+    assert not (PLUGIN_ROOT / "commands" / "ce-strategy.md").exists(), (
+        "no ce-strategy.md command shim must exist (the port is /strategy, not a ce-* alias)"
+    )
+
+    # --- MECHANISM FLOOR 9: BOUNDARY NEGATIVES via POSITIVE-BOUNDARY-PROSE + NEGATION-WINDOW.
+    # The positive boundary prose (E1 bolds the NOT): /strategy records, it does not implement,
+    # file SDLC issues, prioritize, or compute metric values. ---
+    for negative in (
+        "does **NOT** implement",
+        "does **NOT** prioritize",
+        "does **NOT** compute metric values",
+        "does **NOT** file SDLC issues",
+    ):
+        assert negative in skill_doc, f"boundary prose {negative!r} must be present"
+
+    # Negation-window ONLY for the unambiguous mutation verb "deploy" — it appears exactly once
+    # in this corpus (inside the gate negation) and never as a benign noun, so every occurrence
+    # must sit inside a negation window. "push" is DELIBERATELY EXCLUDED from this window check
+    # (the /qa pattern for a token that doubles as an innocent word — "commit" -> "merge commit"):
+    # here "push"/"pushes" is the engine's CORE verb ("pushes back on weak answers", "push back",
+    # "pushback", Rumelt's "push past bad strategy"), so the push boundary is pinned instead by the
+    # positive prose above + the no-runnable-`git push` assert below. The engine IDENTITY verbs
+    # "record" and "anchor" are NEVER windowed — the engine's whole positive identity is that it
+    # records direction. ---
+    flat_skill = re.sub(r"\s+", " ", skill_doc)
+    for match in re.finditer(r"\bdeploys?\b|\bdeployed\b", flat_skill, flags=re.IGNORECASE):
+        window = flat_skill[max(0, match.start() - 70) : match.start()]
+        assert re.search(r"\b(not|never|without|no)\b", window, flags=re.IGNORECASE), (
+            f"mutation verb 'deploy' must only appear inside a negation window, found positive use "
+            f"near: {flat_skill[max(0, match.start() - 50) : match.start() + 30]!r}"
+        )
+
+    # No runnable mutation command anywhere: no git commit, no git push, no gh-PR merge/create.
+    assert "git commit" not in skill_doc, "/strategy must emit no runnable `git commit`"
+    assert "git push" not in skill_doc, "/strategy must emit no runnable `git push`"
+    assert not re.search(r"gh pr\s+\w+", skill_doc), (
+        "/strategy must emit no runnable `gh pr ...` command (no merge/create)"
+    )
+
+    # --- MECHANISM FLOOR 10: NO-SAGA-WRITE. /strategy runs upstream of the work thread and is
+    # advisory — it never writes the saga. E1 mentions the saga tokens only inside explicit
+    # negations ("never writes the saga ... no `saga.py` invocation, no `--review-paths`"), so a
+    # flat `saga.py not in corpus` would fail a FAITHFUL engine (the /founder-review pattern). Pin
+    # the mechanism: no `saga.py save` string AND no runnable `python saga.py` invocation. ---
+    assert "saga.py save" not in corpus, "/strategy must never emit a `saga.py save` write"
+    assert not re.search(r"python3?\s+\S*saga\.py", corpus), (
+        "/strategy must emit no runnable `python saga.py` invocation (it never writes the saga)"
+    )
+
+    # --- MECHANISM FLOOR 11: dispatch-table is REFERENCED but NOT restated (one source of truth,
+    # no /strategy<->/loop duplication). The path is cited; the table's own unique H1 title + lead
+    # sentence (which live ONLY in loop/references/dispatch-table.md) must NOT appear here. ---
+    assert "loop/references/dispatch-table.md" in skill_doc, (
+        "cross-command routing must REFERENCE the dispatch-table by path"
+    )
+    assert "# Dispatch Table" not in corpus, (
+        "the dispatch-table H1 title must not be restated in /strategy"
+    )
+    assert "The designed routing map for" not in corpus, (
+        "the dispatch-table lead sentence must not be restated in /strategy"
+    )
+
+    # --- MECHANISM FLOOR 12: the interaction model — AskUserQuestion for routing, free-form for
+    # substance, and the channel-inline fallback when redis-channel is active. ---
+    assert "AskUserQuestion" in skill_doc, "routing decisions must use AskUserQuestion"
+    assert re.search(r"routing", skill_doc), "AskUserQuestion is reserved for routing decisions"
+    assert "free-form" in skill_doc, "substantive sections must use free-form responses"
+    assert "redis-channel" in skill_doc and "inline" in skill_doc, (
+        "the channel-inline fallback must be named for redis-channel sessions"
+    )
+
+    # --- ref-floor: both reference files exist and carry real content (>= 60 lines). A vibes
+    # reskin would leave the refs as stubs. ---
+    for ref in ("interview.md", "strategy-template.md"):
+        ref_path = strategy / "references" / ref
         assert ref_path.exists()
         assert len(_read(ref_path).splitlines()) >= 60
 

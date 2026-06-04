@@ -10,6 +10,25 @@
 
 ## Shipped
 
+### `/strategy` rebuild — the interview-driven STRATEGY.md engine (faithful single-source CE `ce-strategy` port)  {#strategy-engine-rebuild-shipped}
+
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.14.0`, PR #TBD, squash TBD). Was QUEUED P2 `#rebuild-strategy-engine-merge`.
+
+**Summary.** Ninth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`). Rebuilt `/strategy` from a 21-line stub into the lifecycle's **interview-driven STRATEGY.md engine** — a **faithful single-source PORT of CE `ce-strategy`** (NOT a merge): gstack has **no** strategy engine (`cso/` is the Chief **SECURITY** Officer, a 14-phase security audit — the pre-audit "gstack cso ≈ Chief Strategy Officer" mapping was a name-match mixup, LEARNINGS [#lifecycle-thin-reskin-systemic](LEARNINGS.md#lifecycle-thin-reskin-systemic)). Position in the lifecycle: the off-chain direction-recording engine — "where are we pointed, and why?" — the records-half complement to `/founder-review`'s challenge-half. Schema, the four interview answers, and rejected alternatives recorded in DECISIONS [#strategy-engine-rebuild](DECISIONS.md#strategy-engine-rebuild).
+
+**The four settled answers.** (Q1) **CE-only source** — gstack has no strategy engine (`cso` = SECURITY, wrong officer); CE `ce-strategy` is the sole engine source, making this a single-source port not a merge. (Q2) **Keep all 8 sections + the Rumelt kernel** — port the whole engine (diagnosis / guiding-policy / coherent-action kernel + the 8-section interview + the locked template), no trimming. (Q3) **Agent-as-customer is persona-only** — personas may name AI-agent actors when the product is agent-consumed, but **tracks stay pure investment areas / domains of work, NOT actors**; the QUEUED brief's blanket "personas/tracks must name AI-agent actors" was half a category error (tracks are domains of work, not actors), caught by reading the real CE `interview.md` semantics + a Jeff challenge (LEARNINGS [#spec-adaptation-is-a-hypothesis](LEARNINGS.md#spec-adaptation-is-a-hypothesis)). (Q4) **Keep the mandatory 2-round pushback per section** — kept verbatim, the mechanism that turns shapeless prose into a real strategy.
+
+**The design.**
+- Rebuilt `/strategy` SKILL: the interview-driven STRATEGY.md engine — Rumelt-grounded kernel, Phase-0 file-state routing (new STRATEGY.md vs targeted-section update vs pick-a-section), Phase-1 8-section interview with mandatory 2-round pushback per section, and a locked root-`STRATEGY.md` template (3-5 metrics, 2-4 tracks), rerunnable update-in-place.
+- **Artifact home = the repository-root `STRATEGY.md`** (a single locked-template doc).
+- **ZERO `saga.py` edits — off-chain / pre-saga** — `/strategy` runs upstream of the work loop and writes no saga, the same off-chain position as `/founder-review`; persistence = the committed `STRATEGY.md` + the journal ADR. `/strategy` records direction, `/founder-review` challenges it.
+- **No new Python** — `/strategy` is a markdown engine (SKILL + references + command); `saga.py` untouched. No team-execution / workflows offer (a single durable doc, no parallelism).
+- **Periphery** — version bumps (plugin `0.14.0`, marketplace entry `0.14.0`, CHANGELOG new `## 0.14.0` block; keywords stay at 10 — `strategy` was already a keyword); dispatch-table `/strategy` rows stub→shipped (kept ADVISORY); README `/strategy` description stub→shipped.
+
+**Follow-ups.** Wiring STRATEGY.md metrics to live telemetry overlaps the queued `/pulse` / `/optimize` metric loops (QUEUED [#pulse-live-telemetry-component](QUEUED.md#pulse-live-telemetry-component), [#optimize-engine-merge](QUEUED.md#optimize-engine-merge)) — qualitative-only for now. Post-merge follow-up fills the PR # + squash SHA into DECISIONS + this entry. `/retro`, `/optimize` remain the next likely rebuilds.
+
+**Refs.** DECISIONS [#strategy-engine-rebuild](DECISIONS.md#strategy-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Off-chain/pre-saga sibling — DECISIONS [#founder-review-engine-rebuild](DECISIONS.md#founder-review-engine-rebuild). Source-mapping correction (gstack `cso` = SECURITY) — LEARNINGS [#lifecycle-thin-reskin-systemic](LEARNINGS.md#lifecycle-thin-reskin-systemic). Spec-adaptation-is-a-hypothesis lesson — LEARNINGS [#spec-adaptation-is-a-hypothesis](LEARNINGS.md#spec-adaptation-is-a-hypothesis).
+
 ### `/qa` rebuild — the gate-only acceptance-evidence engine (gstack `/qa`+`/qa-only` merge + ce-debug graft, severity-banded verdict + ported deterministic health score, saga qa-track consumer)  {#qa-engine-rebuild-shipped}
 
 **SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.13.0`, PR #187, squash fb2c1b3). Was QUEUED P1 `#rebuild-qa-engine-testing-vs-qa-boundary`.

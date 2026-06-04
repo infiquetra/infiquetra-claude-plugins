@@ -16,7 +16,11 @@ The command set groups by lifecycle phase:
 What each command does:
 
 - `/office-hours`, `/ideate`, and `/brainstorm` support early thinking.
-- `/strategy` maintains the root `STRATEGY.md`.
+- `/strategy` is the interview-driven `STRATEGY.md` engine: a Rumelt-grounded
+  (diagnosis / guiding-policy / coherent-action) 8-section interview with a mandatory 2-round
+  pushback per section, file-state routing (new doc vs targeted-section update), and a locked
+  root-`STRATEGY.md` template (3-5 metrics, 2-4 tracks). It records durable direction (off-chain,
+  no saga write); `/founder-review` challenges it.
 - `/plan`, `/work`, `/qa`, `/retro`, and `/resume` run the durable work loop.
 - `/qa` is the gate-only acceptance-evidence engine: it classifies the change into risk classes, runs
   acceptance checks, assigns severity, derives a ship verdict and reports a ported deterministic

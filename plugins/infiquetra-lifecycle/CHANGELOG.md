@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.14.0 - 2026-06-03
+
+- Rebuild `/strategy` from a 21-line stub into the lifecycle's **interview-driven STRATEGY.md
+  engine** — the **ninth command rebuild** of the engine-merge campaign (after `/office-hours`,
+  `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`). A **faithful
+  single-source PORT of CE `ce-strategy`**, NOT a merge: gstack has **no** strategy engine — `cso/`
+  is the Chief **SECURITY** Officer (a 14-phase security audit), so the pre-audit "gstack cso ≈ Chief
+  Strategy Officer" mapping was a name-match mixup. CE `ce-strategy` is the sole engine source.
+- **The whole engine, ported.** Rumelt-grounded kernel (diagnosis / guiding-policy / coherent-action)
+  + Phase-0 file-state routing (new STRATEGY.md vs targeted-section update vs pick-a-section) +
+  Phase-1 **8-section interview with a mandatory 2-round pushback per section** + a **locked
+  root-`STRATEGY.md` template** (3-5 metrics, 2-4 tracks) + rerunnable update-in-place. All 8
+  sections and the Rumelt kernel are kept (no trimming).
+- **Agent-as-customer is persona-only.** Personas may name AI-agent actors **when the product is
+  agent-consumed**; **tracks stay pure investment areas / domains of work, NOT actors**. The QUEUED
+  brief's blanket "personas/tracks must name AI-agent actors" was half a category error — tracks are
+  domains of work, not actors — caught by reading the real CE `interview.md` section semantics.
+- **Zero saga edits, off-chain / pre-saga.** `/strategy` owns the durable `STRATEGY.md` direction
+  and writes no saga (like `/founder-review`, it runs upstream of the work loop); `/founder-review`
+  challenges the direction, `/strategy` records it. **No new Python** — `/strategy` is a markdown
+  engine (SKILL + references + command). `saga.py` is untouched.
+- Version bumps: plugin `0.14.0`, marketplace entry `0.14.0`. keywords stay at 10 (`strategy` was
+  already a keyword; unchanged).
+
 ## 0.13.0 - 2026-06-03
 
 - Rebuild `/qa` from a 19-line stub into the lifecycle's **gate-only acceptance-evidence engine** — the

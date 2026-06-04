@@ -32,7 +32,7 @@
   dispatch-table now **total over 16 routable commands** with `/investigate` added (off-chain failure
   route); README `/investigate` command-summary entry; `operator-choice.md` + office-hours
   `frame-diagnostic.md` `/investigate` notes moved from "at its rebuild" / "campaign-queued" to active.
-- Documented in the engineering journal (PR #TBD; post-merge SHA-fill PR fills the squash SHA):
+- Documented in the engineering journal (PR #193, squash 5079d8f):
   DECISIONS `#investigate-systematic-debugging-engine-rebuild`, ARCHIVE
   `#investigate-systematic-debugging-engine-shipped`, LEARNINGS
   `#deferred-cross-engine-wiring-must-close-on-build`; consumed from QUEUED.

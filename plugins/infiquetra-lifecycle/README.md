@@ -26,6 +26,12 @@ What each command does:
   acceptance checks, assigns severity, derives a ship verdict and reports a ported deterministic
   0-100 health score alongside it (one signal; the banded verdict is the gate), advances the saga
   qa-track on pass, and routes by merge state — without fixing, committing, or deploying.
+- `/retro` is the meta-improvement engine: a 3-source merge of gstack's `retro` + `learn` passes with
+  CE's `ce-compound` framing that captures lifecycle learnings, distills durable journal knowledge, and
+  proposes improvements to the workflow itself. A **tiered self-edit gate** keeps it safe —
+  pure-additive journal appends auto-apply, but every delete / modify / move of existing durable state
+  (memory, directives, the plugin's own SKILLs) is propose-diff-and-wait, with an extra
+  cross-project-impact warning before any global edit. It is saga read-only (terminal, advisory route).
 - `/handoff` routes durable lifecycle artifacts to `sdlc-manager` prepared issue drafts.
 - `/founder-review` and `/ceo-review` review ambition, scope, and operator risk.
 - `/doc-review` reviews plans, requirements, and formal SDLC artifacts for implementation

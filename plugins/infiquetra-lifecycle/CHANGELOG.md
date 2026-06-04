@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.15.0 - 2026-06-03
+
+- Rebuild `/retro` from a 19-line stub into the lifecycle's **meta-improvement engine** — the **tenth
+  command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`,
+  `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`). A **real 3-source merge**, not a
+  port: gstack's `retro` + `learn` passes merged with CE's `ce-compound` framing into one engine that
+  captures lifecycle learnings, distills durable knowledge, and proposes improvements to the workflow
+  itself.
+- **Six net-new passes on top of the merged retro+learn+compound base** plus a lean metrics surface —
+  the FULL engine shipped in v1, nothing deferred. `/retro` runs as a single command with an optional
+  pass argument so a focused sub-pass can be invoked directly.
+- **Tiered self-edit gate — the safety contract for a self-modifying engine.** Pure-additive,
+  append-only journal writes auto-apply; every delete / modify / move of existing durable state
+  (memory, directives, the lifecycle plugin's own SKILLs) is **propose-diff-and-wait**, and any
+  global / cross-project edit carries an extra cross-project-impact warning. The blast radius is the
+  full self-modification surface **including the lifecycle SKILLs**, gated rather than narrowed.
+- **In-repo vs global/cross-project directive disambiguation.** `/retro` distinguishes a repo-local
+  directive from a global / cross-project one and warns before touching cross-project surfaces.
+- **Saga READ-ONLY — zero saga edits, no §11 change.** The planned `->retro` saga advance was dead
+  wiring; it is dropped. `/retro` reads saga context but writes none, so `saga.py` and `saga-spec.md`
+  are untouched. **No new Python** — `/retro` is a markdown engine (SKILL + references + command) that
+  reuses existing helpers; the windowed mode keeps a stale-base guard scoped to that mode.
+- Version bumps: plugin `0.15.0`, marketplace entry `0.15.0`. keywords stay at 10 (unchanged).
+
 ## 0.14.0 - 2026-06-03
 
 - Rebuild `/strategy` from a 21-line stub into the lifecycle's **interview-driven STRATEGY.md

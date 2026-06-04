@@ -24,7 +24,7 @@
 
 ## 2026-06-03
 
-### Rebuild `/retro` as the meta-improvement engine — a real 3-source merge (gstack `retro`+`learn` + CE `ce-compound`) behind a tiered self-edit gate, saga READ-ONLY (commit: TBD)  {#retro-engine-rebuild}
+### Rebuild `/retro` as the meta-improvement engine — a real 3-source merge (gstack `retro`+`learn` + CE `ce-compound`) behind a tiered self-edit gate, saga READ-ONLY (PR #191, squash f6faae2)  {#retro-engine-rebuild}
 
 **Decision.** Rebuild `/retro` — the **tenth command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`) — from a 19-line stub into the lifecycle's **meta-improvement engine**: the engine that captures lifecycle learnings, curates durable journal knowledge, and proposes improvements to the workflow itself (up to and including the lifecycle plugin's own SKILLs). A **real 3-source merge**: gstack `retro` (forensics + the stale-base/wrong-"today" BLOCK guard) + gstack `learn` (the knowledge-curation loop) + CE `ce-compound` (the "leave the system smarter" framing). The four interview answers settled with Jeff:
 
@@ -56,7 +56,7 @@
 
 **Revisit when.** A retro's auto-applied journal append turns out to need human review too (tighten the auto-apply tier); the windowed-metrics mode's stale-base guard fires falsely on a legitimately old base; the output-routing open question (QUEUED vs `/handoff` vs ready-to-run plan) needs a settled default rather than per-case judgment; or a real `/investigate` / `/pulse` lands and overlaps the metrics/curation passes.
 
-**Refs.** Plugin `0.15.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). The self-modifying-engine safety lesson (tiered gate + cross-project warning) — LEARNINGS [#self-modifying-engine-needs-a-gate](LEARNINGS.md#self-modifying-engine-needs-a-gate). Saga read-only / off-chain siblings (write no saga) — DECISIONS [#founder-review-engine-rebuild](#founder-review-engine-rebuild), [#strategy-engine-rebuild](#strategy-engine-rebuild). Consumed the QUEUED brief `#retro-meta-improvement-engine` (removed; its deferred sub-items folded in above). Ship record: ARCHIVE [#retro-engine-rebuild-shipped](ARCHIVE.md#retro-engine-rebuild-shipped). Commit: TBD (PR #TBD, squash TBD).
+**Refs.** Plugin `0.15.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). The self-modifying-engine safety lesson (tiered gate + cross-project warning) — LEARNINGS [#self-modifying-engine-needs-a-gate](LEARNINGS.md#self-modifying-engine-needs-a-gate). Saga read-only / off-chain siblings (write no saga) — DECISIONS [#founder-review-engine-rebuild](#founder-review-engine-rebuild), [#strategy-engine-rebuild](#strategy-engine-rebuild). Consumed the QUEUED brief `#retro-meta-improvement-engine` (removed; its deferred sub-items folded in above). Ship record: ARCHIVE [#retro-engine-rebuild-shipped](ARCHIVE.md#retro-engine-rebuild-shipped). Commit: f6faae2 (PR #191, squash f6faae2).
 
 ### Rebuild `/strategy` as the interview-driven STRATEGY.md engine — a faithful single-source CE `ce-strategy` PORT (PR #189, squash a9d4c90)  {#strategy-engine-rebuild}
 

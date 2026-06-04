@@ -49,7 +49,13 @@ What each command does:
 - `/doc-review` reviews plans, requirements, and formal SDLC artifacts for implementation
   readiness.
 - `/code-review` runs a structured pre-PR review.
-- `/optimize` runs metric-driven improvement loops.
+- `/optimize` is the off-chain metric-driven optimization engine (CE `ce-optimize` single-source
+  port; the agent-usability metric class is an infiquetra-native angle, not a gstack port): it runs
+  a **bounded-experiment loop** toward a measurable target — baseline, hypothesize, run a bounded
+  experiment, measure the delta, keep or discard, repeat until the target is hit or the budget is
+  spent — across 8 metric classes (performance / cost / reliability / agent-usability / security /
+  quality / developer-experience / maintainability). It records the run narratively (off-chain, no
+  saga write) and offers operator-choice for independent experiment fan-out.
 - `/loop` routes work to plan only, PR, merge, or nonprod deploy.
 
 ## Artifact Model

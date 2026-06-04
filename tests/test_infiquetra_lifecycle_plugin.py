@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.17.0"
+    assert plugin_json["version"] == "0.18.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -2062,6 +2062,301 @@ def test_spec_engine_merge_contract() -> None:
 
     # --- /spec is packaged as a command (the new routable WHAT-interrogation lens). ---
     assert (PLUGIN_ROOT / "commands" / "spec.md").exists(), "/spec must be packaged"
+
+
+def test_optimize_engine_merge_contract() -> None:
+    """Mechanism FLOORS for the CE `ce-optimize` SINGLE-SOURCE PORT /optimize engine (0.18.0).
+
+    HONEST SCOPE: presence proves the contract was AUTHORED, not that a given run is mutation-free.
+    /optimize's whole identity is to OPTIMIZE / MEASURE / BASELINE / EXPERIMENT / TUNE / KEEP /
+    REVERT toward a measurable target — so those engine-identity verbs are NEVER negation-windowed;
+    the engine's positive point is that it runs the bounded experiment loop. The off-chain
+    saga-UNTOUCHED contract is enforced only by Claude reading the prose at runtime — the SKILL emits
+    no runnable mutation and no runnable `python saga.py`, but token presence cannot prove a given
+    run respects the boundary. These floors prove the SKILL/refs EMIT the spine the engine stands on
+    (the ce-optimize loop discipline, the 8 metric classes with the infiquetra-native agent-usability
+    class, the hard-vs-judge three-tier model, the flat-file loop home + the durable split, the
+    operator-choice OFFER for independent experiment fan-out recorded narratively — the floor that
+    distinguishes /optimize from /strategy — and the never-auto-spawn/never-auto-commit boundary),
+    that the boundary prose is present (mutation verbs only inside negation windows, like /strategy /
+    /spec / /qa), that ce-optimize is the SINGLE honestly-attributed source (NOT a merge; gstack
+    plan-tune contributed nothing; agent-usability is infiquetra-native, Jeff's angle), and that the
+    dispatch table is referenced not restated.
+
+    This is the OFF-CHAIN twin of test_strategy / test_spec (saga UNTOUCHED — no `saga.py restore`
+    present-assert, unlike test_investigate which is saga READ-ONLY) — but UNLIKE /strategy and /spec
+    it OFFERS operator-choice for independent-experiment fan-out, which is the distinguishing floor.
+
+    Tokens are taken from the actual E1-authored SKILL.md + its 2 references on disk.
+    """
+    optimize = PLUGIN_ROOT / "skills" / "optimize"
+    skill_doc = _read(optimize / "SKILL.md")
+    taxonomy_doc = _read(optimize / "references" / "metric-taxonomy.md")
+    loop_doc = _read(optimize / "references" / "experiment-loop.md")
+    corpus = "\n".join((skill_doc, taxonomy_doc, loop_doc))
+    flat = re.sub(r"\s+", " ", corpus)
+    flat_skill = re.sub(r"\s+", " ", skill_doc)
+
+    # --- MECHANISM FLOOR 1: the ce-optimize SPINE — the autoresearch loop discipline. The log is the
+    # single source of truth; write-IMMEDIATELY then verify-by-reread; hard degenerate gates run
+    # BEFORE the expensive judge; baseline first; one variable at a time; the strategy digest; the
+    # hypothesis backlog; the stopping-rules cluster. A symptom-tuning reskin has none of this. ---
+    assert "single source of truth" in corpus, (
+        "the log-on-disk must be named the single source of truth (autoresearch discipline)"
+    )
+    assert re.search(r"immediately", corpus, re.IGNORECASE), (
+        "the write-IMMEDIATELY-after-each-experiment rule must be present"
+    )
+    assert re.search(r"re-read|read .* back|verify", corpus, re.IGNORECASE), (
+        "the verify-by-reread rule must be present (a results table not written to disk is a bug)"
+    )
+    assert re.search(r"gate.*before.*judg|before .* expensive", corpus, re.IGNORECASE), (
+        "the cheap-hard-gates-BEFORE-expensive-judgment cost discipline must be present"
+    )
+    assert "baseline" in corpus, "baseline-first discipline must be present"
+    assert "hypothesis backlog" in corpus, "the hypothesis backlog must be named"
+    assert re.search(r"one variable|one-variable", corpus), "one-variable-at-a-time must be present"
+    assert "strategy digest" in corpus, "the cross-batch strategy digest must be named"
+    assert re.search(r"max_iterations|plateau|stopping", corpus), (
+        "the stopping-rules cluster (max_iterations / plateau / stopping) must be present"
+    )
+
+    # --- MECHANISM FLOOR 2: the 8 metric classes ALL named, with agent-usability's sub-metrics. A
+    # thin port drops a class or the infiquetra-native sub-metrics. ---
+    assert "perf" in corpus, "metric class: perf"
+    assert "cost" in corpus, "metric class: cost"
+    assert "reliability" in corpus, "metric class: reliability"
+    assert "agent-usability" in corpus, (
+        "metric class: agent-usability (the infiquetra-native class)"
+    )
+    assert "security" in corpus, "metric class: security"
+    assert re.search(r"quality/accuracy|quality |\bquality\b", corpus), "metric class: quality"
+    assert re.search(r"developer-experience|developer experience|\bDX\b", corpus), (
+        "metric class: developer-experience / DX"
+    )
+    assert "maintainability" in corpus, "metric class: maintainability"
+    # agent-usability sub-metrics (Jeff's angle, all four named).
+    assert re.search(r"token cost|\btoken\b", corpus), "agent-usability sub-metric: token cost"
+    assert "steps-to-success" in corpus, "agent-usability sub-metric: steps-to-success"
+    assert "retry rate" in corpus, "agent-usability sub-metric: retry rate"
+    assert re.search(r"plan-readability|plan readability", corpus), (
+        "agent-usability sub-metric: plan-readability"
+    )
+
+    # --- MECHANISM FLOOR 3: the hard-vs-judge THREE-TIER model. Both "hard" and "judge" present, and
+    # the three-tier ordering: degenerate gates (tier 1) -> LLM-as-judge / judge (tier 2) ->
+    # diagnostics (tier 3). A thin port flattens these into one undifferentiated check. ---
+    assert "hard" in corpus.lower() and "judge" in corpus.lower(), (
+        "the hard-vs-judge model must name both 'hard' and 'judge'"
+    )
+    assert "LLM-as-judge" in corpus or "LLM-as-judge" in corpus.replace("\n", " "), (
+        "the judge tier must be the LLM-as-judge model"
+    )
+    assert "diagnostic" in corpus.lower(), "the three-tier model must name the diagnostics tier"
+    # The three-tier ordering inside the model section (degenerate < judge < diagnostic).
+    sec_start = corpus.find("hard-vs-judge three-tier model")
+    assert sec_start != -1, "the hard-vs-judge three-tier model section must exist"
+    body = corpus[sec_start : sec_start + 1500]
+    body = body[body.find("\n") :].lower()  # drop the header line itself
+    d_idx, j_idx, g_idx = (
+        body.find("degenerate"),
+        body.find("judge"),
+        body.find("diagnostic"),
+    )
+    assert -1 < d_idx < j_idx < g_idx, (
+        "the three-tier order must be degenerate gates -> judge -> diagnostics, cheapest first"
+    )
+
+    # --- MECHANISM FLOOR 4: the flat-file LOOP HOME + the DURABLE SPLIT. Run state is machine-local
+    # scratch under .claude/...; the two durable sinks are docs/optimize/ + the journal LEARNINGS. ---
+    assert ".claude/infiquetra-lifecycle/optimize/" in corpus, (
+        "run state must live under the flat-file loop home .claude/infiquetra-lifecycle/optimize/"
+    )
+    assert "docs/optimize/" in corpus, (
+        "the durable shareable summary must live under docs/optimize/"
+    )
+    assert "LEARNINGS" in corpus, "the durable journal sink (LEARNINGS.md) must be named"
+
+    # --- MECHANISM FLOOR 5 (THE DISTINGUISHING FLOOR vs /strategy & /spec): operator-choice is
+    # OFFERED for independent experiment fan-out, recorded NARRATIVELY (which is what makes "offers a
+    # backend" consistent with "saga-untouched"). The SKILL cites operator-choice.md (relative path),
+    # names the 3 backend enums, justifies the OFFER by independent-experiment fan-out, and NEVER
+    # auto-spawns. A flat /strategy clone (which never offers operator-choice) fails this floor. ---
+    assert "operator-choice.md" in skill_doc, (
+        "the SKILL must cite the operator-choice contract by relative path"
+    )
+    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+        assert backend in corpus, f"the operator-choice backend {backend!r} must be named"
+    assert re.search(
+        r"independent.*experiment|experiment.*fan-out|parallel.*experiment", corpus, re.IGNORECASE
+    ), "the OFFER must be justified by independent-experiment fan-out (the distinguishing trigger)"
+    assert re.search(r"OFFER|offered|never auto", corpus), (
+        "the backend is OFFERED, never auto-spawned"
+    )
+    # NARRATIVE recording is what reconciles "offers a backend" with "saga-untouched": a non-saga
+    # writer records the chosen backend in prose (the strategy digest), not via saga.save.
+    assert re.search(r"narrativ", corpus, re.IGNORECASE), (
+        "the chosen backend must be recorded NARRATIVELY (a non-saga-writer records the choice in "
+        "prose) — this is what makes 'offers a backend' consistent with 'saga-untouched'"
+    )
+
+    # --- MECHANISM FLOOR 6: SAGA UNTOUCHED — the off-chain twin of /strategy & /spec (saga UNTOUCHED),
+    # NOT /investigate (saga READ-ONLY): there is NO `saga.py restore` present-assert here. /optimize
+    # runs off-chain and never writes the work thread. The two strict pins mirror test_strategy
+    # EXACTLY (no `saga.py save` string, no runnable `python saga.py`). The bare `saga.py` and
+    # `--lifecycle-phase` tokens are, on the real E1 file, present ONLY inside the off-chain boundary
+    # negation ("it is off-chain: no `saga.py` invocation, no `--lifecycle-phase`"), so a flat
+    # `--lifecycle-phase not in corpus` assert (the task brief, written from the LABEL) contradicts
+    # the shipped SKILL — exactly the #spec-adaptation-is-a-hypothesis case test_spec already hit.
+    # Pin them with a negation-window instead (the test_spec off-chain pattern), keeping the strict
+    # no-runnable-save mechanism. ---
+    assert "saga.py save" not in corpus, "/optimize must never emit a `saga.py save` write"
+    assert not re.search(r"python3?\s+\S*saga\.py", corpus), (
+        "/optimize must emit no runnable `python saga.py` invocation (it never writes the saga)"
+    )
+    for match in re.finditer(r"--lifecycle-phase", flat):
+        window = flat[max(0, match.start() - 70) : match.start()]
+        assert re.search(r"\b(not|never|without|no)\b", window, flags=re.IGNORECASE), (
+            "`--lifecycle-phase` must only appear inside an off-chain negation window (no saga "
+            f"write), found positive use near: {flat[max(0, match.start() - 50) : match.start() + 30]!r}"
+        )
+    for match in re.finditer(r"\bsaga\.py\b", flat, flags=re.IGNORECASE):
+        window = flat[max(0, match.start() - 70) : match.start()]
+        assert re.search(r"\b(not|never|without|no|untouched)\b", window, flags=re.IGNORECASE), (
+            "`saga.py` must only appear inside an off-chain negation window, found positive use "
+            f"near: {flat[max(0, match.start() - 50) : match.start() + 30]!r}"
+        )
+
+    # --- MECHANISM FLOOR 7: ZERO new Python. /optimize is a skills-only single-source port (the
+    # agent parses the YAML natively; no /qa-style risk-weighted scorer is ported). A stray .py under
+    # skills/optimize means scope crept into code. ---
+    assert not list((PLUGIN_ROOT / "skills" / "optimize").glob("**/*.py")), (
+        "/optimize must add no new Python under skills/optimize (it is a skills-only port)"
+    )
+
+    # --- MECHANISM FLOOR 8: HARD-BOUNDARY negatives. The winner is ROUTED to /work to ship — the
+    # engine never auto-commits or auto-merges experiment branches, and never deploys. POSITIVE
+    # boundary prose first; then a NEGATION-WINDOW for ONLY the unambiguous mutation verb `deploy`
+    # (mirror test_strategy's deploy finditer — every `deploy`/`deployed` occurrence must sit within
+    # ~70 chars after a not/never/without/no). `push`/`commit`/`merge` are DELIBERATELY EXCLUDED from
+    # windowing — faithful prose uses them as benign nouns ("git commit", "merge a PR", "becomes a
+    # real commit") — so those boundaries are pinned by the no-runnable substring-absence asserts
+    # below instead. The engine-IDENTITY verbs optimize / measure / baseline / experiment / tune /
+    # keep / revert are NEVER windowed — the engine's positive identity is to do them. ---
+    assert "does **NOT**" in skill_doc, "the Hard boundary must bold the does-NOT clauses"
+    # Winners are routed to /work (never auto-committed / auto-merged inside the engine).
+    assert re.search(
+        r"never[^\n]*auto-(commit|merge)|not[^\n]*auto-(commit|merge)|"
+        r"auto-(commit|merge)[^\n]*(routed|/work)",
+        corpus,
+        re.IGNORECASE,
+    ) or re.search(r"routed to[^\n]*/work|routes? .* to[^\n]*/work", corpus, re.IGNORECASE), (
+        "the engine must never auto-commit/auto-merge experiment branches — winners route to /work"
+    )
+    for match in re.finditer(r"\bdeploys?\b|\bdeployed\b", flat_skill, flags=re.IGNORECASE):
+        window = flat_skill[max(0, match.start() - 70) : match.start()]
+        assert re.search(r"\b(not|never|without|no)\b", window, flags=re.IGNORECASE), (
+            "mutation verb 'deploy' must only appear inside a negation window, found positive use "
+            f"near: {flat_skill[max(0, match.start() - 50) : match.start() + 30]!r}"
+        )
+    # No runnable mutation command anywhere in the SKILL: no git commit/push/merge, no gh-PR
+    # create/merge. These are flat substring-absence (faithful prose does not emit them).
+    assert "git push" not in skill_doc, "/optimize must emit no runnable `git push`"
+    assert "git commit" not in skill_doc, "/optimize must emit no runnable `git commit`"
+    assert "git merge" not in skill_doc, "/optimize must emit no runnable `git merge`"
+    assert "gh pr create" not in skill_doc, "/optimize must emit no runnable `gh pr create`"
+    assert "gh pr merge" not in skill_doc, "/optimize must emit no runnable `gh pr merge`"
+    # /optimize never files an SDLC issue. `gh issue create` appears ONLY inside negations ("Never
+    # run `gh issue create`", "does **NOT** run `gh issue create`"), so a flat token-absence assert
+    # would fail the FAITHFUL engine — pin the no-runnable mechanism (the /retro pattern): every
+    # occurrence sits inside a negation window.
+    assert not re.search(r"(?<!Never run )(?<!NOT\*\* run )gh issue create", corpus) or all(
+        re.search(
+            r"\b(not|never)\b",
+            flat[max(0, m.start() - 50) : m.start()],
+            re.IGNORECASE,
+        )
+        for m in re.finditer(r"gh issue create", flat)
+    ), (
+        "/optimize must file no SDLC issue (`gh issue create` only inside a negation; sdlc-manager owns it)"
+    )
+
+    # --- MECHANISM FLOOR 9: ROUTING — /handoff, /work, /brainstorm are the named onward routes, and
+    # the dispatch table is REFERENCED by path, NOT restated (one source of truth, no
+    # /optimize<->/loop duplication). Infiquetra-name purity: the route is /optimize, never /ce-*. ---
+    for route in ("/handoff", "/work", "/brainstorm"):
+        assert route in corpus, f"the onward routing must name {route!r}"
+    assert "loop/references/dispatch-table.md" in skill_doc, (
+        "cross-command routing must REFERENCE the dispatch-table by path"
+    )
+    assert "# Dispatch Table" not in corpus, (
+        "the dispatch-table H1 title must not be restated in /optimize"
+    )
+    assert "/ce-optimize" not in corpus, (
+        "the command is the Infiquetra /optimize, never a /ce-* alias (name purity)"
+    )
+
+    # --- MECHANISM FLOOR 10: ATTRIBUTION HONESTY. ce-optimize is the SINGLE honestly-attributed
+    # source: it appears inside an attribution window, the explicit non-merge claim is present, and
+    # agent-usability is framed infiquetra-native (Jeff's angle / not a gstack port). No "gstack
+    # insight" prose is required (gstack plan-tune contributed nothing). The single hard-absence: no
+    # command shim — neither a ce-* alias nor the gstack plan-tune.md. ---
+    attr_kw = re.compile(
+        r"(Ported|ported|\bCE\b|Compound-Engineering|source|grounded|SHED|SHEDS|adapt)",
+        re.IGNORECASE,
+    )
+    ce_matches = list(re.finditer(r"ce-optimize", flat))
+    assert ce_matches, "the attribution must name the source engine `ce-optimize`"
+    assert any(attr_kw.search(flat[max(0, m.start() - 90) : m.end() + 50]) for m in ce_matches), (
+        "ce-optimize must appear inside an attribution window (named near a port/source token)"
+    )
+    assert re.search(r"single-source|not a balanced|not a .{0,20}merge", corpus), (
+        "the explicit non-merge claim must be present (single-source port, NOT a balanced merge)"
+    )
+    assert re.search(r"infiquetra-native|infiquetra native", corpus) or re.search(
+        r"Jeff's angle|not a gstack", corpus
+    ), "agent-usability must be framed infiquetra-native (Jeff's angle / not a gstack port)"
+    # Single hard-absence: no command shim was created — neither a ce-* alias nor gstack plan-tune.
+    assert not list((PLUGIN_ROOT / "commands").glob("ce-*.md")), (
+        "no commands/ce-*.md shim must exist (the port is /optimize, not a ce-* alias)"
+    )
+    assert not (PLUGIN_ROOT / "commands" / "plan-tune.md").exists(), (
+        "no plan-tune.md command shim must exist (gstack plan-tune is not ported)"
+    )
+
+    # --- MECHANISM FLOOR 11: lane boundaries vs /pulse and /qa. /pulse is the CONTINUOUS / live
+    # telemetry sibling — /optimize is BOUNDED; /qa GATES (one-shot ship verdict) while /optimize
+    # LOOPS toward a target. A thin port has no lane discrimination. ---
+    assert re.search(r"/pulse|live telemetry|continuous", corpus) and "bounded" in corpus.lower(), (
+        "the /pulse boundary must pair continuous-vs-bounded (the BOUNDED experiment loop)"
+    )
+    assert re.search(r"GATES|gate.*loop|one-shot", skill_doc) and re.search(
+        r"LOOPS|loop", skill_doc
+    ), "the /qa boundary must state gate-vs-loop (/qa gates one-shot, /optimize loops to a target)"
+
+    # --- MECHANISM FLOOR 12: the interaction model — AskUserQuestion for choices, free-form for
+    # substance, and the channel-inline fallback citing brainstorm when redis-channel is active. ---
+    assert "AskUserQuestion" in skill_doc, "choices from a known set must use AskUserQuestion"
+    assert "free-form" in skill_doc, "substantive content must use free-form responses"
+    assert "redis-channel" in skill_doc and "inline" in skill_doc, (
+        "the channel-inline fallback must be named for redis-channel sessions"
+    )
+    assert "brainstorm/SKILL.md" in skill_doc, (
+        "the channel-inline convention must cite brainstorm/SKILL.md (not duplicate it)"
+    )
+
+    # --- MECHANISM FLOOR 13: thin-port tripwire — both reference files exist and carry real content
+    # (>= 60 lines), and the SKILL is a real engine (>= 200 lines), not a transcribed stub. ---
+    for ref in ("metric-taxonomy.md", "experiment-loop.md"):
+        ref_path = optimize / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+    assert len(skill_doc.splitlines()) >= 200, (
+        "the /optimize SKILL must be a real engine (>= 200 lines), not a thin transcribed stub"
+    )
+
+    # --- /optimize is packaged as a command (the campaign's final routable optimization lens). ---
+    assert (PLUGIN_ROOT / "commands" / "optimize.md").exists(), "/optimize must be packaged"
 
 
 def test_operator_choice_framework_is_documented_and_cited() -> None:

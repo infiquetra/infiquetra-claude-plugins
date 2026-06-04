@@ -24,6 +24,40 @@
 
 ## 2026-06-04
 
+### Rebuild `/optimize` as the lifecycle's metric-driven optimization engine — CE `ce-optimize` SINGLE-SOURCE port + infiquetra-native agent-usability metric class (NOT a merge), off-chain, saga UNTOUCHED (PR #TBD)  {#optimize-engine-rebuild}
+
+**Decision.** Rebuild `/optimize` from a 20-line stub into a **metric-driven optimization engine** — the **thirteenth and FINAL command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`, `/investigate`, `/spec`). It runs a **bounded-experiment loop** toward a measurable target: pick a metric, baseline it, hypothesize, run a bounded experiment, measure the delta, keep or discard, repeat until the target is hit or the budget is spent. The five settled interview answers:
+
+- **(Q1) Saga UNTOUCHED.** `/optimize` writes no saga, advances no `lifecycle_phase`, and makes **no `saga.py` edit at all** — mirrors `/strategy` / `/spec`. It is **off-chain** (advisory, never blocks `/loop`). It records the run **narratively**.
+- **(Q2) ZERO new Python.** No new script ships; the engine is SKILL-resident. (Contrast `/qa`, which shipped one ported scorer — `/optimize` needs none.)
+- **(Q3) Eight metric classes** — the **maximal v1 taxonomy**: performance, cost, reliability, **agent-usability**, security, quality, developer-experience, maintainability.
+- **(Q4) Handoff DEFERRED.** No `docs/optimize/` is added to `handoff_envelope.py`'s `SOURCE_DIRS`, and **no `handoff_envelope.py` edit** ships. An optimization run's durable output is narrative, not a `/handoff`-discoverable artifact yet; wire it only when a run routinely needs to become an SDLC issue.
+- **(Q5) Operator-choice OFFERS.** `/optimize` **does** cite operator-choice — independent experiments fan out cleanly across backends (default **serial inline**). The choice is recorded **narratively** (saga-untouched), not via an `orchestration_mode` saga field.
+
+The five decisions a–e:
+
+- **(a) One engine, no profile-coach sibling.** `/optimize` is a single metric-loop engine. There is **no** developer-psychographic question-coach sibling (gstack `plan-tune`'s shape) — that supplies nothing portable.
+- **(b) Serial default + shed CE's worktree/parallel machinery.** Experiments run serial inline by default; CE `ce-optimize`'s in-engine worktree spawn / parallel-runner plumbing is **shed** (parallelism is offered via operator-choice, not baked into the engine).
+- **(c) OFFERS operator-choice, recorded narratively** (see Q5).
+- **(d) `/qa` boundary = gate vs loop.** `/qa` **gates a shipped change** (ship-or-not); `/optimize` **loops toward a measurable target** by bounded experiment. "Good / secure enough to ship?" → `/qa`; "drive this metric toward a target?" → `/optimize`.
+- **(e) `/pulse` boundary = bounded vs continuous, and not a gate.** `/optimize` is a **bounded** experiment loop with a target and a budget; a future `/pulse` would be **continuous live telemetry**, not a one-shot loop and not a gate. The optimize-side boundary is settled; `/pulse` stays a separate queued item.
+
+**Honest attribution (load-bearing).** `/optimize` is a **CE `ce-optimize` SINGLE-SOURCE PORT**. The **agent-usability** metric class is an **infiquetra-native** angle (Jeff's) — **NOT a gstack contribution**: a **full-file grep of gstack `plan-tune` for the agent-usability terms returned ZERO**. gstack `plan-tune` is a developer-psychographic question-coach that supplies **nothing portable** and is **not ported**. This is **NOT a merge** of any kind; gstack is credited with **no insight**.
+
+**Rejected alternatives.**
+- *Frame as a balanced CE+gstack merge.* REJECTED — gstack `plan-tune` supplies nothing portable; a grep for the agent-usability terms returned zero. Single-source CE port is the honest provenance.
+- *Port ce-plan / a benchmark harness.* REJECTED — `ce-optimize` is the metric-loop engine to port; ce-plan is `/plan`'s engine.
+- *Add a gstack profile-coach sibling command.* REJECTED — one engine; the question-coach shape is not what `/optimize` is for.
+- *Bake in-engine worktree parallelism (CE's runner).* REJECTED — shed it; parallel fan-out is offered via operator-choice (default serial inline), not hardwired.
+- *Add `docs/optimize/` to handoff `SOURCE_DIRS`.* REJECTED — deferred; an optimization run's output is narrative, not yet a `/handoff` source. No `handoff_envelope.py` edit.
+- *Make the saga read-only (read the work-thread for evidence).* REJECTED — there is no real downstream consumer for an `/optimize` saga write or read; saga UNTOUCHED is the cleaner off-chain stance (the recurring dead-wiring guard).
+
+**Rationale.** Metric improvement work kept lacking a repeatable engine — "make it faster / cheaper / more reliable" routed nowhere with discipline. `/optimize` is that engine: a bounded-experiment loop with an explicit target, a baseline, and a budget, across 8 metric classes. Off-chain + saga-untouched keeps it from blocking the loop or dead-wiring a saga write; narrative recording avoids a saga field with no consumer. The agent-usability class is the infiquetra-native angle that makes the engine fit a 1-human + agents shop — earned honestly, not borrowed.
+
+**Revisit when.** The 8-class taxonomy proves unwieldy in practice (it is the **maximal v1 set** — trim if classes go unused); OR an optimization run routinely needs to become an SDLC issue (revisit Q4 handoff-deferred); OR the prose-only experiment log demonstrably drifts/corrupts across context compaction (revisit ZERO-new-Python — see QUEUED [#optimize-log-helper](QUEUED.md)); OR a `/pulse` continuous-telemetry command is built (settle the shared boundary from the pulse side).
+
+**Refs.** ARCHIVE [#optimize-engine-rebuild-shipped](ARCHIVE.md#optimize-engine-rebuild-shipped) + the campaign-complete capstone; LEARNINGS [#shipped-on-origin-not-in-stale-local-tree](LEARNINGS.md#shipped-on-origin-not-in-stale-local-tree), [#campaign-brief-merge-is-a-provenance-hypothesis](LEARNINGS.md#campaign-brief-merge-is-a-provenance-hypothesis) (its third firing); the off-chain / saga-untouched twins — [#strategy-engine-rebuild](#strategy-engine-rebuild), [#spec-interrogation-engine-rebuild](#spec-interrogation-engine-rebuild); the gate sibling — [#investigate-systematic-debugging-engine-rebuild](#investigate-systematic-debugging-engine-rebuild) (the `/qa`-boundary pattern); operator-choice — [#operator-choice-framework](#operator-choice-framework). Campaign — [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign) (now COMPLETE). Consumed QUEUED [#optimize-engine-merge](QUEUED.md); added QUEUED [#optimize-log-helper](QUEUED.md).
+
 ### Add `/spec` as the lifecycle's spec-interrogation engine — gstack `spec` SINGLE-SOURCE WHAT-interrogation port (the WHAT-rigor sibling of `/plan`'s HOW-rigor), off-chain, saga UNTOUCHED (PR #195)  {#spec-interrogation-engine-rebuild}
 
 **Decision.** Add `/spec` — the **twelfth command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`, `/investigate`) and the campaign's **spec-interrogation engine**: the pass that owns relentless **WHAT-rigor** — the sibling of `/plan`'s HOW-rigor. A **gstack `spec` SINGLE-SOURCE port** of the WHAT-interrogation half: the principal-engineer-who-refuses-ambiguous-work persona, the HARD GATE (no spec after message 1 — always start the interview), Phase-1 five-Why, Phase-2 scope / MVP / out-of-scope / failure-mode lock, Phase-3 read-code-first grounding, quantify-everything, and a draft-review pass. The four settled Qs + decisions a–d:

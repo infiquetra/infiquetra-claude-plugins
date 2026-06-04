@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.16.0 - 2026-06-04
+
+- Add `/investigate` — the lifecycle's net-new **systematic-debugging engine** and the **eleventh
+  command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`,
+  `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`). It answers "what is
+  actually broken, and why?" — the diagnostic brain `/qa` (the gate) deliberately does not own. A
+  **CE `ce-debug` spine** (causal-chain gate, falsifiable predictions for uncertain links, assumption
+  audit, Phase-0 triage with trivial fast-path, smart-escalation, parallel read-only sub-agent
+  dispatch) + **gstack `investigate` grafts** (the pattern-signature table — race/null/state/integration/config/cache
+  — the two distinct numeric stop gates (hypothesis-exhaustion + 3-failed-fix), and the DEBUG REPORT
+  Status enum) + a **superpowers
+  systematic-debugging borrow**. Drops gstack scope-lock/freeze and all gstack runtime bins.
+- **Diagnosis-primary, never a fixer.** `/investigate` produces a DEBUG REPORT (file:line, causal
+  chain, regression-test path, Status enum) and **routes** the work out: a real fix → `/work` (via a
+  `/handoff` issue); an applied inline fix → `/work` or `/code-review` to ship; a trackable defect →
+  `/handoff`; a design-level root cause → `/brainstorm`. It does not commit, push, open/merge a PR, or
+  deploy.
+- **Saga READ-ONLY — zero saga edits.** `/investigate` reads saga context for evidence but writes no
+  saga; **off-chain** (advisory, never blocks `/loop`). `saga.py`, `handoff_envelope.py`, and
+  `references/saga-spec.md` are untouched. **No new Python** — `/investigate` is a markdown engine
+  (SKILL + references + command). Verification is **own-minimal** (carries its own light verification),
+  NOT a call back into `/qa`, overriding the pre-decision "verification CALLS /qa".
+- **Full `/qa` cross-engine rewire — closes the deferred route at every site.** `/qa` deferred deep
+  post-merge root-cause failures to "when `/investigate` is built." Building it closes that deferral
+  **everywhere** (5 `/qa` SKILL mentions + 2 other-file notes): `/qa`'s post-merge FAIL branch is now
+  **two-target** — deep-root-cause failures route to `/investigate` (now on the dispatch-table's
+  routable list), clear/trackable defects still route to `/handoff`; pre-merge still routes to `/work`.
+  Routing still **reads** `loop/references/dispatch-table.md`. No `/investigate`→`/qa` verify loop.
+- **Periphery** — version bumps (plugin `0.16.0`, marketplace entry `0.16.0`; keywords stay at 10);
+  dispatch-table now **total over 16 routable commands** with `/investigate` added (off-chain failure
+  route); README `/investigate` command-summary entry; `operator-choice.md` + office-hours
+  `frame-diagnostic.md` `/investigate` notes moved from "at its rebuild" / "campaign-queued" to active.
+- Documented in the engineering journal (PR #TBD; post-merge SHA-fill PR fills the squash SHA):
+  DECISIONS `#investigate-systematic-debugging-engine-rebuild`, ARCHIVE
+  `#investigate-systematic-debugging-engine-shipped`, LEARNINGS
+  `#deferred-cross-engine-wiring-must-close-on-build`; consumed from QUEUED.
+
 ## 0.15.0 - 2026-06-03
 
 - Rebuild `/retro` from a 19-line stub into the lifecycle's **meta-improvement engine** — the **tenth

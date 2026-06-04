@@ -32,8 +32,9 @@ lands that advance (Phase 6).
 1. **Gate, not fixer.** `/qa` reports, assigns severity, derives a verdict, and routes. It does **NOT**
    fix bugs, does **NOT** edit reviewed code, does **NOT** commit, does **NOT** push, does **NOT** open,
    update, or merge a PR, does **NOT** deploy, does **NOT** file SDLC issues, and does **NOT** set
-   readiness labels. All fixing belongs to `/work` (round-N), the existing fixers, and the future
-   `/investigate`. Fixer dispatch is *routed*, never run here.
+   readiness labels. All fixing and deep root-cause work belongs to `/work` (round-N), the existing
+   fixers, and `/investigate` (the systematic-debugging engine). Fixer dispatch is *routed*, never run
+   here.
 2. **Risk-driven.** Classify the change into the **9-way risk router** — behavior, security, infra, API,
    deployment, data, docs, config, trivial — and run only the classes the change actually touches,
    narrow before broad. Browser behavior folds into the **behavior** class as one MCP-driven check
@@ -293,13 +294,18 @@ state**:
 
 - **Pre-merge (PR still open)** → **`/work`** — hand the findings back and re-enter the round-N PR loop.
   `/work`'s Phase 0.4 re-entry keys on the saga's `pr_refs`, so the thread resumes cleanly.
-- **Post-merge (merged to `main`)** → **`/handoff`** — open a **new defect thread**. Do **not** route a
-  merged thread back to `/work` round-N: its `pr_refs` PR is merged, so Phase 0.4 would cycle the merged
-  PR straight back to `/qa`.
+- **Post-merge (merged to `main`)** → a **two-target branch**. Do **not** route a merged thread back to
+  `/work` round-N: its `pr_refs` PR is merged, so Phase 0.4 would cycle the merged PR straight back to
+  `/qa`. Instead route by what the failure needs:
+  - **Deep / uncertain root cause** (the cause is unknown or the falsifiable prediction failed) →
+    **`/investigate`** — the systematic-debugging engine owns the causal-chain work `/qa` does not do.
+  - **Clear / trackable defect** (the cause is understood, just not fixing it now) → **`/handoff`** —
+    open a **new defect thread**.
 
-When `/investigate` is built, deep post-merge failures will route there for root-cause work; until then
-it is **not** a runnable route (it is not on the dispatch-table's routable list), so never emit
-`/investigate` as a command. Routing **reads** `loop/references/dispatch-table.md`.
+`/investigate` is a real routable target — it ships and is on the dispatch-table's routable list, so
+emit it for deep post-merge root-cause failures. `/qa` still does **not** debug: it routes the
+root-cause work TO `/investigate`, never runs it, and there is **no `/investigate` → `/qa` verify
+loop`. Routing **reads** `loop/references/dispatch-table.md`.
 
 ---
 
@@ -309,7 +315,7 @@ it is **not** a runnable route (it is not on the dispatch-table's routable list)
 saga, and routes — then stops. It does **NOT** fix bugs, does **NOT** edit reviewed code, does **NOT**
 commit, does **NOT** push, does **NOT** open, update, or merge a PR, does **NOT** deploy, does **NOT**
 file SDLC issues, does **NOT** set readiness labels, and does **NOT** run a fix loop or deep root-cause
-debugging (`/work` and the future `/investigate` own those). It never blocks the router.
+debugging (`/work` and `/investigate` own those). It never blocks the router.
 
 ---
 

@@ -1,14 +1,14 @@
 # Dispatch Table
 
-The designed routing map for `/loop`. It is **total** over the 15 routable lifecycle commands: every
+The designed routing map for `/loop`. It is **total** over the 16 routable lifecycle commands: every
 input type, saga `lifecycle_phase` + `phase_status`, and handoff maturity resolves to exactly one next
 command. The table is designed from the already-shipped siblings' own clean-exit routing — there is no
 upstream router to port. `/loop` reads this table in Phase 2, then ticks the saga and dispatches
 (Phase 4).
 
-The 15 routable commands: `/office-hours`, `/ideate`, `/brainstorm`, `/plan`, `/doc-review`, `/work`,
-`/code-review`, `/qa`, `/founder-review`, `/strategy`, `/optimize`, `/handoff`, `/retro`, `/resume`,
-and `/loop` itself (re-entry).
+The 16 routable commands: `/office-hours`, `/ideate`, `/brainstorm`, `/plan`, `/doc-review`, `/work`,
+`/code-review`, `/qa`, `/investigate`, `/founder-review`, `/strategy`, `/optimize`, `/handoff`,
+`/retro`, `/resume`, and `/loop` itself (re-entry).
 
 ---
 
@@ -30,6 +30,7 @@ A route to a **stub** target is **advisory**: `/loop` names it as the next comma
 | `/founder-review` | shipped (239L) | normal |
 | `/handoff` | shipped (68L, functional) | normal + handoff envelope |
 | `/qa` | shipped (gate-only) | **advisory** — never block |
+| `/investigate` | shipped (systematic-debugging engine) | **advisory + off-chain** — never block |
 | `/retro` | shipped (meta-improvement engine) | **advisory + terminal** — never block |
 | `/resume` | **stub (24L)** | **advisory / opt-in** — never auto-route |
 | `/strategy` | shipped (STRATEGY.md engine) | **advisory** — never block |
@@ -86,6 +87,7 @@ For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `i
 
 | Input / trigger | Next command | State |
 |---|---|---|
+| Bug / defect / root-cause question, a failing or flaky test, "why is this broken" | `/investigate` | advisory, shipped (off-chain) |
 | Strategic-direction ask, STRATEGY.md maintenance | `/strategy` | advisory, shipped |
 | "Improve / route / optimize this metric" | `/optimize` | advisory stub |
 | Scope / ambition question ("is this ambitious enough", "think bigger") on a plan / strategy / brainstorm | `/founder-review` | shipped |
@@ -96,6 +98,16 @@ For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `i
 `/founder-review` fires **upstream of execution** and produces a scope decision, then routes accepted
 scope back to `/plan` and the (re-)expanded plan back to `/doc-review` — `/loop` honors that closed
 loop rather than treating founder-review as a terminal.
+
+`/investigate` is the **off-chain systematic-debugging engine** and is **READ-ONLY on the saga**: it
+diagnoses (it never blocks `/loop`) and routes the work OUT by what it finds — a confirmed **real fix**
+→ `/work` (via a `/handoff` issue that DESCRIBES the defect and LINKS the DEBUG REPORT as evidence —
+never pass `docs/investigations/` to `handoff_envelope`'s classifier; it mis-classifies, see
+debug-report.md); an **applied inline fix** → `/work` or `/code-review` to ship it; a **trackable
+defect** (not fixing now) → `/handoff`; a
+root cause that is really a **design problem** → `/brainstorm`. `/qa` routes deep post-merge
+root-cause failures here (clear/trackable defects still go to `/handoff`); there is **no
+`/investigate` → `/qa` verify loop` — `/investigate` carries its own minimal verification.
 
 ---
 

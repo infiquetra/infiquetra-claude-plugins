@@ -294,12 +294,12 @@ Office-hours always ends by naming the next command, with plural clean exits. Re
 | A real problem, one chosen direction, "really a requirements question" | `/brainstorm` | Deepen the single idea into a requirements doc. |
 | A real problem that's "already buildable" — approach is clear | `/plan` | Skip ideation/requirements; plan the build directly. |
 | Really a "direction" question about where Infiquetra is pointed | `/strategy` | This is positioning/direction, not a single build. |
+| Really a "we don't understand the problem well enough to frame it" — there's a bug/defect to dig into | `/investigate` | This is a diagnostic, not a build; go find the root cause first. |
 | The thing isn't worth pursuing | "drop it" | A clean exit is a valid outcome. |
 
-**Campaign-queued routes (add when they ship):** `/investigate` (for "we don't understand the problem
-well enough to frame it — go dig") and `/spec` (for "the frame is clear but needs a formal
-specification before planning") are queued for the lifecycle engine-merge campaign and are **not** live
-routes yet. Add them to this rubric as routes once they exist; until then, do not offer them.
+**Campaign-queued routes (add when they ship):** `/spec` (for "the frame is clear but needs a formal
+specification before planning") is queued for the lifecycle engine-merge campaign and is **not** a live
+route yet. Add it to this rubric as a route once it exists; until then, do not offer it.
 
 Whatever the route, **hand off the settled frame** — pass the problem statement (and the frame-note
 path, if written) so the next command does not re-derive what office-hours just settled. **End with an

@@ -12,7 +12,7 @@
 
 ### `/strategy` rebuild — the interview-driven STRATEGY.md engine (faithful single-source CE `ce-strategy` port)  {#strategy-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.14.0`, PR #TBD, squash TBD). Was QUEUED P2 `#rebuild-strategy-engine-merge`.
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.14.0`, PR #189, squash a9d4c90). Was QUEUED P2 `#rebuild-strategy-engine-merge`.
 
 **Summary.** Ninth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`). Rebuilt `/strategy` from a 21-line stub into the lifecycle's **interview-driven STRATEGY.md engine** — a **faithful single-source PORT of CE `ce-strategy`** (NOT a merge): gstack has **no** strategy engine (`cso/` is the Chief **SECURITY** Officer, a 14-phase security audit — the pre-audit "gstack cso ≈ Chief Strategy Officer" mapping was a name-match mixup, LEARNINGS [#lifecycle-thin-reskin-systemic](LEARNINGS.md#lifecycle-thin-reskin-systemic)). Position in the lifecycle: the off-chain direction-recording engine — "where are we pointed, and why?" — the records-half complement to `/founder-review`'s challenge-half. Schema, the four interview answers, and rejected alternatives recorded in DECISIONS [#strategy-engine-rebuild](DECISIONS.md#strategy-engine-rebuild).
 

@@ -24,7 +24,7 @@
 
 ## 2026-06-03
 
-### Rebuild `/strategy` as the interview-driven STRATEGY.md engine — a faithful single-source CE `ce-strategy` PORT (commit: TBD)  {#strategy-engine-rebuild}
+### Rebuild `/strategy` as the interview-driven STRATEGY.md engine — a faithful single-source CE `ce-strategy` PORT (PR #189, squash a9d4c90)  {#strategy-engine-rebuild}
 
 **Decision.** Rebuild `/strategy` — the **ninth command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`) — from a 21-line stub into the lifecycle's **interview-driven STRATEGY.md engine**. A **faithful single-source PORT of CE `ce-strategy`**, NOT a merge: it is the campaign's second single-source port (after `/founder-review`'s gstack port), but here the single source is **CE**. The four interview answers settled with Jeff:
 
@@ -50,7 +50,7 @@
 
 **Revisit when.** A repo's `STRATEGY.md` needs metrics wired to live telemetry (revisit the qualitative-only stance — overlaps the queued `/pulse` / `/optimize` metric loops); a real gstack (or other) strategy engine appears worth merging; or strategy starts needing to write durable cross-session state beyond the committed doc (revisit the no-saga position).
 
-**Refs.** Plugin `0.14.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Off-chain/pre-saga sibling (no saga write, records-vs-challenges) — [#founder-review-engine-rebuild](#founder-review-engine-rebuild). Source-mapping correction (gstack `cso` = SECURITY, not Strategy; name-match ≠ verified mapping) — LEARNINGS [#lifecycle-thin-reskin-systemic](LEARNINGS.md#lifecycle-thin-reskin-systemic). The spec-adaptation-is-a-hypothesis lesson (the brief's blanket tracks-as-actors note was half a category error) — LEARNINGS [#spec-adaptation-is-a-hypothesis](LEARNINGS.md#spec-adaptation-is-a-hypothesis), which pairs with [#source-fidelity-cuts-both-ways](LEARNINGS.md#source-fidelity-cuts-both-ways). Ship record: ARCHIVE [#strategy-engine-rebuild-shipped](ARCHIVE.md#strategy-engine-rebuild-shipped). Shipped via PR #TBD (squash TBD).
+**Refs.** Plugin `0.14.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Off-chain/pre-saga sibling (no saga write, records-vs-challenges) — [#founder-review-engine-rebuild](#founder-review-engine-rebuild). Source-mapping correction (gstack `cso` = SECURITY, not Strategy; name-match ≠ verified mapping) — LEARNINGS [#lifecycle-thin-reskin-systemic](LEARNINGS.md#lifecycle-thin-reskin-systemic). The spec-adaptation-is-a-hypothesis lesson (the brief's blanket tracks-as-actors note was half a category error) — LEARNINGS [#spec-adaptation-is-a-hypothesis](LEARNINGS.md#spec-adaptation-is-a-hypothesis), which pairs with [#source-fidelity-cuts-both-ways](LEARNINGS.md#source-fidelity-cuts-both-ways). Ship record: ARCHIVE [#strategy-engine-rebuild-shipped](ARCHIVE.md#strategy-engine-rebuild-shipped). Shipped via PR #189 (squash a9d4c90).
 
 ### Rebuild `/qa` as the gate-only acceptance-evidence engine — a real gstack `/qa`+`/qa-only` merge + ce-debug graft, severity-banded verdict + ported deterministic health score, saga qa-track consumer (PR #187, squash fb2c1b3)  {#qa-engine-rebuild}
 

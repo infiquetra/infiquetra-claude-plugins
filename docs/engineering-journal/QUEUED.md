@@ -68,30 +68,6 @@
 **Boundary (settle before building).** `/pulse` = "what is the product doing live?" (a live-telemetry read). This overlaps `/optimize` (metric-driven optimization loop) + `STRATEGY.md` metrics — clarify ownership first: does `/pulse` feed `/optimize`, replace part of it, or stand beside it? founder-review = "is this the right thing to build?" (qualitative, upstream); `/pulse` = "is the built thing working live?" (quantitative, downstream) — distinct jobs.
 **Context.** Cross-ref `/optimize` + `STRATEGY.md` metrics; DECISIONS [#founder-review-engine-rebuild](DECISIONS.md#founder-review-engine-rebuild) (Q1 — posture stolen, component queued).
 
-### P1 — Add `/spec`: gstack spec-interrogation engine as a pre-handoff sharpening pass  {#spec-interrogation-engine}
-
-**Priority.** P1 (verdict: ADOPT, strictly upstream of issue authoring). **Effort.** Medium (~120-180 lines; port 3-phase interrogation, wire to `/handoff`, no Python). **Category.** missing-candidate.
-**Worth it when.** Vague asks keep reaching `/handoff` and producing under-specified issues that agents bounce back with questions.
-**Today.** No `/spec`. `/handoff` is a thin envelope-builder; `sdlc-issues` structures rough text into issue bodies. Nobody owns the upstream interrogation that turns a vague ask into precise, agent-executable spec text.
-**Engines.** *gstack* `spec` = adversarial "principal engineer who refuses ambiguous work": hard gate (no issue after msg 1), Phase-1 five-question Why, Phase-2 scope/out-of-scope/MVP/failure-modes/rollback, Phase-3 **mandatory read-code-first grounding (cite path:line before asking)**, quantify-everything. *CE* — none for spec; reuse the assumption-challenge/failure-mode register already in `/ideate` and `/brainstorm`.
-**Merge.** Fold gstack's Phase 1-3 interrogation (five-Why, scope/MVP/failure-mode lock, read-code-first grounding, quantify + cite-evidence) into lifecycle as a sharpening pass feeding `/handoff`. Drop gstack's issue-body authoring, dedupe, codex gate, redaction, agent spawn (sdlc-manager / team-execution / infiquetra-deploy territory).
-**Infiquetra.** `/spec` sharpens the ask into a precise, agent-runnable artifact under `docs/specs/`; sdlc-manager keeps sole ownership of issue bodies/acceptance/readiness/mutation. `/spec` output is a `/handoff` source, never a direct gh issue create.
-**Operator choice.** After a sharp spec, offer team-execution (size/risk) or route to `/handoff` → sdlc-manager; CC workflows/ultracode for clear-cut specs.
-**Shed (sign-off).** gstack telemetry, gbrain sync, plan-mode detection, redaction, dedupe, codex gate, `--execute` worktree spawn.
-**Interview (1-by-1).**
-- Adopt `/spec` as a distinct command, or fold the interrogation phases into `/handoff`'s front end?
-- Confirm boundary: `/spec` sharpens + writes a `docs/specs/` artifact, sdlc-manager still owns the issue body?
-- Keep gstack's read-code-first hard gate (cite path:line before Phase-3 questions)?
-- Want executability scoring (a `/doc-review` pass on the spec), or skip the gate?
-
-### P2 — Resolve the `/brainstorm` ↔ gstack `spec` WHAT-interrogation seam before building either  {#brainstorm-spec-interrogation-seam}
-
-**Priority.** P2. **Effort.** Small (a decision-point interview, ~30-45 min; the build is whichever side wins). **Category.** engine-merge / decision-point.
-**Worth it when.** The next time `/brainstorm` feels soft on ambiguity (lets an under-specified WHAT through), OR `/spec` ([#spec-interrogation-engine](#spec-interrogation-engine)) is about to be built — resolve the seam **before** building either, so the relentless WHAT-rigor lands in exactly one place.
-**The seam.** Surfaced by the `/plan` rebuild ([#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild)): `/plan` deliberately takes only gstack `spec`'s **HOW**-interrogation + code-grounding front end and leaves the **WHAT**-rigor (five-Why, scope/out-of-scope/MVP lock, failure-mode enumeration, quantify-everything) upstream — with a one-way bounce to `/brainstorm` for open WHAT-ambiguity. But that WHAT-rigor currently has no settled owner: `/brainstorm` carries an engine but is not as adversarially relentless as gstack `spec`, and the queued standalone `/spec` would import exactly that rigor. Two commands competing for the same job.
-**Decision-point.** Either (a) **fold** gstack `spec`'s WHAT-interrogation rigor into the shipped `/brainstorm` (one Think-phase engine owns ambiguity-killing), or (b) **ship the standalone `/spec`** as a distinct pre-handoff sharpening pass and keep `/brainstorm` as the divergent-exploration engine. Do NOT build both with overlapping interrogation — pick the owner first.
-**Context.** Cross-ref [#spec-interrogation-engine](#spec-interrogation-engine) (the queued standalone `/spec`); DECISIONS [#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild) (where the seam was named — `/plan` is HOW-only and bounces WHAT-ambiguity to `/brainstorm`); DECISIONS [#ce-ideation-engine-restore](DECISIONS.md#ce-ideation-engine-restore) (the current `/brainstorm` engine). This entry is the gate the `/spec` build must pass through.
-
 ### P2 — Rebuild `/optimize`: CE experiment harness + gstack profile-tuning into an infiquetra engine  {#optimize-engine-merge}
 
 **Priority.** P2. **Effort.** Medium (~1 day: infiquetra metric taxonomy + loop skeleton; trimmed spec/log schema; defer parallel harness to team-execution). **Category.** engine-merge.

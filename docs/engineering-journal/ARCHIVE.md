@@ -10,6 +10,36 @@
 
 ## Shipped
 
+### `/spec` — the spec-interrogation engine (gstack `spec` single-source WHAT-interrogation port, the WHAT-rigor sibling of `/plan`'s HOW-rigor, off-chain, saga UNTOUCHED)  {#spec-interrogation-engine-shipped}
+
+**SHIPPED 2026-06-04** (`infiquetra-lifecycle` `0.17.0`, PR #TBD, squash #TBD). Was QUEUED P1 `#spec-interrogation-engine`.
+
+**Summary.** Twelfth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`, `/investigate`) and the campaign's **spec-interrogation engine** — the pass that owns relentless **WHAT-rigor**, the sibling of `/plan`'s HOW-rigor. A **gstack `spec` SINGLE-SOURCE port** of the WHAT-interrogation half (NOT a merge): persona + HARD GATE + five-Why + scope/MVP/out-of-scope/failure-mode lock + read-code-first grounding + quantify-everything + draft-review. Off-chain, saga-untouched; its only durable output is a sharp WHAT artifact under `docs/specs/`. The four settled Qs, decisions a–d, the honest single-source attribution, and rejected alternatives are recorded in DECISIONS [#spec-interrogation-engine-rebuild](DECISIONS.md#spec-interrogation-engine-rebuild).
+
+**The four settled answers (+ a–d).** (Q1) **Saga UNTOUCHED** — no saga write, no `lifecycle_phase` advance, **no `saga.py` edit at all** (mirrors `/strategy`); off-chain, never blocks `/loop`. (Q2) **Handoff = `docs/specs/` added to the source set** — `Path("docs/specs")` in `SOURCE_DIRS` (functional); `infer_maturity` → `requirements-ready` (equals the default — for consistency, NOT a behavior change, NOT dead-wiring; a spec is a sharp WHAT, not plan-ready); `infer_lifecycle_phase` stays `"unknown"`; no `spec` member in `LIFECYCLE_PHASES`. (Q3) **Read-code-first HARD with a non-code escape.** (Q4) **Optional `/doc-review` pass** under the requirements lens (`docs/specs/ → requirements` tie-breaker). (c) **Operator-choice NEVER OFFERS** — single artifact, no parallelism; downstream executor owns backend. (d) **Brainstorm-seam resolved standalone** — `/spec` owns WHAT-rigor; `/brainstorm` stays divergent and offers Sharpen-with-`/spec`.
+
+**What shipped.**
+- **NEW `/spec` SKILL + references + command** (owned by the engine agent E1): the gstack `spec` WHAT-interrogation port. Sheds the gstack preamble, dedupe machinery, codex quality gate, two-layer redaction, `--execute` worktree spawn, gh issue authoring/filing, and the `~/.gstack` store.
+- **Q2 handoff wiring** — `handoff_envelope.py`: `Path("docs/specs")` in `SOURCE_DIRS`; `infer_maturity` `docs/specs/ → requirements-ready` (consistency, not behavior); `infer_lifecycle_phase` unchanged (`"unknown"`, off-chain). `references/saga-spec.md` §3.3 + `skills/handoff/SKILL.md` document the doc-path mapping; no `LIFECYCLE_PHASES` change.
+- **Q4 + operator-choice** — `doc-review/SKILL.md` `docs/specs/ → requirements` tie-breaker; `operator-choice.md` `/spec` row "at its rebuild" → "never offers".
+- **Brainstorm-seam closure** — `brainstorm/SKILL.md` Phase-4 menu adds "Sharpen with `/spec`" (renumbered to stay contiguous) with a divergent→convergent boundary note.
+- **Periphery** — version bumps (plugin `0.17.0`, marketplace entry `0.17.0`, CHANGELOG `## 0.17.0`; keywords stay at 10); dispatch-table now **total over 17 routable commands** with `/spec` added (stub-vs-shipped row + cold-start row + off-chain row + routing-OUT prose); README `/spec` command-summary line; office-hours `frame-diagnostic.md` `/spec` moved from "campaign-queued" to an active routing-rubric row.
+- **ZERO new Python; `saga.py` UNTOUCHED; only `handoff_envelope.py` edited (the Q2 functional source-set wiring).**
+
+**Follow-ups.** Post-merge follow-up fills the PR # + squash SHA into DECISIONS + this entry + the seam-resolved entry. `/optimize` is the last remaining campaign rebuild.
+
+**Refs.** DECISIONS [#spec-interrogation-engine-rebuild](DECISIONS.md#spec-interrogation-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). The seam it closed — ARCHIVE [#brainstorm-spec-interrogation-seam-resolved](#brainstorm-spec-interrogation-seam-resolved). The off-chain / saga-untouched twin — DECISIONS [#strategy-engine-rebuild](DECISIONS.md#strategy-engine-rebuild). The provenance-hypothesis lesson — LEARNINGS [#campaign-brief-merge-is-a-provenance-hypothesis](LEARNINGS.md#campaign-brief-merge-is-a-provenance-hypothesis). Consumed from QUEUED `#spec-interrogation-engine`.
+
+### `/brainstorm` ↔ gstack `spec` WHAT-interrogation seam — RESOLVED in favor of a standalone `/spec`  {#brainstorm-spec-interrogation-seam-resolved}
+
+**RESOLVED 2026-06-04** (`infiquetra-lifecycle` `0.17.0`, PR #TBD, squash #TBD). Was QUEUED P2 `#brainstorm-spec-interrogation-seam`.
+
+**Resolution.** Resolved in favor of **option (b)**: ship the **standalone `/spec`** as the single owner of relentless WHAT-rigor (five-Why, scope/MVP/out-of-scope/failure-mode lock, read-code-first grounding, quantify-everything), and keep `/brainstorm` as the **divergent-exploration** engine. Option (a) — folding the WHAT-interrogation rigor into `/brainstorm` — was rejected: the relentless ambiguity-killing lands in exactly one place (the convergent `/spec`), and `/brainstorm` stays divergent. The two are wired, not merged: `/brainstorm`'s Phase-4 handoff menu now offers **Sharpen with `/spec`** (divergent `/brainstorm` → convergent `/spec`).
+
+**Why this won.** The seam was named in the `/plan` rebuild — `/plan` took only gstack `spec`'s HOW-interrogation and left the WHAT-rigor upstream with a one-way bounce to `/brainstorm`, but that WHAT-rigor had no settled owner. Giving it a distinct command keeps each Think-phase engine at one altitude (divergent exploration vs convergent precision) instead of overloading `/brainstorm` with two competing jobs. The boundary is principled: the **WHAT vs HOW** axis splits `/spec` from `/plan`; the **divergent vs convergent** axis splits `/brainstorm` from `/spec`.
+
+**Refs.** DECISIONS [#spec-interrogation-engine-rebuild](DECISIONS.md#spec-interrogation-engine-rebuild) (decision d), [#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild) (where the seam was named). The shipped engine — ARCHIVE [#spec-interrogation-engine-shipped](#spec-interrogation-engine-shipped). Consumed from QUEUED `#brainstorm-spec-interrogation-seam`.
+
 ### `/investigate` — the systematic-debugging engine (CE `ce-debug` spine + gstack `investigate` grafts + superpowers borrow, diagnosis-primary, saga read-only, full `/qa` rewire)  {#investigate-systematic-debugging-engine-shipped}
 
 **SHIPPED 2026-06-04** (`infiquetra-lifecycle` `0.16.0`, PR #193, squash 5079d8f). Was QUEUED P1 `#investigate-systematic-debugging-engine`.

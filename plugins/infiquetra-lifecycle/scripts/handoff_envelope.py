@@ -14,6 +14,7 @@ STATE_DIR = Path(".claude/infiquetra-lifecycle")
 SOURCE_DIRS = (
     Path("docs/plans"),
     Path("docs/brainstorms"),
+    Path("docs/specs"),
     Path("docs/ideation"),
     Path("docs/reviews"),
     Path("docs/work-sessions"),
@@ -25,6 +26,10 @@ def infer_maturity(source: str) -> str:
     if "docs/ideation/" in normalized:
         return "idea-ready"
     if "docs/brainstorms/" in normalized:
+        return "requirements-ready"
+    if "docs/specs/" in normalized:
+        # A spec is a sharp WHAT, NOT plan-ready. This equals the final default below and
+        # is set for consistency with the other SOURCE_DIRS entries, not a behavior change.
         return "requirements-ready"
     if "docs/plans/" in normalized or "docs/reviews/" in normalized:
         return "plan-ready"
@@ -45,6 +50,7 @@ def infer_lifecycle_phase(source: str) -> str:
         return "review"
     if "docs/work-sessions/" in normalized or normalized.startswith("branch:"):
         return "work"
+    # docs/specs/ is off-chain (/spec) — no lifecycle phase; maturity is set in infer_maturity.
     return "unknown"
 
 

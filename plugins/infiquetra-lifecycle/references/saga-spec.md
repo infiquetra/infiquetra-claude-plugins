@@ -190,6 +190,12 @@ historical `status`↔`phase_status` ambiguity.
 
 Fallback for any unmapped value: `requirements-ready` (matches `handoff_envelope.infer_maturity`'s default).
 
+**Off-chain doc-path note (`/spec`).** A `docs/specs/` artifact (off-chain `/spec`) is not on the saga
+chain: `handoff_envelope.infer_lifecycle_phase` returns `"unknown"` for it (no `spec` member is added to
+`LIFECYCLE_PHASES`), and `infer_maturity` maps `docs/specs/` → `requirements-ready` directly (a sharp
+WHAT — equals the unmapped fallback, set explicitly for consistency). A spec hands off as
+`requirements-ready` with `lifecycle_phase: unknown`.
+
 ### 3.4 Concrete example envelope
 
 `sagas/issue-42/20260602-141233.md`:

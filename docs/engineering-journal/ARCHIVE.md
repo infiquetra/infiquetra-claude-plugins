@@ -12,7 +12,7 @@
 
 ### `/qa` rebuild — the gate-only acceptance-evidence engine (gstack `/qa`+`/qa-only` merge + ce-debug graft, severity-banded verdict + ported deterministic health score, saga qa-track consumer)  {#qa-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.13.0`, PR #TBD, squash TBD). Was QUEUED P1 `#rebuild-qa-engine-testing-vs-qa-boundary`.
+**SHIPPED 2026-06-03** (`infiquetra-lifecycle` `0.13.0`, PR #187, squash fb2c1b3). Was QUEUED P1 `#rebuild-qa-engine-testing-vs-qa-boundary`.
 
 **Summary.** Eighth **command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`). Rebuilt `/qa` from a 19-line stub into the lifecycle's **gate-only acceptance-evidence engine** — the gate downstream of `/work` + `/code-review` answering "does the shipped thing actually work?". A **real two-engine merge** against the **cloned** gstack source (`/qa` + `/qa-only` + `/investigate`) plus a CE `ce-debug` graft (not a phantom — gstack was absent from the install cache, then cloned from GitHub; LEARNINGS [#source-fidelity-cuts-both-ways](LEARNINGS.md#source-fidelity-cuts-both-ways)). Adopts gstack's own report-only `/qa-only` model: tests, gathers evidence, assigns severity, derives a ship verdict, computes a deterministic health score (PORTED from gstack), advances the saga qa-track on pass, and routes — but **never fixes, commits, pushes, opens/merges a PR, deploys, files SDLC issues, or sets readiness labels**. Schema, the four interview answers, and rejected alternatives recorded in DECISIONS [#qa-engine-rebuild](DECISIONS.md#qa-engine-rebuild).
 

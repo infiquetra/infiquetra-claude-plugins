@@ -31,7 +31,7 @@
   loop-toward-target); `operator-choice.md` `/optimize` row "at its rebuild" → "now, offers";
   README `/optimize` command-summary line tightened to the bounded-experiment loop + 8 metric
   classes. Dispatch-table command count stays **17** (`/optimize` was already counted).
-- Documented in the engineering journal (PR #TBD): DECISIONS `#optimize-engine-rebuild`, ARCHIVE
+- Documented in the engineering journal (PR #197): DECISIONS `#optimize-engine-rebuild`, ARCHIVE
   `#optimize-engine-rebuild-shipped` + the campaign-complete capstone (closes
   `#lifecycle-engine-merge-campaign`), LEARNINGS `#shipped-on-origin-not-in-stale-local-tree` +
   the third firing of `#campaign-brief-merge-is-a-provenance-hypothesis`; consumed
@@ -80,7 +80,7 @@
   Two deferral closures: `operator-choice.md` `/spec` row "at its rebuild" → "never offers";
   office-hours `frame-diagnostic.md` `/spec` moved from "campaign-queued" to an active routing-rubric
   row.
-- Documented in the engineering journal (PR #TBD): DECISIONS
+- Documented in the engineering journal (PR #195): DECISIONS
   `#spec-interrogation-engine-rebuild`, ARCHIVE `#spec-interrogation-engine-shipped` +
   `#brainstorm-spec-interrogation-seam-resolved`, LEARNINGS
   `#campaign-brief-merge-is-a-provenance-hypothesis`; consumed both `#spec-interrogation-engine` and

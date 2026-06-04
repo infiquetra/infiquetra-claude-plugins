@@ -24,7 +24,7 @@
 
 ## 2026-06-04
 
-### Rebuild `/optimize` as the lifecycle's metric-driven optimization engine — CE `ce-optimize` SINGLE-SOURCE port + infiquetra-native agent-usability metric class (NOT a merge), off-chain, saga UNTOUCHED (PR #TBD)  {#optimize-engine-rebuild}
+### Rebuild `/optimize` as the lifecycle's metric-driven optimization engine — CE `ce-optimize` SINGLE-SOURCE port + infiquetra-native agent-usability metric class (NOT a merge), off-chain, saga UNTOUCHED (PR #197, squash d00a506)  {#optimize-engine-rebuild}
 
 **Decision.** Rebuild `/optimize` from a 20-line stub into a **metric-driven optimization engine** — the **thirteenth and FINAL command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`, `/investigate`, `/spec`). It runs a **bounded-experiment loop** toward a measurable target: pick a metric, baseline it, hypothesize, run a bounded experiment, measure the delta, keep or discard, repeat until the target is hit or the budget is spent. The five settled interview answers:
 

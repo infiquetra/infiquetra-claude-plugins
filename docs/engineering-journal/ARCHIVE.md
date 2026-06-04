@@ -12,7 +12,7 @@
 
 ### `/optimize` — the metric-driven optimization engine (CE `ce-optimize` single-source port + infiquetra-native agent-usability metric class, NOT a merge, off-chain, saga UNTOUCHED) — and the engine-merge campaign CAPSTONE  {#optimize-engine-rebuild-shipped}
 
-**SHIPPED 2026-06-04** (`infiquetra-lifecycle` `0.18.0`, PR #TBD, squash #TBD). Was QUEUED `#optimize-engine-merge`.
+**SHIPPED 2026-06-04** (`infiquetra-lifecycle` `0.18.0`, PR #197, squash d00a506). Was QUEUED `#optimize-engine-merge`.
 
 **Summary.** Thirteenth and **FINAL command** rebuild of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`, `/qa`, `/strategy`, `/retro`, `/investigate`, `/spec`). Rebuilt `/optimize` from a 20-line stub into the lifecycle's **metric-driven optimization engine** — a **bounded-experiment loop** toward a measurable target: pick a metric, baseline, hypothesize, run a bounded experiment, measure the delta, keep or discard, repeat until the target is hit or the budget is spent. A **CE `ce-optimize` SINGLE-SOURCE PORT** (NOT a merge); the agent-usability metric class is an infiquetra-native angle. Off-chain, saga-UNTOUCHED; the run is recorded narratively. The five settled Qs, decisions a–e, the honest single-source attribution, and rejected alternatives are recorded in DECISIONS [#optimize-engine-rebuild](DECISIONS.md#optimize-engine-rebuild).
 
@@ -32,7 +32,7 @@
 
 ### Engine-merge campaign — COMPLETE (all 13 command rebuilds shipped; `#lifecycle-engine-merge-campaign` closed)  {#lifecycle-engine-merge-campaign-complete}
 
-**COMPLETE 2026-06-04** (`infiquetra-lifecycle` `0.18.0`, PR #TBD, squash #TBD). Closes the campaign decision DECISIONS [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign).
+**COMPLETE 2026-06-04** (`infiquetra-lifecycle` `0.18.0`, PR #197, squash d00a506). Closes the campaign decision DECISIONS [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign).
 
 **What this closes.** The **command-rebuild** half of the engine-merge campaign is **done**: all **13 lifecycle commands** have been rebuilt from thin stubs (or adopted net-new) into self-contained infiquetra engines, each an interview-driven design settled 1-by-1:
 

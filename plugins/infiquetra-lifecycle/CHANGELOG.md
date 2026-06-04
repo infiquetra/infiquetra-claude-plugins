@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.13.0 - 2026-06-03
+
+- Rebuild `/qa` from a 19-line stub into the lifecycle's **gate-only acceptance-evidence engine** — the
+  **eighth command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`,
+  `/code-review`, `/founder-review`, `/work`, `/loop`, `/resume`). A **real two-engine merge** against
+  the cloned gstack source (`/qa` + `/qa-only` + `/investigate`) plus a CE `ce-debug` graft, **not** a
+  phantom port: `/qa` adopts gstack's own report-only `/qa-only` model — it tests, gathers evidence,
+  assigns severity, derives a verdict, and routes, but **never fixes, commits, pushes, opens/merges a
+  PR, or deploys**.
+- **Severity-banded verdict + a ported deterministic health score, reported alongside each other.** Each
+  finding carries critical / high / medium / low (with a documented ↔ P0-P3 cross-walk to `/code-review`);
+  pass/fail is stated per risk class and the overall ship verdict (`ship` / `ship-with-deferred` /
+  `no-ship`) is derived from the tier's blocking threshold — and that verdict is the gate decision. A new
+  deterministic scorer `scripts/qa_health_score.py` **ports gstack's Health Score Rubric**
+  (`scripts/resolvers/utility.ts:286-321`, injected as the `{{QA_METHODOLOGY}}` macro): gstack's deduction
+  values verbatim (critical -25 / high -15 / medium -8 / low -3) with documented infiquetra 9-way
+  ship-risk-class weights, re-normalized over the in-scope classes, plus a baseline-from-prior-report
+  delta. The 0-100 number is reported **alongside** the banded verdict, with the explicit caveat that its
+  inputs are LLM-assigned severities — so it is one signal, not the gate decision.
+- **Saga qa-track consumer — lands the deferred work→qa advance.** `/qa` `restore`s the work-thread
+  saga, writes `qa_paths`, and **on PASS advances `lifecycle_phase` from `work` to `qa`** — the advance
+  `/work` (0.10.0) explicitly deferred to this rebuild. On FAIL it keeps `lifecycle_phase=work` and
+  records evidence. Every flag already exists (`--lifecycle-phase qa`, `--qa-paths`, the `qa` phase) —
+  **zero `saga.py` edits**.
+- **Durable risk reference + falsifiable-prediction graft.** Ships a `references/risk-taxonomy.md`
+  (9-way risk router + per-class checklists + diff-aware file→class map + severity defs + the P0-P3
+  cross-walk; gstack's 7 web categories fold under behavior/browser as **one MCP-driven class**, a
+  graceful no-op off-UI) and `references/qa-report.md` (the report shape + ship-verdict derivation +
+  tier→blocking-threshold table). Grafts CE `ce-debug`'s **falsifiable-prediction** discipline: for
+  each uncertain-cause failure, state a prediction another path must also fail if the cause is real,
+  giving the routed fixer a head start.
+- **Merge-state failure routing.** PASS routes to `/handoff` or `/retro`; FAIL routes by merge state —
+  pre-merge to `/work` (re-enter the round-N loop), post-merge to `/handoff` (open a new defect
+  thread). `/investigate` is future-prose only (not on the dispatch-table's routable list). Routing
+  **reads** `loop/references/dispatch-table.md`, never restating it.
+- **One new script.** The Q2 final ports gstack's formula into `scripts/qa_health_score.py` (the scorer)
+  with an oracle test; otherwise `/qa` is a markdown engine (SKILL + 2 refs + command + the scorer +
+  tests), and `saga.py` is untouched. Also resolves the present-tense `docs/qa/` collision with the
+  `/optimize` stub (one-line `/optimize` → `docs/optimize/`).
+- Version bumps: plugin `0.13.0`, marketplace entry `0.13.0`. keywords stay at 10.
+
 ## 0.12.0 - 2026-06-03
 
 - Rebuild `/resume` from a 23-line "read committed docs first" doc into the lifecycle's **heavy

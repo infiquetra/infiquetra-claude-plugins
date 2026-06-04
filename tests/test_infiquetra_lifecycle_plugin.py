@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "infiquetra-lifecycle")
 
     assert plugin_json["name"] == "infiquetra-lifecycle"
-    assert plugin_json["version"] == "0.12.0"
+    assert plugin_json["version"] == "0.13.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/infiquetra-lifecycle"
     assert "lifecycle" in plugin_json["description"]
@@ -732,6 +732,245 @@ def test_resume_engine_merge_contract() -> None:
     # --- ref-floor: both reference files exist and carry real content (>= 60 lines). ---
     for ref in ("forensic-reconstruction.md", "session-forensics.md"):
         ref_path = resume / "references" / ref
+        assert ref_path.exists()
+        assert len(_read(ref_path).splitlines()) >= 60
+
+
+def test_qa_engine_merge_contract() -> None:
+    """Mechanism FLOORS for the rebuilt engine-merge /qa acceptance-evidence gate (0.13.0).
+
+    HONEST SCOPE: presence proves the contract was AUTHORED, not that runtime is mutation-free.
+    "Never fix / never commit / never deploy" is enforced only by Claude reading the prose at
+    runtime — the SKILL emits no runnable mutation command, but token presence cannot prove a
+    given run respects the boundary. These floors prove the SKILL/refs EMIT the runnable lines
+    the gate stands on (saga restore/advance, issue-progress with evidence, the diff mechanic),
+    that the gate-only boundary prose is present (and mutation verbs appear ONLY inside negation
+    windows, like /resume and /founder-review), that failures route by merge state, that the
+    ce-debug falsifiable-prediction graft is grafted, and that the 0-100 health score is the
+    deterministic gstack-formula PORT (via the runnable `qa_health_score.py` CLI) reported alongside
+    the banded verdict — a real score, not faked. A thin port of the prior 19-line stub (a 9-way
+    router + "store notes", no severity model / verdict / saga wiring / routing) fails these floors.
+
+    Tokens are taken from the actual E1-authored SKILL.md + its 2 references on disk.
+    """
+    qa = PLUGIN_ROOT / "skills" / "qa"
+    skill_doc = _read(qa / "SKILL.md")
+    risk_doc = _read(qa / "references" / "risk-taxonomy.md")
+    report_doc = _read(qa / "references" / "qa-report.md")
+    corpus = "\n".join((skill_doc, risk_doc, report_doc))
+
+    # --- MECHANISM FLOOR 1: the saga restore CLI (qa is a pure consumer — restore, never mint). ---
+    assert "saga.py restore --saga-id" in corpus, (
+        "the gate must restore the work-thread saga (`saga.py restore --saga-id`)"
+    )
+
+    # --- MECHANISM FLOOR 2: the qa-track ADVANCE write — a runnable `saga.py save` carrying the
+    # qa lifecycle phase AND --qa-paths. A bare "ticks the saga" mention cannot satisfy this; the
+    # block must carry both flags (the deferred work->qa advance /work left to this rebuild). ---
+    save_blocks = re.findall(r"saga\.py save.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL)
+    assert any(
+        "--lifecycle-phase qa" in block and "--qa-paths" in block for block in save_blocks
+    ), (
+        "the PASS tick must be a runnable `saga.py save` carrying --lifecycle-phase qa AND --qa-paths"
+    )
+    # The advance pins --phase to the restored integer (so --phase-status complete cannot advertise
+    # a phantom counter advance) and sets --phase-status complete.
+    assert any(
+        "--phase " in block and "--phase-status complete" in block for block in save_blocks
+    ), "the qa advance must pin --phase to the restored value and mark --phase-status complete"
+    # The never-mint guard must be pinned at the dangerous save call-site (not only in Phase 0.2),
+    # mirroring the shipped /code-review which states `saga.py save mints unconditionally` right at
+    # its save block: `saga.py save` mints an unknown id unconditionally, so the SKILL must reinforce
+    # the scan-first / never-mint guard near the qa-advance save block, not just upstream in restore.
+    assert "mints unconditionally" in skill_doc, (
+        "the SKILL must pin the never-mint guard at the save call-site "
+        "(`saga.py save` mints unconditionally — only tick when a saga was restored)"
+    )
+    save_idx = skill_doc.find("saga.py save")
+    mints_idx = skill_doc.find("mints unconditionally")
+    assert save_idx != -1 and mints_idx != -1 and abs(mints_idx - save_idx) <= 600, (
+        "the `mints unconditionally` never-mint caveat must sit next to the `saga.py save` block "
+        "(the /code-review call-site-guard pattern), not in a distant section"
+    )
+
+    # --- MECHANISM FLOOR 3: the issue-progress evidence emission with BOTH evidence flags. ---
+    progress_blocks = re.findall(
+        r"issue_progress\.py.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL
+    )
+    assert any(
+        "--checks-run" in block and "--evidence-link" in block for block in progress_blocks
+    ), "the gate must emit `issue_progress.py` with --checks-run AND --evidence-link"
+
+    # --- MECHANISM FLOOR 4: the diff-aware mechanic — merge-base + diff (reused from /code-review,
+    # fetch-first, two-dot to avoid the empty post-merge three-dot diff). ---
+    assert "git merge-base" in corpus, "the diff-aware scope must use `git merge-base`"
+    assert re.search(r"git diff[^\n]*DIFF_BASE", corpus), (
+        "the diff-aware scope must run `git diff` against the computed merge-base"
+    )
+
+    # --- MECHANISM FLOOR 5: the ce-debug falsifiable-PREDICTION graft (the distinct ce-debug
+    # import — the rest of evidence discipline already lives in /code-review principle 2). ---
+    assert "falsifiable prediction" in corpus.lower(), (
+        "the ce-debug falsifiable-prediction mechanic must be grafted"
+    )
+    assert "if this is the real cause" in corpus, (
+        "the prediction must be the concrete ce-debug shape ('if this is the real cause, X ...')"
+    )
+
+    # --- MECHANISM FLOOR 6: the 9-way risk router + browser-as-ONE-MCP-class fold. ---
+    nine_classes = (
+        "behavior",
+        "security",
+        "infra",
+        "API",
+        "deployment",
+        "data",
+        "docs",
+        "config",
+        "trivial",
+    )
+    for klass in nine_classes:
+        assert klass in risk_doc, f"risk class {klass!r} must be in the 9-way router"
+    # The gstack 7-web-categories fold: browser is ONE MCP-driven class under behavior, not a
+    # separate 7-category surface, and uses the installed MCP (no gstack $B/browse daemon).
+    assert "one MCP" in risk_doc or "ONE MCP" in risk_doc, (
+        "browser must fold into a single MCP-driven class (the gstack 7-category fold)"
+    )
+    assert "chrome-devtools" in risk_doc and "playwright" in risk_doc, (
+        "the browser class is driven by the installed chrome-devtools / playwright MCP"
+    )
+
+    # --- MECHANISM FLOOR 7: the SEVERITY-BANDED verdict (ship / ship-with-deferred / no-ship +
+    # critical/high/medium/low) AND the deterministic gstack-PORTED health score (re-added in
+    # 0.13.x: Jeff re-opened Q2 to port gstack's REAL formula, not invent one). ---
+    for verdict in ("ship-with-deferred", "no-ship"):
+        assert verdict in corpus, f"the ship verdict {verdict!r} must be named"
+    assert re.search(r"\bship\b", corpus), "the ship verdict 'ship' must be named"
+    for severity in ("critical", "high", "medium", "low"):
+        assert severity in corpus, f"severity band {severity!r} must be named"
+    # The P0-P3 cross-walk to /code-review is documented.
+    for prio in ("P0", "P1", "P2", "P3"):
+        assert prio in risk_doc, f"the severity <-> {prio} cross-walk must be documented"
+    # The deterministic scorer is wired: the SKILL emits a runnable `qa_health_score.py` CLI line
+    # carrying --findings-json, and the report ref documents the model. A bare "compute the score"
+    # mention cannot satisfy this — the runnable line must be present.
+    assert "qa_health_score.py" in skill_doc, (
+        "the SKILL must emit the runnable deterministic scorer `qa_health_score.py`"
+    )
+    assert "qa_health_score.py" in report_doc, (
+        "the report ref must carry the runnable `qa_health_score.py` line + the score model"
+    )
+    score_blocks = re.findall(r"qa_health_score\.py.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL)
+    assert any("--findings-json" in block for block in score_blocks), (
+        "the scorer invocation must pass --findings-json (the per-class severity counts)"
+    )
+    # Baseline-from-prior-report: the score is regression-aware via --baseline-score (read from the
+    # prior report the saga's qa_paths points at — no baseline.json, no saga field).
+    assert "--baseline-score" in corpus, (
+        "the scorer must support baseline-from-prior-report via --baseline-score"
+    )
+    assert "baseline" in skill_doc.lower() and "qa_paths" in skill_doc, (
+        "the SKILL must read the prior overall from the saga's qa_paths as the baseline"
+    )
+    # The score is reported alongside the verdict, with the honest LLM-assigned-inputs caveat (the
+    # score is a signal, the verdict is the gate decision).
+    assert "Health Score Rubric" in corpus or "Health Score" in corpus, (
+        "the health score must be named (the gstack-ported model)"
+    )
+    flat = re.sub(r"\s+", " ", corpus)
+    assert re.search(r"signal[^.]*?verdict|verdict[^.]*?(?:decision|gate)", flat, re.IGNORECASE), (
+        "the score is one signal; the verdict is the gate decision — both must be reported"
+    )
+
+    # --- MECHANISM FLOOR 8: gate-only negatives via POSITIVE-BOUNDARY-PROSE + NEGATION-WINDOW.
+    # The positive boundary prose (E1 bolds the NOT). ---
+    for negative in (
+        "does **NOT** fix",
+        "does **NOT** commit",
+        "does **NOT** push",
+        "does **NOT** deploy",
+    ):
+        assert negative in skill_doc, f"gate-only boundary prose {negative!r} must be present"
+    assert "merge a PR" in skill_doc and "does **NOT**" in skill_doc
+
+    # Negation-window: a FAITHFUL gate-only SKILL mentions mutation VERBS only inside "does NOT"
+    # clauses (the /resume + /founder-review pattern), so a flat token-absence assert would fail it.
+    # "push" is the unambiguous mutation verb here — it never appears as a benign noun in this
+    # corpus — so every "push" occurrence must sit inside a negation window. ("commit" is excluded
+    # from this window check because it doubles as the benign noun "merge commit"; the commit
+    # boundary is pinned by the positive prose above + the no-runnable-`git commit` assert below,
+    # exactly the founder-review pattern for a token that doubles as an innocent word.) ---
+    flat_skill = re.sub(r"\s+", " ", skill_doc)
+    for match in re.finditer(r"\bpushe?[sd]?\b", flat_skill, flags=re.IGNORECASE):
+        window = flat_skill[max(0, match.start() - 70) : match.start()]
+        assert re.search(r"\b(not|never|without|no)\b", window, flags=re.IGNORECASE), (
+            f"mutation verb 'push' must only appear inside a negation window, "
+            f"found positive use near: {flat_skill[match.start() - 50 : match.start() + 30]!r}"
+        )
+
+    # No runnable mutation command anywhere. `git add` appears ONLY inside "Never `git add`"
+    # negations, so pin the mechanism: no positive git-mutation / gh-PR-mutation invocation.
+    assert not re.search(r"(?<!Never )(?<!never )`?git commit", skill_doc)
+    assert "git push" not in skill_doc
+    assert "gh pr merge" not in skill_doc and "gh pr create" not in skill_doc
+    # Every `git add` occurrence is a "Never git add" negation (saga state is git-ignored).
+    for match in re.finditer(r"git add", flat):
+        window = flat[max(0, match.start() - 30) : match.start()]
+        assert re.search(r"\bNever\b", window), (
+            "any `git add` mention must be inside a 'Never git add' negation"
+        )
+
+    # --- MECHANISM FLOOR 9: MERGE-STATE FAILURE ROUTING — pre-merge -> /work, post-merge ->
+    # /handoff. /investigate is NOT on a runnable-route line (future prose only). ---
+    assert "Pre-merge" in skill_doc and "/work" in skill_doc, "pre-merge failure routes to /work"
+    assert "Post-merge" in skill_doc and "/handoff" in skill_doc, (
+        "post-merge failure routes to /handoff"
+    )
+    # /investigate is named only as future prose, never emitted as a runnable route. Assert it is
+    # not on a route-arrow / "route ... to /investigate" line, and that its mentions sit inside a
+    # not-yet / future / not-a-route window.
+    assert not re.search(r"(?:->|→|\broute[sd]?\b[^\n]*\bto\b)[^\n]*/investigate", skill_doc), (
+        "/investigate must NOT appear as a runnable route target"
+    )
+    flat_skill_inv = re.sub(r"\s+", " ", skill_doc)
+    for match in re.finditer(r"/investigate", flat_skill_inv):
+        window = flat_skill_inv[max(0, match.start() - 90) : match.start() + 90]
+        assert re.search(
+            r"\b(future|when .*?is built|until then|not a runnable route|never emit|not\b.*\broutable|own)\b",
+            window,
+            flags=re.IGNORECASE,
+        ), (
+            f"/investigate must appear only as future/non-route prose, "
+            f"found near: {flat_skill_inv[match.start() - 50 : match.start() + 50]!r}"
+        )
+    # PASS routes to /handoff or /retro (the clean-exit route).
+    assert "/handoff" in skill_doc and "/retro" in skill_doc
+
+    # --- MECHANISM FLOOR 10: dispatch-table is REFERENCED, never restated (one source of truth,
+    # no /qa<->/loop duplication). The path is cited; the table's own unique H1 title + lead
+    # sentence (which live ONLY in loop/references/dispatch-table.md) must NOT appear in the qa
+    # corpus. ---
+    assert "loop/references/dispatch-table.md" in skill_doc, (
+        "outbound routing must REFERENCE the dispatch-table by path"
+    )
+    assert "# Dispatch Table" not in corpus, (
+        "the dispatch-table H1 title must not be restated in /qa"
+    )
+    assert "The designed routing map for `/loop`" not in corpus
+
+    # --- MECHANISM FLOOR 11: own durable artifact dir (docs/qa/), no classifier collision. ---
+    assert "docs/qa/" in skill_doc and "docs/qa/" in report_doc
+
+    # --- Operator-choice citation at the plugin-root path + the 3 backend enums (large/parallel
+    # verification is OFFERED, never auto-spawned; generic agents only — no agents/ dir). ---
+    assert "references/operator-choice.md" in skill_doc
+    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+        assert backend in skill_doc
+    assert "Explore" in skill_doc and "Task" in skill_doc  # generic-agent dispatch
+
+    # --- ref-floor: both reference files exist and carry real content (>= 60 lines). ---
+    for ref in ("risk-taxonomy.md", "qa-report.md"):
+        ref_path = qa / "references" / ref
         assert ref_path.exists()
         assert len(_read(ref_path).splitlines()) >= 60
 

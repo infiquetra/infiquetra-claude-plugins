@@ -66,12 +66,14 @@ When `destination=nonprod-deploy`, the route after merge is `/qa` (ship-readines
 
 ## Advisory routing + the qa-deferral
 
-`/qa` is still a stub with **zero saga awareness** — it does not `restore`/`save`/advance
-`lifecycle_phase`. So on merge, `/work` sets `phase_status=complete` and `next_step="run /qa
-(ship-readiness)"` and routes to `/qa` **advisorily**, but **leaves `lifecycle_phase=work`**. It does
-**not** claim "/qa owns/advances the qa slot" as if wired — it isn't. The saga legitimately sits at `work`
-post-merge until the `/qa` rebuild lands the `qa` advance; `/handoff` deriving `resume-ready` for that
-state is correct (the thread *is* resume-ready-into-qa).
+`/qa` is now the shipped **gate-only** engine (0.13.0) and is the saga's qa-track consumer — it
+`restore`s the work-thread and, on a PASS verdict, advances `lifecycle_phase` `work`→`qa` (the advance
+this rebuild deferred to it). `/work`'s own behavior on merge is unchanged: it sets
+`phase_status=complete` and `next_step="run /qa (ship-readiness)"` and routes to `/qa` **advisorily**,
+but **leaves `lifecycle_phase=work`** — it does **not** claim "/qa owns/advances the qa slot" from inside
+`/work`; the advance happens when `/qa` actually runs and passes. The saga legitimately sits at `work`
+post-merge until `/qa` lands the advance; `/handoff` deriving `resume-ready` for that state is correct
+(the thread *is* resume-ready-into-qa).
 
 Likewise **`/resume` routing is advisory**. `/work`'s own Phase-0.4 re-entry (this file) is the
 load-bearing "come back later" mechanism — it does not depend on the `/resume` stub being rebuilt. A

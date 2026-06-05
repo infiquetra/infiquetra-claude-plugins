@@ -1,0 +1,522 @@
+# Saga Specification (saga)
+
+**Status:** canonical contract · **schema_version:** `1.0` · **plugin version:** 0.4.0
+**Engine:** [`scripts/saga.py`](../scripts/saga.py)
+**Audience:** the four execution-loop commands (`/plan`, `/work`, `/resume`, `/loop`) implement against this
+file when they are rebuilt. They MUST treat the field names, enum values, and operation semantics below as
+the single source of truth. If code and this document disagree, that is a bug in one of them — fix it, do
+not work around it.
+
+> The engine shipped as a primitive in 0.4.0 (unit tests + manual smoke) and is now **consumed**: `/plan`
+> (0.7.0) writes a plan saga via `save`, `/code-review` (0.8.0) is the first review-track consumer
+> (append-only/never-mint to an existing thread's `review_paths`), and `/work` (0.10.0) is the **primary
+> writer** — it `scan`s/`restore`s on re-entry and writes a tick per phase. `/resume` + `/loop` wiring
+> remains queued. This spec is the single source of truth those consumers implement against.
+
+---
+
+## 1. What a saga is
+
+A **saga** is the durable, resumable work-state envelope for **one thread of lifecycle work** — exactly one
+GitHub issue (`kind=issue`) or one ad-hoc task (`kind=task`). It is the spine that carries a single thread
+from idea through plan, work, review, QA, and retro across many sessions, machines, and rounds. A saga
+answers, from cold, three questions a resumer needs:
+
+1. **Where are we?** — `lifecycle_phase`, `phase`, `phase_status`, `round`.
+2. **What is the disposition?** — `status` (active / blocked / paused / handed-off / done / abandoned).
+3. **What is the single next move?** — `next_step` (the imperative resume anchor) + `## Remaining`.
+
+A saga is a **log of immutable ticks**. Each save appends a new timestamped envelope file; the
+newest-by-filename tick is the current state. Earlier ticks are immutable history. A derived
+`state.json` index summarizes all sagas for fast lookup, but it is rebuildable and never authoritative.
+
+### 1.1 Ownership boundary (a saga links, it does not own, another owner's state)
+
+A saga owns **only its own work-thread state**. Everything else it references by pointer. This is a hard
+directive boundary:
+
+| Owner | Owns | Saga holds |
+|---|---|---|
+| **mission-control** | the GitHub issue, its body, labels, project-board fields, comments | `issue_ref` pointer (`owner/repo#N`), cached scalars for offline display only |
+| **deploy** | deployment mutation, tag promotion, environment state | `destination` intent + `pr_refs`; never a deploy authority |
+| **engineering-journal** (`docs/engineering-journal/`) | the durable DECISIONS / LEARNINGS record | `journal_refs`, `adr_refs` pointers; `## Decisions` mirrors KTDs but the journal is canonical |
+| **git** | branch, commit, working tree | `branch`, `head_sha`, `last_commit_sha` cached for offline display only |
+
+A saga is **valid offline** (it reads no network to `restore`) but is **never the authority** for another
+owner's state. When a saga's cached scalar (e.g. a stale `branch`) disagrees with the owner, the owner wins.
+
+---
+
+## 2. Identity
+
+A saga's id is **derived** from `kind` + `id`, minted at birth, and **sticky** for the saga's whole life:
+
+```
+derive_saga_id("issue", "42")               -> "issue-42"
+derive_saga_id("task", "Saga Foundation!")  -> "task-saga-foundation"
+```
+
+- `issue-<N>` — `<N>` is the issue number verbatim.
+- `task-<slug>` — `<slug>` is `slugify(id)`: lowercase, alphanumeric runs hyphen-joined, empty -> `"saga"`.
+
+**`round` and `phase` are FIELDS, never part of identity.** A saga keeps one directory
+(`sagas/<saga_id>/`) across all rounds and phases; round/phase live in the frontmatter. This is the whole
+point of the unify: one stable home per thread, many ticks inside it.
+
+### 2.1 Adopted-issue cross-reference (`issue_ref` -> `saga_id`)
+
+A task-born saga that later gets a GitHub issue **keeps its `task-<slug>` id** (the id is sticky) and gains
+an `issue_ref` (`owner/repo#N`). Its directory name still says `task-…`, which would make it invisible to a
+"find by issue number" lookup. The derived index closes that gap: a reader resolves an issue number to a
+`saga_id` by scanning `state.json.sagas[*].issue_ref`, not by guessing the directory name.
+
+> **Consumer rule:** to find the saga for issue N, first try `derive_saga_id("issue", N)`; if that has no
+> directory, scan `state.json.sagas` for a `saga_id` whose `issue_ref` ends in `#N`. Do **not** rename the
+> directory to match the issue — the id is sticky.
+
+### 2.2 Collision guard (task-slug)
+
+Two different tasks can slugify to the same `task-<slug>` (e.g. "Saga Foundation" and "saga-foundation!").
+Before minting a brand-new saga at a `task-<slug>` directory that already exists, a consumer **MUST** check
+the existing latest tick:
+
+- **Same thread** (matching `issue_ref` / `created_at`, or the user confirms "resume this") -> reuse it
+  (append a tick). This is the common, correct case.
+- **Divergent thread** (different `issue_ref` / `created_at` and the user did not confirm resume) -> refuse
+  or warn; the consumer should disambiguate the slug (e.g. append a discriminator to `id` before deriving)
+  rather than silently fork an unrelated thread onto the same id.
+
+### 2.3 Slug-instability mitigation
+
+A task description that drifts ("Saga foundation" -> "Saga foundation engine") slugs to a different id and
+would mint a second saga for the same work. Mitigation is a **consumer convention**, not engine magic:
+`/plan` (and any creation path) **SHOULD `scan` first and offer "resume existing saga?"** before minting a
+new one. The engine cannot detect intent; the consumer must.
+
+---
+
+## 3. File format
+
+Each tick is a gstack-style envelope: **YAML frontmatter (machine fields) + a Markdown body (prose
+sections)**, stored at `sagas/<saga_id>/<YYYYMMDD-HHMMSS>.md`. `render_envelope` / `parse_envelope` are
+exact inverses and preserve unknown keys (§3.5).
+
+### 3.1 Frontmatter field table
+
+Rendered in this exact order (`FRONTMATTER_FIELDS`), then sorted `extra` keys. `req` = required to
+construct a `Saga` (no default); all others have the listed default.
+
+| Field | Type | Req | Default | Purpose |
+|---|---|---|---|---|
+| `schema_version` | str | — | `"1.0"` | Envelope schema version (§9). |
+| `saga_id` | str | ✅ | — | Sticky derived id (§2). |
+| `kind` | str | ✅ | — | `issue` or `task`. |
+| `id` | str | ✅ | — | Issue number (as str) or task slug source. |
+| `created_at` | str (ISO) | — | `""` | First tick's timestamp; sticky across ticks. |
+| `updated_at` | str (ISO) | — | `""` | This tick's timestamp (= save moment). |
+| `lifecycle_phase` | enum | — | `ideation` | CE-flow position (§4) — **MUST** be in `LIFECYCLE_PHASES`. |
+| `phase_status` | enum | — | `pending` | Phase completion (§4) — **MUST** be in `PHASE_STATUSES`. |
+| `status` | enum | — | `active` | Thread disposition (§4) — **MUST** be in `STATUSES`, **MUST NOT** be `pending`/`in_progress`. |
+| `next_step` | str | — | `""` | The one imperative resume anchor (top of `## Remaining`). |
+| `orchestration_mode` | enum | — | `inline` | How work runs — decision contract in `references/operator-choice.md`; **MUST** be in `ORCHESTRATION_MODES`. |
+| `orchestration_ref` | str | — | `""` | Pointer into the orchestration (team name, workflow id, …). |
+| `issue_ref` | str | — | `""` | `owner/repo#N` pointer; empty for plan-only / pre-issue work. |
+| `destination` | enum | — | `plan-only` | Routing intent — **MUST** be in `DESTINATIONS`. Mirrors `lifecycle_state`. |
+| `round` | int | — | `0` | Current PR/iteration round. |
+| `phase` | int | — | `0` | Current numeric phase within the work plan. |
+| `progress_pct` | int | — | `0` | Coarse progress (display only). |
+| `plan_path` | str | — | `""` | Pointer to the durable plan doc. |
+| `work_session_paths` | list[str] | — | snapshot | Pointers to `docs/work-sessions/` writeups. |
+| `review_paths` | list[str] | — | snapshot | Pointers to review docs. |
+| `qa_paths` | list[str] | — | snapshot | Pointers to QA docs. |
+| `branch` | str | — | `""` | Cached git branch (offline display; git is authority). |
+| `head_sha` | str | — | `""` | Cached short HEAD (offline display). |
+| `last_commit_sha` | str | — | `""` | Cached full HEAD (offline display). |
+| `files_modified` | list[str] | — | snapshot | Files touched this thread (display). |
+| `rounds_seen` | list[int] | — | snapshot | Every round number observed; drives `next_round` (§6). |
+| `next_round` | int | — | `1` | Derived: `max(rounds_seen)+1` else `1`. Set by `save`, not by caller. |
+| `pr_refs` | list[str] | — | snapshot | Pointers to PRs. |
+| `adr_refs` | list[str] | — | snapshot | `ADR-NNNN` pointers into the journal. |
+| `journal_refs` | list[str] | — | snapshot | Pointers to journal entries. |
+| `blockers` | str | — | `""` | Free-text blockers. |
+| `open_questions` | list[str] | — | snapshot | Outstanding questions (snapshot — see §6). |
+| `checks_run` | list[str] | — | snapshot | Tests / gates run (snapshot). |
+| `source` | str | — | `""` | Origin artifact path (e.g. `docs/plans/…`). |
+
+"snapshot" = list field with full-snapshot semantics (§6); defaults to the `ABSENT` sentinel in memory but
+is always a concrete list once persisted/parsed.
+
+**Body sections** (after the closing `---`), all free-form prose, all preserved on round-trip:
+
+| Heading | Saga field | Purpose |
+|---|---|---|
+| `## Summary` | `summary` | One-paragraph state of the thread. |
+| `## Decisions` | `decisions` | KTDs (key technical decisions) — mirrored to the journal, which is canonical. |
+| `## Remaining` | `remaining` | Outstanding work; **the top item equals `next_step`**. |
+| `## Notes / Tried` | `notes` | Scratchpad / tried-and-rejected notes. The parser also accepts `## Notes`. |
+
+### 3.2 The three stored axes + one derived (MUST rules)
+
+There are **three independent stored axes** and **one derived** value. Keeping them separate removes the
+historical `status`↔`phase_status` ambiguity.
+
+- **`lifecycle_phase`** — *where in the CE flow are we.* One of
+  `ideation | brainstorm | plan | review | work | qa | retro`. This is a **superset** of
+  `handoff_envelope.infer_lifecycle_phase` (which emits only
+  `ideation | brainstorm | plan | review | work | unknown`); saga **extends** it (adds `qa`, `retro`; never
+  emits `unknown`). It is the flow-position field — "have we ideated and brainstormed yet."
+  **MUST** be a member of `LIFECYCLE_PHASES`.
+- **`phase_status`** — *is the current numeric `phase` finished.* One of `pending | in_progress | complete`.
+  **Authoritative** for "is the phase done." Drives `next_phase` (§5). **MUST** be a member of
+  `PHASE_STATUSES`.
+- **`status`** — *thread disposition.* One of `active | blocked | paused | handed-off | done | abandoned`.
+  **MUST** be a member of `STATUSES`. **MUST NOT** ever take `pending` or `in_progress` — those values
+  belong exclusively to `phase_status`. A saga can be `phase_status=complete` while `status=active` (phase
+  done, thread still going) or `status=done` (thread finished).
+- **`maturity`** — **DERIVED, NEVER STORED.** Computed at `/handoff` time from `lifecycle_phase` via
+  `PHASE_TO_MATURITY`. No `maturity` key ever appears in frontmatter; any consumer that needs it derives it.
+
+### 3.3 `lifecycle_phase` -> `maturity` derivation (handoff only)
+
+| `lifecycle_phase` | derived `maturity` |
+|---|---|
+| `ideation` | `idea-ready` |
+| `brainstorm` | `requirements-ready` |
+| `plan` | `plan-ready` |
+| `review` | `plan-ready` |
+| `work` | `resume-ready` |
+| `qa` | `resume-ready` |
+| `retro` | `resume-ready` |
+
+Fallback for any unmapped value: `requirements-ready` (matches `handoff_envelope.infer_maturity`'s default).
+
+**Off-chain doc-path note (`/spec`).** A `docs/specs/` artifact (off-chain `/spec`) is not on the saga
+chain: `handoff_envelope.infer_lifecycle_phase` returns `"unknown"` for it (no `spec` member is added to
+`LIFECYCLE_PHASES`), and `infer_maturity` maps `docs/specs/` → `requirements-ready` directly (a sharp
+WHAT — equals the unmapped fallback, set explicitly for consistency). A spec hands off as
+`requirements-ready` with `lifecycle_phase: unknown`.
+
+### 3.4 Concrete example envelope
+
+`sagas/issue-42/20260602-141233.md`:
+
+```markdown
+---
+schema_version: "1.0"
+saga_id: issue-42
+kind: issue
+id: "42"
+created_at: "2026-06-02T14:05:10+00:00"
+updated_at: "2026-06-02T14:12:33+00:00"
+lifecycle_phase: work
+phase_status: in_progress
+status: active
+next_step: "wire /resume to call saga.restore"
+orchestration_mode: cc-workflows-ultracode
+orchestration_ref: "wf-saga-foundation"
+issue_ref: "infiquetra/infiquetra-claude-plugins#42"
+destination: pr
+round: 2
+phase: 3
+progress_pct: 60
+plan_path: docs/plans/2026-06-02-saga-foundation.md
+work_session_paths:
+  - docs/work-sessions/2026-06-02-saga-engine.md
+review_paths: []
+qa_paths: []
+branch: feature/saga-foundation
+head_sha: a1b2c3d
+last_commit_sha: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
+files_modified:
+  - plugins/saga/scripts/saga.py
+rounds_seen:
+  - 1
+  - 2
+next_round: 3
+pr_refs:
+  - infiquetra/infiquetra-claude-plugins#170
+adr_refs:
+  - ADR-0042
+journal_refs:
+  - "docs/engineering-journal/DECISIONS.md#saga-foundation"
+blockers: ""
+open_questions:
+  - "GC policy for old ticks?"
+checks_run:
+  - pytest
+  - ruff
+source: docs/plans/2026-06-02-saga-foundation.md
+---
+
+## Summary
+
+Saga engine built; wrappers + spec done. Mid-wiring of consumers.
+
+## Decisions
+
+Derived sticky id; append-only log + derived index; filename-as-order (never mtime).
+
+## Remaining
+
+wire /resume to call saga.restore
+then /work, /loop, /plan
+
+## Notes / Tried
+
+Considered minted UUID ids — rejected (not human-legible, no offline issue lookup).
+```
+
+### 3.5 Unknown-key preservation (`extra`)
+
+`parse_envelope` routes any frontmatter key it does not recognize into `Saga.extra`; `render_envelope`
+re-emits `extra` keys (sorted) after the known fields. A newer writer's field therefore survives a
+read-modify-write by an older reader — forward-compatible round-trip. Consumers **MUST NOT** strip `extra`.
+
+---
+
+## 4. Enum domains (authoritative)
+
+```python
+LIFECYCLE_PHASES   = ("ideation", "brainstorm", "plan", "review", "work", "qa", "retro")
+PHASE_STATUSES     = ("pending", "in_progress", "complete")
+STATUSES           = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
+DESTINATIONS       = ("plan-only", "pr", "merge", "nonprod-deploy")
+ORCHESTRATION_MODES= ("inline", "team-execution", "cc-workflows-ultracode")
+```
+
+`destination` mirrors `lifecycle_state.normalize_destination`'s canonical set — use that helper to normalize
+user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing.
+
+---
+
+## 5. Storage
+
+### 5.1 Three storage tiers
+
+```
+.claude/saga/          # git-ignored (.gitignore) — volatile local state
+├── sagas/                             # CANONICAL — append-only immutable envelope log
+│   ├── issue-42/
+│   │   ├── 20260602-140510.md         # tick 1
+│   │   └── 20260602-141233.md         # tick 2 — newest FILENAME = current state
+│   └── task-saga-foundation/
+│       └── 20260602-093000.md
+├── state.json                         # DERIVED index (rebuildable from a scan; never authoritative)
+└── checkpoints/                       # LEGACY (pre-0.4.0) — scan reads as low-priority fallback, 1 version
+```
+
+- **`sagas/` is canonical.** Each tick is immutable; `save` never overwrites a tick, it appends a new one.
+- **`state.json` is derived** (§5.4). If it is missing or corrupt, that is **non-fatal**: `scan` rebuilds
+  the picture from `sagas/`, and the next `save` rewrites a valid index.
+- **`checkpoints/` is legacy.** Pre-0.4.0 per-phase checkpoint files (`{kind}-{id}[-round-N]-phaseM[-status].md`).
+  `scan` reads them as **flagged, low-priority fallback for one version** (§8), then they are dropped.
+
+### 5.2 Filename IS the order — never `mtime`
+
+Ticks are ordered **purely by filename string**, never by file modification time. The newest tick for a saga
+is `max(files, key=envelope_sort_key)`; `restore` reads exactly that file.
+
+> **Why filename, not mtime:** so that **rsync / backup / snapshot-restore** preserve tick order
+> deterministically. A copy tool can rewrite every file's mtime (e.g. all-equal on restore, or reordered),
+> which would silently corrupt an mtime-ordered scan. Filename order survives any byte-faithful copy.
+>
+> **This is NOT about git worktrees.** Git worktrees do not copy git-ignored files at all, so saga state
+> created in a worktree lives only in that worktree's ignored `.claude/` and is discarded on cleanup — that
+> is expected, volatile dev state. The filename-order win is the rsync/backup case, not the worktree case.
+
+### 5.3 Scan ordering + collision
+
+- Filename pattern: `^(?P<ts>\d{8}-\d{6})(?:-(?P<seq>\d+))?\.md$` (`YYYYMMDD-HHMMSS` + optional `-N`).
+- **Same-second collision** -> the writer appends `-1`, `-2`, … . The sort key is
+  `envelope_sort_key(name) = (ts, seq)` where the base tick `<ts>.md` is `seq=0` and `<ts>-N.md` is `seq=N`.
+  This guarantees the suffixed file sorts **after** its base (a naive string compare would wrongly place
+  `<ts>-1.md` before `<ts>.md` because `-` < `.`). Ordering is still derived entirely from the filename.
+- `scan` returns **one candidate per saga** (the latest tick of each), `sagas/` candidates **newest-first**
+  by `envelope_sort_key`, then legacy checkpoints appended after (so live sagas always rank above legacy).
+- Non-matching files and non-directory entries are skipped silently.
+
+### 5.4 `state.json` shape (derived index)
+
+```json
+{
+  "last_updated": "<iso>",
+  "active_saga_id": "<saga_id>",
+  "sagas": {
+    "<saga_id>": {
+      "saga_id", "kind", "id", "lifecycle_phase", "phase_status", "status",
+      "phase", "round", "next_phase", "next_round", "destination",
+      "issue_ref", "plan_path", "next_step", "updated_at"
+    }
+  },
+  "current_work": {
+    "kind", "id", "round", "phase", "phase_status", "destination",
+    "plan_path", "work_session_path", "next_steps": ["<next_step>"], "saga_id"
+  }
+}
+```
+
+- `sagas` is a per-saga summary map (one entry per known saga).
+- `current_work` mirrors the **most-recently-saved** saga, **carries its `saga_id`**, and keeps the legacy
+  key set (`plan_path`, `work_session_path`, `next_steps`) **UNCHANGED** — `handoff_envelope.py` and its
+  test read `current_work.plan_path` / `current_work.work_session_path`, so those keys MUST stay stable.
+  `work_session_path` = the first entry of `work_session_paths` (or `""`).
+
+---
+
+## 6. List merge semantics — full snapshot, never union
+
+A tick is a **full snapshot**, so list fields use snapshot-replace semantics at `save` time. There are
+three distinguishable input states (the `ABSENT` sentinel distinguishes "carry forward" from "clear"):
+
+| Incoming list value | Result in the new tick |
+|---|---|
+| **Populated** `[a, b]` | **REPLACE** — the new tick's list is exactly `[a, b]` (prior list discarded). |
+| **Empty** `[]` | **CLEAR** — the new tick's list is `[]`. |
+| **`ABSENT`** (omitted) | **CARRY FORWARD** — copy the prior tick's list verbatim (or `[]` for a new saga). |
+
+**Never union.** Union-only lists accumulate stale `open_questions` and `files_modified` that mislead a cold
+resume; snapshot semantics let a resume payload **shrink** (e.g. an `open_question` that got answered drops
+off the next tick). A persisted/parsed tick always holds **concrete** lists (never `ABSENT`).
+
+**Scalar carry-forward:** a scalar field left at its dataclass default in the incoming saga inherits the
+prior tick's value. To *clear* a scalar you must pass a non-default sentinel value explicitly (e.g. `" "`),
+since the default and "unset" are indistinguishable for scalars. `created_at` is sticky from the first tick;
+`updated_at` is always the save moment; `next_round` is recomputed (§6.1).
+
+### 6.1 Derived-at-save fields
+
+- `next_round = max(rounds_seen) + 1` (or `1` if `rounds_seen` is empty). The caller MUST NOT set it.
+- `next_phase = phase + 1 if phase_status == "complete" else phase`. Returned by `save`, surfaced in
+  `scan` candidates and `state.json` summaries.
+- `branch` / `head_sha` / `last_commit_sha` — if left empty, `save` fills them from a **guarded** git probe
+  (`current_git_state`); any git failure yields empty strings (never raises). `restore` never probes git.
+
+---
+
+## 7. Operation contract (`save` / `restore` / `scan`)
+
+| Op | Reads | Writes | Subprocess? | Notes |
+|---|---|---|---|---|
+| `save(root, saga, *, now=, runner=)` | latest prior tick (`restore`) | new immutable tick + `state.json` | yes (guarded git) | merges (§6); returns `{saga_id, envelope_path, state_path, phase, status, next_phase, next_round}`. |
+| `restore(root, saga_id)` | latest tick by filename | — | **no** | cold, branch-agnostic; `None` if no tick. NEVER calls git/subprocess. |
+| `scan(root, *, max_candidates=)` | latest tick per saga + legacy | — | no | one candidate/saga, newest-first, legacy appended + flagged. |
+| `update_index(root, saga, *, now=)` | existing `state.json` | `state.json` | no | atomic temp+rename; corrupt prior index rebuilt. |
+| `latest_envelope_for(root, saga_id)` | tick filenames | — | no | the newest tick `Path` by `envelope_sort_key`, or `None`. |
+| `aggregate_context(root, owner, repo, issue, *, runner=)` | saga + `gh` PRs + journal | — | yes (guarded `gh`) | missing `gh` no-raises -> empty PR list. |
+
+### 7.1 Atomicity + best-effort index
+
+`update_index` writes via **temp file + `os.replace`** (atomic on POSIX), so a reader never sees a
+half-written `state.json`. The index is nonetheless **best-effort / racy** under concurrent writers: two
+sessions saving different sagas can clobber each other's `current_work` (last writer wins). That is
+acceptable because:
+
+- `current_work` is rebuildable (re-save the saga, or read it from `sagas/` directly), and
+- `scan` (reading `sagas/`) — not `state.json` — is the **source of truth** for "what work exists."
+
+A reader that needs the authoritative current state of saga X MUST `restore(root, X)` (read the canonical
+log), not trust `state.json.current_work`.
+
+### 7.2 Cold-resume / branch-agnostic
+
+`restore` reads only the envelope (frontmatter + body). It does **not** consult git, the network, or the
+current checkout, so a saga restores **identically on any branch or machine** that has the `sagas/`
+directory. (The cached `branch`/`head_sha` may be stale — that is fine, git is the authority for those.)
+
+---
+
+## 8. Migration (pre-0.4.0 -> 0.4.0)
+
+- **Format change:** checkpoints moved from flat `checkpoints/{kind}-{id}[-round-N]-phaseM[-status].md`
+  (overwrite-in-place, mtime-ordered) to `sagas/<saga_id>/<YYYYMMDD-HHMMSS>.md` (append-only,
+  filename-ordered).
+- **No automatic data migration.** Old `checkpoints/` files are **read by `scan` as flagged, low-priority
+  fallback for one version** (each carries `legacy: true` and a reduced key set), then support is dropped.
+- **Upgrade warning:** complete any in-flight loop on the legacy format **before** upgrading. A loop that
+  spans the upgrade should re-save through `saga.save` to materialize a `sagas/` entry; otherwise its state
+  lives only in `checkpoints/` and survives just one more version of `scan`.
+
+---
+
+## 9. Versioning
+
+- **`schema_version`** (currently `"1.0"`) is a frontmatter field stamped on every tick. Bump it on any
+  breaking change to field meaning or layout. Readers SHOULD tolerate a higher `schema_version` they do not
+  fully understand by relying on `extra` round-trip (§3.5) rather than dropping unknown keys.
+- **Additive evolution** (new optional frontmatter field) does **not** require a `schema_version` bump: the
+  `extra` mechanism preserves it across older readers, and adding a field with a default keeps old envelopes
+  parseable.
+- The plugin's own SemVer (`plugin.json` / `marketplace.json`) tracks the capability; `schema_version`
+  tracks the on-disk envelope contract. They move independently.
+
+---
+
+## 10. Link-vs-duplicate policy
+
+| Concept | Authority (owner) | Saga stores | Why |
+|---|---|---|---|
+| Issue body / labels / board | mission-control | `issue_ref` pointer | mission-control owns issue artifacts. |
+| Plan document | the plan doc | `plan_path` pointer | doc is canonical; saga points. |
+| Work-session / review / QA writeups | the docs | `work_session_paths` / `review_paths` / `qa_paths` | docs are canonical. |
+| PRs | GitHub | `pr_refs` pointers | GitHub is canonical. |
+| Decisions / ADRs / learnings | engineering-journal | `journal_refs` / `adr_refs` + `## Decisions` mirror | journal is canonical; `## Decisions` is a convenience mirror only. |
+| Branch / commit | git | `branch` / `head_sha` / `last_commit_sha` cache | git is canonical; cache is for offline display. |
+| Deployment | deploy | `destination` intent + `pr_refs` | deploy owns mutation. |
+
+**Rule:** cache tiny scalars for offline display, but **never** treat a cached value as authoritative when
+the owner is reachable. When in doubt, store a pointer, not a copy.
+
+---
+
+## 11. Consumer contract (rebuild targets)
+
+Each command below implements against this spec when rebuilt. None call the engine after the 0.4.0 PR —
+this table is the wiring contract for their own queued items.
+
+| Command | Reads | Writes (`save`) |
+|---|---|---|
+| **/plan** | `scan` (offer "resume existing?" before minting — §2.3) | `lifecycle_phase=plan`, `plan_path`, `destination`, `adr_refs`; `## Decisions` = KTDs. |
+| **/work** | `restore` (rehydrate `round`/`phase`/`checks_run`/`next_step`) | primary writer: per-phase ticks, round bump (`rounds_seen`), `checks_run`, `work_session_paths`, `issue_ref` adoption, `status=done` at completion. |
+| **/code-review** | the diff + `scan`/`restore` (the existing work-thread) | review-track consumer: appends `review_paths` (append-only, never mints); **never advances `lifecycle_phase`** (preserves it). |
+| **/qa** | `restore` (the work-thread) | qa-track consumer: writes `qa_paths`; on PASS advances `lifecycle_phase` `work`→`qa`; on FAIL keeps `lifecycle_phase=work`. Never mints. |
+| **/resume** | `restore` (cold reconstruction) + `scan` (candidate list) | routes to `/work` or `/handoff`; may save a `status=paused`/`active` re-entry tick. |
+| **/loop** | `scan` at start (offer resume) | creation tick + a tick per routing decision; `status=handed-off` when routing to `/handoff`. |
+
+`/handoff` derives `maturity` from `lifecycle_phase` (§3.3) at handoff time; it does not read a stored
+`maturity` because there isn't one.
+
+---
+
+## 12. Edge cases (MUST / SHOULD)
+
+- **MUST** keep `status` out of the `phase_status` domain (no `pending`/`in_progress` in `status`) and vice
+  versa.
+- **MUST** treat a missing/corrupt `state.json` as non-fatal: `scan` rebuilds from `sagas/`.
+- **MUST** order ticks by filename (`envelope_sort_key`), never by `mtime` (§5.2).
+- **MUST** preserve unknown frontmatter keys via `extra` (§3.5) — never strip them on round-trip.
+- **MUST NOT** let `restore` shell out to git or the network (cold, branch-agnostic — §7.2).
+- **MUST** treat a missing `gh` as empty PR data in `aggregate_context`/`prior_prs`, never an exception (§7).
+- **SHOULD** `scan` and offer "resume existing?" before minting a new task saga (slug-instability — §2.3).
+- **SHOULD** guard task-slug collisions against an existing divergent saga before appending (§2.2).
+- **SHOULD** resolve issue->saga via `state.json.sagas[*].issue_ref` when the `issue-<N>` directory is
+  absent (adopted-issue case — §2.1).
+
+### 12.1 Append-only growth (deferred)
+
+Ticks accumulate; there is **no GC today**. A future `max_ticks` retention policy is the planned seam — it
+prunes oldest ticks while keeping the newest authoritative, so it is purely additive and needs **no schema
+change**. Until then, growth is bounded only by save frequency and is acceptable for the volatile,
+machine-local `.claude/` location.
+
+---
+
+## 13. References
+
+- Engine: [`../scripts/saga.py`](../scripts/saga.py)
+- Wrappers (delegate to the engine): `../scripts/scaffold_checkpoint.py`,
+  `../scripts/find_inflight_work.py`, `../scripts/load_saga_context.py`
+- Handoff maturity/phase inference (the source this spec extends):
+  `../scripts/handoff_envelope.py` (`infer_maturity`, `infer_lifecycle_phase`)
+- Destination normalization: `../scripts/lifecycle_state.py` (`normalize_destination`)
+- Design rationale (rejected alternatives, revisit conditions):
+  `../../../docs/engineering-journal/DECISIONS.md` (saga-foundation ADR)

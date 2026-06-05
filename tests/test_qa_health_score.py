@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SCRIPT = ROOT / "plugins" / "infiquetra-lifecycle" / "scripts" / "qa_health_score.py"
+SCRIPT = ROOT / "plugins" / "saga" / "scripts" / "qa_health_score.py"
 
 
 def _load():

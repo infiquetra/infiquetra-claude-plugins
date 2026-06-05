@@ -6,9 +6,27 @@
 >
 > **Append new entries to the top** within each section.
 
+> **Naming note (2026-06-05):** entries below name plugins by their original directory names; the work family was later renamed — `infiquetra-lifecycle`->`saga`, `sdlc-manager`->`mission-control`, `infiquetra-deploy`->`deploy`, and `blueprint-reviewer` was folded into `saga`.
+
 ---
 
 ## Shipped
+
+### Whole-family plugin rename — `saga` / `mission-control` / `deploy`, blueprint-reviewer folded into `saga`, command rebrand, dropped `infiquetra-` prefix (Phase 1 of a multi-repo migration)  {#plugin-family-rename-shipped}
+
+**SHIPPED 2026-06-05** (commit #TBD — post-merge SHA-fill). Implements DECISIONS [#plugin-family-rename-scheme-y](DECISIONS.md#plugin-family-rename-scheme-y).
+
+**Summary.** Renamed the lifecycle/SDLC/deploy plugin family to short functional names and folded `blueprint-reviewer` into `saga`. The directory renames: `infiquetra-lifecycle` -> **`saga`**, `sdlc-manager` -> **`mission-control`**, `infiquetra-deploy` -> **`deploy`**. `blueprint-reviewer` was **deleted as a standalone plugin** and its review engine folded into `saga` — the idea/spec/issue rubric libraries moved to `plugins/saga/references/rubrics/{idea,spec,issue}/{core,extras}/` and its reviewer script to `plugins/saga/scripts/lifecycle_review.py`. The three family plugins now share the marketplace **category `saga`**.
+
+**Command + skill rebrand.** The SDLC command/skill surface was rebranded off the `sdlc-` prefix: `/issue`, `/board`, `/metrics`, `/triage`, `/flow`, `/labels`, `/milestones` (plus `/rollout` for deploy). The legacy `/sdlc-create` compatibility alias was **dropped**. `blueprint-reviewer`'s commands fold under `saga`'s review surface.
+
+**Marketplace.** Dropping the `infiquetra-` prefix removed it from the 2-of-18 plugins that carried it (this family), bringing the marketplace to **17 plugins**, metadata bumped to **2.1.0**.
+
+**Kept on purpose (NOT renamed).** The SDLC-domain tokens are externally anchored to the `infiquetra-sdlc` repo and were intentionally retained: `config/sdlc-schema.json`, the `sdlc_manager.py` module filename, `agents/sdlc-operator.md`, `docs/sdlc-issue-drafts/`, and the `INFIQUETRA_SDLC_PATH` env var. Only directory prefixes + the command/skill brand changed; the SDLC vocabulary inside `mission-control` stayed put.
+
+**Coordinated multi-repo migration.** This repo is **Phase 1**. The rename ripples to dependent repos as **follow-on phases**: home-lab (consumes these plugins via the marketplace), the slimmed `infiquetra-antigravity-plugins` fork, dotfiles (any plugin-name references), and `infiquetra-sdlc` (the externally-anchored SDLC vocabulary source). Those phases are tracked separately and are NOT part of this PR.
+
+**Refs.** DECISIONS [#plugin-family-rename-scheme-y](DECISIONS.md#plugin-family-rename-scheme-y) (the scheme + rejected alternatives + kept-on-purpose rationale). The engine-merge campaign whose 13 rebuilds now live under `plugins/saga/` — DECISIONS [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign), ARCHIVE [#lifecycle-engine-merge-campaign-complete](#lifecycle-engine-merge-campaign-complete). Commit #TBD (post-merge SHA-fill).
 
 ### `/optimize` — the metric-driven optimization engine (CE `ce-optimize` single-source port + infiquetra-native agent-usability metric class, NOT a merge, off-chain, saga UNTOUCHED) — and the engine-merge campaign CAPSTONE  {#optimize-engine-rebuild-shipped}
 
@@ -154,7 +172,7 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 
 **Follow-ups.** `/investigate` (the deep root-cause debugging engine `/qa` routes failures to) remains QUEUED [#investigate-systematic-debugging-engine](QUEUED.md#investigate-systematic-debugging-engine) — the `/qa`↔`/investigate` boundary is now settled on the `/qa` side (gate-only, routes deep failures out). Post-merge follow-up fills the squash SHA into DECISIONS + this entry. `/retro`, `/strategy` remain the next likely rebuilds.
 
-**Refs.** DECISIONS [#qa-engine-rebuild](DECISIONS.md#qa-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Consumes the saga foundation as the qa-track consumer (zero edits) — DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation), spec `plugins/infiquetra-lifecycle/references/saga-spec.md` §11. Lands the advance deferred by — DECISIONS [#work-engine-rebuild](DECISIONS.md#work-engine-rebuild). Gate-only + no-`agents/`-dir + the diff mechanic from — DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild) (`skills/code-review/SKILL.md:164`). No-false-precision posture from — DECISIONS [#founder-review-engine-rebuild](DECISIONS.md#founder-review-engine-rebuild). Source-fidelity lesson — LEARNINGS [#source-fidelity-cuts-both-ways](LEARNINGS.md#source-fidelity-cuts-both-ways), counterpart to LEARNINGS [#brief-source-claim-phantom-artifact](LEARNINGS.md#brief-source-claim-phantom-artifact). Future debugging engine — QUEUED [#investigate-systematic-debugging-engine](QUEUED.md#investigate-systematic-debugging-engine).
+**Refs.** DECISIONS [#qa-engine-rebuild](DECISIONS.md#qa-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Consumes the saga foundation as the qa-track consumer (zero edits) — DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation), spec `plugins/saga/references/saga-spec.md` §11. Lands the advance deferred by — DECISIONS [#work-engine-rebuild](DECISIONS.md#work-engine-rebuild). Gate-only + no-`agents/`-dir + the diff mechanic from — DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild) (`skills/code-review/SKILL.md:164`). No-false-precision posture from — DECISIONS [#founder-review-engine-rebuild](DECISIONS.md#founder-review-engine-rebuild). Source-fidelity lesson — LEARNINGS [#source-fidelity-cuts-both-ways](LEARNINGS.md#source-fidelity-cuts-both-ways), counterpart to LEARNINGS [#brief-source-claim-phantom-artifact](LEARNINGS.md#brief-source-claim-phantom-artifact). Future debugging engine — QUEUED [#investigate-systematic-debugging-engine](QUEUED.md#investigate-systematic-debugging-engine).
 
 ### `/resume` rebuild — the lifecycle's heavy forensic reconstruction engine (Tier-1 saga all-ticks + Tier-2 CE `ce-sessions` port)  {#resume-engine-rebuild-shipped}
 
@@ -173,7 +191,7 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 
 **Follow-ups.** CE's keyword/branch relevance ranking (`extract-metadata.py`) was deferred — recency-MVP is enough until a no-saga Tier-2 forensic returns >5 candidate sessions and recency mis-ranks (QUEUED [#resume-session-relevance-ranking](QUEUED.md#resume-session-relevance-ranking)). Cross-machine (fresh-clone) recovery is out of Tier-2 scope today (same-machine only). Post-merge follow-up fills the squash SHA into DECISIONS + this entry. `/qa`, `/retro`, `/strategy` remain the next likely rebuilds.
 
-**Refs.** DECISIONS [#resume-engine-rebuild](DECISIONS.md#resume-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Consumes the saga foundation (adds the all-ticks `read_ticks` reader) — DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation), spec `plugins/infiquetra-lifecycle/references/saga-spec.md`. Heavy partner of the lightweight half — DECISIONS [#loop-engine-rebuild](DECISIONS.md#loop-engine-rebuild) (Q4, the split it deferred). Verification-cuts-both-ways counterpart — LEARNINGS [#brief-source-claim-phantom-artifact](LEARNINGS.md#brief-source-claim-phantom-artifact), [#resume-port-source-verified-true](LEARNINGS.md#resume-port-source-verified-true). Wrapper-wrong-layer learning — LEARNINGS [#wrapper-required-arg-wrong-layer](LEARNINGS.md#wrapper-required-arg-wrong-layer). No-`agents/`-dir convention — DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild) (`skills/code-review/SKILL.md:164`). Deferred relevance ranking — QUEUED [#resume-session-relevance-ranking](QUEUED.md#resume-session-relevance-ranking).
+**Refs.** DECISIONS [#resume-engine-rebuild](DECISIONS.md#resume-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Consumes the saga foundation (adds the all-ticks `read_ticks` reader) — DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation), spec `plugins/saga/references/saga-spec.md`. Heavy partner of the lightweight half — DECISIONS [#loop-engine-rebuild](DECISIONS.md#loop-engine-rebuild) (Q4, the split it deferred). Verification-cuts-both-ways counterpart — LEARNINGS [#brief-source-claim-phantom-artifact](LEARNINGS.md#brief-source-claim-phantom-artifact), [#resume-port-source-verified-true](LEARNINGS.md#resume-port-source-verified-true). Wrapper-wrong-layer learning — LEARNINGS [#wrapper-required-arg-wrong-layer](LEARNINGS.md#wrapper-required-arg-wrong-layer). No-`agents/`-dir convention — DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild) (`skills/code-review/SKILL.md:164`). Deferred relevance ranking — QUEUED [#resume-session-relevance-ranking](QUEUED.md#resume-session-relevance-ranking).
 
 ### `/loop` rebuild — the campaign's one NATIVE router engine (Route/Drive/Resume; no upstream port/merge)  {#loop-engine-rebuild-shipped}
 
@@ -198,7 +216,7 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 
 **Summary.** The cross-skill scan defect surfaced (not introduced) by the `/work` rebuild's adversarial review had **two** parts. **Defect 1 (scan match keys) — SHIPPED HERE:** `saga.py` `scan()` / `_saga_summary` exposed `saga_id`/`kind`/`id`/`round`/`phase`/`status`/`lifecycle_phase`/`next_step` but **not** the `issue_ref`/`plan_path`/`branch` match keys that `/code-review` Phase 5.1 (and a resuming `/loop`) say they match on — so a standalone matcher had to `restore` every candidate to read them, contradicting the prose. Fixed as a **purely additive** extension to both the `scan()` candidate dict and `_saga_summary` (all three match keys `issue_ref`/`plan_path`/`branch`, plus `destination` + the `orchestration_mode`/`orchestration_ref` pair the `/loop` picker needs), alongside the `/loop` rebuild — the first consumer that needs them. Asserted by `test_scan_exposes_picker_fields`. **Defect 2 (the `/code-review` Phase-5.4 programmatic-mode append contradiction) — NOT shipped here:** that is a `/code-review` SKILL change, out of scope for the `/loop` rebuild (which deliberately touched no other skill), and **REMAINS QUEUED** (re-scoped to Defect 2 only — QUEUED [#code-review-saga-scan-touchups](QUEUED.md#code-review-saga-scan-touchups)).
 
-**Refs.** Shipped with DECISIONS [#loop-engine-rebuild](DECISIONS.md#loop-engine-rebuild) / ARCHIVE [#loop-engine-rebuild-shipped](#loop-engine-rebuild-shipped). Surfaced by DECISIONS [#work-engine-rebuild](DECISIONS.md#work-engine-rebuild) (the forward-coupling residual) and [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild). Remaining Defect 2 — QUEUED [#code-review-saga-scan-touchups](QUEUED.md#code-review-saga-scan-touchups). Spec `plugins/infiquetra-lifecycle/references/saga-spec.md`.
+**Refs.** Shipped with DECISIONS [#loop-engine-rebuild](DECISIONS.md#loop-engine-rebuild) / ARCHIVE [#loop-engine-rebuild-shipped](#loop-engine-rebuild-shipped). Surfaced by DECISIONS [#work-engine-rebuild](DECISIONS.md#work-engine-rebuild) (the forward-coupling residual) and [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild). Remaining Defect 2 — QUEUED [#code-review-saga-scan-touchups](QUEUED.md#code-review-saga-scan-touchups). Spec `plugins/saga/references/saga-spec.md`.
 
 ### `/work` rebuild — CE `ce-work` execution engine + gstack `ship`/`land-and-deploy` (saga-primary-writer execution loop)  {#work-engine-rebuild-shipped}
 
@@ -221,7 +239,7 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 
 **Follow-ups.** gstack's canary-verify + offer-revert was **read-then-relocated** to `infiquetra-deploy` (a deliberate brief deviation, deploy/canary is deploy's hard boundary) — the capability is QUEUED there, worth-it-when a prod deploy path exists (QUEUED [#infiquetra-deploy-canary-verify-revert](QUEUED.md#infiquetra-deploy-canary-verify-revert)). The `qa` `lifecycle_phase` advance is honestly deferred to the `/qa` rebuild — the saga sits at `work` post-merge; `/qa`/`/resume` routing is advisory. Post-merge follow-up fills the squash SHA into DECISIONS + this entry. `/resume`, `/qa`, `/loop` remain the next likely rebuilds.
 
-**Refs.** DECISIONS [#work-engine-rebuild](DECISIONS.md#work-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Lands the deferred operator-choice helper — DECISIONS [#operator-choice-framework](DECISIONS.md#operator-choice-framework). Saga primary-writer — DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation), spec `plugins/infiquetra-lifecycle/references/saga-spec.md` §11. Forward-coupling partner — DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild). Relocated canary capability — QUEUED [#infiquetra-deploy-canary-verify-revert](QUEUED.md#infiquetra-deploy-canary-verify-revert). Work-session home: `docs/work-sessions/`. Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`.
+**Refs.** DECISIONS [#work-engine-rebuild](DECISIONS.md#work-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Lands the deferred operator-choice helper — DECISIONS [#operator-choice-framework](DECISIONS.md#operator-choice-framework). Saga primary-writer — DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation), spec `plugins/saga/references/saga-spec.md` §11. Forward-coupling partner — DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild). Relocated canary capability — QUEUED [#infiquetra-deploy-canary-verify-revert](QUEUED.md#infiquetra-deploy-canary-verify-revert). Work-session home: `docs/work-sessions/`. Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`.
 
 ### `/founder-review` rebuild — gstack `plan-ceo-review` port (scope/ambition review lens)  {#founder-review-engine-rebuild-shipped}
 
@@ -241,7 +259,7 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 
 **Follow-ups.** A standalone `/pulse` live-product telemetry component (CE `product-pulse` as the engine source) is QUEUED — worth-it-when Infiquetra has a live product with real telemetry; pre-revenue greenfield has no data yet (QUEUED [#pulse-live-telemetry-component](QUEUED.md#pulse-live-telemetry-component)). Post-merge follow-up fills the squash SHA into DECISIONS + this entry. `/work`→`/loop` (the execution-loop track, where the deferred operator-choice CLI helper lands) and `/qa` remain the next likely rebuilds.
 
-**Refs.** DECISIONS [#founder-review-engine-rebuild](DECISIONS.md#founder-review-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Sibling review-lens rebuild: [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild). Operator-choice contract: `plugins/infiquetra-lifecycle/references/operator-choice.md`. Queued `/pulse`: QUEUED [#pulse-live-telemetry-component](QUEUED.md#pulse-live-telemetry-component). Scope-decision home: `docs/founder-reviews/`. Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`.
+**Refs.** DECISIONS [#founder-review-engine-rebuild](DECISIONS.md#founder-review-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Sibling review-lens rebuild: [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild). Operator-choice contract: `plugins/saga/references/operator-choice.md`. Queued `/pulse`: QUEUED [#pulse-live-telemetry-component](QUEUED.md#pulse-live-telemetry-component). Scope-decision home: `docs/founder-reviews/`. Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`.
 
 ### `/code-review` rebuild — CE `ce-code-review` spine + gstack `/review` scope/plan audit  {#code-review-engine-rebuild-shipped}
 
@@ -261,7 +279,7 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 
 **Follow-ups.** The safe-autofix *apply* mode is a deliberate future add (gate-only ships first). The forward-coupling is now closed — the `/work` rebuild (SHIPPED 0.10.0) mints/advances + names the work-thread saga code-review appends to AND reads code-review's `review_paths`/blocked-status as a gate input — see [#work-engine-rebuild-shipped](#work-engine-rebuild-shipped). `/founder-review` was the next review-lens rebuild.
 
-**Refs.** DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Operator-choice contract: `plugins/infiquetra-lifecycle/references/operator-choice.md`. Saga foundation: DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation). Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`.
+**Refs.** DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Operator-choice contract: `plugins/saga/references/operator-choice.md`. Saga foundation: DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation). Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`.
 
 ### `/plan` rebuild — CE `ce-plan` artifact engine + gstack `spec` HOW-interrogation  {#plan-engine-rebuild-shipped}
 
@@ -282,7 +300,7 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 
 **Seam left queued.** The `/brainstorm` ↔ gstack `spec` WHAT-interrogation ownership seam (where the relentless WHAT-rigor lands — fold into `/brainstorm` vs the standalone `/spec`) is a deliberate downstream decision-point — see QUEUED [#brainstorm-spec-interrogation-seam](QUEUED.md#brainstorm-spec-interrogation-seam).
 
-**Refs.** DECISIONS [#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Operator-choice contract: `plugins/infiquetra-lifecycle/references/operator-choice.md`. Saga foundation: DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation).
+**Refs.** DECISIONS [#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Operator-choice contract: `plugins/saga/references/operator-choice.md`. Saga foundation: DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation).
 
 ### `/office-hours` rebuild — two-mode gstack diagnostic as the frame-finding front door  {#office-hours-engine-rebuild-shipped}
 
@@ -308,14 +326,14 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 **Scope — a consumed doc + two offer hooks (deliberate).** This ships the reference doc, the two prose offer hooks, and a `saga-spec` cross-reference fix. The CLI-backed `recommend_execution_backend()` helper is **DEFERRED to the `/work` rebuild**, where it gets a real caller — adding it now would create an uncallable helper that drifts against the doc (the verified state of the existing `should_offer_team_execution`, defined but never called outside its test). The originally-queued sizing was "M / no scripts"; this ship honors that.
 
 **What shipped.**
-- `plugins/infiquetra-lifecycle/references/operator-choice.md` — the decision contract (the three backend enum strings, when each is offered, the always-confirm posture, the capability gate, graceful fallback). Complements `references/saga-spec.md` (storage contract).
+- `plugins/saga/references/operator-choice.md` — the decision contract (the three backend enum strings, when each is offered, the always-confirm posture, the capability gate, graceful fallback). Complements `references/saga-spec.md` (storage contract).
 - Short prose offer hooks in `/loop` and `/work` SKILLs that cite the doc and inline the choices (referencing the brainstorm channel-inline convention — redis-channel sessions cannot call AskUserQuestion — rather than copying it).
 - `saga-spec.md` cross-reference fix tying `orchestration_mode` storage to the decision contract.
 - Version bumps: plugin `0.5.0`, marketplace entry `0.5.0`; CHANGELOG.
 
 **Consumers.** `/loop` and `/work` carry the offer hooks now; the other command rebuilds cite this doc as they land. The CLI-backed helper `recommend_execution_backend()` **SHIPPED with the `/work` rebuild** (0.10.0) — see [#work-engine-rebuild-shipped](#work-engine-rebuild-shipped), closing the deferral.
 
-**Refs.** DECISIONS [#operator-choice-framework](DECISIONS.md#operator-choice-framework), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Decision contract: `plugins/infiquetra-lifecycle/references/operator-choice.md`.
+**Refs.** DECISIONS [#operator-choice-framework](DECISIONS.md#operator-choice-framework), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Decision contract: `plugins/saga/references/operator-choice.md`.
 
 ### Saga foundation — durable, resumable work-state envelope (P0)  {#saga-foundation-shipped}
 
@@ -326,9 +344,9 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 **Scope — an unconsumed primitive (deliberate).** This ships the engine, the three legacy scripts refactored into thin wrappers, and the spec. **No command actually calls `restore`/`scan` after this PR** — consumer wiring is each consumer's own queued item. The new engine is validated by its own unit tests + manual smoke; the wrappers keep every legacy CLI flag and JSON key. The originally-queued sizing was "M / spec-only"; the user chose full-unify-now + characterize-first testing, making it realistically effort L — an accepted, deliberate growth, one PR not a doc.
 
 **What shipped.**
-- `plugins/infiquetra-lifecycle/scripts/saga.py` — the engine: derived `kind-id` (`issue-<N>`/`task-<slug>`, sticky), append-only `sagas/<saga_id>/<YYYYMMDD-HHMMSS>.md` envelope log (filename-as-order, never mtime), derived atomic `state.json` index, gstack frontmatter+body envelope, `save`/`restore`/`scan`/`context` ops with `root:Path` + `now`/`runner` injection.
+- `plugins/saga/scripts/saga.py` — the engine: derived `kind-id` (`issue-<N>`/`task-<slug>`, sticky), append-only `sagas/<saga_id>/<YYYYMMDD-HHMMSS>.md` envelope log (filename-as-order, never mtime), derived atomic `state.json` index, gstack frontmatter+body envelope, `save`/`restore`/`scan`/`context` ops with `root:Path` + `now`/`runner` injection.
 - The three legacy scripts (`scaffold_checkpoint.py`, `find_inflight_work.py`, `load_saga_context.py`) refactored into thin wrappers delegating to `saga.py` (zero CLI-flag/JSON-key removals).
-- `plugins/infiquetra-lifecycle/references/saga-spec.md` — the canonical contract (new plugin-level `references/` convention).
+- `plugins/saga/references/saga-spec.md` — the canonical contract (new plugin-level `references/` convention).
 - Tests `tests/test_infiquetra_lifecycle_saga.py` (characterize-first → intended-behavior); plugin-version + `saga.py`-existence updates in `tests/test_infiquetra_lifecycle_plugin.py`.
 - Version bumps: plugin `0.4.0`, marketplace entry `0.4.0`; CHANGELOG with the behavior-change + upgrade warning (complete in-flight loops before upgrading; legacy `checkpoints/` read as fallback for one version).
 

@@ -22,6 +22,28 @@
 
 ---
 
+## 2026-06-05
+
+### Whole-family plugin rename — Scheme Y: functional names + a shared `saga` category, drop the `infiquetra-` prefix, fold `blueprint-reviewer` into `saga` (commit #TBD)  {#plugin-family-rename-scheme-y}
+
+**Decision.** Rename the lifecycle/SDLC/deploy plugin family to short **functional names** and consolidate it under a shared marketplace **category `saga`** — "Scheme Y" of the rename options. The renames: `infiquetra-lifecycle` -> **`saga`**, `sdlc-manager` -> **`mission-control`**, `infiquetra-deploy` -> **`deploy`**. Drop the `infiquetra-` prefix (it was carried by only 2 of 18 plugins — this family — so prefix-consistency was never real). **Fold `blueprint-reviewer` into `saga`** rather than keeping it standalone: its idea/spec/issue rubric libraries move to `plugins/saga/references/rubrics/{idea,spec,issue}/{core,extras}/` and its reviewer script to `plugins/saga/scripts/lifecycle_review.py`. Rebrand the SDLC command/skill surface off the `sdlc-` prefix (`/issue`, `/board`, `/metrics`, `/triage`, `/flow`, `/labels`, `/milestones`, plus `/rollout` for deploy) and **drop the `/sdlc-create` compatibility alias**. Net marketplace: **17 plugins**, metadata **2.1.0**. This repo is **Phase 1** of a coordinated multi-repo migration.
+
+**Kept on purpose (NOT renamed).** The SDLC-domain tokens are **externally anchored to the `infiquetra-sdlc` repo** (its issue taxonomy / schema / vocabulary), so renaming them here would desync from the source of truth. Retained as-is: the `sdlc_manager.py` module filename, `config/sdlc-schema.json`, `agents/sdlc-operator.md`, `docs/sdlc-issue-drafts/`, and the `INFIQUETRA_SDLC_PATH` env var. The directory prefix + the user-facing command/skill brand changed; the SDLC vocabulary inside `mission-control` did not. Also kept separate on purpose: `team-execution` and `deploy` are **NOT vendored into `saga`** — they stay standalone plugins that `saga` routes to, preserving their own boundaries (validator/nonprod automation for team-execution; tag-promotion/deploy mutation for deploy).
+
+**Rejected alternatives.**
+- *Prefix-consistency (rename everything TO `infiquetra-*`).* REJECTED — only 2 of 18 plugins carried the prefix, so "consistency" meant adding noise to 16 plugins to match 2; dropping it from the 2 is the cheaper, cleaner direction.
+- *A `saga-*` sub-brand (`saga-lifecycle`, `saga-sdlc`, `saga-deploy`).* REJECTED — re-introduces a prefix we just removed and buries the functional name; the shared **category** `saga` groups the family in the marketplace without prefixing every name.
+- *Consolidate the whole family into one `saga` plugin.* REJECTED — collapses three distinct boundaries (lifecycle engine, SDLC issue/board ownership, deploy mutation) into one plugin, losing the ownership seams the engine-merge campaign deliberately preserved; `mission-control` and `deploy` stay separate.
+- *Descope to a `saga`-only rename (the DA's recommendation — leave `sdlc-manager` + `infiquetra-deploy` alone).* REJECTED — **Jeff overrode** the devil's-advocate descope: the family reads as one unit, so a half-rename (rename lifecycle, leave the prefix on deploy + the `sdlc-` brand on the SDLC commands) would leave the inconsistency the rename exists to fix. Whole-family in Phase 1.
+
+**Rationale.** The lifecycle plugin's 13-command engine-merge campaign made `infiquetra-lifecycle` the spine of a tightly-coupled trio (lifecycle routes to SDLC handoff and to deploy). Short functional names (`saga` / `mission-control` / `deploy`) + a shared `saga` category make the family legible at a glance; the `infiquetra-` prefix added length without grouping value (2 of 18). Folding `blueprint-reviewer` in removes a fourth plugin whose rubric-based review is squarely lifecycle review work — it belongs under `saga`, not beside it. The SDLC tokens stay because they answer to an external contract (`infiquetra-sdlc`), and team-execution/deploy stay standalone because their boundaries are real, not cosmetic.
+
+**Revisit when.** A fourth repo consumes these plugins and the short names collide with another `saga`/`deploy` in its namespace (revisit prefixing); OR `infiquetra-sdlc` itself renames its SDLC vocabulary (re-sync the kept-on-purpose tokens then); OR the `mission-control`/`deploy` boundaries stop earning their separateness (revisit the consolidation rejection). The follow-on migration phases (home-lab, the antigravity fork, dotfiles, infiquetra-sdlc) each have their own revisit triggers tracked with that phase.
+
+**Refs.** Ship record: ARCHIVE [#plugin-family-rename-shipped](ARCHIVE.md#plugin-family-rename-shipped). The campaign whose engine now lives under `plugins/saga/` — [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign), ARCHIVE [#lifecycle-engine-merge-campaign-complete](ARCHIVE.md#lifecycle-engine-merge-campaign-complete). Commit #TBD (post-merge SHA-fill).
+
+---
+
 ## 2026-06-04
 
 ### Rebuild `/optimize` as the lifecycle's metric-driven optimization engine — CE `ce-optimize` SINGLE-SOURCE port + infiquetra-native agent-usability metric class (NOT a merge), off-chain, saga UNTOUCHED (PR #197, squash d00a506)  {#optimize-engine-rebuild}
@@ -210,7 +232,7 @@ The five decisions a–e:
 
 **Revisit when.** `/investigate` ships (then deep post-merge failures route there for root-cause work instead of `/handoff`); a real UI product makes the browser class high-frequency enough to warrant more than one MCP-driven check; or a health signal becomes available whose **inputs** are deterministically measured (not LLM-assigned counts) and genuinely additive over the banded verdict (revisit the dropped score — gstack's formula is real, but only re-adopt a number when its inputs are measured, not eyeballed).
 
-**Refs.** Plugin `0.13.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Consumes the saga foundation as the qa-track consumer (zero edits) — [#saga-schema-foundation](#saga-schema-foundation), spec `plugins/infiquetra-lifecycle/references/saga-spec.md` §11. Lands the advance deferred by — [#work-engine-rebuild](#work-engine-rebuild) (`work/SKILL.md:354`). Gate-only + no-`agents/`-dir conventions from — [#code-review-engine-rebuild](#code-review-engine-rebuild) (`skills/code-review/SKILL.md:164`; the `git merge-base` diff mechanic). No-false-precision posture from — [#founder-review-engine-rebuild](#founder-review-engine-rebuild). The future debugging engine `/qa` routes to — QUEUED [#investigate-systematic-debugging-engine](QUEUED.md#investigate-systematic-debugging-engine). Source-fidelity lesson (clone the repo; read the engine, not the scaffold) — LEARNINGS [#source-fidelity-cuts-both-ways](LEARNINGS.md#source-fidelity-cuts-both-ways), the counterpart to LEARNINGS [#brief-source-claim-phantom-artifact](LEARNINGS.md#brief-source-claim-phantom-artifact). Ship record: ARCHIVE [#qa-engine-rebuild-shipped](ARCHIVE.md#qa-engine-rebuild-shipped). Shipped via PR #187 (squash fb2c1b3).
+**Refs.** Plugin `0.13.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Consumes the saga foundation as the qa-track consumer (zero edits) — [#saga-schema-foundation](#saga-schema-foundation), spec `plugins/saga/references/saga-spec.md` §11. Lands the advance deferred by — [#work-engine-rebuild](#work-engine-rebuild) (`work/SKILL.md:354`). Gate-only + no-`agents/`-dir conventions from — [#code-review-engine-rebuild](#code-review-engine-rebuild) (`skills/code-review/SKILL.md:164`; the `git merge-base` diff mechanic). No-false-precision posture from — [#founder-review-engine-rebuild](#founder-review-engine-rebuild). The future debugging engine `/qa` routes to — QUEUED [#investigate-systematic-debugging-engine](QUEUED.md#investigate-systematic-debugging-engine). Source-fidelity lesson (clone the repo; read the engine, not the scaffold) — LEARNINGS [#source-fidelity-cuts-both-ways](LEARNINGS.md#source-fidelity-cuts-both-ways), the counterpart to LEARNINGS [#brief-source-claim-phantom-artifact](LEARNINGS.md#brief-source-claim-phantom-artifact). Ship record: ARCHIVE [#qa-engine-rebuild-shipped](ARCHIVE.md#qa-engine-rebuild-shipped). Shipped via PR #187 (squash fb2c1b3).
 
 ### Rebuild `/resume` as the lifecycle's heavy forensic reconstruction engine — a real CE `ce-sessions` PORT (PR #185, squash 73975ec)  {#resume-engine-rebuild}
 
@@ -244,7 +266,7 @@ The five decisions a–e:
 
 **Revisit when.** Codex/Cursor forensics become a real recovery source (revisit the Claude-only Tier-2 port); a no-saga forensic routinely returns >5 candidate sessions and recency-only mis-ranks (revisit the deferred keyword/branch relevance ranking — QUEUED [#resume-session-relevance-ranking](QUEUED.md#resume-session-relevance-ranking)); or a fresh-clone (cross-machine) recovery path becomes a real need (Tier 2 is scoped to same-machine today).
 
-**Refs.** Plugin `0.12.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Consumes the saga foundation (adds the all-ticks `read_ticks` reader) — [#saga-schema-foundation](#saga-schema-foundation), spec `plugins/infiquetra-lifecycle/references/saga-spec.md`. Heavy partner of the lightweight half — [#loop-engine-rebuild](#loop-engine-rebuild) (Q4, the lightweight/heavy split it deferred). Verification-cuts-both-ways counterpart to the phantom-source lesson — LEARNINGS [#brief-source-claim-phantom-artifact](LEARNINGS.md#brief-source-claim-phantom-artifact), [#resume-port-source-verified-true](LEARNINGS.md#resume-port-source-verified-true). No-`agents/`-dir convention catch — DECISIONS [#code-review-engine-rebuild](#code-review-engine-rebuild) (`skills/code-review/SKILL.md:164`). Wrapper-wrong-layer learning — LEARNINGS [#wrapper-required-arg-wrong-layer](LEARNINGS.md#wrapper-required-arg-wrong-layer). Ship record: ARCHIVE [#resume-engine-rebuild-shipped](ARCHIVE.md#resume-engine-rebuild-shipped). Deferred relevance ranking: QUEUED [#resume-session-relevance-ranking](QUEUED.md#resume-session-relevance-ranking). Shipped via PR #185 (squash 73975ec).
+**Refs.** Plugin `0.12.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Consumes the saga foundation (adds the all-ticks `read_ticks` reader) — [#saga-schema-foundation](#saga-schema-foundation), spec `plugins/saga/references/saga-spec.md`. Heavy partner of the lightweight half — [#loop-engine-rebuild](#loop-engine-rebuild) (Q4, the lightweight/heavy split it deferred). Verification-cuts-both-ways counterpart to the phantom-source lesson — LEARNINGS [#brief-source-claim-phantom-artifact](LEARNINGS.md#brief-source-claim-phantom-artifact), [#resume-port-source-verified-true](LEARNINGS.md#resume-port-source-verified-true). No-`agents/`-dir convention catch — DECISIONS [#code-review-engine-rebuild](#code-review-engine-rebuild) (`skills/code-review/SKILL.md:164`). Wrapper-wrong-layer learning — LEARNINGS [#wrapper-required-arg-wrong-layer](LEARNINGS.md#wrapper-required-arg-wrong-layer). Ship record: ARCHIVE [#resume-engine-rebuild-shipped](ARCHIVE.md#resume-engine-rebuild-shipped). Deferred relevance ranking: QUEUED [#resume-session-relevance-ranking](QUEUED.md#resume-session-relevance-ranking). Shipped via PR #185 (squash 73975ec).
 
 ### Rebuild `/loop` as the campaign's one NATIVE router engine — no upstream to port or merge (PR #183, squash 1fca13a)  {#loop-engine-rebuild}
 
@@ -448,7 +470,7 @@ The five decisions a–e:
 
 **Revisit when.** The `/work` rebuild — wire the CLI-backed execution-backend helper against this doc (or decide the prose offer suffices and no helper is needed).
 
-**Refs.** Plugin `0.5.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Decision contract: `plugins/infiquetra-lifecycle/references/operator-choice.md`; complements storage contract `references/saga-spec.md`. Ship record: ARCHIVE [#operator-choice-framework-shipped](ARCHIVE.md#operator-choice-framework-shipped). Channel-inline convention: `plugins/infiquetra-lifecycle/skills/brainstorm/SKILL.md`. Shipped via PR `#171` (squash `e935bd4`).
+**Refs.** Plugin `0.5.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Decision contract: `plugins/saga/references/operator-choice.md`; complements storage contract `references/saga-spec.md`. Ship record: ARCHIVE [#operator-choice-framework-shipped](ARCHIVE.md#operator-choice-framework-shipped). Channel-inline convention: `plugins/saga/skills/brainstorm/SKILL.md`. Shipped via PR `#171` (squash `e935bd4`).
 
 ### Saga schema: derived `kind-id` identity + append-only envelope log + three-axis state (PR `#170`)  {#saga-schema-foundation}
 
@@ -460,7 +482,7 @@ The five decisions a–e:
 - **Three stored state axes, one derived:** `lifecycle_phase` (CE flow: `ideation|brainstorm|plan|review|work|qa|retro`), `phase_status` (`pending|in_progress|complete`; authoritative, drives `next_phase` = phase+1 if complete else phase), `status` (thread disposition: `active|blocked|paused|handed-off|done|abandoned`; MUST NOT take `pending`/`in_progress`). **`maturity` is derived at `/handoff` time** from `lifecycle_phase` (the existing `infer_maturity` mapping), not stored.
 - **List merge: full-snapshot semantics** — a tick's lists replace; absent carries forward; empty clears. Not union.
 - **Full unify now:** one `saga.py` engine (`save`/`restore`/`scan`/`context`) with the 3 legacy scripts refactored into thin wrappers.
-- **Spec home: plugin-level** `plugins/infiquetra-lifecycle/references/saga-spec.md` (a new convention — no plugin-level `references/` existed before); each consuming SKILL links to it.
+- **Spec home: plugin-level** `plugins/saga/references/saga-spec.md` (a new convention — no plugin-level `references/` existed before); each consuming SKILL links to it.
 
 **Rejected alternatives.**
 - *Minted opaque saga-id (UUID/counter).* Rejected: not human-legible, not deterministic, requires a lookup to resume issue-born work. Derived `kind-id` is self-describing and backward-compatible.
@@ -474,7 +496,7 @@ The five decisions a–e:
 
 **Revisit when.** A consumer rebuild surfaces a missing/awkward field or enum (extend via `schema_version` + the `extra:` preserve-unknown seam, not a breaking change); append-only growth needs a GC policy (the spec leaves a `max_ticks` seam); or a second identity collision pattern emerges that the derived-id guards don't cover.
 
-**Refs.** Plugin `0.4.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Spec: `plugins/infiquetra-lifecycle/references/saga-spec.md`. Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`. ARCHIVE [saga foundation shipped](ARCHIVE.md#saga-foundation-shipped) — consumers remain queued in [QUEUED.md](QUEUED.md).
+**Refs.** Plugin `0.4.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Spec: `plugins/saga/references/saga-spec.md`. Plan `.claude/plans/ok-we-yestereday-we-scalable-fox.md`. ARCHIVE [saga foundation shipped](ARCHIVE.md#saga-foundation-shipped) — consumers remain queued in [QUEUED.md](QUEUED.md).
 
 ### Rebuild lifecycle commands by merging gstack + CE engines into self-contained infiquetra engines (commit pending)  {#lifecycle-engine-merge-campaign}
 
@@ -644,7 +666,7 @@ that token or coordination cost.
 handoff friction dominates safety value, or `team-execution` becomes cheap enough to run by
 default on normal work.
 
-**Refs.** `plugins/infiquetra-loop/`, `plugins/infiquetra-deploy/`,
+**Refs.** `plugins/infiquetra-loop/`, `plugins/deploy/`,
 [team-execution v2 decision](#team-execution-v2-validators).
 
 ---

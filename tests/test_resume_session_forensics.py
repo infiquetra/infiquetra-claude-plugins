@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SCRIPTS_DIR = ROOT / "plugins" / "infiquetra-lifecycle" / "scripts"
+SCRIPTS_DIR = ROOT / "plugins" / "saga" / "scripts"
 DISCOVER = SCRIPTS_DIR / "discover_sessions.py"
 EXTRACT = SCRIPTS_DIR / "extract_session_skeleton.py"
 

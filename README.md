@@ -15,8 +15,8 @@ Claude Code plugins for Infiquetra development workflows.
 | [docs-generator](plugins/docs-generator/) | Automated README, API spec, and architecture documentation generation | Development |
 | [python-toolkit](plugins/python-toolkit/) | Python patterns for serverless apps: Lambda Powertools, DynamoDB, error handling | Development |
 | [sdk-lifecycle](plugins/sdk-lifecycle/) | SDK scaffolding, documentation, security review, and registry publishing | Development |
-| [infiquetra-deploy](plugins/infiquetra-deploy/) | Tag-promotion deploy, status, rollback, hotfix, and release-note workflows | Operations |
-| [infiquetra-lifecycle](plugins/infiquetra-lifecycle/) | Engineering lifecycle: Think, Plan & execute, Hand off, Review, and Improve & route | Development |
+| [deploy](plugins/deploy/) | Tag-promotion deploy, status, rollback, hotfix, and release-note workflows | Operations |
+| [saga](plugins/saga/) | Engineering lifecycle: Think, Plan & execute, Hand off, Review, and Improve & route | Development |
 
 ## Installation
 
@@ -85,7 +85,7 @@ python3 plugins/docs-generator/skills/generate-docs/scripts/docs_generator.py ge
 
 ### Infiquetra Deploy
 ```bash
-python3 plugins/infiquetra-deploy/scripts/mint_tag.py \
+python3 plugins/deploy/scripts/mint_tag.py \
     --env nonprod \
     --version 1.2.3 \
     --dry-run
@@ -96,13 +96,13 @@ Commands carry work through five lifecycle phases:
 
 - **Think:** `/office-hours`, `/ideate`, `/brainstorm`, `/strategy`
 - **Plan & execute:** `/plan`, `/work`, `/qa`, `/retro`, `/resume`
-- **Hand off:** `/handoff` → `sdlc-manager`
+- **Hand off:** `/handoff` → `mission-control`
 - **Review:** `/founder-review`, `/ceo-review`, `/doc-review`, `/code-review`
 - **Improve & route:** `/optimize`, `/loop`
 
 Use `/loop` to route work to plan only, PR, merge, or nonprod deploy. Durable artifacts live in
 repo docs such as `docs/plans/`, `docs/work-sessions/`, and `docs/engineering-journal/`; raw
-runtime state stays under ignored `.claude/infiquetra-lifecycle/`.
+runtime state stays under ignored `.claude/saga/`.
 
 ### Splunk
 ```bash

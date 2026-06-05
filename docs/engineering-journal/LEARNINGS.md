@@ -283,7 +283,7 @@ degradation won't surface until someone notices the AI stopped doing the work.
 ### `gh api` with `-f` silently defaults to POST — breaks read-only queries  {#gh-api-f-defaults-post}
 
 **Context.** `/deploy-status` was non-functional: `query_deployments.py` `latest_deployment()` called `gh api repos/{repo}/deployments -f environment={env} -f per_page=1` and got `HTTP 422 "ref wasn't supplied"`. The intent was to *read* the deployments list; the API was rejecting it as a malformed *create*.
-**Evidence.** Issue #161; `plugins/infiquetra-deploy/scripts/query_deployments.py:86` (pre-fix). Live repro against `infiquetra/campps-identity-access` returned 422; the GET form `gh api --method GET repos/infiquetra/campps-identity-access/deployments -f environment=nonprod -f per_page=1 --jq '.[0].ref'` returns `v0.1.0`.
+**Evidence.** Issue #161; `plugins/deploy/scripts/query_deployments.py:86` (pre-fix). Live repro against `infiquetra/campps-identity-access` returned 422; the GET form `gh api --method GET repos/infiquetra/campps-identity-access/deployments -f environment=nonprod -f per_page=1 --jq '.[0].ref'` returns `v0.1.0`.
 **Mechanism.** `gh api` chooses the HTTP method by *inference*: with no `--method`, the presence of any `-f`/`-F` field flag flips the default from GET to **POST** (the flags are assumed to be a request body). `POST repos/{repo}/deployments` is the create-deployment endpoint, which requires a `ref` — hence 422. With `--method GET` explicit, `gh` instead serializes `-f` params into the query string.
 **Fix.** Added `--method GET` and a tag-ref filter; commit on `fix/deploy-status-query-deployments`. Validated: live smoke prints `nonprod: v0.1.0`, no 422; regression test asserts `--method GET` is present so it can't silently revert to POST.
 **Second defect (same fix).** Even as a GET, taking the newest record per env was wrong — GitHub Actions `environment:` job keys auto-create Deployment objects with branch/SHA refs (`main`, PR branches) that interleave with real tag refs. Fixed by `is_tag_ref()` (known prefix + version digit) selecting the newest *tag-ref* record. See [QUEUED: per_page lookback cap](QUEUED.md#deploy-status-perpage-cap).
@@ -295,10 +295,10 @@ degradation won't surface until someone notices the AI stopped doing the work.
 **Context.** `sdlc-manager` needed to turn rough source text into Asgard or Mount Olympus issues
 without creating cards that fail team readiness checks or require hidden board/label repair.
 
-**Evidence.** The new workflow in `plugins/sdlc-manager/scripts/sdlc_manager.py` writes markdown
+**Evidence.** The new workflow in `plugins/mission-control/scripts/sdlc_manager.py` writes markdown
 drafts plus JSON sidecars, re-runs readiness in `issue create-prepared`, and records created issue
-state back onto the draft. Tests in `plugins/sdlc-manager/tests/test_issue_prepare.py` and
-`plugins/sdlc-manager/tests/test_issue_create_prepared.py` cover blocked drafts, safe statuses,
+state back onto the draft. Tests in `plugins/mission-control/tests/test_issue_prepare.py` and
+`plugins/mission-control/tests/test_issue_create_prepared.py` cover blocked drafts, safe statuses,
 mapping PR stop, override creation, and draft-created state.
 
 **Mechanism.** A direct "source text -> GitHub issue" command mixes interpretation, validation,
@@ -313,7 +313,7 @@ mapping PR handling, natural-language prompt guidance, and plugin metadata for `
 **Validation.** `uv run pytest -q`, `uv run ruff check .`, `uv run python -m mypy plugins/
 scripts/ tests/ --ignore-missing-imports`, `uv run python -m ruff format --check .`,
 `uv run python marketplace/validator/validate.py`, `uv run python
-plugins/sdlc-manager/scripts/sync_template_docs.py --check`, and `git diff --check` pass. The
+plugins/mission-control/scripts/sync_template_docs.py --check`, and `git diff --check` pass. The
 post-merge `main` CI run `26685668123` also passed.
 
 **Generalizable rule.** When a plugin command turns ambiguous human or agent text into external
@@ -328,13 +328,13 @@ ARCHIVE [Asgard/Olympus issue readiness workflow](ARCHIVE.md#asgard-olympus-issu
 board schema and generated template reference, but handwritten prompts and references still taught
 old label behavior.
 
-**Evidence.** `plugins/sdlc-manager/config/sdlc-schema.json` matched
+**Evidence.** `plugins/mission-control/config/sdlc-schema.json` matched
 `../infiquetra-sdlc/config/sdlc-schema.json`, and
-`uv run python plugins/sdlc-manager/scripts/sync_template_docs.py --check` passed. The remaining
+`uv run python plugins/mission-control/scripts/sync_template_docs.py --check` passed. The remaining
 drift was in handwritten files such as
-`plugins/sdlc-manager/agents/sdlc-operator.md`,
-`plugins/sdlc-manager/commands/sdlc-triage.md`, and
-`plugins/sdlc-manager/skills/sdlc-issues/references/issue-types.md`.
+`plugins/mission-control/agents/sdlc-operator.md`,
+`plugins/mission-control/commands/sdlc-triage.md`, and
+`plugins/mission-control/skills/sdlc-issues/references/issue-types.md`.
 
 **Mechanism.** Generated docs can stay correct while nearby prompt text keeps stale duplicated
 facts. Agents read both surfaces, so a correct generated reference is insufficient if the operator
@@ -342,12 +342,12 @@ prompt still says exploration/context-update are `hermes-task` or examples still
 `needs-analysis` as a current template label.
 
 **Fix.** Aligned the handwritten prompts/references with the generated template contract and added
-`plugins/sdlc-manager/tests/test_prompt_alignment.py` to pin the current metadata,
+`plugins/mission-control/tests/test_prompt_alignment.py` to pin the current metadata,
 Hermes-actionability, and label wording.
 
-**Validation.** `uv run python plugins/sdlc-manager/scripts/sync_template_docs.py --check`,
-`uv run ruff check plugins/sdlc-manager/tests/test_prompt_alignment.py`, and
-`uv run pytest plugins/sdlc-manager/tests tests/test_sdlc_manager.py -q` pass.
+**Validation.** `uv run python plugins/mission-control/scripts/sync_template_docs.py --check`,
+`uv run ruff check plugins/mission-control/tests/test_prompt_alignment.py`, and
+`uv run pytest plugins/mission-control/tests tests/test_sdlc_manager.py -q` pass.
 
 **Generalizable rule.** When a plugin mixes generated references with human-authored prompts, add
 drift guards for the human-authored prompts too; otherwise agents can keep following stale
@@ -747,7 +747,7 @@ note:     Got: def delete(self, *names: bytes|str|memoryview[int]) -> Awaitable[
 
 **Context.** CI consolidation restored `marketplace/validator/validate.py` and added `jsonschema` to dev dependencies so schema validation runs in normal CI installs.
 
-**Evidence.** `python3 marketplace/validator/validate.py` passed in the system environment while warning `jsonschema not installed, skipping schema validation`. Running the same validator inside a temporary environment after `pip install -e ".[dev]"` failed on `plugins/sdlc-manager/.claude-plugin/plugin.json` because its description exceeded `marketplace/validator/schema.json`'s 200 character limit.
+**Evidence.** `python3 marketplace/validator/validate.py` passed in the system environment while warning `jsonschema not installed, skipping schema validation`. Running the same validator inside a temporary environment after `pip install -e ".[dev]"` failed on `plugins/mission-control/.claude-plugin/plugin.json` because its description exceeded `marketplace/validator/schema.json`'s 200 character limit.
 
 **Mechanism.** The validator treats missing `jsonschema` as a warning and continues. That made schema validation effectively optional in local and previous CI paths, so an invalid manifest could sit in the repository undetected until the dependency became available.
 

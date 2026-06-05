@@ -1,0 +1,188 @@
+{
+  "schema_version": "2026-05-30",
+  "status": "active",
+  "description": "Canonical Infiquetra SDLC board, team, routing, review, approval, and deployment-state schema. This file intentionally contains no live GitHub Projects field option IDs; tooling must resolve those from GitHub at runtime.",
+  "teams": {
+    "jeff": {
+      "kind": "human_operator",
+      "status": "active",
+      "role": "Sole human operator, intent source, approval gate, escalation arbitrator, and occasional direct implementer with local AI tools",
+      "board": "jeff_intent",
+      "review_model": "operator_judgment"
+    },
+    "asgard": {
+      "kind": "agent_team",
+      "status": "active",
+      "role": "Jeff-proximal rapid-action, incubation, and mission-mode team with an issue-backed feed and lightweight proof model",
+      "board": "asgard",
+      "modes": ["Rapid Action", "Incubator", "Mission"],
+      "review_model": "team_owned_review",
+      "operating_model_doc": "docs/process/asgard-operating-model.md"
+    },
+    "olympus": {
+      "kind": "agent_team",
+      "status": "active",
+      "role": "Primary autonomous engineering execution pipeline",
+      "board": "olympus",
+      "agents": ["Zeus", "Athena", "Apollo", "Artemis", "Hephaestus", "Perseus", "Prometheus", "Ares"],
+      "review_model": "team_owned_review"
+    },
+    "hermes": {
+      "kind": "system_role",
+      "status": "active",
+      "role": "Single Python orchestrator process that ingests GitHub webhooks, dispatches work, coordinates plan review, and manages Discord threads",
+      "board": null,
+      "review_model": "not_a_reviewer"
+    },
+    "themis": {
+      "kind": "system_role",
+      "status": "retired_historical",
+      "role": "Former PR-review state machine. Preserved for migration history only; not an active routing path.",
+      "board": null,
+      "review_model": "retired"
+    }
+  },
+  "boards": {
+    "jeff_intent": {
+      "name": "Jeff Intent",
+      "status": "active",
+      "purpose": "Raw operator intent, approvals, questions, personal/operator work, and shaping before team execution",
+      "owner": "jeff",
+      "workflow": "intent_flow",
+      "routing_required_at": "Ready",
+      "live_creation": "created_2026-05-29_project_3"
+    },
+    "asgard": {
+      "name": "Asgard",
+      "status": "active",
+      "purpose": "Rapid action, incubation, and mission-mode work close to Jeff",
+      "owner": "asgard",
+      "workflow": "intent_flow",
+      "live_creation": "created_2026-05-29_project_2"
+    },
+    "olympus": {
+      "name": "Mount Olympus Operations",
+      "status": "active",
+      "purpose": "Primary engineering execution pipeline",
+      "owner": "olympus",
+      "workflow": "olympus_execution",
+      "live_creation": "already_exists"
+    }
+  },
+  "workflows": {
+    "intent_flow": {
+      "statuses": ["Idea", "Shaping", "Ready", "Active", "Verify", "Done"],
+      "terminal_statuses": ["Done"],
+      "canonical_for": ["jeff_intent", "asgard"]
+    },
+    "olympus_execution": {
+      "statuses": ["Backlog", "Ready", "Planning", "Assigned", "In Review", "Done", "Closed"],
+      "pause_states": ["Plan-Approved", "Needs Review", "Needs Question", "Blocked", "Cancelled"],
+      "terminal_statuses": ["Done", "Closed", "Cancelled"],
+      "noncanonical_statuses": {
+        "In Progress": "Treat as historical, legacy, migration, or live-evidence exception text only. Do not include in the canonical Olympus workflow unless later authoritative runtime evidence forces a schema revision.",
+        "In Development": "Legacy pre-modernization status; map to Assigned when interpreting old references.",
+        "E2E Testing": "Legacy pre-modernization status; map to In Review or Verify depending on board context.",
+        "Deployment Ready": "Legacy pre-modernization status; represent with deployment_state fields.",
+        "Deployed": "Legacy pre-modernization status; represent with GitHub Deployments/Environments plus Done or Closed work status."
+      },
+      "canonical_for": ["olympus"]
+    }
+  },
+  "fields": {
+    "common": ["Status", "Owner", "Priority", "Risk", "Initiative", "Objective"],
+    "jeff_intent": ["Status", "Target Team", "Jeff Needed", "Context Pack", "Decision Needed"],
+    "asgard": ["Status", "Mode", "Jeff Needed", "Target Repository", "Risk", "Transfer Target"],
+    "olympus": ["Status", "Assigned Agent", "Initiative", "Objective", "Capability Size", "Risk", "Deploy Target", "Deploy State", "Snapshot Version", "Promotion Pending", "Release Risk", "Last Deployment"]
+  },
+  "pause_states": {
+    "Plan-Approved": "Plan accepted but operator intentionally paused dispatch.",
+    "Needs Review": "Operator or team review needed before work can continue.",
+    "Needs Question": "Author or operator input needed; currently treated as a human-input state.",
+    "Blocked": "Known external blocker prevents progress.",
+    "Cancelled": "Work intentionally stopped before completion."
+  },
+  "wip_limits": {
+    "jeff_intent": {
+      "Idea": null,
+      "Shaping": 10,
+      "Ready": 10,
+      "Active": 5,
+      "Verify": 5,
+      "Done": null
+    },
+    "asgard": {
+      "Idea": null,
+      "Shaping": 8,
+      "Ready": 8,
+      "Active": 5,
+      "Verify": 5,
+      "Done": null
+    },
+    "olympus": {
+      "Backlog": null,
+      "Ready": 10,
+      "Planning": 3,
+      "Assigned": "3 per assigned agent",
+      "In Review": 5,
+      "Done": null,
+      "Closed": null,
+      "pause_states": null
+    }
+  },
+  "dispatch_gates": {
+    "jeff_intent": {
+      "Ready": ["Target Team must be set before promotion out of Jeff Intent"]
+    },
+    "asgard": {
+      "Active": ["Mode must be set", "Jeff Needed must be set when work crosses an approval boundary"]
+    },
+    "olympus": {
+      "Ready": ["Hermes-actionable issue schema passes", "Work is labeled for Olympus dispatch", "Acceptance criteria and verification are present"],
+      "Assigned": ["Selected agent has available WIP capacity"],
+      "In Review": ["Team-owned review is active for the PR or work artifact"]
+    }
+  },
+  "team_routing": {
+    "target_team_values": ["Asgard", "Olympus", "Jeff", "External/Deferred"],
+    "jeff_intent_ready_rule": "A Ready Jeff Intent card must name one target team before moving to another board or workflow.",
+    "asgard_issue_feed_rule": "Asgard-bound work enters through Jeff Intent Target Team=Asgard, a direct issue added to Asgard, or a context/issue pack. Before Active, set Mode, target repository or surface, risk, approval state, proof path, and transfer target when a cross-team handoff is expected.",
+    "cross_team_transfer_rule": "Asgard and Olympus are sibling target boards. Cross-team movement happens only when an operator explicitly routes, transfers, clones, or links work to another board; readiness checks may warn about target fit but must not infer movement.",
+    "default_pressure_valve": "Prefer project views over new boards unless scale, automation, or reporting needs justify a separate board."
+  },
+  "review_model": {
+    "current": "team_owned_review",
+    "team_owned_review": "The team that owns the work owns PR review, evidence, and merge readiness. Hermes may coordinate events, but does not route active PR review to Themis.",
+    "plan_review": "Hermes can coordinate plan review before dispatch.",
+    "retired": {
+      "Themis": "Historical PR-review state machine. Do not route active PR review to Themis from current SDLC docs."
+    }
+  },
+  "human_approval_state": {
+    "active_pattern": "Per-agent direct message or per-card thread request to Jeff, depending on the work context.",
+    "retired_patterns": ["olympus-input-orchestrator", "olympus:agent:input-request", "#agent-handoffs as canonical HITL channel"],
+    "approval_required_for": [
+      "production changes",
+      "destructive operations",
+      "secrets or credential changes",
+      "IAM or permission changes",
+      "billing or cost-impacting actions",
+      "external commitments",
+      "major team or process authority changes"
+    ]
+  },
+  "deployment_state": {
+    "source_of_truth": "GitHub Deployments/Environments plus tag-promotion records",
+    "not_workflow_statuses": ["nonprod", "staging", "production", "Deployment Ready", "Deployed"],
+    "fields": {
+      "Deploy Target": "Environment or promotion target requested by the work item",
+      "Deploy State": "Current deployment or promotion state derived from deployment records",
+      "Snapshot Version": "Immutable version or tag promoted across environments",
+      "Promotion Pending": "Whether a promotion approval or gate is waiting",
+      "Release Risk": "Operational risk classification for the release or promotion",
+      "Last Deployment": "Most recent deployment evidence link or timestamp"
+    },
+    "mutation_owner": "deploy",
+    "display_owner": "mission-control may display or link deployment state in a later pass"
+  }
+}

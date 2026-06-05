@@ -24,7 +24,7 @@
 
 ## 2026-06-05
 
-### Whole-family plugin rename — Scheme Y: functional names + a shared `saga` category, drop the `infiquetra-` prefix, fold `blueprint-reviewer` into `saga` (commit #TBD)  {#plugin-family-rename-scheme-y}
+### Whole-family plugin rename — Scheme Y: functional names + a shared `saga` category, drop the `infiquetra-` prefix, fold `blueprint-reviewer` into `saga` (squash `b6a03e0`, PR #199)  {#plugin-family-rename-scheme-y}
 
 **Decision.** Rename the lifecycle/SDLC/deploy plugin family to short **functional names** and consolidate it under a shared marketplace **category `saga`** — "Scheme Y" of the rename options. The renames: `infiquetra-lifecycle` -> **`saga`**, `sdlc-manager` -> **`mission-control`**, `infiquetra-deploy` -> **`deploy`**. Drop the `infiquetra-` prefix (it was carried by only 2 of 18 plugins — this family — so prefix-consistency was never real). **Fold `blueprint-reviewer` into `saga`** rather than keeping it standalone: its idea/spec/issue rubric libraries move to `plugins/saga/references/rubrics/{idea,spec,issue}/{core,extras}/` and its reviewer script to `plugins/saga/scripts/lifecycle_review.py`. Rebrand the SDLC command/skill surface off the `sdlc-` prefix (`/issue`, `/board`, `/metrics`, `/triage`, `/flow`, `/labels`, `/milestones`, plus `/rollout` for deploy) and **drop the `/sdlc-create` compatibility alias**. Net marketplace: **17 plugins**, metadata **2.1.0**. This repo is **Phase 1** of a coordinated multi-repo migration.
 
@@ -40,7 +40,7 @@
 
 **Revisit when.** A fourth repo consumes these plugins and the short names collide with another `saga`/`deploy` in its namespace (revisit prefixing); OR `infiquetra-sdlc` itself renames its SDLC vocabulary (re-sync the kept-on-purpose tokens then); OR the `mission-control`/`deploy` boundaries stop earning their separateness (revisit the consolidation rejection). The follow-on migration phases (home-lab, the antigravity fork, dotfiles, infiquetra-sdlc) each have their own revisit triggers tracked with that phase.
 
-**Refs.** Ship record: ARCHIVE [#plugin-family-rename-shipped](ARCHIVE.md#plugin-family-rename-shipped). The campaign whose engine now lives under `plugins/saga/` — [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign), ARCHIVE [#lifecycle-engine-merge-campaign-complete](ARCHIVE.md#lifecycle-engine-merge-campaign-complete). Commit #TBD (post-merge SHA-fill).
+**Refs.** Ship record: ARCHIVE [#plugin-family-rename-shipped](ARCHIVE.md#plugin-family-rename-shipped). The campaign whose engine now lives under `plugins/saga/` — [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign), ARCHIVE [#lifecycle-engine-merge-campaign-complete](ARCHIVE.md#lifecycle-engine-merge-campaign-complete). Squash `b6a03e0`, PR #199.
 
 ---
 

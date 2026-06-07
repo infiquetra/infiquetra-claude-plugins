@@ -64,7 +64,7 @@ KTD3 — Soft-wrap is "no hard wrap within a paragraph + mandatory blank lines b
 
 KTD4 — Enforcement is a pytest, `tests/test_saga_doc_formatting.py`, in the existing Tests job; no new top-level script. Rationale: matches the recent "zero new top-level Python" saga pattern and reuses the harness. Rejected: a new `scripts/validate_doc_formatting.py` in the Validate job (adds a script); deferring enforcement (risks drift in the gap).
 
-KTD5 — Rollout covers all nine doc-writing skills (ideate, plan, brainstorm, spec, strategy, retro, doc-review, code-review, founder-review). Rejected: ideate-only exemplar (leaves the recurrence unsolved elsewhere); the seven issue-named skills only (code-review and founder-review also produce jumbled review docs).
+KTD5 — Rollout covers all nine doc-writing skills (ideate, plan, brainstorm, spec, strategy, retro, doc-review, code-review, founder-review) for *consistency* — every skill links the one shared reference. Verified reality (do not over-edit): only `ideation-artifact.md` actually carries the bold-label collapse (9 consecutive `**label:**` lines); the other eight templates already use headings/prose/tables (spec/strategy/brainstorm/retro/founder-review have zero bold-label stacks; plan uses `###` headings; code-review already renders findings as a pipe-delimited table per `findings-schema.md:105`). So the per-skill work is: ideate = the real collapse fix; everyone else = link the shared reference + apply the lead-in/short-paragraph/soft-wrap rules and table any comparative data, with U6 standing guard against future regressions. Rejected: ideate-only exemplar (leaves the shared contract unenforced elsewhere); the seven issue-named skills only (code-review and founder-review docs deserve the same shared contract even though their current collapse risk is low).
 
 KTD6 — The golden specimen is a worked EXAMPLE block embedded in `formatting-style.md`, not a separate fixture file. Rationale: one artifact serves as the few-shot the templates point to, the human reference, and the test oracle — nothing extra to drift.
 
@@ -99,6 +99,8 @@ tests/test_saga_doc_formatting.py  (collapse pattern + structural rules + link p
 ```
 
 ## Implementation Units
+
+**Execution guard (read before U2-U5, especially under the parallel fan-out).** "Apply the rules" to a template means two things: (1) encode the rules as *prescriptions/instructions* the skill gives the model, and (2) render the template's own EXAMPLE / specimen blocks in the target format. It does **NOT** mean reflowing the template file's editorial source prose to no-hard-wrap — the template `.md` files stay editor-friendly and hard-wrapped (KTD3). Do not produce a whitespace-only reflow diff of a template's prose.
 
 ### U1. Author the shared formatting reference + golden specimen
 
@@ -150,8 +152,8 @@ tests/test_saga_doc_formatting.py  (collapse pattern + structural rules + link p
 - **Requirements:** R1, R2, R3, R4, R5, R6.
 - **Dependencies:** U1.
 - **Files:** `plugins/saga/skills/retro/references/retro-report.md`, `plugins/saga/skills/doc-review/SKILL.md` (the findings/readiness report format, ~lines 128-156 — no references dir), `plugins/saga/skills/code-review/references/findings-schema.md`, `plugins/saga/skills/founder-review/references/review-modes.md`, plus each skill's `SKILL.md` shared-ref link where the format lives elsewhere.
-- **Approach:** Render findings (severity/priority/confidence/location) as a table per KTD2; lead each report section with a one-liner; apply short-paragraph + soft-wrap rules; link the shared reference. Keep the P0–P3 priority semantics and findings-schema field names intact.
-- **Patterns to follow:** the shared reference (U1); the existing findings table conventions in `code-review/references/findings-schema.md`.
+- **Approach:** code-review already renders findings as a pipe-delimited table (`findings-schema.md:105`) — do NOT re-table findings. For code-review, scope is: link the shared reference + apply the lead-in/short-paragraph/soft-wrap rules to the durable review artifact's *narrative* sections. For retro/doc-review/founder-review, lead each report section with a one-liner, table any comparative/findings data per KTD2, and apply short-paragraph + soft-wrap rules. Keep the P0–P3 priority semantics and `findings-schema` field names intact.
+- **Patterns to follow:** the shared reference (U1); the existing pipe-delimited findings output at `code-review/references/findings-schema.md:105`.
 - **Test scenarios:** `Test expectation: none -- template/format content; validated by U6.`
 - **Verification:** All four outputs link the shared ref and U6 passes.
 
@@ -161,7 +163,7 @@ tests/test_saga_doc_formatting.py  (collapse pattern + structural rules + link p
 - **Requirements:** R8, R9.
 - **Dependencies:** U1, U2, U3, U4, U5 (the templates must conform before the gate goes green).
 - **Files:** `tests/test_saga_doc_formatting.py` (new); `tests/conftest.py` (only if a shared fixture helps).
-- **Approach:** Enumerate the saga template/format files; assert none contains 2+ consecutive `**label:**` lines with no intervening blank line (the fatal collapse pattern); assert each of the nine doc-writing skills links `saga/references/formatting-style.md`; assert the `formatting-style.md` specimen block itself passes the collapse check; where cheaply checkable, assert ranked-survivor/findings sections use a table. Do NOT assert no-hard-wrap on template source (KTD3).
+- **Approach:** Enumerate the saga template/format files; assert none contains 2+ consecutive `**label:**` lines with no intervening blank line (the fatal collapse pattern); assert each of the nine doc-writing skills links `saga/references/formatting-style.md` *somewhere in its skill dir* (in the template file for skills that have one; in `SKILL.md` for doc-review, which has no references dir); assert the `formatting-style.md` specimen block itself passes the collapse check; where cheaply checkable, assert ranked-survivor/findings sections use a table. Do NOT assert no-hard-wrap on template source (KTD3). Coverage note: this test only reads markdown, so it adds no `plugins/` line coverage — that is fine, there is no `--cov-fail-under` gate (`pyproject.toml:76` reports coverage, does not gate it); do not add a coverage workaround.
 - **Patterns to follow:** `tests/test_saga_plugin.py`, `tests/test_saga_saga.py` for harness/style; ruff 100-char, pytest.
 - **Test scenarios:**
   - **Happy path:** all conforming templates → test passes.

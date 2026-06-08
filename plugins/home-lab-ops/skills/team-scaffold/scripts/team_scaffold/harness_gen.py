@@ -1,30 +1,62 @@
-"""Render a team's deploy harness (deploy/{<team>.yml,requirements.yml,README.md}).
+"""Render a team's deploy harness.
 
-Promoted verbatim from the one-off migration generator
-(home-lab `/tmp/journal-partition/gen_harness.py`, 2026-05-31). The template
-strings below are byte-identical to that generator's output — proven by the
-golden test, which reproduces all 12 live team repos exactly. Do NOT reflow or
-"clean up" these templates: any whitespace change breaks byte parity. In
-particular keep `requirements.yml`'s ``src`` pointing at
-``git+https://github.com/namredips/home-lab.git`` (personal account, not
-``infiquetra``) — parity depends on it.
-
-The only change from the migration script is the data source: instead of a
-hardcoded ``TEAMS`` dict it takes a spec ``cfg`` dict (see ``spec.py``), so new
-teams render from a ``team-spec.yaml`` rather than a code edit.
+The harness is collection-first: reusable Hermes team roles are referenced by
+their ``infiquetra.hermes_team`` fully qualified collection names, while
+inventory and shared runtime secrets are explicit operator inputs.
 """
 
 from __future__ import annotations
 
+COLLECTION_ROLES = {
+    "hermes": "infiquetra.hermes_team.hermes",
+    "hermes_dm_listener": "infiquetra.hermes_team.hermes_dm_listener",
+    "hermes_mint_broker": "infiquetra.hermes_team.hermes_mint_broker",
+    "deploy_skill": "infiquetra.hermes_team.deploy_skill",
+}
+
 REQUIREMENTS = """---
-# Reuse the home-lab roles (native distribution packaging deferred; this Ansible
-# path is the supported independent-deploy mechanism). See deploy/README.md for
-# the roles-path setup (local checkout recommended).
-roles:
-  - name: hermes
-    src: git+https://github.com/namredips/home-lab.git
-    version: main
+# Install reusable Hermes team deployment roles from the shared collection.
+# Pin by tag or commit. Private-repository auth should come from SSH/netrc/Git
+# credential config, not credentials embedded in this URL.
+collections:
+  - name: git+https://github.com/infiquetra/infiquetra-ansible-collections.git#/ansible_collections/infiquetra/hermes_team/
+    type: git
+    version: v0.1.0
 """
+
+SHARED_INFRA_VAULT_EXAMPLE = """---
+# Example shape only. Store the real file as an encrypted Ansible Vault artifact
+# supplied by the operator at deploy time via INFIQUETRA_SHARED_INFRA_VAULT.
+
+vault_redis_password: "change-me"
+vault_langfuse_public_key: "change-me"
+vault_langfuse_secret_key: "change-me"
+vault_elevenlabs_api_key: "change-me"
+"""
+
+
+def _format_tags(tags: str) -> str:
+    parts = [p.strip() for p in tags.split(",") if p.strip()]
+    return "[" + ", ".join(repr(p) for p in parts) + "]"
+
+
+def _render_role(role: str, tags: str) -> str:
+    rendered_role = COLLECTION_ROLES.get(role, role)
+    return f"    - {{ role: {rendered_role}, tags: {_format_tags(tags)} }}"
+
+
+def _render_inventory_example(cfg: dict) -> str:
+    lines = [
+        "---",
+        "all:",
+        "  children:",
+        f"    {cfg['hosts']}:",
+        "      hosts:",
+        f"        {cfg['limit']}:",
+    ]
+    for key, value in (cfg.get("inventory") or {}).items():
+        lines.append(f"          {key}: {value}")
+    return "\n".join(lines) + "\n"
 
 
 def render_play(name: str, cfg: dict) -> str:
@@ -36,17 +68,18 @@ def render_play(name: str, cfg: dict) -> str:
         else " Only this team's profiles are touched."
     )
     pin = "    hermes_update: false  # runtime pinned (shared host)\n" if cfg["pin"] else ""
-    roles = "\n".join(f"    - {{ role: {r}, tags: ['{t}'] }}" for r, t in cfg["roles"])
+    roles = "\n".join(_render_role(r, t) for r, t in cfg["roles"])
     return f"""---
-# Deploy the {cfg["team"]} — and ONLY this team — from this repo.
+# Deploy the {cfg["team"]} - and ONLY this team - from this repo.
 #
-# Reuses the home-lab hermes role via the per-team-deploy hooks (2026-05-31):
+# Uses the infiquetra.hermes_team collection via deploy/requirements.yml:
 #   hermes_team_profiles_filter : narrows the host's profiles to this team's
 #     (derived from this repo's profiles/ dir) so co-resident teams are untouched.
 #   hermes_souls_source         : SOULs sourced from this repo's profiles/<n>/SOUL.md.
 #
 # Usage (see deploy/README.md):
-#   cd deploy && ansible-playbook -i <home-lab-inventory> \\
+#   export INFIQUETRA_SHARED_INFRA_VAULT=/path/to/shared-infra-vault.yml
+#   ansible-playbook -i <inventory> \\
 #     --limit {cfg["limit"]} {name} --vault-password-file ~/.vault_pass.txt
 #
 # Native distribution packaging (`hermes profile install`) is DEFERRED.
@@ -56,27 +89,62 @@ def render_play(name: str, cfg: dict) -> str:
   gather_facts: true
   vars:
     # realpath normalizes the .. so the control-node find() gets an absolute dir.
-    # NOTE: ansible's fileglob lookup does NOT expand '..' — use find() instead.
+    # NOTE: ansible's fileglob lookup does NOT expand '..' - use find() instead.
     _team_repo_root: "{{{{ (playbook_dir + '/..') | realpath }}}}"
     hermes_souls_source: "{{{{ _team_repo_root }}}}/profiles"
-    # profile-dir layout = source each SOUL from <repo>/profiles/<name>/SOUL.md
-    # (the team repo is authoritative). Without this the role's SOUL tasks fall
-    # back to home-lab's bundled files/souls/ (macOS ignored the source entirely).
+    # profile-dir layout = source each SOUL from <repo>/profiles/<name>/SOUL.md.
     hermes_souls_layout: profile-dir
-    # home-lab checkout (for the SHARED-INFRA vault: github-app PEMs, langfuse,
-    # elevenlabs). Override -e homelab_root=/path if your checkout differs.
-    homelab_root: "{{{{ lookup('ansible.builtin.env', 'HOME') }}}}/workspace/infiquetra/home-lab"
+    # Explicit operator-provided shared runtime secrets: Redis, Langfuse, and
+    # optional voice-tooling credentials. Keep this outside the team repo unless
+    # the file is encrypted for this consumer.
+    shared_infra_vault_path: "{{{{ lookup('ansible.builtin.env', 'INFIQUETRA_SHARED_INFRA_VAULT') | default('', true) }}}}"
 {pin}  vars_files:
     # This team's OWN secrets (post vault-split): Discord tokens etc.
     - "{{{{ _team_repo_root }}}}/ansible/inventory/group_vars/all/vault.yml"
-    # Shared-infra secrets that live in home-lab (PEMs / langfuse / elevenlabs).
-    - "{{{{ homelab_root }}}}/ansible/inventory/group_vars/all/vault_shared_infra.yml"
-    # This team's hermes_team_profiles (Phase 8 Stage A — relocated FROM home-lab
-    # host_vars so the harness is self-contained and home-lab can drop per-team
-    # content). A play var, so it overrides any home-lab host_var of the same name
-    # while that dual-write window lasts, and is the sole source after deletion.
+    # This team's hermes_team_profiles. The team repo is authoritative.
     - "{{{{ _team_repo_root }}}}/deploy/team_profiles.yml"
   pre_tasks:
+    - name: Require explicit shared-infra vault input
+      ansible.builtin.assert:
+        that:
+          - shared_infra_vault_path | length > 0
+        fail_msg: >-
+          Set INFIQUETRA_SHARED_INFRA_VAULT to the encrypted shared runtime
+          secrets file before running this play.
+      tags: [always]
+
+    - name: Refuse legacy infrastructure checkout inputs
+      ansible.builtin.assert:
+        that:
+          - "'/home-lab/ansible/' not in shared_infra_vault_path"
+          - (ansible_inventory_sources | default([]) | select('search', '/home-lab/ansible/') | list | length) == 0
+        fail_msg: >-
+          {cfg["team"]} deploy inputs must be independent artifacts. Do not pass
+          the legacy infrastructure checkout inventory or shared-infra vault path.
+      tags: [always]
+
+    - name: Check shared-infra vault path on the control node
+      ansible.builtin.stat:
+        path: "{{{{ shared_infra_vault_path }}}}"
+      delegate_to: localhost
+      run_once: true
+      register: _shared_infra_vault_stat
+      tags: [always]
+
+    - name: Refuse missing shared-infra vault file
+      ansible.builtin.assert:
+        that:
+          - _shared_infra_vault_stat.stat.exists
+          - _shared_infra_vault_stat.stat.isreg
+        fail_msg: "Shared-infra vault file not found: {{{{ shared_infra_vault_path }}}}"
+      tags: [always]
+
+    - name: Load shared-infra runtime secrets
+      ansible.builtin.include_vars:
+        file: "{{{{ shared_infra_vault_path }}}}"
+      no_log: true
+      tags: [always]
+
     - name: Enumerate this repo's profile dirs on the control node
       ansible.builtin.find:
         paths: "{{{{ _team_repo_root }}}}/profiles"
@@ -98,7 +166,7 @@ def render_play(name: str, cfg: dict) -> str:
         that:
           - hermes_team_profiles_filter | length > 0
         fail_msg: >-
-          Derived an EMPTY profile filter from {{{{ _team_repo_root }}}}/profiles —
+          Derived an EMPTY profile filter from {{{{ _team_repo_root }}}}/profiles -
           refusing to deploy (an empty filter makes the hermes role deploy the
           host's entire profile set, including co-resident teams). Check the
           repo layout / playbook_dir.
@@ -115,57 +183,85 @@ def render_play(name: str, cfg: dict) -> str:
 
 README_TMPL = """# Deploying {team} independently
 
-Deploys **only this team** from this repo, reusing the home-lab `hermes` role
-via the per-team-deploy hooks (`hermes_team_profiles_filter` +
-`hermes_souls_source`). It does **not** fork the role.{coresident_line}
+Deploys only this team from this repository using the pinned
+`infiquetra.hermes_team` collection.{coresident_line}
 
-> Native Hermes profile-distribution packaging is deferred; this Ansible path is
-> the supported independent-deploy mechanism.
+Native Hermes profile-distribution packaging is deferred; this Ansible path is
+the supported independent deploy mechanism.
 
-## Prereqs
-1. Home-lab roles on the roles-path:
-   ```bash
-   export ANSIBLE_ROLES_PATH="$HOME/workspace/infiquetra/home-lab/ansible/roles"
-   ```
-   (or `ansible-galaxy install -r deploy/requirements.yml -p deploy/roles`)
-2. Inventory + secrets from home-lab until the per-team vault split lands.
+## Prerequisites
+
+1. Ansible plus `ansible-galaxy`.
+2. Git authentication that can read the private collection repository.
 3. Vault password at `~/.vault_pass.txt`.
+4. An inventory file with a `{hosts}` group.
+5. An encrypted shared-infra vault file containing cross-team runtime secrets.
+
+The playbook does not discover role code, inventory, or shared-infra secrets
+from a sibling infrastructure checkout.
+
+## Install Collections
+
+From the repository root:
+
+```bash
+ansible-galaxy collection install -r deploy/requirements.yml -p .ansible/collections --force
+```
 
 ## Deploy
-```bash
-cd deploy
-ansible-playbook \\
-  -i "$HOME/workspace/infiquetra/home-lab/ansible/inventory/hosts.yml" \\
-  --limit {limit} \\
-  {play} \\
-  --vault-password-file ~/.vault_pass.txt
-```
-Dry-run first with `--check --diff`. The play prints its profile scope and
-asserts the souls source exists before acting.
 
-## Not yet
-- Per-team vault split (secrets still from home-lab `group_vars/all`).
-- Native distribution install (deferred).
-- Team-owned host_vars slice (uses home-lab's today).
+```bash
+export INFIQUETRA_SHARED_INFRA_VAULT=/path/to/shared-infra-vault.yml
+
+ANSIBLE_COLLECTIONS_PATH=.ansible/collections \\
+  ansible-playbook \\
+    -i /path/to/team-or-shared-inventory.yml \\
+    --limit {limit} \\
+    deploy/{play} \\
+    --vault-password-file ~/.vault_pass.txt
+```
+
+Dry-run first with `--check --diff`. The play prints its profile scope and
+refuses to run if it cannot derive team profiles from this repo.
+
+## Local Collection Artifact Test
+
+Before the GitHub repository exists, install a locally built collection artifact
+from `infiquetra-ansible-collections`:
+
+```bash
+ansible-galaxy collection install \\
+  /path/to/infiquetra-hermes_team-0.1.0.tar.gz \\
+  -p .ansible/collections --force
+```
+
+If this team's spec includes roles outside `infiquetra.hermes_team`, extract
+those roles into collections before treating the deploy as fully independent.
 """
 
 
 def render_readme(cfg: dict) -> str:
     coresident_line = (
-        f"\n\n**Note:** this team shares its host with {cfg['coresident']}; "
-        f"the filter ensures {cfg['coresident']} is never touched by this deploy."
+        f"\n\nThis team shares its host with {cfg['coresident']}. "
+        f"The profile filter ensures {cfg['coresident']} is never touched by this deploy."
         if cfg.get("coresident")
         else ""
     )
     return README_TMPL.format(
-        team=cfg["team"], limit=cfg["limit"], play=cfg["play"], coresident_line=coresident_line
+        team=cfg["team"],
+        hosts=cfg["hosts"],
+        limit=cfg["limit"],
+        play=cfg["play"],
+        coresident_line=coresident_line,
     )
 
 
 def render_harness(cfg: dict) -> dict[str, str]:
-    """Return {filename: content} for the 3 generated deploy/ files."""
+    """Return {filename: content} for generated deploy/ files."""
     return {
         cfg["play"]: render_play(cfg["play"], cfg),
         "requirements.yml": REQUIREMENTS,
         "README.md": render_readme(cfg),
+        "inventory.example.yml": _render_inventory_example(cfg),
+        "shared-infra-vault.example.yml": SHARED_INFRA_VAULT_EXAMPLE,
     }

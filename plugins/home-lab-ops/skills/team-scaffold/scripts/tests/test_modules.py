@@ -195,6 +195,8 @@ def test_stamp_new_single_profile_team(tmp_path: pathlib.Path):
         "deploy/nyx.yml",
         "deploy/requirements.yml",
         "deploy/README.md",
+        "deploy/inventory.example.yml",
+        "deploy/shared-infra-vault.example.yml",
         "deploy/team_profiles.yml",
         "docs/engineering-journal/LEARNINGS.md",
     ):

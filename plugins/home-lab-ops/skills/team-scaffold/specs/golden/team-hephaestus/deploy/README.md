@@ -1,34 +1,56 @@
 # Deploying Hephaestus (legacy single agent) independently
 
-Deploys **only this team** from this repo, reusing the home-lab `hermes` role
-via the per-team-deploy hooks (`hermes_team_profiles_filter` +
-`hermes_souls_source`). It does **not** fork the role.
+Deploys only this team from this repository using the pinned
+`infiquetra.hermes_team` collection.
 
-> Native Hermes profile-distribution packaging is deferred; this Ansible path is
-> the supported independent-deploy mechanism.
+Native Hermes profile-distribution packaging is deferred; this Ansible path is
+the supported independent deploy mechanism.
 
-## Prereqs
-1. Home-lab roles on the roles-path:
-   ```bash
-   export ANSIBLE_ROLES_PATH="$HOME/workspace/infiquetra/home-lab/ansible/roles"
-   ```
-   (or `ansible-galaxy install -r deploy/requirements.yml -p deploy/roles`)
-2. Inventory + secrets from home-lab until the per-team vault split lands.
+## Prerequisites
+
+1. Ansible plus `ansible-galaxy`.
+2. Git authentication that can read the private collection repository.
 3. Vault password at `~/.vault_pass.txt`.
+4. An inventory file with a `agent_vms` group.
+5. An encrypted shared-infra vault file containing cross-team runtime secrets.
+
+The playbook does not discover role code, inventory, or shared-infra secrets
+from a sibling infrastructure checkout.
+
+## Install Collections
+
+From the repository root:
+
+```bash
+ansible-galaxy collection install -r deploy/requirements.yml -p .ansible/collections --force
+```
 
 ## Deploy
-```bash
-cd deploy
-ansible-playbook \
-  -i "$HOME/workspace/infiquetra/home-lab/ansible/inventory/hosts.yml" \
-  --limit hephaestus.infiquetra.com \
-  hephaestus.yml \
-  --vault-password-file ~/.vault_pass.txt
-```
-Dry-run first with `--check --diff`. The play prints its profile scope and
-asserts the souls source exists before acting.
 
-## Not yet
-- Per-team vault split (secrets still from home-lab `group_vars/all`).
-- Native distribution install (deferred).
-- Team-owned host_vars slice (uses home-lab's today).
+```bash
+export INFIQUETRA_SHARED_INFRA_VAULT=/path/to/shared-infra-vault.yml
+
+ANSIBLE_COLLECTIONS_PATH=.ansible/collections \
+  ansible-playbook \
+    -i /path/to/team-or-shared-inventory.yml \
+    --limit hephaestus.infiquetra.com \
+    deploy/hephaestus.yml \
+    --vault-password-file ~/.vault_pass.txt
+```
+
+Dry-run first with `--check --diff`. The play prints its profile scope and
+refuses to run if it cannot derive team profiles from this repo.
+
+## Local Collection Artifact Test
+
+Before the GitHub repository exists, install a locally built collection artifact
+from `infiquetra-ansible-collections`:
+
+```bash
+ansible-galaxy collection install \
+  /path/to/infiquetra-hermes_team-0.1.0.tar.gz \
+  -p .ansible/collections --force
+```
+
+If this team's spec includes roles outside `infiquetra.hermes_team`, extract
+those roles into collections before treating the deploy as fully independent.

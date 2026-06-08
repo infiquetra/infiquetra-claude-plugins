@@ -4,9 +4,9 @@ Implements the directory contract from
 ``infiquetra-context-library/docs/repositories/agent-team-archetype.md``:
 seeds AI-instruction files + the engineering journal from the context-library
 templates, and stamps the team-specific stubs (README, constitution, identity,
-orchestration, per-profile dirs). The deploy harness (3 files) is written
-separately by harness_gen; deploy/team_profiles.yml gets an authored-artifact
-template. config.yaml / distribution.yaml are labeled DEFERRED placeholders.
+orchestration, per-profile dirs). The deploy harness is written separately by
+harness_gen; deploy/team_profiles.yml gets an authored-artifact template.
+config.yaml / distribution.yaml are labeled DEFERRED placeholders.
 
 Idempotent: existing files are never overwritten (so re-runs + hand edits are
 safe). Returns the list of paths actually created.
@@ -25,6 +25,7 @@ GITIGNORE = """\
 *.vault_pass*
 .env
 .team-scaffold-state.json
+.ansible/
 # python
 __pycache__/
 *.pyc

@@ -1,11 +1,4 @@
-"""Golden test: harness_gen of each materialized spec must reproduce the live
-team repos' deploy/ files byte-for-byte.
-
-This is the acceptance gate for the gen_harness -> harness_gen promotion. The
-fixtures under specs/golden/ are frozen copies of the live infiquetra/team-*
-repos (fetched 2026-06-01); all 36 (3 files x 12 teams) matched the migration
-generator byte-for-byte at promotion time.
-"""
+"""Harness contract tests for the collection-era team deploy generator."""
 
 from __future__ import annotations
 
@@ -17,24 +10,37 @@ from team_scaffold import harness_gen, spec
 
 ROOT = pathlib.Path(__file__).resolve().parents[1].parent  # skills/team-scaffold
 SPECS = ROOT / "specs"
-GOLDEN = SPECS / "golden"
 
 SPEC_FILES = sorted(SPECS.glob("team-*.yaml"))
 assert len(SPEC_FILES) == 12, f"expected 12 specs, found {len(SPEC_FILES)}"
 
 
 @pytest.mark.parametrize("spec_path", SPEC_FILES, ids=lambda p: p.stem)
-def test_harness_byte_for_byte(spec_path: pathlib.Path) -> None:
+def test_harness_uses_collection_contract(spec_path: pathlib.Path) -> None:
     ts = spec.load_spec(spec_path)
     assert ts.validate() == [], f"{ts.repo} spec is invalid"
     rendered = harness_gen.render_harness(ts.as_cfg())
-    gold_dir = GOLDEN / ts.repo / "deploy"
-    assert gold_dir.is_dir(), f"missing golden fixtures for {ts.repo}"
-    for fname, content in rendered.items():
-        expected = (gold_dir / fname).read_text()
-        assert content == expected, f"{ts.repo}/deploy/{fname} diverged from golden"
+    assert set(rendered) == {
+        "README.md",
+        "requirements.yml",
+        "inventory.example.yml",
+        "shared-infra-vault.example.yml",
+        ts.play,
+    }
+    assert "infiquetra-ansible-collections.git" in rendered["requirements.yml"]
+    assert "git+https://github.com/namredips/home-lab.git" not in rendered["requirements.yml"]
+    assert "ANSIBLE_ROLES_PATH" not in rendered["README.md"]
+    assert "homelab_root" not in rendered[ts.play]
+    assert "INFIQUETRA_SHARED_INFRA_VAULT" in rendered[ts.play]
+    assert "pin_guard" not in rendered[ts.play]
+
+    for role_name, _tags in ts.roles:
+        fqcn = harness_gen.COLLECTION_ROLES.get(role_name)
+        if fqcn:
+            assert f"role: {fqcn}" in rendered[ts.play]
 
 
-def test_requirements_src_pinned_to_namredips() -> None:
-    """Byte parity depends on the personal-account remote; guard against a 'fix'."""
-    assert "git+https://github.com/namredips/home-lab.git" in harness_gen.REQUIREMENTS
+def test_requirements_uses_collection_source() -> None:
+    assert "infiquetra-ansible-collections.git" in harness_gen.REQUIREMENTS
+    assert "type: git" in harness_gen.REQUIREMENTS
+    assert "version: v0.1.0" in harness_gen.REQUIREMENTS

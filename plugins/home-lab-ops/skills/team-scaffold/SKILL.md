@@ -20,8 +20,8 @@ in `scripts/`) with the **two irreducible human gates** that cannot be
 API-automated.
 
 > Native `hermes profile install` packaging is DEFERRED. The deploy artifact is
-> the Ansible harness (`deploy/<team>.yml`) that reuses home-lab roles via
-> `ANSIBLE_ROLES_PATH` — the supported independent-deploy mechanism.
+> the Ansible harness (`deploy/<team>.yml`) that installs reusable role code from
+> `infiquetra.hermes_team` and takes inventory/shared secrets as explicit inputs.
 
 ## Mental model
 
@@ -74,9 +74,10 @@ Full detail in [references/runbook.md](references/runbook.md); spec schema in
 9. **Register the host** (the ONLY home-lab write):
    `team-scaffold register-host team-spec.yaml` (dry-run) →
    `... --apply`, then commit home-lab's `hosts.yml` as a single revertible commit.
-10. **Dry-run the deploy:** `cd <clone>/deploy && ansible-playbook -i
-    <home-lab-inventory> --limit <host> <team>.yml --check --diff
-    --vault-password-file ~/.vault_pass.txt`, then deploy for real.
+10. **Dry-run the deploy:** install collections, set
+    `INFIQUETRA_SHARED_INFRA_VAULT`, then run `ansible-playbook -i
+    <inventory-artifact> --limit <host> deploy/<team>.yml --check --diff
+    --vault-password-file ~/.vault_pass.txt`.
 
 ## Guardrails
 
@@ -96,8 +97,9 @@ Full detail in [references/runbook.md](references/runbook.md); spec schema in
 
 ```bash
 cd scripts
-uv run pytest -q                 # 39 tests: golden byte-parity (12 teams) + validators + modules
+uv run pytest -q                 # generator contract + validators + modules
 uv run team-scaffold golden      # re-derive the 12 known teams vs frozen fixtures
 ```
-The golden gate proves the generator still reproduces every live team
-byte-for-byte — run it after any change to `harness_gen.py` or the specs.
+The harness tests prove the generator emits collection install, explicit
+inventory/shared-vault inputs, and no legacy roles-path dependency. Run them
+after any change to `harness_gen.py` or the specs.

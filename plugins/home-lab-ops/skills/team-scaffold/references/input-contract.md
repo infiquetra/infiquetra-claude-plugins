@@ -43,10 +43,10 @@ profiles:                         # NAMES + token vars only (dir stamping + vaul
 
 ## How the 12 existing teams map
 
-`specs/team-*.yaml` are materialized from the migration generator's TEAMS dict
-(harness block) + the live `team_profiles.yml` (profile refs) + `hosts.yml`
-(inventory). They are the golden fixtures: `team-scaffold golden` proves each one
-re-derives its live `deploy/` files byte-for-byte. Use them as worked examples:
+`specs/team-*.yaml` are materialized from the migration generator's TEAMS dict,
+the live `team_profiles.yml` profile refs, and `hosts.yml` inventory. They feed
+the generated deploy fixtures checked by `team-scaffold golden`. Use them as
+worked examples:
 
 - `specs/team-themis.yaml` — single-profile legacy agent (minimal)
 - `specs/team-apollo.yaml` — multi-profile dev team (`hermes_team_listener`)

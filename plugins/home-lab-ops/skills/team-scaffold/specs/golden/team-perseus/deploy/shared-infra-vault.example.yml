@@ -1,0 +1,8 @@
+---
+# Example shape only. Store the real file as an encrypted Ansible Vault artifact
+# supplied by the operator at deploy time via INFIQUETRA_SHARED_INFRA_VAULT.
+
+vault_redis_password: "change-me"
+vault_langfuse_public_key: "change-me"
+vault_langfuse_secret_key: "change-me"
+vault_elevenlabs_api_key: "change-me"

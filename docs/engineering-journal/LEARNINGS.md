@@ -37,6 +37,23 @@
 **Generalizable rule.** Before honoring a "must stay machine-parseable" constraint, grep for the actual parser. If the consumer is an LLM plus a human with no regex, optimize for legibility — a table beats a field stack on both the human and the model axis — and do not pay for a structured-data split that serves a parser that is not there.
 **Refs.** DECISIONS {#saga-doc-formatting-contract}; `docs/reviews/2026-06-07-saga-doc-readability-plan-doc-review.md`.
 
+### Doc-review's premise-check caught a plan that over-stated its own remediation (#201)  {#doc-review-catches-plan-over-claim}
+
+**Context.** The #201 plan — produced by this repo's own `/ideate`→`/plan` — asserted a uniform "fix the bold-label collapse across all nine doc-writing skills." `/doc-review`'s readiness pass grepped the actual templates before approving.
+**Evidence.** `rg -c '^\*\*[a-z_]+:\*\*'` returned non-zero ONLY for `ideation-artifact.md` (9 lines); the other eight templates returned 0 — they already used headings/prose/tables, and `code-review` already rendered findings as a pipe-delimited table (`findings-schema.md:105`). Recorded as F1/F2 in `docs/reviews/2026-06-07-saga-doc-readability-plan-doc-review.md`.
+**Mechanism.** A plan written from one vivid instance (ideate's collapse) generalized the remediation to all siblings without measuring each. The premise was a hypothesis dressed as a fact.
+**Fix.** `/doc-review` safe-fixed the plan (KTD5 + U5 + an execution guard) before `/work` ran, so the parallel fan-out did not over-edit eight already-clean templates.
+**Generalizable rule.** A plan's quantitative premise ("all N have problem X") is a hypothesis — measure it against the repo before building, even when the plan came from your own ideation. The cheapest place to catch an over-claim is the doc-review gate, not the diff.
+**Refs.** DECISIONS {#saga-doc-formatting-contract}; the campaign's components-present-≠-verified lesson.
+
+### Parallel fan-out agents hedge on output conventions unless given the exact form (#201)  {#fanout-agents-hedge-conventions}
+
+**Context.** The #201 `/work` used a `cc-workflows-ultracode` four-agent fan-out to roll a shared-reference LINK into nine skill files. Each agent was told to "link `saga/references/formatting-style.md`."
+**Evidence.** The ideate/plan agents used the repo's bare code-span convention; the brainstorm/spec/strategy/retro/doc-review/code-review/founder-review agents instead emitted a clickable markdown link `[...](../../../references/formatting-style.md)` — several putting BOTH forms on one line, hedging. Normalized to the bare convention post-fan-out before commit (PR #205).
+**Mechanism.** "Link X" under-specifies the FORM. Absent the exact convention, independent agents each pick a defensible-but-different rendering, and some hedge by emitting two.
+**Generalizable rule.** When fanning out a uniform edit across files, give each agent the EXACT output form (a one-line example of the convention), not just the target — or budget a normalization pass. Verifying every fan-out diff is non-optional; the same review pass also caught a hard-coded version-pin test that needed bumping.
+**Refs.** LEARNINGS {#doc-review-catches-plan-over-claim}.
+
 ---
 
 ## 2026-06-04

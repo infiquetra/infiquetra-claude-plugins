@@ -284,6 +284,13 @@ independent read-only review, exploration, or implementation-plan critique.
 
 ## P3 — nice-to-have
 
+### Demonstrate or relax R5 (no-hard-wrap soft-wrap) for generated saga docs  {#saga-doc-soft-wrap-r5}
+
+**Priority.** P3.
+**Effort.** S (a contract edit, or a lint + a regenerate pass).
+**Worth it when.** A markdown viewer is observed to actually jumble a blank-line-separated, hard-wrapped saga doc, OR the no-hard-wrap-vs-repo-hard-wrap-habit tension becomes recurring friction. Then either enforce R5 (lint + regenerate the key docs no-hard-wrap) or relax it to blank-line-separation-only in `formatting-style.md`.
+**Context.** `formatting-style.md` rule 5 prescribes no-hard-wrap for generated output, but generated docs still hard-wrap at ~100 chars; the jumbling problem is already solved by blank-line separation + tables. QA #201 flagged this as the one LOW deferred (F1); operator chose "leave as-is, opportunistic" at the 2026-06-07 retro. Refs: `docs/qa/qa-issue-201-2026-06-07.md`; DECISIONS {#saga-doc-formatting-contract}.
+
 ### Symmetric `/ideate` → `/brainstorm` handoff field contract  {#ideate-brainstorm-handoff-symmetry}
 
 **Priority.** P3.

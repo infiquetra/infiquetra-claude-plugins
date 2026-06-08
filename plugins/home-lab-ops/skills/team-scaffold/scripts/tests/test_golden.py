@@ -36,8 +36,8 @@ def test_harness_uses_collection_contract(spec_path: pathlib.Path) -> None:
 
     for role_name, _tags in ts.roles:
         fqcn = harness_gen.COLLECTION_ROLES.get(role_name)
-        if fqcn:
-            assert f"role: {fqcn}" in rendered[ts.play]
+        assert fqcn, f"{role_name} is not mapped to infiquetra.hermes_team"
+        assert f"role: {fqcn}" in rendered[ts.play]
 
 
 def test_requirements_uses_collection_source() -> None:

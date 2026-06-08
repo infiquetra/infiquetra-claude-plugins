@@ -12,6 +12,9 @@ COLLECTION_ROLES = {
     "hermes_dm_listener": "infiquetra.hermes_team.hermes_dm_listener",
     "hermes_mint_broker": "infiquetra.hermes_team.hermes_mint_broker",
     "deploy_skill": "infiquetra.hermes_team.deploy_skill",
+    "ollama": "infiquetra.hermes_team.ollama",
+    "hermes_team_listener": "infiquetra.hermes_team.hermes_team_listener",
+    "hermes_orchestrator": "infiquetra.hermes_team.hermes_orchestrator",
 }
 
 REQUIREMENTS = """---
@@ -32,6 +35,17 @@ vault_redis_password: "change-me"
 vault_langfuse_public_key: "change-me"
 vault_langfuse_secret_key: "change-me"
 vault_elevenlabs_api_key: "change-me"
+
+# Required by infiquetra.hermes_team.ollama when ollama_cloud_models is non-empty.
+ollama_cloud_ssh_private_key: |
+  -----BEGIN OPENSSH PRIVATE KEY-----
+  change-me
+  -----END OPENSSH PRIVATE KEY-----
+ollama_cloud_ssh_public_key: "ssh-ed25519 change-me"
+
+# Required when deploying the Hermes orchestrator role.
+vault_hermes_conductor_token: "change-me"
+vault_github_webhook_secret: "change-me"
 """
 
 
@@ -195,7 +209,8 @@ the supported independent deploy mechanism.
 2. Git authentication that can read the private collection repository.
 3. Vault password at `~/.vault_pass.txt`.
 4. An inventory file with a `{hosts}` group.
-5. An encrypted shared-infra vault file containing cross-team runtime secrets.
+5. An encrypted shared-infra vault file containing cross-team runtime secrets,
+   including Ollama Cloud SSH key material when `ollama_cloud_models` is non-empty.
 
 The playbook does not discover role code, inventory, or shared-infra secrets
 from a sibling infrastructure checkout.
@@ -234,9 +249,6 @@ ansible-galaxy collection install \\
   /path/to/infiquetra-hermes_team-0.1.0.tar.gz \\
   -p .ansible/collections --force
 ```
-
-If this team's spec includes roles outside `infiquetra.hermes_team`, extract
-those roles into collections before treating the deploy as fully independent.
 """
 
 

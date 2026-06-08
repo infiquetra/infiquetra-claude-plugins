@@ -106,6 +106,6 @@
           Deploying {{ hermes_team_profiles_filter | length }} profiles
           ({{ hermes_team_profiles_filter | join(', ') }}). Only this team's profiles are touched.
   roles:
-    - { role: ollama, tags: ['ollama', 'prometheus'] }
+    - { role: infiquetra.hermes_team.ollama, tags: ['ollama', 'prometheus'] }
     - { role: infiquetra.hermes_team.hermes, tags: ['hermes', 'prometheus'] }
     - { role: infiquetra.hermes_team.hermes_dm_listener, tags: ['dm_listener', 'prometheus'] }

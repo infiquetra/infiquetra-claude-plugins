@@ -106,7 +106,7 @@
           Deploying {{ hermes_team_profiles_filter | length }} profiles
           ({{ hermes_team_profiles_filter | join(', ') }}). Only this team's profiles are touched.
   roles:
-    - { role: ollama, tags: ['ollama', 'apollo'] }
+    - { role: infiquetra.hermes_team.ollama, tags: ['ollama', 'apollo'] }
     - { role: infiquetra.hermes_team.hermes, tags: ['hermes', 'apollo'] }
-    - { role: hermes_team_listener, tags: ['team_listener', 'apollo'] }
+    - { role: infiquetra.hermes_team.hermes_team_listener, tags: ['team_listener', 'apollo'] }
     - { role: infiquetra.hermes_team.hermes_dm_listener, tags: ['dm_listener', 'apollo'] }

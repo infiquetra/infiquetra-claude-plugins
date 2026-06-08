@@ -14,7 +14,8 @@ the supported independent deploy mechanism.
 2. Git authentication that can read the private collection repository.
 3. Vault password at `~/.vault_pass.txt`.
 4. An inventory file with a `mac_minis` group.
-5. An encrypted shared-infra vault file containing cross-team runtime secrets.
+5. An encrypted shared-infra vault file containing cross-team runtime secrets,
+   including Ollama Cloud SSH key material when `ollama_cloud_models` is non-empty.
 
 The playbook does not discover role code, inventory, or shared-infra secrets
 from a sibling infrastructure checkout.
@@ -53,6 +54,3 @@ ansible-galaxy collection install \
   /path/to/infiquetra-hermes_team-0.1.0.tar.gz \
   -p .ansible/collections --force
 ```
-
-If this team's spec includes roles outside `infiquetra.hermes_team`, extract
-those roles into collections before treating the deploy as fully independent.

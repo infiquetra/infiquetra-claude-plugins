@@ -8,6 +8,11 @@ Field names here are IDENTICAL to the SURVIVOR SCHEMA and REVIVABLE-CUT SCHEMA i
 them aligned. Omit a clearly irrelevant field only when necessary. On resume, update in place and
 preserve `Explored` markers, stable `R#` ids, and their statuses.
 
+The visual shape of the generated artifact follows the canonical formatting contract,
+`saga/references/formatting-style.md`: lead each ranked survivor with a one-line summary, keep
+`description` / `rationale` / `downsides` as short blank-line-separated prose, and render the compact
+fields (`basis` / `confidence` / `complexity` / `axis` / `status`) as a small two-column table.
+
 The artifact carries `idea-ready` handoff maturity (feeds `/handoff` → `mission-control` and `/plan`).
 
 ```markdown
@@ -41,19 +46,24 @@ when Phase 1.5 was skipped. Omit this section entirely if not applicable.]
 ## Ranked Survivors
 
 ### 1. <Idea Title>
-**title:** <short, concrete>
-**description:** [Concrete explanation of the move]
-**axis:** [Topic axis this idea targets — omit when decomposition was skipped]
-**basis:** [`direct:` quoted file/line/issue/user-context | `external:` named prior art/source |
-`reasoned:` written-out first-principles argument]
-**rationale:** [How the basis connects to the move's significance]
-**downsides:** [Tradeoffs or costs]
-**confidence:** [0-100]
-**complexity:** [Low | Med | High]
-**status:** [Unexplored | Explored]
+
+[One-line plain-language summary of the move, before any fields.]
+
+[Concrete explanation of the move — the `description`. Short prose, ≤3 sentences.]
+
+[How the basis connects to the move's significance — the `rationale` — then the `downsides`
+(tradeoffs or costs), as a separate short paragraph. Blank-line separated, ≤3 sentences each.]
+
+| field | value |
+|-------|-------|
+| basis | [`direct:` quoted file/line/issue/user-context \| `external:` named prior art/source \| `reasoned:` written-out first-principles argument] |
+| confidence | [0-100] |
+| complexity | [Low \| Med \| High] |
+| axis | [Topic axis this idea targets — omit this row when decomposition was skipped] |
+| status | [Unexplored \| Explored] |
 
 ### 2. <Idea Title>
-[... same fields, strongest-first by rubric score ...]
+[... same shape — summary, prose, then the field table — strongest-first by rubric score ...]
 
 ## Did not survive (revivable)
 

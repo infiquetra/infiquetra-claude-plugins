@@ -22,6 +22,18 @@
 
 ---
 
+## 2026-06-07
+
+### Saga document formatting contract — one shared reference, table-rendered schema (#201)  {#saga-doc-formatting-contract}
+
+**Decision.** All nine saga doc-writing skills (ideate, plan, brainstorm, spec, strategy, retro, doc-review, code-review, founder-review) link one shared reference, `saga/references/formatting-style.md`, which mandates: ≤3-sentence blank-line-separated paragraphs; a one-line summary opening each ranked item/section; comparative or ranked data as a table; the compact engineer-facing schema fields (basis/confidence/complexity/axis/status, findings severity/file/line) rendered as a table while narrative fields stay prose; no-hard-wrap soft-wrap for generated output; and dropping a field a heading already carries. A pytest (`tests/test_saga_doc_formatting.py`) enforces the no-stacked-bold-label rule and the link-presence rule across the templates.
+**Rejected alternatives.** Per-template duplication (drifts — `plan` fixed the CommonMark collapse once at `plan-sections.md` and `ideate` regressed into the stack anyway); a two-file `.fields.yaml` sidecar or a full doc serializer (both serve a field-level parser that does not exist, and a serializer cannot author narrative prose); fenced-block-for-all-fields (loses the at-a-glance scannability of the compact fields).
+**Rationale.** A single referenced contract means one edit improves every skill and the next new one; the table render kills the CommonMark collapse, scans at a glance, and — since the schema consumer is an LLM reader plus a human, not a regex — is *more* legible, not a parse risk; the pytest makes the format unable to silently regress.
+**Revisit when.** A real field-level parser is introduced for ideation/review schemas (a structured sidecar like the rejected R1 may then earn its place), or the pytest's stacked-bold-label heuristic proves too narrow or too noisy in practice.
+**Refs.** `docs/plans/2026-06-07-saga-doc-readability-plan.md`; `docs/ideation/2026-06-07-saga-doc-readability-ideation.md`; `docs/reviews/2026-06-07-saga-doc-readability-plan-doc-review.md`; LEARNINGS {#saga-doc-schema-no-field-parser}.
+
+---
+
 ## 2026-06-05
 
 ### Whole-family plugin rename — Scheme Y: functional names + a shared `saga` category, drop the `infiquetra-` prefix, fold `blueprint-reviewer` into `saga` (squash `b6a03e0`, PR #199)  {#plugin-family-rename-scheme-y}

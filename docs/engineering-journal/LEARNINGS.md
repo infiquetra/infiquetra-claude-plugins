@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-06-07
+
+### Saga ideation/review schema fields are not machine-parsed — the consumer is an LLM + a human  {#saga-doc-schema-no-field-parser}
+
+**Context.** Issue #201 (make saga docs readable) carried a constraint "keep the schema machine-parseable for `/handoff` and `/plan`," and the templates' own comments asserted those consumers "parse" `basis`/`confidence`/`complexity`. That constraint drove two early heavyweight ideas (a YAML field sidecar, a full doc serializer).
+**Evidence.** `plugins/saga/scripts/parse_issue.py` parses issue *bodies* only (ADR/AC refs, keyword flags, H3 headings, handoff maturity) — never ideation-doc fields. `handoff/SKILL.md:53-57` routes by directory → maturity plus frontmatter `maturity:`; `brainstorm`/`plan` consume the doc as an LLM reader, with the human naming the survivor by title or `R#`. No code regexes `**basis:**` / `**confidence:**` / `**complexity:**`.
+**Mechanism.** The "machine-parseable" contract was aspirational template prose, never an implemented parser. The real consumers are a model reading the markdown and a human — both of which read a table or fenced block *better* than a run-on bold-label stack.
+**Fix.** Rendered the compact schema fields as a table (#201) and kept the field names stable for legibility and future-proofing; dropped the YAML-sidecar and serializer ideas.
+**What surprised.** A constraint stated as load-bearing ("must stay parseable") was satisfied — and improved — by the human-readability fix itself, because the asserted parser did not exist. Reading the consumer code flipped two heavyweight options straight into the reject pile.
+**Generalizable rule.** Before honoring a "must stay machine-parseable" constraint, grep for the actual parser. If the consumer is an LLM plus a human with no regex, optimize for legibility — a table beats a field stack on both the human and the model axis — and do not pay for a structured-data split that serves a parser that is not there.
+**Refs.** DECISIONS {#saga-doc-formatting-contract}; `docs/reviews/2026-06-07-saga-doc-readability-plan-doc-review.md`.
+
+---
+
 ## 2026-06-04
 
 ### "X shipped" can be TRUE on origin yet INVISIBLE in a stale local tree — verify against origin/<tip> + `gh pr view`, not the checkout, before concluding "X didn't ship"  {#shipped-on-origin-not-in-stale-local-tree}

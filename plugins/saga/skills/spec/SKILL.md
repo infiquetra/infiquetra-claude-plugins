@@ -166,6 +166,8 @@ register) nor `/brainstorm`'s divergent exploration job. It reads the repo but d
 - `references/spec-template.md` — the locked `docs/specs/` artifact: frontmatter + sections, the
   post-write checklist, and the `/handoff` routing note (the artifact is a `/handoff` source mapping to
   `requirements-ready`; `mission-control` owns the issue body).
+- `saga/references/formatting-style.md` — the shared formatting contract the written spec follows
+  (one-line section summaries, short blank-separated paragraphs, comparative data as tables/bullets).
 
 ## Learn more
 

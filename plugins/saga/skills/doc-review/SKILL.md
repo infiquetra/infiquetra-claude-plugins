@@ -181,6 +181,12 @@ For issue-attached work, summarize:
 
 ## Output Shape
 
+The generated readiness report and the `docs/reviews/` artifact follow the shared formatting contract
+in `saga/references/formatting-style.md`: lead the readiness
+summary and each section with a one-line plain-language verdict, render the by-priority findings as a
+table (one row per finding, with its `P0`-`P3` priority and status), and keep narrative fields as short
+(≤3-sentence) blank-line-separated prose.
+
 Use this structure:
 
 1. Applied fixes, if any.

@@ -24,7 +24,7 @@
 
 ## 2026-06-07
 
-### Saga document formatting contract — one shared reference, table-rendered schema (#201)  {#saga-doc-formatting-contract}
+### Saga document formatting contract — one shared reference, table-rendered schema (squash `abcc06b`, PR #205, #201)  {#saga-doc-formatting-contract}
 
 **Decision.** All nine saga doc-writing skills (ideate, plan, brainstorm, spec, strategy, retro, doc-review, code-review, founder-review) link one shared reference, `saga/references/formatting-style.md`, which mandates: ≤3-sentence blank-line-separated paragraphs; a one-line summary opening each ranked item/section; comparative or ranked data as a table; the compact engineer-facing schema fields (basis/confidence/complexity/axis/status, findings severity/file/line) rendered as a table while narrative fields stay prose; no-hard-wrap soft-wrap for generated output; and dropping a field a heading already carries. A pytest (`tests/test_saga_doc_formatting.py`) enforces the no-stacked-bold-label rule and the link-presence rule across the templates.
 **Rejected alternatives.** Per-template duplication (drifts — `plan` fixed the CommonMark collapse once at `plan-sections.md` and `ideate` regressed into the stack anyway); a two-file `.fields.yaml` sidecar or a full doc serializer (both serve a field-level parser that does not exist, and a serializer cannot author narrative prose); fenced-block-for-all-fields (loses the at-a-glance scannability of the compact fields).

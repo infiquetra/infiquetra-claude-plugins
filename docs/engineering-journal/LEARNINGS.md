@@ -27,7 +27,7 @@
 
 ## 2026-06-07
 
-### Saga ideation/review schema fields are not machine-parsed — the consumer is an LLM + a human  {#saga-doc-schema-no-field-parser}
+### Saga ideation/review schema fields are not machine-parsed — the consumer is an LLM + a human (squash `abcc06b`, PR #205, #201)  {#saga-doc-schema-no-field-parser}
 
 **Context.** Issue #201 (make saga docs readable) carried a constraint "keep the schema machine-parseable for `/handoff` and `/plan`," and the templates' own comments asserted those consumers "parse" `basis`/`confidence`/`complexity`. That constraint drove two early heavyweight ideas (a YAML field sidecar, a full doc serializer).
 **Evidence.** `plugins/saga/scripts/parse_issue.py` parses issue *bodies* only (ADR/AC refs, keyword flags, H3 headings, handoff maturity) — never ideation-doc fields. `handoff/SKILL.md:53-57` routes by directory → maturity plus frontmatter `maturity:`; `brainstorm`/`plan` consume the doc as an LLM reader, with the human naming the survivor by title or `R#`. No code regexes `**basis:**` / `**confidence:**` / `**complexity:**`.

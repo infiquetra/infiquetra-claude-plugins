@@ -9,6 +9,12 @@ User-facing behavior, scope boundaries, and success criteria belong in this doc.
 file layouts, and code-level design do not — unless the brainstorm is itself about that technical
 decision, in which case those details are the subject and belong here.
 
+**Formatting contract.** The generated requirements doc follows the shared
+`saga/references/formatting-style.md`: open each section and
+each ranked item with a one-line plain-language summary, keep narrative fields as short
+(≤3-sentence) blank-line-separated paragraphs, and render any comparative, scored, or enumerated data
+(option comparisons, requirement groups, tradeoffs) as a table or bullet list rather than a prose wall.
+
 ## The outcome
 
 A great requirements doc lets three audiences act:

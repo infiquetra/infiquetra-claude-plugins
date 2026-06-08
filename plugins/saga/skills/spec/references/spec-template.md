@@ -16,6 +16,12 @@ answers and write to `docs/specs/<YYYY-MM-DD>-<slug>-spec.md`. Template structur
   `issue:#N`, or the repo-relative upstream doc path).
 - **Optional sections (Open Questions): delete the section entirely if unused. Never leave an empty
   header.**
+- **Formatting.** Follow the shared
+  `saga/references/formatting-style.md`: open `Context`,
+  `Proposed Change`, and each filled section with a one-line summary, keep narrative fields as short
+  (≤3-sentence) blank-line-separated paragraphs, and render comparative or scored data as a table or
+  bullets — the `Failure Modes & Rollback` and `Files Reference` tables and the numbered `Acceptance
+  Criteria` already follow this.
 
 ## Template
 

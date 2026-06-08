@@ -172,6 +172,13 @@ Push twice, then respect the answer. Escape hatches are in `references/interroga
 Write the plan to `docs/plans/YYYY-MM-DD-<topic>-plan.md` per `references/plan-sections.md`. Right-size
 by the Phase-0.5 scope class. **Never code during this phase** — research, decide, and write the plan.
 
+Follow the shared formatting contract in `saga/references/formatting-style.md` for the plan's visual
+structure: lead each unit and major section with a one-line summary, keep narrative fields as short
+(≤3-sentence) blank-line-separated prose, render comparative/scored data as a table, and never stack
+bold labels without a blank line between them. Per-unit fields stay as blank-line-separated
+`**label:**` lines under each `### U<N>.` heading (the contract's prose-heavy per-unit branch) — not a
+table.
+
 **Hard floor (every warranted plan carries these):**
 
 - **Summary** — what the plan proposes, in 1-3 lines.

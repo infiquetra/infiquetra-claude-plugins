@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.20.0 - 2026-06-07
+
+- Add a shared formatting contract, `saga/references/formatting-style.md`, linked by all nine
+  doc-writing skills (ideate, plan, brainstorm, spec, strategy, retro, doc-review, code-review,
+  founder-review). It mandates scannable output: ≤3-sentence blank-line-separated paragraphs, a
+  one-line summary opening each ranked item/section, comparative data as tables, the compact
+  engineer-facing schema fields rendered as a table (narrative fields stay prose), no-hard-wrap
+  soft-wrap for generated output, and dropping fields a heading already carries. (#201)
+- Fix the triggering case: `ideate`'s `ideation-artifact.md` SURVIVOR SCHEMA no longer stacks
+  bold-label lines (the CommonMark collapse that read as "all jumbled together") — it now leads with
+  a one-line summary and renders the schema as a table.
+- Enforce it: `tests/test_saga_doc_formatting.py` fails CI on a stacked-bold-label collapse and on
+  any doc-writing skill that does not link the contract.
+
+## 0.19.0 - 2026-06-05
+
+- Rename the engine plugin to `saga` (Scheme Y plugin-family rename) and fold `blueprint-reviewer`
+  into it. Metadata/marketplace change; no command behavior change. (#199)
+
 ## 0.18.0 - 2026-06-04
 
 - Rebuild `/optimize` from a 20-line stub into a **metric-driven optimization engine** — the

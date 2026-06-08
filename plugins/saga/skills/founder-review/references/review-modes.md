@@ -4,6 +4,11 @@ This reference is the operational spine of `/founder-review`: the 4 scope modes,
 pre-review system audit, the Step-0 sub-steps (with the **target-conditional** ceremonies), the
 expansion-framing and opt-in ceremonies, and the scope-decision artifact format.
 
+**Formatting contract.** The generated `docs/founder-reviews/` scope-decision artifact follows the shared
+contract in `saga/references/formatting-style.md`: lead each
+section with a one-line summary, keep the Scope Decisions data as a table (the format below), and keep
+narrative fields (Vision, Premise findings, verdict) as short (≤3-sentence) blank-line-separated prose.
+
 ---
 
 ## The 4 scope modes

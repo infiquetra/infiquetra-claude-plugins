@@ -4,6 +4,13 @@ Every review lens returns findings in this schema. It is adopted from CE's findi
 are **agent-consumable** — `autofix_class` and `owner` are routing metadata a downstream fixer reads.
 `/code-review` itself only reports, classifies, and routes; it never applies a fix.
 
+**Formatting contract.** The output below already tables findings (the pipe-delimited interactive table);
+that satisfies the shared contract in
+`saga/references/formatting-style.md`. When the report carries
+any surrounding narrative (the Coverage section, the verdict blockquote), keep it as short (≤3-sentence)
+blank-line-separated prose and lead each block with a one-line summary. Do **not** re-table the findings —
+the schema and its table are canonical.
+
 ## Per-finding fields
 
 | Field | Required | Description |

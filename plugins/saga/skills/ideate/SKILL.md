@@ -527,3 +527,12 @@ and follow Phases 3–6 (adversarial filter → present survivors + revivable cu
 co-ideate / revive / interview / hand off), then the quality-bar self-check. This load is
 non-optional — the critique rubric, revival state machine, persistence template, the Phase 6 menu,
 and the quality bar live there, not in this file. Do not improvise them from memory.
+
+## Reference files
+
+- `saga/skills/ideate/references/convergence-and-partnership.md` — Phases 3–6 (critique, present,
+  persist, refine/revive/hand off) and the quality bar.
+- `saga/skills/ideate/references/ideation-artifact.md` — the persisted artifact template.
+- `saga/references/formatting-style.md` — the canonical formatting contract that governs how the
+  presented survivors and the persisted artifact look (lead-in summaries, short prose, compact fields
+  as a table).

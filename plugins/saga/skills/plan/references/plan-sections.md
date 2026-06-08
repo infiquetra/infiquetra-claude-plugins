@@ -4,6 +4,12 @@ This reference describes WHAT a great Infiquetra implementation plan contains. T
 markdown only (the HTML output branch is not used here). Sections earn their place by serving one of
 the plan's three audiences; omit padding.
 
+**Formatting authority.** The generated plan's visual structure follows the shared formatting
+contract in `saga/references/formatting-style.md` — that file is canonical for how saga documents
+*look* (short paragraphs, lead-with-a-summary, comparative data as a table, never stack bold labels).
+This reference governs WHAT a plan contains and how its units are shaped; the formatting contract
+governs the render rules they share.
+
 ## The outcome — three audiences
 
 A great plan enables three audiences to act:
@@ -114,6 +120,16 @@ than forcing the content where it doesn't belong.
   machines, worktrees, and teammates.
 
 ### Per implementation unit
+
+**Lead with a one-liner.** Each unit (and each major plan section) opens with a one-line,
+plain-language summary before any fields or detail — the reader grasps the unit's intent in a single
+glance, then drops into the fields. This is rule 2 of `saga/references/formatting-style.md`.
+
+**Field shape — blank-line-separated bold labels.** Per-unit fields render as `**label:**` lines under
+the `### U<N>.` heading, each separated by a blank line — this is the contract's "prose-heavy per-unit
+fields that don't tabularize" branch (`saga/references/formatting-style.md`, "Which structure to use").
+Do **not** convert plan units to a table, and **never** stack two `**label:**` lines without a blank
+line between them (the fatal CommonMark collapse — rule 7 of the formatting contract).
 
 Each `### U<N>. [Name]` includes:
 

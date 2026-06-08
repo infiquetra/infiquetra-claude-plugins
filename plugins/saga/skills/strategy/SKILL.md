@@ -141,6 +141,8 @@ does **NOT** write the saga — no `saga.py` invocation, no `--review-paths`. Re
 - `references/strategy-template.md` — the locked `STRATEGY.md` template: YAML frontmatter + the 8
   sections in locked order, the 3-5 metrics / 2-4 tracks constraints, delete-optional-if-unused, and
   the post-write checklist.
+- `saga/references/formatting-style.md` — the shared formatting contract the written `STRATEGY.md`
+  follows (short blank-separated sections leading with the point, comparative data as bullets/tables).
 
 ## Learn more
 

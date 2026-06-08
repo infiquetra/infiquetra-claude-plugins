@@ -12,6 +12,11 @@ to the repository root `STRATEGY.md`. Locked template ported from Compound-Engin
 - **Optional sections: delete the section entirely if unused. Never leave an empty header.**
 - Set `last_updated` in the YAML frontmatter to today's ISO date (YYYY-MM-DD); do not duplicate it in
   prose. Set `name` to the product or initiative name (the same value used in the H1 title).
+- **Formatting.** Follow the shared
+  `saga/references/formatting-style.md`: keep each section a
+  short (≤3-sentence) blank-line-separated paragraph, lead with the plain-language point, and render
+  any comparative or enumerated data as the bullet lists the template already prescribes (`Key metrics`,
+  `Milestones`, `Not working on`) rather than a prose wall.
 
 ## Template
 

@@ -81,21 +81,26 @@ brief follow-up questions and lightweight clarification.
 
 ### SURVIVOR SCHEMA
 
-Present only the surviving ideas, each in this exact shape (field names identical to the artifact
-template in `saga/skills/ideate/references/ideation-artifact.md`):
+Present only the surviving ideas. The render follows the canonical formatting contract,
+`saga/references/formatting-style.md`, and matches the artifact template in
+`saga/skills/ideate/references/ideation-artifact.md` exactly (same field names). Each survivor takes
+this shape:
 
-- **title** — short, concrete.
-- **description** — concrete explanation of the move.
-- **axis** — the topic axis this idea targets. Include only when Phase 1.5 produced an axis list; omit
-  when decomposition was skipped.
-- **basis** — tagged exactly one of `direct:` (quoted file/line/issue/user-context), `external:`
-  (named prior art / source), or `reasoned:` (written-out first-principles argument). This is the same
-  basis contract the frame agents carried in Phase 2.
-- **rationale** — how the basis connects to the move's significance.
-- **downsides** — tradeoffs or costs.
-- **confidence** — 0-100.
-- **complexity** — Low / Med / High.
-- **status** — `Unexplored` / `Explored`.
+- a `### N. <title>` heading — the **title** (short, concrete) lives in the heading, not a separate
+  field;
+- a one-line plain-language summary of the move;
+- the **description** (concrete explanation of the move) as short prose, then **rationale** (how the
+  basis connects to the move's significance) and **downsides** (tradeoffs or costs) as a separate
+  short paragraph — blank-line-separated, ≤3 sentences each;
+- a small two-column table for the compact fields:
+  - **basis** — tagged exactly one of `direct:` (quoted file/line/issue/user-context), `external:`
+    (named prior art / source), or `reasoned:` (written-out first-principles argument). This is the
+    same basis contract the frame agents carried in Phase 2.
+  - **confidence** — 0-100.
+  - **complexity** — Low / Med / High.
+  - **axis** — the topic axis this idea targets. Include this row only when Phase 1.5 produced an axis
+    list; omit it when decomposition was skipped.
+  - **status** — `Unexplored` / `Explored`.
 
 Order survivors by the rubric score (strongest first).
 

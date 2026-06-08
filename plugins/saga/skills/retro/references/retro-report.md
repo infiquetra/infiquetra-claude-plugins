@@ -2,6 +2,12 @@
 
 The shape of the `docs/retros/` writeup and the journal entry templates `/retro` promotes into.
 
+**Formatting contract.** The generated retro doc follows the shared
+`saga/references/formatting-style.md`: open each report
+section with a one-line summary, render comparative or enumerated data (findings, scope decisions) as a
+table or bullet list rather than a prose wall, keep narrative fields as short (≤3-sentence)
+blank-line-separated paragraphs, and never stack `**label:**` lines without a blank line between them.
+
 ---
 
 ## The `docs/retros/` writeup shape

@@ -42,7 +42,7 @@ mutation** — keep it last, emit it as one commit, and never run it before step
 
 ## After scaffolding
 
-Run the golden gate to confirm nothing regressed the generator:
+Run the generator checks to confirm nothing regressed the scaffold output:
 
 ```bash
 cd scripts && uv run pytest -q && uv run team-scaffold golden

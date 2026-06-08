@@ -59,6 +59,7 @@ class TeamSpec:
             "roles": self.roles,
             "pin": self.pin_runtime,
             "coresident": self.coresident,
+            "inventory": self.inventory,
         }
 
     def validate(self) -> list[str]:

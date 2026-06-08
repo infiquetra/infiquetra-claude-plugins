@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Build helper (run once): materialize specs/team-*.yaml for the 12 existing teams.
 
-Imports the TEAMS dict from the preserved migration generator so the harness
-block is transcription-free, enriches each spec with profile refs (from the live
-team_profiles.yml fixtures) + an inventory block (from home-lab hosts.yml), and
-writes specs/team-<name>.yaml. Those specs feed the golden test: harness_gen of
-each spec must reproduce the live deploy/ files byte-for-byte.
+Imports the TEAMS dict from the preserved migration generator, enriches each
+spec with profile refs (from the live team_profiles.yml fixtures) + an inventory
+block (from home-lab hosts.yml), and writes specs/team-<name>.yaml. Those specs
+feed the generated deploy fixture parity check.
 
 Usage:
   python3 materialize_specs.py \

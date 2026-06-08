@@ -10,7 +10,7 @@ Everything here is scriptable + idempotent:
   team-scaffold stamp              team-spec.yaml --out <dir> [--context-library PATH]
   team-scaffold vault-wire         team-spec.yaml --source <home-lab all.yml> --out <dir>
   team-scaffold register-host      team-spec.yaml [--hosts PATH] [--apply]
-  team-scaffold golden             # re-derive 12 known teams vs frozen fixtures
+  team-scaffold golden             # re-derive 12 known teams vs generated fixtures
 """
 
 from __future__ import annotations
@@ -120,7 +120,7 @@ def _cmd_golden(_args: argparse.Namespace) -> int:
     if fails:
         print(f"{fails} divergence(s)")
         return 1
-    print(f"✓ golden: {len(specs)} teams reproduce byte-for-byte")
+    print(f"✓ golden: {len(specs)} teams match generated deploy fixtures")
     return 0
 
 

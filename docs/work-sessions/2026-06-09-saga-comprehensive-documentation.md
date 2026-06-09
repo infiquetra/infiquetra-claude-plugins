@@ -52,9 +52,11 @@ Implemented the v1 Saga documentation system from U1-U7: curated source model, g
 
 - `uv run python plugins/saga/scripts/render_docs_visuals.py --check`
 - `uv run ruff check plugins/saga/scripts/render_docs_visuals.py tests/test_saga_docs_coverage.py`
+- `uv run ruff check .`
 - `uv run pytest tests/test_saga_docs_coverage.py`
 - `uv run pytest tests/test_saga_docs_coverage.py tests/test_saga_doc_formatting.py tests/test_saga_plugin.py`
 - `uv run pytest` with local `.claude/saga/` moved aside during the run, then restored: 716 passed
+- `git diff --check`
 - `python3 -m json.tool plugins/saga/.claude-plugin/plugin.json`
 - `python3 -m json.tool .claude-plugin/marketplace.json`
 - `rsvg-convert -w 1600 -h 900 plugins/saga/docs/assets/*.svg`

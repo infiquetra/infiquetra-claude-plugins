@@ -24,7 +24,7 @@ REQUIREMENTS = """---
 collections:
   - name: git+https://github.com/infiquetra/infiquetra-ansible-collections.git#/ansible_collections/infiquetra/hermes_team/
     type: git
-    version: v0.1.0
+    version: v0.1.1
 """
 
 SHARED_INFRA_VAULT_EXAMPLE = """---

@@ -43,4 +43,4 @@ def test_harness_uses_collection_contract(spec_path: pathlib.Path) -> None:
 def test_requirements_uses_collection_source() -> None:
     assert "infiquetra-ansible-collections.git" in harness_gen.REQUIREMENTS
     assert "type: git" in harness_gen.REQUIREMENTS
-    assert "version: v0.1.0" in harness_gen.REQUIREMENTS
+    assert "version: v0.1.1" in harness_gen.REQUIREMENTS

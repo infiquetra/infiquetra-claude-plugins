@@ -208,9 +208,7 @@ def test_manual_relative_links_resolve() -> None:
             if not target_without_anchor:
                 continue
             target = (page.parent / target_without_anchor).resolve()
-            assert target.exists(), (
-                f"{page.relative_to(REPO_ROOT)} has broken link: {raw_target}"
-            )
+            assert target.exists(), f"{page.relative_to(REPO_ROOT)} has broken link: {raw_target}"
 
 
 def test_generated_visual_assets_match_model() -> None:
@@ -226,5 +224,5 @@ def test_generated_visual_assets_match_model() -> None:
             f"{visual['file']} is stale; run "
             "uv run python plugins/saga/scripts/render_docs_visuals.py"
         )
-        assert f"<title id=\"title\">{visual['title']}</title>" in svg
+        assert f'<title id="title">{visual["title"]}</title>' in svg
         assert "Do not edit by hand" in svg

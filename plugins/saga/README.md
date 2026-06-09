@@ -1,105 +1,99 @@
 # saga
 
-Infiquetra engineering lifecycle plugin for day-to-day engineering work. Commands carry work
-through five phases: **Think → Plan & execute → Hand off → Review → Improve & route**.
+Saga is the Infiquetra lifecycle spine for turning vague work into reviewed plans, PRs, merges, handoffs, QA evidence, and durable learning.
 
-## Commands
+It is an operating model, not just a command bundle. Saga owns lifecycle choice, local saga state, routing, and handoff envelopes. Adjacent plugins own their own mutation surfaces: `mission-control` owns SDLC issues and board state, `deploy` owns deployment mutation, and `team-execution` owns reviewer/validator orchestration.
 
-The command set groups by lifecycle phase:
+![Saga Lifecycle Atlas](docs/assets/lifecycle-atlas.svg)
 
-- **Think:** `/office-hours`, `/ideate`, `/brainstorm`, `/spec`, `/strategy`
-- **Plan & execute:** `/plan`, `/work`, `/qa`, `/investigate`, `/retro`, `/resume`
-- **Hand off:** `/handoff` → `mission-control`
-- **Review:** `/founder-review`, `/ceo-review`, `/doc-review`, `/code-review`
-- **Improve & route:** `/optimize`, `/loop`
+## Start Here
 
-What each command does:
+Use the situation, not the command list, as the entry point.
 
-- `/office-hours`, `/ideate`, and `/brainstorm` support early thinking.
-- `/spec` is the off-chain spec-interrogation engine (gstack `spec` single-source WHAT-interrogation
-  port — the sibling of `/plan`'s HOW-rigor): a relentless five-Why → scope/MVP/out-of-scope/failure-mode
-  lock → read-code-first grounding interview that sharpens a vague ask into a precise WHAT artifact under
-  `docs/specs/` (a `requirements-ready` `/handoff` source). It records the WHAT (off-chain, no saga
-  write); `/brainstorm` diverges into it and `/plan` settles the HOW after.
-- `/strategy` is the interview-driven `STRATEGY.md` engine: a Rumelt-grounded
-  (diagnosis / guiding-policy / coherent-action) 8-section interview with a mandatory 2-round
-  pushback per section, file-state routing (new doc vs targeted-section update), and a locked
-  root-`STRATEGY.md` template (3-5 metrics, 2-4 tracks). It records durable direction (off-chain,
-  no saga write); `/founder-review` challenges it.
-- `/plan`, `/work`, `/qa`, `/retro`, and `/resume` run the durable work loop.
-- `/qa` is the gate-only acceptance-evidence engine: it classifies the change into risk classes, runs
-  acceptance checks, assigns severity, derives a ship verdict and reports a ported deterministic
-  0-100 health score alongside it (one signal; the banded verdict is the gate), advances the saga
-  qa-track on pass, and routes by merge state — without fixing, committing, or deploying.
-- `/investigate` is the off-chain systematic-debugging engine: a CE `ce-debug` causal-chain spine
-  (falsifiable predictions for uncertain links, assumption audit, Phase-0 triage with a trivial
-  fast-path) + gstack `investigate` grafts (pattern-signature table, the two distinct numeric stop gates
-  — hypothesis-exhaustion + 3-failed-fix — and the DEBUG REPORT Status enum). It is **diagnosis-primary** — it produces a DEBUG REPORT (file:line, causal chain,
-  regression-test path) and routes the fix out (`/work` via `/handoff`, `/code-review`, `/handoff` for
-  a trackable defect, or `/brainstorm` for a design-level root cause); it carries its own minimal
-  verification and is saga read-only (advisory, never blocks `/loop`).
-- `/retro` is the meta-improvement engine: a 3-source merge of gstack's `retro` + `learn` passes with
-  CE's `ce-compound` framing that captures lifecycle learnings, distills durable journal knowledge, and
-  proposes improvements to the workflow itself. A **tiered self-edit gate** keeps it safe —
-  pure-additive journal appends auto-apply, but every delete / modify / move of existing durable state
-  (memory, directives, the plugin's own SKILLs) is propose-diff-and-wait, with an extra
-  cross-project-impact warning before any global edit. It is saga read-only (terminal, advisory route).
-- `/handoff` routes durable lifecycle artifacts to `mission-control` prepared issue drafts.
-- `/founder-review` and `/ceo-review` review ambition, scope, and operator risk.
-- `/doc-review` reviews plans, requirements, and formal SDLC artifacts for implementation
-  readiness.
-- `/code-review` runs a structured pre-PR review.
-- `/optimize` is the off-chain metric-driven optimization engine (CE `ce-optimize` single-source
-  port; the agent-usability metric class is an infiquetra-native angle, not a gstack port): it runs
-  a **bounded-experiment loop** toward a measurable target — baseline, hypothesize, run a bounded
-  experiment, measure the delta, keep or discard, repeat until the target is hit or the budget is
-  spent — across 8 metric classes (performance / cost / reliability / agent-usability / security /
-  quality / developer-experience / maintainability). It records the run narratively (off-chain, no
-  saga write) and offers operator-choice for independent experiment fan-out.
-- `/loop` routes work to plan only, PR, merge, or nonprod deploy.
+| Situation | Command | Next artifact |
+|-----------|---------|---------------|
+| The ask is still unframed | `/office-hours` | frame note and route |
+| You want grounded options | `/ideate` | `docs/ideation/` |
+| One idea needs requirements | `/brainstorm` | `docs/brainstorms/` |
+| The WHAT is vague | `/spec` | `docs/specs/` |
+| The WHAT is settled and needs HOW | `/plan` | `docs/plans/` |
+| A plan needs readiness review | `/doc-review` | `docs/reviews/` |
+| A reviewed plan should be built | `/work` | `docs/work-sessions/`, PR |
+| A built branch needs pre-PR review | `/code-review` | `docs/code-reviews/` |
+| Merged or merge-bound work needs evidence | `/qa` | `docs/qa/` |
+| Work should move to an SDLC issue | `/handoff` | mission-control issue preparation |
+| The thread is cold or confusing | `/resume` | re-entry route |
+| Finished work should teach the lifecycle | `/retro` | journal or retro artifact |
 
-## Artifact Model
+The repository contains 18 command files and 17 routable commands. `/ceo-review` is an alias for `/founder-review`, not a separate lifecycle node.
 
-Durable artifacts are repo docs:
+## Manual
 
-- `STRATEGY.md`
-- `docs/office-hours/`
-- `docs/ideation/`
-- `docs/brainstorms/`
-- `docs/plans/`
-- `docs/reviews/`
-- `docs/qa/`
-- `docs/work-sessions/`
-- `docs/retros/`
-- `docs/engineering-journal/`
+The manual pages are the maintained user-facing reference.
 
-Ignored local state belongs under `.claude/saga/`. Durable, resumable work-state is
-tracked as sagas: append-only, timestamped envelope logs under
-`.claude/saga/sagas/<saga_id>/`, plus a derived `state.json` index. See
-[`references/saga-spec.md`](references/saga-spec.md) for the storage contract and
-[`references/operator-choice.md`](references/operator-choice.md) for the execution-backend decision contract (`inline` / `team-execution` / `cc-workflows-ultracode`).
+| Page | Use it for |
+|------|------------|
+| [Manual index](docs/README.md) | Documentation map and maintenance path |
+| [Lifecycle](docs/lifecycle.md) | Main chain, off-chain routes, gates, and destination horizon |
+| [Command selection](docs/commands.md) | Comparable cards for every command |
+| [State and readiness](docs/state-readiness.md) | Stored saga state vs derived handoff maturity |
+| [Scenarios](docs/scenarios.md) | User-situation journeys and example routes |
+| [Boundaries](docs/boundaries.md) | Saga vs adjacent plugin ownership, Claude vs Codex adapter notes |
+| [Visuals](docs/visuals.md) | Source model, generated assets, and regeneration workflow |
 
-## Boundaries
+## Lifecycle In One Pass
 
-- `deploy` owns deployment mutation.
-- `team-execution` stays independent and is offered when risk, size, or parallelism justify it.
-- `mission-control` owns SDLC issue creation, issue comments, and board movement.
-- `saga` owns only the handoff envelope; `mission-control` owns issue bodies, readiness,
-  sidecars, labels, project fields, and GitHub mutation.
-- `/plan <issue>` consumes `idea-ready` and `requirements-ready` handoff issues.
-- `/work <issue>` consumes `plan-ready` and `resume-ready` handoff issues.
+The main chain is:
 
-## Deterministic Helpers
+```text
+idea/requirements-ready -> /plan -> /doc-review -> /work -> /code-review -> /qa -> /handoff or /retro
+```
 
-- `scripts/parse_issue.py` extracts ADR, acceptance-criteria, handoff maturity, source context,
-  round, and risk hints.
-- `scripts/saga.py` is the saga engine: stable derived identity, save/restore/scan over the
-  append-only envelope log, and gh-context aggregation.
-- `scripts/scaffold_checkpoint.py` saves a saga envelope tick under
-  `.claude/saga/sagas/<saga_id>/` (thin wrapper over `saga.py`).
-- `scripts/find_inflight_work.py` ranks resumable saga state.
-- `scripts/load_saga_context.py` reconstructs prior issue, PR, saga, and journal context.
-- `scripts/discover_subissues.py` discovers GitHub sub-issues through GraphQL.
-- `scripts/detect_deploy_strategy.py` classifies tag-promotion workflow coverage.
-- `scripts/issue_progress.py` renders issue comments, including doc-review status when present.
-- `scripts/handoff_envelope.py` builds the thin source envelope for `/handoff`.
+Off-chain commands are still first-class, but they do not become linear saga phases. `/spec` sharpens WHAT, `/investigate` diagnoses root cause, `/optimize` runs metric experiments, `/strategy` records direction, and `/retro` captures learning after work is complete.
+
+Destination sets the routing horizon:
+
+| Destination | Horizon |
+|-------------|---------|
+| `plan-only` | stop at a written, reviewed plan |
+| `pr` | run through `/work` to an open PR |
+| `merge` | add `/work`'s confirmed merge of the PR |
+| `nonprod-deploy` | after merge, route deployment mutation to `deploy` |
+
+## State And Readiness
+
+Saga stores three axes in local, git-ignored saga ticks: `lifecycle_phase`, `phase_status`, and `status`.
+
+`maturity` is different. It is derived at handoff time from the source artifact or lifecycle phase and must not be stored as saga state.
+
+| Artifact root | Derived maturity | Consumer |
+|---------------|------------------|----------|
+| `docs/ideation/` | `idea-ready` | `/plan` |
+| `docs/brainstorms/`, `docs/specs/` | `requirements-ready` | `/plan` |
+| `docs/plans/`, `docs/reviews/` | `plan-ready` | `/work` |
+| `docs/work-sessions/`, branch refs | `resume-ready` | `/work` |
+
+See [state and readiness](docs/state-readiness.md) for the full passport.
+
+## Maintainer Workflow
+
+The visual and coverage source lives at [docs/model/saga-docs-model.yaml](docs/model/saga-docs-model.yaml). Update it when command routes, readiness mappings, ownership boundaries, scenarios, or visual coverage change.
+
+Regenerate visuals:
+
+```bash
+uv run python plugins/saga/scripts/render_docs_visuals.py
+```
+
+Check drift:
+
+```bash
+uv run pytest tests/test_saga_docs_coverage.py tests/test_saga_doc_formatting.py
+```
+
+Core implementation contracts still live in canonical references:
+
+- [Saga spec](references/saga-spec.md)
+- [Dispatch table](skills/loop/references/dispatch-table.md)
+- [Operator choice](references/operator-choice.md)
+- [Formatting style](references/formatting-style.md)

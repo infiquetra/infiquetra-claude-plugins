@@ -25,6 +25,36 @@
 
 ---
 
+## 2026-06-09
+
+### Presentation visuals need an actual render pass, not just SVG/file existence checks  {#visual-docs-need-rendered-sanity-check}
+
+**Context.** The Saga documentation system adds source-generated SVGs for the lifecycle atlas,
+state/readiness ladder, command matrix, and ownership boundary map.
+
+**Evidence.** `uv run python plugins/saga/scripts/render_docs_visuals.py --check` proved the SVG files
+were deterministic, but a rendered PNG sanity pass with `rsvg-convert` showed the first command matrix
+was too dense and the lifecycle atlas had cramped off-chain labels. The renderer was simplified and the
+assets regenerated before treating the visuals as done.
+
+**Mechanism.** SVG text can be syntactically valid, deterministic, and still visually poor. Diagram tests
+catch missing or stale files; they do not catch label collisions, over-dense cards, or presentation
+legibility.
+
+**Fix.** Kept the deterministic renderer and added a manual render sanity pass to the implementation
+workflow. The final command matrix uses command/role/state tags instead of long state prose; detailed
+selection prose stays in `docs/commands.md`.
+
+**Validation.** `rsvg-convert -w 1600 -h 900 plugins/saga/docs/assets/*.svg` produced 16:9 PNG previews
+for all four assets, and the noisy layouts were corrected before final checks.
+
+**Generalizable rule.** For generated documentation visuals, validate both contracts: source/model
+freshness by test, and rendered legibility by an actual image preview. A diagram can pass every file
+check and still fail the reader.
+
+**Refs.** DECISIONS {#saga-docs-source-model};
+`plugins/saga/scripts/render_docs_visuals.py`; `plugins/saga/docs/assets/command-matrix.svg`.
+
 ## 2026-06-07
 
 ### Saga ideation/review schema fields are not machine-parsed — the consumer is an LLM + a human (squash `abcc06b`, PR #205, #201)  {#saga-doc-schema-no-field-parser}

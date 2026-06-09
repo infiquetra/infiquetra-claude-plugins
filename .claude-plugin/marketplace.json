@@ -296,7 +296,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.20.0",
+      "version": "0.21.0",
       "description": "Infiquetra engineering lifecycle plugin spanning five phases: Think, Plan & execute, Hand off to mission-control, Review, and Improve & route (covers office-hours through resume, plus /loop routing).",
       "author": {
         "name": "Infiquetra",

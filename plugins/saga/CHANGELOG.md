@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.21.0 - 2026-06-09
+
+- Add a comprehensive Saga documentation system: README atlas, manual pages under
+  `plugins/saga/docs/`, curated source model, and generated SVG visual kit.
+- Document every Saga command as a comparable decision card, including the 18 command-file /
+  17 routable-command distinction and the `/ceo-review` -> `/founder-review` alias.
+- Add dedicated lifecycle, state/readiness, scenario, boundary, and visual-maintenance pages.
+- Add `plugins/saga/scripts/render_docs_visuals.py` to generate presentation-ready SVG assets from
+  `plugins/saga/docs/model/saga-docs-model.yaml`.
+- Add `tests/test_saga_docs_coverage.py` to guard command coverage, alias handling, derived
+  readiness maturity, scenario coverage, manual links, source references, and visual inventory.
+
 ## 0.20.0 - 2026-06-07
 
 - Add a shared formatting contract, `saga/references/formatting-style.md`, linked by all nine

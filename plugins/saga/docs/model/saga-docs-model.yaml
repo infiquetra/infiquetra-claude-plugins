@@ -1,0 +1,719 @@
+schema_version: 1
+model_name: saga-comprehensive-documentation
+source_of_truth: Claude Saga in this repository
+command_surface:
+  command_files: 18
+  routable_commands: 17
+  alias_count: 1
+  alias_note: /ceo-review is an alias for /founder-review, not a separate lifecycle node.
+
+state_axes:
+  lifecycle_phase:
+    values: [ideation, brainstorm, plan, review, work, qa, retro]
+    purpose: Where this work thread is in the lifecycle.
+    source_refs:
+      - plugins/saga/references/saga-spec.md
+  phase_status:
+    values: [pending, in_progress, complete]
+    purpose: Whether the current numeric phase is finished.
+    source_refs:
+      - plugins/saga/references/saga-spec.md
+  status:
+    values: [active, blocked, paused, handed-off, done, abandoned]
+    purpose: Disposition of the whole work thread.
+    source_refs:
+      - plugins/saga/references/saga-spec.md
+
+maturity:
+  derived_not_stored: true
+  values:
+    idea-ready:
+      from: [docs/ideation/]
+      consumed_by: [/plan]
+    requirements-ready:
+      from: [docs/brainstorms/, docs/specs/]
+      consumed_by: [/plan]
+    plan-ready:
+      from: [docs/plans/, docs/reviews/]
+      consumed_by: [/work]
+    resume-ready:
+      from: [docs/work-sessions/, branch refs]
+      consumed_by: [/work]
+    deferred-context:
+      from: [explicit preserve/defer language]
+      consumed_by: [/handoff]
+  source_refs:
+    - plugins/saga/references/saga-spec.md
+    - plugins/saga/skills/handoff/SKILL.md
+
+destinations:
+  plan-only:
+    horizon: Stop at a written, reviewed plan.
+  pr:
+    horizon: Run through /work to an open PR.
+  merge:
+    horizon: Add /work's confirmed merge of the PR.
+  nonprod-deploy:
+    horizon: After merge, hand deployment mutation to deploy.
+
+execution_backends:
+  inline:
+    use_when: The agent can execute directly without team consensus or broad fan-out.
+  team-execution:
+    use_when: Size, risk, consensus, or validator/reviewer orchestration justify a team protocol.
+  cc-workflows-ultracode:
+    use_when: Source Claude workflow backend for broad independent fan-out; not offered in Codex Saga.
+
+external_owners:
+  saga:
+    owns:
+      - lifecycle choice
+      - local saga state
+      - routing decisions
+      - handoff envelopes
+    must_not_own:
+      - GitHub issue mutation
+      - deployment mutation
+      - reviewer/validator orchestration internals
+  mission-control:
+    owns:
+      - SDLC issue bodies
+      - prepared issue drafts
+      - labels and project fields
+      - GitHub issue mutation
+    saga_holds:
+      - issue_ref pointer
+  deploy:
+    owns:
+      - tag promotion
+      - deployment mutation
+      - environment state
+    saga_holds:
+      - destination intent
+      - pr_refs
+  team-execution:
+    owns:
+      - reviewer orchestration
+      - validator orchestration
+      - consensus protocol
+    saga_holds:
+      - orchestration_mode
+      - orchestration_ref
+
+routes:
+  main_chain:
+    - from: idea-ready
+      to: /plan
+      reason: Turn idea or requirements context into HOW.
+    - from: /plan
+      to: /doc-review
+      reason: Check implementation readiness before work.
+    - from: /doc-review
+      to: /work
+      reason: Execute only after no unresolved P0/P1 review findings or recorded override.
+    - from: /work
+      to: /code-review
+      reason: Review code at PR boundary.
+    - from: /work
+      to: /qa
+      reason: Run acceptance evidence after merge.
+    - from: /qa
+      to: /handoff
+      reason: Route defects or follow-up work.
+    - from: /qa
+      to: /retro
+      reason: Capture lifecycle learning when work is complete.
+  off_chain:
+    - command: /spec
+      state_behavior: saga-untouched
+      routes_to: [/handoff, /plan, /doc-review]
+    - command: /investigate
+      state_behavior: saga-read-only
+      routes_to: [/work, /handoff, /brainstorm, /code-review]
+    - command: /optimize
+      state_behavior: saga-untouched
+      routes_to: [/work]
+    - command: /strategy
+      state_behavior: saga-untouched
+      routes_to: [/ideate, /brainstorm, /plan]
+    - command: /retro
+      state_behavior: saga-read-only
+      routes_to: [/handoff]
+
+commands:
+  office-hours:
+    command: /office-hours
+    phase: think
+    lifecycle_role: frame-finding front door
+    source_refs:
+      - plugins/saga/commands/office-hours.md
+      - plugins/saga/skills/office-hours/SKILL.md
+    purpose: Find the right frame for an early, vague, or stage-sensitive ask before selecting a lifecycle command.
+    use_when:
+      - The user has an idea but the problem frame, stage, or assumptions are still blurry.
+      - The right next artifact is unclear.
+    do_not_use_when:
+      - The WHAT is already settled enough for requirements or planning.
+      - The user is asking for implementation.
+    inputs: Topic, early ask, vague business or builder problem.
+    outputs: Optional frame note under docs/office-hours/ plus a route to /ideate, /brainstorm, /plan, or /strategy.
+    durable_artifacts: [docs/office-hours/]
+    saga_state_behavior: Does not write saga state directly; /loop may tick routing decisions around it.
+    routes_in: [cold-start vague ask, /loop]
+    routes_out: [/ideate, /brainstorm, /plan, /strategy]
+    gates: Never implement, plan, scaffold, or file an SDLC issue.
+    ownership_boundary: Owns frame discovery only.
+    common_mistakes:
+      - Treating office-hours as a planning command.
+      - Skipping it when the real problem frame is still unknown.
+    example_invocation: /office-hours "I have an idea but do not know what it is yet"
+  ideate:
+    command: /ideate
+    phase: think
+    lifecycle_role: divergent idea engine
+    source_refs:
+      - plugins/saga/commands/ideate.md
+      - plugins/saga/skills/ideate/SKILL.md
+    purpose: Generate, critique, and surface grounded survivor ideas.
+    use_when:
+      - The user wants possible directions or improvements.
+      - The user has a theme but has not chosen one idea.
+    do_not_use_when:
+      - One idea is already chosen and needs requirements depth.
+      - The ask needs precise WHAT interrogation rather than divergent generation.
+    inputs: Topic, repo context, strategy context, operator seed ideas.
+    outputs: Survivor ideas and optional ideation artifact.
+    durable_artifacts: [docs/ideation/]
+    saga_state_behavior: Produces idea-ready artifacts; does not store maturity in saga state.
+    routes_in: [/office-hours, cold-start divergent ask]
+    routes_out: [/brainstorm, /spec, /plan]
+    gates: Preserve rejection reasons; do not treat operator seed ideas as exempt from critique.
+    ownership_boundary: Owns divergent generation and critique, not requirements or implementation.
+    common_mistakes:
+      - Using /ideate when the selected idea already needs requirements.
+      - Dropping rejected ideas without reasons.
+    example_invocation: /ideate "Saga documentation improvements"
+  brainstorm:
+    command: /brainstorm
+    phase: think
+    lifecycle_role: requirements deep-dive
+    source_refs:
+      - plugins/saga/commands/brainstorm.md
+      - plugins/saga/skills/brainstorm/SKILL.md
+    purpose: Turn one chosen idea into a right-sized requirements-ready document.
+    use_when:
+      - A single idea is chosen but the implementation requirements are not settled.
+      - The operator wants approaches explored before planning.
+    do_not_use_when:
+      - The request is still an open-ended idea search.
+      - The ask is a vague WHAT that needs formal interrogation by /spec.
+    inputs: Chosen idea, ideation survivor, or named topic.
+    outputs: Requirements document under docs/brainstorms/.
+    durable_artifacts: [docs/brainstorms/]
+    saga_state_behavior: Produces requirements-ready artifacts; does not store maturity in saga state.
+    routes_in: [/ideate, /office-hours, selected idea]
+    routes_out: [/spec, /plan, /handoff]
+    gates: Keep WHAT and acceptance examples clear enough for /plan.
+    ownership_boundary: Owns requirements exploration, not HOW planning.
+    common_mistakes:
+      - Treating a brainstorm as an implementation plan.
+      - Skipping approach tradeoffs.
+    example_invocation: /brainstorm docs/ideation/2026-06-09-example.md
+  spec:
+    command: /spec
+    phase: think
+    lifecycle_role: WHAT interrogation
+    source_refs:
+      - plugins/saga/commands/spec.md
+      - plugins/saga/skills/spec/SKILL.md
+    purpose: Interrogate a vague ask into a precise backlog-ready WHAT spec.
+    use_when:
+      - The ask is under-specified and needs five-Why, scope, MVP, and failure-mode rigor.
+      - A requirements artifact must be sharp before planning or handoff.
+    do_not_use_when:
+      - The operator needs multiple possible ideas.
+      - The HOW is the unsettled part.
+    inputs: Vague ask, issue reference, rough doc path.
+    outputs: Spec artifact under docs/specs/.
+    durable_artifacts: [docs/specs/]
+    saga_state_behavior: Off-chain and saga-untouched; docs/specs/ maps to requirements-ready at handoff.
+    routes_in: [vague WHAT, /brainstorm]
+    routes_out: [/handoff, /plan, /doc-review]
+    gates: Do not produce a spec after message 1; interrogate first and read code before technical questions.
+    ownership_boundary: Owns WHAT rigor, not HOW planning or issue mutation.
+    common_mistakes:
+      - Treating spec as a stored lifecycle phase.
+      - Filing an SDLC issue directly from /spec.
+    example_invocation: /spec "make Saga docs better"
+  plan:
+    command: /plan
+    phase: plan
+    lifecycle_role: HOW planning
+    source_refs:
+      - plugins/saga/commands/plan.md
+      - plugins/saga/skills/plan/SKILL.md
+    purpose: Create a durable implementation plan from requirements-ready or plan-ready context.
+    use_when:
+      - The WHAT is settled and the work needs implementation units, decisions, and verification.
+      - A handoff issue is idea-ready or requirements-ready.
+    do_not_use_when:
+      - The WHAT is still vague.
+      - The user asked for direct implementation of an atomic change.
+    inputs: Requirements doc, issue, source artifact, or request.
+    outputs: Plan document under docs/plans/ and a plan saga tick.
+    durable_artifacts: [docs/plans/]
+    saga_state_behavior: Writes lifecycle_phase=plan with phase_status complete when the plan is done.
+    routes_in: [idea-ready, requirements-ready, docs/brainstorms/, docs/specs/]
+    routes_out: [/doc-review, /work]
+    gates: Does not implement or run the review gauntlet.
+    ownership_boundary: Owns HOW planning only.
+    common_mistakes:
+      - Re-deciding product scope that belongs in /brainstorm or /spec.
+      - Skipping /doc-review before /work on nontrivial plans.
+    example_invocation: /plan docs/brainstorms/2026-06-09-example.md
+  doc-review:
+    command: /doc-review
+    phase: review
+    lifecycle_role: implementation-readiness review
+    source_refs:
+      - plugins/saga/commands/doc-review.md
+      - plugins/saga/skills/doc-review/SKILL.md
+    purpose: Review plans, requirements, or formal SDLC artifacts for implementation readiness.
+    use_when:
+      - A plan or requirements document must be checked before execution.
+      - Safe in-place fixes can improve readiness.
+    do_not_use_when:
+      - The target is code at the PR boundary.
+      - The question is ambition or scope challenge.
+    inputs: Document path.
+    outputs: Review artifact under docs/reviews/ and optional safe document fixes.
+    durable_artifacts: [docs/reviews/]
+    saga_state_behavior: Review phase evidence; /work blocks on unresolved P0/P1 unless overridden.
+    routes_in: [/plan, optional /spec review]
+    routes_out: [/work, /plan, /founder-review]
+    gates: P0/P1 findings block /work without recorded override.
+    ownership_boundary: Owns document readiness, not code review or implementation.
+    common_mistakes:
+      - Treating doc-review as code-review.
+      - Ignoring unresolved P0/P1 findings.
+    example_invocation: /doc-review docs/plans/2026-06-09-example-plan.md
+  work:
+    command: /work
+    phase: work
+    lifecycle_role: implementation and PR loop
+    source_refs:
+      - plugins/saga/commands/work.md
+      - plugins/saga/skills/work/SKILL.md
+    purpose: Execute an approved plan to PR-ready, then own the round-N PR continuation loop.
+    use_when:
+      - A reviewed plan is ready to build.
+      - A plan-ready or resume-ready handoff issue should be executed.
+    do_not_use_when:
+      - Requirements or HOW are still unsettled.
+      - Deployment mutation is the only remaining step.
+    inputs: Plan path, plan-ready issue, or resume-ready issue.
+    outputs: Code/docs changes, work-session writeups, commits, PR coordination, saga ticks.
+    durable_artifacts: [docs/work-sessions/]
+    saga_state_behavior: Primary saga writer for lifecycle_phase=work; records rounds, branch, checks, PR refs, and work sessions.
+    routes_in: [/doc-review, plan-ready, resume-ready]
+    routes_out: [/code-review, /qa, /handoff]
+    gates: Hard test gate by risk; hard review gate on P0/P1 or stale review; PR and merge require confirmation.
+    ownership_boundary: Owns build, test, record, and PR loop; does not own deploy or issue filing.
+    common_mistakes:
+      - Starting /work before doc-review readiness.
+      - Claiming PR-ready without fresh tests and review.
+    example_invocation: /work docs/plans/2026-06-09-example-plan.md
+  code-review:
+    command: /code-review
+    phase: review
+    lifecycle_role: pre-PR code gate
+    source_refs:
+      - plugins/saga/commands/code-review.md
+      - plugins/saga/skills/code-review/SKILL.md
+    purpose: Run a structured code-quality review at the work-to-PR boundary.
+    use_when:
+      - Built work needs a pre-PR or PR-boundary review.
+      - A branch or diff needs findings classified and routed.
+    do_not_use_when:
+      - The target is a plan or requirements document.
+      - The user wants code changes applied by the reviewer.
+    inputs: Diff, branch, PR, or scope.
+    outputs: Code review artifact under docs/code-reviews/.
+    durable_artifacts: [docs/code-reviews/]
+    saga_state_behavior: Appends review_paths to an active work-thread saga when present; does not advance lifecycle_phase.
+    routes_in: [/work, PR boundary]
+    routes_out: [/work, PR-ready]
+    gates: P0/P1 findings block PR-ready unless overridden.
+    ownership_boundary: Owns review findings, not fixes, commits, PR creation, or issue filing.
+    common_mistakes:
+      - Expecting /code-review to fix its own findings.
+      - Running it against a stale diff.
+    example_invocation: /code-review HEAD~1..HEAD
+  qa:
+    command: /qa
+    phase: qa
+    lifecycle_role: acceptance evidence gate
+    source_refs:
+      - plugins/saga/commands/qa.md
+      - plugins/saga/skills/qa/SKILL.md
+    purpose: Check whether shipped or merge-bound work actually works.
+    use_when:
+      - Work is merged or at an acceptance boundary.
+      - A risk-classified acceptance verdict is needed.
+    do_not_use_when:
+      - The goal is to optimize a metric over experiments.
+      - The user wants root-cause diagnosis or fixes.
+    inputs: Scope, PR, merged change, or work-thread context.
+    outputs: QA artifact under docs/qa/ with severity, health score, and verdict.
+    durable_artifacts: [docs/qa/]
+    saga_state_behavior: On pass, advances qa-track and records qa_paths; on fail, keeps lifecycle_phase=work for repair routing.
+    routes_in: [/work, post-merge]
+    routes_out: [/work, /handoff, /retro, /investigate]
+    gates: Verdict threshold determines ship, ship-with-deferred, or no-ship.
+    ownership_boundary: Owns acceptance evidence and routing, not fixes, commits, deployment, or issue mutation.
+    common_mistakes:
+      - Using /qa as an optimization loop.
+      - Asking /qa to fix the defect it finds.
+    example_invocation: /qa "PR #123 acceptance"
+  handoff:
+    command: /handoff
+    phase: handoff
+    lifecycle_role: issue handoff envelope
+    source_refs:
+      - plugins/saga/commands/handoff.md
+      - plugins/saga/skills/handoff/SKILL.md
+    purpose: Prepare a durable lifecycle artifact for SDLC issue handoff through mission-control.
+    use_when:
+      - Another team or future session should pick up a lifecycle artifact.
+      - A prepared issue needs the right maturity and source context.
+    do_not_use_when:
+      - The user expects Saga to create the GitHub issue directly.
+      - No source artifact or route is identifiable.
+    inputs: Source artifact, target team, target repository, handoff notes.
+    outputs: Handoff envelope and suggested mission-control command.
+    durable_artifacts: []
+    saga_state_behavior: Reads saga/doc context to infer source and maturity; does not own mission-control mutation.
+    routes_in: [/qa, /retro, /spec, /brainstorm, /work]
+    routes_out: [mission-control]
+    gates: Ask when source, maturity, target repo, team, or issue type is ambiguous.
+    ownership_boundary: Saga owns the envelope; mission-control owns issue body, sidecars, labels, board, and GitHub mutation.
+    common_mistakes:
+      - Passing investigation reports directly to the classifier instead of linking them as evidence.
+      - Suggesting /loop for normal team handoff.
+    example_invocation: /handoff docs/plans/2026-06-09-example-plan.md Asgard
+  retro:
+    command: /retro
+    phase: retro
+    lifecycle_role: lifecycle learning
+    source_refs:
+      - plugins/saga/commands/retro.md
+      - plugins/saga/skills/retro/SKILL.md
+    purpose: Turn finished work into durable journal knowledge and gated lifecycle improvements.
+    use_when:
+      - Work is complete and the lifecycle should capture learnings.
+      - A time-windowed or pass-specific retrospective is needed.
+    do_not_use_when:
+      - The work is not complete enough for learning capture.
+      - The user wants implementation or GitHub mutation.
+    inputs: Saga id, issue, branch, time window, or pass argument.
+    outputs: Retro artifact or journal entries/proposals.
+    durable_artifacts: [docs/retros/, docs/engineering-journal/]
+    saga_state_behavior: Terminal and saga read-only; does not advance or write saga state.
+    routes_in: [/qa, completed work]
+    routes_out: [/handoff]
+    gates: Self-edit safety gate; modifications/deletions require explicit apply/skip/modify choice.
+    ownership_boundary: Owns learning capture and proposed lifecycle improvements, not SDLC mutation.
+    common_mistakes:
+      - Letting retro silently edit existing directive files.
+      - Treating retro as a required blocker for /loop.
+    example_invocation: /retro task-saga-comprehensive-documentation
+  resume:
+    command: /resume
+    phase: work
+    lifecycle_role: forensic reconstruction
+    source_refs:
+      - plugins/saga/commands/resume.md
+      - plugins/saga/skills/resume/SKILL.md
+    purpose: Reconstruct an in-flight work thread in depth and route to the owning command.
+    use_when:
+      - Lightweight /loop restore is insufficient.
+      - A saga, issue, PR, or session trajectory needs forensic reconstruction.
+    do_not_use_when:
+      - The thread is easy to restore from current saga state.
+      - The user wants work, tests, or PR mutation.
+    inputs: Saga id, issue, plan path, PR refs, or resume request.
+    outputs: Re-entry tick and route recommendation.
+    durable_artifacts: []
+    saga_state_behavior: Reads full saga tick chain and writes one git-ignored re-entry tick; reuses restored saga_id.
+    routes_in: [cold resume, ambiguous work thread]
+    routes_out: [/work, /handoff]
+    gates: Read-only on world; Tier 2 session forensics only when no saga and no resolvable issue exist.
+    ownership_boundary: Owns reconstruction and routing, not build/test/PR.
+    common_mistakes:
+      - Minting a new saga when an old saga should be reused.
+      - Routing back to /loop.
+    example_invocation: /resume docs/plans/2026-06-09-example-plan.md
+  investigate:
+    command: /investigate
+    phase: off-chain
+    lifecycle_role: root-cause diagnosis
+    source_refs:
+      - plugins/saga/commands/investigate.md
+      - plugins/saga/skills/investigate/SKILL.md
+    purpose: Find the root cause of a bug, failing test, or unexpected behavior before proposing a fix.
+    use_when:
+      - The user asks why something is broken.
+      - A QA failure needs causal diagnosis.
+    do_not_use_when:
+      - The fix is already planned and ready for /work.
+      - The ask is a metric optimization loop.
+    inputs: Error, failing test path, issue, or broken behavior.
+    outputs: Debug report under docs/investigations/ and optional trivial verified fix.
+    durable_artifacts: [docs/investigations/]
+    saga_state_behavior: Off-chain and saga read-only; never advances lifecycle_phase.
+    routes_in: [/qa, defect reports, failing tests]
+    routes_out: [/work, /handoff, /brainstorm, /code-review]
+    gates: No fix without root-cause chain grounded in observed evidence.
+    ownership_boundary: Owns diagnosis, not shipping real fixes.
+    common_mistakes:
+      - Starting with a fix hypothesis before reproducing and explaining the chain.
+      - Routing back to /qa for verification.
+    example_invocation: /investigate tests/test_saga_docs_coverage.py
+  optimize:
+    command: /optimize
+    phase: off-chain
+    lifecycle_role: metric experiment loop
+    source_refs:
+      - plugins/saga/commands/optimize.md
+      - plugins/saga/skills/optimize/SKILL.md
+    purpose: Improve a measurable target through bounded one-variable experiments.
+    use_when:
+      - The user wants a metric better, cheaper, faster, safer, or more reliable.
+      - There is a baseline, metric direction, and experiment budget to define.
+    do_not_use_when:
+      - The question is whether a shipped change is acceptable.
+      - The winning change is already selected and needs shipping.
+    inputs: Metric, workflow, or bottleneck.
+    outputs: Optimization notes, experiment result, winning change routed to /work.
+    durable_artifacts: [docs/optimize/]
+    saga_state_behavior: Off-chain and saga-untouched; records backend choice narratively.
+    routes_in: [metric optimization ask]
+    routes_out: [/work]
+    gates: Hard degenerate gates before any LLM judge; keep only real measured improvement.
+    ownership_boundary: Owns experiment loop, not merge or deployment.
+    common_mistakes:
+      - Using /optimize as a QA gate.
+      - Shipping an experiment without routing the winning change to /work.
+    example_invocation: /optimize "reduce docs update drift"
+  strategy:
+    command: /strategy
+    phase: think
+    lifecycle_role: durable direction anchor
+    source_refs:
+      - plugins/saga/commands/strategy.md
+      - plugins/saga/skills/strategy/SKILL.md
+    purpose: Create or maintain root STRATEGY.md as the durable direction anchor.
+    use_when:
+      - The repo direction, target problem, approach, metrics, or tracks need updating.
+      - A downstream idea or plan needs strategy grounding.
+    do_not_use_when:
+      - The user wants the direction challenged for ambition or scope.
+      - The request is a concrete implementation plan.
+    inputs: Optional section focus or strategy update request.
+    outputs: Root STRATEGY.md update.
+    durable_artifacts: [STRATEGY.md]
+    saga_state_behavior: Off-chain and saga-untouched.
+    routes_in: [strategic-direction ask, /office-hours]
+    routes_out: [/ideate, /brainstorm, /plan, /founder-review]
+    gates: Interview-driven update with pushback; do not implement or file issues.
+    ownership_boundary: Owns recording direction; /founder-review challenges direction.
+    common_mistakes:
+      - Treating /strategy as the ambition review.
+      - Bypassing interview pushback.
+    example_invocation: /strategy metrics
+  founder-review:
+    command: /founder-review
+    phase: review
+    lifecycle_role: scope and ambition review
+    source_refs:
+      - plugins/saga/commands/founder-review.md
+      - plugins/saga/skills/founder-review/SKILL.md
+    purpose: Challenge scope, ambition, positioning, timing, and operator risk.
+    use_when:
+      - A plan, strategy, brainstorm, feature, or PR needs founder/operator judgment.
+      - The user asks whether the work is ambitious enough or too broad.
+    do_not_use_when:
+      - The question is implementation readiness.
+      - The user wants code changes.
+    inputs: Plan, strategy, feature, PR, or scope question.
+    outputs: Scope-decision artifact under docs/founder-reviews/.
+    durable_artifacts: [docs/founder-reviews/]
+    saga_state_behavior: Review artifact; does not implement or mutate git/GitHub.
+    routes_in: [scope question, /strategy, /plan, /brainstorm]
+    routes_out: [/plan, /doc-review, /code-review]
+    gates: Opt-in ceremony before scope expansion.
+    ownership_boundary: Owns challenge and decision capture, not direction recording or readiness review.
+    common_mistakes:
+      - Using /founder-review to record STRATEGY.md.
+      - Letting it apply code changes.
+    example_invocation: /founder-review docs/plans/2026-06-09-example-plan.md
+  loop:
+    command: /loop
+    phase: route
+    lifecycle_role: lifecycle router and resume substrate
+    source_refs:
+      - plugins/saga/commands/loop.md
+      - plugins/saga/skills/loop/SKILL.md
+      - plugins/saga/skills/loop/references/dispatch-table.md
+    purpose: Classify input, find in-flight work, and dispatch to the command that owns the next phase.
+    use_when:
+      - The user wants Saga to route or drive lifecycle work.
+      - The user says resume, drive it, or provides an issue/plan without naming the next command.
+    do_not_use_when:
+      - The user already named the exact owning command.
+      - Heavy forensic reconstruction is required.
+    inputs: Issue, plan path, work description, resume request, or drive request.
+    outputs: Routing decision, saga tick, and dispatched command.
+    durable_artifacts: []
+    saga_state_behavior: Scans/restores saga and ticks routing decisions; does not execute phase work itself.
+    routes_in: [all lifecycle entry points]
+    routes_out: [/office-hours, /ideate, /brainstorm, /spec, /plan, /doc-review, /work, /code-review, /qa, /handoff, /retro, /resume, /strategy, /optimize, /investigate, /founder-review]
+    gates: Enforces doc-review P0/P1 hard gate before /work; stub/off-chain routes are advisory.
+    ownership_boundary: Owns routing and handoff envelope, not phase work, backend choice, issue filing, deploy, or heavy forensics.
+    common_mistakes:
+      - Asking /loop to implement code.
+      - Routing normal team handoff through /loop.
+    example_invocation: /loop docs/plans/2026-06-09-example-plan.md
+
+aliases:
+  ceo-review:
+    command: /ceo-review
+    aliases: /founder-review
+    source_refs:
+      - plugins/saga/commands/ceo-review.md
+      - plugins/saga/skills/founder-review/SKILL.md
+    note: Same engine as /founder-review; counted as a command file but not a separate routable lifecycle node.
+
+adjacent_pairs:
+  - [/office-hours, /ideate]
+  - [/ideate, /brainstorm]
+  - [/brainstorm, /spec]
+  - [/plan, /doc-review]
+  - [/qa, /optimize]
+  - [/strategy, /founder-review]
+  - [/loop, /resume]
+
+scenarios:
+  vague-idea:
+    starting_statement: I have a rough idea but do not know the frame.
+    selected_command: /office-hours
+    effect: Names the frame and routes to the next thinking command.
+    stop_condition: The real problem and key assumptions are nameable.
+    next_route: /ideate or /brainstorm
+  chosen-idea:
+    starting_statement: We picked this idea; now shape it.
+    selected_command: /brainstorm
+    effect: Writes requirements-ready context under docs/brainstorms/.
+    stop_condition: Requirements and acceptance examples are clear.
+    next_route: /plan
+  vague-what:
+    starting_statement: Build something like this, but the WHAT is fuzzy.
+    selected_command: /spec
+    effect: Writes a precise WHAT spec under docs/specs/.
+    stop_condition: Scope, MVP, non-goals, and failure modes are pinned.
+    next_route: /plan or /handoff
+  requirements-ready-handoff:
+    starting_statement: This requirements doc should become work for a team.
+    selected_command: /handoff
+    effect: Produces a handoff envelope for mission-control.
+    stop_condition: Source, maturity, target repo, target team, and issue type are clear.
+    next_route: mission-control
+  plan-review:
+    starting_statement: This plan looks ready; check it before build.
+    selected_command: /doc-review
+    effect: Writes readiness findings and applies safe fixes.
+    stop_condition: No unresolved P0/P1 findings or override is recorded.
+    next_route: /work
+  pr-boundary:
+    starting_statement: The branch is built and needs PR readiness.
+    selected_command: /code-review
+    effect: Writes a structured code review and gate verdict.
+    stop_condition: No unresolved P0/P1 findings and review is fresh.
+    next_route: PR via /work
+  post-merge-qa:
+    starting_statement: This merged; prove it actually works.
+    selected_command: /qa
+    effect: Writes acceptance evidence and a ship verdict.
+    stop_condition: Verdict is ship or ship-with-deferred.
+    next_route: /retro or /handoff
+  qa-failure:
+    starting_statement: QA failed and we need the right repair path.
+    selected_command: /qa
+    effect: Classifies severity and routes by merge state.
+    stop_condition: Failure is classified as pre-merge repair, post-merge defect, or root-cause investigation.
+    next_route: /work, /handoff, or /investigate
+  root-cause-investigation:
+    starting_statement: Why is this failing?
+    selected_command: /investigate
+    effect: Writes a debug report with causal chain and evidence.
+    stop_condition: Root cause is explained with no causal gaps.
+    next_route: /work, /handoff, or /brainstorm
+  metric-optimization:
+    starting_statement: Make this workflow faster and cheaper.
+    selected_command: /optimize
+    effect: Runs bounded experiments against a metric.
+    stop_condition: Target is hit, budget is spent, or a winning change is selected.
+    next_route: /work
+  strategy-refresh:
+    starting_statement: The repo direction or metrics need updating.
+    selected_command: /strategy
+    effect: Updates STRATEGY.md through interview and pushback.
+    stop_condition: Direction, metrics, and tracks are coherent.
+    next_route: /ideate, /brainstorm, or /plan
+  cross-team-handoff:
+    starting_statement: Another team should pick this up.
+    selected_command: /handoff
+    effect: Builds a self-contained envelope for mission-control issue preparation.
+    stop_condition: Recipient can act without Saga context.
+    next_route: mission-control
+  cold-resume:
+    starting_statement: Reconstruct where this work stopped.
+    selected_command: /resume
+    effect: Reads full saga/PR/doc context and writes a re-entry tick.
+    stop_condition: Next owning command is unambiguous.
+    next_route: /work or /handoff
+  retro-learning:
+    starting_statement: This is finished; capture what we learned.
+    selected_command: /retro
+    effect: Records durable learning or proposed lifecycle improvement.
+    stop_condition: Learning is journaled or a gated improvement proposal exists.
+    next_route: terminal or /handoff
+
+visuals:
+  lifecycle-atlas:
+    file: plugins/saga/docs/assets/lifecycle-atlas.svg
+    title: Saga Lifecycle Atlas
+    purpose: Show the spine, gates, off-chain routes, and destination horizon.
+  state-readiness-ladder:
+    file: plugins/saga/docs/assets/state-readiness-ladder.svg
+    title: State and Readiness Ladder
+    purpose: Separate stored state axes from derived handoff maturity.
+  command-matrix:
+    file: plugins/saga/docs/assets/command-matrix.svg
+    title: Command Matrix
+    purpose: Compare routable commands and the /ceo-review alias.
+  ownership-boundary-map:
+    file: plugins/saga/docs/assets/ownership-boundary-map.svg
+    title: Ownership Boundary Map
+    purpose: Show Saga ownership beside mission-control, deploy, and team-execution.
+
+sources:
+  - plugins/saga/README.md
+  - plugins/saga/commands/
+  - plugins/saga/skills/loop/references/dispatch-table.md
+  - plugins/saga/references/saga-spec.md
+  - plugins/saga/skills/handoff/SKILL.md
+  - plugins/saga/references/operator-choice.md
+  - ../infiquetra-codex-plugins/plugins/saga/PORTABILITY.md
+  - ../infiquetra-codex-plugins/docs/portability/saga-family-state-policy.md
+  - ../infiquetra-codex-plugins/docs/portability/saga-family-capability-map.md

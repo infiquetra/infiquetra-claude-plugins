@@ -14,7 +14,7 @@
         "campps-context-library",
         "campps-mvp",
         "github-actions-runners",
-        "hermes-extensions",
+        "infiquetra-hermes-plugins",
         "infiquetra-aws-infra",
         "infiquetra-claude-plugins",
         "infiquetra-sdlc",

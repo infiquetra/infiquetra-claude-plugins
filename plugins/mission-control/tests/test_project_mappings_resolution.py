@@ -139,7 +139,7 @@ def test_vendored_project_mappings_has_expected_canonical_state() -> None:
         "campps-context-library",
         "campps-mvp",
         "github-actions-runners",
-        "hermes-extensions",
+        "infiquetra-hermes-plugins",
         "infiquetra-aws-infra",
         "infiquetra-claude-plugins",
         "infiquetra-sdlc",

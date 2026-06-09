@@ -22,6 +22,30 @@
 
 ---
 
+## 2026-06-09
+
+### Track renamed Hermes plugin repo in Mission Control (commit `75aae9e`)  {#mission-control-hermes-plugin-repo-rename}
+
+**Decision.** Update the vendored Mission Control repository mapping to use
+`infiquetra-hermes-plugins`, and update current journal references that point readers at the
+Hermes-facing plugin repository.
+
+**Rejected alternatives.**
+- *Rely on GitHub redirects.* Rejected: project mapping data is not a clone URL and must match the
+  canonical repository name used for board routing.
+- *Leave journal references under the old name.* Rejected: the affected entries are current
+  guidance for where to inspect Hermes plugin examples, not only historical evidence.
+
+**Rationale.** This repo remains an active Mission Control source and reference lineage for the
+Codex/Antigravity ports. Keeping the repo mapping and current guidance aligned avoids drift across
+the plugin-family variants during the cutover.
+
+**Revisit when.** Mission Control discovers repositories live instead of using vendored canonical
+sets, or this repo no longer carries Mission Control as an active source plugin.
+
+**Refs.** `plugins/mission-control/config/project-mappings.json`;
+`plugins/mission-control/tests/test_project_mappings_resolution.py`.
+
 ## 2026-06-07
 
 ### Saga document formatting contract — one shared reference, table-rendered schema (squash `abcc06b`, PR #205, #201)  {#saga-doc-formatting-contract}
@@ -723,7 +747,7 @@ separate audited release plugin.
 
 **Rejected alternatives.**
 - *Embed Hermes/Discord logic directly into the plugin.* Rejected: would reimplement Discord voice-receive that already works (battle-tested) in `hermes-agent`. Verification confirmed the voice-receive code is **not** in `home-lab/asgard_voice_arbiter` (where the initial design assumed it lived) — the arbiter is routing-only; the sink/decode lives in closed-source `hermes-agent.gateway.platforms.discord`. Rebuilding would have been 3–5 days of unknown work.
-- *Add the router as a 4th plugin inside `infiquetra/hermes-extensions`.* Considered seriously after `hermes-extensions` was identified as the canonical external-plugin pattern. Rejected per user preference for independent versioning. The router's expected LoC (~1k+) justifies its own home.
+- *Add the router as a 4th plugin inside `infiquetra/infiquetra-hermes-plugins`.* Considered seriously after `infiquetra-hermes-plugins` was identified as the canonical external-plugin pattern. Rejected per user preference for independent versioning. The router's expected LoC (~1k+) justifies its own home.
 - *Use HTTP transport between plugin and router.* Rejected: Redis already runs on Mac mini for `voice_coordinator`; Streams give durable + ordered + consumer-group resume; no port-binding on either side; matches existing Hermes infra patterns.
 
 **Rationale.** Decoupling means: (a) any future consumer (web UI, mobile app, CLI test harness) can drive a Claude Code session by speaking the protocol; (b) the plugin is testable without Hermes infrastructure; (c) protocol changes are version-gated, not implicit. The protocol spec (PROTOCOL.md) and pydantic models (`server/protocol.py`) are copied verbatim into both repos; synchronized PRs enforce drift detection at review time.

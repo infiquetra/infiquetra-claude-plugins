@@ -41,7 +41,7 @@ reformatted, while Tests, Validate Plugins, Type Check, and Security Scan passed
 `uv run ruff check .` result does not imply `uv run ruff format --check .` will pass.
 
 **Fix.** Formatted the two Python files and added `uv run ruff format --check .` to the documented
-verification list. Commit hash pending until the follow-up correction is committed.
+verification list in commit `cf67c7d`.
 
 **Validation.** `uv run ruff format --check .` passes after the formatter output is committed.
 

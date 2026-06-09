@@ -24,7 +24,7 @@
 
 ## 2026-06-09
 
-### Saga documentation source model and generated SVG visual kit (commit `TBD`)  {#saga-docs-source-model}
+### Saga documentation source model and generated SVG visual kit (commit `2f9f2f2`)  {#saga-docs-source-model}
 
 **Decision.** Maintain Saga's comprehensive user documentation from a curated docs model at
 `plugins/saga/docs/model/saga-docs-model.yaml`, with generated SVG assets under

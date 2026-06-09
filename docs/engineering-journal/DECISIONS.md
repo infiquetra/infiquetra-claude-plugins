@@ -22,6 +22,30 @@
 
 ---
 
+## 2026-06-09
+
+### Track renamed Hermes plugin repo in Mission Control (commit `75aae9e`)  {#mission-control-hermes-plugin-repo-rename}
+
+**Decision.** Update the vendored Mission Control repository mapping to use
+`infiquetra-hermes-plugins`, and update current journal references that point readers at the
+Hermes-facing plugin repository.
+
+**Rejected alternatives.**
+- *Rely on GitHub redirects.* Rejected: project mapping data is not a clone URL and must match the
+  canonical repository name used for board routing.
+- *Leave journal references under the old name.* Rejected: the affected entries are current
+  guidance for where to inspect Hermes plugin examples, not only historical evidence.
+
+**Rationale.** This repo remains an active Mission Control source and reference lineage for the
+Codex/Antigravity ports. Keeping the repo mapping and current guidance aligned avoids drift across
+the plugin-family variants during the cutover.
+
+**Revisit when.** Mission Control discovers repositories live instead of using vendored canonical
+sets, or this repo no longer carries Mission Control as an active source plugin.
+
+**Refs.** `plugins/mission-control/config/project-mappings.json`;
+`plugins/mission-control/tests/test_project_mappings_resolution.py`.
+
 ## 2026-06-07
 
 ### Saga document formatting contract — one shared reference, table-rendered schema (squash `abcc06b`, PR #205, #201)  {#saga-doc-formatting-contract}

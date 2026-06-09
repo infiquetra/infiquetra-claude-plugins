@@ -24,6 +24,34 @@
 
 ## 2026-06-09
 
+### Saga documentation source model and generated SVG visual kit (commit `TBD`)  {#saga-docs-source-model}
+
+**Decision.** Maintain Saga's comprehensive user documentation from a curated docs model at
+`plugins/saga/docs/model/saga-docs-model.yaml`, with generated SVG assets under
+`plugins/saga/docs/assets/` rendered by `plugins/saga/scripts/render_docs_visuals.py`. The README is
+the atlas/index; detailed manual pages live under `plugins/saga/docs/`.
+
+**Rejected alternatives.**
+- *Hand-maintained Mermaid or PNG diagrams as the primary visual source.* Rejected: the user explicitly
+  wanted presentation-worthy visuals, and hand-maintained images drift from command/state reality.
+- *Graphviz/D2/Python Diagrams as a new dependency.* Rejected: Saga's first four visuals are simple
+  enough for deterministic direct SVG, and a new renderer dependency would make docs maintenance heavier.
+- *Fully generated manual prose.* Rejected: command selection needs curated operator judgment; the model
+  guards coverage while the manual carries human-readable decisions.
+
+**Rationale.** Saga's facts were already present but scattered across wrappers, SKILL files,
+dispatch-table references, saga state docs, and sibling Codex-port docs. A curated model gives reviewers
+one coverage surface for commands, routes, readiness, scenarios, owners, and visuals; deterministic SVG
+keeps the visual layer reviewable in git and reusable in README/manual/presentation contexts.
+
+**Revisit when.** The visual set grows beyond simple fixed-layout diagrams, a docs site becomes a real
+product surface, or the source model starts duplicating source-of-truth behavior instead of documenting
+selection and coverage.
+
+**Refs.** `docs/plans/2026-06-09-saga-comprehensive-documentation-plan.md`;
+`plugins/saga/docs/model/saga-docs-model.yaml`; `plugins/saga/scripts/render_docs_visuals.py`;
+LEARNINGS {#visual-docs-need-rendered-sanity-check}.
+
 ### Track renamed Hermes plugin repo in Mission Control (commit `75aae9e`)  {#mission-control-hermes-plugin-repo-rename}
 
 **Decision.** Update the vendored Mission Control repository mapping to use

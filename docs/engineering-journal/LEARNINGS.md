@@ -27,6 +27,30 @@
 
 ## 2026-06-09
 
+### `ruff check` does not prove formatter compliance  {#ruff-check-vs-format-check}
+
+**Context.** PR #212 added the Saga documentation renderer and coverage tests. Local validation
+included `uv run ruff check .`, but did not include the CI formatter command.
+
+**Evidence.** After PR #212 merged, GitHub Actions run `27223971026` failed only in the Lint job at
+`uv run python -m ruff format --check .`. The job reported that
+`plugins/saga/scripts/render_docs_visuals.py` and `tests/test_saga_docs_coverage.py` would be
+reformatted, while Tests, Validate Plugins, Type Check, and Security Scan passed.
+
+**Mechanism.** Ruff's lint checker and formatter are separate commands. A clean
+`uv run ruff check .` result does not imply `uv run ruff format --check .` will pass.
+
+**Fix.** Formatted the two Python files and added `uv run ruff format --check .` to the documented
+verification list in commit `cf67c7d`.
+
+**Validation.** `uv run ruff format --check .` passes after the formatter output is committed.
+
+**Generalizable rule.** Mirror CI's exact command names for pre-merge verification. Tool families often
+split linting, formatting, type checks, and tests into separate pass/fail contracts.
+
+**Refs.** PR #212; GitHub Actions run `27223971026`;
+`docs/work-sessions/2026-06-09-saga-comprehensive-documentation.md`.
+
 ### Presentation visuals need an actual render pass, not just SVG/file existence checks  {#visual-docs-need-rendered-sanity-check}
 
 **Context.** The Saga documentation system adds source-generated SVGs for the lifecycle atlas,

@@ -1,6 +1,17 @@
 ---
 name: investigate
-description: The Infiquetra systematic-debugging engine. Find the ROOT CAUSE of a bug, test failure, error, or unexpected behavior BEFORE any fix — trace the full trigger→symptom causal chain with no gaps, ground every hypothesis in observed evidence, and only then apply a GATED, trivial-scope, self-verified fix. Diagnosis is the primary deliverable: it writes an agent-consumable DEBUG REPORT, routes real implementation work to /work via a /handoff issue, design problems to /brainstorm, and trackable defects to /handoff. READ-ONLY on the world and the saga; never commits, pushes, opens a PR, or deploys. Triggers on "investigate", "debug this", "why is this failing", "trace this error", "root cause", a pasted stack trace / error message / issue ref, or a /qa or /loop hand-in for a deep failure.
+description: >-
+  The Infiquetra systematic-debugging engine. Find the ROOT CAUSE of a bug, test
+  failure, error, or unexpected behavior BEFORE any fix — trace the full
+  trigger→symptom causal chain with no gaps, ground every hypothesis in observed
+  evidence, and only then apply a GATED, trivial-scope, self-verified fix.
+  Diagnosis is the primary deliverable: it writes an agent-consumable DEBUG
+  REPORT, routes real implementation work to /work via a /handoff issue, design
+  problems to /brainstorm, and trackable defects to /handoff. READ-ONLY on the
+  world and the saga; never commits, pushes, opens a PR, or deploys. Triggers on
+  "investigate", "debug this", "why is this failing", "trace this error", "root
+  cause", a pasted stack trace / error message / issue ref, or a /qa or /loop
+  hand-in for a deep failure.
 ---
 
 # Investigate

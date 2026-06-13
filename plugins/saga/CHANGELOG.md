@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.22.0 - 2026-06-13
+
+- Correct the execution-backend recommender (`recommend_execution_backend`) and the operator-choice contract
+  so `cc-workflows-ultracode` (ultracode) is no longer framed as "fan-out, not review depth": ultracode
+  delivers deterministic fan-out **and** independent/adversarial verification. The line to `team-execution`
+  is GOVERNANCE (reviewer consensus + named scanner gates + guarded deploy), not review depth.
+- Add `adversarial_confidence` as a second `cc-workflows-ultracode` trigger beside `broad_independent_fanout`
+  (CLI `--adversarial-confidence`): prove-by-refutation / judge-panel work with no deploy/security signal now
+  reaches ultracode instead of silently falling to `inline`.
+- Add `has_code_surface` (default True; CLI `--no-code-surface`) so pure docs/spec/research output neutralizes
+  the output-blind team-execution proxies — `file_count`, `phase_count`, and the `parse_issue.py` keyword
+  flags `has_infra` / `has_security` / `deployment_sensitive` that fire on a doc merely *mentioning* infra or
+  auth. `cross_repo` (ownership boundary) and `needs_consensus` (contested) survive as the output-agnostic
+  governance signals; the ultracode risk-suppressor is itself gated by `has_code_surface` so broad infra/
+  security DOCS still fan out.
+- Reword operator-choice §3.1 (`PLUS` -> `OR`, matching the code's sufficient-on-its-own consensus) and §3.2
+  (the corrected ultracode framing + the throwaway-signal-vs-standing-verdict mechanical boundary).
+
 ## 0.21.0 - 2026-06-09
 
 - Add a comprehensive Saga documentation system: README atlas, manual pages under

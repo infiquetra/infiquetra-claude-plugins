@@ -49,19 +49,38 @@ def should_offer_team_execution(
     has_infra: bool,
     cross_repo: bool,
     deployment_sensitive: bool,
+    has_code_surface: bool = True,
 ) -> bool:
-    """Decide whether the loop should offer team-execution."""
+    """Decide whether the loop should offer team-execution.
 
-    return any(
+    ``has_code_surface`` defaults True, so every existing caller is unchanged.
+    Set it False for pure docs/spec/research/journal work (no code, no IaC, no
+    API contract, no deployable artifact). It neutralizes the OUTPUT-BLIND
+    proxies — the ones that fire on the *mention* or *volume* of risk rather than
+    a real ship/scanner surface that team-execution's gates can act on:
+
+    * ``file_count`` / ``phase_count`` — volume and sequencing, not governance.
+    * ``has_infra`` / ``has_security`` — ``parse_issue.py`` keyword regexes
+      (terraform, lambda, auth, iam, ...) trip on infra/security DOCS that touch
+      nothing deployable.
+    * ``deployment_sensitive`` — cannot truthfully hold when there is no deploy.
+
+    ``cross_repo`` SURVIVES the neutralizer: crossing a repo boundary crosses an
+    OWNERSHIP boundary, a multi-party coordination/consensus need that holds even
+    for docs. (``needs_consensus`` survives in ``recommend_execution_backend`` for
+    the same reason.)
+    """
+
+    code_shaped = any(
         (
             file_count >= 8,
             phase_count >= 4,
             has_security,
             has_infra,
-            cross_repo,
             deployment_sensitive,
         )
     )
+    return (code_shaped and has_code_surface) or cross_repo
 
 
 def should_prompt_for_issue(*, has_issue: bool, is_trivial: bool, user_declined: bool) -> bool:
@@ -87,6 +106,8 @@ def recommend_execution_backend(
     deployment_sensitive: bool = False,
     needs_consensus: bool = False,
     broad_independent_fanout: bool = False,
+    adversarial_confidence: bool = False,
+    has_code_surface: bool = True,
     workflow_available: bool = True,
 ) -> dict[str, object]:
     """Recommend an execution backend, mirroring operator-choice.md section 3.
@@ -102,6 +123,19 @@ def recommend_execution_backend(
     needs_consensus``) — a small-but-contested job is a team-execution job even
     without a size/risk trigger, which is the more useful behavior for a real
     caller. This is intentional, not a transcription error.
+
+    ``has_code_surface`` (default True) neutralizes the code-shaped team-execution
+    proxies for pure docs/spec/research work (see ``should_offer_team_execution``).
+    It also gates the ultracode RISK SUPPRESSOR below: ``has_infra`` /
+    ``has_security`` are ``parse_issue.py`` keyword matches (mention, not touch),
+    so on a docs change they are false positives that must not block an ultracode
+    fan-out any more than they force team-execution.
+
+    ``adversarial_confidence`` (default False) is the second ultracode trigger
+    beside ``broad_independent_fanout``: prove-by-refutation / judge-panel /
+    perspective-diverse verification is an ultracode shape (deterministic
+    INDEPENDENT verification, not merely breadth). Without it, "stress-test this
+    from many angles" work with no deploy/security signal would fall to inline.
 
     ``alternatives`` lists every *reachable* backend (capability-gated by
     ``workflow_available``) computed INDEPENDENTLY of which backend won
@@ -119,17 +153,24 @@ def recommend_execution_backend(
             has_infra=has_infra,
             cross_repo=cross_repo,
             deployment_sensitive=deployment_sensitive,
+            has_code_surface=has_code_surface,
         )
         or needs_consensus
     )
-    ultracode = broad_independent_fanout and not (has_security or has_infra or deployment_sensitive)
+    # The risk suppressor only bites when there is a real code/scanner surface:
+    # has_infra / has_security are keyword matches that false-positive on docs.
+    elevated_risk = (has_security or has_infra or deployment_sensitive) and has_code_surface
+    ultracode = (broad_independent_fanout or adversarial_confidence) and not elevated_risk
 
     if team:
         recommended = "team-execution"
         rationale = "size/risk or consensus signal -> review consensus + gates fit"
     elif ultracode and workflow_available:
         recommended = "cc-workflows-ultracode"
-        rationale = "broad independent fan-out without elevated risk -> deterministic fan-out"
+        rationale = (
+            "broad fan-out or adversarial-confidence pass without elevated risk"
+            " -> deterministic independent verification"
+        )
     else:
         recommended = "inline"
         rationale = "no escalation signal -> the agent does the work itself"
@@ -165,6 +206,8 @@ def _build_parser() -> argparse.ArgumentParser:
     backend.add_argument("--deployment-sensitive", action="store_true")
     backend.add_argument("--needs-consensus", action="store_true")
     backend.add_argument("--broad-fanout", action="store_true")
+    backend.add_argument("--adversarial-confidence", action="store_true")
+    backend.add_argument("--no-code-surface", action="store_true")
     backend.add_argument("--no-workflow", action="store_true")
 
     return parser
@@ -189,6 +232,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             deployment_sensitive=args.deployment_sensitive,
             needs_consensus=args.needs_consensus,
             broad_independent_fanout=args.broad_fanout,
+            adversarial_confidence=args.adversarial_confidence,
+            has_code_surface=not args.no_code_surface,
             workflow_available=not args.no_workflow,
         )
         print(json.dumps(result))

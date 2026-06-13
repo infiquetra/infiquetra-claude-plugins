@@ -22,6 +22,44 @@
 
 ---
 
+## 2026-06-13
+
+### Correct the operator-choice ultracode framing; add `adversarial_confidence` + `has_code_surface` to the backend recommender (PR #TBD)  {#operator-choice-docs-and-confidence}
+
+**Decision.** (1) Document `cc-workflows-ultracode` as deterministic fan-out **and** independent/adversarial
+verification; the line to `team-execution` is **governance** (consensus + named scanner gates + guarded
+deploy), framed as *artifact kind* — a throwaway signal vs a standing blocking verdict (operator-choice §3.2).
+(2) Add `adversarial_confidence` as a second ultracode trigger beside `broad_independent_fanout` (default
+False). (3) Add `has_code_surface` (default True): pure docs/spec/research neutralizes the output-blind
+code-shaped proxies (`file_count`, `phase_count`, `has_infra`, `has_security`, `deployment_sensitive`);
+`cross_repo` + `needs_consensus` survive as output-agnostic governance signals; the ultracode risk-suppressor
+is itself gated by it. (4) Keep the lean precedence `team-execution > cc-workflows-ultracode > inline`
+unchanged.
+
+**Rejected alternatives.** *Plain reaffirm* — the §3.2 sentence is provably false against the Workflow tool
+spec + official docs, and the `inline` reachability gap is real. *A new decision mechanism (rebuild the
+ladder)* — it maps onto the existing `if/elif` and would churn the locked assertions for no behavioral gain.
+*An `output_kind` enum (code|docs|research) as a primary chooser* — the code/docs correlation breaks (trivial
+code, contested specs, broad code migrations); keying on the label misroutes those. *Keep a docs size-backstop
+to team-execution* (Agent 1's caution) — the real governance docs go off-chain (`/strategy`, `/spec` don't
+call the recommender); a governance doc that reaches it carries `needs_consensus` or breadth; forcing consensus
+ceremony on uncontested docs is the misfire being fixed. *Names `no_deploy_surface` / `is_docs`* —
+double-negative / too narrow; `has_code_surface` (positive, default True) names the real discriminator and
+makes the safe default the conservative one.
+
+**Rationale.** The routing was ~80% right (the code's risk gate already encoded governance); this makes the
+prose true and reaches the two shapes the helper couldn't — adversarial confidence, and docs de-escalation.
+Minimal blast radius: two default-safe kwargs + one predicate clause; every locked assertion is unchanged.
+
+**Revisit when.** `has_code_surface` gets mis-set often in practice (it is a looser caller judgment than the
+others — revisit toward deriving it, or folding `cross_repo` into the neutralizer); OR `parse_issue.py` gains a
+real file-touch signal for infra/security (then neutralizing those two for docs is redundant); OR
+`adversarial_confidence` wants a magnitude gate (many-independent-attempts vs a few lenses — currently
+categorical).
+
+**Refs.** LEARNINGS [#operator-choice-ultracode-framing-and-docs-proxies](LEARNINGS.md#operator-choice-ultracode-framing-and-docs-proxies);
+refines [#operator-choice-framework](#operator-choice-framework).
+
 ## 2026-06-09
 
 ### Saga documentation source model and generated SVG visual kit (commit `2f9f2f2`)  {#saga-docs-source-model}
@@ -514,6 +552,11 @@ The five decisions a–e:
 **Refs.** Plugin `0.6.0`. Part of the engine-merge campaign — see [#lifecycle-engine-merge-campaign](#lifecycle-engine-merge-campaign). Ship record: ARCHIVE [#office-hours-engine-rebuild-shipped](ARCHIVE.md#office-hours-engine-rebuild-shipped). Frame-note home: `docs/office-hours/`.
 
 ### Operator-choice framework ships doc-only; CLI helper deferred to `/work` (PR `#171`)  {#operator-choice-framework}
+
+> **Update (2026-06-13).** The §3.2 "deterministic fan-out, not review depth" framing introduced here was
+> corrected, and `adversarial_confidence` + `has_code_surface` were added to the recommender — see
+> [#operator-choice-docs-and-confidence](#operator-choice-docs-and-confidence). The doc-only-then-helper
+> sequencing, the three-backend enum, and the always-confirm/capability-gate properties below all stand.
 
 **Decision.** Ship the operator-choice framework as a **DOC-ONLY foundation**: `references/operator-choice.md` — the decision contract for the three execution backends `inline` | `team-execution` | `cc-workflows-ultracode` (these enum strings are the contract; prose labels like "CC workflows"/"ultracode" are not) — plus short prose **offer hooks** in `/loop` and `/work`. Lifecycle owns the **choice**, not execution. No code/helper ships this PR. The four interview answers settled:
 

@@ -123,13 +123,18 @@ backend, pre-select it, and surface the alternatives so escalation is one keystr
 python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
   --file-count <N> --phase-count <N> \
   [--has-security] [--has-infra] [--cross-repo] [--deployment-sensitive] \
-  [--needs-consensus] [--broad-fanout] [--no-workflow]
+  [--needs-consensus] [--broad-fanout] [--adversarial-confidence] \
+  [--no-code-surface] [--no-workflow]
 ```
 
 It returns JSON: `{recommended, rationale, alternatives, omit_ultracode}`. The recommendation reuses
 `should_offer_team_execution`'s thresholds (file_count ≥ 8, phase_count ≥ 4, security, infra, cross-repo,
 deployment-sensitive) **or** a needs-consensus signal for `team-execution`; broad-independent-fanout
-without elevated risk for `cc-workflows-ultracode`; `inline` otherwise. `alternatives` lists every
+**or** an adversarial-confidence pass (prove-by-refutation / judge-panel) without elevated risk for
+`cc-workflows-ultracode`; `inline` otherwise. Pass `--no-code-surface` for pure docs/spec/research output:
+it voids the code-shaped proxies (size, and the `has_infra` / `has_security` keyword flags that
+false-positive on docs) so a big docs change isn't conscripted into team-execution — only `--cross-repo`
+and `--needs-consensus` keep it there. `alternatives` lists every
 reachable backend **independent of which one won precedence**, so an overlap job (consensus AND
 fan-out) still offers both — escalation stays one step (operator-choice §3.3).
 

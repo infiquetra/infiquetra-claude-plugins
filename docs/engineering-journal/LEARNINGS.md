@@ -25,6 +25,49 @@
 
 ---
 
+## 2026-06-13
+
+### Saga mis-framed ultracode as "fan-out, not review depth"; keyword risk-proxies over-escalate docs  {#operator-choice-ultracode-framing-and-docs-proxies}
+
+**Context.** A challenge to the operator-choice contract: does saga correctly model Claude Code Workflows
+("ultracode") vs `team-execution` vs `inline`? A multi-agent research + adversarial-review workflow checked
+the Workflow tool's own spec and official Anthropic docs against the contract.
+
+**Evidence.** `operator-choice.md` §3.2 (the sentence "ultracode's value is deterministic fan-out, not review
+depth"); `recommend_execution_backend()` in `plugins/saga/scripts/lifecycle_state.py`; `parse_issue.py:108-110`
+(`INFRA_RE` / `SECURITY_RE` are bare keyword regexes — `terraform|lambda|...`, `auth|iam|...` — over the issue
+*body text*); official docs (code.claude.com/docs/en/workflows: "independent agents adversarially review each
+other's findings… a more trustworthy result than a single pass"). PR #215 (saga 0.22.0).
+
+**Mechanism.** Three things. (1) ultracode HAS review depth — *confidence* is one of the tool's three stated
+purposes, and adversarial-verify / judge-panel / perspective-diverse verify are built-in patterns; "Review" is
+a canonical shape. The real `team-execution` boundary is **governance** (reviewer consensus + named scanner
+gates + guarded deploy), i.e. *artifact kind*: ultracode yields a throwaway statistical signal, team-execution
+a standing blocking verdict. (2) A behavioral gap, not just wording: adversarial-confidence work with no
+deploy/security signal had **no trigger**, so it fell to `inline`. (3) `has_infra` / `has_security` are
+*mention-not-touch* keyword matches, so a docs change merely *mentioning* terraform/auth set the flag and
+force-escalated to `team-execution`, whose scanners are inert on docs.
+
+**Fix.** PR #215. Added `adversarial_confidence` (2nd ultracode trigger) + `has_code_surface` (default True;
+neutralizes the five output-blind code-shaped proxies for docs — `cross_repo` + `needs_consensus` survive as
+the output-agnostic governance signals; the ultracode risk-suppressor is itself gated by it). Reworded §3.1
+(`PLUS` → `OR`) + §3.2 (the artifact-kind boundary).
+
+**Validation.** 31 saga tests green incl. 3 new (`adversarial_confidence`; docs `has_code_surface`; CLI
+round-trip); `ruff` + both plugin validators clean.
+
+**What surprised.** The routing *behavior* was ~80% right — the helper's risk gate already encoded governance —
+while the *justifying sentence* was false. A leaky abstraction can route correctly yet document itself wrongly.
+
+**Generalizable rule.** When a router's prose and its code disagree, the **code's behavior is ground truth** —
+re-derive the doc from the code, not the reverse. And a size/risk proxy (a file count, or a keyword flag like
+`has_infra`) is **necessary-not-sufficient**: it stands in for a real need (governance) that diverges from the
+proxy on off-axis inputs (docs that *mention* infra; big *uncontested* docs) — gate the proxy on the actual
+discriminator (is there a code/ship surface the gate can act on?).
+
+**Refs.** DECISIONS [#operator-choice-docs-and-confidence](DECISIONS.md#operator-choice-docs-and-confidence);
+the contract it refines — DECISIONS [#operator-choice-framework](DECISIONS.md#operator-choice-framework).
+
 ## 2026-06-09
 
 ### `ruff check` does not prove formatter compliance  {#ruff-check-vs-format-check}

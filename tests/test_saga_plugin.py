@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.21.0"
+    assert plugin_json["version"] == "0.22.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -2515,6 +2515,112 @@ def test_lifecycle_state_cli_subcommands(capsys: pytest.CaptureFixture[str]) -> 
     with pytest.raises(SystemExit) as exc_info:
         lifecycle.main(["deploy"])
     assert exc_info.value.code != 0
+
+
+def test_recommend_execution_backend_adversarial_confidence() -> None:
+    """adversarial_confidence is the SECOND ultracode trigger beside broad fan-out.
+
+    Prove-by-refutation / judge-panel work with no deploy/security signal is an
+    ultracode shape (deterministic INDEPENDENT verification), not an inline one.
+    It rides the same risk gate and the same capability gate as broad fan-out.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+    rec = lifecycle.recommend_execution_backend
+
+    # adversarial_confidence alone, no risk -> cc-workflows-ultracode.
+    assert rec(adversarial_confidence=True)["recommended"] == "cc-workflows-ultracode"
+
+    # The risk gate still suppresses it: an elevated-risk signal routes to team.
+    assert rec(adversarial_confidence=True, has_security=True)["recommended"] == "team-execution"
+
+    # Capability gate: with the Workflow tool absent it degrades to inline and
+    # drops ultracode from the offer (mirrors the broad-fanout degrade).
+    gated = rec(adversarial_confidence=True, workflow_available=False)
+    assert gated["recommended"] == "inline"
+    assert gated["omit_ultracode"] is True
+
+    # Overlap: adversarial_confidence (ultracode) AND needs_consensus (team wins)
+    # still lists ultracode as a one-keystroke alternative.
+    overlap = rec(adversarial_confidence=True, needs_consensus=True)
+    assert overlap["recommended"] == "team-execution"
+    assert "cc-workflows-ultracode" in overlap["alternatives"]
+
+
+def test_recommend_execution_backend_docs_no_code_surface() -> None:
+    """has_code_surface=False neutralizes the OUTPUT-BLIND proxies for docs.
+
+    team-execution's scanners + deploy gate are code-shaped and inert on pure
+    docs/spec/research. So size (file/phase) and the parse_issue.py keyword flags
+    (has_infra/has_security/deployment_sensitive) must NOT force team-execution on
+    a docs change. The two output-AGNOSTIC governance signals survive: cross_repo
+    (ownership boundary) and needs_consensus (contested).
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+    rec = lifecycle.recommend_execution_backend
+
+    # Default (has_code_surface=True): the size proxy still trips team-execution.
+    assert rec(file_count=12)["recommended"] == "team-execution"
+
+    # Docs: the size/sequencing proxies are voided -> inline.
+    assert rec(file_count=12, has_code_surface=False)["recommended"] == "inline"
+    assert rec(phase_count=6, has_code_surface=False)["recommended"] == "inline"
+
+    # Docs: the keyword risk proxies are voided too (mention != touch). An infra
+    # runbook or a threat-model doc must not be conscripted into team-execution.
+    assert rec(has_infra=True, has_code_surface=False)["recommended"] == "inline"
+    assert rec(has_security=True, has_code_surface=False)["recommended"] == "inline"
+    assert rec(deployment_sensitive=True, has_code_surface=False)["recommended"] == "inline"
+
+    # Broad docs (many files) fan out via ultracode even with a keyword risk flag
+    # set, because the suppressor is itself gated by has_code_surface.
+    assert (
+        rec(file_count=12, broad_independent_fanout=True, has_code_surface=False)["recommended"]
+        == "cc-workflows-ultracode"
+    )
+    assert (
+        rec(has_infra=True, broad_independent_fanout=True, has_code_surface=False)["recommended"]
+        == "cc-workflows-ultracode"
+    )
+
+    # The output-AGNOSTIC governance signals SURVIVE the neutralizer: cross_repo
+    # (ownership boundary) and needs_consensus (contested) still fire on docs.
+    assert rec(cross_repo=True, has_code_surface=False)["recommended"] == "team-execution"
+    assert rec(needs_consensus=True, has_code_surface=False)["recommended"] == "team-execution"
+
+    # Overlap still lists ultracode: docs breadth + consensus -> team recommended,
+    # ultracode an alternative.
+    overlap = rec(
+        file_count=12,
+        broad_independent_fanout=True,
+        needs_consensus=True,
+        has_code_surface=False,
+    )
+    assert overlap["recommended"] == "team-execution"
+    assert "cc-workflows-ultracode" in overlap["alternatives"]
+
+
+def test_recommend_backend_cli_new_flags(capsys: pytest.CaptureFixture[str]) -> None:
+    """--adversarial-confidence and --no-code-surface round-trip through main().
+
+    Without a runnable CLI surface the new triggers are unreachable from the
+    markdown callers, so the flags must flow end-to-end, not just exist in Python.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+
+    # --adversarial-confidence -> cc-workflows-ultracode.
+    assert lifecycle.main(["recommend-backend", "--adversarial-confidence"]) == 0
+    adv = json.loads(capsys.readouterr().out)
+    assert adv["recommended"] == "cc-workflows-ultracode"
+
+    # --no-code-surface voids the size proxy: a 12-file docs change -> inline.
+    assert lifecycle.main(["recommend-backend", "--file-count", "12", "--no-code-surface"]) == 0
+    docs = json.loads(capsys.readouterr().out)
+    assert docs["recommended"] == "inline"
+
+    # --no-code-surface keeps cross_repo live (the ownership-boundary signal).
+    assert lifecycle.main(["recommend-backend", "--cross-repo", "--no-code-surface"]) == 0
+    cross = json.loads(capsys.readouterr().out)
+    assert cross["recommended"] == "team-execution"
 
 
 def test_issue_progress_comments_include_required_evidence() -> None:

@@ -24,7 +24,7 @@
 
 ## 2026-06-13
 
-### Correct the operator-choice ultracode framing; add `adversarial_confidence` + `has_code_surface` to the backend recommender (PR #TBD)  {#operator-choice-docs-and-confidence}
+### Correct the operator-choice ultracode framing; add `adversarial_confidence` + `has_code_surface` to the backend recommender (PR #215)  {#operator-choice-docs-and-confidence}
 
 **Decision.** (1) Document `cc-workflows-ultracode` as deterministic fan-out **and** independent/adversarial
 verification; the line to `team-execution` is **governance** (consensus + named scanner gates + guarded

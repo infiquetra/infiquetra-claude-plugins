@@ -37,7 +37,7 @@ the Workflow tool's own spec and official Anthropic docs against the contract.
 depth"); `recommend_execution_backend()` in `plugins/saga/scripts/lifecycle_state.py`; `parse_issue.py:108-110`
 (`INFRA_RE` / `SECURITY_RE` are bare keyword regexes — `terraform|lambda|...`, `auth|iam|...` — over the issue
 *body text*); official docs (code.claude.com/docs/en/workflows: "independent agents adversarially review each
-other's findings… a more trustworthy result than a single pass"). PR #TBD (saga 0.22.0).
+other's findings… a more trustworthy result than a single pass"). PR #215 (saga 0.22.0).
 
 **Mechanism.** Three things. (1) ultracode HAS review depth — *confidence* is one of the tool's three stated
 purposes, and adversarial-verify / judge-panel / perspective-diverse verify are built-in patterns; "Review" is
@@ -48,7 +48,7 @@ deploy/security signal had **no trigger**, so it fell to `inline`. (3) `has_infr
 *mention-not-touch* keyword matches, so a docs change merely *mentioning* terraform/auth set the flag and
 force-escalated to `team-execution`, whose scanners are inert on docs.
 
-**Fix.** PR #TBD. Added `adversarial_confidence` (2nd ultracode trigger) + `has_code_surface` (default True;
+**Fix.** PR #215. Added `adversarial_confidence` (2nd ultracode trigger) + `has_code_surface` (default True;
 neutralizes the five output-blind code-shaped proxies for docs — `cross_repo` + `needs_consensus` survive as
 the output-agnostic governance signals; the ultracode risk-suppressor is itself gated by it). Reworded §3.1
 (`PLUS` → `OR`) + §3.2 (the artifact-kind boundary).

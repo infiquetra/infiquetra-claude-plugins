@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.22.1 - 2026-06-13
+
+- Tighten the `adversarial_confidence` guidance: `/work` sets `--adversarial-confidence` only on an explicit
+  operator request for many-independent-attempt verification (refute-N / judge-panel / perspective-diverse),
+  never inferred from generic "make me more confident" phrasing — closes the oversell risk the adversarial
+  review flagged. The trigger stays categorical; a true magnitude gate remains a documented revisit-when.
+- Journal bookkeeping: record the 0.22.0 squash SHA (`331505a`).
+
 ## 0.22.0 - 2026-06-13
 
 - Correct the execution-backend recommender (`recommend_execution_backend`) and the operator-choice contract

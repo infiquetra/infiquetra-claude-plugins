@@ -134,7 +134,10 @@ deployment-sensitive) **or** a needs-consensus signal for `team-execution`; broa
 `cc-workflows-ultracode`; `inline` otherwise. Pass `--no-code-surface` for pure docs/spec/research output:
 it voids the code-shaped proxies (size, and the `has_infra` / `has_security` keyword flags that
 false-positive on docs) so a big docs change isn't conscripted into team-execution — only `--cross-repo`
-and `--needs-consensus` keep it there. `alternatives` lists every
+and `--needs-consensus` keep it there. Set `--adversarial-confidence` ONLY on an explicit operator request
+for many-independent-attempt verification (refute-N, a judge panel, perspective-diverse lenses) — not
+inferred from generic "make me more confident" phrasing, and not when 1-3 review lenses would do; that bar
+keeps confidence work from over-routing to ultracode. `alternatives` lists every
 reachable backend **independent of which one won precedence**, so an overlap job (consensus AND
 fan-out) still offers both — escalation stays one step (operator-choice §3.3).
 

@@ -94,7 +94,9 @@ Offer in **either** of two ungoverned-multiplicity modes, both without elevated 
   targets), or an exhaustive search-all / probe-all sweep where missing a target is the failure mode.
 - **Adversarial confidence** (`adversarial_confidence`) — prove-by-refutation, a judge panel over N
   independent attempts, or perspective-diverse verifiers each applying a distinct lens. This is real review
-  depth; the Workflow tool names *confidence* as a first-class purpose.
+  depth; the Workflow tool names *confidence* as a first-class purpose. Set it only on an **explicit**
+  request for many-independent-attempt verification — not inferred from a generic "be more sure," and not
+  when 1-3 lenses suffice (that is an `inline` / `team-execution` review, not an ultracode fan-out).
 
 So ultracode is **not** "fan-out, not review depth" — it delivers deterministic fan-out **and** independent
 adversarial verification. What it lacks is **governance**: no reviewer-CONSENSUS gate, no named scanner

@@ -24,7 +24,7 @@
 
 ## 2026-06-13
 
-### Correct the operator-choice ultracode framing; add `adversarial_confidence` + `has_code_surface` to the backend recommender (PR #215)  {#operator-choice-docs-and-confidence}
+### Correct the operator-choice ultracode framing; add `adversarial_confidence` + `has_code_surface` to the backend recommender (PR #215, squash `331505a`)  {#operator-choice-docs-and-confidence}
 
 **Decision.** (1) Document `cc-workflows-ultracode` as deterministic fan-out **and** independent/adversarial
 verification; the line to `team-execution` is **governance** (consensus + named scanner gates + guarded
@@ -54,8 +54,8 @@ Minimal blast radius: two default-safe kwargs + one predicate clause; every lock
 **Revisit when.** `has_code_surface` gets mis-set often in practice (it is a looser caller judgment than the
 others — revisit toward deriving it, or folding `cross_repo` into the neutralizer); OR `parse_issue.py` gains a
 real file-touch signal for infra/security (then neutralizing those two for docs is redundant); OR
-`adversarial_confidence` wants a magnitude gate (many-independent-attempts vs a few lenses — currently
-categorical).
+`adversarial_confidence` over-routes to ultracode in practice (PR #216 gated it to an **explicit**
+many-attempts request, but it still lacks a true magnitude gate — add one if it fires too readily).
 
 **Refs.** LEARNINGS [#operator-choice-ultracode-framing-and-docs-proxies](LEARNINGS.md#operator-choice-ultracode-framing-and-docs-proxies);
 refines [#operator-choice-framework](#operator-choice-framework).

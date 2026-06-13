@@ -37,7 +37,8 @@ the Workflow tool's own spec and official Anthropic docs against the contract.
 depth"); `recommend_execution_backend()` in `plugins/saga/scripts/lifecycle_state.py`; `parse_issue.py:108-110`
 (`INFRA_RE` / `SECURITY_RE` are bare keyword regexes — `terraform|lambda|...`, `auth|iam|...` — over the issue
 *body text*); official docs (code.claude.com/docs/en/workflows: "independent agents adversarially review each
-other's findings… a more trustworthy result than a single pass"). PR #215 (saga 0.22.0).
+other's findings… a more trustworthy result than a single pass"). PR #215 (saga 0.22.0, squash `331505a`);
+the `adversarial_confidence` explicit-request guard followed in PR #216 (saga 0.22.1).
 
 **Mechanism.** Three things. (1) ultracode HAS review depth — *confidence* is one of the tool's three stated
 purposes, and adversarial-verify / judge-panel / perspective-diverse verify are built-in patterns; "Review" is

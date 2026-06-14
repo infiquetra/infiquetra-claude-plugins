@@ -46,6 +46,15 @@ packages = ["plugins"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Vendored, generated, DO-NOT-EDIT issue-contract artifacts: their bytes are
+# pinned by a SHA256 parity gate (KTD3) and authored by infiquetra-sdlc's
+# gen_issue_contract.py, so a formatter must never touch them (reformatting
+# would flip the hash and fail the consumer parity check). Excluded from ruff
+# (the hand-written parity gate + tests in this dir are formatted normally).
+extend-exclude = [
+    "plugins/mission-control/config/generated/issue_contract_data.py",
+    "plugins/mission-control/config/generated/issue_contract_shim.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]

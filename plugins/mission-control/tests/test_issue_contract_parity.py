@@ -32,7 +32,7 @@ PARITY_PATH = VENDOR_DIR / "check_issue_contract_parity.py"
 # here as a literal. Update this DELIBERATELY when re-vendoring a new artifact
 # from infiquetra-sdlc -- a silent data+manifest edit cannot pass this.
 EXPECTED_DATA_SHA256 = (
-    "078a27c9b84bb3e2de11c925a39a802f10d34b0e4cd5d33288f2f06ec7dc5a73"
+    "3eace49017da09f9981035f2aec1bdfe0dae0b770ac0cf3a399f78099bde7f4d"
 )
 
 

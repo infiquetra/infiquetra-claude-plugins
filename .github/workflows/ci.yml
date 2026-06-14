@@ -30,6 +30,15 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
 
+      - name: Issue-contract vendored parity (consumer-side gate)
+        # KTD3: the mission-control plugin vendors the issue-contract DATA + shim
+        # modules generated in infiquetra-sdlc. This stdlib-only gate recomputes
+        # each vendored module's SHA256 and compares it to its pinned manifest,
+        # so any drift in a vendored copy fails the PR. The pytest run below also
+        # covers this (test_issue_contract_parity.py); the standalone step gives
+        # a named, dependency-free signal.
+        run: python3 plugins/mission-control/config/generated/check_issue_contract_parity.py
+
       - name: Run tests with coverage
         run: uv run python -m pytest -v --cov=plugins --cov-report=xml --cov-report=term-missing
 

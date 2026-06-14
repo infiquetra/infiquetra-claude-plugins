@@ -59,6 +59,7 @@ Environment Variables:
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -2289,61 +2290,46 @@ def flow_verify_label(
 
 
 # ===========================
-# CARD VALIDATOR (mirror of home-lab card_validator.py)
+# CARD VALIDATOR (generated-data-backed pre-flight, mirrors home-lab card_validator.py)
 # ===========================
-# Mirrors the home-lab orchestrator's card_validator.py contract enough to
-# pre-flight check an issue body before plan-review fires. This is NOT a
-# strict re-implementation — the home-lab validator is the source of truth
-# (`home-lab/ansible/roles/hermes_orchestrator/files/card_validator.py`) and
-# should be consulted when the contract changes. We mirror the high-leverage
-# checks: 6 required H3 headers, AC has ≥1 checklist item, Verification has
-# ≥1 fenced code block, Files-expected has ≥1 path-like line, no placeholders.
+# Pre-flight-checks an issue body before plan-review fires. This is the
+# ALGORITHM (control flow) only — its DATA (the 6 required H3 headers, the
+# regexes, the placeholder set) is GENERATED in infiquetra-sdlc
+# (`tools/docs/gen_issue_contract.py` from the `issue_fields` block of
+# `config/sdlc-schema.json`) and VENDORED here as
+# `config/generated/issue_contract_shim.py` (carried with a pinned SHA256 + a
+# consumer-side parity gate). When the contract changes, the shim DATA is
+# re-vendored from sdlc and this algorithm is left untouched (KTD2). The shim is
+# shaped as a drop-in: it carries `REQUIRED_H3_HEADERS` / `OPTIONAL_H3_HEADERS`
+# and the named regex source strings (`HEADER_RE_PATTERN` / `CHECKLIST_RE_PATTERN`
+# / `CODE_BLOCK_RE_PATTERN` / `PATH_LINE_RE_PATTERN`) + a LOWERCASED
+# `PLACEHOLDER_LINES` set (the shim compares `ln.lower() in _PLACEHOLDER_LINES`).
+#
+# Import mechanism: load the vendored shim BY PATH relative to this file
+# (`__file__`-relative), so it resolves whether `sdlc_manager` is imported as a
+# top-level module in the test suite (tests put `scripts/` on sys.path) OR run
+# directly as the CLI. Loading by path means resolution does NOT depend on
+# `config/generated/` being on sys.path or being an importable package.
+_SHIM_DATA_PATH = (
+    Path(__file__).resolve().parent.parent / "config" / "generated" / "issue_contract_shim.py"
+)
+_shim_spec = importlib.util.spec_from_file_location("issue_contract_shim", _SHIM_DATA_PATH)
+if _shim_spec is None or _shim_spec.loader is None:  # pragma: no cover - defensive
+    raise ImportError(f"vendored issue-contract shim not loadable at {_SHIM_DATA_PATH}")
+_shim = importlib.util.module_from_spec(_shim_spec)
+_shim_spec.loader.exec_module(_shim)
 
-# All regexes + the placeholder set below MUST mirror the home-lab source-of-truth:
-# `home-lab/ansible/roles/hermes_orchestrator/files/card_validator.py`. When that
-# file's contract changes, update these in the same PR.
-
-_REQUIRED_H3_HEADERS = (
-    "Objective",
-    "Acceptance criteria",
-    "Out-of-scope / non-goals",  # exact match: home-lab uses slash, not "or"
-    "Files expected to change",
-    "Tests to add or update",
-    "Verification",
-)
-_OPTIONAL_H3_HEADERS = (
-    "Notes / conventions",
-    "Context library links",
-)
-_HEADER_RE = re.compile(r"^###\s+(.+?)\s*$", re.MULTILINE)
-# Checklist: `- [ ]`, `- [x]`, `* [ ]`, `* [X]`, with leading whitespace.
-# Requires `\S` after the bracket — empty checkbox-only lines don't count
-# (matches home-lab `card_validator.py:73`).
-_CHECKLIST_RE = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+\S", re.MULTILINE)
-_CODE_BLOCK_RE = re.compile(r"^```", re.MULTILINE)
-# A "plausible path" — matches home-lab `_PATH_LINE_RE` exactly:
-# optional bullet (`-` or `*`), optional quote/backtick wrapper, then a
-# token containing either `/` or `.` (so `pyproject.toml` and `- src/foo.py`
-# both pass). The orchestrator verifies actual existence; we just gate on
-# "looks like a path."
-_PATH_LINE_RE = re.compile(
-    r"^\s*(?:[-*]\s+)?"
-    r"[`'\"]?"
-    r"[\w./~\-]*[/.][\w./~\-]+"
-    r".*$",
-    re.MULTILINE,
-)
-_PLACEHOLDER_LINES = frozenset(
-    {
-        "- [ ]",
-        "-",
-        "* [ ]",
-        "*",
-        "_no response_",
-        "none",
-        "<!-- placeholder -->",
-    }
-)
+# DATA imported from the vendored shim (NOT hand-maintained here). A named regex
+# group is also positional group 1, so `HEADER_RE_PATTERN`'s `(?P<label>...)` is
+# a drop-in for the prior `m.group(1)` extraction in `_split_sections` below.
+_REQUIRED_H3_HEADERS = _shim.REQUIRED_H3_HEADERS
+_OPTIONAL_H3_HEADERS = _shim.OPTIONAL_H3_HEADERS
+_HEADER_RE = re.compile(_shim.HEADER_RE_PATTERN, re.MULTILINE)
+_CHECKLIST_RE = re.compile(_shim.CHECKLIST_RE_PATTERN, re.MULTILINE)
+_CODE_BLOCK_RE = re.compile(_shim.CODE_BLOCK_RE_PATTERN, re.MULTILINE)
+_PATH_LINE_RE = re.compile(_shim.PATH_LINE_RE_PATTERN, re.MULTILINE)
+# Already LOWERCASED in the vendored shim to match the `.lower()` compare below.
+_PLACEHOLDER_LINES = frozenset(_shim.PLACEHOLDER_LINES)
 
 
 def _split_sections(body: str) -> dict[str, str]:

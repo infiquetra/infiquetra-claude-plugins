@@ -37,10 +37,12 @@ PARITY_PATH = VENDOR_DIR / "check_issue_contract_parity.py"
 # INDEPENDENT oracle: the sha256 of the vendored issue_contract_data.py, pinned
 # here as a literal. Update this DELIBERATELY when re-vendoring a new artifact
 # from infiquetra-sdlc -- a silent data+manifest edit cannot pass this.
-EXPECTED_DATA_SHA256 = "3eace49017da09f9981035f2aec1bdfe0dae0b770ac0cf3a399f78099bde7f4d"
+# Updated 2026-06-14 for the U8 context-package expansion.
+EXPECTED_DATA_SHA256 = "22fa2b5b77acd739a7a0648d163f3292ddf433903e3f2c97f8c8f2e2feb0afec"
 # INDEPENDENT oracle for the vendored shim module (same discipline as the data
 # oracle above). Update DELIBERATELY when re-vendoring the shim from sdlc.
-EXPECTED_SHIM_SHA256 = "ef825769172cdc9148705bc19f7a01108f6c986f70719980309fcf69f4365285"
+# Updated 2026-06-14 for the U8 context-package expansion.
+EXPECTED_SHIM_SHA256 = "65d972ff3a049ba8103c501d61cdf16266f12eba35c749d76a937fcfe87357ff"
 
 
 def _load_parity():
@@ -104,22 +106,34 @@ def test_parity_gate_fails_on_injected_shim_drift() -> None:
 # The full validator DATA the vendored artifact must carry, pinned independently
 # of the round-trip (faithful extraction of card_validator.py FIELD_HEADERS /
 # REQUIRED_FIELDS). A wrong header or a required-flag flip fails here.
+# Updated 2026-06-14 for the U8 context-package expansion (Intent + risk-
+# conditional fields + Lifecycle Origin; context_library_links promoted to
+# required). Order is the U10/R11 canonical order.
 EXPECTED_FIELD_HEADERS = {
     "objective": "Objective",
-    "acceptance_criteria": "Acceptance criteria",
+    "intent": "Intent",
     "non_goals": "Out-of-scope / non-goals",
+    "inputs": "Inputs inventory",
     "files_expected": "Files expected to change",
     "tests_required": "Tests to add or update",
-    "verification": "Verification",
-    "notes": "Notes / conventions",
+    "failure_modes": "Failure modes / pre-mortem",
+    "stop_conditions": "Stop conditions",
     "context_library_links": "Context library links",
+    "notes": "Notes / conventions",
+    "acceptance_criteria": "Acceptance criteria",
+    "verification": "Verification",
+    "lifecycle_origin": "Lifecycle Origin",
 }
+# The always-required core (risk-independent). The risk-conditional + auto fields
+# are NOT here; the REQUIRED_MATRIX (also vendored) keys them.
 EXPECTED_REQUIRED_FIELDS = (
     "objective",
-    "acceptance_criteria",
+    "intent",
     "non_goals",
     "files_expected",
     "tests_required",
+    "context_library_links",
+    "acceptance_criteria",
     "verification",
 )
 
@@ -133,23 +147,39 @@ def test_vendored_data_is_importable_data_only() -> None:
     assert namespace["REQUIRED_FIELDS"] == EXPECTED_REQUIRED_FIELDS
 
 
+def test_vendored_data_carries_risk_matrix() -> None:
+    """U8/R12: the vendored DATA carries the field x type x risk REQUIRED_MATRIX
+    + the EXECUTABLE_CHECKS the home-lab algorithm evaluates."""
+    namespace: dict = {}
+    exec(DATA_PATH.read_text(encoding="utf-8"), namespace)
+    matrix = namespace["REQUIRED_MATRIX"]
+    assert set(matrix["axes"]["risk"]) == {"low", "medium", "high", "very-high", "*"}
+    assert matrix["auto_populated_fields"] == ["lifecycle_origin"]
+    assert "acceptance_criteria" in namespace["EXECUTABLE_CHECKS"]
+
+
 # The shim DATA surface the vendored shim must carry, pinned independently of the
 # round-trip. These are the names sdlc_manager.py's validate_card_body imports
 # (U4); a wrong header, a lost lowercased-placeholder, or a renamed regex const
-# fails here. The 6 required H3 headers mirror EXPECTED_FIELD_HEADERS' required
-# subset (header values), and the placeholder set is LOWERCASED on purpose --
-# the shim compares ``ln.lower() in PLACEHOLDER_LINES``.
+# fails here. Updated 2026-06-14: Intent + Context library links are now required
+# H3 headers (R1/R4); the risk-conditional fields + Lifecycle Origin are OPTIONAL
+# at the shim layer (it has no Risk input). The placeholder set stays LOWERCASED.
 EXPECTED_SHIM_REQUIRED_H3 = (
     "Objective",
-    "Acceptance criteria",
+    "Intent",
     "Out-of-scope / non-goals",
     "Files expected to change",
     "Tests to add or update",
+    "Context library links",
+    "Acceptance criteria",
     "Verification",
 )
 EXPECTED_SHIM_OPTIONAL_H3 = (
+    "Inputs inventory",
+    "Failure modes / pre-mortem",
+    "Stop conditions",
     "Notes / conventions",
-    "Context library links",
+    "Lifecycle Origin",
 )
 EXPECTED_SHIM_PLACEHOLDER_LINES = (
     "- [ ]",
@@ -177,5 +207,6 @@ def test_vendored_shim_is_importable_data_only() -> None:
         "CHECKLIST_RE_PATTERN",
         "CODE_BLOCK_RE_PATTERN",
         "PATH_LINE_RE_PATTERN",
+        "ACCEPTANCE_EXECUTABLE_RE_PATTERN",
     ):
         assert const in namespace, f"vendored shim missing {const}"

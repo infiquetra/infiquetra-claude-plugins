@@ -2328,6 +2328,13 @@ _HEADER_RE = re.compile(_shim.HEADER_RE_PATTERN, re.MULTILINE)
 _CHECKLIST_RE = re.compile(_shim.CHECKLIST_RE_PATTERN, re.MULTILINE)
 _CODE_BLOCK_RE = re.compile(_shim.CODE_BLOCK_RE_PATTERN, re.MULTILINE)
 _PATH_LINE_RE = re.compile(_shim.PATH_LINE_RE_PATTERN, re.MULTILINE)
+# R2/KTD8 executable-acceptance regex: the acceptance field must name a runnable
+# check (a `code span` or a ``` fenced block). DATA from the vendored shim.
+_ACCEPTANCE_EXECUTABLE_RE = re.compile(_shim.ACCEPTANCE_EXECUTABLE_RE_PATTERN, re.MULTILINE)
+# R4: explicit `_none_` declaration accepted for context-links presence. The
+# none-marker is `_none_` / `none` / `None` (case-insensitive); hard-coded here to
+# match the vendored CONTEXT_PARSING none-marker the home-lab validator uses.
+_NONE_MARKER_RE = re.compile(r"^_?none_?$", re.IGNORECASE)
 # Already LOWERCASED in the vendored shim to match the `.lower()` compare below.
 _PLACEHOLDER_LINES = frozenset(_shim.PLACEHOLDER_LINES)
 
@@ -2350,19 +2357,20 @@ def validate_card_body(body: str) -> tuple[bool, list[str]]:
     Mirrors home-lab card_validator.py's high-leverage checks. When that
     file's contract changes, update this shim in the same PR.
 
-    Returns (is_valid, errors). The 5 checks:
-      1. All 6 required H3 sections present (Objective, Acceptance criteria,
-         Out-of-scope / non-goals, Files expected to change, Tests to add
-         or update, Verification).
-      2. Acceptance criteria has at least one `- [ ]` or `* [ ]` checklist
-         item with non-whitespace content after the bracket.
+    Returns (is_valid, errors). The checks (mirror the home-lab validator's
+    always-required, body-only surface — the shim has no Risk/issue-type input,
+    so the risk-conditional matrix R5-R7 is enforced by the authoritative
+    home-lab gate, not here):
+      1. All required H3 sections present (now incl. Intent and Context library
+         links per the U8 context package).
+      2. Acceptance criteria has at least one `- [ ]` / `* [ ]` checklist item.
+      2b. Acceptance criteria is EXECUTABLE (R2/KTD8): a criterion names a
+         runnable check — a `code span` or a ``` fenced block.
       3. Verification has at least one fenced code block (≥2 ``` markers).
-      4. Files expected to change has at least one path-like line (matches
-         home-lab _PATH_LINE_RE — accepts plain filenames like
-         `pyproject.toml`, bullet-prefixed paths like `- src/foo.py`, and
-         backtick-wrapped paths).
-      5. No required section consists of only placeholder lines
-         (`- [ ]`, `_No response_`, `None`, etc.).
+      4. Files expected to change has at least one path-like line.
+      5. No required section consists of only placeholder lines — EXCEPT the
+         Context library links `_none_` declaration (R4), which is a valid
+         "no link applies" marker, not leftover placeholder chrome.
     """
     errors: list[str] = []
     sections = _split_sections(body)
@@ -2373,13 +2381,19 @@ def validate_card_body(body: str) -> tuple[bool, list[str]]:
     if missing:
         errors.append(f"Missing required H3 sections: {missing}")
 
-    # 2. Acceptance criteria has ≥1 checklist item
+    # 2 + 2b. Acceptance criteria: a checklist item AND an executable criterion.
     if "Acceptance criteria" in sections:
         ac = sections["Acceptance criteria"]
         if not _CHECKLIST_RE.search(ac):
             errors.append(
                 "'Acceptance criteria' has no `- [ ]` checklist item "
                 "(card_validator requires at least one)"
+            )
+        elif not _ACCEPTANCE_EXECUTABLE_RE.search(ac):
+            errors.append(
+                "'Acceptance criteria' is not executable (card_validator "
+                "requires each criterion to name a runnable check -- a `code "
+                "span` or a ``` fenced block -- with its expected result)"
             )
 
     # 3. Verification has ≥1 fenced code block
@@ -2401,11 +2415,15 @@ def validate_card_body(body: str) -> tuple[bool, list[str]]:
                 "(card_validator requires at least one `dir/file` style entry)"
             )
 
-    # 5. No placeholder-only sections
+    # 5. No placeholder-only sections (Context library links `_none_` exempt).
     for header in _REQUIRED_H3_HEADERS:
         if header not in sections:
             continue
         text = sections[header].strip()
+        # R4: a whole-field `_none_` on Context library links is a valid
+        # declaration, not a placeholder-only section.
+        if header == "Context library links" and _NONE_MARKER_RE.match(text):
+            continue
         # Strip blank lines + check whether all remaining lines are placeholders
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         if lines and all(ln.lower() in _PLACEHOLDER_LINES for ln in lines):

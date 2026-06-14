@@ -13,11 +13,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import sdlc_manager  # noqa: E402
 
 
+# Updated 2026-06-14 for the U8 context-package contract: a hermes-task card now
+# carries the always-required Intent (R1) + Context library links (R4), and the
+# acceptance criteria name a runnable check (R2/KTD8). This is a medium-risk card
+# in its test, so the risk-conditional fields (R5-R7) are not required.
 OLYMPUS_BODY = """### Objective
 Add a prepared issue workflow.
 
+### Intent
+Authoring agents need a draft-then-approve path; without it cards skip review.
+End-state: every prepared card is drafted, gated, and only then created.
+
 ### Acceptance criteria
-- [ ] Drafts are written before GitHub mutation
+- [ ] Drafts are written before GitHub mutation; `uv run pytest plugins/mission-control/tests/test_issue_prepare.py` exits 0
 
 ### Out-of-scope / non-goals
 - Do not auto-move issues to Ready
@@ -32,6 +40,9 @@ plugins/mission-control/tests/test_issue_prepare.py
 ```bash
 uv run pytest plugins/mission-control/tests/test_issue_prepare.py
 ```
+
+### Context library links
+_none_
 """
 
 

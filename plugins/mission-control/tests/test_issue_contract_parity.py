@@ -32,7 +32,7 @@ PARITY_PATH = VENDOR_DIR / "check_issue_contract_parity.py"
 # here as a literal. Update this DELIBERATELY when re-vendoring a new artifact
 # from infiquetra-sdlc -- a silent data+manifest edit cannot pass this.
 EXPECTED_DATA_SHA256 = (
-    "4fd1f5974c9dab7814c083d8c714da1f3d0705fe857ed517e42fc09ea37881a9"
+    "078a27c9b84bb3e2de11c925a39a802f10d34b0e4cd5d33288f2f06ec7dc5a73"
 )
 
 
@@ -71,9 +71,33 @@ def test_parity_gate_fails_on_injected_drift() -> None:
     assert mod.parity_errors() == []
 
 
+# The full validator DATA the vendored artifact must carry, pinned independently
+# of the round-trip (faithful extraction of card_validator.py FIELD_HEADERS /
+# REQUIRED_FIELDS). A wrong header or a required-flag flip fails here.
+EXPECTED_FIELD_HEADERS = {
+    "objective": "Objective",
+    "acceptance_criteria": "Acceptance criteria",
+    "non_goals": "Out-of-scope / non-goals",
+    "files_expected": "Files expected to change",
+    "tests_required": "Tests to add or update",
+    "verification": "Verification",
+    "notes": "Notes / conventions",
+    "context_library_links": "Context library links",
+}
+EXPECTED_REQUIRED_FIELDS = (
+    "objective",
+    "acceptance_criteria",
+    "non_goals",
+    "files_expected",
+    "tests_required",
+    "verification",
+)
+
+
 def test_vendored_data_is_importable_data_only() -> None:
-    """The vendored artifact is valid importable DATA (header + required tuple)."""
+    """The vendored artifact is valid importable DATA (full FIELD_HEADERS +
+    REQUIRED_FIELDS tuple), pinned to a faithful extraction of card_validator.py."""
     namespace: dict = {}
     exec(DATA_PATH.read_text(encoding="utf-8"), namespace)
-    assert namespace["FIELD_HEADERS"]["verification"] == "Verification"
-    assert "verification" in namespace["REQUIRED_FIELDS"]
+    assert namespace["FIELD_HEADERS"] == EXPECTED_FIELD_HEADERS
+    assert namespace["REQUIRED_FIELDS"] == EXPECTED_REQUIRED_FIELDS

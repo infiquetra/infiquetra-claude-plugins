@@ -54,6 +54,40 @@ _none_
 """
 
 
+# A body with ALL required H3 sections present and a checklist item, but whose
+# acceptance criterion names NO runnable check (no `code span`, no fenced block
+# in the acceptance section). This trips ONLY the executable-acceptance check
+# (U8/KTD8), proving the gate covers more than absent-headers. Verification still
+# has its own fenced block so the failure is isolated to acceptance executability.
+NON_EXECUTABLE_ACCEPTANCE_BODY = """### Objective
+Add a prepared issue workflow.
+
+### Intent
+Authoring agents need a draft-then-approve path; without it cards skip review.
+End-state: every prepared card is drafted, gated, and only then created.
+
+### Acceptance criteria
+- [ ] The prepared draft is reviewed and looks correct to the operator
+
+### Out-of-scope / non-goals
+- Do not auto-move issues to Ready
+
+### Files expected to change
+plugins/mission-control/scripts/sdlc_manager.py
+
+### Tests to add or update
+plugins/mission-control/tests/test_issue_prepare_compile_approve.py
+
+### Verification
+```bash
+uv run pytest plugins/mission-control/tests/test_issue_prepare_compile_approve.py
+```
+
+### Context library links
+_none_
+"""
+
+
 def _prepare_olympus(tmp_path: Path, *, title: str, source: str = OLYMPUS_BODY) -> Path:
     """Prepare an olympus capability draft offline and return its path."""
     return sdlc_manager.issue_prepare(
@@ -126,6 +160,47 @@ def test_batch_approval(tmp_path) -> None:
         assert "approval_state: approved" in draft.read_text()
 
 
+def test_batch_approval_is_idempotent_and_preserves_timestamp(tmp_path) -> None:
+    """FIX 4: re-approving an already-approved draft is a no-op — it is SKIPPED
+    ("already approved") and approved_at/updated_at are NOT rewritten."""
+    draft = _prepare_olympus(tmp_path, title="Idempotent card")
+
+    first = sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    assert first["approved"] == [str(draft)]
+    after_first = _sidecar(draft)
+    approved_at = after_first["approved_at"]
+    updated_at = after_first["updated_at"]
+
+    # Second approve: skipped, timestamps frozen (true no-op, not a re-stamp).
+    second = sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    assert second["approved"] == []
+    assert second["skipped"] == [{"draft": str(draft), "reason": "already approved"}]
+    after_second = _sidecar(draft)
+    assert after_second["approved_at"] == approved_at
+    assert after_second["updated_at"] == updated_at
+
+
+def test_batch_approval_rejects_tampered_sidecar(tmp_path) -> None:
+    """FIX 3: approval re-derives readiness from the on-disk body, so a sidecar
+    hand-edited to `needs_operator_approval` over a body that FAILS the validator
+    is skipped ("fails validation"), never approved."""
+    # Start from a blocked draft (body fails the validator), then forge its
+    # sidecar approval_state to look like it cleared the compile gate.
+    draft = _prepare_olympus(tmp_path, title="Forged card", source="Just ship it.")
+    sidecar_path = draft.with_suffix(".json")
+    tampered = _sidecar(draft)
+    assert tampered["readiness"]["passed"] is False  # body really is invalid
+    tampered["approval_state"] = "needs_operator_approval"
+    sidecar_path.write_text(json.dumps(tampered))
+
+    result = sdlc_manager.prepared_approve_batch([draft], fmt="text")
+
+    assert result["approved"] == []
+    assert result["skipped"] == [{"draft": str(draft), "reason": "fails validation"}]
+    # The forged draft was NOT pushed to approved.
+    assert _sidecar(draft)["approval_state"] == "needs_operator_approval"
+
+
 def test_batch_approval_skips_blocked_draft(tmp_path) -> None:
     """A blocked draft has no approval gate; batch approval skips it, fault
     isolated, without aborting the rest of the batch."""
@@ -163,6 +238,21 @@ def test_validator_gates_agent_output(tmp_path) -> None:
     assert blocked_sidecar["state"] == "blocked"
     assert blocked_sidecar["approval_state"] is None
     assert "approval_state" not in blocked.read_text()
+
+    # Second malformed case (FIX 6): ALL required H3 sections present, but the
+    # acceptance criterion names no runnable check. This proves the gate covers
+    # the executable-acceptance contract (U8/KTD8), not just absent headers.
+    non_exec_ok, non_exec_errors = sdlc_manager.validate_card_body(NON_EXECUTABLE_ACCEPTANCE_BODY)
+    assert non_exec_ok is False
+    assert any("not executable" in err for err in non_exec_errors)
+
+    non_exec = _prepare_olympus(
+        tmp_path, title="Non-executable acceptance", source=NON_EXECUTABLE_ACCEPTANCE_BODY
+    )
+    non_exec_sidecar = _sidecar(non_exec)
+    assert non_exec_sidecar["readiness"]["passed"] is False
+    assert non_exec_sidecar["state"] == "blocked"
+    assert non_exec_sidecar["approval_state"] is None
 
     # The same gate lets a valid body through to the approval gate.
     valid_ok, _ = sdlc_manager.validate_card_body(OLYMPUS_BODY)

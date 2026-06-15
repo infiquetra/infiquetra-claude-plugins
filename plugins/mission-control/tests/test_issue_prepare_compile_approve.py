@@ -90,7 +90,10 @@ _none_
 
 def _prepare_olympus(tmp_path: Path, *, title: str, source: str = OLYMPUS_BODY) -> Path:
     """Prepare an olympus capability draft offline and return its path."""
-    return sdlc_manager.issue_prepare(
+    # Funnel through a typed local: `sdlc_manager` is imported via sys.path so
+    # mypy (with --ignore-missing-imports) sees it as Any; the annotated local
+    # pins the return type and avoids no-any-return.
+    draft: Path = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
         team="olympus",
@@ -102,10 +105,12 @@ def _prepare_olympus(tmp_path: Path, *, title: str, source: str = OLYMPUS_BODY) 
         mode=None,
         draft_dir=tmp_path,
     )
+    return draft
 
 
 def _sidecar(draft: Path) -> dict:
-    return json.loads(draft.with_suffix(".json").read_text())
+    data: dict = json.loads(draft.with_suffix(".json").read_text())
+    return data
 
 
 def test_issue_prepare_populates_project_fields(tmp_path) -> None:

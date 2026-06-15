@@ -973,16 +973,38 @@ def board_add(
     fmt: str,
     config: dict | None = None,
     project_name: str | None = None,
+    project_names: list[str] | None = None,
 ) -> None:
-    """Add issue/PR to correct project(s)."""
+    """Add issue/PR to correct project(s).
+
+    Native Projects-v2 multi-membership: one item node id is added to each
+    resolved project as an INDEPENDENT membership (not a clone — see KTD10).
+    Each project keeps its own per-board Status.
+
+    Project resolution precedence (first non-empty wins):
+      1. ``project_names`` — explicit list of named projects (repeatable
+         ``--project`` on the CLI). Order-preserving de-dup; add to exactly
+         those boards.
+      2. ``project_name`` — a single explicit named project (back-compat).
+      3. neither given — fall back to ``get_projects_for_repo`` (the repo →
+         project mapping), unchanged.
+
+    Per-project fault isolation: one project's add failing is captured in the
+    results and does not abort adds to the remaining projects.
+    """
     if not config:
         config = load_config()
 
-    projects = (
-        [get_project_config(config, project_name)]
-        if project_name
-        else get_projects_for_repo(config, repo)
-    )
+    if project_names:
+        # Explicit multi-membership: resolve each named project, order-
+        # preserving de-dup so a repeated --project doesn't add twice.
+        seen: set[str] = set()
+        ordered = [n for n in project_names if not (n in seen or seen.add(n))]
+        projects = [get_project_config(config, n) for n in ordered]
+    elif project_name:
+        projects = [get_project_config(config, project_name)]
+    else:
+        projects = get_projects_for_repo(config, repo)
     if not projects:
         mappings = config.get("project_mappings", {})
         excluded = mappings.get("excluded_repositories", [])
@@ -4485,8 +4507,14 @@ def main() -> None:
     board_add_p = board_sp.add_parser("add", help="Add issue/PR to project(s)")
     board_add_p.add_argument(
         "--project",
+        action="append",
         choices=PROJECT_CHOICES,
-        help="Target a specific project instead of repo-based default routing",
+        help=(
+            "Target a specific project instead of repo-based default routing. "
+            "Repeatable: pass --project more than once to place the item on "
+            "multiple boards as independent memberships "
+            "(e.g. --project mount-olympus --project asgard)."
+        ),
     )
     board_add_p.add_argument("--repo", required=True, help="Repository name (without org)")
     board_add_p.add_argument("--number", required=True, type=int, help="Issue or PR number")
@@ -4836,7 +4864,9 @@ def main() -> None:
             if args.action == "view":
                 board_view(args.project, args.status, fmt)
             elif args.action == "add":
-                board_add(args.repo, args.number, fmt, project_name=args.project)
+                # `--project` is repeatable (action="append"): args.project is
+                # None (repo-mapping default) or a list of named projects.
+                board_add(args.repo, args.number, fmt, project_names=args.project)
             elif args.action == "move":
                 board_move(args.repo, args.number, args.status, fmt, project_name=args.project)
             elif args.action == "archive":

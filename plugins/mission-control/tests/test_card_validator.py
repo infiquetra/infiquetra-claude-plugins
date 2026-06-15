@@ -224,10 +224,7 @@ def test_context_links_now_required() -> None:
     )
     is_valid, errors = sdlc_manager.validate_card_body(body)
     assert not is_valid
-    assert any(
-        "Missing required H3 sections" in e and "Context library links" in e
-        for e in errors
-    )
+    assert any("Missing required H3 sections" in e and "Context library links" in e for e in errors)
 
 
 def test_context_links_bare_none_accepted() -> None:

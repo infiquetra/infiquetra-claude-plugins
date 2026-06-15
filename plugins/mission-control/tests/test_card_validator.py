@@ -1,8 +1,12 @@
 """Tests for the card_validator shim.
 
-The shim mirrors home-lab/.../card_validator.py's high-leverage checks:
-6 required H3 headers, AC has ≥1 checklist item, Verification has ≥1
-fenced code block, Files-expected has ≥1 path-like line, no placeholders.
+The shim mirrors home-lab/.../card_validator.py's always-required, body-only
+checks: the required H3 headers (incl. the U8 Intent + Context library links),
+AC has >=1 checklist item AND names a runnable check (executable acceptance,
+R2/KTD8), Verification has >=1 fenced code block, Files-expected has >=1 path-like
+line, no placeholder-only sections (the Context library links `_none_`
+declaration excepted). The risk-conditional matrix (R5-R7) is the home-lab gate's
+job -- the shim has no Risk/issue-type input.
 """
 
 import sys
@@ -13,11 +17,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import sdlc_manager  # noqa: E402
 
+# Updated 2026-06-14 for the U8 context-package contract expansion: the card now
+# carries the new always-required Intent (R1), the acceptance criteria name a
+# runnable check (R2/KTD8 — `code spans`), and Context library links is required
+# (R4). The shim validates the body alone (no Risk/issue-type), so it enforces
+# the always-required headers + executable acceptance; the risk-conditional
+# fields (R5-R7) are the home-lab gate's job.
 VALID_BODY = """### Objective
 Add schema validator that gates plan-review on structured card fields.
 
+### Intent
+Cold agents waste planner rounds on malformed cards; gate at ingest so a card
+either carries the contract or never reaches the planner.
+
 ### Acceptance criteria
-- [ ] Validator runs on `projects_v2_item` webhook when status becomes Ready
+- [ ] `pytest tests/test_card_validator.py` exits 0 on a well-formed card
 - [ ] Cards missing required fields get a `needs-author-action` label
 
 ### Out-of-scope / non-goals
@@ -60,7 +74,7 @@ def test_rejects_missing_required_header() -> None:
 
 def test_rejects_missing_checklist_in_acceptance_criteria() -> None:
     body = VALID_BODY.replace(
-        "- [ ] Validator runs on `projects_v2_item` webhook when status becomes Ready\n"
+        "- [ ] `pytest tests/test_card_validator.py` exits 0 on a well-formed card\n"
         "- [ ] Cards missing required fields get a `needs-author-action` label",
         "Validator runs on webhook events. Cards without required fields fail.",
     )
@@ -125,9 +139,14 @@ def test_h2_headers_do_not_match_h3_parser() -> None:
 
 
 def test_optional_sections_not_required() -> None:
-    # Strip the optional Notes + Context library links sections — body should still validate
-    body = VALID_BODY
-    body = body.split("### Notes / conventions")[0].rstrip() + "\n"
+    # Strip the truly-optional Notes section — body should still validate.
+    # Context library links is NOT optional anymore (U8/R4: required-or-`_none_`),
+    # so it stays; only Notes is removed here.
+    body = VALID_BODY.replace(
+        "### Notes / conventions\n"
+        "- GitHub issue forms render fields as `### <Field Label>` headers\n\n",
+        "",
+    )
     is_valid, errors = sdlc_manager.validate_card_body(body)
     assert is_valid, f"Expected valid without optional sections; got: {errors}"
 
@@ -173,3 +192,71 @@ def test_required_headers_match_actual_issue_templates() -> None:
                 f"Validator requires '{required}' but {tmpl} doesn't have a "
                 f"matching `label:` field. Templates have: {sorted(labels)}"
             )
+
+
+# ─── U8: context-package shim checks (Intent + executable AC + `_none_`) ──────
+#
+# The shim is a pre-flight on the body alone (no Risk/issue-type input), so it
+# mirrors the home-lab validator's ALWAYS-required surface: the new Intent (R1)
+# and Context library links (R4) headers + the executable-acceptance check
+# (R2/KTD8). The risk-conditional matrix (R5-R7) is enforced by the home-lab gate.
+
+
+def test_intent_now_required() -> None:
+    """R1: Intent is an always-required header the shim enforces."""
+    body = VALID_BODY.replace(
+        "### Intent\n"
+        "Cold agents waste planner rounds on malformed cards; gate at ingest so a card\n"
+        "either carries the contract or never reaches the planner.\n\n",
+        "",
+    )
+    is_valid, errors = sdlc_manager.validate_card_body(body)
+    assert not is_valid
+    assert any("Missing required H3 sections" in e and "Intent" in e for e in errors)
+
+
+def test_context_links_now_required() -> None:
+    """R4: Context library links is required (was optional)."""
+    body = VALID_BODY.replace(
+        "### Context library links\n"
+        "- architecture_decisions: https://github.com/infiquetra/blueprint/adr/042.md\n",
+        "",
+    )
+    is_valid, errors = sdlc_manager.validate_card_body(body)
+    assert not is_valid
+    assert any("Missing required H3 sections" in e and "Context library links" in e for e in errors)
+
+
+def test_context_links_bare_none_accepted() -> None:
+    """R4: a whole-field `_none_` declaration satisfies the requirement (it is
+    NOT flagged as placeholder-only)."""
+    body = VALID_BODY.replace(
+        "### Context library links\n"
+        "- architecture_decisions: https://github.com/infiquetra/blueprint/adr/042.md\n",
+        "### Context library links\n_none_\n",
+    )
+    is_valid, errors = sdlc_manager.validate_card_body(body)
+    assert is_valid, f"Expected `_none_` to satisfy context-links; got: {errors}"
+
+
+def test_non_executable_acceptance_rejected() -> None:
+    """R2/KTD8: a checklist whose items name no runnable check is rejected."""
+    body = VALID_BODY.replace(
+        "- [ ] `pytest tests/test_card_validator.py` exits 0 on a well-formed card\n"
+        "- [ ] Cards missing required fields get a `needs-author-action` label",
+        "- [ ] The validator works\n- [ ] Nothing regresses",
+    )
+    is_valid, errors = sdlc_manager.validate_card_body(body)
+    assert not is_valid
+    assert any("Acceptance criteria" in e and "executable" in e for e in errors)
+
+
+def test_executable_acceptance_via_fenced_block_accepted() -> None:
+    """A fenced ``` block inside the acceptance section is executable evidence."""
+    body = VALID_BODY.replace(
+        "- [ ] `pytest tests/test_card_validator.py` exits 0 on a well-formed card\n"
+        "- [ ] Cards missing required fields get a `needs-author-action` label",
+        "- [ ] Running the suite passes:\n```\npytest -q\n```\n- [ ] No regressions",
+    )
+    is_valid, errors = sdlc_manager.validate_card_body(body)
+    assert is_valid, f"Expected fenced-block AC to be executable; got: {errors}"

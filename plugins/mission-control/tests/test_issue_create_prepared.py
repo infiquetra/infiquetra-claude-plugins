@@ -125,6 +125,70 @@ def test_blocked_draft_refuses_to_mutate(tmp_path) -> None:
     mock_create.assert_not_called()
 
 
+def test_create_prepared_refuses_unapproved_then_succeeds_after_approval(tmp_path) -> None:
+    """The U11 gate is enforced (FIX 1): a ready-but-unapproved draft is refused
+    with no GitHub mutation, and the same draft creates once approved."""
+    draft = _ready_draft(tmp_path)
+    assert (
+        json.loads(draft.with_suffix(".json").read_text())["approval_state"]
+        == "needs_operator_approval"
+    )
+
+    # Refusal path: load_config / _create_github_issue must never be reached.
+    with (
+        patch.object(sdlc_manager, "load_config") as mock_config,
+        patch.object(sdlc_manager, "_create_github_issue") as mock_create,
+        pytest.raises(RuntimeError, match="awaits operator approval"),
+    ):
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+    mock_config.assert_not_called()
+    mock_create.assert_not_called()
+
+    # Approve, then the same draft creates with no skip_approval override.
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(
+            sdlc_manager,
+            "_create_github_issue",
+            return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/7", 7),
+        ),
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+    ):
+        result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    assert result["created"] is True
+    assert result["number"] == 7
+
+
+def test_create_prepared_skip_approval_bypasses_gate(tmp_path) -> None:
+    """--skip-approval lets the operator's direct prepare->create path through
+    the gate without an explicit approve step (FIX 1)."""
+    draft = _ready_draft(tmp_path)
+
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(
+            sdlc_manager,
+            "_create_github_issue",
+            return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/9", 9),
+        ),
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+    ):
+        result = sdlc_manager.issue_create_prepared(
+            draft, fmt="text", auto_confirm=True, skip_approval=True
+        )
+
+    assert result["created"] is True
+    assert result["number"] == 9
+
+
 def test_declined_confirmation_applies_no_mutation(tmp_path) -> None:
     draft = _ready_draft(tmp_path)
 
@@ -135,14 +199,22 @@ def test_declined_confirmation_applies_no_mutation(tmp_path) -> None:
         patch.object(sdlc_manager, "_safe_input", return_value="n"),
         patch.object(sdlc_manager, "_create_github_issue") as mock_create,
     ):
-        result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=False)
+        # skip_approval: this test exercises create *mechanics* (declined
+        # confirmation), not the U11 approval gate (covered separately below).
+        result = sdlc_manager.issue_create_prepared(
+            draft, fmt="text", auto_confirm=False, skip_approval=True
+        )
 
     assert result == {"created": False, "reason": "declined"}
     mock_create.assert_not_called()
 
 
 def test_create_prepared_creates_issue_and_marks_draft(tmp_path) -> None:
+    # Models the REAL operator flow end to end: prepare -> approve -> create.
+    # No skip_approval — creation proceeds because the draft was approved first.
     draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    assert json.loads(draft.with_suffix(".json").read_text())["approval_state"] == "approved"
 
     with (
         patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
@@ -191,7 +263,10 @@ def test_missing_mapping_opens_pr_and_stops_without_override(tmp_path) -> None:
         patch.object(sdlc_manager, "_open_mapping_pr", return_value="https://github.com/pr/1"),
         patch.object(sdlc_manager, "_create_github_issue") as mock_create,
     ):
-        result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+        # skip_approval: exercises the missing-mapping stop, not the approval gate.
+        result = sdlc_manager.issue_create_prepared(
+            draft, fmt="text", auto_confirm=True, skip_approval=True
+        )
 
     assert result == {"created": False, "mapping_pr_url": "https://github.com/pr/1"}
     mock_create.assert_not_called()
@@ -219,11 +294,13 @@ def test_override_mapping_creates_issue_and_records_pending_mapping(tmp_path) ->
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):
+        # skip_approval: exercises the override-mapping create path, not the gate.
         result = sdlc_manager.issue_create_prepared(
             draft,
             fmt="text",
             auto_confirm=True,
             override_mapping=True,
+            skip_approval=True,
         )
 
     assert result["created"] is True
@@ -250,7 +327,8 @@ def test_missing_labels_and_templates_are_deployed_after_confirmation(tmp_path) 
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):
-        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+        # skip_approval: exercises label/template deploy mechanics, not the gate.
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True, skip_approval=True)
 
     mock_labels.assert_called_once_with("hermes-claude-code-router", fmt="text")
     mock_templates.assert_called_once_with("hermes-claude-code-router", fmt="text")

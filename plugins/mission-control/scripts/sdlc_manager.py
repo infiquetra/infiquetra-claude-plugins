@@ -2735,17 +2735,19 @@ _PREPARE_STATE_BLOCKED = "blocked"
 _PREPARE_STATE_READY = "ready_to_create"
 _APPROVAL_NEEDS_OPERATOR = "needs_operator_approval"
 _APPROVAL_APPROVED = "approved"
-# approval_state values from which a draft may be batch-approved. Approving an
-# already-approved draft is a no-op (idempotent).
-_APPROVABLE_APPROVAL_STATES = frozenset({_APPROVAL_NEEDS_OPERATOR, _APPROVAL_APPROVED})
+# approval_state values from which a draft may be batch-approved. Only a draft
+# sitting in the gate is approvable; an already-approved draft is SKIPPED (its
+# approved_at timestamp is preserved, not rewritten) so approval is a true no-op.
+_APPROVABLE_APPROVAL_STATES = frozenset({_APPROVAL_NEEDS_OPERATOR})
 
 # Project FIELDS a prepared card carries, computed offline at prepare time from
-# the issue's own metadata so the later live `create` step can set them. These
-# are card VALUES (not the project's live field schema): "field-schema
-# discovery" against a real project stays behind `_resolve_project_field` (live
-# GraphQL), which `create`/`flow set-field` already use. Lifecycle Origin is the
-# auto-populated field (R10) — never author-supplied. Risk maps to the
-# `Technical Risk` single-select named in the PROJECT FIELD REALITY note above.
+# the issue's own metadata and RECORDED in the sidecar for a future create-time
+# consumer (consumption is a follow-up unit, not wired here). These are card
+# VALUES (not the project's live field schema): "field-schema discovery" against
+# a real project stays behind `_resolve_project_field` (live GraphQL), which
+# `flow set-field` uses. Lifecycle Origin is the auto-populated field (R10) —
+# never author-supplied. Risk maps to the `Technical Risk` single-select named
+# in the PROJECT FIELD REALITY note above.
 _PREPARED_FIELD_RISK = "Technical Risk"
 _PREPARED_FIELD_OBJECTIVE = "Objective"
 _PREPARED_FIELD_ISSUE_TYPE = "Issue Type"
@@ -2797,12 +2799,14 @@ def _prepared_project_fields(
     """Resolve the project-field values a prepared card will carry (U11).
 
     Pure/offline: derives values from the issue's own metadata + the handoff
-    source, so tests run without a live GitHub call. The live project field
-    schema (which fields/options actually exist on the target project) is
-    discovered later by `_resolve_project_field` when `create` sets them; a
-    field the project does not yet expose is simply skipped at set time. We
-    only record non-empty values so the sidecar reflects what we can actually
-    populate.
+    source, so tests run without a live GitHub call. These values are RECORDED
+    in the sidecar (`project_fields`) for a LATER create-time consumer to set on
+    the live card — that consumption is a FOLLOW-UP unit and is NOT wired here.
+    `create` does not yet read `project_fields`, and `_resolve_project_field`
+    currently RAISES on a field the live project doesn't expose (per-field
+    tolerance for not-yet-created fields is also a follow-up, not implemented
+    here). We only record non-empty values so the sidecar reflects what we could
+    populate; do not read more into the presence of this key than "recorded".
     """
     fields: dict[str, str] = {_PREPARED_FIELD_ISSUE_TYPE: issue.issue_type}
     if issue.risk:
@@ -3674,6 +3678,19 @@ def _update_sidecar_state(draft_path: Path, updates: dict[str, Any]) -> None:
     sidecar_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _read_sidecar_approval_state(draft_path: Path) -> str | None:
+    """Read just the U11 `approval_state` from a draft's sidecar.
+
+    Focused reader (the gate enforcement in issue_create_prepared needs only
+    this one field; PreparedIssue deliberately doesn't carry it). Returns None
+    when absent — i.e. legacy drafts predating the gate, which proceed unblocked.
+    """
+    sidecar_path = draft_path.with_suffix(".json")
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    value = payload.get("approval_state")
+    return str(value) if value is not None else None
+
+
 def _build_mutation_plan(issue: PreparedIssue, config: dict[str, Any]) -> MutationPlan:
     if not issue.draft_path:
         raise RuntimeError("Prepared issue is missing draft_path")
@@ -3730,6 +3747,7 @@ def issue_create_prepared(
     fmt: str,
     auto_confirm: bool = False,
     override_mapping: bool = False,
+    skip_approval: bool = False,
 ) -> dict[str, Any]:
     issue = _read_prepared_issue(draft_path)
     readiness = _readiness_for_prepared_issue(issue)
@@ -3741,6 +3759,24 @@ def issue_create_prepared(
             for gap in readiness.blocking_gaps:
                 print(f"  - {gap}")
         raise RuntimeError("Prepared issue has blocking readiness gaps")
+
+    # Enforce the U11 human gate (FIX 1): a draft sitting in
+    # `needs_operator_approval` is NOT created until an operator approves it (via
+    # `issue approve`) or explicitly overrides with --skip-approval. An
+    # `approved` draft proceeds; a None approval_state (legacy drafts predating
+    # the gate; blocked drafts already failed readiness above) proceeds
+    # unchanged — back-compatible, do NOT newly block None.
+    approval_state = _read_sidecar_approval_state(draft_path)
+    if approval_state == _APPROVAL_NEEDS_OPERATOR and not skip_approval:
+        message = (
+            f"Prepared draft awaits operator approval; run "
+            f"`issue approve {draft_path}` first, or pass --skip-approval."
+        )
+        if fmt == "json":
+            _out({"created": False, "reason": "needs_operator_approval"}, fmt)
+        else:
+            print(message)
+        raise RuntimeError(message)
 
     config = load_config()
     plan = _build_mutation_plan(issue, config)
@@ -3821,6 +3857,10 @@ def _set_draft_approval_state(draft_path: Path, approval_state: str) -> None:
     if "approval_state" in metadata:
         # Replace the existing line in place (front-matter only, before body).
         end = text.find("\n---\n", 4)
+        if end == -1:
+            # Opening `---` but no closing fence: never split a malformed draft
+            # (matches _parse_draft_frontmatter's contract). Safe no-op.
+            return
         head, tail = text[:end], text[end:]
         head = re.sub(r"(?m)^approval_state:.*$", line, head)
         draft_path.write_text(head + tail, encoding="utf-8")
@@ -3829,18 +3869,28 @@ def _set_draft_approval_state(draft_path: Path, approval_state: str) -> None:
         # No front-matter to edit (defensive): nothing durable to rewrite.
         return
     end = text.find("\n---\n", 4)
+    if end == -1:
+        # Opening `---` but no closing fence: refuse to truncate. Safe no-op.
+        return
     draft_path.write_text(text[:end] + f"\n{line}" + text[end:], encoding="utf-8")
 
 
 def prepared_approve_batch(draft_paths: list[Path], fmt: str = "text") -> dict[str, Any]:
     """Approve multiple prepared drafts at once (U11 batch approval).
 
-    Transitions each draft's `approval_state` out of `needs_operator_approval`
-    -> `approved` in both the sidecar and the draft front-matter. This is the
-    human gate clearing a batch of compiled cards for creation. Idempotent and
-    per-draft fault isolated: an unreadable / non-approvable draft (e.g. a
-    blocked draft, which has no approval gate) is reported and skipped, never
-    aborting the rest of the batch.
+    Transitions each draft's `approval_state` from `needs_operator_approval` ->
+    `approved` in both the sidecar and the draft front-matter. This is the human
+    gate clearing a batch of compiled cards for creation.
+
+    Per-draft fault isolated: a missing/malformed/non-gate draft is reported in
+    `skipped` and the rest of the batch still proceeds. Approving an
+    already-`approved` draft is a no-op — it is SKIPPED ("already approved") and
+    its `approved_at`/`updated_at` are preserved, not rewritten.
+
+    Self-defending: readiness is RECONSTRUCTED from disk (re-run the validator
+    on the on-disk body) before approving, so a hand-edited / forged sidecar that
+    claims `needs_operator_approval` over a body that fails validation cannot be
+    pushed to `approved`.
     """
     approved: list[str] = []
     skipped: list[dict[str, str]] = []
@@ -3855,8 +3905,23 @@ def prepared_approve_batch(draft_paths: list[Path], fmt: str = "text") -> dict[s
             skipped.append({"draft": str(draft_path), "reason": f"malformed sidecar: {e}"})
             continue
         current = sidecar.get("approval_state")
+        if current == _APPROVAL_APPROVED:
+            skipped.append({"draft": str(draft_path), "reason": "already approved"})
+            continue
         if current not in _APPROVABLE_APPROVAL_STATES:
             skipped.append({"draft": str(draft_path), "reason": f"approval_state is {current!r}"})
+            continue
+        # Re-derive readiness from the on-disk draft so a tampered sidecar can't
+        # smuggle an unvalidated body past the gate. _read_prepared_issue raises
+        # on a malformed/conflicting draft — treat that as a skip, not an abort.
+        try:
+            issue = _read_prepared_issue(draft_path)
+            readiness = _readiness_for_prepared_issue(issue)
+        except RuntimeError as e:
+            skipped.append({"draft": str(draft_path), "reason": f"unreadable draft: {e}"})
+            continue
+        if not readiness.passed:
+            skipped.append({"draft": str(draft_path), "reason": "fails validation"})
             continue
         _update_sidecar_state(
             draft_path,
@@ -4543,6 +4608,12 @@ def main() -> None:
         action="store_true",
         help="Create the issue before a missing project-mapping PR merges",
     )
+    issue_create_prepared_p.add_argument(
+        "--skip-approval",
+        action="store_true",
+        help="Bypass the Needs Operator Approval gate (operator's direct "
+        "prepare->create path); otherwise approve via `issue approve` first",
+    )
 
     issue_approve_p = issue_sp.add_parser(
         "approve",
@@ -4812,6 +4883,7 @@ def main() -> None:
                     fmt=fmt,
                     auto_confirm=args.yes,
                     override_mapping=args.override_mapping,
+                    skip_approval=args.skip_approval,
                 )
             elif args.action == "approve":
                 prepared_approve_batch([Path(d) for d in args.drafts], fmt=fmt)

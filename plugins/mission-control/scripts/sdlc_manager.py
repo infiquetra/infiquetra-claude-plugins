@@ -2719,6 +2719,38 @@ _HERMES_ACTIONABLE_TYPES = frozenset(
 # additional prompts light up automatically.
 _CAPABILITY_ADAPTIVE_TYPES = frozenset({"capability", "objective"})
 
+# ---------------------------------------------------------------------------
+# Prepared-issue compile + approve machinery (U11)
+# ---------------------------------------------------------------------------
+# Two ORTHOGONAL durable axes, kept separate on purpose:
+#   - `state`          : the creation-pipeline state (blocked -> ready_to_create
+#                        -> mapping_pending -> created). UNCHANGED by U11 so the
+#                        existing readiness/create-prepared contract + tests hold.
+#   - `approval_state` : the human gate U11 adds. A cleanly-compiled draft lands
+#                        in NEEDS_OPERATOR_APPROVAL (recorded durably in BOTH the
+#                        sidecar and the draft front-matter) and is NOT
+#                        auto-created. Batch approval transitions it to APPROVED.
+# A blocked draft has approval_state=None — it never reaches the gate.
+_PREPARE_STATE_BLOCKED = "blocked"
+_PREPARE_STATE_READY = "ready_to_create"
+_APPROVAL_NEEDS_OPERATOR = "needs_operator_approval"
+_APPROVAL_APPROVED = "approved"
+# approval_state values from which a draft may be batch-approved. Approving an
+# already-approved draft is a no-op (idempotent).
+_APPROVABLE_APPROVAL_STATES = frozenset({_APPROVAL_NEEDS_OPERATOR, _APPROVAL_APPROVED})
+
+# Project FIELDS a prepared card carries, computed offline at prepare time from
+# the issue's own metadata so the later live `create` step can set them. These
+# are card VALUES (not the project's live field schema): "field-schema
+# discovery" against a real project stays behind `_resolve_project_field` (live
+# GraphQL), which `create`/`flow set-field` already use. Lifecycle Origin is the
+# auto-populated field (R10) — never author-supplied. Risk maps to the
+# `Technical Risk` single-select named in the PROJECT FIELD REALITY note above.
+_PREPARED_FIELD_RISK = "Technical Risk"
+_PREPARED_FIELD_OBJECTIVE = "Objective"
+_PREPARED_FIELD_ISSUE_TYPE = "Issue Type"
+_PREPARED_FIELD_LIFECYCLE_ORIGIN = "Lifecycle Origin"
+
 
 @dataclass
 class PreparedReadiness:
@@ -2754,8 +2786,37 @@ class PreparedIssue:
     body: str
     handoff_maturity: str | None = None
     source_artifact: dict[str, Any] | None = None
+    project_fields: dict[str, str] | None = None
     draft_path: str | None = None
     sidecar_path: str | None = None
+
+
+def _prepared_project_fields(
+    issue: PreparedIssue, source_artifact: SourceArtifact | None
+) -> dict[str, str]:
+    """Resolve the project-field values a prepared card will carry (U11).
+
+    Pure/offline: derives values from the issue's own metadata + the handoff
+    source, so tests run without a live GitHub call. The live project field
+    schema (which fields/options actually exist on the target project) is
+    discovered later by `_resolve_project_field` when `create` sets them; a
+    field the project does not yet expose is simply skipped at set time. We
+    only record non-empty values so the sidecar reflects what we can actually
+    populate.
+    """
+    fields: dict[str, str] = {_PREPARED_FIELD_ISSUE_TYPE: issue.issue_type}
+    if issue.risk:
+        fields[_PREPARED_FIELD_RISK] = issue.risk
+    # Lifecycle Origin is auto-populated from the handoff maturity that drove
+    # this draft (R10) — it is the compile step's record of "where this card
+    # came from", never an author-required input.
+    if issue.handoff_maturity:
+        fields[_PREPARED_FIELD_LIFECYCLE_ORIGIN] = issue.handoff_maturity
+    # Objective is carried only when the handoff source names one; we don't
+    # invent an Objective the operator didn't supply.
+    if source_artifact and source_artifact.ref:
+        fields[_PREPARED_FIELD_OBJECTIVE] = source_artifact.ref
+    return fields
 
 
 @dataclass
@@ -3076,7 +3137,7 @@ def _strip_draft_h1(body: str) -> tuple[str | None, str]:
     return None, body
 
 
-def _render_draft_markdown(issue: PreparedIssue) -> str:
+def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = None) -> str:
     labels = ", ".join(issue.labels)
     frontmatter = [
         "---",
@@ -3094,6 +3155,11 @@ def _render_draft_markdown(issue: PreparedIssue) -> str:
         frontmatter.append(f"mode: {issue.mode}")
     if issue.handoff_maturity:
         frontmatter.append(f"handoff_maturity: {issue.handoff_maturity}")
+    # Durably record the approval state in the draft front-matter too (U11), so
+    # the human gate survives independent of the sidecar (front-matter is what
+    # an operator reads when reviewing the draft markdown directly).
+    if approval_state:
+        frontmatter.append(f"approval_state: {approval_state}")
     frontmatter.append("---")
     return "\n".join(frontmatter) + f"\n\n# {issue.title}\n\n{issue.body.rstrip()}\n"
 
@@ -3240,6 +3306,9 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         source_artifact=sidecar.get("source_artifact")
         if isinstance(sidecar.get("source_artifact"), dict)
         else None,
+        project_fields=sidecar.get("project_fields")
+        if isinstance(sidecar.get("project_fields"), dict)
+        else None,
         draft_path=str(draft_path),
         sidecar_path=str(sidecar_path),
     )
@@ -3331,11 +3400,17 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
 
 
 def _sidecar_payload(
-    issue: PreparedIssue, readiness: PreparedReadiness, state: str
+    issue: PreparedIssue,
+    readiness: PreparedReadiness,
+    state: str,
+    approval_state: str | None,
 ) -> dict[str, Any]:
     return {
         "schema_version": "1.0",
         "state": state,
+        # The U11 human gate (None when blocked — a blocked draft never reaches
+        # approval). Distinct from `state` (the creation pipeline) on purpose.
+        "approval_state": approval_state,
         "title": issue.title,
         "repo": issue.repo,
         "issue_type": issue.issue_type,
@@ -3347,6 +3422,7 @@ def _sidecar_payload(
         "mode": issue.mode,
         "handoff_maturity": issue.handoff_maturity,
         "source_artifact": issue.source_artifact,
+        "project_fields": issue.project_fields or {},
         "draft_path": issue.draft_path,
         "sidecar_path": issue.sidecar_path,
         "readiness": asdict(readiness),
@@ -3402,6 +3478,13 @@ def issue_prepare(
         handoff_maturity=maturity,
         source_artifact=_source_artifact_payload(source_artifact),
     )
+    # Record the project-field values the card will carry so the later live
+    # `create` step can set them (U11). Offline — derived from issue metadata.
+    issue.project_fields = _prepared_project_fields(issue, source_artifact)
+    # KTD9: the body produced by prepare must PASS the Phase C validator before
+    # it can reach approval. The validator runs inside readiness (the olympus
+    # profile calls validate_card_body), so a malformed body fails readiness and
+    # is forced to `blocked` below — it never reaches `needs_operator_approval`.
     readiness = _readiness_for_prepared_issue(issue)
 
     target_dir = draft_dir or _PREPARED_DRAFT_DIR
@@ -3411,10 +3494,20 @@ def issue_prepare(
     issue.draft_path = str(draft_path)
     issue.sidecar_path = str(sidecar_path)
 
-    draft_path.write_text(_render_draft_markdown(issue), encoding="utf-8")
-    state = "ready_to_create" if readiness.passed else "blocked"
+    # Creation-pipeline state is unchanged by U11 (ready_to_create / blocked).
+    # The U11 human gate is the SEPARATE approval_state: a cleanly-compiled draft
+    # lands in `needs_operator_approval` (NOT auto-created); a blocked draft has
+    # no approval gate to enter.
+    state = _PREPARE_STATE_READY if readiness.passed else _PREPARE_STATE_BLOCKED
+    approval_state = _APPROVAL_NEEDS_OPERATOR if readiness.passed else None
+    draft_path.write_text(
+        _render_draft_markdown(issue, approval_state=approval_state), encoding="utf-8"
+    )
     sidecar_path.write_text(
-        json.dumps(_sidecar_payload(issue, readiness, state), indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            _sidecar_payload(issue, readiness, state, approval_state), indent=2, sort_keys=True
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -3712,6 +3805,78 @@ def issue_create_prepared(
         _out({**result, "mutation_plan": plan_payload}, fmt)
     else:
         print(f"Created issue: {url}")
+    return result
+
+
+def _set_draft_approval_state(draft_path: Path, approval_state: str) -> None:
+    """Rewrite the `approval_state:` front-matter line on the draft markdown.
+
+    The approval state lives in BOTH the draft front-matter and the sidecar so
+    the human gate survives whichever artifact an operator looks at. This keeps
+    the front-matter in lockstep when batch approval transitions the sidecar.
+    """
+    text = draft_path.read_text(encoding="utf-8")
+    metadata, _ = _parse_draft_frontmatter(text)
+    line = f"approval_state: {approval_state}"
+    if "approval_state" in metadata:
+        # Replace the existing line in place (front-matter only, before body).
+        end = text.find("\n---\n", 4)
+        head, tail = text[:end], text[end:]
+        head = re.sub(r"(?m)^approval_state:.*$", line, head)
+        draft_path.write_text(head + tail, encoding="utf-8")
+        return
+    if not text.startswith("---\n"):
+        # No front-matter to edit (defensive): nothing durable to rewrite.
+        return
+    end = text.find("\n---\n", 4)
+    draft_path.write_text(text[:end] + f"\n{line}" + text[end:], encoding="utf-8")
+
+
+def prepared_approve_batch(draft_paths: list[Path], fmt: str = "text") -> dict[str, Any]:
+    """Approve multiple prepared drafts at once (U11 batch approval).
+
+    Transitions each draft's `approval_state` out of `needs_operator_approval`
+    -> `approved` in both the sidecar and the draft front-matter. This is the
+    human gate clearing a batch of compiled cards for creation. Idempotent and
+    per-draft fault isolated: an unreadable / non-approvable draft (e.g. a
+    blocked draft, which has no approval gate) is reported and skipped, never
+    aborting the rest of the batch.
+    """
+    approved: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for draft_path in draft_paths:
+        sidecar_path = draft_path.with_suffix(".json")
+        if not sidecar_path.exists():
+            skipped.append({"draft": str(draft_path), "reason": "missing sidecar"})
+            continue
+        try:
+            sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            skipped.append({"draft": str(draft_path), "reason": f"malformed sidecar: {e}"})
+            continue
+        current = sidecar.get("approval_state")
+        if current not in _APPROVABLE_APPROVAL_STATES:
+            skipped.append({"draft": str(draft_path), "reason": f"approval_state is {current!r}"})
+            continue
+        _update_sidecar_state(
+            draft_path,
+            {
+                "approval_state": _APPROVAL_APPROVED,
+                "approved_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        _set_draft_approval_state(draft_path, _APPROVAL_APPROVED)
+        approved.append(str(draft_path))
+
+    result = {"approved": approved, "skipped": skipped}
+    if fmt == "json":
+        _out(result, fmt)
+    else:
+        print(f"Approved {len(approved)} prepared draft(s).")
+        for path in approved:
+            print(f"  - APPROVED: {path}")
+        for entry in skipped:
+            print(f"  - SKIPPED ({entry['reason']}): {entry['draft']}")
     return result
 
 
@@ -4379,6 +4544,16 @@ def main() -> None:
         help="Create the issue before a missing project-mapping PR merges",
     )
 
+    issue_approve_p = issue_sp.add_parser(
+        "approve",
+        help="Batch-approve prepared drafts out of the Needs Operator Approval gate",
+    )
+    issue_approve_p.add_argument(
+        "drafts",
+        nargs="+",
+        help="One or more prepared draft markdown paths to approve",
+    )
+
     # ===========================
     # LABELS
     # ===========================
@@ -4638,6 +4813,8 @@ def main() -> None:
                     auto_confirm=args.yes,
                     override_mapping=args.override_mapping,
                 )
+            elif args.action == "approve":
+                prepared_approve_batch([Path(d) for d in args.drafts], fmt=fmt)
 
         elif args.resource == "labels":
             if args.action == "sync-fields":

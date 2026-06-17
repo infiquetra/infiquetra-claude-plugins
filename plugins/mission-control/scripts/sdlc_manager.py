@@ -999,7 +999,12 @@ def board_add(
         # Explicit multi-membership: resolve each named project, order-
         # preserving de-dup so a repeated --project doesn't add twice.
         seen: set[str] = set()
-        ordered = [n for n in project_names if not (n in seen or seen.add(n))]
+        ordered: list[str] = []
+        for name in project_names:
+            if name in seen:
+                continue
+            seen.add(name)
+            ordered.append(name)
         projects = [get_project_config(config, n) for n in ordered]
     elif project_name:
         projects = [get_project_config(config, project_name)]

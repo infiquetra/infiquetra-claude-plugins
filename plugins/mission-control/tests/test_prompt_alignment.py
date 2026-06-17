@@ -110,7 +110,7 @@ def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
 def test_asgard_olympus_model_uses_explicit_transfer_language() -> None:
     schema = json.loads(_read(PLUGIN_ROOT / "config/sdlc-schema.json"))
 
-    assert schema["schema_version"] == "2026-05-30"
+    assert schema["schema_version"] == "2026-06-13.2"
     assert schema["teams"]["asgard"]["status"] == "active"
     assert "Transfer Target" in schema["fields"]["asgard"]
     assert "Promotion Target" not in schema["fields"]["asgard"]
@@ -142,3 +142,15 @@ def test_asgard_olympus_model_uses_explicit_transfer_language() -> None:
         text = _read(path)
         for phrase in stale_phrases:
             assert phrase not in text, f"{path.relative_to(ROOT)} contains stale phrase {phrase!r}"
+
+
+def test_saga_handoff_routes_without_copying_issue_templates() -> None:
+    handoff = _read(ROOT / "plugins/saga/skills/handoff/SKILL.md")
+    issue_command = _read(PLUGIN_ROOT / "commands/issue.md")
+
+    assert "Do not copy SDLC issue templates into this skill." in handoff
+    assert "/issue --prepare --from <source> --maturity <maturity>" in handoff
+    assert "issue prepare" in issue_command
+    assert "do not copy\n   SDLC issue template sections into Saga" in issue_command
+    assert "### Objective" not in handoff
+    assert "### Acceptance criteria" not in handoff

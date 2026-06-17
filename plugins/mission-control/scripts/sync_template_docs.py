@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -19,16 +20,26 @@ REFERENCE_PATH = (
 DEFAULT_SDLC_PATH = Path.home() / "workspace" / "infiquetra" / "infiquetra-sdlc"
 
 ACTIONABLE_TEMPLATES = ("capability", "enhancement", "defect")
-NON_ACTIONABLE_TEMPLATES = ("objective", "exploration", "context-update")
+NON_ACTIONABLE_TEMPLATES = ("exploration", "context-update")
 TEMPLATE_ORDER = ACTIONABLE_TEMPLATES + NON_ACTIONABLE_TEMPLATES
+CONTRACT_DATA_PATH = REPO_ROOT / "plugins/mission-control/config/generated/issue_contract_data.py"
+
+_contract_spec = importlib.util.spec_from_file_location("issue_contract_data", CONTRACT_DATA_PATH)
+if _contract_spec is None or _contract_spec.loader is None:  # pragma: no cover - defensive
+    raise ImportError(f"vendored issue-contract data not loadable at {CONTRACT_DATA_PATH}")
+_contract = importlib.util.module_from_spec(_contract_spec)
+_contract_spec.loader.exec_module(_contract)
 
 CONTRACT_REQUIRED_FIELDS = [
-    "Objective",
-    "Acceptance criteria",
-    "Out-of-scope / non-goals",
-    "Files expected to change",
-    "Tests to add or update",
-    "Verification",
+    _contract.FIELD_HEADERS[field_key] for field_key in _contract.REQUIRED_FIELDS
+]
+RISK_CONDITIONAL_FIELDS = [
+    _contract.FIELD_HEADERS[field_key]
+    for field_key in ("inputs", "failure_modes", "stop_conditions")
+]
+AUTO_POPULATED_FIELDS = [
+    _contract.FIELD_HEADERS[field_key]
+    for field_key in _contract.REQUIRED_MATRIX["auto_populated_fields"]
 ]
 
 ACTIONABLE_TEMPLATE_NOTES = {
@@ -75,6 +86,10 @@ def display_name(template_name: str) -> str:
 def format_inline_code(values: list[str]) -> str:
     """Render values as a comma-separated inline-code list."""
     return ", ".join(f"`{value}`" for value in values)
+
+
+def format_template_files(template_names: tuple[str, ...]) -> str:
+    return format_inline_code([f"{template}.yml" for template in template_names])
 
 
 def load_template(template_name: str) -> dict[str, Any]:
@@ -149,8 +164,12 @@ def _render_actionable(template_name: str, template: dict[str, Any]) -> list[str
         "",
         "- Actionable cards must carry `hermes-task`, `needs-plan`, and the type label.",
         "- GitHub issue forms must render required fields as exact `### <Field label>` headers.",
-        "- Acceptance criteria must include at least one `- [ ]` checklist item.",
+        "- `Context library links` is required for Hermes readiness; use `_none_` when no context applies.",
+        "- `Acceptance criteria` must include at least one `- [ ]` checklist item and name a runnable check.",
         "- Verification must include exact commands in a fenced shell code block.",
+        "- High and very-high risk cards also require `Inputs inventory`, "
+        "`Failure modes / pre-mortem`, and `Stop conditions`.",
+        "- `Lifecycle Origin` is auto-populated by prepared handoff flows, not author supplied.",
         "",
     ]
     return lines
@@ -213,19 +232,26 @@ def render_reference() -> str:
         "",
         "## Hermes card taxonomy",
         "",
-        "- Actionable templates: `capability.yml`, `enhancement.yml`, `defect.yml`.",
+        f"- Actionable templates: {format_template_files(ACTIONABLE_TEMPLATES)}.",
         "- Actionable labels: `hermes-task`, `needs-plan`, plus the type label.",
-        "- Non-actionable templates: `objective.yml`, `exploration.yml`, `context-update.yml`.",
+        f"- Non-actionable templates: {format_template_files(NON_ACTIONABLE_TEMPLATES)}.",
         "- Non-actionable labels: `hermes-not-actionable` plus template-specific context labels.",
         "",
         "## Shared actionable required fields",
         "",
         *_render_field_list(CONTRACT_REQUIRED_FIELDS),
         "",
+        "## Shared actionable risk-conditional fields",
+        "",
+        *_render_field_list(RISK_CONDITIONAL_FIELDS),
+        "",
+        "## Shared actionable generated fields",
+        "",
+        *_render_field_list(AUTO_POPULATED_FIELDS),
+        "",
         "## Shared actionable optional fields",
         "",
         "- Notes / conventions",
-        "- Context library links",
         "- Capability size (human planning hint) on capability cards only",
         "",
     ]

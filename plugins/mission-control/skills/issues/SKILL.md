@@ -76,21 +76,27 @@ apply `hermes-task`, `needs-plan`, and the type label.
 Each actionable card must render the following exact H3 section headers in the GitHub issue body:
 
 - `### Objective`
-- `### Acceptance criteria`
+- `### Intent`
 - `### Out-of-scope / non-goals`
 - `### Files expected to change`
 - `### Tests to add or update`
+- `### Context library links`
+- `### Acceptance criteria`
 - `### Verification`
 
 Hermes validation expects these semantics:
 
-- `Acceptance criteria` includes at least one `- [ ]` checklist item.
+- `Context library links` is required for Hermes readiness; use `_none_` when no context applies.
+- `Acceptance criteria` includes at least one `- [ ]` checklist item and names a runnable check.
 - `Verification` includes exact commands, preferably in a fenced shell code block.
 - `Files expected to change` includes at least one path-like line.
+- High and very-high risk cards also require `Inputs inventory`, `Failure modes / pre-mortem`,
+  and `Stop conditions`.
+- `Lifecycle Origin` is auto-populated by prepared handoff flows, not author supplied.
 - Empty placeholder sections such as `_No response_` are invalid.
 
-Optional actionable sections are `Notes / conventions` and `Context library links`. Capability cards
-also include optional `Capability size (human planning hint)`.
+Optional actionable sections include `Notes / conventions`. Capability cards also include optional
+`Capability size (human planning hint)`.
 
 ## Non-actionable Templates
 

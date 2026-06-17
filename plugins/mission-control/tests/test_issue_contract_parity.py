@@ -26,9 +26,11 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+SCHEMA_PATH = ROOT / "plugins" / "mission-control" / "config" / "sdlc-schema.json"
 VENDOR_DIR = ROOT / "plugins" / "mission-control" / "config" / "generated"
 DATA_PATH = VENDOR_DIR / "issue_contract_data.py"
 SHIM_PATH = VENDOR_DIR / "issue_contract_shim.py"
@@ -101,6 +103,19 @@ def test_parity_gate_fails_on_injected_shim_drift() -> None:
     finally:
         SHIM_PATH.write_bytes(original)
     assert mod.parity_errors() == []
+
+
+def test_vendored_schema_carries_issue_fields_block() -> None:
+    """The consumer schema must include the source issue_fields block, not just
+    the generated Python artifacts."""
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    issue_fields = schema.get("issue_fields")
+    assert issue_fields, "vendored sdlc-schema.json is missing issue_fields"
+    fields_by_key = {field["key"]: field for field in issue_fields["fields"]}
+    assert fields_by_key["intent"]["required"] is True
+    assert fields_by_key["context_library_links"]["required"] is True
+    assert issue_fields["required_matrix"]["auto_populated_fields"] == ["lifecycle_origin"]
+    assert "very-high" in issue_fields["required_matrix"]["axes"]["risk"]
 
 
 # The full validator DATA the vendored artifact must carry, pinned independently

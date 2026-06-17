@@ -33,22 +33,39 @@ STALE_ACTIONABLE_TERMS = {
 
 EXPECTED_ACTIONABLE_REQUIRED_FIELDS = [
     "Objective",
-    "Acceptance criteria",
+    "Intent",
     "Out-of-scope / non-goals",
     "Files expected to change",
     "Tests to add or update",
+    "Context library links",
+    "Acceptance criteria",
     "Verification",
 ]
 
 
 EXPECTED_OPTIONAL_ACTIONABLE_FIELDS = {
     "capability": [
+        "Inputs inventory",
+        "Failure modes / pre-mortem",
+        "Stop conditions",
         "Notes / conventions",
-        "Context library links",
+        "Lifecycle Origin",
         "Capability size (human planning hint)",
     ],
-    "enhancement": ["Notes / conventions", "Context library links"],
-    "defect": ["Notes / conventions", "Context library links"],
+    "enhancement": [
+        "Inputs inventory",
+        "Failure modes / pre-mortem",
+        "Stop conditions",
+        "Notes / conventions",
+        "Lifecycle Origin",
+    ],
+    "defect": [
+        "Inputs inventory",
+        "Failure modes / pre-mortem",
+        "Stop conditions",
+        "Notes / conventions",
+        "Lifecycle Origin",
+    ],
 }
 
 
@@ -134,3 +151,19 @@ def test_stale_actionable_label_and_field_terms_are_absent() -> None:
         section = _section(markdown, sync_template_docs.display_name(template_name))
         for stale_term in STALE_ACTIONABLE_TERMS:
             assert stale_term not in section
+
+
+def test_shared_contract_docs_include_context_and_risk_rules() -> None:
+    markdown = sync_template_docs.render_reference()
+
+    shared_required = _section(markdown, "Shared actionable required fields")
+    assert "- Intent" in shared_required
+    assert "- Context library links" in shared_required
+
+    risk_conditional = _section(markdown, "Shared actionable risk-conditional fields")
+    assert "- Inputs inventory" in risk_conditional
+    assert "- Failure modes / pre-mortem" in risk_conditional
+    assert "- Stop conditions" in risk_conditional
+
+    assert "optional Context library links" not in markdown
+    assert "six required fields" not in markdown

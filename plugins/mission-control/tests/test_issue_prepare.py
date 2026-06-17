@@ -110,6 +110,41 @@ def test_prepare_olympus_blocks_missing_verification(tmp_path) -> None:
     assert sidecar["state"] == "blocked"
     assert sidecar["readiness"]["passed"] is False
     assert any("Verification" in gap for gap in sidecar["readiness"]["blocking_gaps"])
+    body = draft.read_text()
+    for header in (
+        "Objective",
+        "Intent",
+        "Out-of-scope / non-goals",
+        "Files expected to change",
+        "Tests to add or update",
+        "Context library links",
+        "Acceptance criteria",
+        "Verification",
+    ):
+        assert f"### {header}" in body
+
+
+def test_prepare_high_risk_fallback_includes_risk_conditional_sections(tmp_path) -> None:
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="olympus",
+        project="mount-olympus",
+        source="Implement the router issue workflow.",
+        title="High-risk fallback",
+        status=None,
+        risk="high",
+        mode=None,
+        draft_dir=tmp_path,
+    )
+
+    body = draft.read_text()
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+
+    assert sidecar["state"] == "blocked"
+    for header in ("Inputs inventory", "Failure modes / pre-mortem", "Stop conditions"):
+        assert f"### {header}" in body
+        assert any(header in gap for gap in sidecar["readiness"]["blocking_gaps"])
 
 
 def test_prepare_asgard_accepts_shaping_quality_input(tmp_path) -> None:
@@ -131,6 +166,29 @@ def test_prepare_asgard_accepts_shaping_quality_input(tmp_path) -> None:
     assert sidecar["state"] == "ready_to_create"
     assert sidecar["readiness"]["passed"] is True
     assert sidecar["readiness"]["warnings"] == []
+
+
+def test_prepare_asgard_actionable_uses_hermes_contract(tmp_path) -> None:
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="asgard",
+        project="asgard",
+        source=ASGARD_BODY,
+        title="Asgard actionable issue",
+        status=None,
+        risk="low",
+        mode="Rapid Action",
+        draft_dir=tmp_path,
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+
+    assert sidecar["state"] == "blocked"
+    assert any("Objective" in gap for gap in sidecar["readiness"]["blocking_gaps"])
+    assert not any(
+        "Missing Asgard mode metadata" in gap for gap in sidecar["readiness"]["blocking_gaps"]
+    )
 
 
 def test_ready_status_blocks_prepared_draft(tmp_path) -> None:

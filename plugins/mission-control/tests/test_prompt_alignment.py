@@ -107,16 +107,30 @@ def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
     assert "/loop <issue>" not in create_command
 
 
-def test_asgard_olympus_model_uses_explicit_transfer_language() -> None:
+def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
     schema = json.loads(_read(PLUGIN_ROOT / "config/sdlc-schema.json"))
 
-    assert schema["schema_version"] == "2026-05-30"
+    assert schema["schema_version"] == "2026-06-17"
     assert schema["teams"]["asgard"]["status"] == "active"
+    assert schema["teams"]["olympus"]["status"] == "retired_historical"
+    assert schema["teams"]["olympus"]["board"] is None
+    assert "olympus" not in schema["boards"]
+    assert schema["boards"]["campps"]["status"] == "active"
     assert "Transfer Target" in schema["fields"]["asgard"]
     assert "Promotion Target" not in schema["fields"]["asgard"]
     assert "cross_team_transfer_rule" in schema["team_routing"]
     assert "asgard_to_olympus_rule" not in schema["team_routing"]
-    assert "sibling target boards" in schema["team_routing"]["cross_team_transfer_rule"]
+    assert schema["team_routing"]["target_team_values"] == [
+        "Asgard",
+        "CAMPPS",
+        "Jeff",
+        "External/Deferred",
+    ]
+    assert "Asgard and CAMPPS" in schema["team_routing"]["cross_team_transfer_rule"]
+    assert (
+        "Mount Olympus is retired historical context"
+        in schema["team_routing"]["cross_team_transfer_rule"]
+    )
 
     active_surfaces = [
         PLUGIN_ROOT / "config/sdlc-schema.json",
@@ -142,3 +156,15 @@ def test_asgard_olympus_model_uses_explicit_transfer_language() -> None:
         text = _read(path)
         for phrase in stale_phrases:
             assert phrase not in text, f"{path.relative_to(ROOT)} contains stale phrase {phrase!r}"
+
+
+def test_saga_handoff_routes_without_copying_issue_templates() -> None:
+    handoff = _read(ROOT / "plugins/saga/skills/handoff/SKILL.md")
+    issue_command = _read(PLUGIN_ROOT / "commands/issue.md")
+
+    assert "Do not copy SDLC issue templates into this skill." in handoff
+    assert "/issue --prepare --from <source> --maturity <maturity>" in handoff
+    assert "issue prepare" in issue_command
+    assert "do not copy\n   SDLC issue template sections into Saga" in issue_command
+    assert "### Objective" not in handoff
+    assert "### Acceptance criteria" not in handoff

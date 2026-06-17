@@ -115,6 +115,18 @@ def test_rejects_placeholder_only_section() -> None:
     assert any("Objective" in e and "placeholder" in e for e in errors)
 
 
+def test_rejects_empty_required_section() -> None:
+    body = VALID_BODY.replace(
+        "### Intent\n"
+        "Cold agents waste planner rounds on malformed cards; gate at ingest so a card\n"
+        "either carries the contract or never reaches the planner.\n\n",
+        "### Intent\n\n",
+    )
+    is_valid, errors = sdlc_manager.validate_card_body(body)
+    assert not is_valid
+    assert any("Intent" in e and "empty" in e for e in errors)
+
+
 def test_handles_empty_body() -> None:
     is_valid, errors = sdlc_manager.validate_card_body("")
     assert not is_valid
@@ -279,3 +291,14 @@ def test_context_aware_validator_requires_high_risk_sections() -> None:
     assert any("Inputs inventory" in err for err in errors)
     assert any("Failure modes / pre-mortem" in err for err in errors)
     assert any("Stop conditions" in err for err in errors)
+
+
+def test_context_aware_validator_rejects_empty_high_risk_section() -> None:
+    body = VALID_BODY + "\n\n### Inputs inventory\n\n### Failure modes / pre-mortem\n_No response_\n\n### Stop conditions\n_No response_\n"
+
+    is_valid, errors = sdlc_manager.validate_card_body_for_context(
+        body, issue_type="capability", risk="high"
+    )
+
+    assert not is_valid
+    assert any("Inputs inventory" in err and "empty" in err for err in errors)

@@ -2462,6 +2462,9 @@ def validate_card_body(body: str) -> tuple[bool, list[str]]:
         # declaration, not a placeholder-only section.
         if header == "Context library links" and _NONE_MARKER_RE.match(text):
             continue
+        if not text:
+            errors.append(f"'{header}' is empty")
+            continue
         # Strip blank lines + check whether all remaining lines are placeholders
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         if lines and all(ln.lower() in _PLACEHOLDER_LINES for ln in lines):
@@ -2518,6 +2521,9 @@ def validate_card_body_for_context(
             continue
         text = sections[header].strip()
         if header == "Context library links" and _NONE_MARKER_RE.match(text):
+            continue
+        if not text:
+            errors.append(f"'{header}' is empty")
             continue
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         if lines and all(ln.lower() in _PLACEHOLDER_LINES for ln in lines):

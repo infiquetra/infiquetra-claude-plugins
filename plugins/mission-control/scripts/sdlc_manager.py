@@ -2335,17 +2335,28 @@ def flow_verify_label(
 _SHIM_DATA_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "generated" / "issue_contract_shim.py"
 )
+_CONTRACT_DATA_PATH = (
+    Path(__file__).resolve().parent.parent / "config" / "generated" / "issue_contract_data.py"
+)
 _shim_spec = importlib.util.spec_from_file_location("issue_contract_shim", _SHIM_DATA_PATH)
 if _shim_spec is None or _shim_spec.loader is None:  # pragma: no cover - defensive
     raise ImportError(f"vendored issue-contract shim not loadable at {_SHIM_DATA_PATH}")
 _shim = importlib.util.module_from_spec(_shim_spec)
 _shim_spec.loader.exec_module(_shim)
+_contract_spec = importlib.util.spec_from_file_location("issue_contract_data", _CONTRACT_DATA_PATH)
+if _contract_spec is None or _contract_spec.loader is None:  # pragma: no cover - defensive
+    raise ImportError(f"vendored issue-contract data not loadable at {_CONTRACT_DATA_PATH}")
+_contract = importlib.util.module_from_spec(_contract_spec)
+_contract_spec.loader.exec_module(_contract)
 
 # DATA imported from the vendored shim (NOT hand-maintained here). A named regex
 # group is also positional group 1, so `HEADER_RE_PATTERN`'s `(?P<label>...)` is
 # a drop-in for the prior `m.group(1)` extraction in `_split_sections` below.
 _REQUIRED_H3_HEADERS = _shim.REQUIRED_H3_HEADERS
 _OPTIONAL_H3_HEADERS = _shim.OPTIONAL_H3_HEADERS
+_CONTRACT_FIELD_HEADERS = _contract.FIELD_HEADERS
+_CONTRACT_REQUIRED_MATRIX = _contract.REQUIRED_MATRIX
+_CONTRACT_AUTO_FIELDS = frozenset(_CONTRACT_REQUIRED_MATRIX.get("auto_populated_fields", ()))
 _HEADER_RE = re.compile(_shim.HEADER_RE_PATTERN, re.MULTILINE)
 _CHECKLIST_RE = re.compile(_shim.CHECKLIST_RE_PATTERN, re.MULTILINE)
 _CODE_BLOCK_RE = re.compile(_shim.CODE_BLOCK_RE_PATTERN, re.MULTILINE)
@@ -2452,6 +2463,62 @@ def validate_card_body(body: str) -> tuple[bool, list[str]]:
             errors.append(f"'{header}' contains only placeholder text")
 
     return (len(errors) == 0, errors)
+
+
+def _rule_matches(rule_value: str, actual: str | None) -> bool:
+    return rule_value == "*" or rule_value == (actual or "")
+
+
+def _required_contract_field_keys(issue_type: str, risk: str | None) -> list[str]:
+    required_by_field = {
+        field: bool(_CONTRACT_REQUIRED_MATRIX.get("default_required", False))
+        for field in _CONTRACT_REQUIRED_MATRIX["axes"]["field"]
+    }
+    normalized_risk = risk or "*"
+    for rule in _CONTRACT_REQUIRED_MATRIX["rules"]:
+        if not _rule_matches(rule["issue_type"], issue_type):
+            continue
+        if not _rule_matches(rule["risk"], normalized_risk):
+            continue
+        for field in rule["fields"]:
+            required_by_field[field] = bool(rule["required"])
+    return [
+        field
+        for field in _CONTRACT_REQUIRED_MATRIX["axes"]["field"]
+        if required_by_field.get(field) and field not in _CONTRACT_AUTO_FIELDS
+    ]
+
+
+def validate_card_body_for_context(
+    body: str, issue_type: str, risk: str | None
+) -> tuple[bool, list[str]]:
+    """Validate a prepared issue body when issue type and risk are known.
+
+    `validate_card_body` intentionally remains body-only for compatibility. This
+    wrapper layers the generated required matrix on top for prepared drafts.
+    """
+    valid, errors = validate_card_body(body)
+    sections = _split_sections(body)
+    required_headers = [
+        _CONTRACT_FIELD_HEADERS[field] for field in _required_contract_field_keys(issue_type, risk)
+    ]
+    missing = [header for header in required_headers if header not in sections]
+    if missing:
+        errors.append(
+            f"Missing required H3 sections for {issue_type}/{risk or 'unknown-risk'}: {missing}"
+        )
+
+    for header in required_headers:
+        if header not in sections:
+            continue
+        text = sections[header].strip()
+        if header == "Context library links" and _NONE_MARKER_RE.match(text):
+            continue
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if lines and all(ln.lower() in _PLACEHOLDER_LINES for ln in lines):
+            errors.append(f"'{header}' contains only placeholder text")
+
+    return (valid and not errors, errors)
 
 
 class CardValidationError(RuntimeError):
@@ -3231,10 +3298,50 @@ def _render_handoff_context(
     return "\n\n" + "\n".join(lines) + "\n"
 
 
+def _context_links_from_source(source_artifact: SourceArtifact | None) -> str:
+    if not source_artifact:
+        return "_none_"
+    if source_artifact.url:
+        return f"- source_context: {source_artifact.url}"
+    if source_artifact.path:
+        return f"- source_context: {source_artifact.path}"
+    return "_none_"
+
+
+def _contract_field_placeholder(
+    field: str,
+    source: str,
+    source_artifact: SourceArtifact | None,
+) -> str:
+    if field == "objective":
+        return source
+    if field == "context_library_links":
+        return _context_links_from_source(source_artifact)
+    if field == "acceptance_criteria":
+        return "- [ ] _No response_"
+    return "_No response_"
+
+
+def _contract_scaffold_body(
+    source: str,
+    issue_type: str,
+    risk: str | None,
+    source_artifact: SourceArtifact | None,
+) -> str:
+    sections: list[str] = []
+    for field in _required_contract_field_keys(issue_type, risk):
+        header = _CONTRACT_FIELD_HEADERS[field]
+        value = _contract_field_placeholder(field, source, source_artifact)
+        sections.append(f"### {header}\n{value}")
+    return "\n\n".join(sections)
+
+
 def _source_to_issue_body(
     source: str,
+    issue_type: str,
     team: str,
     repo: str,
+    risk: str | None,
     mode: str | None,
     handoff_maturity: str | None = None,
     source_artifact: SourceArtifact | None = None,
@@ -3244,6 +3351,10 @@ def _source_to_issue_body(
         if "### Handoff maturity" in stripped:
             return stripped
         return stripped + _render_handoff_context(handoff_maturity, source_artifact)
+    if issue_type in _DISPATCH_ACTIONABLE_TYPES:
+        return _contract_scaffold_body(
+            stripped, issue_type, risk, source_artifact
+        ) + _render_handoff_context(handoff_maturity, source_artifact)
     if team == "asgard":
         return f"""### Intent
 {stripped}
@@ -3387,18 +3498,21 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
         warnings.append("Missing handoff maturity metadata")
 
     sections = _split_sections(issue.body)
-    if issue.team == "olympus":
-        if issue.issue_type not in _DISPATCH_ACTIONABLE_TYPES:
-            blocking.append(
-                f"Issue type {issue.issue_type!r} is not an Olympus dispatch-ready task type"
-            )
-        valid_body, body_errors = validate_card_body(issue.body)
+    if issue.issue_type in _DISPATCH_ACTIONABLE_TYPES:
+        valid_body, body_errors = validate_card_body_for_context(
+            issue.body, issue.issue_type, issue.risk
+        )
         if not valid_body:
             blocking.extend(body_errors)
         if not issue.project:
             blocking.append("Missing target project")
         if not issue.risk:
             blocking.append("Missing author-visible risk metadata")
+    elif issue.team == "olympus":
+        if issue.issue_type not in _DISPATCH_ACTIONABLE_TYPES:
+            blocking.append(
+                f"Issue type {issue.issue_type!r} is not an Olympus dispatch-ready task type"
+            )
     elif issue.team == "asgard":
         required = {
             "Intent": "intent",
@@ -3500,7 +3614,9 @@ def issue_prepare(
         labels=_issue_expected_labels(issue_type),
         risk=risk,
         mode=mode,
-        body=_source_to_issue_body(source, team, repo, mode, maturity, source_artifact),
+        body=_source_to_issue_body(
+            source, issue_type, team, repo, risk, mode, maturity, source_artifact
+        ),
         handoff_maturity=maturity,
         source_artifact=_source_artifact_payload(source_artifact),
     )

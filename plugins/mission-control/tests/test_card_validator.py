@@ -260,3 +260,22 @@ def test_executable_acceptance_via_fenced_block_accepted() -> None:
     )
     is_valid, errors = sdlc_manager.validate_card_body(body)
     assert is_valid, f"Expected fenced-block AC to be executable; got: {errors}"
+
+
+def test_context_aware_validator_keeps_low_risk_body_compatible() -> None:
+    is_valid, errors = sdlc_manager.validate_card_body_for_context(
+        VALID_BODY, issue_type="capability", risk="low"
+    )
+
+    assert is_valid, f"Expected low-risk card to pass; got: {errors}"
+
+
+def test_context_aware_validator_requires_high_risk_sections() -> None:
+    is_valid, errors = sdlc_manager.validate_card_body_for_context(
+        VALID_BODY, issue_type="capability", risk="high"
+    )
+
+    assert not is_valid
+    assert any("Inputs inventory" in err for err in errors)
+    assert any("Failure modes / pre-mortem" in err for err in errors)
+    assert any("Stop conditions" in err for err in errors)

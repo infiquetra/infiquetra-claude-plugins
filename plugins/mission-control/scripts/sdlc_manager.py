@@ -168,7 +168,7 @@ def _fetch_gh_login() -> str | None:
 
 
 def load_config() -> dict[str, Any]:
-    """Load config from infiquetra-sdlc checkout with remote fallback."""
+    """Load SDLC config, preferring live canonical sources when freshness matters."""
     sdlc_path = get_sdlc_path()
     config: dict[str, Any] = {}
 
@@ -217,7 +217,9 @@ def load_config() -> dict[str, Any]:
             except Exception:
                 config[key] = {}
 
-    # Project mappings and SDLC schema — three-step resolution
+    # Project mappings and SDLC schema each have their own resolution policy.
+    # Mappings allow local override for operator workflow testing; schema prefers
+    # GitHub main first because a local infiquetra-sdlc checkout may be stale.
     config["project_mappings"] = _resolve_project_mappings(sdlc_path)
     config["sdlc_schema"] = _resolve_sdlc_schema(sdlc_path)
 
@@ -280,21 +282,12 @@ def _resolve_project_mappings(sdlc_path: Path) -> dict[str, Any]:
 
 
 def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
-    """Resolve sdlc-schema.json via external checkout → vendored → remote fallback."""
-    override = sdlc_path / "config" / "sdlc-schema.json"
-    if override.exists():
-        with open(override) as f:
-            return cast(dict[str, Any], json.load(f))
-
-    if _VENDORED_SDLC_SCHEMA_PATH.exists():
-        with open(_VENDORED_SDLC_SCHEMA_PATH) as f:
-            return cast(dict[str, Any], json.load(f))
-
+    """Resolve sdlc-schema.json via GitHub main → vendored → local fallback."""
     try:
         result = _gh(
             [
                 "api",
-                f"repos/{ORG}/infiquetra-sdlc/contents/config/sdlc-schema.json",
+                f"repos/{ORG}/infiquetra-sdlc/contents/config/sdlc-schema.json?ref=main",
                 "--jq",
                 ".content",
             ]
@@ -306,6 +299,15 @@ def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
             return cast(dict[str, Any], json.loads(content))
     except (GhApiError, RuntimeError):
         pass
+
+    if _VENDORED_SDLC_SCHEMA_PATH.exists():
+        with open(_VENDORED_SDLC_SCHEMA_PATH) as f:
+            return cast(dict[str, Any], json.load(f))
+
+    local_fallback = sdlc_path / "config" / "sdlc-schema.json"
+    if local_fallback.exists():
+        with open(local_fallback) as f:
+            return cast(dict[str, Any], json.load(f))
 
     return {}
 

@@ -1,8 +1,9 @@
 {
-  "schema_version": "2026-06-13.2",
+  "schema_version": "2026-06-17",
   "migration_notes": [
-    "2026-06-13: Added additive saga_lifecycle block derived from the vendored saga-docs-model.yaml snapshot (plugin 0.21.0). Strictly additive; existing consumers (e.g. wip_limits.olympus) unchanged.",
-    "2026-06-13.2: Merged hand-authored config/saga-lifecycle-extras.yaml (combinations, reset_edges, gate_classification, phase_board_map, phase_command_map) into the saga_lifecycle block. Strictly additive; snapshot-derived keys and existing consumers unchanged."
+    "2026-06-13: Added additive saga_lifecycle block derived from the vendored saga-docs-model.yaml snapshot (plugin 0.21.0). At that migration, this was strictly additive and existing consumers (for example, wip_limits.olympus) were unchanged; superseded for Olympus routing by the 2026-06-17 retirement.",
+    "2026-06-13.2: Merged hand-authored config/saga-lifecycle-extras.yaml (combinations, reset_edges, gate_classification, phase_board_map, phase_command_map) into the saga_lifecycle block. Strictly additive; snapshot-derived keys and existing consumers unchanged.",
+    "2026-06-17: Retired Mount Olympus as an active board projection. phase_board_map now projects only Jeff Intent, Asgard, and CAMPPS; Project #1 is closed externally and preserved as historical context."
   ],
   "status": "active",
   "description": "Canonical Infiquetra SDLC board, team, routing, review, approval, and deployment-state schema. This file intentionally contains no live GitHub Projects field option IDs; tooling must resolve those from GitHub at runtime.",
@@ -25,11 +26,11 @@
     },
     "olympus": {
       "kind": "agent_team",
-      "status": "active",
-      "role": "Primary autonomous engineering execution pipeline",
-      "board": "olympus",
+      "status": "retired_historical",
+      "role": "Former primary autonomous engineering execution pipeline. Preserved for history only; do not route active work or current board state through Mount Olympus.",
+      "board": null,
       "agents": ["Zeus", "Athena", "Apollo", "Artemis", "Hephaestus", "Perseus", "Prometheus", "Ares"],
-      "review_model": "team_owned_review"
+      "review_model": "retired"
     },
     "hermes": {
       "kind": "system_role",
@@ -64,13 +65,15 @@
       "workflow": "intent_flow",
       "live_creation": "created_2026-05-29_project_2"
     },
-    "olympus": {
-      "name": "Mount Olympus Operations",
+    "campps": {
+      "name": "CAMPPS",
+      "kind": "long_lived_initiative_board",
       "status": "active",
-      "purpose": "Primary engineering execution pipeline",
-      "owner": "olympus",
-      "workflow": "olympus_execution",
-      "live_creation": "already_exists"
+      "purpose": "Portfolio-level execution board for the CAMPPS program, tracking Outcome, Capability, and Component slice progress while the initiative is active",
+      "owner": "asgard",
+      "workflow": "campps_initiative",
+      "archive_trigger": "Operator declares the initiative complete after Objectives are Done and Outcome Scorecards are reviewed.",
+      "live_creation": "created_2026-06-16_project_4"
     }
   },
   "workflows": {
@@ -79,26 +82,77 @@
       "terminal_statuses": ["Done"],
       "canonical_for": ["jeff_intent", "asgard"]
     },
-    "olympus_execution": {
-      "statuses": ["Backlog", "Ready", "Planning", "Assigned", "In Review", "Done", "Closed"],
-      "pause_states": ["Plan-Approved", "Needs Review", "Needs Question", "Blocked", "Cancelled"],
-      "terminal_statuses": ["Done", "Closed", "Cancelled"],
-      "noncanonical_statuses": {
-        "In Progress": "Treat as historical, legacy, migration, or live-evidence exception text only. Do not include in the canonical Olympus workflow unless later authoritative runtime evidence forces a schema revision.",
-        "In Development": "Legacy pre-modernization status; map to Assigned when interpreting old references.",
-        "E2E Testing": "Legacy pre-modernization status; map to In Review or Verify depending on board context.",
-        "Deployment Ready": "Legacy pre-modernization status; represent with deployment_state fields.",
-        "Deployed": "Legacy pre-modernization status; represent with GitHub Deployments/Environments plus Done or Closed work status."
-      },
-      "canonical_for": ["olympus"]
+    "campps_initiative": {
+      "statuses": ["Idea", "Committed", "In Progress", "Done", "Parked"],
+      "pause_states": ["Parked"],
+      "terminal_statuses": ["Done"],
+      "canonical_for": ["campps"]
     }
   },
   "fields": {
     "common": ["Status", "Owner", "Priority", "Risk", "Initiative", "Objective"],
     "jeff_intent": ["Status", "Target Team", "Jeff Needed", "Context Pack", "Decision Needed", "Objective"],
     "asgard": ["Status", "Mode", "Jeff Needed", "Target Repository", "Risk", "Transfer Target", "Objective"],
-    "olympus": ["Status", "Assigned Agent", "Initiative", "Objective", "Capability Size", "Risk", "Deploy Target", "Deploy State", "Snapshot Version", "Promotion Pending", "Release Risk", "Last Deployment"],
-    "campps": ["Status", "Objective", "Milestone", "Start", "Target", "Initiative"]
+    "campps": ["Status", "Objective", "Milestone", "Start", "Target", "Initiative", "Test Strategy"]
+  },
+  "work_hierarchy": {
+    "source_note": "Canonical machine-readable hierarchy for Objective, Outcome, Capability, and Component slice roles. Component is a dispatch role encoded by sub-issue position plus fields, not a separate issue type.",
+    "roles": {
+      "objective": {
+        "kind": "project_field_plus_scorecard",
+        "issue_type": false,
+        "primary_surface": "Objective project field",
+        "supporting_artifact": "Outcome Scorecard doc in the owning context-library repository"
+      },
+      "outcome": {
+        "kind": "initiative_board_proof_card",
+        "issue_type": false,
+        "applies_to": ["long_lived_initiative_board"],
+        "example_board": "campps",
+        "purpose": "Dated proof tier for initiative-level outcomes when a long-lived initiative board exists."
+      },
+      "capability": {
+        "kind": "cross_service_coordinator",
+        "issue_type": "capability",
+        "purpose": "Coordinates the end-to-end result across services and names the verification slice that proves completion."
+      },
+      "component": {
+        "kind": "repo_bounded_dispatch_slice",
+        "issue_type": false,
+        "encoded_by": ["native GitHub sub-issue position under a Capability", "Test Strategy project field"],
+        "purpose": "Independently service-testable slice an agent can build inside one repository or bounded context."
+      }
+    },
+    "component_slices": {
+      "parent_role": "capability",
+      "test_strategy_field": "Test Strategy",
+      "test_strategy_field_status": "planned_schema_intent",
+      "test_strategies": ["endpoint", "event", "schema", "property", "combine"],
+      "validation_policy": {
+        "endpoint": {
+          "enforcement": "advisory",
+          "proof_expectation": "Request and response seam proof for one endpoint vertical."
+        },
+        "event": {
+          "enforcement": "enforced",
+          "proof_expectation": "Event emission, idempotency, state transition, and alarm or retry proof."
+        },
+        "schema": {
+          "enforcement": "enforced",
+          "proof_expectation": "Schema invariant, compatibility, and generated artifact proof."
+        },
+        "property": {
+          "enforcement": "enforced",
+          "proof_expectation": "Property, exhaustiveness, or state-space proof for non-enumerable behavior."
+        },
+        "combine": {
+          "enforcement": "enforced",
+          "proof_expectation": "Cross-repository or cross-service seam proof that local green checks did not miss the end-to-end result."
+        }
+      },
+      "capability_close_rule": "Every Capability coordinator names one enforced end-to-end verification slice before close; use combine when a cross-repo seam exists or a dedicated closeout E2E slice otherwise.",
+      "experiment_metrics": ["slice_rework_rate", "dispatch_without_clarification_rate", "service_test_pass_rate", "cross_service_e2e_pass_rate"]
+    }
   },
   "pause_states": {
     "Plan-Approved": "Plan accepted but operator intentionally paused dispatch.",
@@ -124,16 +178,6 @@
       "Verify": 5,
       "Done": null
     },
-    "olympus": {
-      "Backlog": null,
-      "Ready": 10,
-      "Planning": 3,
-      "Assigned": "3 per assigned agent",
-      "In Review": 5,
-      "Done": null,
-      "Closed": null,
-      "pause_states": null
-    },
     "campps": {
       "Idea": null,
       "Committed": null,
@@ -149,17 +193,16 @@
     "asgard": {
       "Active": ["Mode must be set", "Jeff Needed must be set when work crosses an approval boundary"]
     },
-    "olympus": {
-      "Ready": ["Hermes-actionable issue schema passes", "Work is labeled for Olympus dispatch", "Acceptance criteria and verification are present"],
-      "Assigned": ["Selected agent has available WIP capacity"],
-      "In Review": ["Team-owned review is active for the PR or work artifact"]
+    "campps": {
+      "Committed": ["Outcome or Capability is admitted to the initiative portfolio", "Objective field is set"],
+      "In Progress": ["Component slices identify their Test Strategy when applicable"]
     }
   },
   "team_routing": {
-    "target_team_values": ["Asgard", "Olympus", "Jeff", "External/Deferred"],
+    "target_team_values": ["Asgard", "CAMPPS", "Jeff", "External/Deferred"],
     "jeff_intent_ready_rule": "A Ready Jeff Intent card must name one target team before moving to another board or workflow.",
     "asgard_issue_feed_rule": "Asgard-bound work enters through Jeff Intent Target Team=Asgard, a direct issue added to Asgard, or a context/issue pack. Before Active, set Mode, target repository or surface, risk, approval state, proof path, and transfer target when a cross-team handoff is expected.",
-    "cross_team_transfer_rule": "Asgard and Olympus are sibling target boards. Cross-team movement happens only when an operator explicitly routes, transfers, clones, or links work to another board; readiness checks may warn about target fit but must not infer movement.",
+    "cross_team_transfer_rule": "Asgard and CAMPPS are sibling active target surfaces. Cross-team movement happens only when an operator explicitly routes, transfers, clones, or links work to another board; readiness checks may warn about target fit but must not infer movement. Mount Olympus is retired historical context and is not an active target.",
     "default_pressure_valve": "Prefer project views over new boards unless scale, automation, or reporting needs justify a separate board."
   },
   "review_model": {
@@ -503,15 +546,12 @@
         "blocking": true,
         "advances_phase": true,
         "overridable": false,
-        "source": "config/sdlc-schema.json review_model.team_owned_review + dispatch_gates.olympus['In Review']",
-        "note": "The authoritative PR review + merge-readiness gate; the team that owns the work owns it; clearing it (with merge) advances work->qa; not unilaterally overridable (the owning team decides)."
+        "source": "config/sdlc-schema.json review_model.team_owned_review",
+        "note": "The authoritative PR review + merge-readiness gate; the team or initiative surface that owns the work owns it; clearing it (with merge) advances work->qa; not unilaterally overridable (the owner decides)."
       }
     },
     "phase_board_map": {
       "ideation": {
-        "olympus": [
-          "Backlog"
-        ],
         "jeff_intent": [
           "Idea"
         ],
@@ -523,9 +563,6 @@
         ]
       },
       "brainstorm": {
-        "olympus": [
-          "Ready"
-        ],
         "jeff_intent": [
           "Shaping"
         ],
@@ -537,9 +574,6 @@
         ]
       },
       "plan": {
-        "olympus": [
-          "Planning"
-        ],
         "jeff_intent": [
           "Ready"
         ],
@@ -551,9 +585,6 @@
         ]
       },
       "review": {
-        "olympus": [
-          "Plan-Approved"
-        ],
         "jeff_intent": [
           "Ready"
         ],
@@ -563,13 +594,9 @@
         "campps": [
           "Committed"
         ],
-        "note": "The doc-review gate -> Plan-Approved on Olympus; on Jeff Intent / Asgard it is the Ready->Active gate (plan approved before work goes Active); on CAMPPS the work is Committed (admitted to the portfolio) before execution starts."
+        "note": "The doc-review gate is the Ready->Active gate on Jeff Intent / Asgard (plan approved before work goes Active); on CAMPPS the work is Committed (admitted to the portfolio) before execution starts."
       },
       "work": {
-        "olympus": [
-          "Assigned",
-          "In Review"
-        ],
         "jeff_intent": [
           "Active"
         ],
@@ -579,12 +606,9 @@
         "campps": [
           "In Progress"
         ],
-        "note": "Work (with code-review at the PR boundary) spans Assigned -> In Review."
+        "note": "Work (with code-review at the PR boundary) runs in Active on Jeff Intent / Asgard and In Progress on CAMPPS."
       },
       "qa": {
-        "olympus": [
-          "In Review"
-        ],
         "jeff_intent": [
           "Verify"
         ],
@@ -594,12 +618,9 @@
         "campps": [
           "In Progress"
         ],
-        "note": "The qa verdict gates In Review -> Done on Olympus; CAMPPS has no separate verify column, so qa stays In Progress on the initiative rollup until the work is Done."
+        "note": "The qa verdict gates Verify -> Done on Jeff Intent / Asgard; CAMPPS has no separate verify column, so qa stays In Progress on the initiative rollup until the work is Done."
       },
       "retro": {
-        "olympus": [
-          "Done"
-        ],
         "jeff_intent": [
           "Done"
         ],

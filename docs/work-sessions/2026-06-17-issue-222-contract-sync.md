@@ -17,6 +17,10 @@ Implemented U1-U5 of the issue #222 plan.
 - U4/U5: Regenerated issue template guidance from vendored contract data, removed stale `Context library links` optionality, and added a Saga handoff no-template-copy guard.
 - Gate repair: Replaced an existing `set.add()` list-comprehension idiom in `board_add` so mission-control mypy passes.
 - Review-found fix: Required contract sections now reject present-but-empty bodies, not only missing or placeholder-only bodies.
+- Follow-up schema refresh: Checked live `infiquetra-sdlc` `main` with `gh api`, found schema
+  `2026-06-17`, re-vendored `sdlc-schema.json`, and updated the prompt-alignment guard for the
+  Asgard/CAMPPS active-board model with Mount Olympus retired as historical context. Generated
+  issue-contract data and shim bytes matched the source artifacts, so those files were not changed.
 
 ## Commits
 
@@ -25,6 +29,8 @@ Implemented U1-U5 of the issue #222 plan.
 - `b664ed1` `docs(mission-control): sync issue contract guidance`
 - `5ad705f` `fix(mission-control): satisfy board add type check`
 - `7be7933` `fix(mission-control): reject empty contract sections`
+- `93c77f6` `fix(mission-control): prefer remote SDLC schema`
+- This commit: `fix(mission-control): re-vendor current SDLC schema`
 
 ## Checks Run
 
@@ -38,6 +44,8 @@ Implemented U1-U5 of the issue #222 plan.
 - `uv run pytest -q -k 'not test_suite_does_not_create_claude_dir_under_repo_root'` — 752 passed, 1 local-state guard deselected.
 - `git diff --check origin/main..HEAD`
 - `uv run bandit -q -r plugins/mission-control/scripts/sdlc_manager.py plugins/mission-control/scripts/sync_template_docs.py` — reported pre-existing low-severity subprocess/exception findings in `sdlc_manager.py`; no new high/medium findings.
+- `uv run pytest plugins/mission-control/tests/test_project_mappings_resolution.py plugins/mission-control/tests/test_prompt_alignment.py plugins/mission-control/tests/test_issue_contract_parity.py -q` — 28 passed after the `2026-06-17` schema re-vendor.
+- `uv run ruff check plugins/mission-control/config/generated/check_issue_contract_parity.py plugins/mission-control/tests/test_prompt_alignment.py plugins/mission-control/tests/test_project_mappings_resolution.py`
 
 ## Residual Risk
 

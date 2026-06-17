@@ -19,9 +19,13 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "mission-control")
 
     assert plugin_json["name"] == "mission-control"
-    assert plugin_json["version"] == "2.0.0"
+    assert plugin_json["version"] == "2.1.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
+    assert "CAMPPS" in plugin_json["description"]
+    assert "Mount Olympus" not in plugin_json["description"]
+    assert "campps" in plugin_json["keywords"]
+    assert "mount-olympus" not in plugin_json["keywords"]
     assert "Jeff Intent" in entry["description"]
     assert "Beads" not in entry["description"]
     assert "beads" not in entry["keywords"]

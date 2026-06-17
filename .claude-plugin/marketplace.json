@@ -345,8 +345,8 @@
     {
       "name": "mission-control",
       "source": "./plugins/mission-control",
-      "version": "2.0.0",
-      "description": "SDLC workflow manager for Infiquetra's Jeff Intent, Asgard, and Mount Olympus boards. Adds prepared issue drafts, board management, project fields, labels, flow metrics, milestones, and rollout helpers via Python CLI.",
+      "version": "2.1.0",
+      "description": "SDLC workflow manager for Infiquetra's Jeff Intent, Asgard, and CAMPPS boards. Adds prepared issue drafts, live schema sync, project fields, labels, metrics, milestones, and rollout helpers via Python CLI.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -358,7 +358,7 @@
         "kanban",
         "project-management",
         "github-projects",
-        "mount-olympus",
+        "campps",
         "asgard",
         "jeff-intent",
         "project-fields",

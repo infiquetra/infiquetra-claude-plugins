@@ -127,7 +127,12 @@ plugin-name/
 3. Write tests in `tests/` for CLI plugins
 4. Document in README.md
 5. Add entry to `.claude-plugin/marketplace.json`
-6. Submit PR for review
+6. For every plugin behavior, schema, command, prompt, or user-facing guidance change, update the
+   plugin release surfaces in the same PR: `plugins/<plugin>/.claude-plugin/plugin.json`,
+   `.claude-plugin/marketplace.json`, `plugins/<plugin>/CHANGELOG.md`, and any version/metadata
+   drift guard tests. Do not treat code/tests as PR-ready until installed-plugin metadata tells the
+   same story as the diff.
+7. Submit PR for review
 
 ## Running Quality Checks
 

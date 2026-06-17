@@ -27,6 +27,36 @@
 
 ## 2026-06-17
 
+### Plugin behavior can ship while installed metadata still advertises the old contract  {#plugin-release-metadata-is-a-release-surface}
+
+**Context.** PR #224 shipped the mission-control issue-contract sync and SDLC schema refresh, but the
+plugin manifest, marketplace entry, and changelog did not move with it. The installed plugin still
+advertised `mission-control` `2.0.0` and described Mount Olympus as an active board after the code and
+vendored schema had moved to the Jeff Intent / Asgard / CAMPPS active-board model.
+
+**Evidence.** After PR #224 merged as `898cc8e`, `plugins/mission-control/.claude-plugin/plugin.json` and
+`.claude-plugin/marketplace.json` still listed `version: 2.0.0`, and `plugins/mission-control/CHANGELOG.md`
+had no `2.1.0` release notes for the contract/schema change. Follow-up PR #225 fixes the metadata and
+adds this release-closeout rule to `AGENTS.md`.
+
+**Mechanism.** The implementation diff made code, schema, tests, and receipts correct, but the release
+surfaces are independent files outside the runtime path. CI validated the plugin shape and tests, yet it
+could not infer that a behavior/schema change should bump metadata and update upgrade notes unless the
+version guard and process checklist demand it.
+
+**Fix.** Bump `mission-control` plugin and marketplace metadata to `2.1.0`, add changelog migration notes,
+and extend the prompt-alignment test to assert the new version and active-board metadata.
+
+**Validation.** `python3 -m json.tool` on both JSON files, `uv run pytest
+plugins/mission-control/tests/test_prompt_alignment.py -q`, `uv run python marketplace/validator/validate.py`,
+and CI on PR #225.
+
+**Generalizable rule.** A plugin release is not complete when code is correct. For any plugin behavior,
+schema, command, prompt, or guidance change, update `plugin.json`, the marketplace entry, changelog, and
+version/metadata drift tests in the same PR before calling the branch PR-ready.
+
+**Refs.** LEARNINGS [#marketplace-drift](#marketplace-drift); AGENTS.md Development Workflow.
+
 ### Issue-contract consumers need both generated data and source-schema drift guards  {#issue-contract-consumer-schema-and-data-guards}
 
 **Context.** Issue #222 reported mission-control drift from the current Hermes issue contract. The generated

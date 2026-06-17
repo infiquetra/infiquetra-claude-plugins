@@ -25,6 +25,42 @@
 
 ---
 
+## 2026-06-17
+
+### Issue-contract consumers need both generated data and source-schema drift guards  {#issue-contract-consumer-schema-and-data-guards}
+
+**Context.** Issue #222 reported mission-control drift from the current Hermes issue contract. The generated
+validator data and body-only shim had already been updated, but the plugin's vendored `sdlc-schema.json`
+and template guidance still described older contract surfaces.
+
+**Evidence.** Commit `22557f0` vendors `infiquetra-sdlc origin/main` `sdlc-schema.json` and adds
+`test_vendored_schema_carries_issue_fields_block`; commit `24a9057` adds context-aware prepared validation;
+commit `b664ed1` regenerates template guidance from vendored `issue_contract_data.py`.
+
+**Mechanism.** The consumer can have correct generated Python artifacts while its source-schema snapshot and
+docs remain stale. A hash parity check on generated modules proves byte identity for those modules only; it
+does not prove the vendored schema still exposes the `issue_fields` source block, nor that docs stopped
+calling context links optional.
+
+**Fix.** Added an explicit schema-level drift guard for `issue_fields`, used the generated required matrix for
+prepared issue readiness, compiled fallback prepared bodies from contract field data, and made template docs
+render from the vendored contract data.
+
+**Validation.** `uv run pytest` targeted issue-contract suite: 67 passed. `uv run pytest -q -k 'not
+test_suite_does_not_create_claude_dir_under_repo_root'`: 752 passed, 1 local-state guard deselected.
+`uv run mypy plugins/mission-control`: clean. `uv run ruff check .`: clean.
+
+**What surprised.** The local default `infiquetra-sdlc` checkout was not a reliable template source; a clean
+`origin/main` export showed `objective.yml` no longer exists, so the generated reference was stale in more
+than just field requiredness.
+
+**Generalizable rule.** For generated-contract consumers, guard every consumed layer separately: source schema,
+generated data, runtime wrapper, compiler, and docs. A green generated-artifact hash does not prove the
+consumer's checked-in source snapshot or generated docs are current.
+
+**Refs.** DECISIONS [#mission-control-issue-contract-consumer-sync](DECISIONS.md#mission-control-issue-contract-consumer-sync);
+plan [`docs/plans/2026-06-17-mission-control-issue-contract-sync-plan.md`](../plans/2026-06-17-mission-control-issue-contract-sync-plan.md).
+
 ## 2026-06-13
 
 ### Saga mis-framed ultracode as "fan-out, not review depth"; keyword risk-proxies over-escalate docs  {#operator-choice-ultracode-framing-and-docs-proxies}

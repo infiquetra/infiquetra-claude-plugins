@@ -35,7 +35,8 @@ and template guidance still described older contract surfaces.
 
 **Evidence.** Commit `22557f0` vendors `infiquetra-sdlc origin/main` `sdlc-schema.json` and adds
 `test_vendored_schema_carries_issue_fields_block`; commit `24a9057` adds context-aware prepared validation;
-commit `b664ed1` regenerates template guidance from vendored `issue_contract_data.py`.
+commit `b664ed1` regenerates template guidance from vendored `issue_contract_data.py`; commit `7be7933`
+closes the review-found present-but-empty section gap.
 
 **Mechanism.** The consumer can have correct generated Python artifacts while its source-schema snapshot and
 docs remain stale. A hash parity check on generated modules proves byte identity for those modules only; it
@@ -44,7 +45,8 @@ calling context links optional.
 
 **Fix.** Added an explicit schema-level drift guard for `issue_fields`, used the generated required matrix for
 prepared issue readiness, compiled fallback prepared bodies from contract field data, and made template docs
-render from the vendored contract data.
+render from the vendored contract data. Required sections now reject present-but-empty bodies, not only
+missing or placeholder-only bodies.
 
 **Validation.** `uv run pytest` targeted issue-contract suite: 67 passed. `uv run pytest -q -k 'not
 test_suite_does_not_create_claude_dir_under_repo_root'`: 752 passed, 1 local-state guard deselected.

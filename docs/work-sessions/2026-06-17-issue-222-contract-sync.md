@@ -16,6 +16,7 @@ Implemented U1-U5 of the issue #222 plan.
 - U2/U3: Added context-aware prepared issue validation using the generated required matrix, compiled fallback actionable bodies from generated contract data, and kept `validate_card_body(body)` body-only for compatibility.
 - U4/U5: Regenerated issue template guidance from vendored contract data, removed stale `Context library links` optionality, and added a Saga handoff no-template-copy guard.
 - Gate repair: Replaced an existing `set.add()` list-comprehension idiom in `board_add` so mission-control mypy passes.
+- Review-found fix: Required contract sections now reject present-but-empty bodies, not only missing or placeholder-only bodies.
 
 ## Commits
 
@@ -23,6 +24,7 @@ Implemented U1-U5 of the issue #222 plan.
 - `24a9057` `fix(mission-control): validate prepared issue context`
 - `b664ed1` `docs(mission-control): sync issue contract guidance`
 - `5ad705f` `fix(mission-control): satisfy board add type check`
+- `7be7933` `fix(mission-control): reject empty contract sections`
 
 ## Checks Run
 
@@ -30,7 +32,7 @@ Implemented U1-U5 of the issue #222 plan.
 - `uv run pytest plugins/mission-control/tests/test_card_validator.py plugins/mission-control/tests/test_issue_prepare.py plugins/mission-control/tests/test_issue_prepare_compile_approve.py plugins/mission-control/tests/test_issue_create_prepared.py -q`
 - `uv run pytest plugins/mission-control/tests/test_template_sync.py plugins/mission-control/tests/test_prompt_alignment.py -q`
 - `INFIQUETRA_SDLC_PATH=<clean origin/main export> uv run python plugins/mission-control/scripts/sync_template_docs.py --check`
-- `uv run pytest plugins/mission-control/tests/test_issue_contract_parity.py plugins/mission-control/tests/test_card_validator.py plugins/mission-control/tests/test_issue_prepare.py plugins/mission-control/tests/test_issue_prepare_compile_approve.py plugins/mission-control/tests/test_issue_create_prepared.py plugins/mission-control/tests/test_template_sync.py plugins/mission-control/tests/test_prompt_alignment.py -q` — 67 passed.
+- `uv run pytest plugins/mission-control/tests/test_issue_contract_parity.py plugins/mission-control/tests/test_card_validator.py plugins/mission-control/tests/test_issue_prepare.py plugins/mission-control/tests/test_issue_prepare_compile_approve.py plugins/mission-control/tests/test_issue_create_prepared.py plugins/mission-control/tests/test_template_sync.py plugins/mission-control/tests/test_prompt_alignment.py -q` — 69 passed after the review-found empty-section fix.
 - `uv run ruff check .`
 - `uv run mypy plugins/mission-control`
 - `uv run pytest -q -k 'not test_suite_does_not_create_claude_dir_under_repo_root'` — 752 passed, 1 local-state guard deselected.

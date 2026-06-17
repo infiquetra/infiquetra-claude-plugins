@@ -186,7 +186,9 @@ def test_prepare_asgard_actionable_uses_hermes_contract(tmp_path) -> None:
 
     assert sidecar["state"] == "blocked"
     assert any("Objective" in gap for gap in sidecar["readiness"]["blocking_gaps"])
-    assert not any("Missing Asgard mode metadata" in gap for gap in sidecar["readiness"]["blocking_gaps"])
+    assert not any(
+        "Missing Asgard mode metadata" in gap for gap in sidecar["readiness"]["blocking_gaps"]
+    )
 
 
 def test_ready_status_blocks_prepared_draft(tmp_path) -> None:

@@ -127,9 +127,10 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
         "External/Deferred",
     ]
     assert "Asgard and CAMPPS" in schema["team_routing"]["cross_team_transfer_rule"]
-    assert "Mount Olympus is retired historical context" in schema["team_routing"][
-        "cross_team_transfer_rule"
-    ]
+    assert (
+        "Mount Olympus is retired historical context"
+        in schema["team_routing"]["cross_team_transfer_rule"]
+    )
 
     active_surfaces = [
         PLUGIN_ROOT / "config/sdlc-schema.json",

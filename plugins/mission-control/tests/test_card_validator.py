@@ -294,7 +294,10 @@ def test_context_aware_validator_requires_high_risk_sections() -> None:
 
 
 def test_context_aware_validator_rejects_empty_high_risk_section() -> None:
-    body = VALID_BODY + "\n\n### Inputs inventory\n\n### Failure modes / pre-mortem\n_No response_\n\n### Stop conditions\n_No response_\n"
+    body = (
+        VALID_BODY
+        + "\n\n### Inputs inventory\n\n### Failure modes / pre-mortem\n_No response_\n\n### Stop conditions\n_No response_\n"
+    )
 
     is_valid, errors = sdlc_manager.validate_card_body_for_context(
         body, issue_type="capability", risk="high"

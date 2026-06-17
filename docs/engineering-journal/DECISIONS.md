@@ -22,6 +22,35 @@
 
 ---
 
+## 2026-06-17
+
+### Mission-control issue-contract consumer sync (planned; issue #222)  {#mission-control-issue-contract-consumer-sync}
+
+**Decision.** Plan issue #222 as a consumer-sync fix, not as a wholesale validator rewrite. `infiquetra-sdlc`
+`issue_fields` remains the contract source; `mission-control` vendors generated data and keeps local
+control flow hand-maintained. `validate_card_body(body)` stays body-only for compatibility, and a
+context-aware prepared-readiness path should enforce issue-type/risk conditional fields when those
+values are known. Prepared actionable issue bodies should be compiled from contract data rather than
+from separate freehand Asgard/Olympus strings. Saga remains template-free and delegates issue body
+ownership to `mission-control`.
+
+**Rejected alternatives.** *Generate or vendor the home-lab validator algorithm into mission-control* —
+rejected because the established boundary is generated data plus hand-maintained consumer algorithms.
+*Replace `validate_card_body(body)` with a signature that requires type/risk* — rejected because
+existing body-only callers such as `flow validate-card` should keep working. *Copy SDLC issue templates
+into Saga* — rejected because the handoff boundary already says `mission-control` owns issue artifacts.
+
+**Rationale.** Current `main` already enforces the always-required body surface through the generated shim,
+so redoing that work would churn the wrong layer. The live gaps are prepared body compilation, risk-aware
+readiness, stale template docs, and vendored schema/data parity.
+
+**Revisit when.** The validator algorithm is relocated into `infiquetra-sdlc`; GitHub issue forms become
+the only authoring path again; or Asgard starts accepting actionable Hermes task cards through a distinct
+non-Olympus runtime gate.
+
+**Refs.** Issue #222; plan
+[`docs/plans/2026-06-17-mission-control-issue-contract-sync-plan.md`](../plans/2026-06-17-mission-control-issue-contract-sync-plan.md).
+
 ## 2026-06-13
 
 ### Correct the operator-choice ultracode framing; add `adversarial_confidence` + `has_code_surface` to the backend recommender (PR #215, squash `331505a`)  {#operator-choice-docs-and-confidence}

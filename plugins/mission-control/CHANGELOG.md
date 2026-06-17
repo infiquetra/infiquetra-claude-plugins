@@ -1,5 +1,24 @@
 # Changelog — mission-control
 
+## [2.1.0] — 2026-06-17
+
+### Migration notes
+- Mission Control now treats Jeff Intent, Asgard, and CAMPPS as the active board surfaces.
+  Mount Olympus remains historical context in the vendored SDLC schema and should not be used as
+  an active routing target for new work.
+- `sdlc-schema.json` resolves from `infiquetra-sdlc` on GitHub `main` before falling back to the
+  vendored snapshot, so operators are less likely to read stale local checkout state.
+
+### Changed
+- Re-vendored the current `infiquetra-sdlc` schema snapshot at `schema_version: 2026-06-17`.
+- Prepared actionable issue drafts now compile fallback bodies from generated SDLC issue-contract
+  data instead of hand-written prompt template sections.
+- Readiness validation now applies issue-type and risk-aware required fields, including high-risk
+  sections and empty-section rejection.
+- Updated issue command and skill guidance to route through `issue prepare` for generated contract
+  bodies.
+- Bumped plugin and marketplace metadata to `2.1.0`.
+
 ## 1.6.1 - 2026-05-31
 
 ### Changed

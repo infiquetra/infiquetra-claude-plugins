@@ -3,7 +3,7 @@ name: team-scaffold
 description: Stand up a new infiquetra agent-team repo end-to-end — context-library-compliant repo + Discord identity + GitHub identity + split-vault wiring + Ansible deploy harness — by composing a deterministic generator with two human-in-loop portal gates
 when_to_use: |
   Use this skill when the user:
-  - Wants to create a brand-new agent team (a new Olympus/Asgard persona or crew)
+  - Wants to create a brand-new agent team (a new persona or crew in the Olympus grouping or the Asgard grouping)
   - Says "scaffold a team", "stand up team-X", "add a new team", "new agent team repo"
   - Needs to reproduce the polyrepo per-team layout (deploy harness, vault slice,
     profiles/, engineering journal) without repeating the manual migration dance

@@ -37,16 +37,16 @@ Triage an existing issue by analyzing its content, recommending appropriate labe
 ## Script Commands
 
 ```bash
-SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/1.6.0/scripts/sdlc_manager.py
+SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py
 
 # Auto-label based on content
 python3 $SCRIPT labels auto-label --repo athena-service --number 42
 
-# Add to project
-python3 $SCRIPT board add --repo athena-service --number 42
+# Add to the named active board (--project is required; no default)
+python3 $SCRIPT board add --project asgard --repo athena-service --number 42
 
 # Set project fields directly when needed
-python3 $SCRIPT flow set-field --project mount-olympus \
+python3 $SCRIPT flow set-field --project asgard \
   --repo athena-service --number 42 \
   --field Status --option Ready
 ```
@@ -65,13 +65,13 @@ When the user invokes `/triage repo#number`:
    - `python3 $SCRIPT labels auto-label --repo <repo> --number <N>`
 5. Manually apply recommended labels when the template did not apply them:
    - `gh issue edit <N> --repo infiquetra/<repo> --add-label "capability,hermes-task,needs-plan"`
-6. Add to project board:
-   - `python3 $SCRIPT board add --repo <repo> --number <N>`
+6. Add to the named active board (`--project` is required; ask which board if unstated):
+   - `python3 $SCRIPT board add --project <jeff-intent|asgard|campps> --repo <repo> --number <N>`
 7. Set initiative/objective fields when applicable:
-   - `python3 $SCRIPT flow set-field --project mount-olympus --repo <repo> --number <N> --field Initiative --option <name>`
-   - `python3 $SCRIPT flow set-field --project mount-olympus --repo <repo> --number <N> --field Objective --option <name>`
+   - `python3 $SCRIPT flow set-field --project <board> --repo <repo> --number <N> --field Initiative --option <name>`
+   - `python3 $SCRIPT flow set-field --project <board> --repo <repo> --number <N> --field Objective --option <name>`
 8. Recommend status:
-   - Defect (critical/high): Move directly to Assigned on Olympus, or Active on Asgard
+   - Defect (critical/high): move to Active on Jeff Intent or Asgard (or In Progress on CAMPPS)
    - Has complete context: Ready
    - Needs more context: keep `needs-plan` on actionable cards, optionally add `needs-context`,
      and leave in Backlog or Shaping

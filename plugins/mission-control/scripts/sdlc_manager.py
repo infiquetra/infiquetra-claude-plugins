@@ -7,46 +7,49 @@ Reads configuration dynamically from the infiquetra-sdlc repository checkout
 
 All GitHub operations use the `gh` CLI for zero-token-management auth.
 
+Active boards: Jeff Intent, Asgard, CAMPPS. Board/metrics commands require an
+explicit --project (KTD17); there is no default board.
+
 Usage:
-    sdlc_manager.py board view --project mount-olympus
-    sdlc_manager.py board add --repo athena-service --number 42
-    sdlc_manager.py board move --repo athena-service --number 42 --status "Assigned"
-    sdlc_manager.py board archive --project mount-olympus [--dry-run]
-    sdlc_manager.py board wip --project mount-olympus
-    sdlc_manager.py board standup --project mount-olympus
-    sdlc_manager.py board discover-fields --project mount-olympus
+    sdlc_manager.py board view --project jeff-intent
+    sdlc_manager.py board add --project asgard --repo athena-service --number 42
+    sdlc_manager.py board move --project asgard --repo athena-service --number 42 --status "Active"
+    sdlc_manager.py board archive --project asgard [--dry-run]
+    sdlc_manager.py board wip --project asgard
+    sdlc_manager.py board standup --project jeff-intent
+    sdlc_manager.py board discover-fields --project jeff-intent
 
     sdlc_manager.py issue create --repo athena-service --type capability
-    sdlc_manager.py issue prepare --repo athena-service --type capability --team olympus \
-      --project mount-olympus --from docs/plans/example.md
+    sdlc_manager.py issue prepare --repo athena-service --type capability --team asgard \
+      --project asgard --from docs/plans/example.md
     sdlc_manager.py issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 
     sdlc_manager.py labels sync-fields --repo athena-service --number 42
     sdlc_manager.py labels audit --repo athena-service
     sdlc_manager.py labels deploy --repo athena-service
     sdlc_manager.py labels auto-label --repo athena-service --number 42
-    sdlc_manager.py fields create-option --project mount-olympus --field initiative --option "new-initiative"
-    sdlc_manager.py fields discover --project mount-olympus
+    sdlc_manager.py fields create-option --project asgard --field initiative --option "new-initiative"
+    sdlc_manager.py fields discover --project asgard
 
-    sdlc_manager.py metrics cycle-time --project mount-olympus [--days 30] [--type capability]
-    sdlc_manager.py metrics throughput --project mount-olympus [--weeks 4]
-    sdlc_manager.py metrics wip-age --project mount-olympus
-    sdlc_manager.py metrics column-time --project mount-olympus --number 42
+    sdlc_manager.py metrics cycle-time --project asgard [--days 30] [--type capability]
+    sdlc_manager.py metrics throughput --project asgard [--weeks 4]
+    sdlc_manager.py metrics wip-age --project asgard
+    sdlc_manager.py metrics column-time --project asgard --number 42
 
     sdlc_manager.py milestones create --repo athena-service --title "Pilot: Auth MVP" --due-date 2026-04-15
     sdlc_manager.py milestones list --repo athena-service [--state open]
     sdlc_manager.py milestones progress --repo athena-service --milestone 1
     sdlc_manager.py milestones link --repo athena-service --issue 42 --milestone 1
 
-    sdlc_manager.py rollout status [--team mount-olympus]
+    sdlc_manager.py rollout status [--team asgard]
     sdlc_manager.py rollout gap-analysis --repo athena-service
     sdlc_manager.py rollout deploy-labels --repo athena-service
     sdlc_manager.py rollout deploy-templates --repo athena-service
     sdlc_manager.py rollout deploy-all --repo athena-service
     sdlc_manager.py rollout update --repo athena-service --field labels --status complete
 
-    sdlc_manager.py flow set-field --project mount-olympus --repo R --number N --field Initiative --option <name>
-    sdlc_manager.py flow field-options --project mount-olympus --field Objective
+    sdlc_manager.py flow set-field --project asgard --repo R --number N --field Initiative --option <name>
+    sdlc_manager.py flow field-options --project asgard --field Objective
     sdlc_manager.py flow discover-project --repo athena-service
     sdlc_manager.py flow link-sub-issue --parent-repo R --parent-number P --child-repo R2 --child-number C
     sdlc_manager.py flow verify-label --repo athena-service --name high-priority [--color D93F0B] [--description "..."]
@@ -236,7 +239,11 @@ _VENDORED_PROJECT_MAPPINGS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "project-mappings.json"
 )
 _VENDORED_SDLC_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "config" / "sdlc-schema.json"
-PROJECT_CHOICES = ("mount-olympus", "asgard", "jeff-intent")
+# Active boards only (KTD17): Jeff Intent, Asgard, CAMPPS. Mount Olympus
+# (former project #1) is retired historical context and is NOT an active board
+# choice; legacy Olympus card reads are still handled by the status/WIP helpers
+# below for any external override that points at the old project.
+PROJECT_CHOICES = ("jeff-intent", "asgard", "campps")
 LIVE_LEGACY_STATUS_ALIASES = {
     "In Progress": "Assigned",
     "In Development": "Assigned",
@@ -2757,8 +2764,11 @@ _ISSUE_TYPES = (
     "context-update",
     "objective",
 )
-_TEAM_CHOICES = ("asgard", "olympus")
-_TEAM_SAFE_STATUSES = {"asgard": "Shaping", "olympus": "Backlog"}
+# Active prepared-issue teams (KTD17): Asgard (shaping/rapid-action profile) and
+# CAMPPS (strict actionable dispatch profile on the initiative execution board).
+# Mount Olympus is retired historical context and is not an active prepare target.
+_TEAM_CHOICES = ("asgard", "campps")
+_TEAM_SAFE_STATUSES = {"asgard": "Shaping", "campps": "Idea"}
 _DISPATCH_ACTIONABLE_TYPES = frozenset({"capability", "enhancement", "defect"})
 _ISSUE_TYPE_LABELS = {
     "capability": ["capability", "hermes-task", "needs-plan"],
@@ -3521,10 +3531,10 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
             blocking.append("Missing target project")
         if not issue.risk:
             blocking.append("Missing author-visible risk metadata")
-    elif issue.team == "olympus":
+    elif issue.team == "campps":
         if issue.issue_type not in _DISPATCH_ACTIONABLE_TYPES:
             blocking.append(
-                f"Issue type {issue.issue_type!r} is not an Olympus dispatch-ready task type"
+                f"Issue type {issue.issue_type!r} is not a CAMPPS dispatch-ready task type"
             )
     elif issue.team == "asgard":
         required = {
@@ -4483,12 +4493,12 @@ def issue_create(
     projects = get_projects_for_repo(config, repo)
     project_name: str | None = None
     if projects:
-        # Prefer the user's default_project if it's one of the matches
+        # Prefer the user's default_project if it's one of the matches.
+        # No board is a hardcoded canonical default (KTD17): work is never
+        # silently routed to a board the operator did not name.
         default_project = defaults.get("default_project")
         for p in projects:
-            if (
-                p.get("name", "").lower() == (default_project or "").lower() or p.get("number") == 1
-            ):  # mount-olympus is #1; canonical fallback
+            if default_project and p.get("name", "").lower() == default_project.lower():
                 project_name = next(
                     (
                         k
@@ -4499,7 +4509,7 @@ def issue_create(
                 )
                 break
         if not project_name:
-            # Just use the first match
+            # Just use the first repo-mapped match (no implicit project-#1 default).
             project_name = next(
                 iter(config.get("project_mappings", {}).get("projects", {}).keys()),
                 None,

@@ -1,26 +1,16 @@
 {
   "_comment": "Vendored canonical project mapping for the Infiquetra org. Plugin reads this by default. Override at $INFIQUETRA_SDLC_PATH/config/project-mappings.json (per the resolution order in load_config). Project node IDs and field/option IDs are NOT cached here — they rotate on rename/recreate; fetched live via _resolve_project_field and discover_project_field_options.",
-  "_provenance": "Verified 2026-05-29: `gh project list --owner infiquetra` shows Olympus #1, Asgard #2, and Jeff Intent #3. `gh repo list infiquetra --json name --jq '.[].name'` repo list below remains the canonical Olympus repo set for default board_add routing. The id field is captured for board_add convenience; if it rotates, re-run `gh project view N --owner infiquetra --format json -q .id` and update.",
+  "_provenance": "Verified 2026-06-20: `gh project list --owner infiquetra` shows the active boards CAMPPS #4, Jeff Intent #3, and Asgard #2. Mount Olympus (former project #1) was retired 2026-06-17 and is closed externally; it is preserved only as historical context in sdlc-schema.json and is NOT an active routing target. No board is a default: board commands require an explicit --project (KTD17). The `repositories` lists are intentionally empty — repo-based default routing was removed so work is never silently routed to a board.",
   "organization": "infiquetra",
   "projects": {
-    "mount-olympus": {
-      "number": 1,
-      "id": "PVT_kwDODdfJoc4BVHOl",
-      "name": "Olympus",
-      "board_key": "olympus",
-      "workflow": "olympus_execution",
-      "_id_note": "Project node id captured 2026-05-04. If it rotates (project rename/recreate), re-fetch via: gh project view 1 --owner infiquetra --format json -q .id",
-      "repositories": [
-        "campps-context-library",
-        "campps-mvp",
-        "github-actions-runners",
-        "infiquetra-hermes-plugins",
-        "infiquetra-aws-infra",
-        "infiquetra-claude-plugins",
-        "infiquetra-sdlc",
-        "mimir",
-        "mimir-context-library"
-      ]
+    "jeff-intent": {
+      "number": 3,
+      "id": "PVT_kwDODdfJoc4BZLMK",
+      "name": "Jeff Intent",
+      "board_key": "jeff_intent",
+      "workflow": "intent_flow",
+      "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 3 --owner infiquetra --format json -q .id",
+      "repositories": []
     },
     "asgard": {
       "number": 2,
@@ -31,13 +21,13 @@
       "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 2 --owner infiquetra --format json -q .id",
       "repositories": []
     },
-    "jeff-intent": {
-      "number": 3,
-      "id": "PVT_kwDODdfJoc4BZLMK",
-      "name": "Jeff Intent",
-      "board_key": "jeff_intent",
-      "workflow": "intent_flow",
-      "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 3 --owner infiquetra --format json -q .id",
+    "campps": {
+      "number": 4,
+      "id": "PVT_kwDODdfJoc4BanD0",
+      "name": "CAMPPS",
+      "board_key": "campps",
+      "workflow": "campps_initiative",
+      "_id_note": "Project node id captured 2026-06-20. If it rotates, re-fetch via: gh project view 4 --owner infiquetra --format json -q .id",
       "repositories": []
     }
   },

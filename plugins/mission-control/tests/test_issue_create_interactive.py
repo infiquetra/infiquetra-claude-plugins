@@ -291,7 +291,7 @@ def test_metadata_label_failure_does_not_abort_other_steps() -> None:
             repo="campps-mvp",
             issue_number=42,
             issue_type="capability",
-            project_name="mount-olympus",
+            project_name="campps",
             parent=("campps-context-library", 1),
             field_values={"Initiative": "olympus-quality"},
             fmt="text",

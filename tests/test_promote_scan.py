@@ -29,9 +29,7 @@ import pytest
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "plugins" / "saga" / "scripts" / "promote_scan.py"
 SKILL = ROOT / "plugins" / "saga" / "skills" / "promote" / "SKILL.md"
-CONTRACT = (
-    ROOT / "plugins" / "saga" / "skills" / "promote" / "references" / "promotion-contract.md"
-)
+CONTRACT = ROOT / "plugins" / "saga" / "skills" / "promote" / "references" / "promotion-contract.md"
 
 _spec = importlib.util.spec_from_file_location("promote_scan", SCRIPT)
 assert _spec and _spec.loader
@@ -76,9 +74,7 @@ def _entry(rule: str, transcendent: str | None = None) -> str:
 def test_golden_vectors():
     """The §2 recipe reproduces the contract's real sha256[:12] oracle values."""
     assert (
-        promote_scan.rule_hash(
-            "A verification gate that is named but not executed is not a gate."
-        )
+        promote_scan.rule_hash("A verification gate that is named but not executed is not a gate.")
         == "87c4c366deb7"
     )
     assert (
@@ -102,7 +98,9 @@ def test_normalization_is_emphasis_and_case_insensitive():
     """Re-bolding / casing / trailing punct are cosmetic — same identity (§2)."""
     a = promote_scan.rule_hash("A verification gate that is named but not executed is not a gate.")
     b = promote_scan.rule_hash("A *verification* gate that is NAMED but not executed is not a gate")
-    c = promote_scan.rule_hash("  a verification gate that is named but not executed is not a gate;")
+    c = promote_scan.rule_hash(
+        "  a verification gate that is named but not executed is not a gate;"
+    )
     assert a == b == c
 
 
@@ -361,7 +359,13 @@ def test_main_human_in_process(tmp_path, capsys):
 
 def test_main_key_in_process(capsys):
     rc = promote_scan.main(
-        ["key", "--repo", "r", "--rule", "A verification gate that is named but not executed is not a gate."]
+        [
+            "key",
+            "--repo",
+            "r",
+            "--rule",
+            "A verification gate that is named but not executed is not a gate.",
+        ]
     )
     assert rc == 0
     assert capsys.readouterr().out.strip() == "r:87c4c366deb7"

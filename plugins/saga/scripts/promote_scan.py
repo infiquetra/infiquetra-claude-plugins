@@ -321,8 +321,7 @@ def _recurrence_clusters(candidates: Iterable[Candidate], threshold: int) -> lis
                 "repos": repos,
                 "keys": sorted({c.key for c in members}),
                 "occurrences": [
-                    {"repo": c.repo, "backlink": c.backlink, "key": c.key}
-                    for c in members
+                    {"repo": c.repo, "backlink": c.backlink, "key": c.key} for c in members
                 ],
                 "declared_transcendent": any(c.transcendent for c in members),
             }
@@ -374,9 +373,7 @@ def _neutralize(text: str) -> str:
     while making it structurally inert (§5 ledger integrity).
     """
     return (
-        text.replace("<!--", "<!‑‑")
-        .replace("-->", "‑‑>")
-        .replace("promote-keys:", "promote‑keys:")
+        text.replace("<!--", "<!‑‑").replace("-->", "‑‑>").replace("promote-keys:", "promote‑keys:")
     )
 
 
@@ -554,11 +551,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Root holding the per-repo clones (default ~/workspace/infiquetra)",
     )
     sc.add_argument(
-        "--threshold", type=int, default=DEFAULT_THRESHOLD,
+        "--threshold",
+        type=int,
+        default=DEFAULT_THRESHOLD,
         help="Distinct-repo count to nominate a recurrence cluster (default 2)",
     )
     sc.add_argument(
-        "--context-library", default=DEFAULT_CONTEXT_LIBRARY,
+        "--context-library",
+        default=DEFAULT_CONTEXT_LIBRARY,
         help="Repo dir excluded from candidates; read only for the ledger",
     )
     sc.add_argument("--json", action="store_true", help="Emit full JSON payload")
@@ -592,12 +592,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"workspace: {result.workspace_root}")
     print(f"repos scanned: {len(result.repos_scanned)} (context-library excluded)")
     print(f"already-promoted keys in ledger: {result.ledger_key_count}")
-    print(f"candidates: {len(result.candidates)} "
-          f"(filtered by ledger: {result.filtered_by_ledger}, "
-          f"backstop-skipped: {result.skipped_promoted})")
+    print(
+        f"candidates: {len(result.candidates)} "
+        f"(filtered by ledger: {result.filtered_by_ledger}, "
+        f"backstop-skipped: {result.skipped_promoted})"
+    )
     print(f"declared transcendent: {len(result.marked)}")
-    print(f"recurrence clusters (>= {result.threshold} repos): "
-          f"{len(result.recurrence_clusters)}")
+    print(f"recurrence clusters (>= {result.threshold} repos): {len(result.recurrence_clusters)}")
     for cl in result.recurrence_clusters:
         flag = " [declared]" if cl["declared_transcendent"] else ""
         print(f"  - {cl['hash']} x{len(cl['repos'])}{flag}: {cl['normalized'][:80]}")

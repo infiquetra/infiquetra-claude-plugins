@@ -9,7 +9,7 @@ description: |
   anonymize, personal data, privacy.
 
   NOT for: general security concerns (security-reviewer); legal determinations (flags for legal review).
-model: inherit
+model: opus
 color: magenta
 ---
 

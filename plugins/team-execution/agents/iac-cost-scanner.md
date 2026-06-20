@@ -5,7 +5,7 @@ description: |
   and cost-risk signals.
 
   Candidate tools: Checkov, Trivy.
-model: inherit
+model: haiku
 color: blue
 ---
 

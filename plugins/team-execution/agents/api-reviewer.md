@@ -8,7 +8,7 @@ description: |
   SDK, contract, breaking change.
 
   NOT for: implementation security (security-reviewer's job); infrastructure concerns.
-model: inherit
+model: opus
 color: green
 ---
 

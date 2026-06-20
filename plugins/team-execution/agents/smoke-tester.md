@@ -3,7 +3,7 @@ name: smoke-tester
 description: |
   Tester validator for team-execution. Runs the narrowest meaningful smoke tests for services,
   CLIs, health endpoints, or configured smoke targets.
-model: inherit
+model: sonnet
 color: yellow
 ---
 

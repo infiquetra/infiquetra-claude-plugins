@@ -3,7 +3,7 @@ name: concurrency-tester
 description: |
   Tester validator for team-execution. Tests concurrent execution, locks, retries,
   idempotency, races, and worker coordination.
-model: inherit
+model: sonnet
 color: purple
 ---
 

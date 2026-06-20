@@ -13,7 +13,7 @@ description: |
 
   NOT for: code quality specifics (code-quality-reviewer); security-specific concerns
   (security-reviewer's job); test coverage (testing-reviewer).
-model: inherit
+model: opus
 color: purple
 ---
 

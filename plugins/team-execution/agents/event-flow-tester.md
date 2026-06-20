@@ -3,7 +3,7 @@ name: event-flow-tester
 description: |
   Tester validator for team-execution. Validates queues, streams, webhooks, pub/sub,
   retries, idempotency, and async event paths.
-model: inherit
+model: sonnet
 color: purple
 ---
 

@@ -3,7 +3,7 @@ name: sdk-regression-tester
 description: |
   Tester validator for team-execution. Checks SDK compatibility, generated client behavior,
   packaging smoke tests, and regression fixtures.
-model: inherit
+model: sonnet
 color: green
 ---
 

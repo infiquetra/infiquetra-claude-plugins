@@ -5,7 +5,7 @@ description: |
   workflows after reviewer, scanner, CI, and required tester gates pass.
 
   NOT for: production, staging, force-push, branch deletion, or credential changes.
-model: inherit
+model: haiku
 color: blue
 ---
 

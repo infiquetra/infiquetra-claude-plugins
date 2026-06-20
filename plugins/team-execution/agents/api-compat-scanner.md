@@ -5,7 +5,7 @@ description: |
   changes.
 
   Candidate tools: oasdiff, Schemathesis.
-model: inherit
+model: haiku
 color: green
 ---
 

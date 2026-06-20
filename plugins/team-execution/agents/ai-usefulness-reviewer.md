@@ -11,7 +11,7 @@ description: |
 
   NOT for: dumbing down content; general documentation quality (clarity-reviewer).
   Focus: making specs structured and explicit for AI consumption.
-model: inherit
+model: opus
 color: yellow
 ---
 

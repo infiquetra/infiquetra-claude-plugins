@@ -5,7 +5,7 @@ description: |
   workflows and visible behavior.
 
   Candidate tool: Playwright.
-model: inherit
+model: sonnet
 color: cyan
 ---
 

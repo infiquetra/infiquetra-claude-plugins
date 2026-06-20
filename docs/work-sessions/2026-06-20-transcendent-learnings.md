@@ -56,7 +56,21 @@ wheel in this env; unrelated to saga).
 - `5c43d68` `feat(saga): register /promote + release & docs surfaces (U5)`
 - `aebf1c0` `fix(saga): harden promote per team-execution review`
 
-## Next step
+## Final merge status
 
-Open the `feat/transcendent-learnings` PR, get CI green, merge. Then land U6 (sdlc practice-doc +
-DECISIONS) and the U1 context-library README note as their own light PRs.
+All three Option B PRs are merged — the feature is shipped end to end.
+
+| Repo | PR | Merge commit | Notes |
+| --- | --- | --- | --- |
+| `infiquetra-claude-plugins` | [#228](https://github.com/infiquetra/infiquetra-claude-plugins/pull/228) | `57f3d4f` (squash) | U1–U5; saga `0.23.0` on `origin/main`, CI green |
+| `infiquetra-sdlc` | #44 | `f71116c` | U6 — practice-doc promotion path + DECISIONS entry |
+| `infiquetra-context-library` | #52 | `02315f0` (squash) | U1 README note — promoted-entry convention |
+
+Governance note: context-library #52 was admin-merged at the operator's explicit direction. Its
+branch protection (1 required review) was satisfied by override, not an independent reviewer — the
+content went through the four-reviewer team-execution pass pre-merge, but no second human reviewed
+it. The other two PRs merged through the normal flow.
+
+Worktrees for all three repos were removed after merge; the `feat/transcendent-learnings` branch was
+deleted (local + remote). The only deferred follow-up is QUEUED `#promote-review-hardening` (the four
+frozen-contract items the review surfaced but did not change).

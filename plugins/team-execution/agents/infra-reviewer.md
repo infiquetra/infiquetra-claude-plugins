@@ -9,7 +9,7 @@ description: |
   multi-region, infrastructure, AWS.
 
   NOT for: application-level security (security-reviewer's job); API design concerns.
-model: inherit
+model: opus
 color: blue
 ---
 

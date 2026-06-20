@@ -5,7 +5,7 @@ description: |
   claims when performance risk is in scope.
 
   Candidate tool: k6.
-model: inherit
+model: sonnet
 color: magenta
 ---
 

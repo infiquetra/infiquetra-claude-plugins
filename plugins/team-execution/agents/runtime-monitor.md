@@ -3,7 +3,7 @@ name: runtime-monitor
 description: |
   Monitor validator for team-execution. Checks runtime health using repository-appropriate
   observability after nonprod deploy or publish.
-model: inherit
+model: haiku
 color: blue
 ---
 

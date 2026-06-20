@@ -9,7 +9,7 @@ description: |
 
   NOT for: security concerns (security-reviewer); test coverage (testing-reviewer);
   style/formatting (linter handles that).
-model: inherit
+model: opus
 color: cyan
 ---
 

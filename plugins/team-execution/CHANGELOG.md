@@ -4,6 +4,17 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.1.0] - 2026-06-20
+
+### Changed
+- Teammate agents now run on role-appropriate models instead of all inheriting the
+  session model: the 10 reviewers on **Opus** (deep judgment), the 8 testers on
+  **Sonnet**, and the 7 scanners/monitors on **Haiku** (mechanical tool-running).
+  Set per agent via the `model:` frontmatter; any agent can be returned to `inherit`
+  to track the session model. Reasoning effort is unchanged (session-level).
+
+---
+
 ## [2.0.0] - 2026-05-27
 
 ### Added

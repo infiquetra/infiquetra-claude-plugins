@@ -3,7 +3,7 @@ name: scenario-tester
 description: |
   Tester validator for team-execution. Executes scenario flows from plan context or
   `.team-execution.json` scenario_hints.
-model: inherit
+model: sonnet
 color: yellow
 ---
 

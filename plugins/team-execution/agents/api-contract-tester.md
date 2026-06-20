@@ -5,7 +5,7 @@ description: |
   behavior, and generated client expectations.
 
   Candidate tools: Schemathesis, oasdiff.
-model: inherit
+model: sonnet
 color: green
 ---
 

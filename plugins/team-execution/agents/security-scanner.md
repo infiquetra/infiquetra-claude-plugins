@@ -5,7 +5,7 @@ description: |
   tools where available.
 
   Candidate tools: Semgrep, Bandit, Gitleaks, detect-secrets.
-model: inherit
+model: haiku
 color: orange
 ---
 

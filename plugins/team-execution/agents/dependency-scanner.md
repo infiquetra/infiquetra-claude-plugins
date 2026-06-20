@@ -5,7 +5,7 @@ description: |
   inputs for vulnerable or risky supply-chain changes.
 
   Candidate tools: pip-audit, Trivy.
-model: inherit
+model: haiku
 color: orange
 ---
 

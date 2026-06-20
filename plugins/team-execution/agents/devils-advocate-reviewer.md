@@ -9,7 +9,7 @@ description: |
 
   NOT for: blocking on theoretical concerns; redesigning the solution; doing the security
   reviewer's job (auth/secrets); doing the architecture reviewer's job (patterns/conventions).
-model: inherit
+model: opus
 color: red
 ---
 

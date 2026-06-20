@@ -2,8 +2,8 @@ schema_version: 1
 model_name: saga-comprehensive-documentation
 source_of_truth: Claude Saga in this repository
 command_surface:
-  command_files: 18
-  routable_commands: 17
+  command_files: 19
+  routable_commands: 18
   alias_count: 1
   alias_note: /ceo-review is an alias for /founder-review, not a separate lifecycle node.
 
@@ -427,6 +427,33 @@ commands:
       - Letting retro silently edit existing directive files.
       - Treating retro as a required blocker for /loop.
     example_invocation: /retro task-saga-comprehensive-documentation
+  promote:
+    command: /promote
+    phase: retro
+    lifecycle_role: cross-repo journal feeder
+    source_refs:
+      - plugins/saga/commands/promote.md
+      - plugins/saga/skills/promote/SKILL.md
+      - plugins/saga/skills/promote/references/promotion-contract.md
+    purpose: Promote the select few cross-repo transcendent learnings into infiquetra-context-library as distilled org standards.
+    use_when:
+      - The same lesson has recurred across repos, or a learning was marked transcendent.
+      - The workspace journal layer should lift org-wide standards from per-repo learnings.
+    do_not_use_when:
+      - The lesson is repo-specific, or you want a bulk harvest of every generalizable rule.
+      - The user wants implementation, SDLC mutation, or a write back to a source repo.
+    inputs: Workspace root or repo subset; an optional recurrence threshold.
+    outputs: Proposed gated upserts into context-library's LEARNINGS.md.
+    durable_artifacts: [infiquetra-context-library/docs/engineering-journal/LEARNINGS.md]
+    saga_state_behavior: Terminal and SDLC read-only; writes only to context-library, never to the saga.
+    routes_in: [/retro declared marker, recurrence across repos]
+    routes_out: []
+    gates: Every context-library write is propose-diff-and-wait; idempotent via the drift-stable source-key ledger.
+    ownership_boundary: Owns the cross-repo journal feed into context-library, not source-repo or SDLC mutation.
+    common_mistakes:
+      - Treating it as a bulk copy of every generalizable rule instead of the select few.
+      - Writing back to a source repo or weakening the context-library self-feed guard.
+    example_invocation: /promote ~/workspace/infiquetra
   resume:
     command: /resume
     phase: work

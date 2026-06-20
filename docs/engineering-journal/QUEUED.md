@@ -327,3 +327,10 @@ scrolls the real tag off the page and reports "no deployment found".
 - Current behavior degrades gracefully (no crash, just a missing env line).
 - Fix options when triggered: paginate until a tag-ref is found or N pages exhausted, or use the
   `environment` filter combined with a larger page. See [LEARNINGS.md#gh-api-f-defaults-post](LEARNINGS.md#gh-api-f-defaults-post).
+
+### Plan-dictated per-teammate effort levels for `/work` + team-execution  {#team-execution-per-teammate-effort}
+
+**Priority.** P3 (→ P2 if Claude Code ships an `effort:` agent-frontmatter field).
+**Effort.** Multi-day — re-architect team-execution's spawn onto the Workflow engine (where `agent()` accepts `effort`), then teach `/work` to parse and pass per-teammate effort.
+**Worth it when.** Uniform session effort proves too coarse — you want deep reasoning concentrated on specific reviewers (e.g. security, architecture) without paying it across the mechanical scanners — or Claude Code adds an `effort:` agent-frontmatter field (at which point most of this collapses to a cheap frontmatter edit mirroring the model tiers).
+**Context.** Companion to the v2.1.0 per-teammate **model** tiers (reviewers Opus / testers Sonnet / scanners+monitors Haiku). Model is settable per agent because it is frontmatter; **effort is not** — per-agent effort only exists inside a Workflow script (`agent(..., {effort})`), and team-execution spawns subagents by type, so all teammates inherit one session-global effort. Target design (Jeff, 2026-06-20): the plan carries an effort level per teammate (e.g. a `validator → effort` table) and `/work` ingests it during the work phase to set each teammate's effort at spawn. Feasibility hinges on the spawn path exposing effort — today that means routing team-execution through the Workflow engine. Note Haiku may clamp the top effort tiers; verify per-model effort support when built.

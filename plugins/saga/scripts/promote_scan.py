@@ -327,6 +327,158 @@ def _recurrence_clusters(candidates: Iterable[Candidate], threshold: int) -> lis
     return clusters
 
 
+# --- §4/§5: the gated upsert (write half, U4) ------------------------------
+
+#: §4 — the promoted entry's `**Sources.**` line.
+SOURCES_RE = re.compile(r"^\*\*Sources\.\*\*\s*(.*)$")
+#: First dated section header — the newest-first insertion anchor.
+DATE_HEADER_RE = re.compile(r"^##\s+\d{4}-\d{2}-\d{2}\b")
+#: The canonical destination journal (R10 write-surface guard).
+CONTEXT_LIBRARY_JOURNAL = JOURNAL_RELPATH
+
+
+@dataclass
+class Origin:
+    """One source occurrence feeding a promoted entry: a backlink + its key."""
+
+    backlink: str  # §4 `repo/path:line` provenance pointer (may drift, R9)
+    key: str  # §2 drift-stable `repo:hash` idempotency key
+
+
+@dataclass
+class Promotion:
+    """A distilled cluster ready to upsert (the agent supplies rule/mechanism)."""
+
+    date: str
+    title: str
+    rule: str
+    mechanism: str
+    origins: list[Origin]
+
+    @property
+    def keys(self) -> list[str]:
+        return [o.key for o in self.origins]
+
+
+def render_entry(promo: Promotion) -> str:
+    """Render the contract §4 promoted-entry template (Rule + Mechanism only)."""
+    sources = "; ".join(o.backlink for o in promo.origins)
+    keys = "; ".join(o.key for o in promo.origins)
+    return (
+        f"## {promo.date}\n\n"
+        f"### {promo.title}\n\n"
+        f"**Author.** promote (saga)\n"
+        f"**Generalizable rule.** {promo.rule}\n"
+        f"**Mechanism.** {promo.mechanism}\n"
+        f"**Sources.** {sources}\n"
+        f"<!-- promote-keys: {keys} -->\n"
+    )
+
+
+@dataclass
+class _PromotedEntry:
+    keys: set[str]
+    keys_line: int  # index of the `<!-- promote-keys: ... -->` line
+    sources_line: int  # index of the `**Sources.**` line (or -1)
+
+
+def _promoted_entries(lines: list[str]) -> list[_PromotedEntry]:
+    """Index existing context-library entries by their promote-keys + line refs."""
+    starts = [i for i, ln in enumerate(lines) if re.match(r"^###\s", ln)]
+    if not starts:
+        return []
+    bounds = list(zip(starts, [*starts[1:], len(lines)], strict=True))
+    entries: list[_PromotedEntry] = []
+    for start, end in bounds:
+        keys: set[str] = set()
+        keys_line = -1
+        sources_line = -1
+        for i in range(start, end):
+            km = PROMOTE_KEYS_RE.search(lines[i])
+            if km:
+                keys_line = i
+                keys |= {k.strip() for k in km.group(1).split(";") if k.strip()}
+            if SOURCES_RE.match(lines[i]):
+                sources_line = i
+        if keys_line != -1:
+            entries.append(_PromotedEntry(keys, keys_line, sources_line))
+    return entries
+
+
+def compute_upsert(journal_text: str, promo: Promotion) -> dict:
+    """Compute (purely, no I/O) the upsert for ``promo`` against the journal.
+
+    Returns ``{action, new_text, added_keys, ...}`` — the proposed change only;
+    the gated WRITE is the caller's (the SKILL's) approved action. This purity
+    *is* AE5: a nomination produces a proposed diff and changes nothing on disk
+    until approval.
+
+    - ``noop``   — every origin key already present (§5 idempotency, AE1).
+    - ``update`` — an existing entry shares >=1 key; add the new origins'
+      backlinks + keys, no new entry (§5 upsert, AE3 third-repo case).
+    - ``create`` — no key overlap; prepend a new newest-first entry.
+    """
+    lines = journal_text.splitlines()
+    entries = _promoted_entries(lines)
+    origin_keys = set(promo.keys)
+
+    match = next((e for e in entries if e.keys & origin_keys), None)
+    if match is not None:
+        new_origins = [o for o in promo.origins if o.key not in match.keys]
+        if not new_origins:
+            return {"action": "noop", "new_text": journal_text, "added_keys": []}
+        out = list(lines)
+        if match.sources_line != -1:
+            out[match.sources_line] = (
+                out[match.sources_line].rstrip()
+                + "; "
+                + "; ".join(o.backlink for o in new_origins)
+            )
+        km = PROMOTE_KEYS_RE.search(out[match.keys_line])
+        existing = [k.strip() for k in km.group(1).split(";") if k.strip()]
+        merged = existing + [o.key for o in new_origins]
+        out[match.keys_line] = f"<!-- promote-keys: {'; '.join(merged)} -->"
+        return {
+            "action": "update",
+            "new_text": "\n".join(out) + ("\n" if journal_text.endswith("\n") else ""),
+            "added_keys": [o.key for o in new_origins],
+        }
+
+    # create: insert a new entry newest-first (before the first dated header).
+    entry = render_entry(promo)
+    insert_at = next((i for i, ln in enumerate(lines) if DATE_HEADER_RE.match(ln)), None)
+    if insert_at is None:
+        body = journal_text.rstrip("\n") + "\n\n" + entry
+    else:
+        head = "\n".join(lines[:insert_at]).rstrip("\n")
+        tail = "\n".join(lines[insert_at:])
+        body = f"{head}\n\n{entry}\n{tail}".rstrip("\n") + "\n"
+    return {"action": "create", "new_text": body, "added_keys": list(promo.keys)}
+
+
+def context_library_journal(workspace_root: Path, context_library: str) -> Path:
+    """The one path the pass may write (R10)."""
+    return workspace_root / context_library / CONTEXT_LIBRARY_JOURNAL
+
+
+def assert_write_target(path: Path, workspace_root: Path, context_library: str) -> None:
+    """Refuse any write outside context-library's journal (R10 write-surface guard)."""
+    allowed = context_library_journal(workspace_root, context_library).resolve()
+    if path.resolve() != allowed:
+        raise ValueError(
+            f"refusing to write outside the context-library journal: {path} "
+            f"(only {allowed} is writable)"
+        )
+
+
+def write_promotion(
+    path: Path, new_text: str, workspace_root: Path, context_library: str = DEFAULT_CONTEXT_LIBRARY
+) -> None:
+    """Write an approved upsert, enforcing the write-surface guard first."""
+    assert_write_target(path, workspace_root, context_library)
+    path.write_text(new_text, encoding="utf-8")
+
+
 # --- CLI --------------------------------------------------------------------
 
 

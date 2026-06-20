@@ -400,3 +400,150 @@ def test_skill_does_not_redefine_the_key_recipe():
     text = SKILL.read_text(encoding="utf-8")
     # the SKILL must not embed a second sha256 recipe — that lives only in the contract
     assert "sha256" not in text.lower(), "key recipe must live only in promotion-contract.md"
+
+
+def test_skill_states_gate_and_context_library_boundary():
+    """U4 contract: SKILL.md states the Tier-2 gate and the write-surface boundary."""
+    text = SKILL.read_text(encoding="utf-8")
+    assert "propose-diff-and-wait" in text
+    # writes only to context-library; never back to a source repo; SDLC read-only
+    assert "infiquetra-context-library" in text
+    assert "READ-ONLY on the SDLC" in text or "read-only on the sdlc" in text.lower()
+    assert "never writes back" in text.lower() or "never write" in text.lower()
+
+
+# --- U4: the gated upsert (write half) -------------------------------------
+
+
+def _promotion(origins, title="A declared-but-unexecuted check is not a gate"):
+    return promote_scan.Promotion(
+        date="2026-06-20",
+        title=title,
+        rule="A check declared but never executed provides no protection.",
+        mechanism="A gate's value is in its execution, not its declaration.",
+        origins=[promote_scan.Origin(backlink=b, key=k) for b, k in origins],
+    )
+
+
+def _library_with_entry(keys_and_backlinks) -> str:
+    sources = "; ".join(b for b, _ in keys_and_backlinks)
+    keys = "; ".join(k for _, k in keys_and_backlinks)
+    return (
+        "# Learnings — context library\n\n---\n\n"
+        "## 2026-06-19\n\n"
+        "### A declared-but-unexecuted check is not a gate\n\n"
+        "**Author.** promote (saga)\n"
+        "**Generalizable rule.** A check declared but never executed provides no protection.\n"
+        "**Mechanism.** A gate's value is in its execution.\n"
+        f"**Sources.** {sources}\n"
+        f"<!-- promote-keys: {keys} -->\n"
+    )
+
+
+def test_render_entry_matches_contract_template():
+    entry = promote_scan.render_entry(
+        _promotion([("infiquetra-home-lab/x:1", "infiquetra-home-lab:87c4c366deb7")])
+    )
+    assert "**Author.** promote (saga)" in entry
+    assert "**Generalizable rule.**" in entry
+    assert "**Mechanism.**" in entry
+    assert "**Sources.** infiquetra-home-lab/x:1" in entry
+    assert "<!-- promote-keys: infiquetra-home-lab:87c4c366deb7 -->" in entry
+
+
+def test_upsert_create_when_no_key_overlap():
+    library = "# Learnings\n\n---\n\n## 2026-06-18\n\n### Unrelated  {#u}\n\n**Author.** human\n"
+    promo = _promotion([("repo-a/x:1", "repo-a:aaaaaaaaaaaa")])
+    result = promote_scan.compute_upsert(library, promo)
+    assert result["action"] == "create"
+    # exactly one new promoted entry, inserted newest-first (above 2026-06-18)
+    assert result["new_text"].count("<!-- promote-keys:") == 1
+    assert result["new_text"].index("2026-06-20") < result["new_text"].index("2026-06-18")
+
+
+def test_upsert_three_repo_cluster_is_one_entry_three_sources():
+    """AE3: a 3-repo cluster yields ONE entry with three backlinks + three keys."""
+    promo = _promotion(
+        [
+            ("repo-a/x:1", "repo-a:aaaaaaaaaaaa"),
+            ("repo-b/y:2", "repo-b:bbbbbbbbbbbb"),
+            ("repo-c/z:3", "repo-c:cccccccccccc"),
+        ]
+    )
+    result = promote_scan.compute_upsert("# L\n\n---\n", promo)
+    assert result["action"] == "create"
+    assert result["new_text"].count("### ") == 1  # one entry, not three
+    assert result["new_text"].count("<!-- promote-keys:") == 1
+    keys_line = [ln for ln in result["new_text"].splitlines() if "promote-keys:" in ln][0]
+    assert keys_line.count(";") == 2  # three keys, two separators
+
+
+def test_upsert_noop_when_all_keys_present():
+    """AE1: re-running with an already-present key-set yields no change."""
+    library = _library_with_entry(
+        [("repo-a/x:1", "repo-a:aaaaaaaaaaaa"), ("repo-b/y:2", "repo-b:bbbbbbbbbbbb")]
+    )
+    promo = _promotion(
+        [("repo-a/x:1", "repo-a:aaaaaaaaaaaa"), ("repo-b/y:2", "repo-b:bbbbbbbbbbbb")]
+    )
+    result = promote_scan.compute_upsert(library, promo)
+    assert result["action"] == "noop"
+    assert result["new_text"] == library  # byte-for-byte unchanged
+    assert result["added_keys"] == []
+
+
+def test_upsert_update_adds_new_origin_only():
+    """AE3 (third repo later): an overlapping key-set upserts one backlink + one key."""
+    library = _library_with_entry(
+        [("repo-a/x:1", "repo-a:aaaaaaaaaaaa"), ("repo-b/y:2", "repo-b:bbbbbbbbbbbb")]
+    )
+    promo = _promotion(
+        [
+            ("repo-b/y:2", "repo-b:bbbbbbbbbbbb"),  # already known → not re-added
+            ("repo-c/z:3", "repo-c:cccccccccccc"),  # new origin
+        ]
+    )
+    result = promote_scan.compute_upsert(library, promo)
+    assert result["action"] == "update"
+    assert result["added_keys"] == ["repo-c:cccccccccccc"]
+    assert result["new_text"].count("<!-- promote-keys:") == 1  # still one entry
+    assert result["new_text"].count("### ") == 1
+    keys_line = [ln for ln in result["new_text"].splitlines() if "promote-keys:" in ln][0]
+    assert "repo-c:cccccccccccc" in keys_line
+    assert "repo-c/z:3" in result["new_text"]
+
+
+def test_compute_upsert_is_pure_no_disk_write(tmp_path):
+    """AE5: computing the proposal touches nothing on disk until approval."""
+    journal = tmp_path / "LEARNINGS.md"
+    original = "# L\n\n---\n\n## 2026-06-18\n\n### x  {#x}\n\n**Author.** human\n"
+    journal.write_text(original)
+    promo = _promotion([("repo-a/x:1", "repo-a:aaaaaaaaaaaa")])
+    result = promote_scan.compute_upsert(journal.read_text(), promo)
+    assert result["action"] == "create"
+    assert journal.read_text() == original  # the file is untouched — proposal only
+
+
+def test_write_surface_guard_refuses_foreign_path(tmp_path):
+    """R10: the writer refuses any path outside context-library's journal."""
+    workspace = tmp_path
+    foreign = workspace / "infiquetra-home-lab" / "docs" / "engineering-journal" / "LEARNINGS.md"
+    foreign.parent.mkdir(parents=True)
+    import pytest
+
+    with pytest.raises(ValueError, match="context-library"):
+        promote_scan.assert_write_target(foreign, workspace, "infiquetra-context-library")
+    with pytest.raises(ValueError):
+        promote_scan.write_promotion(foreign, "x", workspace, "infiquetra-context-library")
+    assert not foreign.exists()  # nothing was written to the refused path
+
+
+def test_write_promotion_writes_the_allowed_path(tmp_path):
+    workspace = tmp_path
+    dest = promote_scan.context_library_journal(workspace, "infiquetra-context-library")
+    dest.parent.mkdir(parents=True)
+    dest.write_text("# L\n\n---\n")
+    promo = _promotion([("repo-a/x:1", "repo-a:aaaaaaaaaaaa")])
+    result = promote_scan.compute_upsert(dest.read_text(), promo)
+    promote_scan.write_promotion(dest, result["new_text"], workspace, "infiquetra-context-library")
+    assert "repo-a:aaaaaaaaaaaa" in dest.read_text()

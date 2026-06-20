@@ -130,6 +130,26 @@ Free-form for substance; `AskUserQuestion` for choices. Anchor every question in
 Each flagged item → a diff + `AskUserQuestion` (apply / skip / modify). A `QUEUED → ARCHIVE` move deletes
 from `QUEUED.md`, so it is propose, not auto.
 
+**Mark transcendence (PROPOSE-DIFF-AND-WAIT) — the cross-repo `promote` feeder.** Walk the
+`**Generalizable rule.**` lines this retro touched (just-promoted entries + any the interview flagged as
+cross-cutting). For each, strip the repo-specific nouns and test "would this rule still be true and useful
+in a repo of a different stack or domain?" Mark only the **select few** that pass — the sparing declare
+feeder; the `promote` recurrence net (legacy-rule clustering across repos) catches the rest. The proposed
+edit inserts exactly one canonical line directly below the rule, gated (diff + `AskUserQuestion`
+apply / skip / modify; channel session: inline the choice):
+
+    **Generalizable rule.** <the rule, unchanged>
+    **Transcendent.** <one line on why it holds in a repo of a different stack/domain>
+
+- **Idempotent** — skip any rule already followed by a `**Transcendent.**` line (a human may have declared
+  it; the contract lets both write it). Never double-mark.
+- **Single-repo boundary** — writes the marker into **this** repo's journal only. No cross-repo read, no
+  clustering, no `infiquetra-context-library` write — those are the `promote` skill. The marker waits in
+  place for the next `promote` run.
+- **Source of truth** — the canonical marker form + the drift-stable `<repo>:<hash>` source key are frozen
+  in `../../promote/references/promotion-contract.md` §1–§2; the recurrence-net feeder and the gated upsert
+  live in the `promote` skill (do not reimplement them here).
+
 ---
 
 ## Pass 6 — Meta-improvement passes (net-new; ALL propose-diff-and-wait)

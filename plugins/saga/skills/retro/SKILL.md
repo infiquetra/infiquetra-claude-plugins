@@ -1,6 +1,6 @@
 ---
 name: retro
-description: The Infiquetra lifecycle META-IMPROVEMENT ENGINE. The TERMINAL, ADVISORY lifecycle phase downstream of /qa — it reads the work that shipped, gathers evidence (git forensics behind a stale-base/wrong-today BLOCK guard, saga trajectory, gh issues/PRs READ-ONLY, session transcripts), interviews the operator, writes a concise agent-consumable retro doc, PROMOTES generalizable findings into the engineering journal (pure-append, auto), CURATES the journal + auto-memory (staleness / contradiction / dedup / rule-enforcement sweeps, propose-diff-and-wait), and runs net-new meta-improvement passes (new-skill detection, refine the lifecycle SKILLs, refine directives, prune memory) — every one gated. It never blocks /loop, never mutates the world, never writes the saga, and never self-applies a non-journal edit. Triggers on "retro", "retrospective", "what did we learn", "leave the system smarter", a /qa or /handoff hand-in, or the end of a meaningful work loop / PR / deploy.
+description: The Infiquetra lifecycle META-IMPROVEMENT ENGINE. The TERMINAL, ADVISORY lifecycle phase downstream of /qa — it reads the work that shipped, gathers evidence (git forensics behind a stale-base/wrong-today BLOCK guard, saga trajectory, gh issues/PRs READ-ONLY, session transcripts), interviews the operator, writes a concise agent-consumable retro doc, PROMOTES generalizable findings into the engineering journal (pure-append, auto), CURATES the journal + auto-memory (staleness / contradiction / dedup / rule-enforcement sweeps, propose-diff-and-wait), MARKS the select cross-repo learnings transcendent for the promote layer (single-repo, propose-diff-and-wait), and runs net-new meta-improvement passes (new-skill detection, refine the lifecycle SKILLs, refine directives, prune memory) — every one gated. It never blocks /loop, never mutates the world, never writes the saga, and never self-applies a non-journal edit. Triggers on "retro", "retrospective", "what did we learn", "leave the system smarter", a /qa or /handoff hand-in, or the end of a meaningful work loop / PR / deploy.
 ---
 
 # Retro
@@ -212,7 +212,7 @@ to existing content, so it is outside the propose-gate.
 
 ---
 
-## Phase 4 — Journal promotion + curation
+## Phase 4 — Journal promotion, curation + transcendence marking
 
 **PROMOTE (AUTO — pure append, per the contract).** Append **new** entries:
 
@@ -236,6 +236,27 @@ show a diff + `AskUserQuestion` (apply / skip / modify):
 
 A `QUEUED → ARCHIVE` move (an item that shipped this thread) **deletes from `QUEUED.md`**, so it is a
 **propose**, not an auto-append.
+
+**MARK transcendence (PROPOSE-DIFF-AND-WAIT — the cross-repo `promote` feeder).** After promoting, look at
+the `**Generalizable rule.**` lines this retro just touched (the entries it appended, plus any the
+interview surfaced as cross-cutting) and propose a `**Transcendent.**` marker on the **select few** whose
+rule would still hold in a repo of a *different stack or domain* — strip the entry's repo-specific nouns
+and ask "is this still true and useful elsewhere?" Default to **not** marking: this is the sparing,
+human-judgment **declare** feeder, not a bulk harvest — the `promote` skill's recurrence net catches the
+latent cross-repo lessons this sweep does not.
+
+- **Form + placement (frozen — do not redefine).** Exactly `**Transcendent.**` on its own line directly
+  below the rule it elevates, with an optional one-line reason it crosses. The canonical form, the
+  detection anchor, and the `<repo>:<hash>` source key are frozen in
+  `../promote/references/promotion-contract.md` §1–§2 — quote that contract, it is the single definition.
+- **Tier.** It **edits an existing entry**, so it is **PROPOSE-DIFF-AND-WAIT** (never the Tier-1 AUTO
+  append) — show the one-line insertion as a diff + `AskUserQuestion` (apply / skip / modify the reason).
+  Skip any entry that already carries the marker (a human may have written it — idempotent, never
+  double-mark).
+- **Single-repo boundary (hard).** `/retro` writes the marker into **this** repo's journal and stops. It
+  does **not** read other repos, cluster, dedup, or write `infiquetra-context-library` — that cross-repo
+  collection and the gated context-library upsert are the separate `promote` skill. The marker simply
+  waits in place for the next `promote` run to collect it.
 
 ---
 

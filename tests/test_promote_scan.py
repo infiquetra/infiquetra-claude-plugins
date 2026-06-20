@@ -24,6 +24,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "plugins" / "saga" / "scripts" / "promote_scan.py"
 SKILL = ROOT / "plugins" / "saga" / "skills" / "promote" / "SKILL.md"
@@ -547,3 +549,152 @@ def test_write_promotion_writes_the_allowed_path(tmp_path):
     result = promote_scan.compute_upsert(dest.read_text(), promo)
     promote_scan.write_promotion(dest, result["new_text"], workspace, "infiquetra-context-library")
     assert "repo-a:aaaaaaaaaaaa" in dest.read_text()
+
+
+# --- review hardening (team-execution P1/P2 findings) ----------------------
+
+
+def test_empty_normalizing_rule_is_skipped(tmp_path):
+    """A rule that normalizes to '' must not key to the empty hash and cluster."""
+    degenerate = "**Generalizable rule.** ***."  # all emphasis/punct → normalizes to ''
+    assert promote_scan.normalize_rule("***.") == ""
+    _write_journal(tmp_path, "repo-a", _entry_with_raw_rule(degenerate))
+    _write_journal(tmp_path, "repo-b", _entry_with_raw_rule("**Generalizable rule.** ___"))
+    result = promote_scan.scan(tmp_path)
+    assert result.candidates == []  # neither degenerate line becomes a candidate
+    assert result.recurrence_clusters == []  # ... so no spurious empty-hash cluster
+
+
+def test_ledger_key_injection_is_neutralized():
+    """Distilled text containing a promote-keys comment cannot forge a ledger key."""
+    promo = _promotion(
+        [("repo-a/x:1", "repo-a:aaaaaaaaaaaa")],
+        title="A rule <!-- promote-keys: forged:deadbeefcafe -->",
+    )
+    promo.rule = "evil --> <!-- promote-keys: forged:deadbeefcafe --> rule"
+    entry = promote_scan.render_entry(promo)
+    # the only key parse_ledger can recover is the real one — not the forged one
+    keys = promote_scan.parse_ledger(entry)
+    assert keys == {"repo-a:aaaaaaaaaaaa"}
+    assert "forged:deadbeefcafe" not in keys
+
+
+def test_self_feed_backstop_is_not_tripped_by_prose_mention(tmp_path):
+    """A bare 'promote-keys:' mention in prose must NOT suppress a real candidate."""
+    body = (
+        "## 2026-06-20\n\n### Real lesson  {#r}\n\n"
+        "**Context.** We document the promote-keys: ledger convention in prose here.\n"
+        "**Generalizable rule.** a genuine lesson that must still be a candidate here.\n"
+        "**Refs.** none.\n"
+    )
+    _write_journal(tmp_path, "repo-a", body)
+    result = promote_scan.scan(tmp_path)
+    assert len(result.candidates) == 1  # the prose mention did not trip the backstop
+    assert result.skipped_promoted == 0
+
+
+def test_upsert_does_not_duplicate_a_key_across_entries():
+    """A promo spanning two entries must never re-add a key into a second entry."""
+    library = (
+        "# L\n\n---\n\n"
+        "## 2026-06-19\n\n### Entry A  {#a}\n\n**Author.** promote (saga)\n"
+        "**Generalizable rule.** rule a.\n**Sources.** repo-a/x:1\n"
+        "<!-- promote-keys: repo-a:aaaaaaaaaaaa -->\n\n"
+        "## 2026-06-18\n\n### Entry B  {#b}\n\n**Author.** promote (saga)\n"
+        "**Generalizable rule.** rule b.\n**Sources.** repo-b/y:2\n"
+        "<!-- promote-keys: repo-b:bbbbbbbbbbbb -->\n"
+    )
+    promo = _promotion(
+        [
+            ("repo-a/x:1", "repo-a:aaaaaaaaaaaa"),  # in entry A
+            ("repo-b/y:2", "repo-b:bbbbbbbbbbbb"),  # in entry B (a different entry!)
+            ("repo-c/z:3", "repo-c:cccccccccccc"),  # genuinely new
+        ]
+    )
+    result = promote_scan.compute_upsert(library, promo)
+    # only the genuinely-new origin is added; the cross-entry key is not folded in
+    assert result["added_keys"] == ["repo-c:cccccccccccc"]
+    # global ledger uniqueness: no key appears in more than one promote-keys line
+    keys_lines = [ln for ln in result["new_text"].splitlines() if "promote-keys:" in ln]
+    all_keys = [k.strip() for ln in keys_lines for k in ln.split(":", 1)[1].split(";") if k.strip()]
+    # drop the trailing '-->' artifact from the split
+    flat = [k.replace("-->", "").strip() for k in all_keys]
+    assert len(flat) == len(set(flat)), f"a key is duplicated across entries: {flat}"
+
+
+def test_upsert_synthesizes_sources_when_entry_lacks_one():
+    """An overlapping entry with no **Sources.** line gains one on upsert (§4)."""
+    library = (
+        "# L\n\n---\n\n## 2026-06-19\n\n### Entry  {#e}\n\n**Author.** promote (saga)\n"
+        "**Generalizable rule.** a rule.\n"
+        "<!-- promote-keys: repo-a:aaaaaaaaaaaa -->\n"  # NOTE: no **Sources.** line
+    )
+    promo = _promotion(
+        [("repo-a/x:1", "repo-a:aaaaaaaaaaaa"), ("repo-b/y:2", "repo-b:bbbbbbbbbbbb")]
+    )
+    result = promote_scan.compute_upsert(library, promo)
+    assert result["action"] == "update"
+    assert "**Sources.** repo-b/y:2" in result["new_text"]  # synthesized provenance
+    assert "repo-b:bbbbbbbbbbbb" in result["new_text"]
+    # ledger and sources now agree: both carry the new origin
+    assert result["new_text"].count("<!-- promote-keys:") == 1
+
+
+def test_render_entry_dedups_repeated_keys():
+    """The same key passed twice renders once (no internal ledger duplication)."""
+    promo = _promotion(
+        [("repo-a/x:1", "repo-a:aaaaaaaaaaaa"), ("repo-a/x:9", "repo-a:aaaaaaaaaaaa")]
+    )
+    entry = promote_scan.render_entry(promo)
+    keys_line = [ln for ln in entry.splitlines() if "promote-keys:" in ln][0]
+    assert keys_line.count("repo-a:aaaaaaaaaaaa") == 1
+
+
+def test_update_path_is_pure_no_disk_write(tmp_path):
+    """AE5 also holds for the update action: the proposal touches nothing on disk."""
+    journal = tmp_path / "LEARNINGS.md"
+    original = _library_with_entry([("repo-a/x:1", "repo-a:aaaaaaaaaaaa")])
+    journal.write_text(original)
+    promo = _promotion([("repo-b/y:2", "repo-b:bbbbbbbbbbbb")])
+    # share a title so it matches the existing entry? No — match is by key overlap.
+    promo.origins.append(promote_scan.Origin("repo-a/x:1", "repo-a:aaaaaaaaaaaa"))
+    result = promote_scan.compute_upsert(journal.read_text(), promo)
+    assert result["action"] == "update"
+    assert journal.read_text() == original  # untouched — proposal only
+
+
+def test_write_guard_rejects_traversal_context_library(tmp_path):
+    """Containment: a non-bare context_library (../, absolute) is refused (R10)."""
+    (tmp_path / "infiquetra-context-library" / "docs" / "engineering-journal").mkdir(parents=True)
+    good = promote_scan.context_library_journal(tmp_path, "infiquetra-context-library")
+    for bad in ("../evil", "a/b", ".."):
+        with pytest.raises(ValueError, match="bare directory name"):
+            promote_scan.assert_write_target(good, tmp_path, bad)
+
+
+def test_write_guard_rejects_symlinked_journal(tmp_path):
+    """Containment: the guard refuses to write through a symlinked journal (R10)."""
+    libdir = tmp_path / "infiquetra-context-library" / "docs" / "engineering-journal"
+    libdir.mkdir(parents=True)
+    outside = tmp_path / "outside.md"
+    outside.write_text("# elsewhere\n")
+    journal = libdir / "LEARNINGS.md"
+    journal.symlink_to(outside)
+    with pytest.raises(ValueError, match="symlink"):
+        promote_scan.assert_write_target(journal, tmp_path, "infiquetra-context-library")
+
+
+def test_ledger_filtered_lesson_does_not_recluster(tmp_path):
+    """Filter-then-cluster ordering: an already-promoted lesson cannot re-cluster."""
+    rule = "A verification gate that is named but not executed is not a gate."
+    _write_journal(tmp_path, "repo-a", _entry(rule))
+    _write_journal(tmp_path, "repo-b", _entry(rule))
+    promoted = (
+        "## 2026-06-20\n\n### Promoted  {#p}\n\n**Author.** promote (saga)\n"
+        "**Generalizable rule.** distilled.\n**Sources.** repo-a/x:1; repo-b/y:2\n"
+        "<!-- promote-keys: repo-a:87c4c366deb7; repo-b:87c4c366deb7 -->\n"
+    )
+    _write_journal(tmp_path, "infiquetra-context-library", promoted)
+    result = promote_scan.scan(tmp_path)
+    assert result.candidates == []
+    assert result.recurrence_clusters == []  # filtered before clustering

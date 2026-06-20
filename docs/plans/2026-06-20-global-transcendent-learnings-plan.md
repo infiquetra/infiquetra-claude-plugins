@@ -132,7 +132,7 @@ Dependency-ordered. Each is independently landable. Paths are repo-qualified whe
 
 **Approach:** For each approved cluster, distill Rule + Mechanism into the U1 entry template, compute the destination upsert (match an existing entry by overlapping source-key set, else create), append `**Sources.**` backlinks for new origins, and write only to context-library behind a Tier-2 propose-diff-and-wait gate (KTD6). Idempotency comes from the key ledger (KTD2): already-covered keys are skipped.
 
-**Test scenarios** (`tests/test_promote_scan.py`): re-running with an already-present key-set yields no new/duplicate entry (AE1); a 3-repo cluster yields one entry with three `**Sources.**` lines, not three entries (AE3); the writer refuses any path outside context-library's journal (R10 write-surface guard); a marked-but-unapproved cluster produces a proposed diff and no write until approval (AE5). Contract test: `promote/SKILL.md` states the Tier-2 gate and the context-library-only boundary.
+**Test scenarios** (`tests/test_promote_scan.py`): re-running with an already-present key-set yields no new/duplicate entry (AE1); a 3-repo cluster yields one entry with three `; `-separated backlinks on a single `**Sources.**` line, not three entries (AE3, per frozen contract §4); the writer refuses any path outside context-library's journal (R10 write-surface guard); a marked-but-unapproved cluster produces a proposed diff and no write until approval (AE5). Contract test: `promote/SKILL.md` states the Tier-2 gate and the context-library-only boundary.
 
 **Verification:** `pytest`; a manual end-to-end dry run shows a proposed diff, and approving it writes exactly one upserted entry.
 

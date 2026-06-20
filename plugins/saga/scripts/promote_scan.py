@@ -150,7 +150,7 @@ def _entry_skip_lines(lines: list[str]) -> set[int]:
     bounds = list(zip(starts, [*starts[1:], len(lines)], strict=True))
     skip: set[int] = set()
     for start, end in bounds:
-        if any("promote-keys:" in lines[i] for i in range(start, end)):
+        if any(PROMOTE_KEYS_RE.search(lines[i]) for i in range(start, end)):
             skip.update(range(start, end))
     return skip
 
@@ -173,6 +173,9 @@ def parse_journal(text: str, repo: str, path: str) -> list[Candidate]:
         rule_text = m.group(1).strip()
         if not rule_text:
             continue  # the ~7/785 markers with no inline lesson — nothing to key
+        normalized = normalize_rule(rule_text)
+        if not normalized:
+            continue  # degenerate (all-emphasis/punctuation) — would collide on the empty hash
         transcendent = False
         reason = ""
         if i + 1 < len(lines):
@@ -186,7 +189,7 @@ def parse_journal(text: str, repo: str, path: str) -> list[Candidate]:
                 path=path,
                 line=i + 1,
                 rule_text=rule_text,
-                normalized=normalize_rule(rule_text),
+                normalized=normalized,
                 hash=rule_hash(rule_text),
                 key=source_key(repo, rule_text),
                 transcendent=transcendent,
@@ -255,7 +258,8 @@ def scan(
     skipped_promoted = 0
 
     for repo, journal in journals:
-        text = journal.read_text(encoding="utf-8")
+        # errors="replace": one malformed journal must not abort the whole scan.
+        text = journal.read_text(encoding="utf-8", errors="replace")
         rel = str(journal.relative_to(workspace_root))
         if repo == context_library:
             # §5.2 layer 1: read ONLY for the ledger; never a candidate source.
@@ -360,16 +364,44 @@ class Promotion:
         return [o.key for o in self.origins]
 
 
+def _neutralize(text: str) -> str:
+    """Neutralize ledger/comment control tokens in distilled free text.
+
+    The promoted entry interpolates agent-distilled rule/title/mechanism text; if
+    that text carried a literal ``<!-- promote-keys: ... -->`` it would forge a
+    ledger receipt the next scan would ingest (silent candidate suppression).
+    Replacing the hyphens with a non-breaking hyphen keeps the prose readable
+    while making it structurally inert (§5 ledger integrity).
+    """
+    return (
+        text.replace("<!--", "<!‑‑")
+        .replace("-->", "‑‑>")
+        .replace("promote-keys:", "promote‑keys:")
+    )
+
+
+def _dedup_origins(origins: list[Origin]) -> list[Origin]:
+    """Order-preserving dedup by key — a key never appears twice (§2 per-source)."""
+    seen: set[str] = set()
+    out: list[Origin] = []
+    for o in origins:
+        if o.key not in seen:
+            seen.add(o.key)
+            out.append(o)
+    return out
+
+
 def render_entry(promo: Promotion) -> str:
     """Render the contract §4 promoted-entry template (Rule + Mechanism only)."""
-    sources = "; ".join(o.backlink for o in promo.origins)
-    keys = "; ".join(o.key for o in promo.origins)
+    origins = _dedup_origins(promo.origins)
+    sources = "; ".join(o.backlink for o in origins)
+    keys = "; ".join(o.key for o in origins)
     return (
         f"## {promo.date}\n\n"
-        f"### {promo.title}\n\n"
+        f"### {_neutralize(promo.title)}\n\n"
         f"**Author.** promote (saga)\n"
-        f"**Generalizable rule.** {promo.rule}\n"
-        f"**Mechanism.** {promo.mechanism}\n"
+        f"**Generalizable rule.** {_neutralize(promo.rule)}\n"
+        f"**Mechanism.** {_neutralize(promo.mechanism)}\n"
         f"**Sources.** {sources}\n"
         f"<!-- promote-keys: {keys} -->\n"
     )
@@ -421,24 +453,34 @@ def compute_upsert(journal_text: str, promo: Promotion) -> dict:
     lines = journal_text.splitlines()
     entries = _promoted_entries(lines)
     origin_keys = set(promo.keys)
+    all_keys: set[str] = set().union(*(e.keys for e in entries)) if entries else set()
 
     match = next((e for e in entries if e.keys & origin_keys), None)
     if match is not None:
-        new_origins = [o for o in promo.origins if o.key not in match.keys]
+        # Add only origins whose key is absent from EVERY existing entry (not just
+        # the matched one), and never the same key twice — so a key can never land
+        # in two `promote-keys` lines (§4: ledger and entries cannot disagree). An
+        # origin already promoted under a *different* entry is a split/merge call
+        # for the SKILL judgment layer, not a silent re-add here.
+        new_origins = _dedup_origins([o for o in promo.origins if o.key not in all_keys])
         if not new_origins:
             return {"action": "noop", "new_text": journal_text, "added_keys": []}
         out = list(lines)
+        add_sources = "; ".join(o.backlink for o in new_origins)
+        keys_line = match.keys_line
         if match.sources_line != -1:
-            out[match.sources_line] = (
-                out[match.sources_line].rstrip()
-                + "; "
-                + "; ".join(o.backlink for o in new_origins)
-            )
-        km = PROMOTE_KEYS_RE.search(out[match.keys_line])
-        assert km is not None  # keys_line is, by construction, a promote-keys line
+            out[match.sources_line] = out[match.sources_line].rstrip() + "; " + add_sources
+        else:
+            # the matched entry has no Sources line: synthesize one directly above
+            # the promote-keys line so provenance and the ledger never disagree (§4).
+            out.insert(keys_line, f"**Sources.** {add_sources}")
+            keys_line += 1  # the insert pushed the promote-keys line down by one
+        km = PROMOTE_KEYS_RE.search(out[keys_line])
+        if km is None:  # pragma: no cover — keys_line is a promote-keys line by construction
+            raise ValueError(f"promote-keys line not found at index {keys_line}")
         existing = [k.strip() for k in km.group(1).split(";") if k.strip()]
         merged = existing + [o.key for o in new_origins]
-        out[match.keys_line] = f"<!-- promote-keys: {'; '.join(merged)} -->"
+        out[keys_line] = f"<!-- promote-keys: {'; '.join(merged)} -->"
         return {
             "action": "update",
             "new_text": "\n".join(out) + ("\n" if journal_text.endswith("\n") else ""),
@@ -463,9 +505,21 @@ def context_library_journal(workspace_root: Path, context_library: str) -> Path:
 
 
 def assert_write_target(path: Path, workspace_root: Path, context_library: str) -> None:
-    """Refuse any write outside context-library's journal (R10 write-surface guard)."""
-    allowed = context_library_journal(workspace_root, context_library).resolve()
-    if path.resolve() != allowed:
+    """Refuse any write that is not context-library's journal (R10 write-surface guard).
+
+    Containment, not mere self-consistency: ``context_library`` must be a bare
+    directory name (so ``../evil`` or an absolute ``/etc/...`` cannot escape the
+    workspace), and the destination journal — and its library dir — must not be a
+    symlink (so an approved write cannot be redirected outside the tree).
+    """
+    if "/" in context_library or context_library in ("", ".", ".."):
+        raise ValueError(f"context_library must be a bare directory name: {context_library!r}")
+    root = workspace_root.resolve()
+    libroot = root / context_library
+    allowed = libroot / CONTEXT_LIBRARY_JOURNAL
+    if libroot.is_symlink() or allowed.is_symlink():
+        raise ValueError(f"refusing to write through a symlinked path: {allowed}")
+    if path.resolve() != allowed.resolve():
         raise ValueError(
             f"refusing to write outside the context-library journal: {path} "
             f"(only {allowed} is writable)"

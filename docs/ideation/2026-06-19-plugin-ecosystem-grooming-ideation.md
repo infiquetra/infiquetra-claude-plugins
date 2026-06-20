@@ -1,5 +1,6 @@
 ---
 date: 2026-06-19
+updated: 2026-06-19 (operator dispositions folded in — Phase 6)
 topic: plugin-ecosystem-grooming
 focus: groom the plugin portfolio (cut/keep/consolidate/extract), build-vs-adopt, and the agent/model/context economy
 scope: broad
@@ -11,57 +12,89 @@ maturity: idea-ready
 
 ## Grounding Context
 
-**Repo:** A Claude Code plugin marketplace monorepo, 17 plugins (marketplace metadata reads 2.4.0 in memory / 2.1.0 in-file — itself a drift signal). Two plugin types: skills-based (markdown) and CLI-based (Python). Quality bar: py3.12, ruff (100-char), mypy, bandit, 80% coverage, uv. `saga` is the dominant plugin (the engineering lifecycle spine — 17 skills, 18 commands). No root `STRATEGY.md`. Stale README (lists 11 of 17 plugins). Incoherent versioning (0.1.1 → 3.0.0, no cadence).
+**Repo:** A Claude Code plugin marketplace monorepo, 17 plugins (marketplace metadata reads 2.4.0 in memory / 2.1.0 in-file — itself a drift signal). Two plugin types: skills-based (markdown) and CLI-based (Python). `saga` is the dominant plugin (the engineering lifecycle spine — 17 skills, 18 commands). No root `STRATEGY.md`. Stale README (lists 11 of 17). Incoherent versioning (0.1.1 → 3.0.0).
 
-**Binding journal decisions that shaped this run:** (1) `agents/*.md` are NOT auto-loaded — they are subagent definitions invokable only via the Agent tool; the canonical plugin convention is **no `agents/` dir → use generic agents**, and custom-agent dirs were explicitly REJECTED twice (`#cc-channels-surface-split`, `#resume-port-source-verified-true`, `#qa-engine-rebuild`, `#resume-engine-rebuild`). (2) Model/effort tiering has ZERO journal coverage (greenfield; the Agent tool + Workflow `agent()` both support per-call model/effort). (3) "No longer needed with current LLMs" has ZERO journal coverage (seed 5 is unexplored). (4) Context learnings: file-mediated extraction, skim-not-read, optimize docs for LLM+human legibility not absent parsers, fan-out budget-exhaustion failure mode. (5) Plugin release = code + `plugin.json` + marketplace entry + changelog + drift tests in the SAME PR; the marketplace-drift bug shipped TWICE; `#marketplace-ci-guard` is P1-queued. (6) `team-execution` + `deploy` were deliberately NOT vendored into `saga` (real boundaries); the engine-merge campaign deliberately UNIFIED saga into one plugin.
+**Binding journal decisions:** (1) `agents/*.md` are NOT auto-loaded — they are subagent definitions invokable only via the Agent tool; the canonical convention is **no `agents/` dir → use generic agents**, and custom-agent dirs were REJECTED twice (qa-engine + resume-engine rebuilds, for saga's internal fan-out). (2) Model/effort tiering: ZERO journal coverage (Agent tool + Workflow `agent()` support per-call model/effort). (3) "No longer needed with current LLMs": ZERO coverage. (4) Plugin release = code + `plugin.json` + marketplace + changelog + drift tests in SAME PR; marketplace-drift shipped TWICE; `#marketplace-ci-guard` is P1.
 
-**Measured usage (the seed-1 transcript scan):** Full 1.3 GB / 1,833-file `~/.claude` corpus across 40 projects; ~all <30 days old, so this is current behavior.
-- Plugins that fire: `saga` 16,502 · `team-execution` 2,339 · `redis-channel` 152 · `home-lab-ops` ~60 · `mission-control` ~48 · `unifi` 11. External installed plugins also used: `compound-engineering` 2,578 + `superpowers` 706 (saga's upstream port sources), `agy` 30 + `codex` 22 (operator already delegates to Antigravity/Codex), `commit-commands` 22, `discord` 11.
-- ZERO attributed skill/command/MCP/subagent fires in the entire corpus: `slack`, `splunk`, `pagerduty`, `identity-toolkit`, `sdk-lifecycle`, `todoist-manager`, `marketplace-lister`, `python-toolkit`, `test-suite`, `docs-generator`, `deploy`.
-- Subagents: generic `Explore` 362 + `general-purpose` 364 + `Plan` 15 dominate. Every one of the 9 bespoke domain agents (digital-identity-architect, pagerduty-ops, marketplace-lister, todoist-manager, homelab-sre, unifi-network-ops, release-orchestrator, sdlc-operator, redis-channel-coach) = ZERO ad-hoc invocations.
-- Operator hand-manages the economy: `/effort` ×113, `/compact` ×48, `/model` ×28, `/context` ×17, `/fast` ×3 (~280 manual interventions).
+**Existing tooling that overlaps these ideas (verified 2026-06-19):**
+- **Langfuse observability plugin is installed** (`langfuse-observability` v1.0.0, since 2026-06-18). It traces every Claude Code session — *tool calls, token usage, and a `skill:<name>` tag per turn* (`CC_LANGFUSE_SKILL_TAGS` on by default) — to the operator's Langfuse instance via Stop/SessionEnd hooks. So per-skill usage AND token cost are already captured (≈1 day of history so far; transcripts hold the back-catalog). This makes #6 a *report-over-existing-telemetry* problem, not a new ledger.
+- **/retro (saga's improve stage) already** mines session transcripts (Phase 1.5), runs **new-skill / plugin detection** (Phase 5a — "repeated friction a new skill/plugin would remove"), writes a retro doc (Phase 3), and pointedly uses **generic agents, no `agents/` dir** — which independently validates #3's roster collapse. So the "review sessions → suggest plugins" half of #3/#10 already exists.
 
-Caveat: "zero attributed usage" = zero skill/command/MCP/subagent fires. A plugin invoked purely via raw `bash` would not attribute, which is why survivor #1 measures the bash path for `python-toolkit`/`test-suite`/`docs-generator` before any verdict.
+**Measured usage (the seed-1 transcript scan):** Full 1.3 GB / 1,833-file `~/.claude` corpus, ~all <30 days old.
+- Fire: `saga` 16,502 · `team-execution` 2,339 · `redis-channel` 152 · `home-lab-ops` ~60 · `mission-control` ~48 · `unifi` 11. External: `compound-engineering` 2,578 + `superpowers` 706 (saga's upstream sources), `agy` 30 + `codex` 22 (operator already delegates outward), `commit-commands` 22, `discord` 11.
+- ZERO attributed fires: `slack`, `splunk`, `pagerduty`, `identity-toolkit`, `sdk-lifecycle`, `todoist-manager`, `marketplace-lister`, `python-toolkit`, `test-suite`, `docs-generator`, `deploy`.
+- Subagents: generic `Explore` 362 + `general-purpose` 364 + `Plan` 15 dominate; all 9 bespoke domain agents = ZERO ad-hoc fires.
+- Operator hand-manages the economy: `/effort` ×113, `/compact` ×48, `/model` ×28, `/context` ×17, `/fast` ×3.
 
-**Context-libraries:** None consulted — the topic is bound to this repo's own plugins/agents.
-
-**Prior art folded in (not regenerated):** `docs/ideation/2026-05-30-delegate-agent-plugin-ideation.md` (the provider-neutral delegation ideation — largely shipped via the `agy` + `codex` plugins). This run starts fresh on the broader grooming question and treats that doc as prior art behind survivor #11.
+**Context-libraries:** None consulted (repo-bound topic). **Prior art folded in:** `2026-05-30-delegate-agent-plugin-ideation.md` (largely shipped via `agy`/`codex`).
 
 ## Topic Axes
 
-- A. Portfolio grooming — keep / cut / consolidate / extract existing plugins.
-- B. Capability gaps — new plugins/skills worth building, vs adopting an existing tool (buy-vs-build).
-- C. Agent triggering & roster — how subagents are defined, why bespoke ones don't fire, what roster earns its place.
-- D. Execution economy — model-tiering + context/cache cost (offload cheap mechanical work; pick the right model/effort per task).
-- E. Ecosystem hygiene & meta — drift guards, versioning, README/marketplace sync, journal/maintenance automation, self-knowledge.
+- A. Portfolio grooming — keep / cut / consolidate / extract.
+- B. Capability gaps — build new vs adopt existing (buy-vs-build).
+- C. Agent triggering & roster — why bespoke agents don't fire; what roster earns its place.
+- D. Execution economy — model-tiering + context/cache cost.
+- E. Ecosystem hygiene & meta — drift guards, versioning, sync, maintenance automation, self-knowledge.
+
+## Operator dispositions & next steps (Phase 6)
+
+The operator reviewed all 11 survivors. Dispositions:
+
+| # | idea | axis | disposition |
+|---|------|:---:|---|
+| 1 | Cause-classified grooming pass | A | **CONFIRMED** — decisive cut: 17 → 7 keep, 9 cut, 1 relocate (table in card #1) |
+| 2 | Mechanical-ops offload | D | **REFRAME** — prefer well-defined *triggered skills*, not a rule → Track 1 |
+| 3 | Collapse the agent roster | C | **CONFIRMED** — collapse; keep only justified cheap-tier agents; enumerate them in Track 1. Session-review→suggest already in /retro |
+| 4 | Generate registry + README from `plugin.json` | E | **CONFIRMED** |
+| 5 | Per-task model/effort tiering | D | **CONFIRMED** — operator has no concrete shape yet; explore mechanism in Track 1 |
+| 6 | Usage report (was: ledger) | E | **REFRAME** — Langfuse already captures usage+cost; build an on-demand report, not a ledger |
+| 7 | Plugin-grooming capability (was: buy-vs-build gate) | B | **REFRAME** — a plugin that *grooms plugins* and always searches existing marketplaces (pre-seeded locations) → Track 2 |
+| 8 | Journal-aware substrate | B | **CONFIRMED** |
+| 9 | Prune LLM-obsolete guards | A | **CONFIRMED** |
+| 10 | After-action report in improve stage | E | **CONFIRMED** — extend /retro (already writes a retro doc) with a defined AAR format → Track 2 |
+| — | (was #11) Codex/Antigravity backends | B | **PARKED** → moved to revivable cut R6 |
+
+**Two follow-on generative tracks** emerge from the dispositions:
+
+**Track 1 — Net-new skills & cheap-tier agents from how I actually work** (folds #2 + #3-roster + #5). A new `/ideate` run whose focus is *well-triggered skills + justified cheap-tier agents*, grounded in **transcript + commit work-pattern mining** (recurring git sequences, bash batches, review/debug loops that aren't yet a skill) — a heavier grounding than this run's usage-counting. Ideation, not brainstorm, because the goal is to *generate a list* from patterns. Model-tiering (#5) rides along: each candidate declares a recommended tier; the cheap git-ops offloader is the worked example. Separable sub-task: a tier policy for *existing* saga commands.
+
+**Track 2 — Self-grooming improve stage** (folds #6 + #7 + #10, minus what /retro already does). /retro already mines sessions, detects new-skill friction, and writes a retro doc. The genuinely-new piece is a periodic, corpus-wide **portfolio-grooming capability** that (a) reports usage+cost from Langfuse/transcripts, (b) ALWAYS searches existing marketplaces before suggesting a build, (c) flags dead/orphan plugins, (d) proposes new skills — i.e. *this session, productized*. Brainstorm (shape one capability + decide new `/groom` skill vs. a portfolio mode of /retro), not ideation. #10 = add a defined after-action-report section to /retro's doc.
+
+**Immediate, shovel-ready:** execute the #1 cut, plus #4 (registry generator) and #9 (obsolete-guard sweep) and #8 (already P2-queued).
 
 ## Ranked Survivors
 
 ### 1. Cause-classified grooming pass — delete/archive/extract, not a blunt purge
 
-Before cutting, classify each zero-fire plugin by *why* it's silent, because "zero usage" has at least four distinct causes and only one justifies a hard delete.
+Classify each zero-fire plugin by *why* it's silent, because "zero usage" has several causes and only one justifies a hard delete.
 
-The four causes: dead service-wrapper (delete — git history is the archive), superseded by the base model (delete; seed 5), available elsewhere / already adopted (delete, adopt the external tool; seed 7), and kept-as-reference or personal (archive or extract, don't delete in place). `python-toolkit`/`test-suite`/`docs-generator` may run via raw `bash` with no attribution, so they get a one-time bash-path measurement before any verdict.
+The operator settled the verdicts decisively (no bash-path measurement needed — "if I need that later I'll build something new"): the marketplace goes from 17 to **7 keep, 9 cut, 1 relocate**.
 
-This is the literal ask and is almost entirely direct measured evidence. The downside is that deletions are mildly irreversible socially (someone may re-add a wrapper); survivor #6's retention flag is the guard against that.
+**Disposition:** CONFIRMED with these verdicts.
 
-Per-plugin verdicts: KEEP — saga, team-execution, mission-control, redis-channel, home-lab-ops, unifi. PROBATION — deploy (new, 0 fires, pre-prod tooling; revisit when a prod path exists). CUT — slack, pagerduty, splunk (thin service wrappers), identity-toolkit + sdk-lifecycle (knowledge-only; LLMs now subsume them). EXTRACT — marketplace-lister + todoist-manager (personal/consumer; verify bash-exec first). MEASURE → DECIDE — python-toolkit, test-suite, docs-generator (0 attributed but may run via bash).
+| plugin | verdict | note |
+|---|---|---|
+| saga, team-execution, mission-control, redis-channel, home-lab-ops, unifi | **KEEP** | all fire |
+| deploy | **KEEP** | works with saga (not probation) |
+| slack, pagerduty, splunk | **CUT** | 0 fires; service wrappers |
+| identity-toolkit, sdk-lifecycle | **CUT** | 0 fires; knowledge-only; LLMs subsume them |
+| python-toolkit, test-suite, docs-generator | **CUT** | 0 fires; rebuild later if needed |
+| todoist-manager | **CUT** | move to the Todoist MCP (with deferred MCP tool-loading, the context-cost argument for a CLI plugin is weak; flag only if a real cost/efficiency gap shows up) |
+| marketplace-lister | **RELOCATE** | move to `infiquetra-hermes-plugins` — it's intended for a hermes agent |
 
 | field | value |
 |-------|-------|
-| basis | direct: zero-attribution corpus data + US1/US5/US6; external: library MUSTIE / restaurant menu-engineering classification |
-| confidence | 86 |
+| basis | direct: zero-attribution corpus data + operator verdicts (US1/US5/US6) |
+| confidence | 92 |
 | complexity | Low-Med |
 | axis | A |
-| status | Unexplored |
+| status | Explored |
 
 ### 2. Mechanical-ops offload to a cheap throwaway sub-session
 
-Make it a rule that the high-context main session never runs `git commit`/`push`/`PR-open`/`format`/`lint` itself — those ship to a fresh Haiku-tier sub-session that starts near 0% context and returns only the result.
+Make it a rule that the high-context main session never runs `git commit`/`push`/`PR-open`/`format`/`lint` itself — those ship to a fresh Haiku-tier sub-session that returns only the result.
 
-This is seed 3 (the "commit at 90% context is a waste" case) fused with the batch-bash/git-ops seed, and it was the strongest cross-frame consensus in the run (every frame produced it). The write-combining-buffer framing sharpens it: the cost isn't the git work, it's the per-op context overhead in an expensive window; one batched flush returns the same result without the intermediate bash chatter touching main context. The hard forbidden-in-main rule is what forces the offload to actually happen.
-
-The downside is that a handoff contract is needed (scope in, result out) so it isn't "spawn and hope"; the existing `handoff_envelope.py` is the nearest primitive to extend.
+**Disposition:** REFRAME → the operator prefers this expressed as *well-defined, well-triggered skills/plugins* rather than a loose "rule." The specific list of such mechanical-ops skills/agents (git-ops offloader, batch-bash, etc.) is generated in **Track 1**, grounded in transcript work-patterns. The savings only land if the sub-agent runs a cheaper model AND the handoff is tight (a subagent that inherits the default model and re-reads the repo moves cost, it doesn't remove it).
 
 | field | value |
 |-------|-------|
@@ -69,181 +102,150 @@ The downside is that a handoff contract is needed (scope in, result out) so it i
 | confidence | 85 |
 | complexity | Med |
 | axis | D |
-| status | Unexplored |
+| status | Explored → routed to Track 1 |
 
-### 3. Collapse the agent roster — delete the `agents/` dirs, ban new ones, justify-tier the exceptions
+### 3. Collapse the agent roster — delete the dead `agents/` dirs, keep only justified cheap-tier agents
 
-Delete the 9 bespoke domain agent files (zero fires, contradict a twice-rejected convention), add a CI guard that fails on a new `agents/` dir, and allow an agent file only if it justifies a non-default `model`/`effort`/tool-scope in frontmatter.
+Delete the 9 bespoke domain agent files (zero fires, domain mismatch, all on the default model), and allow an agent file *only* when it justifies a non-default model/effort/tool-scope.
 
-This is the honest answer to "my agent setup is lacking": the data says the fix is fewer agents, not more. The synaptic-pruning analogy is exact — silent specialized pathways get eliminated and load consolidates onto the high-traffic generic trunks. The justify-tier rule salvages the one legitimate reason to ship an agent file (it needs a different compute/permission profile than the default), linking directly to #5.
+The positive reframe (from the conversation): an agent earns its file when it pins a **cheaper tier or narrower tools** — the commit/git-ops offloader is the canonical *keep*; `pagerduty-ops`/`digital-identity-architect` are the canonical *cut* (good prose, but the work never happens and they inherit the default model). /retro's own design ("no `agents/` dir → generic agents") validates this.
 
-The downside is that a few agent files (`sdlc-operator`, `release-orchestrator`) encode real orchestration prompts worth relocating into their skills rather than deleting outright.
+**Disposition:** CONFIRMED — collapse. The list of *justified* agents to build is generated in **Track 1**. Note: the "review sessions → suggest new plugins" idea the operator floated already exists as /retro Phase 5a.
 
 | field | value |
 |-------|-------|
-| basis | direct: 9 bespoke agents @ 0 ad-hoc fires + "NO agents/ dir" convention rejected twice; external: synaptic pruning |
-| confidence | 88 |
+| basis | direct: 9 bespoke agents @ 0 ad-hoc fires + "NO agents/ dir" convention + /retro uses generic agents |
+| confidence | 90 |
 | complexity | Low |
 | axis | C |
-| status | Unexplored |
+| status | Explored → roster cut now; new agents → Track 1 |
 
 ### 4. Generate `marketplace.json` + README from `plugin.json` (single source of truth)
 
-Stop hand-maintaining derived lists: generate the marketplace array and README plugin table from the per-plugin `plugin.json` files, and let the queued P1 CI guard assert the generated files match.
+Generate the marketplace array and README plugin table from per-plugin `plugin.json`, and let the queued P1 CI guard assert they match.
 
-The drift is real and recurring: the README lists 11 of 17 plugins, the marketplace-drift bug shipped twice, there's a standing memory note about the `marketplace.json` editing footgun, and the metadata version is itself ambiguous. The repo's own docs standard ("single source of truth") applies to its own registry. Generation kills the drift class by construction; the P1 guard becomes a cheap backstop.
-
-The downside is a small generator + template to build and maintain; the `create-plugin.sh` scaffold should emit the compliant bundle too.
+**Disposition:** CONFIRMED. Shovel-ready; closes the drift that shipped twice. The 17→7 cut (card #1) should land *with* this so the generator's first output is the groomed set.
 
 | field | value |
 |-------|-------|
-| basis | direct: README 11/17 stale + drift shipped twice + #marketplace-ci-guard (P1) + memory editing-guard; external: apt autoremove |
-| confidence | 84 |
+| basis | direct: README 11/17 stale + drift shipped twice + #marketplace-ci-guard (P1) + memory editing-guard |
+| confidence | 86 |
 | complexity | Low-Med |
 | axis | E |
-| status | Unexplored |
+| status | Explored |
 
 ### 5. Per-task model/effort tiering as declared saga policy
 
-Annotate each saga command with a recommended tier so dispatch picks the model instead of the operator typing `/model` and `/effort` ~140 times — interrogation/review lean high-effort, mechanical handoffs lean cheap, search fan-outs lean cheap-and-wide.
+Annotate each saga command with a recommended tier so dispatch picks the model instead of the operator typing `/model`/`/effort` ~140 times — and express "cheap-and-wide" (many Haiku Explore + one expensive synthesis), not just "smart-and-one."
 
-Greenfield: zero journal coverage, and the Agent tool + Workflow `agent()` already support per-call model/effort. Frame it as least-privilege compute (tier × tool-scope × effort = the minimum the task needs), which makes #3's justify-tier rule concrete. Key counter-insight: the win is sometimes tiering down and wide (many Haiku Explore agents + one expensive synthesis pass), not tiering up — so the policy must express "cheap-and-many," not just "smart-and-one."
-
-The downside is that tier defaults can be wrong for an off-distribution task; needs an easy per-invocation override (which already exists).
+**Disposition:** CONFIRMED ("love this if it can actually happen") — operator has no concrete shape yet. Explore the mechanism in **Track 1** (each candidate skill/agent declares a tier; the offloader is the worked example). The policy layer for *existing* saga commands is a separable design task.
 
 | field | value |
 |-------|-------|
-| basis | direct: US4 + /effort ×113 + /model ×28 + "model tiering: ZERO journal coverage"; external: tiered storage / least-privilege |
-| confidence | 78 |
+| basis | direct: US4 + /effort ×113 + /model ×28 + "model tiering: ZERO journal coverage" |
+| confidence | 80 |
 | complexity | Med |
 | axis | D |
-| status | Unexplored |
+| status | Explored → routed to Track 1 |
 
-### 6. Plugin usage ledger + retention flags — make grooming self-maintaining
+### 6. Usage report over existing telemetry (was: build a usage ledger)
 
-Add an apt-style `retention` field to each marketplace entry (`core` / `active` / `reference` / `orphan-candidate`) and a ledger that timestamps each plugin's last fire, emitting a quarterly "sunset candidates" report.
+Build an on-demand report that answers "which plugins/skills fire, at what token cost, what's gone dark" — reading the telemetry that **already exists** rather than instrumenting a new ledger.
 
-This directly answers "we have not done this sort of grooming for quite some time" — the reason it drifted is that keep is the silent default and nothing surfaces orphans. The retention flag is the `apt-mark manual` bit: it encodes intent as data so an automated orphan-prune is safe (it can only ever touch `orphan-candidate`). The ledger turns this ideation into a recurring 10-minute report instead of a once-a-year archaeology dig.
-
-The downside is another small mechanism to maintain; only worth it if the report is acted on.
+**Disposition:** REFRAME. The Langfuse plugin already captures tool calls + token usage + `skill:<name>` tags; transcripts hold the back-catalog. So this is a report/query layer (on-demand, with purpose), most naturally a piece of **Track 2** (the grooming capability) or a /retro mode — not a new ledger. Buy-vs-build win.
 
 | field | value |
 |-------|-------|
-| basis | direct: 11/17 zero-fire + "grooming hasn't happened in a while"; external: apt autoremove / manual flag |
-| confidence | 76 |
+| basis | direct: Langfuse plugin traces tool calls + tokens + skill tags (verified) + transcript attribution fields |
+| confidence | 80 |
 | complexity | Low-Med |
 | axis | E |
-| status | Unexplored |
+| status | Explored → routed to Track 2 |
 
-### 7. Buy-vs-build gate at the marketplace door
+### 7. A plugin that grooms plugins (was: buy-vs-build gate)
 
-Make a one-page "does an already-adopted tool cover this?" checklist a merge-blocking item in the plugin PR template, and treat overlap with an adopted external tool as a cut signal for existing homegrown plugins.
+Productize *this very session* as a repeatable saga capability: a grooming pass that always searches existing marketplaces (pre-seeded locations) for prior art before suggesting any build, reports usage, and flags dead/orphan plugins.
 
-This is seed 7 as a structural rule. The corpus shows the operator already routes real work to `agy` (30), `codex` (22), `compound-engineering` (2,578), and `superpowers` (706) — external tools out-fire most of the local portfolio, and several zero-fire plugins are thin API wrappers an MCP server already covers. The gate stops the portfolio from re-growing dead wrappers.
-
-The downside is that a checklist is only as good as the discipline behind it; pair it with #6 so overlap gets caught retroactively.
+**Disposition:** REFRAME — the operator rejected the bare "buy-vs-build gate" (too late / risks building a plugin that already exists) in favor of this. The existing-plugin search is the load-bearing feature; pre-seed it with the known marketplaces (official, awesome-claude-code-plugins, claude-code-plugins, langfuse, infiquetra's own). Shape in **Track 2** (new `/groom` skill vs. a portfolio mode of /retro).
 
 | field | value |
 |-------|-------|
-| basis | direct: US5 + agy/codex/CE/superpowers out-fire local plugins |
-| confidence | 74 |
-| complexity | Low |
+| basis | direct: US5 + agy/codex/CE/superpowers out-fire local plugins + operator reframe |
+| confidence | 78 |
+| complexity | Med |
 | axis | B |
-| status | Unexplored |
+| status | Explored → routed to Track 2 |
 
 ### 8. Journal-aware lifecycle substrate — the journal plugin, sharpened
 
-Promote the queued `#engineering-journal-plugin` from "template-copier" to a substrate whose read side is a first-class saga primitive: a helper that `/retro`, `/investigate`, `/optimize`, and `/strategy` call to query prior LEARNINGS/DECISIONS before they re-derive a lesson.
+Promote `#engineering-journal-plugin` from "template-copier" to a substrate whose read side is a first-class saga primitive: lifecycle commands query prior LEARNINGS/DECISIONS before they re-derive a lesson.
 
-The template-copy is the trivial half. The compounding half is that today the journal only pays back when a human re-reads it — a write-only diary. Direct evidence it leaks value: the same provenance trap (`#campaign-brief-merge-is-a-provenance-hypothesis`) fired three times across builds because nothing forced a pre-build journal read.
-
-The downside is that this is the biggest lift here and the read-API design needs care (tag taxonomy, staleness) — highest ceiling, not cheapest.
+**Disposition:** CONFIRMED ("forgot we had this queued"). Direct evidence it leaks value today: the same provenance trap fired three times across builds because nothing forced a pre-build journal read.
 
 | field | value |
 |-------|-------|
 | basis | direct: #engineering-journal-plugin (P2) + provenance trap fired 3× + 2 manual adopters |
-| confidence | 72 |
+| confidence | 75 |
 | complexity | Med-High |
 | axis | B |
-| status | Unexplored |
+| status | Explored |
 
 ### 9. Prune LLM-obsolete guards/scaffolding — the seed-5 sweep
 
-Run a deliberate pass over saga's skills asking of each guard "does a current frontier model still misbehave without this, or is it cargo-cult from a weaker-model era?" — and delete what no longer changes behavior.
+Pass over saga's skills asking of each guard "does a current frontier model still misbehave without this?" and delete what no longer changes behavior.
 
-This is seed 5, and it's greenfield (zero journal coverage of "no longer needed with current LLMs"). Because saga fires 16,502 times, every obsolete guard is a context tax paid on the dominant workflow. Candidates: heavy read-don't-skim rules, elaborate re-grounding ceremonies, defensive deterministic classifiers (the queued `#doc-review-classifier` is exactly an "is this still worth it vs. the model doing it for free?" case).
-
-The downside — flagged by the journal itself — is that removing a guard that is still load-bearing is a silent regression; each removal needs an end-to-end behavior check before it ships. A careful sweep, not a bulk delete.
+**Disposition:** CONFIRMED. Greenfield (zero journal coverage), and saga's 16,502 fires amplify every obsolete guard. Careful per-guard end-to-end check before each removal — removing a still-load-bearing guard is a silent regression.
 
 | field | value |
 |-------|-------|
-| basis | direct: US6 + "no longer needed with current LLMs: ZERO coverage" + saga 16,502 fires; external: compiler dead-code elimination |
-| confidence | 70 |
+| basis | direct: US6 + "no longer needed with current LLMs: ZERO coverage" + saga 16,502 fires |
+| confidence | 72 |
 | complexity | Med |
 | axis | A |
-| status | Unexplored |
+| status | Explored |
 
-### 10. Saga trajectory telemetry mining — the tick-chain is untapped process data
+### 10. After-action report in saga's improve stage
 
-Build a read-only analytics pass over the saga tick-chains already written (16,502 fires' worth) to find where loops stall, which commands re-run, and where reviews gate — without waiting on a live product.
+The operator already holds the concept of an after-action report (AAR) for the "improve" stage. /retro is that stage and already writes a retro doc, so this is an enhancement: a defined AAR format/section, optionally fed by the #10/#6 telemetry mining over the saga tick-chain (16,502 fires) and Langfuse.
 
-The queued `#pulse-live-telemetry` is gated on "a live product with telemetry," but the lifecycle already generates dense process-telemetry on every run and throws it away after each `/resume`. The all-ticks reader already exists (shipped with `/resume`), so the marginal cost is just the analytics pass. This also feeds #9 and the per-command fire audit (does every one of saga's 18 commands earn its place?).
-
-The downside is that it's introspective tooling — valuable but not user-facing and easy to over-build; scope it to one concrete question first.
+**Disposition:** CONFIRMED — build the AAR into /retro (Track 2). The all-ticks reader already exists, so the marginal cost is the report format + the analytics pass.
 
 | field | value |
 |-------|-------|
-| basis | direct: saga 16,502 fires + all-ticks reader exists + #pulse blocked on product |
-| confidence | 66 |
+| basis | direct: operator's AAR concept + /retro writes a retro doc + saga 16,502 fires + all-ticks reader exists |
+| confidence | 74 |
 | complexity | Med |
 | axis | E |
-| status | Unexplored |
-
-### 11. Codex/Antigravity as first-class saga execution backends
-
-Fold the delegation already done by hand (`agy` ×30, `codex` ×22) into saga's operator-choice as a 4th/5th backend, so `/work` or `/investigate` can route a task to Gemini or GPT-5 the same governed way it routes to team-execution.
-
-This builds on measured cross-model delegation that currently runs off the lifecycle rails and closes the queued `#delegate-agents-plugin` spike. Lowest confidence of the survivors because the prior 2026-05-30 delegate-agent ideation largely shipped (the `agy`/`codex` plugins exist and work standalone), so the genuinely new value is narrow: the saga-backend framing and a governed handoff contract, not the delegation capability itself.
-
-The downside is real overlap with what already works; revisit prior art before committing.
-
-| field | value |
-|-------|-------|
-| basis | direct: agy 30 + codex 22 + saga operator-choice = 3 backends only + #delegate-agents-plugin (P2) |
-| confidence | 60 |
-| complexity | Med-High |
-| axis | B |
-| status | Unexplored |
+| status | Explored → routed to Track 2 |
 
 ## Did not survive (revivable)
 
-Explicit rejection is the quality mechanism. Cut ideas keep stable ids so they can be revived (which re-enters the Phase 3 filter with new evidence).
-
 | id | title | summary | reason | status |
 |----|-------|---------|--------|--------|
-| R1 | Split saga into spine + phase packs | Break saga into a thin router + on-demand phase packs | Premise that all 18 commands load per-turn is unverified (skills load on invocation; only descriptions are always-present), so the claimed context saving likely doesn't exist — and it contradicts the deliberate engine-merge unify decision | rejected |
-| R2 | Saga as 100 micro-plugins | Explode saga into single-command plugins | Subject-distorting (versioning hell, reverses the unify campaign); only real kernel — a per-command fire audit — is folded into #10 | rejected |
-| R3 | Context-watchdog / auto-compact hook | A hook that watches context fill and auto-offloads or compacts | Too speculative; the harness already auto-compacts and the journal warns to verify coaching reaches the model; the frugal-defaults kernel is folded into #2/#5 | rejected |
-| R4 | Wide-cheap-swarm vs one expensive agent | Many Haiku agents + one synthesis pass | Real insight but a tactic, not a standalone deliverable — folded into #5 as the "tier down and wide" rule | rejected |
-| R5 | Bundle dead plugins into one dormant `ops-integrations` | Keep slack/pagerduty/splunk folded into one idle plugin instead of deleting | Dormant code still carries maintenance/sync cost; git history is the archive. Revive if a real on-call/incident-ops need emerges | rejected |
+| R1 | Split saga into spine + phase packs | Thin router + on-demand phase packs | Premise that all 18 commands load per-turn is unverified (skills load on invocation); contradicts the unify decision | rejected |
+| R2 | Saga as 100 micro-plugins | Explode saga into single-command plugins | Subject-distorting; only kernel (per-command fire audit) folded into Track 2 telemetry | rejected |
+| R3 | Context-watchdog / auto-compact hook | Hook watches context fill and auto-offloads | Too speculative; harness already auto-compacts; frugal-defaults kernel folded into #2/#5 | rejected |
+| R4 | Wide-cheap-swarm vs one expensive agent | Many Haiku agents + one synthesis pass | A tactic, not a deliverable — folded into #5 ("cheap-and-wide") | rejected |
+| R5 | Bundle dead plugins into one dormant `ops-integrations` | Keep slack/pagerduty/splunk idle-bundled | Dormant code still carries cost; git history is the archive. Revive if on-call need emerges | rejected |
+| R6 | Codex/Antigravity as saga execution backends | Fold agy/codex into saga operator-choice as backends | Operator unsure + lowest score; prior art largely shipped (agy/codex work standalone). Revive if ad-hoc cross-model delegation becomes a pain | rejected |
 
-No axis ended with zero survivors. Axis C is intentionally served by a single comprehensive idea (#3) because the data says the agent roster should collapse, not multiply — the honest finding, not a coverage gap.
+No axis ended with zero survivors. Axis C is intentionally served by one comprehensive idea (#3) — the data says the roster should collapse, not multiply.
 
 ## Co-ideation log
 
 | source | entered | idea / seed | outcome |
 |--------|---------|-------------|---------|
-| user-seed | Phase 0 | US1: remove slack, identity-toolkit, pagerduty, splunk, sdk-lifecycle (never used) | survived, refined into #1 (classify-by-cause → delete/archive/extract; the 5 named confirmed CUT) |
-| user-seed | Phase 0 | US2: "commit at 90% context" is waste — offload cheap mechanical ops to a sub-session | survived as #2 (strongest cross-frame consensus) |
-| user-seed | Phase 0 | US3: an agent that batches bash/git-ops | survived, fused into #2 (write-combining batch sub-agent) |
-| user-seed | Phase 0 | US4: agents that pick a different model than the default | survived as #5; the wide-cheap counterpoint (R4) folded in |
-| user-seed | Phase 0 | US5: don't build our own for what existing tools cover | survived as #7 (buy-vs-build gate) |
-| user-seed | Phase 0 | US6: prune capabilities/guards no longer necessary with current LLMs | survived as #9; the model-obsolescence half also informs #1 |
-| user-seed | Phase 0 | Seed 1: scan all repos' transcripts for patterns | executed as grounding method (the measured-usage section), not a pool candidate |
-| frame-agent | Phase 2 | Collapse the bespoke agent roster + CI ban + justify-tier | survived as #3 |
-| frame-agent | Phase 2 | Generate marketplace.json + README from plugin.json | survived as #4 (sharpens P1 #marketplace-ci-guard from detect to prevent) |
-| frame-agent | Phase 2 | Usage ledger + apt-style retention flags | survived as #6 |
-| frame-agent | Phase 2 | Journal-aware lifecycle substrate | survived as #8 (sharpens P2 #engineering-journal-plugin) |
-| frame-agent | Phase 2 | Saga trajectory telemetry mining | survived as #10 |
-| frame-agent | Phase 2 | Codex/Antigravity as saga backends | survived as #11 (lowest conf — prior art largely shipped) |
-| frame-agent | Phase 2 | Split saga / 100 micro-plugins / auto-compact hook | cut → R1 / R2 / R3 |
+| user-seed | Phase 0 | US1: remove slack/identity-toolkit/pagerduty/splunk/sdk-lifecycle | survived → #1; expanded by operator to a 17→7 cut |
+| user-seed | Phase 0 | US2: offload "commit at 90% context" to a sub-session | survived → #2; reframed to triggered skills (Track 1) |
+| user-seed | Phase 0 | US3: an agent that batches bash/git-ops | survived, fused into #2 / Track 1 |
+| user-seed | Phase 0 | US4: agents that pick a different model | survived → #5; folded into Track 1 |
+| user-seed | Phase 0 | US5: don't build what existing tools cover | survived → #7; reframed to a grooming capability (Track 2) |
+| user-seed | Phase 0 | US6: prune capabilities/guards obsolete under current LLMs | survived → #9 |
+| frame-agent | Phase 2 | Collapse the agent roster / generate registry / usage ledger / journal substrate / telemetry / codex backends | survived → #3 / #4 / #6 / #8 / #10 / R6 |
+| operator | Phase 6 | deploy is a must-keep (works with saga) | applied to #1 (KEEP, not probation) |
+| operator | Phase 6 | marketplace-lister → infiquetra-hermes-plugins | applied to #1 (RELOCATE) |
+| operator | Phase 6 | todoist-manager → use the MCP | applied to #1 (CUT) |
+| operator | Phase 6 | cut the measure/decide trio outright | applied to #1 (python-toolkit/test-suite/docs-generator CUT) |
+| operator | Phase 6 | #2/#3/#5 should become a list of well-triggered skills/agents from work-patterns | created Track 1 |
+| operator | Phase 6 | #6 likely covered by Langfuse; #7 → a plugin that grooms plugins; #10 → AAR in improve stage | created Track 2; reframed #6/#7/#10 |
+| operator | Phase 6 | #11 — not sure | parked → R6 |

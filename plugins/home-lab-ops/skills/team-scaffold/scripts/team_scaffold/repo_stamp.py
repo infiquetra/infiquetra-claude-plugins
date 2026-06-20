@@ -163,6 +163,23 @@ def _copy_if_absent(src: pathlib.Path, dst: pathlib.Path, created: list[str]) ->
     created.append(str(dst))
 
 
+def _symlink_if_absent(link: pathlib.Path, target: str, created: list[str]) -> None:
+    """Create ``link`` as a relative symlink to sibling ``target``.
+
+    Idempotent like ``_copy_if_absent``: skips if anything already exists at
+    ``link`` (real file or symlink, even a dangling one), so re-runs and hand
+    edits are preserved. Skips when ``target`` is missing, to avoid leaving a
+    dangling link if the canonical file was not stamped.
+    """
+    if link.is_symlink() or link.exists():
+        return
+    if not (link.parent / target).exists():
+        return
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target)
+    created.append(str(link))
+
+
 def stamp(
     spec: TeamSpec, out_dir: str | pathlib.Path, context_library: str | pathlib.Path
 ) -> list[str]:
@@ -174,10 +191,15 @@ def stamp(
 
     sub = {"name": spec.name, "display": spec.display}
 
-    # AI-instruction files (seed from templates, light rename)
+    # AI-instruction files. AGENTS.md is the canonical real file; CLAUDE.md and
+    # GEMINI.md are symlinks to it, so every agent tool reads one source of truth
+    # per repo. Per-tool behavioral differences belong in the global ~/.claude,
+    # ~/.gemini, and ~/.codex configs — not duplicated into each repo. copilot
+    # instructions and llms.txt are distinct formats for distinct consumers, so
+    # they stay as their own files.
     _copy_if_absent(ai / "AGENTS.template.md", root / "AGENTS.md", created)
-    _copy_if_absent(ai / "CLAUDE.template.md", root / "CLAUDE.md", created)
-    _copy_if_absent(ai / "GEMINI.template.md", root / "GEMINI.md", created)
+    _symlink_if_absent(root / "CLAUDE.md", "AGENTS.md", created)
+    _symlink_if_absent(root / "GEMINI.md", "AGENTS.md", created)
     _copy_if_absent(
         ai / "copilot-instructions.template.md",
         root / ".github" / "copilot-instructions.md",

@@ -243,3 +243,39 @@ def test_stamp_is_idempotent(tmp_path: pathlib.Path):
     repo_stamp.stamp(spec, tmp_path, CL)
     second = repo_stamp.stamp(spec, tmp_path, CL)
     assert second == []  # nothing re-created
+
+
+@pytest.mark.skipif(not CL.exists(), reason="context-library not checked out")
+def test_stamp_claude_gemini_are_symlinks_to_agents(tmp_path: pathlib.Path):
+    spec = from_dict(
+        {
+            "team": {
+                "name": "nyx",
+                "display": "Nyx",
+                "host_group": "agent_vms",
+                "limit_host": "nyx.infiquetra.com",
+                "roles": [
+                    {"role": "ollama", "tags": "ollama,nyx"},
+                    {"role": "hermes", "tags": "hermes,nyx"},
+                ],
+            },
+            "profiles": [
+                {
+                    "name": "nyx",
+                    "persona": "nyx",
+                    "discord_token_var": "vault_discord_bot_token_nyx",
+                }
+            ],
+        }
+    )
+    repo_stamp.stamp(spec, tmp_path, CL)
+    agents = tmp_path / "AGENTS.md"
+    claude = tmp_path / "CLAUDE.md"
+    gemini = tmp_path / "GEMINI.md"
+    # AGENTS.md is the canonical real file; CLAUDE/GEMINI are relative symlinks to it
+    assert agents.is_file() and not agents.is_symlink()
+    assert claude.is_symlink() and claude.readlink() == pathlib.Path("AGENTS.md")
+    assert gemini.is_symlink() and gemini.readlink() == pathlib.Path("AGENTS.md")
+    # reading through the symlink yields the canonical content (one source of truth)
+    assert claude.read_text() == agents.read_text()
+    assert gemini.read_text() == agents.read_text()

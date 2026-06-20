@@ -15,10 +15,12 @@ Quick reference for Infiquetra board-flow metrics. Source of truth:
 |-------|-------|----------|
 | Jeff Intent | Active | Done |
 | Asgard | Active | Done |
-| Olympus | Assigned | Done, Closed, Cancelled |
+| CAMPPS | In Progress | Done |
 
-Olympus history may include `In Progress`, `In Development`, or `Deployed`; tooling may
-include those for historical calculations but should not create new movement with those names.
+Legacy (read-only history): the retired `Mount Olympus` board used `Assigned` as start with
+`Done`/`Closed`/`Cancelled` terminals; its history may include `In Progress`, `In Development`,
+or `Deployed`. Tooling reads those for historical calculations only and creates no new movement
+with those names.
 
 **Measurement**: P50, P85, and P95 via GitHub timeline events
 (`ProjectV2ItemFieldValueEvent` on the Status field).
@@ -45,7 +47,7 @@ include those for historical calculations but should not create new movement wit
 |-------|---------------------------|
 | Jeff Intent | Done |
 | Asgard | Done |
-| Olympus | Done, Closed, Cancelled |
+| CAMPPS | Done |
 
 ---
 
@@ -59,11 +61,7 @@ include those for historical calculations but should not create new movement wit
 |-------|--------|-----------|
 | Jeff Intent | Active, Verify | > 3 days |
 | Asgard | Active, Verify | > 3 days |
-| Olympus | Ready | > 2 days |
-| Olympus | Planning | > 2 days |
-| Olympus | Assigned | > 5 days |
-| Olympus | In Progress | > 5 days |
-| Olympus | In Review | > 2 days |
+| CAMPPS | In Progress | > 5 days |
 
 ---
 
@@ -71,8 +69,8 @@ include those for historical calculations but should not create new movement wit
 
 **Definition**: Active work time divided by total cycle time.
 
-For Olympus, active work is primarily `Assigned` plus `In Review`. For intent-flow boards,
-active work is `Active` plus `Verify`. `Ready`, `Shaping`, and `Planning` are wait or
+For CAMPPS, active work is primarily `In Progress`. For intent-flow boards,
+active work is `Active` plus `Verify`. `Ready` and `Shaping` are wait or
 preparation states unless a card's evidence shows otherwise.
 
 Target: greater than 50%.
@@ -109,8 +107,8 @@ Target: greater than 50%.
 
 | Metric | Command | Key flag |
 |--------|---------|----------|
-| Cycle time all types | `metrics cycle-time --project mount-olympus` | `--days N` |
-| Cycle time by type | `metrics cycle-time --project mount-olympus --type capability` | `--type` |
+| Cycle time all types | `metrics cycle-time --project campps` | `--days N` |
+| Cycle time by type | `metrics cycle-time --project campps --type capability` | `--type` |
 | Throughput | `metrics throughput --project asgard` | `--weeks N` |
 | WIP age | `metrics wip-age --project jeff-intent` | -- |
-| Status breakdown | `metrics column-time --project mount-olympus --number 42` | `--number` |
+| Status breakdown | `metrics column-time --project campps --number 42` | `--number` |

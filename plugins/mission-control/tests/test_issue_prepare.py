@@ -70,8 +70,8 @@ def test_prepare_olympus_writes_ready_draft_and_sidecar(tmp_path) -> None:
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
-        team="olympus",
-        project="mount-olympus",
+        team="campps",
+        project="campps",
         source=OLYMPUS_BODY,
         title="Prepared issue workflow",
         status=None,
@@ -95,8 +95,8 @@ def test_prepare_olympus_blocks_missing_verification(tmp_path) -> None:
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
-        team="olympus",
-        project="mount-olympus",
+        team="campps",
+        project="campps",
         source="Implement the router issue workflow.",
         title="Incomplete Olympus draft",
         status=None,
@@ -128,8 +128,8 @@ def test_prepare_high_risk_fallback_includes_risk_conditional_sections(tmp_path)
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
-        team="olympus",
-        project="mount-olympus",
+        team="campps",
+        project="campps",
         source="Implement the router issue workflow.",
         title="High-risk fallback",
         status=None,
@@ -215,8 +215,8 @@ def test_prepare_records_explicit_handoff_maturity(tmp_path) -> None:
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
-        team="olympus",
-        project="mount-olympus",
+        team="campps",
+        project="campps",
         source=OLYMPUS_BODY,
         title="Plan handoff",
         status=None,
@@ -238,8 +238,8 @@ def test_non_default_status_blocks_prepared_draft(tmp_path) -> None:
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
-        team="olympus",
-        project="mount-olympus",
+        team="campps",
+        project="campps",
         source=OLYMPUS_BODY,
         title="Wrong status",
         status="In Progress",
@@ -252,7 +252,7 @@ def test_non_default_status_blocks_prepared_draft(tmp_path) -> None:
 
     assert sidecar["state"] == "blocked"
     assert (
-        "Prepared olympus issues must start in 'Backlog', not 'In Progress'"
+        "Prepared campps issues must start in 'Idea', not 'In Progress'"
         in sidecar["readiness"]["blocking_gaps"]
     )
 
@@ -261,8 +261,8 @@ def test_olympus_requires_actionable_labels_and_risk(tmp_path) -> None:
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
-        team="olympus",
-        project="mount-olympus",
+        team="campps",
+        project="campps",
         source=OLYMPUS_BODY,
         title="Missing risk",
         status=None,
@@ -293,8 +293,8 @@ def test_sidecar_conflict_blocks_draft_parse(tmp_path) -> None:
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
-        team="olympus",
-        project="mount-olympus",
+        team="campps",
+        project="campps",
         source=OLYMPUS_BODY,
         title="Conflict draft",
         status=None,

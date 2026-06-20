@@ -3,7 +3,7 @@ name: metrics
 description: |
   Flow metrics and analysis for Infiquetra project boards using GitHub timeline events.
   Provides cycle time, throughput, WIP age, per-status time breakdowns, and interpretation
-  guidance across Jeff Intent, Asgard, and Mount Olympus.
+  guidance across Jeff Intent, Asgard, and CAMPPS.
 when_to_use: |
   Use this skill when the user wants to:
 
@@ -44,19 +44,21 @@ Always run the script with `python3`.
 |-------|--------------|-------------------|
 | Jeff Intent | Active | Done |
 | Asgard | Active | Done |
-| Olympus | Assigned | Done, Closed, Cancelled |
+| CAMPPS | In Progress | Done |
 
-Olympus timeline history may still include `In Progress`, `In Development`, or `Deployed`.
-The CLI reads those values for continuity, but new cards should use the current schema.
+Legacy (read-only history): the retired `Mount Olympus` board used `Assigned` as active start
+with `Done`/`Closed`/`Cancelled` terminals, and its timeline may include `In Progress`,
+`In Development`, or `Deployed`. The CLI reads those values for historical continuity only;
+new cards use the active boards above.
 
 ## Core Operations
 
 ### Cycle Time
 
 ```bash
-python3 sdlc_manager.py metrics cycle-time --project mount-olympus
+python3 sdlc_manager.py metrics cycle-time --project campps
 python3 sdlc_manager.py metrics cycle-time --project asgard --days 14
-python3 sdlc_manager.py metrics cycle-time --project mount-olympus --type capability
+python3 sdlc_manager.py metrics cycle-time --project campps --type capability
 ```
 
 Cycle time is calculated from the first active-start status to a terminal status.
@@ -64,7 +66,7 @@ Cycle time is calculated from the first active-start status to a terminal status
 ### Throughput
 
 ```bash
-python3 sdlc_manager.py metrics throughput --project mount-olympus
+python3 sdlc_manager.py metrics throughput --project campps
 python3 sdlc_manager.py metrics throughput --project asgard --weeks 8
 ```
 
@@ -73,7 +75,7 @@ Throughput counts items that reached a terminal workflow status during the repor
 ### WIP Age
 
 ```bash
-python3 sdlc_manager.py metrics wip-age --project mount-olympus
+python3 sdlc_manager.py metrics wip-age --project campps
 python3 sdlc_manager.py metrics wip-age --project jeff-intent
 ```
 
@@ -82,7 +84,7 @@ WIP age shows current items in active statuses and flags entries over the config
 ### Per-Status Time Breakdown
 
 ```bash
-python3 sdlc_manager.py metrics column-time --project mount-olympus --number 42
+python3 sdlc_manager.py metrics column-time --project campps --number 42
 ```
 
 Use this to diagnose where one card spent time.
@@ -105,25 +107,21 @@ Use this to diagnose where one card spent time.
 |-------|--------|---------------|
 | Jeff Intent / Asgard | Active | 3 days |
 | Jeff Intent / Asgard | Verify | 3 days |
-| Olympus | Ready | 2 days |
-| Olympus | Planning | 2 days |
-| Olympus | Assigned | 5 days |
-| Olympus | In Progress | 5 days |
-| Olympus | In Review | 2 days |
+| CAMPPS | In Progress | 5 days |
 
 ## Natural Language Examples
 
 **"What's our cycle time for capabilities this month?"**
--> `metrics cycle-time --project mount-olympus --type capability --days 30`
+-> `metrics cycle-time --project campps --type capability --days 30`
 
 **"How many items did Asgard complete recently?"**
 -> `metrics throughput --project asgard --weeks 4`
 
 **"How old are our active items?"**
--> `metrics wip-age --project mount-olympus`
+-> `metrics wip-age --project campps`
 
 **"How long has issue #42 been active?"**
--> `metrics column-time --project mount-olympus --number 42`
+-> `metrics column-time --project campps --number 42`
 
 ## Interpreting Results
 
@@ -140,7 +138,7 @@ Use this to diagnose where one card spent time.
 1. Check whether active statuses are at or over WIP.
 2. Look for aging items that are not moving to review or verification.
 3. Check whether `Ready` is empty or poorly shaped.
-4. Confirm the board is the right one: raw intent should not be counted as Olympus execution.
+4. Confirm the board is the right one: raw intent should not be counted as initiative execution.
 
 ### When WIP Age Is High
 

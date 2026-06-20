@@ -7,16 +7,19 @@ truth is `$INFIQUETRA_SDLC_PATH/config/sdlc-schema.json`, with prose context in
 
 ---
 
-## Boards
+## Active Boards
 
 | Project key | Board | Purpose |
 |-------------|-------|---------|
 | `jeff-intent` | Jeff Intent | Raw operator intent, approvals, personal/operator work, and shaping |
 | `asgard` | Asgard | Jeff-proximal rapid action, incubation, and mission-mode work |
-| `mount-olympus` | Olympus | Primary autonomous engineering execution pipeline |
+| `campps` | CAMPPS | Long-lived initiative execution board (Outcome / Capability / Component slices) |
 
-Prefer project views over new boards until scale, automation, or reporting needs justify
-a separate board.
+No board is a default: board operations require an explicit `--project`. Prefer project
+views over new boards until scale, automation, or reporting needs justify a separate board.
+
+The former project #1 (`Mount Olympus`) is retired-historical and closed (see the legacy
+read-only section below); it is not an active board or a routing target.
 
 ---
 
@@ -42,32 +45,33 @@ Asgard modes:
 | Mode | Use |
 |------|-----|
 | Rapid Action | Reversible, time-sensitive work that benefits from low ceremony. |
-| Incubator | Exploratory work likely to define future Olympus execution. |
+| Incubator | Exploratory work likely to define future initiative execution. |
 | Mission | Focused, high-leverage work close to Jeff with a clear outcome. |
 
-### Mount Olympus
+### CAMPPS
 
 ```
-Backlog -> Ready -> Planning -> Assigned -> In Review -> Done / Closed
+Idea -> Committed -> In Progress -> Done   (pause: Parked)
 ```
 
 | Status | Purpose |
 |--------|---------|
-| Backlog | Accepted but not yet ready for engineering execution. |
-| Ready | Meets issue schema, has acceptance criteria, and is eligible for dispatch. |
-| Planning | Plan or execution approach is being prepared or reviewed. |
-| Assigned | An agent owns implementation and is within WIP capacity. |
-| In Review | PR, work artifact, or verification evidence is under team-owned review. |
-| Done | Work is completed. |
-| Closed | Work is closed without further active flow. |
+| Idea | Captured outcome/capability candidate, not yet admitted to the portfolio. |
+| Committed | Admitted to the initiative portfolio; Objective field is set. |
+| In Progress | Component slices are being built and verified. |
+| Done | Work is completed for this initiative slice. |
+| Parked | Intentionally paused initiative work. |
 
-Pause states: `Plan-Approved`, `Needs Review`, `Needs Question`, `Blocked`, `Cancelled`.
+Deployment state belongs in deployment fields and GitHub Deployments/Environments, not in
+the core Status workflow.
 
-Olympus still exposes a live `In Progress` option. Treat it as a live legacy option:
-display it when present, but use `Assigned` for new work. Older status names such as
-`In Development`, `E2E Testing`, `Deployment Ready`, and `Deployed` are legacy migration
-terms. Deployment state belongs in deployment fields and GitHub Deployments/Environments,
-not in the core Status workflow.
+### Legacy: `Mount Olympus` (read-only history)
+
+The former `Mount Olympus` board (project #1) used
+`Backlog -> Ready -> Planning -> Assigned -> In Review -> Done / Closed`. It is closed and
+retired; tooling may read its historical timeline values (`In Progress`, `In Development`,
+`E2E Testing`, `Deployment Ready`, `Deployed`) for history, but no new cards are created or
+routed there.
 
 ---
 
@@ -83,11 +87,8 @@ not in the core Status workflow.
 | Asgard | Ready | 8 |
 | Asgard | Active | 5 |
 | Asgard | Verify | 5 |
-| Olympus | Ready | 10 |
-| Olympus | Planning | 3 |
-| Olympus | Assigned | 3 per assigned agent |
-| Olympus | In Review | 5 |
 
+CAMPPS is an initiative rollup board and does not enforce per-column WIP limits.
 When a limit is exceeded, finish or unblock current work before pulling more into that status.
 Critical defects can temporarily override WIP, but the exception should be visible in the card.
 
@@ -100,7 +101,7 @@ Walk right-to-left through the relevant board:
 | Board | Review order |
 |-------|--------------|
 | Jeff Intent / Asgard | Done -> Verify -> Active -> Ready -> Shaping -> Idea |
-| Olympus | Closed -> Done -> In Review -> Assigned -> Planning -> Ready -> Backlog |
+| CAMPPS | Done -> In Progress -> Committed -> Idea |
 
 Ask:
 
@@ -119,19 +120,19 @@ Ask:
 1. Capture on Jeff Intent as `Idea`.
 2. Shape until target team and context pack are clear.
 3. Move to `Ready`.
-4. Route to Asgard, Olympus, Jeff, or External/Deferred based on target team.
+4. Route to Asgard, CAMPPS, Jeff, or External/Deferred based on target team.
 
 ### Explicit Cross-Team Transfer
 
-1. Treat Asgard and Olympus as sibling target boards, not stages in a default funnel.
+1. Treat Asgard and CAMPPS as sibling active target surfaces, not stages in a default funnel.
 2. Keep work on the selected board unless an operator explicitly routes, transfers, clones, or links it elsewhere.
 3. When a transfer is requested, make the receiving issue self-contained: target repo or surface, acceptance criteria, verification, risk, approvals, and context links must be clear.
 
-### Olympus Engineering Flow
+### CAMPPS Initiative Flow
 
-1. Start in `Backlog` or `Ready` depending on issue maturity.
-2. Move through `Planning`, `Assigned`, and `In Review`.
-3. Close as `Done` or `Closed`.
+1. Start in `Idea` until the outcome/capability is admitted to the portfolio.
+2. Move to `Committed` once the Objective field is set, then `In Progress` as slices build.
+3. Close as `Done`.
 4. Track environment promotion separately through deployment fields and deployment records.
 
 ---
@@ -143,7 +144,7 @@ Cycle time starts when active ownership begins:
 | Board | Start | Terminal |
 |-------|-------|----------|
 | Jeff Intent / Asgard | Active | Done |
-| Olympus | Assigned | Done, Closed, Cancelled |
+| CAMPPS | In Progress | Done |
 
-Legacy Olympus timeline values may still include `In Progress`, `In Development`, or
-`Deployed`; tooling may read them for history but should not create new cards with those statuses.
+Legacy `Mount Olympus` timeline values (`In Progress`, `In Development`, `Deployed`) may be
+read for history but are never used to create new cards.

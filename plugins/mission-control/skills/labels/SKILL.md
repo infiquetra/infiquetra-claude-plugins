@@ -16,10 +16,10 @@ when_to_use: |
 
   Setting project fields:
   - Set Initiative, Objective, or other project fields directly after label or card changes
-  - Discover available fields and options on Jeff Intent, Asgard, or Mount Olympus
+  - Discover available fields and options on Jeff Intent, Asgard, or CAMPPS
 
   Assigning initiatives and objectives:
-  - "this belongs to olympus-v1", "assign to the platform-launch objective",
+  - "this belongs to platform-v1", "assign to the platform-launch objective",
     "this issue is part of the core-platform initiative", "tag this with the Q1 objective"
   - Setting the corresponding project field option
 
@@ -45,7 +45,7 @@ when_to_use: |
   - Creating new single-select options on the project board for new initiatives/objectives
 
   Field discovery:
-  - "what fields does the mount-olympus board have", "show me the board fields",
+  - "what fields does an active board have", "show me the board fields",
     "discover project fields"
 ---
 
@@ -68,7 +68,7 @@ $INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/mission-control/scrip
 Initiative and Objective are project fields, not label-derived state. Set them directly:
 
 ```bash
-python3 sdlc_manager.py flow set-field --project mount-olympus \
+python3 sdlc_manager.py flow set-field --project campps \
   --repo infiquetra-core --number 42 \
   --field Objective --option "platform-launch"
 ```
@@ -117,16 +117,16 @@ project board's single-select field:
 
 ```bash
 # Add a new initiative option to the board
-python3 sdlc_manager.py fields create-option --project mount-olympus --field initiative --option "platform-stability"
+python3 sdlc_manager.py fields create-option --project campps --field initiative --option "platform-stability"
 
 # Add a new objective
-python3 sdlc_manager.py fields create-option --project mount-olympus --field objective --option "platform-launch"
+python3 sdlc_manager.py fields create-option --project campps --field objective --option "platform-launch"
 ```
 
 ### Discover Project Fields
 
 ```bash
-python3 sdlc_manager.py fields discover --project mount-olympus
+python3 sdlc_manager.py fields discover --project campps
 ```
 
 Shows all fields and their available options with IDs. Useful for confirming field names and
@@ -167,11 +167,11 @@ but they are not the canonical source of truth.
 **"Add the high-priority label to defect #88"**
 -> `gh issue edit 88 --add-label high-priority --repo Infiquetra/infiquetra-core`
 
-**"This issue belongs to the Olympus v1 initiative"**
--> `flow set-field --project mount-olympus --repo <repo> --number <N> --field Initiative --option "olympus-v1"`
+**"This issue belongs to the Platform v1 initiative"**
+-> `flow set-field --project campps --repo <repo> --number <N> --field Initiative --option "platform-v1"`
 
 **"Sync the initiative field for issue #42"**
--> `python3 sdlc_manager.py flow set-field --project mount-olympus --repo infiquetra-core --number 42 --field Initiative --option <name>`
+-> `python3 sdlc_manager.py flow set-field --project campps --repo infiquetra-core --number 42 --field Initiative --option <name>`
 
 **"Audit labels on infiquetra-core"**
 -> `python3 sdlc_manager.py labels audit --repo infiquetra-core`
@@ -185,11 +185,11 @@ but they are not the canonical source of truth.
 **"We have a new initiative called platform-stability — add it to the board"**
 ->
 ```bash
-python3 sdlc_manager.py fields create-option --project mount-olympus --field initiative --option "platform-stability"
+python3 sdlc_manager.py fields create-option --project campps --field initiative --option "platform-stability"
 ```
 
-**"What fields does the mount-olympus board have?"**
--> `python3 sdlc_manager.py fields discover --project mount-olympus`
+**"What fields does an active board have?"**
+-> `python3 sdlc_manager.py fields discover --project campps`
 
 ## Reference Documents
 

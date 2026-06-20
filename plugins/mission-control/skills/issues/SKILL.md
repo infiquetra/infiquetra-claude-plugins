@@ -33,7 +33,7 @@ when_to_use: |
 
   Prepared issue creation:
   - "create an issue from the brainstorm", "handoff the plan as an issue"
-  - "create an Olympus issue from this text"
+  - "create a CAMPPS issue from this text"
   - "create an Asgard issue from these notes"
   - "turn this queue entry into an issue for the router repo"
 ---
@@ -109,7 +109,7 @@ research, or documentation context.
 ### Prepared Issue Draft from Source Text
 
 Use the prepared workflow when the user starts from rough text, notes, copied queue entries, or
-asks for an Asgard/Olympus issue that should be reviewed before mutation.
+asks for an Asgard or CAMPPS issue that should be reviewed before mutation.
 
 `/issue` is the primary user-facing command for this path. `/issue` remains a
 compatibility alias. `--prepare` is the canonical non-mutating mode; `--draft` means the same
@@ -120,8 +120,8 @@ thing. `--from` accepts a local path, GitHub issue/PR URL, branch ref, or natura
 python3 sdlc_manager.py issue prepare \
   --repo hermes-claude-code-router \
   --type capability \
-  --team olympus \
-  --project mount-olympus \
+  --team campps \
+  --project campps \
   --risk medium \
   --title "Prepared issue workflow" \
   --from docs/plans/example.md \
@@ -157,7 +157,7 @@ Natural-language routing rules:
 
 - "Create an issue from the brainstorm" -> search `docs/brainstorms/`, prepare, then
   create-prepared after review.
-- "Create an Olympus issue from this text" -> prepare with `--team olympus --project mount-olympus`,
+- "Create a CAMPPS issue from this text" -> prepare with `--team campps --project campps`,
   then create-prepared after review.
 - "Create an Asgard issue from this text" -> prepare with `--team asgard --project asgard`, then
   create-prepared after review.
@@ -170,7 +170,7 @@ Natural-language routing rules:
 Safe starting statuses:
 
 - Asgard starts in `Shaping`.
-- Mount Olympus starts in `Backlog`.
+- CAMPPS starts in `Idea`.
 - Never auto-move a prepared issue to `Ready`.
 
 ### Create Issue with Template
@@ -229,9 +229,9 @@ Set project fields with the `flow` helpers after the issue is added to a board:
 python3 sdlc_manager.py flow set-field \
   --repo <repo> \
   --number <N> \
-  --project "Mount Olympus Operations" \
+  --project campps \
   --field Status \
-  --option Backlog
+  --option Committed
 ```
 
 Use live field discovery rather than cached field IDs.
@@ -334,8 +334,8 @@ still uses milestones for that repository.
 `issue prepare --from <plan> --maturity plan-ready`. If multiple plans match, ask the user to
 choose.
 
-**"Create an Olympus issue from this text for the router repo"**
--> Prepare an Olympus draft with `issue prepare --team olympus --project mount-olympus`, review
+**"Create a CAMPPS issue from this text for the router repo"**
+-> Prepare a CAMPPS draft with `issue prepare --team campps --project campps`, review
 readiness gaps, then use `issue create-prepared`.
 
 **"Create an Asgard issue from these notes"**

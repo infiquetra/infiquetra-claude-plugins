@@ -9,12 +9,13 @@ throughput, WIP age, and bottleneck hints.
 ## Usage
 
 ```
-/metrics [jeff-intent|asgard|mount-olympus] [--type metric-type]
+/metrics --project <jeff-intent|asgard|campps> [--type metric-type]
 ```
 
 ## Arguments
 
-- `project` - Project name: `mount-olympus` (default), `asgard`, or `jeff-intent`
+- `--project` (required) - Active board: `jeff-intent`, `asgard`, or `campps`. No default;
+  the command errors with the active-board list (Jeff Intent / Asgard / CAMPPS) if omitted.
 - `--type` - Optional metric type: `cycle-time`, `throughput`, `wip-age`, or `all` (default)
 
 ## What This Does
@@ -28,27 +29,27 @@ throughput, WIP age, and bottleneck hints.
 ## Examples
 
 ```
-/metrics
-/metrics mount-olympus
-/metrics asgard --type throughput
-/metrics jeff-intent --type wip-age
+/metrics --project jeff-intent
+/metrics --project asgard --type throughput
+/metrics --project campps --type wip-age
 ```
 
 ## Script Commands
 
 ```bash
-SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/1.6.0/scripts/sdlc_manager.py
+SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py
 
-python3 $SCRIPT metrics cycle-time --project mount-olympus --days 30
+python3 $SCRIPT metrics cycle-time --project jeff-intent --days 30
 python3 $SCRIPT metrics throughput --project asgard --weeks 4
-python3 $SCRIPT metrics wip-age --project jeff-intent
+python3 $SCRIPT metrics wip-age --project campps
 ```
 
 ## Instructions
 
-When the user invokes `/metrics [project] [--type metric-type]`:
+When the user invokes `/metrics --project <project> [--type metric-type]`:
 
-1. Determine project, defaulting to `mount-olympus`.
+1. Require an explicit `--project`. If omitted, error and list the active boards
+   (Jeff Intent / Asgard / CAMPPS); never default to a board.
 2. Determine which metrics to show, defaulting to all.
 3. Run the matching metric commands.
 4. Summarize pass/fail signals, bottlenecks, and concrete next actions.

@@ -53,8 +53,8 @@ def _ready_draft(tmp_path: Path) -> Path:
         sdlc_manager.issue_prepare(
             repo="hermes-claude-code-router",
             issue_type="capability",
-            team="olympus",
-            project="mount-olympus",
+            team="campps",
+            project="campps",
             source=OLYMPUS_BODY,
             title="Prepared issue workflow",
             status=None,
@@ -71,8 +71,8 @@ def _blocked_draft(tmp_path: Path) -> Path:
         sdlc_manager.issue_prepare(
             repo="hermes-claude-code-router",
             issue_type="capability",
-            team="olympus",
-            project="mount-olympus",
+            team="campps",
+            project="campps",
             source="Implement it.",
             title="Blocked issue workflow",
             status=None,
@@ -87,9 +87,9 @@ def _mapped_config() -> dict:
     return {
         "project_mappings": {
             "projects": {
-                "mount-olympus": {
-                    "number": 1,
-                    "name": "Olympus",
+                "campps": {
+                    "number": 4,
+                    "name": "CAMPPS",
                     "repositories": ["hermes-claude-code-router"],
                 }
             }
@@ -101,9 +101,9 @@ def _unmapped_config() -> dict:
     return {
         "project_mappings": {
             "projects": {
-                "mount-olympus": {
-                    "number": 1,
-                    "name": "Olympus",
+                "campps": {
+                    "number": 4,
+                    "name": "CAMPPS",
                     "repositories": [],
                 }
             }
@@ -236,14 +236,14 @@ def test_create_prepared_creates_issue_and_marks_draft(tmp_path) -> None:
         42,
         fmt="text",
         config=_mapped_config(),
-        project_name="mount-olympus",
+        project_name="campps",
     )
     mock_status.assert_called_once_with(
-        "mount-olympus",
+        "campps",
         "hermes-claude-code-router",
         42,
         "Status",
-        "Backlog",
+        "Idea",
         fmt="text",
     )
 
@@ -274,7 +274,7 @@ def test_missing_mapping_opens_pr_and_stops_without_override(tmp_path) -> None:
     assert sidecar["state"] == "mapping_pending"
     assert sidecar["pending_mapping"] == {
         "repo": "hermes-claude-code-router",
-        "project": "mount-olympus",
+        "project": "campps",
     }
 
 
@@ -338,7 +338,7 @@ def test_mapping_pr_uses_temporary_worktree(tmp_path) -> None:
     worktree_root = tmp_path / "infiquetra-sdlc"
     mapping_path = worktree_root / "config" / "project-mappings.json"
     mapping_path.parent.mkdir(parents=True)
-    mapping_path.write_text('{"projects": {"mount-olympus": {"repositories": []}}}\n')
+    mapping_path.write_text('{"projects": {"campps": {"repositories": []}}}\n')
 
     with (
         patch.object(
@@ -352,7 +352,7 @@ def test_mapping_pr_uses_temporary_worktree(tmp_path) -> None:
             sdlc_manager, "_gh", return_value="https://github.com/infiquetra/infiquetra-sdlc/pull/1"
         ),
     ):
-        url = sdlc_manager._open_mapping_pr("hermes-claude-code-router", "mount-olympus")
+        url = sdlc_manager._open_mapping_pr("hermes-claude-code-router", "campps")
 
     assert url == "https://github.com/infiquetra/infiquetra-sdlc/pull/1"
     git_args = [call.args[0] for call in mock_git.call_args_list]

@@ -57,7 +57,9 @@ def test_operator_prompt_honors_hermes_actionability_contract() -> None:
     assert "Step 2: Applied labels (hermes-task, capability, needs-analysis)" not in operator
     assert "issue prepare" in operator
     assert "issue create-prepared" in operator
-    assert "Asgard `Shaping`, Olympus `Backlog`" in operator
+    assert "Asgard `Shaping`, CAMPPS `Idea`" in operator
+    # Olympus is retired; it must not be presented as an active safe-start board.
+    assert "Olympus `Backlog`" not in operator
 
 
 def test_triage_command_uses_project_fields_and_current_actionable_labels() -> None:
@@ -100,8 +102,10 @@ def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
     assert "--maturity" in create_command
     assert "`/issue` is the primary user-facing command" in skill
     assert "/issue [type]" in readme
-    assert "Create an Olympus issue from this text" in skill
+    assert "Create a CAMPPS issue from this text" in skill
     assert "Create an Asgard issue from these notes" in skill
+    # Olympus is retired; the natural-language router must not steer new work to it.
+    assert "Olympus issue from this text" not in skill
     assert "Create an issue from the brainstorm" in skill
     assert "handoff_maturity" in skill
     assert "If team or project is ambiguous, ask" in skill

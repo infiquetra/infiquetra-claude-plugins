@@ -110,12 +110,14 @@ def test_returns_empty_dict_when_all_three_fail(tmp_path, fake_vendored_path) ->
 
 def test_vendored_project_mappings_has_expected_canonical_state() -> None:
     """The vendored project-mappings.json must declare the canonical
-    org-wide state: Olympus is project #1; the repo list matches the
-    actual `gh repo list infiquetra` output as of the file's `_provenance`
-    date. If this test fails, either the vendored file was edited or the
-    org's repo set has drifted — both are events the operator should know
-    about. The expected list is captured here verbatim so drift is
-    visible in code review.
+    org-wide state: the ACTIVE boards are Jeff Intent (#3), Asgard (#2),
+    and CAMPPS (#4). Mount Olympus (former project #1) was retired
+    2026-06-17 and removed from active routing, so it must NOT appear as a
+    project. No board carries a repo-based default routing list (KTD17 —
+    board commands require an explicit --project), so every `repositories`
+    list is empty. If this test fails, either the vendored file was edited
+    or the org's active board set has drifted — both are events the
+    operator should know about.
 
     NOTE: This test reads the REAL vendored file (not the fixture) — it's
     the canonical-state guard, not a hermetic unit test."""
@@ -123,35 +125,22 @@ def test_vendored_project_mappings_has_expected_canonical_state() -> None:
     assert vendored.exists(), f"Vendored file missing at {vendored}"
     data = json.loads(vendored.read_text())
     assert data["organization"] == "infiquetra"
-    assert "mount-olympus" in data["projects"]
-    assert "asgard" in data["projects"]
+    # Olympus is retired and must not be an active routing target.
+    assert "mount-olympus" not in data["projects"]
     assert "jeff-intent" in data["projects"]
-    olympus = data["projects"]["mount-olympus"]
-    assert olympus["number"] == 1
-    assert data["projects"]["asgard"]["number"] == 2
+    assert "asgard" in data["projects"]
+    assert "campps" in data["projects"]
     assert data["projects"]["jeff-intent"]["number"] == 3
+    assert data["projects"]["asgard"]["number"] == 2
+    assert data["projects"]["campps"]["number"] == 4
 
-    # Exact repo set from `gh repo list infiquetra --json name --jq '.[].name'`
-    # captured 2026-05-04. If the org adds/removes a repo, the vendored
-    # file needs updating + this test needs updating in the same PR — the
-    # symmetry forces the operator to re-verify.
-    expected_repos = {
-        "campps-context-library",
-        "campps-mvp",
-        "github-actions-runners",
-        "infiquetra-hermes-plugins",
-        "infiquetra-aws-infra",
-        "infiquetra-claude-plugins",
-        "infiquetra-sdlc",
-        "mimir",
-        "mimir-context-library",
-    }
-    actual_repos = set(olympus["repositories"])
-    assert actual_repos == expected_repos, (
-        f"Vendored repo list drifted from canonical. "
-        f"Missing: {expected_repos - actual_repos}; "
-        f"Unexpected: {actual_repos - expected_repos}"
-    )
+    # No repo-based default routing (KTD17): every board's repositories list
+    # is empty so work is never silently routed to a board.
+    for key, proj in data["projects"].items():
+        assert proj.get("repositories", []) == [], (
+            f"Project {key!r} carries repo-based default routing; "
+            f"KTD17 removed default routing (lists must be empty)."
+        )
 
 
 def test_sdlc_schema_remote_main_wins_over_local_and_vendored(tmp_path, fake_schema_path) -> None:

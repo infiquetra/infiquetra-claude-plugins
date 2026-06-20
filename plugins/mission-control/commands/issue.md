@@ -47,16 +47,16 @@ issue command; `/issue` remains a compatibility alias.
 Prepare from a source artifact:
 
 ```bash
-python3 ~/.claude/plugins/cache/infiquetra-plugins/mission-control/1.6.0/scripts/sdlc_manager.py \
+python3 ~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py \
   issue prepare --repo infiquetra-claude-plugins --type capability \
-  --team olympus --project mount-olympus --risk medium \
+  --team campps --project campps --risk medium \
   --from docs/plans/example.md --maturity plan-ready
 ```
 
 Create after review and confirmation:
 
 ```bash
-python3 ~/.claude/plugins/cache/infiquetra-plugins/mission-control/1.6.0/scripts/sdlc_manager.py \
+python3 ~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py \
   issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 ```
 
@@ -70,7 +70,7 @@ When the user invokes `/issue`:
 4. If multiple artifacts match, ask the user to choose; do not guess.
 5. If the user gives `--maturity`, pass it through to `issue prepare --maturity`.
 6. If creating from an existing prepared draft, run `issue create-prepared`; show the mutation plan and require confirmation unless the user explicitly requested the confirmed mutation.
-7. If target team or project is ambiguous, ask. Do not guess between Asgard and Mount Olympus.
+7. If target team or project is ambiguous, ask. Do not guess between the active teams (Asgard and CAMPPS).
 8. Ensure the prepared issue is self-contained for a recipient without `saga`.
 9. If the recipient does have `saga`, suggest `/plan <issue>` for `idea-ready` or `requirements-ready`, and `/work <issue>` for `plan-ready` or `resume-ready`.
 10. Do not hand-write actionable issue template bodies in this command; route source text through

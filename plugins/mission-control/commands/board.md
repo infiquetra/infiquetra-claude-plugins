@@ -9,14 +9,16 @@ and blockers.
 ## Usage
 
 ```
-/board [jeff-intent|asgard|mount-olympus]
+/board --project <jeff-intent|asgard|campps>
 ```
 
 ## Arguments
 
-- `mount-olympus` - Show Olympus engineering execution board (default)
-- `asgard` - Show Asgard rapid-action/incubation board
-- `jeff-intent` - Show Jeff's intent and shaping board
+- `--project` (required) - Active board to show. No default; the command errors with the
+  active-board list (Jeff Intent / Asgard / CAMPPS) if omitted.
+- `jeff-intent` - Jeff's intent and shaping board.
+- `asgard` - Asgard rapid-action/incubation board.
+- `campps` - CAMPPS initiative execution board (initiative-scoped; archived on completion).
 
 ## What This Does
 
@@ -29,28 +31,28 @@ and blockers.
 ## Examples
 
 ```
-/board
-/board mount-olympus
-/board asgard
-/board jeff-intent
+/board --project jeff-intent
+/board --project asgard
+/board --project campps
 ```
 
 ## Script Commands
 
 ```bash
-SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/1.6.0/scripts/sdlc_manager.py
+SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py
 
-python3 $SCRIPT board view --project mount-olympus
-python3 $SCRIPT board wip --project mount-olympus
+python3 $SCRIPT board view --project jeff-intent
+python3 $SCRIPT board wip --project jeff-intent
 ```
 
-Replace `mount-olympus` with `asgard` or `jeff-intent` for those boards.
+Replace `jeff-intent` with `asgard` or `campps` for those boards.
 
 ## Instructions
 
-When the user invokes `/board [project]`:
+When the user invokes `/board --project <project>`:
 
-1. Determine target project, defaulting to `mount-olympus`.
+1. Require an explicit `--project`. If omitted, error and list the active boards
+   (Jeff Intent / Asgard / CAMPPS); never default to a board.
 2. Run `board view --project <project>`.
 3. Run `board wip --project <project>`.
 4. Summarize items by status, WIP violations, blockers, and aging work.

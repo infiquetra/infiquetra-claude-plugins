@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.23.0 - 2026-06-20
+
+- Add the `/promote` skill — the workspace tier of the engineering journal. It promotes the *select few*
+  cross-repo "transcendent" learnings into `infiquetra-context-library`'s `LEARNINGS.md` as distilled,
+  pull-only org standards: a manual, gated, agent-judged pass with two feeders (the `/retro`-declared
+  `**Transcendent.**` marker and a recurrence net over legacy `**Generalizable rule.**` lines). It mirrors
+  `/ideate`'s cross-repo grounding, clusters the same lesson across repos by judgment (no vectors), and
+  upserts ONE entry per lesson behind a propose-diff-and-wait gate. READ-ONLY on the SDLC; writes only to
+  context-library; never writes back to source repos.
+- Add `scripts/promote_scan.py` — the deterministic backbone: enumerate `*/docs/engineering-journal/
+  LEARNINGS.md`, parse the marker + legacy-rule variants, compute the drift-stable `<repo>:<hash>` source
+  key, read context-library's `promote-keys` ledger to drop already-promoted candidates, exclude
+  context-library and self-feed entries (two layers), group exact-recurrence clusters, and render the
+  idempotent gated upsert (create / update / noop). The marker form, key recipe, parser, entry template,
+  and ledger are frozen in `skills/promote/references/promotion-contract.md` (the single source of truth).
+- Teach `/retro`'s Phase-4 curation to propose the `**Transcendent.**` marker on the select cross-repo
+  learnings (the single-repo, propose-diff-and-wait declare feeder).
+
 ## 0.22.1 - 2026-06-13
 
 - Tighten the `adversarial_confidence` guidance: `/work` sets `--adversarial-confidence` only on an explicit

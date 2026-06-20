@@ -435,6 +435,7 @@ def compute_upsert(journal_text: str, promo: Promotion) -> dict:
                 + "; ".join(o.backlink for o in new_origins)
             )
         km = PROMOTE_KEYS_RE.search(out[match.keys_line])
+        assert km is not None  # keys_line is, by construction, a promote-keys line
         existing = [k.strip() for k in km.group(1).split(";") if k.strip()]
         merged = existing + [o.key for o in new_origins]
         out[match.keys_line] = f"<!-- promote-keys: {'; '.join(merged)} -->"

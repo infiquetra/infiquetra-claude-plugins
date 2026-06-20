@@ -14,7 +14,7 @@
     <tspan x="70" dy="0">Command Matrix</tspan>
   </text>
   <text x="70" y="118" class="subtitle" fill="#52616f">
-    <tspan x="70" dy="0">17 routable commands plus /ceo-review as the /founder-review alias.</tspan>
+    <tspan x="70" dy="0">18 routable commands plus /ceo-review as the /founder-review alias.</tspan>
   </text>
   <rect x="70" y="175" width="350" height="565" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
   <rect x="94" y="205" width="96" height="34" rx="17" fill="#0f7c80"/>
@@ -207,6 +207,16 @@
   <rect x="1385" y="535" width="118" height="34" rx="17" fill="#0f7c80"/>
   <text x="1399" y="558" class="small" fill="#fbfcfd">
     <tspan x="1399" dy="0">terminal</tspan>
+  </text>
+  <text x="1208" y="651" class="label" fill="#2f6fbd">
+    <tspan x="1208" dy="0">/promote</tspan>
+  </text>
+  <text x="1208" y="679" class="body" fill="#52616f">
+    <tspan x="1208" dy="0">cross-repo journal feeder</tspan>
+  </text>
+  <rect x="1385" y="629" width="142" height="34" rx="17" fill="#6b5fb5"/>
+  <text x="1399" y="652" class="small" fill="#fbfcfd">
+    <tspan x="1399" dy="0">cross-repo</tspan>
   </text>
   <rect x="70" y="780" width="1460" height="55" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
   <text x="100" y="816" class="label" fill="#b24a5a">

@@ -1,6 +1,6 @@
 # Saga Command Selection
 
-Saga has 18 command files and 17 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
+Saga has 19 command files and 18 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
 
 ![Command Matrix](assets/command-matrix.svg)
 
@@ -226,6 +226,25 @@ Lifecycle learning and meta-improvement engine.
 | Boundary | Owns learning capture and proposed lifecycle improvements, not SDLC mutation. |
 | Common mistakes | Letting retro silently edit existing directives; treating retro as a required `/loop` blocker. |
 | Example | `/retro task-saga-comprehensive-documentation` |
+
+### /promote
+
+Cross-repo journal feeder — lifts the select few transcendent learnings into the org library.
+
+| Field | Value |
+|-------|-------|
+| Purpose | Promote the select few cross-repo transcendent learnings into `infiquetra-context-library` as distilled org standards. |
+| Use when | The same lesson recurred across repos, or a learning was marked `**Transcendent.**`. |
+| Do not use when | The lesson is repo-specific, you want a bulk harvest, or you want SDLC/source-repo mutation. |
+| Inputs | Workspace root or repo subset; an optional recurrence threshold. |
+| Outputs | Proposed gated upserts into context-library's `LEARNINGS.md`. |
+| Saga state | Terminal and SDLC read-only; writes only to context-library, never to the saga. |
+| Routes in | A `/retro`-declared marker, or recurrence across repos. |
+| Routes out | None — terminal. |
+| Gates | Every context-library write is propose-diff-and-wait; idempotent via the drift-stable source-key ledger. |
+| Boundary | Owns the cross-repo journal feed into context-library, not source-repo or SDLC mutation. |
+| Common mistakes | Treating it as a bulk copy of every generalizable rule; writing back to a source repo. |
+| Example | `/promote ~/workspace/infiquetra` |
 
 ### /resume
 

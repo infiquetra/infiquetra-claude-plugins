@@ -280,6 +280,21 @@ independent read-only review, exploration, or implementation-plan critique.
 - Full design walkthrough lives in `home-lab/docs/engineering-journal/narratives/2026-05-01-engineering-journal-distribution-design.md`.
 - This plan's adoption of the journal in `infiquetra-claude-plugins` is **not** the plugin — it's a hand-built journal for this repo's own meta-work. The plugin work is downstream and uses this repo + home-lab as proven references when it's built.
 
+### Saga arc binds one repo only — let a saga carry multiple repo subplots  {#saga-multi-repo-arc}
+
+**Priority.** P2 (important — core to the saga metaphor; today every cross-repo feature rides an out-of-band workaround). **Effort.** Multi-day (a `Saga` record schema change + a `/work` execution change + a back-compat path for existing single-`issue_ref` sagas). **Category.** saga-primitive / `/work` engine.
+
+**The gap.** A saga is meant to be a long arc of many subplots, but the record binds exactly one repo. Verified: `Saga.issue_ref` is a single `owner/repo#N` (`plugins/saga/scripts/saga.py:154`; saga-spec §1 boundary table + frontmatter row, `plugins/saga/references/saga-spec.md:40,123`); `current_git_state(root)` reads one working tree (`saga.py:472-478`); `journal_entries(root, …)` reads one repo's `docs/engineering-journal/` (`saga.py:924-927`); `prior_prs(owner, repo, issue)` / `aggregate_context` track one repo's PRs (`saga.py:881`; saga-spec `:405`). `/work`'s PR-continuation loop is keyed to that single `issue_ref` — one branch / one PR per saga. So a feature that lands across repos cannot live under one arc.
+
+**What is NOT the blocker.** Storage location already floats above repos: state is written at `root = Path.cwd()` under `.claude/saga/` (`saga.py:1126,44`), so the ledger can — and currently does — sit at the workspace root above every repo. The refactor is in the *record schema + execution*, not where the files live.
+
+**The shape (when built).** Let one saga arc carry a SET of repo subplots — each subplot its own `issue_ref` / branch / PR / journal — so `/work` can open a branch+PR per repo under a single `saga_id`, in dependency order, with the arc tracking all of them. Needs: a subplots list on the record (back-compat: treat the existing scalar `issue_ref` as a subplot-of-one), per-subplot git/PR/journal resolution, and a `/work` loop that iterates subplots. Preserve the saga-spec §3.5 unknown-key round-trip and the §10 invariants.
+
+**Worth it when.** Now-ish to design; the build-trigger is the first real multi-repo feature actually executed — the global transcendent-learnings build is that trigger (3 repos: `infiquetra-claude-plugins`, `infiquetra-context-library`, `infiquetra-sdlc`). Today's workaround (Option A: one workspace `/work` session opening one PR per repo in dependency order, coordinated by hand) ships that feature without the refactor but *proves* the gap — the cross-repo coordination lives in the operator's head and the plan's prose, not in the saga.
+
+**Context.** Surfaced 2026-06-20 while planning the global transcendent-learnings build (`docs/plans/2026-06-20-global-transcendent-learnings-plan.md`, landing-surfaces / Option A note). Companion to the team-execution per-teammate work ([#team-execution-per-teammate-effort](#team-execution-per-teammate-effort)) — both are "the plan wants to drive richer per-repo / per-teammate execution than the current single-axis engine exposes." Cross-ref the lifecycle-engine-merge initiative (`/work` = DECISIONS [#work-engine-rebuild](DECISIONS.md#work-engine-rebuild)) and the saga spec (`plugins/saga/references/saga-spec.md`).
+
+
 ---
 
 ## P3 — nice-to-have

@@ -9,7 +9,7 @@ origin: docs/brainstorms/2026-06-20-global-transcendent-learnings-requirements.m
 
 # Doc-Review: Global Transcendent-Learnings Implementation Plan
 
-**Readiness verdict: ready to drive implementation — not blocked.** No P0/P1 findings. Seven evidence-backed citation/path fixes were applied in place after verifying every load-bearing reference against the three live repos; one P2 multi-repo coordination decision should be settled at `/work`, especially under a team-execution backend.
+**Readiness verdict: ready to drive implementation — not blocked.** No P0/P1 findings. Seven evidence-backed citation/path fixes were applied in place after verifying every load-bearing reference against the three live repos; the one P2 multi-repo coordination decision is now resolved — Option A: a single `/work` session opening one PR per repo in dependency order, recorded in the plan.
 
 ## Applied fixes
 
@@ -41,7 +41,7 @@ A clarifying clause was also added to U6 distinguishing its build-time sdlc mark
 
 | Priority | Finding | Status |
 |----------|---------|--------|
-| P2 | Multi-repo landing/sequencing is stated only at the level of the new note. The three repos land as separate branches/PRs, and U1's data contract (claude-plugins) feeds U2-U4 plus the context-library README across repo boundaries. Under team-execution this coordination — PR sequencing, cross-repo dependency handoff, which session drives — should be an explicit call. | Open — decide at `/work` |
+| P2 | Multi-repo landing/sequencing is stated only at the level of the new note. The three repos land as separate branches/PRs, and U1's data contract (claude-plugins) feeds U2-U4 plus the context-library README across repo boundaries. Under team-execution this coordination — PR sequencing, cross-repo dependency handoff, which session drives — should be an explicit call. | Resolved — Option A: single `/work` session, one PR per repo in dependency order; recorded in the plan's landing-surfaces note |
 | P3 | Cosmetic: the narrative bare ref `engineering-journal.md` (~line 73) is illustrative; KTD5 still says the `promote` name is "open to override at routing" though routing confirmed `promote` this session; `commands/ideate.md:1-16` is cited but the file is 15 lines. | Acknowledged — no action |
 
 ## Recommendation
@@ -54,7 +54,7 @@ Proceed. Before invoking `/work` with team-execution, make one explicit multi-re
 - **Reviewed revision:** working tree (committed in the same change)
 - **Blocked:** false (no P0/P1)
 - **Applied fixes:** 7 (table above) plus 1 clarity clause
-- **Remaining:** 1 x P2 (open, decide at `/work`); P3 cosmetic
+- **Remaining:** P3 cosmetic only (the P2 multi-repo coordination is resolved — Option A, recorded in the plan)
 - **Review artifact:** `docs/reviews/2026-06-20-global-transcendent-learnings-plan-doc-review.md`
 - **Override rationale:** n/a (not blocked)
 - **Linked:** brainstorm `docs/brainstorms/2026-06-20-global-transcendent-learnings-requirements.md`; plan saga `task-global-transcendent-learnings`

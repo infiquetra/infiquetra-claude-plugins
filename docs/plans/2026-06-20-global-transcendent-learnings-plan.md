@@ -78,6 +78,8 @@ Dependency-ordered. Each is independently landable. Paths are repo-qualified whe
 
 **Landing surfaces (multi-repo).** This plan touches three repos: `infiquetra-claude-plugins` (the `promote` skill, scripts, tests, and release surfaces — U1-U5), `infiquetra-context-library` (the promotion destination journal plus a README template note — U1, U4), and `infiquetra-sdlc` (the practice-doc and DECISIONS reconciliation — U6). It does not land as one PR; each repo carries its own branch/PR, sequenced by the unit dependency order.
 
+**Coordination (decided — Option A).** A single workspace-level `/work` session drives all three repos and opens one branch/PR per repo in dependency order. U1's data contract lands first because everything depends on it; then the `infiquetra-claude-plugins` PR carries U1's contract reference plus U2-U5, the `infiquetra-context-library` PR carries U1's README template note, and the `infiquetra-sdlc` PR carries U6. The driving session holds the cross-repo dependency chain so U2-U6 never start against an unfrozen contract.
+
 ### U1. Promotion data contract (marker, key, entry template)
 
 **Goal:** Pin the formats everything else depends on — the `**Transcendent.**` marker, the source-key derivation, and the context-library promoted-entry template with `**Sources.**`.

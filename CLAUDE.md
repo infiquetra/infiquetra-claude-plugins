@@ -1,36 +1,10 @@
 # Claude Configuration for Infiquetra Claude Plugins
 
-## 📓 Engineering journal — AUTO-MAINTAIN
+## 📓 Engineering journal — auto-maintain
 
-Living documentation at [`docs/engineering-journal/`](docs/engineering-journal/) — pattern adopted from `infiquetra/home-lab/docs/engineering-journal/`. The directory IS the engineering journal; the files inside are its sections.
+Living journal at [`docs/engineering-journal/`](docs/engineering-journal/) (`LEARNINGS.md` / `DECISIONS.md` / `QUEUED.md` / `ARCHIVE.md` / `narratives/`). Follow the [shared engineering-journal practice](https://github.com/infiquetra/infiquetra-sdlc/blob/main/docs/process/engineering-journal.md) for the full pattern, and maintain it without being asked — capture durable learnings and decisions in the same commit that ships the change.
 
-| File | Purpose |
-|------|---------|
-| [LEARNINGS.md](docs/engineering-journal/LEARNINGS.md) | Empirical findings + mechanisms + fixes + validations |
-| [DECISIONS.md](docs/engineering-journal/DECISIONS.md) | ADR-style records of plugin-pattern / convention / tooling choices, with rationale + revisit conditions |
-| [QUEUED.md](docs/engineering-journal/QUEUED.md) | Future-work items by priority with "worth it when" triggers |
-| [ARCHIVE.md](docs/engineering-journal/ARCHIVE.md) | Shipped + rejected + superseded items |
-| [narratives/](docs/engineering-journal/narratives/) | Self-contained, longer-form companion docs (plugin design walkthroughs, multi-PR post-mortems, migration write-ups) — readable cold by an outside reader |
-
-**Maintenance rules (Claude: follow these without being asked):**
-
-1. **After fixing a plugin bug or shipping a feature where the mechanism wasn't obvious** (marketplace registry drift, hook timing race, skill activation gotcha, MCP env propagation, build-tool surprise) → add a dated entry to `LEARNINGS.md`. Include the **evidence** (PR / commit / file:line) and the **mechanism** (why it happened, not just what), and a **Generalizable rule** line stripping the lesson from the specific incident.
-
-2. **After committing a plugin-pattern decision** (skills-based vs CLI-based, line length, lockfile choice, marketplace category, version bump strategy, hook event choice, naming convention) → add an entry to `DECISIONS.md` with rationale + rejected alternatives + "revisit when" condition. Include the commit hash.
-
-3. **Whenever a promising idea surfaces but we don't build it right now** (new plugin idea, CI guard, refactor, test improvement) → add to `QUEUED.md` with priority (P0/P1/P2/P3/Maybe), concrete "worth it when" trigger, and rough effort estimate. Don't skip this step — undocumented good ideas decay into forgotten good ideas.
-
-4. **When a QUEUED item ships** → move its entry to `ARCHIVE.md` as SHIPPED with the commit hash + date. Remove it from `QUEUED.md`.
-
-5. **When a QUEUED item is rejected** (we decide it's not worth doing) → move to `ARCHIVE.md` as REJECTED with the reason + revisit conditions. Remove from `QUEUED.md`.
-
-6. **When a prior LEARNING or DECISION is invalidated** (new evidence contradicts the old claim) → update the original entry inline with the correction AND move the pre-correction version to `ARCHIVE.md` as SUPERSEDED. Never silently overwrite history.
-
-7. **When something needs a longer write-up than fits in an entry** (full plugin design narrative, multi-PR post-mortem, migration write-up, rejected-design memo) → create `docs/engineering-journal/narratives/YYYY-MM-DD-short-slug.md` and link to it from the relevant LEARNINGS / DECISIONS entry. The four core files stay scannable; long-form companion lives next door.
-
-**Entry format.** Each of the four core files has a block-quote intro at the top spelling out its format. New entries use these subheaders where applicable: **Context / Evidence / Mechanism / Fix (or queued) / Validation / What surprised / Generalizable rule / Refs**. Not every entry needs every subheader, but the **Generalizable rule** line is the highest-value field — without it, future-Claude has to re-derive the lesson from the evidence each time.
-
-**Don't wait to be asked.** When any of these triggers fire in a session, update the files as part of the same commit that ships the change. The whole point of these files is that they maintain themselves.
+Repo-specific signals worth a `LEARNINGS.md` entry: marketplace registry drift, hook timing races, skill-activation gotchas, MCP env propagation, build-tool surprises. Plugin-pattern choices (skills-based vs CLI-based, version-bump strategy, hook event choice) belong in `DECISIONS.md`.
 
 ## Repository Information
 
@@ -126,7 +100,12 @@ plugin-name/
 3. Write tests in `tests/` for CLI plugins
 4. Document in README.md
 5. Add entry to `.claude-plugin/marketplace.json`
-6. Submit PR for review
+6. For every plugin behavior, schema, command, prompt, or user-facing guidance change, update the
+   plugin release surfaces in the same PR: `plugins/<plugin>/.claude-plugin/plugin.json`,
+   `.claude-plugin/marketplace.json`, `plugins/<plugin>/CHANGELOG.md`, and any version/metadata
+   drift guard tests. Do not treat code/tests as PR-ready until installed-plugin metadata tells the
+   same story as the diff.
+7. Submit PR for review
 
 ## Running Quality Checks
 

@@ -1,37 +1,50 @@
 #!/usr/bin/env python3
 """
-SessionStart hook: surface the stale-main guard as session-start context.
+SessionStart hook: surface a stale default-branch warning (and auto-fix when safe).
 
-After a squash-merge lands on ``origin/main``, local ``main`` is silently
-behind until explicitly fast-forwarded — a failure mode that has cost builds
-here (#shipped-on-origin-not-in-stale-local-tree). This hook runs the repo's
-own ``tools/stale_main_guard.py`` at session start and injects its output as
-SessionStart ``additionalContext`` so the operator (and any build agent) sees
-the stale-state warning before reading the tree.
+After a squash-merge lands on ``origin/<default>``, the local default branch is
+silently behind until explicitly fast-forwarded — a failure mode that has cost
+builds (#shipped-on-origin-not-in-stale-local-tree). This hook detects that
+state at session start and either auto-fast-forwards (only when you are cleanly
+ON the default branch) or warns, injecting the result as SessionStart
+``additionalContext``.
 
-Repo-presence guard (the safety mechanism)
-------------------------------------------
-The saga plugin is DISTRIBUTED — it may be installed in any repo. This hook
-must be INERT everywhere except this repo (or a fork of it). The signal is the
-PRESENCE of ``tools/stale_main_guard.py`` at the CWD repo root, NOT a hardcoded
-repo name. Resolution:
-  1. Resolve the repo root via ``git rev-parse --show-toplevel``.
-  2. If that fails (not a git repo) → exit 0 silently.
-  3. If ``<root>/tools/stale_main_guard.py`` does NOT exist → exit 0 silently
-     (no git fetch, no subprocess — fully inert).
-  4. Only when the guard tool exists do we invoke it (the repo's OWN copy, not
-     ``${CLAUDE_PLUGIN_ROOT}``'s — the guard is repo-local tooling).
+Generalized — runs in ANY git repo
+-----------------------------------
+The saga plugin is DISTRIBUTED and installs at user scope, so this hook fires in
+EVERY repo. Rather than gate on a repo-local tool, it is fully self-contained and
+generic. Preconditions (each failure → exit 0 SILENT):
+  1. CWD is inside a git repo (``git rev-parse --show-toplevel``).
+  2. An ``origin`` remote exists (``git remote get-url origin``).
+  3. The default branch is determinable (see below).
+It no longer depends on ``tools/stale_main_guard.py`` (that remains the repo-local
+manual tool / R18 artifact).
+
+Default-branch detection (generic — never hardcoded to ``main``)
+----------------------------------------------------------------
+``git symbolic-ref --short refs/remotes/origin/HEAD`` → strip the leading
+``origin/``. If that fails, probe ``origin/main`` then ``origin/master`` via
+``git show-ref --verify``. If none resolve → exit 0 silent.
+
+Auto-fast-forward policy (the chosen behavior)
+----------------------------------------------
+If the local default branch is behind ``origin/<default>``:
+  - AUTO-FF WHEN SAFE: if the current branch IS the default branch AND the tree
+    is clean → ``git merge --ff-only origin/<default>`` and confirm. Being ON the
+    default branch means you hold its checkout (git forbids the same branch in two
+    worktrees), so this is inherently worktree-safe.
+  - OTHERWISE (feature branch, dirty, or a linked worktree) → WARN ONLY; mutate
+    nothing.
 
 Output
 ------
-When the guard prints output, emit the official SessionStart JSON shape:
+When there is a message (ff-confirmation or warning), emit the official
+SessionStart JSON shape and nothing otherwise:
   {"hookSpecificOutput": {"hookEventName": "SessionStart",
-                          "additionalContext": "<guard output>"}}
-When the guard is silent, print nothing.
+                          "additionalContext": "<message>"}}
 
 Properties (all by design):
   - NON-blocking: always exits 0 (SessionStart cannot block anyway).
-  - INERT outside this repo: the repo-presence guard short-circuits.
   - QUIET on error: any subprocess error/timeout degrades to no output.
 
 Exit codes:
@@ -43,11 +56,21 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from pathlib import Path
 
-# The repo-local guard tool, relative to the repo root. Its presence is the
-# signal that this hook should run (this repo or a fork of it).
-_GUARD_REL = Path("tools") / "stale_main_guard.py"
+
+def _run(args: list[str], *, cwd: str | None, timeout: int = 15) -> tuple[int, str, str]:
+    """Run a git subprocess; return (returncode, stdout, stderr). Degrades quietly."""
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=timeout,
+        )
+    except Exception:
+        return 1, "", "error"
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
 def _read_cwd_from_stdin() -> str | None:
@@ -71,71 +94,150 @@ def _read_cwd_from_stdin() -> str | None:
     return cwd if isinstance(cwd, str) and cwd else None
 
 
-def _repo_root(cwd: str | None) -> Path | None:
+def _repo_root(cwd: str | None) -> str | None:
     """Return the git repository root for ``cwd``, or None if not a git repo."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
+    rc, root, _ = _run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, timeout=5)
+    if rc != 0 or not root:
+        return None
+    return root
+
+
+def _has_origin_remote(cwd: str | None) -> bool:
+    """Return True if an ``origin`` remote is configured."""
+    rc, url, _ = _run(["git", "remote", "get-url", "origin"], cwd=cwd, timeout=5)
+    return rc == 0 and bool(url)
+
+
+def _default_branch(cwd: str | None) -> str | None:
+    """
+    Resolve the repo's default branch generically (never hardcoded to ``main``).
+
+    Strategy:
+      1. ``git symbolic-ref --short refs/remotes/origin/HEAD`` → strip ``origin/``.
+      2. Fall back to probing ``origin/main`` then ``origin/master`` for an
+         existing remote-tracking ref.
+    Returns the bare branch name (e.g. ``main``), or None if undeterminable.
+    """
+    rc, ref, _ = _run(
+        ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        cwd=cwd,
+        timeout=5,
+    )
+    if rc == 0 and ref:
+        # e.g. "origin/main" -> "main"
+        return ref[len("origin/") :] if ref.startswith("origin/") else ref
+
+    for candidate in ("main", "master"):
+        rc, _, _ = _run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{candidate}"],
             cwd=cwd,
             timeout=5,
         )
-    except Exception:
-        return None
-    if result.returncode != 0:
-        return None
-    root = result.stdout.strip()
-    return Path(root) if root else None
+        if rc == 0:
+            return candidate
+    return None
 
 
-def _run_guard(guard_path: Path, cwd: str | None) -> str:
+def _commits_behind(branch: str, cwd: str | None) -> int | None:
     """
-    Run the repo-local stale-main guard and return its combined output.
+    Return how many commits local ``<branch>`` is behind ``origin/<branch>``.
 
-    The guard prints its warning/confirmation to stderr (and exits 0 always),
-    so we capture both streams. Returns '' on any error/timeout.
+    Returns None if the comparison cannot be made or the count is unparseable.
     """
+    rc, stdout, _ = _run(
+        ["git", "rev-list", "--count", f"{branch}..origin/{branch}"],
+        cwd=cwd,
+    )
+    if rc != 0:
+        return None
     try:
-        result = subprocess.run(
-            [sys.executable, str(guard_path)],
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
+        return int(stdout)
+    except ValueError:
+        return None
+
+
+def _current_branch(cwd: str | None) -> str | None:
+    """Return the currently checked-out branch, or None on detached HEAD / error."""
+    rc, stdout, _ = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
+    if rc != 0 or not stdout:
+        return None
+    return stdout if stdout != "HEAD" else None  # 'HEAD' = detached
+
+
+def _working_tree_is_clean(cwd: str | None) -> bool:
+    """Return True if there are no uncommitted changes (staged or unstaged)."""
+    rc, stdout, _ = _run(["git", "status", "--porcelain"], cwd=cwd)
+    if rc != 0:
+        return False  # Treat unknown state as dirty (conservative)
+    return stdout == ""
+
+
+def _fast_forward(branch: str, cwd: str | None) -> bool:
+    """Fast-forward the current (== default) branch to ``origin/<branch>``."""
+    rc, _, _ = _run(["git", "merge", "--ff-only", f"origin/{branch}"], cwd=cwd)
+    return rc == 0
+
+
+def _compute_message(cwd: str | None) -> str | None:
+    """
+    Run the full stale-default-branch logic. Returns the context message to
+    surface, or None when there is nothing to say (silent).
+    """
+    if _repo_root(cwd) is None:
+        return None  # Not a git repo.
+    if not _has_origin_remote(cwd):
+        return None  # No origin remote.
+
+    branch = _default_branch(cwd)
+    if branch is None:
+        return None  # Default branch undeterminable.
+
+    # Refresh remote-tracking refs. Degrade quietly on failure (offline): the
+    # behind-count below still compares against whatever origin/<branch> we have.
+    _run(["git", "fetch", "origin"], cwd=cwd, timeout=20)
+
+    behind = _commits_behind(branch, cwd)
+    if not behind:  # None or 0
+        return None
+
+    current = _current_branch(cwd)
+    clean = _working_tree_is_clean(cwd)
+    ff_cmd = f"git fetch origin {branch}:{branch}"
+
+    if current == branch and clean:
+        # On the default branch with a clean tree — safe to fast-forward.
+        if _fast_forward(branch, cwd):
+            return (
+                f"[stale-main] Auto-fast-forwarded '{branch}' by {behind} commit(s) "
+                f"to match origin/{branch}."
+            )
+        # FF failed unexpectedly — fall through to a warning rather than lie.
+        return (
+            f"[stale-main] WARNING: local '{branch}' is {behind} commit(s) behind "
+            f"origin/{branch} and auto-fast-forward failed. Run: {ff_cmd}"
         )
-    except Exception:
-        return ""
-    parts = [part for part in (result.stdout.strip(), result.stderr.strip()) if part]
-    return "\n".join(parts)
+
+    # Feature branch, dirty tree, or a linked worktree — warn only, mutate nothing.
+    return (
+        f"[stale-main] WARNING: local '{branch}' is {behind} commit(s) behind "
+        f"origin/{branch}. Fast-forward when ready: {ff_cmd}"
+    )
 
 
 def main() -> None:
     cwd = _read_cwd_from_stdin()
 
-    root = _repo_root(cwd)
-    if root is None:
-        # Not a git repo — stay inert.
+    message = _compute_message(cwd)
+    if not message:
+        # Nothing to surface (silent precondition failure, up to date, or error).
         sys.exit(0)
 
-    guard_path = root / _GUARD_REL
-    if not guard_path.is_file():
-        # The saga plugin is installed somewhere that isn't this repo (or its
-        # fork). Do NOT run git fetch or anything — stay fully inert.
-        sys.exit(0)
-
-    output = _run_guard(guard_path, cwd)
-    if not output:
-        # Guard was silent (up to date, or it degraded quietly) — print nothing.
-        sys.exit(0)
-
-    # Surface the guard's output as SessionStart context.
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",
-                    "additionalContext": output,
+                    "additionalContext": message,
                 }
             }
         )

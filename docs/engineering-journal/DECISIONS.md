@@ -24,7 +24,21 @@
 
 ## 2026-06-21
 
+### Stale-main SessionStart hook generalized to run in ANY git repo, self-contained in the plugin (PR pending — SHA-fill on merge)  {#stale-main-hook-generalized}
+
+**Decision.** The saga `SessionStart` hook (`plugins/saga/hooks/stale_main_session_hook.py`) now runs in **ANY git repo with an `origin` remote** — there is no repo-presence gate. It is **self-contained in the plugin**: it no longer invokes `tools/stale_main_guard.py` (which remains the repo-local manual tool / R18 artifact). It detects the default branch generically (`git symbolic-ref --short refs/remotes/origin/HEAD` → strip `origin/`, fall back to probing `origin/main` then `origin/master`), never hardcoding `main`. The operator chose **auto-fast-forward when safe**: if the local default branch is behind `origin/<default>` AND the current branch IS the default branch AND the tree is clean → `git merge --ff-only origin/<default>`; otherwise (feature branch, dirty, or a linked worktree) → WARN only. Preconditions (not-a-repo, no `origin`, undeterminable default) → exit 0 silent. Always non-blocking; emits the standard SessionStart `additionalContext` shape only when there is a message. Supersedes [#stale-main-sessionstart-hook](#stale-main-sessionstart-hook).
+
+**Rejected alternatives.** (a) Warn-only everywhere (no auto-FF) — rejected: the operator wants the stale local default branch fixed automatically in the common safe case, not just flagged. (b) Opt-in-per-repo (keep some presence/marker gate so the behaviour only activates where explicitly enabled) — rejected: defeats the point of a user-scope distributed hook; the safety is intrinsic (auto-FF only when cleanly ON the default branch, which git guarantees is the holding checkout — never a linked worktree).
+
+**Rationale.** Saga installs at user scope, so the old repo-presence gate made the hook inert in every repo except this one. Auto-FF is worktree-safe by construction: being ON the default branch means you hold its checkout (git forbids the same branch in two worktrees), so the auto-FF never mutates another worktree's branch. Generic default-branch detection avoids hardcoding `main` and handles `master`-default repos. The small git-logic overlap with `tools/stale_main_guard.py` is accepted for now (the plugin hook must be self-contained; the repo tool stays as the manual R18 path).
+
+**Revisit when.** Auto-fast-forwarding in arbitrary repos proves surprising to users (then reconsider warn-only-default or an opt-out), or the duplicated git logic across the plugin hook and `tools/stale_main_guard.py` drifts (then consider consolidating to one source).
+
+**Refs.** `plugins/saga/hooks/stale_main_session_hook.py`, `plugins/saga/hooks/hooks.json`, `tests/test_stale_main_session_hook.py`; `tools/stale_main_guard.py` (left intact, R18); saga 0.36.0. Supersedes [#stale-main-sessionstart-hook](#stale-main-sessionstart-hook).
+
 ### Stale-main guard ships as a repo-guarded SessionStart hook in the distributed saga plugin (PR pending — SHA-fill on merge)  {#stale-main-sessionstart-hook}
+
+> **Superseded 2026-06-21 by [#stale-main-hook-generalized](#stale-main-hook-generalized)** — the hook is now self-contained and runs in any git repo (no repo-presence gate, no dependency on `tools/stale_main_guard.py`).
 
 **Decision.** Install the existing `tools/stale_main_guard.py` (R18) as a `SessionStart` hook (matcher `startup|resume`) wired through the **saga plugin's** `hooks/hooks.json` via a thin wrapper `plugins/saga/hooks/stale_main_session_hook.py`. Because saga is distributed to other repos, the wrapper carries a **repo-presence guard**: it resolves the CWD repo root (`git rev-parse --show-toplevel`) and only runs the guard if `<root>/tools/stale_main_guard.py` exists — otherwise it exits 0 silently (no `git fetch`, no subprocess). It invokes the repo's OWN guard copy (not `${CLAUDE_PLUGIN_ROOT}`'s) and surfaces output as SessionStart `additionalContext` (`{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ...}}`), always exit 0.
 

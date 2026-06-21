@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.35.0 - 2026-06-21
+
+- Install the stale-main guard as a `SessionStart` hook (`startup|resume`). New wrapper
+  `plugins/saga/hooks/stale_main_session_hook.py` reads the SessionStart payload from stdin,
+  resolves the CWD repo root via `git rev-parse --show-toplevel`, and runs the repo's OWN
+  `tools/stale_main_guard.py` — surfacing its output as SessionStart `additionalContext`
+  (`{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ...}}`).
+- Repo-presence guard keeps the distributed plugin INERT elsewhere: if the CWD is not a git repo,
+  or `tools/stale_main_guard.py` is absent at the repo root, the hook exits 0 silently (no
+  `git fetch`, no subprocess). Always non-blocking (exit 0); degrades quietly on any error/timeout.
+- Wire the new `SessionStart` event into `plugins/saga/hooks/hooks.json` (the plugin's 4th hook).
+- Tests (`tests/test_stale_main_session_hook.py`): a fake repo-local guard exercises the wrapper
+  end-to-end without any real `git fetch` — repo-without-guard (inert), not-a-git-repo (silent),
+  guard-stale (warning reaches `additionalContext`), guard-silent (no output).
+
 ## 0.34.0 - 2026-06-21
 
 - Wire the R12 producer path so override-rate telemetry is no longer inert. `saga.py save` gains

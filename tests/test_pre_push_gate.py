@@ -373,7 +373,8 @@ class TestManifestDrivesHook:
 
         def capturing_run_step(step: dict, cwd: Path) -> tuple[bool, str]:
             executed_step_ids.append(step.get("id", ""))
-            return original_run_step(step, cwd)
+            result: tuple[bool, str] = original_run_step(step, cwd)
+            return result
 
         with (
             patch.object(sys, "stdin") as mock_stdin,

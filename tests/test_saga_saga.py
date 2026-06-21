@@ -1355,3 +1355,46 @@ def test_suite_does_not_create_claude_dir_under_repo_root() -> None:
     if stray_legacy.exists():
         leaked_cp = [p.name for p in stray_legacy.glob("issue-*-phase*.md")]
         assert leaked_cp == [], f"saga tests leaked legacy checkpoints: {leaked_cp}"
+
+
+# ===========================================================================
+# U4: Display-label map — decouple presentation from wire contract (R8 / KTD5)
+# ===========================================================================
+
+
+def test_orchestration_modes_enum_is_frozen(saga: ModuleType) -> None:
+    """ORCHESTRATION_MODES must be byte-for-byte unchanged — it is the wire contract.
+
+    Persisted sagas carry the raw enum string; changing value or order would silently
+    corrupt any saga that was saved before the change.  This test is the assertion
+    KTD5 mandates: no value-addition, no reorder, no rename.
+    """
+    assert saga.ORCHESTRATION_MODES == ("inline", "team-execution", "cc-workflows-ultracode")
+
+
+def test_display_orchestration_mode_renders_labels(saga: ModuleType) -> None:
+    """The display helper maps each enum value to its human-readable label."""
+    assert saga.display_orchestration_mode("cc-workflows-ultracode") == "dynamic workflows"
+    assert saga.display_orchestration_mode("team-execution") == "team execution"
+    assert saga.display_orchestration_mode("inline") == "inline"
+
+
+def test_display_orchestration_mode_falls_back_on_miss(saga: ModuleType) -> None:
+    """An unknown key falls back to the raw string — never raises."""
+    assert saga.display_orchestration_mode("unknown-future-mode") == "unknown-future-mode"
+    assert saga.display_orchestration_mode("") == ""
+
+
+def test_orchestration_mode_labels_covers_all_modes(saga: ModuleType) -> None:
+    """Every value in ORCHESTRATION_MODES has an explicit entry in the label map.
+
+    A future ORCHESTRATION_MODES extension that forgets to add a label is caught
+    here (the fallback is intentional, but unregistered modes shouldn't stay
+    accidentally unlabelled forever).
+    """
+    for mode in saga.ORCHESTRATION_MODES:
+        assert mode in saga.ORCHESTRATION_MODE_LABELS, (
+            f"Mode {mode!r} is in ORCHESTRATION_MODES but has no entry in "
+            "ORCHESTRATION_MODE_LABELS — add a display label or the offer will "
+            "fall back to the raw enum string silently."
+        )

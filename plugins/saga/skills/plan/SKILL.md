@@ -246,12 +246,13 @@ nonprod-deploy**. This becomes the saga `--destination`.
 ### 5.2 Offer the execution backend
 
 Offer the execution backend per `references/operator-choice.md` (the decision contract). There are
-exactly three backends — `inline | team-execution | cc-workflows-ultracode`. Read the work shape,
-**recommend the cheapest-correct** backend and pre-select it, but always surface the alternatives so
-escalation is one step. Escalate to `team-execution` for risky/consensus work (≥8 files, ≥4 phases,
-security, infra, cross-repo, deployment-sensitive, plus a needs-consensus signal); to
-`cc-workflows-ultracode` for broad independent fan-out without elevated risk. Omit
-`cc-workflows-ultracode` from the offer when the Workflow tool is observably absent in this session.
+exactly three backends — `inline` ("inline") | `team-execution` ("team execution") |
+`cc-workflows-ultracode` ("dynamic workflows"). Read the work shape, **recommend the cheapest-correct**
+backend and pre-select it, but always surface the alternatives so escalation is one step. Escalate to
+`team-execution` ("team execution") for risky/consensus work (≥8 files, ≥4 phases, security, infra,
+cross-repo, deployment-sensitive, plus a needs-consensus signal); to `cc-workflows-ultracode`
+("dynamic workflows") for broad independent fan-out without elevated risk. Omit `cc-workflows-ultracode`
+("dynamic workflows") from the offer when the Workflow tool is observably absent in this session.
 Confirm with the operator and record what they picked via `--orchestration-mode`.
 
 ### 5.3 Write the saga tick

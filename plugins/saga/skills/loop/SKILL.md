@@ -245,7 +245,7 @@ python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
 Recommend the cheapest-correct backend, surface the alternatives (escalation one step), confirm with
 the operator, and record `--orchestration-mode` + `--orchestration-ref` in the routing tick (Phase 4)
 **only in this `/loop`-owned-offload case** — never on an ordinary single-command route. Omit
-`cc-workflows-ultracode` from the offer when the Workflow tool is observably absent; fall back to
+`cc-workflows-ultracode` ("dynamic workflows") from the offer when the Workflow tool is observably absent; fall back to
 `/loop`'s own phase-walk when no heavier backend is reachable (operator-choice §4).
 
 ---

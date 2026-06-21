@@ -6,6 +6,14 @@
   (R12 — choice-vs-recommendation recording). Enables override-rate computation in `/retro`+`/optimize`.
   Both fields default to `""` so pre-0.24.0 sagas parse without error (backward-compatible additive
   evolution per §9 of the saga spec).
+- Add `ORCHESTRATION_MODE_LABELS` display-label map to `saga.py` (`cc-workflows-ultracode` →
+  "dynamic workflows", `team-execution` → "team execution", `inline` → "inline") and a
+  `display_orchestration_mode()` helper that falls back to the raw enum string on a miss — never errors
+  (R8 / KTD5).
+- Route all offer-surface prose in `/plan`, `/work`, `/code-review`, `/loop`, `/founder-review`,
+  `/optimize`, and `/retro` skills through the display labels so operators see "dynamic workflows"
+  in descriptions while the stored enum string `cc-workflows-ultracode` remains the frozen wire
+  contract (carried in persisted sagas and `--orchestration-mode` CLI choices, byte-for-byte unchanged).
 
 ## 0.23.0 - 2026-06-20
 

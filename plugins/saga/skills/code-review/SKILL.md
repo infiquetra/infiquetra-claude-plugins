@@ -166,12 +166,13 @@ do **not** reference named `ce-*` agents). Each lens returns findings in the sch
 `references/findings-schema.md`.
 
 **Operator-choice backend.** Offer the execution backend per `../../references/operator-choice.md` (the
-plugin-root decision contract). There are exactly three backends — `inline | team-execution |
-cc-workflows-ultracode`. Read the work shape, recommend the cheapest-correct backend and pre-select it,
-but surface the alternatives so escalation is one step. Escalate to `team-execution` for risky/consensus
-review (large diff, security, infra, cross-repo, deployment-sensitive); to `cc-workflows-ultracode` for
-broad independent fan-out without elevated risk. Omit `cc-workflows-ultracode` when the Workflow tool is
-observably absent. `inline` suits small diffs.
+plugin-root decision contract). There are exactly three backends — `inline` ("inline") |
+`team-execution` ("team execution") | `cc-workflows-ultracode` ("dynamic workflows"). Read the work
+shape, recommend the cheapest-correct backend and pre-select it, but surface the alternatives so
+escalation is one step. Escalate to `team-execution` ("team execution") for risky/consensus review
+(large diff, security, infra, cross-repo, deployment-sensitive); to `cc-workflows-ultracode`
+("dynamic workflows") for broad independent fan-out without elevated risk. Omit `cc-workflows-ultracode`
+("dynamic workflows") when the Workflow tool is observably absent. `inline` ("inline") suits small diffs.
 
 **Search-before-recommending.** Before citing a fix pattern (concurrency, caching, auth, framework
 behavior), verify it is current best practice for the version in use — check for a built-in solution in

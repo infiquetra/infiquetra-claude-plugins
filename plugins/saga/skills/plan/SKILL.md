@@ -246,13 +246,45 @@ nonprod-deploy**. This becomes the saga `--destination`.
 ### 5.2 Offer the execution backend
 
 Offer the execution backend per `references/operator-choice.md` (the decision contract). There are
-exactly three backends — `inline | team-execution | cc-workflows-ultracode`. Read the work shape,
-**recommend the cheapest-correct** backend and pre-select it, but always surface the alternatives so
-escalation is one step. Escalate to `team-execution` for risky/consensus work (≥8 files, ≥4 phases,
-security, infra, cross-repo, deployment-sensitive, plus a needs-consensus signal); to
-`cc-workflows-ultracode` for broad independent fan-out without elevated risk. Omit
-`cc-workflows-ultracode` from the offer when the Workflow tool is observably absent in this session.
-Confirm with the operator and record what they picked via `--orchestration-mode`.
+exactly three backends — `inline` ("inline") | `team-execution` ("team execution") |
+`cc-workflows-ultracode` ("dynamic workflows"). Read the work shape, **recommend the cheapest-correct**
+backend and pre-select it, but always surface the alternatives so escalation is one step.
+
+**Dynamic workflows serve BOTH purposes** (per `references/operator-choice.md` §3.2) — escalate to
+`cc-workflows-ultracode` ("dynamic workflows"), without elevated risk, for **either**:
+
+- **Breadth / scale** — broad independent fan-out, the same operation across many enumerated targets, or
+  an exhaustive probe-all sweep where missing a target is the failure mode.
+- **Adversarial confidence** — a judge panel over N independent attempts, prove-by-refutation (refute-N),
+  or perspective-diverse verifiers each applying a distinct lens. This is real review depth; the Workflow
+  tool names *confidence* as a first-class purpose. Set it only on an **explicit** request for
+  many-independent-attempt verification, not on a generic "be more sure."
+
+**The team↔workflow fork is GOVERNANCE, not "review depth"** (both have review depth). The question is:
+**does the verdict need to stick?** Escalate to `team-execution` ("team execution") when the work needs
+**gated** consensus — a verdict that blocks a merge/deploy and persists as standing evidence (a reviewer-
+CONSENSUS gate, named scanners, a guarded deploy), or the size/risk signals fire (≥8 files, ≥4 phases,
+security, infra, cross-repo, deployment-sensitive). When the consensus signal is **advisory** — N
+throwaway in-session votes you act on yourself, nothing recorded or blocking — it is a dynamic-workflow
+judge-panel, not a team-execution job. Omit `cc-workflows-ultracode` ("dynamic workflows") from the offer
+when the Workflow tool is observably absent in this session. Confirm with the operator and record what
+they picked via `--orchestration-mode`.
+
+**KTD4 — the gated-vs-advisory interrogation (R7).** When a consensus / multi-reviewer / many-attempt
+signal is present, do **not** silently force `team-execution`. Ask the operator (`AskUserQuestion`, or
+channel-inline) one question, with the work-shape default pre-selected:
+
+> **Does this verdict need to BLOCK a merge/deploy or PERSIST as evidence — or are these throwaway
+> in-session votes you act on yourself?**
+> **A) Gated** — block/persist (a reviewer-CONSENSUS gate, named scanners, a guarded deploy) → `team-execution`.
+> **B) Advisory** — N throwaway votes, nothing recorded/blocking → `cc-workflows-ultracode` (a judge-panel).
+
+**Work-shape default:** pre-select **Gated** when any deploy / security / persist signal is present
+(`--destination merge|nonprod-deploy`, security/infra work, or a verdict that must be recorded); pre-select
+**Advisory** otherwise. Pass the answer into the recommender as `--advisory-consensus` (set for B; omit for
+A — gated is the default). The advisory path feeds the existing `adversarial_confidence` ultracode trigger,
+so a contested-but-not-gated job reaches the judge-panel and never regresses to `inline`. If the work is
+**both** gated **and** broadly parallel, list both backends (per `references/operator-choice.md` §3.3).
 
 ### 5.3 Write the saga tick
 

@@ -211,10 +211,11 @@ directory (**NOT** `docs/reviews/` = readiness, **NOT** `docs/code-reviews/` = c
 
 **Operator-choice.** On a scope-expansion or scrap-and-rethink verdict, **OFFER** routing the accepted
 changes through an execution backend per `../../references/operator-choice.md` (the plugin-root
-decision contract). There are exactly three backends — `inline | team-execution |
-cc-workflows-ultracode`. Read the work shape, recommend the cheapest-correct backend and pre-select
-it, but surface the alternatives so escalation is one step. Omit `cc-workflows-ultracode` when the
-Workflow tool is observably absent. The offer is never auto-run.
+decision contract). There are exactly three backends — `inline` ("inline") | `team-execution` ("team execution") |
+`cc-workflows-ultracode` ("dynamic workflows"). Read the work shape, recommend the cheapest-correct
+backend and pre-select it, but surface the alternatives so escalation is one step. Omit
+`cc-workflows-ultracode` ("dynamic workflows") when the Workflow tool is observably absent. The offer is
+never auto-run.
 
 **No saga write.** `/founder-review` runs upstream of the work thread and does **not** touch the saga
 — no `saga.py` invocation, no `--review-paths`. Persistence is the `docs/founder-reviews/` artifact +

@@ -73,9 +73,9 @@ Resolve any cross-command route through the lifecycle routing reference at
    developer-experience, maintainability. Each metric is measured as **hard** (a direct numeric, gated)
    or by **judge** (semantic quality), chosen per metric — see `references/metric-taxonomy.md`.
 6. **Default bounded & serial; escalate by CHOICE.** The loop runs serial and in working state by
-   default. For **independent experiment fan-out** it **OFFERS** `team-execution` /
-   `cc-workflows-ultracode` per the operator-choice contract, recorded **narratively** (this engine
-   writes no saga). It never auto-spawns a backend, never auto-commits, never auto-merges, never deploys.
+   default. For **independent experiment fan-out** it **OFFERS** `team-execution` ("team execution") /
+   `cc-workflows-ultracode` ("dynamic workflows") per the operator-choice contract, recorded
+   **narratively** (this engine writes no saga). It never auto-spawns a backend, never auto-commits, never auto-merges, never deploys.
 
 ## Interaction method
 
@@ -154,9 +154,9 @@ start of every batch.
 
 **Select a batch** from the runnable backlog. **Serial default = batch size 1.** For **independent
 experiment fan-out**, **OFFER** an execution backend HERE per `../../references/operator-choice.md`
-(§3.2 — broad, independent, low-risk fan-out leans `cc-workflows-ultracode`; risky-and-parallel leans
-`team-execution`); record the chosen backend **narratively** in the strategy digest (this engine writes
-no saga — §6 of operator-choice). Never auto-spawn.
+(§3.2 — broad, independent, low-risk fan-out leans `cc-workflows-ultracode` ("dynamic workflows");
+risky-and-parallel leans `team-execution` ("team execution")); record the chosen backend **narratively**
+in the strategy digest (this engine writes no saga — §6 of operator-choice). Never auto-spawn.
 
 **Per experiment:**
 

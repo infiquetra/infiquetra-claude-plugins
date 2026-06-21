@@ -1,11 +1,50 @@
 # Changelog
 
+## 0.26.0 - 2026-06-21
+
+- Split the recommender's `needs_consensus` signal on the **governance** axis (R7 keystone). A consensus
+  signal is no longer an unconditional hard-force to `team-execution`: `recommend_execution_backend`
+  gains `consensus_is_gated` (default True). **Gated** consensus (the verdict must block a merge/deploy and
+  persist as evidence) → `team-execution`; **advisory** consensus (throwaway in-session votes) is OR'd into
+  the existing `adversarial_confidence` ultracode trigger → `cc-workflows-ultracode`. A
+  contested-but-not-gated job now reaches the advisory judge-panel and never regresses to `inline`.
+- Add `--advisory-consensus` to the `recommend-backend` CLI so the markdown caller can reach the advisory
+  branch; gated stays the default when the flag is omitted.
+- Add the KTD4 gated-vs-advisory interrogation question + work-shape default to `skills/plan/SKILL.md` §5.2
+  (default *gated* when deploy/security/persist signals are present, *advisory* otherwise; the operator
+  confirms).
+- Update `references/operator-choice.md` §3.1 to record the gated/advisory governance split and that only
+  gated consensus reaches `team-execution`.
+- Cover AE1 (advisory → ultracode), AE2 (gated → team), the overlap case, the docs-gating case, and the
+  CLI round-trip in `tests/test_saga_plugin.py`.
+
+## 0.25.0 - 2026-06-21
+
+- Rewrite the `/plan` (`skills/plan/SKILL.md`) and `/code-review` execution-backend offers to name
+  **both** dynamic-workflow purposes from `operator-choice.md` §3.2 — **breadth / scale** fan-out **and**
+  **adversarial confidence** (judge-panel / refute-N / perspective-diverse) — instead of underselling
+  `cc-workflows-ultracode` as fan-out only (R5).
+- Reframe the team↔workflow fork on the **governance** axis ("does the verdict need to stick?" — gated
+  consensus that blocks a merge/deploy and persists vs. advisory throwaway votes), not on "review depth"
+  (which both backends have) (R6).
+- Add `tests/test_operator_choice_drift.py` — a drift guard asserting every offer surface stays a
+  SUPERSET of the §3.2 purpose list (anchored on stable content markers, not line numbers), so a future
+  rebuild cannot silently drop a purpose or reintroduce the "review depth" framing.
+
 ## 0.24.0 - 2026-06-21
 
 - Add `orchestration_recommended` and `orchestration_operator_choice` fields to the saga envelope
   (R12 — choice-vs-recommendation recording). Enables override-rate computation in `/retro`+`/optimize`.
   Both fields default to `""` so pre-0.24.0 sagas parse without error (backward-compatible additive
   evolution per §9 of the saga spec).
+- Add `ORCHESTRATION_MODE_LABELS` display-label map to `saga.py` (`cc-workflows-ultracode` →
+  "dynamic workflows", `team-execution` → "team execution", `inline` → "inline") and a
+  `display_orchestration_mode()` helper that falls back to the raw enum string on a miss — never errors
+  (R8 / KTD5).
+- Route all offer-surface prose in `/plan`, `/work`, `/code-review`, `/loop`, `/founder-review`,
+  `/optimize`, and `/retro` skills through the display labels so operators see "dynamic workflows"
+  in descriptions while the stored enum string `cc-workflows-ultracode` remains the frozen wire
+  contract (carried in persisted sagas and `--orchestration-mode` CLI choices, byte-for-byte unchanged).
 
 ## 0.23.0 - 2026-06-20
 

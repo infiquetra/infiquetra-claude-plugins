@@ -73,18 +73,35 @@ Offer `team-execution` when **ANY** of:
 | `cross_repo` | true |
 | `deployment_sensitive` | true |
 
-**OR** a needs-consensus signal: multiple reviewer lenses are warranted, a decision is contested, or
-validator gates should bound the work. team-execution's whole value is *review consensus + gates*, so a job
-that wants those is a team-execution job even if it is small — the consensus signal is **sufficient on its
-own**, not an additive PLUS (this matches `recommend_execution_backend`, which ORs it in).
+**OR** a **GATED** needs-consensus signal — see the governance split below. team-execution's whole value
+is *review consensus + gates*, so a job that wants a verdict to **block and persist** is a team-execution
+job even if it is small — a gated consensus signal is **sufficient on its own**, not an additive PLUS
+(this matches `recommend_execution_backend`, which ORs the gated half in).
+
+**Gated vs advisory consensus (the governance split, R7).** A bare "needs consensus" is not enough — the
+deciding question is whether the verdict **needs to stick**:
+
+| Consensus shape | What it means | Backend |
+|---|---|---|
+| **gated** (`consensus_is_gated=True`, the default) | the verdict must BLOCK a merge/deploy and PERSIST as standing evidence — a reviewer-CONSENSUS gate, named scanners, a guarded deploy | `team-execution` |
+| **advisory** (`consensus_is_gated=False`) | N throwaway in-session votes the operator acts on themselves; nothing is recorded or blocks | `cc-workflows-ultracode` (a judge-panel — §3.2 adversarial confidence) |
+
+So `recommend_execution_backend` no longer hard-forces team-execution on *every* consensus signal: only
+**gated** consensus reaches team-execution; **advisory** consensus is OR'd into the `adversarial_confidence`
+ultracode trigger (§3.2). A contested-but-not-gated job therefore reaches the advisory ultracode branch and
+**never regresses to inline**. When advisory consensus AND a broad fan-out both fire, the offer still lists
+both (§3.3). `/plan` resolves the gated/advisory question with the KTD4 interrogation question
+(`skills/plan/SKILL.md` §5.2), defaulting to *gated* when deploy/security/persist signals are present and
+*advisory* otherwise — the operator confirms.
 
 **Docs exception (`has_code_surface=False`).** team-execution's scanners + deploy gate are code-shaped and
 inert on pure docs/spec/research output, so the **output-blind** rows above — `file_count`, `phase_count`,
 `has_security`, `has_infra`, `deployment_sensitive` (the last two are `parse_issue.py` keyword matches that
 fire on a doc merely *mentioning* terraform or auth) — are neutralized when the work has no code/ship
 surface. Two rows survive because they signal governance, not code: **`cross_repo`** (crossing a repo =
-crossing an ownership boundary = a multi-party coordination need) and the **needs-consensus** signal. A big
-docs change with neither stays `inline`/ultracode, not team-execution.
+crossing an ownership boundary = a multi-party coordination need) and the **gated** needs-consensus signal
+(advisory consensus routes to ultracode regardless of code surface). A big docs change with neither stays
+`inline`/ultracode, not team-execution.
 
 ### 3.2 `inline` -> `cc-workflows-ultracode` (Claude Code only)
 

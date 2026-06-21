@@ -70,6 +70,23 @@ STATUSES = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
 DESTINATIONS = ("plan-only", "pr", "merge", "nonprod-deploy")
 ORCHESTRATION_MODES = ("inline", "team-execution", "cc-workflows-ultracode")
 
+# Display-label map (R8 / KTD5).  Maps the stored enum string to the human-readable
+# label surfaced in every offer.  The enum values in ORCHESTRATION_MODES are the
+# frozen wire contract (carried in persisted sagas and CLI --orchestration-mode);
+# this map is additive and never changes their meaning.  A key miss falls back to
+# the raw enum string — never errors.
+ORCHESTRATION_MODE_LABELS: dict[str, str] = {
+    "cc-workflows-ultracode": "dynamic workflows",
+    "team-execution": "team execution",
+    "inline": "inline",
+}
+
+
+def display_orchestration_mode(mode: str) -> str:
+    """Return the human-readable label for *mode*; fall back to the raw string on a miss."""
+    return ORCHESTRATION_MODE_LABELS.get(mode, mode)
+
+
 # maturity is DERIVED at /handoff time from lifecycle_phase — never stored and never
 # surfaced by the generic engine (restore/scan). This is the contract mapping the future
 # /handoff rebuild imports; see references/saga-spec.md §3.3.

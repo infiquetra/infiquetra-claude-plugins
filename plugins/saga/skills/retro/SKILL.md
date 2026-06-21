@@ -107,9 +107,9 @@ presentation format; the gate itself is:
   carries an **EXPLICIT warning in the diff header**:
   > **WARNING: this changes your GLOBAL Claude config and affects ALL projects, not just this repo.**
 
-**Never auto-launch** a destructive self-edit or an execution backend. A backend (team-execution /
-cc-workflows-ultracode) for a big refactor is **offered** per `../../references/operator-choice.md`, never
-started without the operator's pick.
+**Never auto-launch** a destructive self-edit or an execution backend. A backend (`team-execution` ("team execution") /
+`cc-workflows-ultracode` ("dynamic workflows")) for a big refactor is **offered** per
+`../../references/operator-choice.md`, never started without the operator's pick.
 
 ---
 
@@ -273,8 +273,9 @@ The passes neither source had, all gated (`references/retro-passes.md`):
 - **(d) memory pruning** — propose curation of the `.claude` auto-memory (`MEMORY.md` + topic files) per
   the journal-rule + staleness + contradiction sweeps.
 
-A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (team-execution /
-cc-workflows-ultracode) per `../../references/operator-choice.md`. **Never auto-run** it.
+A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (`team-execution`
+("team execution") / `cc-workflows-ultracode` ("dynamic workflows")) per
+`../../references/operator-choice.md`. **Never auto-run** it.
 
 ---
 

@@ -171,7 +171,10 @@ chat memory alone as durable evidence after a resume.
 Offer the execution backend per `references/operator-choice.md` and the **runnable
 `recommend_execution_backend()` CLI call** in `references/execution-strategy.md`: compute the
 recommendation from the work shape, pre-select it, surface the alternatives (overlap offers both),
-confirm with the operator, and record what they picked via `--orchestration-mode`.
+confirm with the operator, and record what they picked via `--orchestration-mode`. Also pass
+`--orchestration-recommended <the recommend_execution_backend() output>` so the tick records
+recommended-vs-chosen on this decision (R12 override-rate telemetry); `orchestration_operator_choice`
+auto-derives from `--orchestration-mode`, so the only added burden is naming the recommendation.
 
 Then mint/advance the work-thread saga to `lifecycle_phase=work`. Set `--issue-ref` (the issue case — the
 saga-spec §11 `issue_ref`-adoption write), `--plan-path` whenever a plan exists, and save **on the work
@@ -188,6 +191,7 @@ python3 plugins/saga/scripts/saga.py save \
   --plan-path docs/plans/YYYY-MM-DD-<topic>-plan.md \
   --destination <plan-only|pr|merge|nonprod-deploy> \
   --orchestration-mode <inline|team-execution|cc-workflows-ultracode> \
+  --orchestration-recommended <recommend_execution_backend() output> \
   --rounds-seen "1"
 ```
 

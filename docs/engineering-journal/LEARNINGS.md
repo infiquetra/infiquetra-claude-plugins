@@ -27,6 +27,20 @@
 
 ## 2026-06-21
 
+### Dead-wiring has TWO axes — a new saga field needs BOTH a real producer AND a real consumer, or the telemetry is silently inert  {#dead-wiring-needs-producer-and-consumer}
+
+**Context.** The tiering campaign's U3 shipped `orchestration_recommended` / `orchestration_operator_choice` on the `Saga` dataclass, in `FRONTMATTER_FIELDS` (so they serialize + parse + load backward-compatibly), AND the full R12 consumer (`override_rate_reader.py` reads them; `/retro` counts only sagas where both are non-empty). Everything looked done. But **nothing wrote them**: `_build_save_saga` never set them, the `save` argparse had no flags for them, and neither `/plan` nor `/work` instructed recording them. So `override_rate_reader` always reported "no data yet" in production — a complete, tested, wired-on-the-read-side feature that produced zero signal because the write side was missing.
+
+**Evidence.** PR fix/r12-producer-r13-test (saga 0.34.0). Producer path: `plugins/saga/scripts/saga.py:1058` `_build_save_saga` now sets `orchestration_recommended` from the new `--orchestration-recommended` flag and `orchestration_operator_choice` from its flag (defaulting to `--orchestration-mode`); flags added at the `save` subparser next to `--orchestration-mode`. `/plan` Phase 5.3 + `/work` Phase 1.4 SKILLs now pass `--orchestration-recommended`. End-to-end test `tests/test_override_rate.py::test_real_saga_save_feeds_override_rate_reader` drives the REAL `saga.py save` twice (override + match) and asserts the consumer sees real data, not "no data yet".
+
+**Mechanism.** The "dead saga write" lesson recurred on its mirror axis. The prior campaign lessons all caught *writes with no consumer* (a saga advance/field added with no downstream reader → dropped). This is the inverse: a *consumer with no producer*. Both are dead wiring; checking only one direction (does this field have a reader?) passed while the field was inert. A field is live only when a real producer writes it AND a real consumer reads it — and a serializer + a dataclass slot + an argparse-less default is not a producer.
+
+**Validation.** New end-to-end producer→consumer test green (NOT a hand-crafted frontmatter fixture — it runs the actual CLI save entrypoint through `_build_save_saga`); full suite 928 passed.
+
+**Generalizable rule.** Dead-wiring has two axes: before declaring a new saga field done, verify it has BOTH a real producer (a code path that actually sets it on save, reachable from a caller — flag + `_build_save_saga` assignment + SKILL instruction) AND a real consumer (a reader that changes behavior). Serialization/parse round-trip proves neither; it only proves the field survives I/O. Test the seam end-to-end through the real entrypoint, not via a fixture that fabricates the on-disk shape.
+
+**Refs.** [#validate-plugins-only-scans-top-level-md](#validate-plugins-only-scans-top-level-md); the recurring "dead-wiring saga writes" lessons in MEMORY (caught + dropped in `/work`, `/founder-review`, `/retro`).
+
 ### `validate_plugins.py` only scans top-level `plugins/*.md` — its "no plugin files found" is a healthy pass, not a worktree artifact  {#validate-plugins-only-scans-top-level-md}
 
 **Context.** Running the U17 final gate fleet-wide from a fresh worktree, `scripts/validate_plugins.py` printed `⚠️ No plugin files found in .../plugins` and exited 0. The instinct is "the worktree broke path resolution." It did not.

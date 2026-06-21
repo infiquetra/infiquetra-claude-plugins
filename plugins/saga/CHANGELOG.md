@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.34.0 - 2026-06-21
+
+- Wire the R12 producer path so override-rate telemetry is no longer inert. `saga.py save` gains
+  `--orchestration-recommended` and `--orchestration-operator-choice` (both `choices=ORCHESTRATION_MODES`,
+  default empty); `_build_save_saga` now sets `orchestration_recommended` from the flag and
+  `orchestration_operator_choice` from its flag, defaulting to `--orchestration-mode` (the operator's
+  chosen backend IS their choice). Backward-compatible: absent flags → `""`; older sagas still load.
+- `/plan` (Phase 5.3) and `/work` (Phase 1.4) now instruct recording `--orchestration-recommended`
+  alongside `--orchestration-mode` on each orchestration decision, so `override_rate_reader` sees real
+  recommended-vs-chosen data instead of "no data yet".
+- Tests: end-to-end producer→consumer test drives the real `saga.py save` twice (an override + a match)
+  then asserts `override_rate_reader` reports non-zero data; a MultiEdit invalid-JSON case for the
+  marketplace validation hook.
+
 ## 0.33.0 - 2026-06-21
 
 - Add R12 override-rate reader (`scripts/override_rate_reader.py`): scans saga envelopes and

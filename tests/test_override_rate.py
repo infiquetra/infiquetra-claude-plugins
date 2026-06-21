@@ -49,6 +49,12 @@ def orr() -> ModuleType:
     return _load_module("override_rate_reader.py")
 
 
+@pytest.fixture
+def saga() -> ModuleType:
+    """Loaded saga engine module (the real producer of envelope frontmatter)."""
+    return _load_module("saga.py")
+
+
 # ---------------------------------------------------------------------------
 # Envelope fixture helpers
 # ---------------------------------------------------------------------------
@@ -435,3 +441,110 @@ def test_summary_as_dict_round_trips(orr: ModuleType, tmp_path: Path) -> None:
     assert d["override_rate"] == pytest.approx(1.0)
     assert d["under_tier_rate"] == pytest.approx(1.0)
     assert d["over_tier_rate"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end producer → consumer (R12)
+# ---------------------------------------------------------------------------
+
+
+def _stub_saga_git(saga: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``saga.save``'s subprocess seam a no-op so the test never shells out.
+
+    ``save`` threads ``runner`` as a keyword-only default captured at definition
+    time, so we patch both ``saga.subprocess.run`` and the captured default on the
+    git-touching functions (mirrors test_saga_saga's ``_set_runner``).
+    """
+
+    def fake_run(*_args: object, **_kwargs: object) -> object:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(saga.subprocess, "run", fake_run)
+    for fn_name in ("save", "current_git_state"):
+        fn = getattr(saga, fn_name)
+        new_kwdefaults = dict(fn.__kwdefaults__ or {})
+        new_kwdefaults["runner"] = fake_run
+        monkeypatch.setattr(fn, "__kwdefaults__", new_kwdefaults)
+
+
+def test_real_saga_save_feeds_override_rate_reader(
+    orr: ModuleType,
+    saga: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,  # type: ignore[type-arg]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: the REAL ``saga.py save`` producer feeds the R12 consumer.
+
+    Exercises the full producer→consumer path (NOT hand-crafted frontmatter):
+    drive ``saga.main(["save", ...])`` twice through ``_build_save_saga`` — once
+    recording an override (mode != recommended) and once a match — then run the
+    override-rate reader over the same saga dir and assert it sees real data
+    (denominator > 0, the override counted), i.e. NOT "no data yet".
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_saga_git(saga, monkeypatch)
+
+    # Decision 1: an OVERRIDE — operator chose cc-workflows-ultracode over the
+    # recommended team-execution. operator_choice auto-derives from --orchestration-mode.
+    assert (
+        saga.main(
+            [
+                "save",
+                "--kind",
+                "task",
+                "--id",
+                "override-decision",
+                "--lifecycle-phase",
+                "plan",
+                "--orchestration-mode",
+                "cc-workflows-ultracode",
+                "--orchestration-recommended",
+                "team-execution",
+            ]
+        )
+        == 0
+    )
+    # Decision 2: operator FOLLOWED the recommendation (mode == recommended).
+    assert (
+        saga.main(
+            [
+                "save",
+                "--kind",
+                "task",
+                "--id",
+                "matched-decision",
+                "--lifecycle-phase",
+                "plan",
+                "--orchestration-mode",
+                "inline",
+                "--orchestration-recommended",
+                "inline",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()  # discard the save JSON the CLI prints
+
+    # Consumer reads the SAME root the producer wrote to.
+    summary, records = orr.read_override_rate(tmp_path)
+
+    # Real data, not "no data yet": both decisions recorded both fields.
+    assert summary.total_sagas == 2
+    assert summary.decisions_with_data == 2
+    assert summary.override_count == 1  # only decision 1 overrode
+    assert summary.over_tier_count == 1  # team-execution → cc-workflows-ultracode is over-tier
+    assert summary.under_tier_count == 0
+    assert summary.override_rate == pytest.approx(0.5)
+
+    # The human report must NOT fall through to the zero-data branch.
+    report = orr.format_report(summary, records)
+    assert "no data yet" not in report
+    assert "50.0%" in report
+
+    # The override decision's operator_choice auto-derived from --orchestration-mode.
+    override_rec = next(r for r in records if r.recommended == "team-execution")
+    assert override_rec.operator_choice == "cc-workflows-ultracode"
+    assert override_rec.actual_mode == "cc-workflows-ultracode"

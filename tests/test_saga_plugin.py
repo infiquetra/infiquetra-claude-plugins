@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.29.0"
+    assert plugin_json["version"] == "0.30.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -1407,11 +1407,17 @@ def test_retro_engine_merge_contract() -> None:
     assert "operator-choice.md" in corpus, "the operator-choice contract must be cited by path"
     for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
         assert backend in corpus, f"the operator-choice backend {backend!r} must be named"
-    # generic-agent fan-out only — this plugin has no agents/ dir.
+    # generic-agent fan-out for non-mechanical work; the agents/ dir now exists but must contain
+    # ONLY the mechanical-executor (the cheap-tier Bash-only agent added by U14/R16).
+    # General Explore/Task fan-out still uses generic agents, not named ce-* agents.
     assert "Explore" in corpus and "Task" in corpus, "the transcript fan-out uses generic agents"
-    assert not (PLUGIN_ROOT / "agents").exists() or not list(
-        (PLUGIN_ROOT / "agents").glob("*.md")
-    ), "this plugin must have no agents/ dir (generic-agent convention)"
+    if (PLUGIN_ROOT / "agents").exists():
+        agent_files = list((PLUGIN_ROOT / "agents").glob("*.md"))
+        agent_names = {f.stem for f in agent_files}
+        assert agent_names == {"mechanical-executor"}, (
+            f"plugins/saga/agents/ must contain ONLY mechanical-executor.md (U14/R16); "
+            f"found: {sorted(agent_names)}. Named ce-* or judgment agents belong outside this dir."
+        )
 
     # --- MECHANISM FLOOR 9: the durable artifact dir (docs/retros/) + journal promotion into the
     # four core files (the markdown journal is the durable sink). ---
@@ -1769,13 +1775,18 @@ def test_investigate_engine_merge_contract() -> None:
     assert re.search(r"parallel read-only", corpus, re.IGNORECASE), (
         "parallel read-only sub-agent dispatch must be OFFERED for evidence-bottlenecked subsystems"
     )
-    # generic-agent fan-out only — this plugin has no agents/ dir.
+    # generic-agent fan-out for non-mechanical work; the agents/ dir now exists but must contain
+    # ONLY the mechanical-executor (the cheap-tier Bash-only agent added by U14/R16).
     assert "Explore" in corpus and "Task" in corpus, (
         "parallel probes use generic Explore/Task agents"
     )
-    assert not (PLUGIN_ROOT / "agents").exists() or not list(
-        (PLUGIN_ROOT / "agents").glob("*.md")
-    ), "this plugin must have no agents/ dir (generic-agent convention)"
+    if (PLUGIN_ROOT / "agents").exists():
+        agent_files = list((PLUGIN_ROOT / "agents").glob("*.md"))
+        agent_names = {f.stem for f in agent_files}
+        assert agent_names == {"mechanical-executor"}, (
+            f"plugins/saga/agents/ must contain ONLY mechanical-executor.md (U14/R16); "
+            f"found: {sorted(agent_names)}. Named ce-* or judgment agents belong outside this dir."
+        )
 
     # --- MECHANISM FLOOR 10: docs/investigations/ artifact + dispatch REFERENCED not restated +
     # /brainstorm route (no /ce-brainstorm). The dispatch-table is one source of truth. ---

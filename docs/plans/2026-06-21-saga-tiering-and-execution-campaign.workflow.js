@@ -1,10 +1,7 @@
 export const meta = {
   name: 'saga-tiering-execution-campaign',
   description:
-    'Build the saga tiering + execution-mechanism campaign (5 epics, 17 units) with a per-unit {model,effort} tier on every step. ' +
-    'Epic-isolated PRs, full hands-off auto-merge when CI is green. Opus for judgment (offer rewrite, recommender split, the spec ' +
-    'emitter, degradation, final verify); Sonnet for bounded builds; Haiku for the preflight existence check. Control-flow only — ' +
-    'every agent reads the plan as its authoritative spec.',
+    'Build the saga tiering + execution-mechanism campaign (5 epics, 17 units) with a per-unit {model,effort} tier on every step. Epic-isolated PRs, full hands-off auto-merge when CI is green. Opus for judgment (offer rewrite, recommender split, the spec emitter, degradation, final verify); Sonnet for bounded builds; Haiku for the preflight existence check. Control-flow only -- every agent reads the plan as its authoritative spec.',
   phases: [
     { title: 'Preflight' },
     { title: 'Epic 0 - Tiering', model: 'sonnet' },

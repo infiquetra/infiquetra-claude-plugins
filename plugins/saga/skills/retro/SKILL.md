@@ -181,6 +181,32 @@ dir; an **optional generic-sub-agent fan-out (one per session)** synthesizes the
 operator-choice, **never** via an `agents/` dir (this plugin has none; use generic `Explore` / `Task`).
 The orchestrator never reads a raw `.jsonl` or a skeleton file — paths only.
 
+**1.6 R12 orchestration telemetry (read-only).** Run the override-rate reader to surface
+backend choice-vs-recommendation signals across all sagas:
+
+```bash
+python3 plugins/saga/scripts/override_rate_reader.py --root . [--json]
+```
+
+This surfaces three R12 signals:
+
+- **Override rate** — fraction of decisions where the operator's explicit pick differed from
+  the recommender's suggestion (only sagas where both `orchestration_recommended` and
+  `orchestration_operator_choice` are recorded count toward the denominator).
+- **Tier direction** — of those overrides, how many escalated to a richer backend
+  (over-tier) vs. de-escalated to a cheaper one (under-tier).
+- **Budget-exhaustion / capability degradation** — sagas with a non-empty
+  `orchestration_downgrade` note (recorded by U12 on off-host resume).
+
+**Zero-data contract**: if no sagas have been recorded with recommendation data yet, the
+reader reports "no data yet" rather than a rate. Do not fabricate a narrative from zero data;
+carry the "no data yet" state into the retro doc as-is and note that signal accrues over time.
+
+This pass is **read-only** — the reader never writes to disk. Include the output verbatim in
+the Phase-1 evidence block. A non-zero override rate or a skew toward over/under-tier is
+signal worth surfacing in Phase 2 interview and the Phase-3 retro doc, so any future default
+re-weighting is evidence-driven (R12's intent: measure before re-weighting).
+
 ---
 
 ## Phase 2 — Structured interview
@@ -325,3 +351,6 @@ It never blocks the router.
 - `loop/references/dispatch-table.md` — the outbound routing reference (read, never restate).
 - `../brainstorm/SKILL.md` — the canonical channel-inline convention (cite, never duplicate).
 - `../../references/saga-spec.md` — the saga contract (`restore` / `ticks`; `/retro` is read-only).
+- `../../scripts/override_rate_reader.py` — R12 telemetry reader: scans saga envelopes for
+  override-rate, over/under-tier, and budget-exhaustion signals (Phase 1.6). Zero-data reports
+  "no data yet"; read-only; `--json` for machine-readable output.

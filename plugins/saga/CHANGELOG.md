@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.33.0 - 2026-06-21
+
+- Add R12 override-rate reader (`scripts/override_rate_reader.py`): scans saga envelopes and
+  surfaces override-rate, over/under-tier direction, and budget-exhaustion (capability
+  degradation) signals. Zero-data reports "no data yet" (no divide-by-zero). Read-only; CLI
+  supports `--json` for machine output.
+- Wire the reader into `/retro` Phase 1.6: a dedicated evidence-gathering step runs the reader
+  and includes its output verbatim; reference added to the SKILL.md reference-files section.
+- Signal accrues post-merge as `/plan` records recommended vs operator-chosen backends (U3);
+  this surface enables evidence-driven default re-weighting (R12's intent).
+
 ## 0.32.0 - 2026-06-21
 
 - Capability-portable degradation (R11 / U12): every authored plan now carries a runnable

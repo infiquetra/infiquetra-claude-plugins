@@ -6,223 +6,10 @@
   },
   "metadata": {
     "description": "Claude Code plugins for Infiquetra development workflows",
-    "version": "2.1.0",
+    "version": "3.0.0",
     "pluginRoot": "./plugins"
   },
   "plugins": [
-    {
-      "name": "todoist-manager",
-      "source": "./plugins/todoist-manager",
-      "version": "2.1.0",
-      "description": "Full-featured Todoist integration for task management, task readiness review, project organization, and productivity workflows",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "todoist",
-        "tasks",
-        "productivity",
-        "project-management",
-        "task-review",
-        "readiness",
-        "plan-task"
-      ],
-      "category": "development"
-    },
-    {
-      "name": "pagerduty",
-      "source": "./plugins/pagerduty",
-      "version": "1.0.0",
-      "description": "PagerDuty incident management, service CRUD, team management, and on-call orchestration",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "pagerduty",
-        "incident-management",
-        "on-call",
-        "alerting",
-        "operations",
-        "sre"
-      ],
-      "category": "automation"
-    },
-    {
-      "name": "slack",
-      "source": "./plugins/slack",
-      "version": "1.0.0",
-      "description": "Slack messaging and channel management for team communication workflows",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "slack",
-        "messaging",
-        "channels",
-        "notifications",
-        "communication"
-      ],
-      "category": "automation"
-    },
-    {
-      "name": "splunk",
-      "source": "./plugins/splunk",
-      "version": "1.0.0",
-      "description": "Splunk log search and analysis for operational visibility and debugging",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "splunk",
-        "logs",
-        "search",
-        "observability",
-        "debugging"
-      ],
-      "category": "infrastructure"
-    },
-    {
-      "name": "identity-toolkit",
-      "source": "./plugins/identity-toolkit",
-      "version": "1.0.0",
-      "description": "Digital identity architecture design using NIST 800-63 guidelines, custodial/non-custodial wallet patterns, and W3C Verifiable Credentials",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "identity",
-        "digital-identity",
-        "nist",
-        "verifiable-credentials",
-        "security"
-      ],
-      "category": "security"
-    },
-    {
-      "name": "test-suite",
-      "source": "./plugins/test-suite",
-      "version": "2.0.0",
-      "description": "Parallel test runner for comprehensive Python quality checks (pytest, ruff, mypy, bandit) with faster execution",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "testing",
-        "pytest",
-        "quality",
-        "python",
-        "parallel",
-        "ruff",
-        "mypy",
-        "bandit"
-      ],
-      "category": "development"
-    },
-    {
-      "name": "docs-generator",
-      "source": "./plugins/docs-generator",
-      "version": "2.0.0",
-      "description": "Automated documentation generation including README, API specs, and architecture documentation",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "documentation",
-        "readme",
-        "api",
-        "architecture",
-        "automation"
-      ],
-      "category": "development"
-    },
-    {
-      "name": "python-toolkit",
-      "source": "./plugins/python-toolkit",
-      "version": "1.0.0",
-      "description": "Python patterns for serverless applications including Lambda Powertools, DynamoDB single-table design, error handling, and project scaffolding",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "python",
-        "lambda",
-        "powertools",
-        "dynamodb",
-        "aws",
-        "serverless"
-      ],
-      "category": "development"
-    },
-    {
-      "name": "sdk-lifecycle",
-      "source": "./plugins/sdk-lifecycle",
-      "version": "2.0.0",
-      "description": "Complete SDK lifecycle management: scaffolding, documentation generation, security review, and registry publishing",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "sdk",
-        "library",
-        "packaging",
-        "publishing",
-        "documentation",
-        "security"
-      ],
-      "category": "development"
-    },
-    {
-      "name": "marketplace-lister",
-      "source": "./plugins/marketplace-lister",
-      "version": "3.0.0",
-      "description": "Identify items from photos and generate multi-platform listings for Facebook Marketplace, Mercari, and eBay with full eBay API integration.",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-      "license": "MIT",
-      "keywords": [
-        "marketplace",
-        "facebook-marketplace",
-        "mercari",
-        "ebay",
-        "selling",
-        "photos",
-        "listings",
-        "pricing",
-        "shipping",
-        "api"
-      ],
-      "category": "automation"
-    },
     {
       "name": "home-lab-ops",
       "source": "./plugins/home-lab-ops",
@@ -251,7 +38,7 @@
       "name": "unifi",
       "source": "./plugins/unifi",
       "version": "1.0.0",
-      "description": "UniFi Network and Protect CLI for managing UDM devices, clients, VLANs, firewall rules, traffic routes, cameras, PTZ control, and motion events — dry-run by default, API key auth, no MCP supply chain risk",
+      "description": "UniFi Network and Protect CLI for managing UDM devices, clients, VLANs, firewall rules, traffic routes, cameras, PTZ control, and motion events \u2014 dry-run by default, API key auth, no MCP supply chain risk",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -389,5 +176,5 @@
       "category": "development"
     }
   ],
-  "version": "2.4.0"
+  "version": "3.0.0"
 }

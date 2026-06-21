@@ -43,7 +43,7 @@ choices in the reply text. Never silently skip a gate question. Ask one question
 <focus_hint> #$ARGUMENTS </focus_hint>
 
 Treat any argument as optional context: a concept (`DX improvements`), a path
-(`plugins/test-suite/`), a constraint (`low-complexity quick wins`), a backlog phrasing
+(`plugins/unifi/`), a constraint (`low-complexity quick wins`), a backlog phrasing
 (`themes in our open issues`), or a volume hint (`top 3`, `100 ideas`, `raise the bar`). With no
 argument, proceed open-ended.
 
@@ -71,7 +71,7 @@ is the failure this gate exists to prevent.
 reach:
 
 - Repo-bound — the idea lives inside the current repo. *Example: sitting in
-  `infiquetra-claude-plugins`, `/ideate quick wins in the test-suite plugin` — the plugin source
+  `infiquetra-claude-plugins`, `/ideate quick wins in the unifi plugin` — the plugin source
   is right here.*
 - Multi-repo with named repos — the idea spans repos and names them. *Example: `/ideate how
   campps-auth and campps-identity-access should share session state` — both repos exist and are
@@ -85,7 +85,7 @@ reach:
   library actually grounds the idea (vs. the idea being broader than the library's domain), lean to
   the **Case B** ask below rather than silently proceeding.
 
-State the inferred framing in one plain sentence ("Treating this as a topic inside the test-suite
+State the inferred framing in one plain sentence ("Treating this as a topic inside the unifi
 plugin — about X") and proceed. Never print internal routing labels. Carry forward two facts the
 gate establishes for Phase 1: **the named repos** (when the multi-repo branch fired) and **whether
 the current repo is itself a `*-context-library`** (when the in-library branch fired).
@@ -388,7 +388,7 @@ Worked examples (illustrative — derive yours from real grounding):
 
 | Topic | Axes |
 |---|---|
-| Improve the test-suite plugin | Coverage enforcement; fixture ergonomics; mocking patterns; CI integration; reporting/feedback |
+| Improve the unifi plugin | Endpoint coverage; dry-run ergonomics; error handling; output formatting; auth/session robustness |
 | mimir routing taxonomy | Route definitions; classification signals; fallback behavior; observability of routing decisions |
 | campps session-state sharing across services | Token shape; storage/replication; invalidation triggers; cross-service contract |
 

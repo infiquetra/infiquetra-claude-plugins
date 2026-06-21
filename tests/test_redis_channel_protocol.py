@@ -1,7 +1,7 @@
 """Tests for the redis-channel plugin's protocol pydantic models.
 
 Lives at repo-root tests/ per this repo's CLI-plugin testing convention
-(mirrors `tests/test_slack_client.py` etc). Pins the wire format; any
+(mirrors `tests/test_unifi_network_client.py` etc). Pins the wire format; any
 change here means PROTOCOL.md must change (and the matching change must
 land in hermes-claude-code-router).
 """

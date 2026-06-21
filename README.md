@@ -6,17 +6,13 @@ Claude Code plugins for Infiquetra development workflows.
 
 | Plugin | Description | Category |
 |--------|-------------|----------|
-| [todoist-manager](plugins/todoist-manager/) | Full-featured Todoist integration for task and project management | Productivity |
-| [pagerduty](plugins/pagerduty/) | PagerDuty incident management, on-call orchestration, and service CRUD | Operations |
-| [slack](plugins/slack/) | Slack messaging and channel management | Communication |
-| [splunk](plugins/splunk/) | Splunk log search and operational analysis | Operations |
-| [identity-toolkit](plugins/identity-toolkit/) | Digital identity architecture (NIST 800-63, W3C VCs, custodial wallets) | Security |
-| [test-suite](plugins/test-suite/) | Parallel Python quality checks: pytest, ruff, mypy, bandit | Development |
-| [docs-generator](plugins/docs-generator/) | Automated README, API spec, and architecture documentation generation | Development |
-| [python-toolkit](plugins/python-toolkit/) | Python patterns for serverless apps: Lambda Powertools, DynamoDB, error handling | Development |
-| [sdk-lifecycle](plugins/sdk-lifecycle/) | SDK scaffolding, documentation, security review, and registry publishing | Development |
 | [deploy](plugins/deploy/) | Tag-promotion deploy, status, rollback, hotfix, and release-note workflows | Operations |
+| [home-lab-ops](plugins/home-lab-ops/) | Proxmox VE cluster ops, Ansible pre-flight, Ceph, monitoring guard, and vault helper | Infrastructure |
+| [mission-control](plugins/mission-control/) | SDLC workflow manager: boards, prepared issues, project fields, labels, metrics, milestones | Development |
+| [redis-channel](plugins/redis-channel/) | Claude Code channel bridging sessions to external systems over Redis Streams | Development |
 | [saga](plugins/saga/) | Engineering lifecycle: Think, Plan & execute, Hand off, Review, and Improve & route | Development |
+| [team-execution](plugins/team-execution/) | Two-phase plan execution with reviewer consensus, validator gates, and nonprod automation | Development |
+| [unifi](plugins/unifi/) | UniFi Network & Protect CLI: devices, clients, VLANs, firewall, cameras, PTZ, motion events | Infrastructure |
 
 ## Installation
 
@@ -45,44 +41,6 @@ ln -s /path/to/infiquetra-claude-plugins/plugins ~/.claude/plugins/infiquetra
 
 ## Usage Examples
 
-### Todoist Manager
-```bash
-# Manage tasks via CLI
-python3 plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py tasks list
-python3 plugins/todoist-manager/skills/todoist-manage/scripts/todoist_client.py tasks add "Review PR" --project "Work"
-```
-
-### PagerDuty
-Set environment variables first:
-```bash
-export PAGERDUTY_API_KEY="your-api-key"
-export PAGERDUTY_DEFAULT_TEAM_ID="YOUR_TEAM_ID"
-export PAGERDUTY_DEFAULT_ESCALATION_POLICY_ID="YOUR_POLICY_ID"
-```
-
-```bash
-# List active incidents
-python3 plugins/pagerduty/skills/pagerduty-incidents/scripts/pagerduty_client.py incidents list --status triggered
-
-# Acknowledge an incident
-python3 plugins/pagerduty/skills/pagerduty-incidents/scripts/pagerduty_client.py incidents acknowledge --id PXXXXX
-```
-
-### Test Suite
-```bash
-# Run all quality checks in parallel
-python3 plugins/test-suite/skills/run-quality-checks/scripts/test_runner.py \
-    --coverage 80 \
-    --source-dir src \
-    --test-dir tests
-```
-
-### Docs Generator
-```bash
-# Generate all documentation
-python3 plugins/docs-generator/skills/generate-docs/scripts/docs_generator.py generate --all --service my-service
-```
-
 ### Infiquetra Deploy
 ```bash
 python3 plugins/deploy/scripts/mint_tag.py \
@@ -103,24 +61,6 @@ Commands carry work through five lifecycle phases:
 Use `/loop` to route work to plan only, PR, merge, or nonprod deploy. Durable artifacts live in
 repo docs such as `docs/plans/`, `docs/work-sessions/`, and `docs/engineering-journal/`; raw
 runtime state stays under ignored `.claude/saga/`.
-
-### Splunk
-```bash
-export SPLUNK_HOST="your-splunk-host"
-export SPLUNK_TOKEN="your-token"
-
-python3 plugins/splunk/skills/splunk-search/scripts/splunk_client.py search \
-    "index=main level=ERROR earliest=-1h"
-```
-
-### Slack
-```bash
-export SLACK_BOT_TOKEN="xoxb-your-token"
-
-python3 plugins/slack/skills/slack-messaging/scripts/slack_client.py message \
-    --channel "#general" \
-    --text "Deployment complete"
-```
 
 ## Development
 

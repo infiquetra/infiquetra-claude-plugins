@@ -33,7 +33,7 @@ plugin-name/
 └── CHANGELOG.md
 ```
 
-**Examples**: `identity-toolkit`, `python-toolkit`, `sdk-lifecycle`, `docs-generator`, `test-suite`
+**Examples**: `saga`, `home-lab-ops`, `team-execution`
 
 ### CLI-based Plugins
 Python CLI scripts wrapped as Claude skills/commands for interacting with external services.
@@ -55,15 +55,15 @@ plugin-name/
 └── CHANGELOG.md
 ```
 
-**Examples**: `pagerduty`, `slack`, `splunk`, `todoist-manager`
+**Examples**: `mission-control`, `unifi`, `deploy`, `redis-channel`
 
 ## Plugin Development Guidelines
 
 ### Naming Conventions
-- Plugin directories: `kebab-case` (e.g., `python-toolkit`)
-- Python files: `snake_case` (e.g., `splunk_client.py`)
-- Classes: `PascalCase` (e.g., `SplunkClient`)
-- Skill names in frontmatter: `kebab-case` (e.g., `splunk-search`)
+- Plugin directories: `kebab-case` (e.g., `redis-channel`)
+- Python files: `snake_case` (e.g., `unifi_network_client.py`)
+- Classes: `PascalCase` (e.g., `UnifiNetworkClient`)
+- Skill names in frontmatter: `kebab-case` (e.g., `unifi-network`)
 
 ### Code Quality Standards
 - Python 3.12+ required
@@ -114,7 +114,7 @@ plugin-name/
 uv run pytest
 
 # Run specific test file
-uv run pytest tests/test_pagerduty_client.py -v
+uv run pytest tests/test_deploy_plugin.py -v
 
 # Run linting
 uv run ruff check .

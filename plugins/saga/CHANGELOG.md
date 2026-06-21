@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.24.0 - 2026-06-21
+
+- Add `orchestration_recommended` and `orchestration_operator_choice` fields to the saga envelope
+  (R12 — choice-vs-recommendation recording). Enables override-rate computation in `/retro`+`/optimize`.
+  Both fields default to `""` so pre-0.24.0 sagas parse without error (backward-compatible additive
+  evolution per §9 of the saga spec).
+
 ## 0.23.0 - 2026-06-20
 
 - Add the `/promote` skill — the workspace tier of the engineering journal. It promotes the *select few*

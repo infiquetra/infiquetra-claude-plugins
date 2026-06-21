@@ -122,6 +122,7 @@ construct a `Saga` (no default); all others have the listed default.
 | `orchestration_ref` | str | — | `""` | Pointer into the orchestration (team name, workflow id, …). |
 | `orchestration_recommended` | str | — | `""` | The backend the recommender suggested for this decision (R12). Empty on older sagas. |
 | `orchestration_operator_choice` | str | — | `""` | The backend the operator actually picked (R12). Differs from `orchestration_mode` when overriding. Empty on older sagas. |
+| `orchestration_downgrade` | str | — | `""` | One-line capability-portable downgrade note (R11). Set on an off-host resume when the Workflow tool is unavailable and the orchestration tier recompiled DOWN (unit specs + per-unit tiers preserved); empty on a host that ran the authored tier. Empty on older sagas. |
 | `issue_ref` | str | — | `""` | `owner/repo#N` pointer; empty for plan-only / pre-issue work. |
 | `destination` | enum | — | `plan-only` | Routing intent — **MUST** be in `DESTINATIONS`. Mirrors `lifecycle_state`. |
 | `round` | int | — | `0` | Current PR/iteration round. |

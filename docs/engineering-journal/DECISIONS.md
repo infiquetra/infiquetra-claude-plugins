@@ -24,7 +24,7 @@
 
 ## 2026-06-20
 
-### Plugin portfolio groomed 17 → 7; marketplace version majors on plugin removal  {#plugin-portfolio-groom-17-to-7}
+### Plugin portfolio groomed 17 → 7; marketplace version majors on plugin removal (04fa93e)  {#plugin-portfolio-groom-17-to-7}
 
 **Decision.** Cut the marketplace from 17 plugins to **7 keepers** (`saga`, `team-execution`, `mission-control`, `redis-channel`, `home-lab-ops`, `unifi`, `deploy`). Removed 9 zero-fire plugins (`slack`, `pagerduty`, `splunk`, `identity-toolkit`, `sdk-lifecycle`, `python-toolkit`, `test-suite`, `docs-generator`, `todoist-manager`) and relocated `marketplace-lister` → `infiquetra-hermes-plugins` (removed here; **registration there is a separate follow-up**). Bumped the registry version **2.4.0 → 3.0.0 (major)** and aligned the stale nested `metadata.version` (2.1.0 → 3.0.0). Removed each plugin's `marketplace.json` entry + 7 client test files; repointed every doc that named a cut plugin (README table/examples, CLAUDE.md/AGENTS.md examples, MARKETPLACE_GUIDE, the `/ideate` worked example) to survivors; pruned the orphaned pagerduty/splunk/slack conftest fixtures.
 
@@ -34,7 +34,7 @@
 
 **Revisit when.** A cut plugin is needed again (revive from git history + re-register), `marketplace-lister` lands in `infiquetra-hermes-plugins` (closes the relocate follow-up), or a "generate `marketplace.json` + README from `plugin.json`" survivor ships (fold the programmatic-regen into it).
 
-**Refs.** Ideation: `docs/ideation/2026-06-19-plugin-ecosystem-grooming-ideation.md` + `2026-06-19-plugin-grooming-next-steps.md`. Track 1 survivor builds (tiering pins, hook harness, mechanical-handoff substrate) remain queued. Squash SHA filled post-merge.
+**Refs.** Ideation: `docs/ideation/2026-06-19-plugin-ecosystem-grooming-ideation.md` + `2026-06-19-plugin-grooming-next-steps.md`. Track 1 survivor builds (tiering pins, hook harness, mechanical-handoff substrate) remain queued. Shipped via PR #232 (squash 04fa93e).
 
 ## 2026-06-17
 

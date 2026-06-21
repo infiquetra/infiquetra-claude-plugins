@@ -44,11 +44,18 @@ export const meta = {
 // resolves by rebase-before-merge (KTD9) -- a genuine saga.py conflict HALTS the epic
 // unmerged rather than auto-resolving load-bearing code.
 //
-// MERGE GATE (main is UNPROTECTED -- verified; no GitHub-required checks): the gate is
-// the agent's poll discipline alone, so merge with plain `--squash` (NOT --admin, which
-// would bypass nothing) ONLY when all 5 checks are conclusively SUCCESS. The gate-fix
-// loop may not weaken tests to pass (SPEC rule 5). Recommend the operator enable branch
-// protection so GitHub enforces the gate (plan R-RISK-1).
+// MERGE GATE (main IS protected -- branch protection ON: the 5 required checks + strict
+// "require branches up to date" + enforce_admins=false, no required reviews; plan R-RISK-1
+// CLOSED). Merge with plain `--squash` (NOT --admin -- enforce_admins=false means there is
+// nothing to bypass and the gate must not be circumvented) ONLY when all 5 checks are
+// conclusively SUCCESS. The gate-fix loop may not weaken tests to pass (SPEC rule 5).
+//
+// STRICT-MODE MERGE SERIALIZATION: because strict requires the PR branch to be up to date,
+// parallel epics serialize at merge -- the FIRST lands clean; the moment it does, main moves
+// and the other open PRs go stale, so their `gh pr merge` is REJECTED ("base out of date").
+// That is NOT a failure: the merge step re-fetches, rebases onto origin/main, re-pushes,
+// re-polls the (re-triggered) checks, and retries the merge -- bounded (<=4 merge attempts).
+// Only an actual red check or the attempt cap leaves a PR open (merged=false).
 //
 // RATE LIMITS: narrow concurrency (<=3 wave-1 / <=2 wave-2 agents; serial units within
 // an epic); CI polls sleep ~25s and cap out (no tight loop); a post-retry dead agent is
@@ -75,7 +82,7 @@ const SPEC =
   '(3) Follow repo commit/PR conventions (`type(scope): description`, atomic); NEVER add attribution lines ' +
   '("Generated with", "Co-authored-by") to commits, PRs, or any content. ' +
   '(4) Feature-bearing units add real tests at the repo-relative path the plan names; run them before reporting done. ' +
-  '(5) ORACLE INTEGRITY (main is unprotected -- the gate is the ONLY guard): NEVER weaken a test, delete an assertion, ' +
+  '(5) ORACLE INTEGRITY (main is branch-protected, but the gate is still yours to honor -- do not game it): NEVER weaken a test, delete an assertion, ' +
   'loosen a threshold, or add `# type: ignore` / `# noqa` to make a check pass. If the code is wrong, fix the CODE; if you ' +
   'cannot pass the gate with a legitimate in-scope fix in <=3 attempts, STOP and leave the work unmerged for review. ' +
   'Your final message IS the structured return value -- no human-facing prose.'
@@ -160,19 +167,24 @@ async function runEpic(epicId, phaseTitle, branch, units) {
   // Gate + PR + auto-merge -- FULL HANDS-OFF (KTD3): merge when CI is green, no human checkpoint.
   const merge = await agent(
     SPEC +
-      '\n\nEPIC MERGE STEP for ' + epicId + ' (worktree ' + dir + ', branch ' + branch + '). FULL HANDS-OFF -- but the gate is the ONLY guard (main is unprotected).\n' +
-      '1) From WITHIN ' + dir + ' run the full local gate: `ruff format --check .`; `ruff check .`; ' +
-      '`python3 scripts/validate_plugins.py`; `python3 marketplace/validator/validate.py`; `uv run pytest`; `uv run mypy plugins/`. ' +
+      '\n\nEPIC MERGE STEP for ' + epicId + ' (worktree ' + dir + ', branch ' + branch + '). FULL HANDS-OFF. main is branch-protected (5 required checks + strict); merge only when GitHub-green.\n' +
+      '1) From WITHIN ' + dir + ' run the full local gate -- EXACTLY the CI commands so local-green == CI-green: ' +
+      '`uv run ruff format --check .`; `uv run ruff check .`; `uv run python scripts/validate_plugins.py`; `uv run python marketplace/validator/validate.py`; ' +
+      '`uv run pytest`; `uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports` (NOTE: CI type-checks scripts/ and tests/ too, not just plugins/ -- your new test files must pass mypy). ' +
       'If any FAILS, fix the CODE in the worktree (small, in-scope) and re-run -- per SPEC rule 5 NEVER weaken a test/assertion or add ignore-comments to pass. ' +
       'Cap: <=3 fix attempts; if still red, set gatePassed=false, leave the PR unmerged, and return (do NOT merge a red epic).\n' +
       '2) `git -C ' + dir + ' fetch origin && git -C ' + dir + ' rebase origin/main`. If the rebase CONFLICTS in a load-bearing logic file ' +
       '(plugins/saga/scripts/saga.py, lifecycle_state.py): do NOT auto-resolve -- `git rebase --abort`, set merged=false, reason="saga.py rebase conflict -- needs review", and return. ' +
       'Resolve only trivial non-logic conflicts (CHANGELOG / marketplace.json) by integrating both sides; re-run the gate if the rebase changed anything.\n' +
       '3) Push and open a PR (`gh pr create`; title "' + epicId + ': <summary>"). Probe first: if a PR for this branch already exists, reuse it; if already MERGED, set merged=true and skip to step 5.\n' +
-      '4) Poll the 5 checks (Tests (Python 3.12) / Validate Plugins / Lint / Type Check / Security Scan); "Publish Plugin" SKIPPED is expected (it runs only on refs/tags/*). ' +
-      'POLL DISCIPLINE: check, then sleep ~25s; cap ~30 polls (~12 min); do NOT tight-loop. Merge ONLY when ALL 5 are conclusively SUCCESS -- treat pending / null / FAILURE as do-not-merge. ' +
-      'Then `gh pr merge --squash --delete-branch` (plain; NOT --admin -- there is nothing to bypass and the gate must not be circumvented). ' +
-      'If any check FAILS or stays pending past the cap: set ciGreen=false, merged=false, leave the PR open, and report it.\n' +
+      '4) MERGE LOOP (handles strict-mode serialization -- up to 4 attempts):\n' +
+      '   a) Poll the 5 checks (Tests (Python 3.12) / Validate Plugins / Lint / Type Check / Security Scan) on the CURRENT PR head; "Publish Plugin" SKIPPED is expected (it runs only on refs/tags/*). ' +
+      'POLL DISCIPLINE: check, then sleep ~25s; cap ~30 polls (~12 min); do NOT tight-loop. Proceed to merge ONLY when ALL 5 are conclusively SUCCESS -- treat pending / null / FAILURE as not-yet (an actual FAILURE or staying pending past the cap => set ciGreen=false, merged=false, leave the PR open, return).\n' +
+      '   b) Attempt `gh pr merge --squash --delete-branch` (plain; NOT --admin -- enforce_admins=false, nothing to bypass, and the gate must not be circumvented).\n' +
+      '   c) If the merge is REJECTED for "base branch is out of date" / "not up to date" / "Base branch was modified" (strict mode -- another epic merged during your poll), that is EXPECTED and NOT a failure: ' +
+      '`git -C ' + dir + ' fetch origin && git -C ' + dir + ' rebase origin/main` (if this NOW conflicts in a load-bearing logic file plugins/saga/scripts/saga.py or lifecycle_state.py: `git rebase --abort`, set merged=false, reason="saga.py rebase conflict on re-sync -- needs review", return; resolve only trivial CHANGELOG/marketplace.json conflicts by integrating both sides), `git -C ' + dir + ' push --force-with-lease`, then go back to (a) to re-poll the re-triggered checks and retry. ' +
+      'Bound the loop to <=4 merge attempts; if still unmerged after 4, set ciGreen accordingly, merged=false, leave the PR open, and report it.\n' +
+      '   d) On a successful squash-merge, set merged=true and continue.\n' +
       '5) `git -C ' + REPO + ' worktree remove ' + dir + ' --force` (ignore if already gone).\n' +
       'Return EPIC_SCHEMA. merged=true ONLY if the squash-merge actually landed on origin/main.',
     { schema: EPIC_SCHEMA, label: epicId + ' gate+merge', phase: phaseTitle, model: 'sonnet', effort: 'high' }
@@ -346,7 +358,7 @@ const epicsLanded = [e0, e1, e3, e2, e4].filter((x) => x && x.merged).map((x) =>
 const final = await agent(
   SPEC +
     '\n\nUNIT U17 -- FINAL verification + journal. Work in a fresh worktree ' + WT + '/final on branch feat/campaign-final off origin/main.\n' +
-    '1) Run the FULL gate fleet-wide from that worktree (ruff format --check, ruff check, both validators, uv run pytest, uv run mypy plugins/) and confirm GREEN.\n' +
+    '1) Run the FULL gate fleet-wide from that worktree, EXACTLY the CI commands (uv run ruff format --check ., uv run ruff check ., uv run python scripts/validate_plugins.py, uv run python marketplace/validator/validate.py, uv run pytest, uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports) and confirm GREEN.\n' +
     '2) Write the campaign DECISIONS.md + LEARNINGS.md entries this campaign earned (KTD1-KTD10; the dead-wiring/source-fidelity lessons if any surfaced).\n' +
     '3) Write a reconciliation report under docs/analysis/2026-06-21-saga-tiering-execution-campaign-report.md mapping EVERY R-ID (R1-R18) to its landed unit, ' +
     'flagging R4 explicitly as "applied-inline -- operator confirm done" (no unit builds it) and listing any epic left as an UNMERGED open PR ' +

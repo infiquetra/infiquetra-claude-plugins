@@ -22,6 +22,20 @@
 
 ---
 
+## 2026-06-20
+
+### Plugin portfolio groomed 17 → 7; marketplace version majors on plugin removal  {#plugin-portfolio-groom-17-to-7}
+
+**Decision.** Cut the marketplace from 17 plugins to **7 keepers** (`saga`, `team-execution`, `mission-control`, `redis-channel`, `home-lab-ops`, `unifi`, `deploy`). Removed 9 zero-fire plugins (`slack`, `pagerduty`, `splunk`, `identity-toolkit`, `sdk-lifecycle`, `python-toolkit`, `test-suite`, `docs-generator`, `todoist-manager`) and relocated `marketplace-lister` → `infiquetra-hermes-plugins` (removed here; **registration there is a separate follow-up**). Bumped the registry version **2.4.0 → 3.0.0 (major)** and aligned the stale nested `metadata.version` (2.1.0 → 3.0.0). Removed each plugin's `marketplace.json` entry + 7 client test files; repointed every doc that named a cut plugin (README table/examples, CLAUDE.md/AGENTS.md examples, MARKETPLACE_GUIDE, the `/ideate` worked example) to survivors; pruned the orphaned pagerduty/splunk/slack conftest fixtures.
+
+**Rejected alternatives.** (a) Keep the thicker dev plugins (`python-toolkit`/`test-suite`/`docs-generator`) — rejected: zero fires; current LLMs subsume the knowledge-only ones; rebuild later if a real need appears (git history is the archive). (b) Minor bump (2.5.0) to match the rename campaign's precedent — rejected: removing 10 of 17 plugins breaks installs of those plugins, which is exactly what a major signals; a minor would bury the largest-ever portfolio change. (c) Hand-edit `marketplace.json` entry-by-entry — rejected for the double-`]` footgun; regenerated programmatically (load → filter to keep-set → dump → trailing newline) instead.
+
+**Rationale.** The 17-plugin registry was mostly zero-fire service wrappers and knowledge-only plugins. Both validators are **structural, not enumerative** (`validate.py` requires each entry's `source` path to exist and validates whatever dirs are present; `validate_plugins.py` globs `plugins/*.md` = no-op), so a consistent dir+entry removal stays green with **no drift-guard rewrite** — the per-plugin metadata tests are match-tests for kept plugins only. Convention set: **marketplace registry version majors on plugin removal, minors on additions/metadata.**
+
+**Revisit when.** A cut plugin is needed again (revive from git history + re-register), `marketplace-lister` lands in `infiquetra-hermes-plugins` (closes the relocate follow-up), or a "generate `marketplace.json` + README from `plugin.json`" survivor ships (fold the programmatic-regen into it).
+
+**Refs.** Ideation: `docs/ideation/2026-06-19-plugin-ecosystem-grooming-ideation.md` + `2026-06-19-plugin-grooming-next-steps.md`. Track 1 survivor builds (tiering pins, hook harness, mechanical-handoff substrate) remain queued. Squash SHA filled post-merge.
+
 ## 2026-06-17
 
 ### Mission-control issue-contract consumer sync (planned; issue #222)  {#mission-control-issue-contract-consumer-sync}

@@ -64,55 +64,35 @@ ln -s ~/code/infiquetra-claude-plugins/plugins ~/.claude/plugins/infiquetra
 After installation, verify the plugins are available:
 
 ```bash
-# Check parallel-test-runner
-python3 ~/.claude/plugins/infiquetra/parallel-test-runner/src/test_runner.py --help
+# Check deploy
+python3 ~/.claude/plugins/infiquetra/deploy/scripts/mint_tag.py --help
 
-# Check docs-generator
-python3 ~/.claude/plugins/infiquetra/docs-generator/src/docs_generator.py --help
+# Check unifi
+python3 ~/.claude/plugins/infiquetra/unifi/skills/unifi-network/scripts/unifi_network_client.py --help
 ```
 
 ## Using Plugins
 
-### Parallel Test Runner
+Each plugin documents its own usage in its `README.md`. Two quick examples:
 
-Run all quality checks in parallel:
-
-```bash
-# Basic usage
-python3 ~/.claude/plugins/infiquetra/parallel-test-runner/src/test_runner.py
-
-# With options
-python3 ~/.claude/plugins/infiquetra/parallel-test-runner/src/test_runner.py \
-    --coverage 80 \
-    --source-dir src \
-    --test-dir tests \
-    --verbose
-
-# JSON output for CI/CD
-python3 ~/.claude/plugins/infiquetra/parallel-test-runner/src/test_runner.py \
-    --output json \
-    --output-file results.json
-```
-
-### Documentation Generator
-
-Generate project documentation:
+### Deploy
 
 ```bash
-# Generate all docs
-python3 ~/.claude/plugins/infiquetra/docs-generator/src/docs_generator.py generate \
-    --all \
-    --service my-service
-
-# Generate specific doc type
-python3 ~/.claude/plugins/infiquetra/docs-generator/src/docs_generator.py generate \
-    --type readme \
-    --service my-service
-
-# Validate existing docs
-python3 ~/.claude/plugins/infiquetra/docs-generator/src/docs_generator.py validate \
-    --output docs
+# Preview a tag-promotion release (dry run)
+python3 ~/.claude/plugins/infiquetra/deploy/scripts/mint_tag.py \
+    --env nonprod \
+    --version 1.2.3 \
+    --dry-run
 ```
+
+### UniFi Network
+
+```bash
+# Discover available commands (dry-run by default)
+python3 ~/.claude/plugins/infiquetra/unifi/skills/unifi-network/scripts/unifi_network_client.py --help
+```
+
+For the saga lifecycle commands (`/plan`, `/work`, `/code-review`, …) and the other plugins, see each plugin's README.
 
 ## Updating Plugins
 
@@ -169,18 +149,18 @@ Add convenient aliases to your shell configuration:
 ```bash
 # Add to ~/.zshrc or ~/.bashrc
 
-# Parallel test runner
-alias ptest='python3 ~/.claude/plugins/infiquetra/parallel-test-runner/src/test_runner.py'
+# Deploy: mint a tag-promotion release
+alias deploy-tag='python3 ~/.claude/plugins/infiquetra/deploy/scripts/mint_tag.py'
 
-# Docs generator
-alias docgen='python3 ~/.claude/plugins/infiquetra/docs-generator/src/docs_generator.py'
+# UniFi network client
+alias unifi-net='python3 ~/.claude/plugins/infiquetra/unifi/skills/unifi-network/scripts/unifi_network_client.py'
 ```
 
 Then use:
 
 ```bash
-ptest --coverage 80 --verbose
-docgen generate --all --service my-service
+deploy-tag --env nonprod --version 1.2.3 --dry-run
+unifi-net --help
 ```
 
 ## Support

@@ -17,13 +17,13 @@ into one campaign, planned and built **epic-by-epic**, with tiering as the share
 ## Problem Frame
 
 Two independent ideation efforts converged on the same root waste. The first found that the
-highest-value offloads are deterministic and cheap — yet the repo runs every subagent on the Opus main
-model (35 agent files were `model: inherit`; ~10 still are), has **zero hooks**, and re-pays expensive
-tokens for binary answers a hook could settle for free. The second found that saga *undersells and
-structurally avoids* its cheapest powerful backend: the `/plan` offer pitches dynamic (ultracode)
-workflows as fan-out only, and the recommender hard-forces team-execution on any consensus signal — so
-a workflow judge-panel is never recommended even though the Workflow tool documents judge panels as
-first-class.
+highest-value offloads are deterministic and cheap — yet the repo still leaves un-tiered subagents on
+the Opus main model (after the 17→7 cut, 5 of 30 agent files remain unpinned), has **zero hooks**, and
+re-pays expensive tokens for binary answers a hook could settle for free. The second found that saga
+*undersells and structurally avoids* its cheapest powerful backend: the `/plan` offer pitches dynamic
+(ultracode) workflows as fan-out only, and the recommender hard-forces team-execution on any consensus
+signal — so a workflow judge-panel is never recommended even though the Workflow tool documents judge
+panels as first-class.
 
 The seam between them is **tiering**: doc1's "pin the model where agents are dispatched" and doc2's
 "assign a per-unit `{model, effort}` where plan work is defined" are the same decision on two dispatch
@@ -82,7 +82,8 @@ R4. The tier rule is recorded once as prose where it is auto-loaded every sessio
 
 R5. The `/plan` execution-backend offer names dynamic workflows' **both** purposes — breadth/scale
 fan-out AND adversarial confidence (judge-panel / refute-N / perspective-diverse verification) — not
-fan-out alone.
+fan-out alone; and a drift-guard test asserts every offer surface stays a superset of the
+`operator-choice.md` §3.2 purpose list, so the under-sell cannot silently return on a future rebuild.
 
 R6. The offer frames the team-execution↔workflow choice on the **governance** axis ("does the verdict
 need to stick — block a merge/deploy and persist as evidence — or is it throwaway?"), not on "review
@@ -112,7 +113,8 @@ preserved).
 
 R12. Backend choice-vs-recommendation is recorded, and a `/retro` or `/optimize` pass surfaces the
 override-rate (plus over/under-tier and budget-exhaustion signals) so any future default re-weighting is
-evidence-driven, not asserted.
+evidence-driven, not asserted. This measurement is independent of Epics 0-1 and can begin early —
+ideally capturing a baseline before the Epic 1 representation changes land, for a clean before/after.
 
 **Epic 3 — Hook harness** *(independent; the repo's first hooks; can run in parallel)*
 
@@ -155,6 +157,10 @@ F2. **Off-host resume degradation (R11).**
 2. A one-line downgrade is surfaced; the orchestration tier recompiles down to team-execution or inline.
 3. Unit specs and per-unit tiers are preserved; the downgrade is recorded.
 
+Epics 3-4 (hooks, the cheap executor, release guards) are event-triggered guards rather than multi-step
+flows, so they carry no flow here — their behavior is fully captured by their requirements and acceptance
+examples.
+
 ## Acceptance Examples
 
 AE1. **Covers R7.** When work wants consensus but does NOT need to block a merge/deploy or persist a
@@ -172,6 +178,9 @@ surfaces it as an error, not a silent skip (the failure mode the context-fleet-a
 
 AE5. **Covers R13.** When an edit leaves `marketplace.json` unparseable or with unbalanced brackets → the
 hook blocks the edit and names the offending line.
+
+AE6. **Covers R14.** When a `feat`/`fix` commit stages code changes but no `docs/engineering-journal/`
+entry → the hook surfaces a nudge; it does not write the entry or block the commit.
 
 ## Scope Boundaries
 
@@ -194,13 +203,20 @@ Out of scope:
   routes to). Epic 3 (hooks) is independent and parallelizable.
 - **Capability gate:** dynamic workflows run on Claude Code only; this constrains R5 (omit the option
   off-host) and is the reason R11 (degradation) exists.
-- **Verified facts:** the repo has zero hooks today, so Epic 3 is greenfield; ~25 of 35 agent files are
-  already model-pinned, so Epic 0's enforcement is a small tail (the unpinned survivor agents + the
-  per-call arg + the rule), not a from-scratch build; the `cc-workflows-ultracode` enum string is carried
-  in persisted sagas, which is why R8 freezes it; `langfuse` ships user-enabled hooks cross-repo, the
-  existence proof for R14's distribution.
+- **Verified facts (2026-06-20, current 7-plugin tree):** the repo has zero hooks today, so Epic 3 is
+  greenfield; 25 of 30 agent files are already model-pinned, so Epic 0's enforcement is a small tail —
+  the 5 unpinned survivor agents (`deploy/release-orchestrator`, `home-lab-ops/homelab-sre`,
+  `mission-control/sdlc-operator`, `redis-channel/redis-channel-coach`, `unifi/unifi-network-ops`) plus
+  the per-call arg and the rule, not a from-scratch build; the `cc-workflows-ultracode` enum string is
+  carried in persisted sagas, which is why R8 freezes it; `langfuse` ships user-enabled hooks cross-repo,
+  the existence proof for R14's distribution.
 - **Assumption:** the Workflow tool's per-agent `model`/`effort` overrides and `budget` API are stable —
   R3, R9, and R12 depend on them.
+- **Release-surface obligation (cross-cutting):** every epic that changes plugin behavior updates the
+  release surfaces in the same PR — the plugin's `.claude-plugin/plugin.json` version,
+  `.claude-plugin/marketplace.json`, the plugin `CHANGELOG.md`, and any version/metadata drift-guard
+  tests (CLAUDE.md §6; the ideation's Thread C). Epics 0-2 modify saga, Epic 3 adds hooks to a plugin,
+  Epic 4 adds an agent — each carries this obligation.
 
 ## Success Criteria
 

@@ -110,10 +110,16 @@ only, agents do the work). Hand-authoring it now validates the R9 spec before Ep
 judgment → Opus, read-only survey → Sonnet, mechanical → Sonnet/Haiku. The full table is the Execution
 Spec below.
 
-**KTD3 — Full hands-off auto-merge (operator-chosen).** Each epic lands as its own PR, auto-merged when the
-5 required CI checks are green (`--admin` if branch protection needs it). The oracle is the test suite +
-the two plugin validators + the drift-guard tests; per-unit worktree isolation + rebase-before-merge
-prevents races. No mid-run operator checkpoint.
+**KTD3 — Full hands-off auto-merge (operator-chosen).** Each epic lands as its own PR and merges with a
+plain `gh pr merge --squash` (**not** `--admin`) only after the agent confirms all 5 CI checks are
+conclusively SUCCESS. The oracle is the test suite + the two plugin validators + the drift-guard tests.
+**Verified caveat (doc-review):** `main` is currently **unprotected** — no GitHub-required checks — so the
+merge gate is the agent's poll discipline alone, not GitHub enforcement (`--admin` would bypass nothing and
+is dropped). The harness merge step therefore (a) merges only on all-SUCCESS, treating pending / null /
+FAILURE as do-not-merge, and (b) forbids its gate-fix loop from weakening tests, deleting assertions, or
+adding `# type: ignore` / `# noqa` to force a pass (cap 3 attempts, then leave the PR unmerged). The proper
+hardening — enabling branch protection with the 5 checks so GitHub enforces the gate — is recommended but is
+the operator's infra call (see Risk Analysis, R-RISK-1). No mid-run operator checkpoint.
 
 **KTD4 — R7 gated-vs-advisory via an explicit interrogation question, work-shape pre-filled
 (operator-chosen).** `/plan` asks "does this verdict need to block a merge/deploy or persist as evidence?",
@@ -144,7 +150,11 @@ out of band.
 **KTD9 — Rebase-before-merge discipline (from the reference pattern).** Every workflow agent runs
 `git fetch origin` and rebases the latest default branch before opening or merging its PR. The two
 saga.py-touching units (U3 instrument, U4 label map) live in different epics; their merge order resolves by
-rebase, not by a hard serialization.
+rebase, not by a hard serialization. **Hands-off guardrail:** if the rebase produces a CONFLICT in
+`plugins/saga/scripts/saga.py` (or any load-bearing logic file), the agent does **not** auto-resolve — it
+aborts the rebase, leaves the PR unmerged with a "needs review" reason, and the run continues (the conflict
+is surfaced to the operator at completion). Autonomous conflict resolution in load-bearing code is out of
+bounds.
 
 **KTD10 — R15 gate manifest is a small declarative file** co-located with the validators
 (`tools/gate-manifest.*`); the exact format is settled inside U9 (Epic 3 is independent and lowest-stakes,
@@ -485,7 +495,10 @@ false-fire on a legitimately current main.
 
 **Work:** run the full gate fleet-wide (`ruff format --check`, `ruff check`, the two validators, `pytest`,
 `mypy`), confirm green, write the `DECISIONS.md` + `LEARNINGS.md` entries the campaign earned, and a
-reconciliation report mapping every R-ID to its landed unit (no silent skips).
+reconciliation report mapping every R-ID (R1–R18) to its landed unit (no silent skips). The reconciliation
+**must** flag two things explicitly: **R4** as `applied-inline — operator confirm done` (it is not built by
+any unit), and any epic left as an **unmerged open PR** (a non-required epic that did not merge, or a
+saga.py-conflict HALT) so nothing is silently dropped.
 
 **Files:** `docs/engineering-journal/{DECISIONS,LEARNINGS}.md`, a final report under `docs/analysis/`.
 
@@ -528,12 +541,34 @@ serially on one worktree+branch (no intra-epic race) and land as one PR; epics r
 
 **Safety model.** The oracle is the test suite + the two validators + the drift-guards (no human review
 mid-run, per KTD3). Each epic agent runs the full local gate before opening its PR, fetches+rebases latest
-main (KTD9), then auto-merges when the 5 required CI checks are green. A budget floor checkpoints the run;
-a circuit breaker halts on repeated gate failure. The run HALTS on a preflight drift (U1) or a failed
-barrier (a required epic PR not merged).
+main (KTD9), then merges only when all 5 CI checks are conclusively SUCCESS. A budget floor checkpoints the
+run; a circuit breaker halts on repeated gate failure. The run HALTS on a preflight drift (U1) or a failed
+barrier (a required epic PR not merged). A non-required epic that does not merge (E3 alone, or a wave-2
+epic) is left as an open PR and surfaced at completion — never force-merged.
 
-**Out of the workflow.** R4's global `~/.claude/CLAUDE.md` tier rule is applied inline with operator
-confirmation (KTD8), not by an autonomous agent.
+**Full-hands-off readiness (the explicit review lens).** Three properties make the unattended run safe to
+leave: **(1) the merge gate** is the agent confirming all-SUCCESS with a plain `--squash` (no `--admin`
+bypass) — and because `main` is unprotected, the gate-fix loop is constrained so it cannot game its own
+oracle (KTD3); **(2) recoverability** — every HALT (preflight drift, dead agent, exhausted budget, a
+saga.py conflict) is resumable via `resumeFromRunId`, which returns cached results for completed units and
+re-runs only from the first incomplete one, so a transient failure costs a resume, not a redo; **(3) no
+outward irreversibility** — merging the epics cuts **no release** (the CI `publish` job runs only on
+`refs/tags/*`, verified), so nothing is published, deployed, or tagged autonomously. The standing residual
+is that the merge gate is enforcement-by-prose until branch protection is enabled (R-RISK-1).
+
+**Rate-limit discipline (operator-requested).** The topology is deliberately narrow-concurrency, not max
+fan-out: wave 1 runs ≤3 concurrent epic agents (one per epic; units within an epic are serial), wave 2 ≤2.
+CI-status polling sleeps between polls (≈25 s, capped at ~30 polls ≈ 12 min, then report-pending-and-stop,
+never a tight loop). The Workflow runtime retries an agent on transient API errors before returning null; a
+null/dead agent after those retries is treated as a (possibly rate-limit) HALT — surfaced, not swallowed —
+and the whole run resumes later via `resumeFromRunId`. The per-epic gate-fix loop is capped (3 attempts) so
+a stuck unit cannot burn the budget hammering the API.
+
+**Out of the workflow (R4 — a REQUIRED operator step, tracked).** R4's global `~/.claude/CLAUDE.md` tier
+rule is applied inline with operator confirmation (KTD8), not by an autonomous agent — but Epic 0's success
+("the tier rule is loaded every session") **depends on it**, so it is not optional. U17's reconciliation
+lists R4 explicitly as `applied-inline — operator must confirm done`, so a forgotten R4 shows up as an open
+item rather than silently leaving Epic 0 incomplete.
 
 ## Scope Boundaries
 
@@ -552,17 +587,29 @@ Deferred to Follow-Up Work:
 
 ## Risk Analysis & Mitigation
 
-**Autonomous edits to load-bearing logic (U6 recommender, U10 spec).** A subtle recommender regression
-mis-routes every future job. *Mitigation:* AE1/AE2/overlap/docs-gating tests gate U6; the drift-guard (U5)
-catches purpose-list erosion; full hands-off still gates each PR on the complete CI suite — a red gate
-blocks the auto-merge.
+**R-RISK-1 — `main` is unprotected, so the autonomous merge gate is enforcement-by-prose (the top
+full-hands-off risk).** GitHub requires no checks, so a buggy poll or a gamed gate could land a red PR on
+main. *Mitigation (in-harness):* merge only on all-SUCCESS (pending / null / FAILURE → do-not-merge), plain
+`--squash` not `--admin`, and a gate-fix loop that may not weaken tests / delete assertions / add ignore
+comments (cap 3). *Mitigation (operator, recommended):* enable branch protection with the 5 checks so
+GitHub enforces the gate — the real fix that removes the enforcement-by-prose residual; an infra call left
+to the operator.
+
+**Autonomous edits to load-bearing logic (U6 recommender, U10 spec) + the gate-fix loop gaming its own
+oracle.** A subtle recommender regression mis-routes every future job; worse, an unattended "fix until
+green" agent could make a red gate pass by weakening the very test that guards it. *Mitigation:*
+AE1/AE2/overlap/docs-gating tests gate U6; the drift-guard (U5) catches purpose-list erosion; the harness
+SPEC forbids test/assertion-weakening and ignore-comments in gate-fixes and caps the loop, so the oracle
+stays trustworthy; a red gate blocks the merge.
 
 **`marketplace.json` double-`]` corruption during the U2 triad bumps.** *Mitigation:* `python3 -m json.tool`
 validation in U2; U7 makes it structurally unrepresentable thereafter (and U7 is in the parallel first
 wave).
 
 **Cross-epic `saga.py` conflict (U3 vs U4).** *Mitigation:* KTD9 rebase-before-merge; both are small,
-additive edits.
+additive edits authored in disjoint regions. **A genuine rebase conflict in saga.py is NOT auto-resolved** —
+the epic halts unmerged for operator review (KTD9 guardrail), rather than an autonomous agent reconciling
+load-bearing code.
 
 **Cheap-tier budget exhaustion in generated agents (R9).** *Mitigation:* U10 bakes the
 `workflow_structuredoutput_budget` lesson (cap output, mandatory emit, skim, batch) into emitted cheap-tier
@@ -570,6 +617,12 @@ agents; re-run only failed indices.
 
 **PR/CI volume (5 epic PRs + CI each).** *Mitigation:* epic-grouped PRs (not per-unit) keep it to ~5 CI
 runs; epics parallelize; a budget floor checkpoints for resume.
+
+**API rate limits during the unattended run (operator-requested).** Many tiered agents + polling loops risk
+throttling. *Mitigation:* narrow concurrency (≤3 wave-1 / ≤2 wave-2 agents, serial units within an epic),
+CI polls sleep ≈25 s and cap out to report-pending (no tight loop), the runtime retries transient API
+errors, and a post-retry dead agent HALTs the run resumably (`resumeFromRunId`) rather than failing hard.
+A rate-limit interruption costs a resume, not a restart.
 
 ## Dependencies / Assumptions
 
@@ -581,8 +634,15 @@ runs; epics parallelize; a budget floor checkpoints for resume.
   `adversarial_confidence` already a recommender trigger (`lifecycle_state.py:163`); `cc-workflows-ultracode`
   carried in persisted sagas (why R8 freezes it); recommender tested in `tests/test_saga_plugin.py`; the two
   validators are `marketplace/validator/validate.py` + `scripts/validate_plugins.py`.
+- **Doc-review-verified (full-hands-off):** the CI `publish` job runs **only** on `refs/tags/*`
+  (`.github/workflows/ci.yml:158`), so merging the epics cuts no release autonomously; and `main` is
+  currently **unprotected** (no GitHub-required checks) — the merge gate is the harness's poll discipline,
+  which R-RISK-1 hardens and recommends fixing via branch protection.
 - **Assumption:** the Workflow tool's per-agent `model`/`effort` overrides and `budget` API are stable —
   R3, R9, R12 and this campaign's own harness depend on them.
+- **Assumption (resumability):** the harness is restart-safe via `resumeFromRunId` — completed `agent()`
+  calls return cached results, so any HALT (preflight drift, a dead/rate-limited agent, exhausted budget, a
+  saga.py conflict) resumes from the first incomplete unit rather than from scratch.
 - **Release-surface obligation (cross-cutting):** every epic that changes plugin behavior bumps the release
   triad in the same PR (CLAUDE.md §6). Epics 0-2 modify saga; Epic 3 adds hooks to a plugin; Epic 4 adds an
   agent — each carries it.

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TypedDict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SAGA_ROOT = REPO_ROOT / "plugins" / "saga"
@@ -32,10 +33,16 @@ OFFER_SURFACES = {
     "code-review": SAGA_ROOT / "skills" / "code-review" / "SKILL.md",
 }
 
+
+class PurposeSpec(TypedDict):
+    marker: str
+    keywords: list[str]
+
+
 # The two §3.2 purposes, each identified by a stable bold marker and a set of
 # defining keywords. The marker proves the purpose is NAMED; the keywords prove it
 # carries its semantics, not just a label. Surfaces must be a SUPERSET of this set.
-CANONICAL_PURPOSES = {
+CANONICAL_PURPOSES: dict[str, PurposeSpec] = {
     "breadth": {
         "marker": "breadth",
         "keywords": ["fan-out", "target"],

@@ -1,0 +1,35 @@
+{
+  "description": "Single-source pre-push gate manifest. The hook at plugins/saga/hooks/pre_push_gate_hook.py reads this file and runs every step in order. Add or remove steps here to change what the gate checks — the hook never diverges.",
+  "steps": [
+    {
+      "id": "ruff-format",
+      "label": "ruff format --check",
+      "command": ["uv", "run", "python", "-m", "ruff", "format", "--check", "."],
+      "failure_hint": "Run `uv run python -m ruff format .` to auto-fix formatting."
+    },
+    {
+      "id": "ruff-lint",
+      "label": "ruff check",
+      "command": ["uv", "run", "python", "-m", "ruff", "check", "."],
+      "failure_hint": "Run `uv run python -m ruff check --fix .` to apply safe auto-fixes."
+    },
+    {
+      "id": "validate-plugins",
+      "label": "validate plugin manifests",
+      "command": ["uv", "run", "python", "scripts/validate_plugins.py"],
+      "failure_hint": "Fix plugin manifest errors reported above."
+    },
+    {
+      "id": "validate-marketplace",
+      "label": "validate marketplace registry",
+      "command": ["uv", "run", "python", "marketplace/validator/validate.py"],
+      "failure_hint": "Fix marketplace.json errors reported above."
+    },
+    {
+      "id": "pytest",
+      "label": "pytest",
+      "command": ["uv", "run", "python", "-m", "pytest"],
+      "failure_hint": "Fix failing tests before pushing."
+    }
+  ]
+}

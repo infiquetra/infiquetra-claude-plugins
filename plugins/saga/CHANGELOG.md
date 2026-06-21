@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.29.0 - 2026-06-21
+
+- Add `tools/gate-manifest.json`: single-source declarative listing of the pre-push gate steps
+  (`ruff format --check`, `ruff check`, `validate_plugins`, `validate marketplace`, `pytest`),
+  each with an `id`, `label`, `command`, and `failure_hint`.  This file is the sole authoritative
+  gate definition — the hook reads it at runtime and never diverges.  Addresses R15 / KTD10
+  (Epic 3 hook harness, U9).
+- Add `plugins/saga/hooks/pre_push_gate_hook.py`: a `PreToolUse` / Bash hook that fires when the
+  Bash tool runs a `git push` command.  Reads `tools/gate-manifest.json` relative to the repo root,
+  runs every step in order, and reports by exception — silent on pass, prints each failed step's
+  label, output, and failure hint to stderr then exits 2 (blocking) on any failure.  Cross-repo-safe:
+  degrades silently when the manifest is absent.  Co-located with U7/U8 in `hooks/hooks.json`.
+- Update `plugins/saga/hooks/hooks.json`: add a `PreToolUse` / `Bash` matcher entry wiring
+  `pre_push_gate_hook.py` into the hook harness alongside the existing JSON validator (U7) and
+  journal nudge (U8).
+- Add `tests/test_pre_push_gate.py`: 20 tests covering manifest structure (5 required step IDs,
+  uniqueness, all fields present), push detection, exit-code contract (silent on pass, exit 2 on
+  failure, exit 0 on non-push/non-Bash/malformed/missing-manifest), failure reporting (all failing
+  steps listed, output echoed, hints included), and the single-source invariant (hook executes
+  manifest-defined steps, not a hard-coded list).
+
 ## 0.28.0 - 2026-06-21
 
 - Add `plugins/saga/hooks/journal_nudge_hook.py`: a non-blocking `PostToolUse` hook (exit 0 always)

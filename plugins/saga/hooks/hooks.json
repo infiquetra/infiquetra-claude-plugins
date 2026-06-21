@@ -1,5 +1,5 @@
 {
-  "description": "Saga plugin hooks: (1) validates marketplace.json and plugin.json for valid JSON and balanced brackets on every edit, blocking (exit 2) with the offending line on failure; (2) nudges (non-blocking, exit 0) when a feat/fix commit touches code but stages no docs/engineering-journal/ entry.",
+  "description": "Saga plugin hooks: (1) validates marketplace.json and plugin.json for valid JSON and balanced brackets on every edit, blocking (exit 2) with the offending line on failure; (2) nudges (non-blocking, exit 0) when a feat/fix commit touches code but stages no docs/engineering-journal/ entry; (3) runs the pre-push gate from tools/gate-manifest.json on git push, reporting by exception and blocking (exit 2) on any failure.",
   "hooks": {
     "PreToolUse": [
       {
@@ -8,6 +8,15 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/validate_json_hook.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_push_gate_hook.py\""
           }
         ]
       }

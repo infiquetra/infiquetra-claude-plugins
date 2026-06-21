@@ -1,0 +1,16 @@
+{
+  "description": "Saga plugin hook: validates marketplace.json and plugin.json for valid JSON and balanced brackets on every edit, blocking (exit 2) with the offending line on failure.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/validate_json_hook.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

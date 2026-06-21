@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.27.0 - 2026-06-21
+
+- Add `plugins/saga/hooks/hooks.json` and `hooks/validate_json_hook.py`: the repo's first hook.
+  A `PreToolUse` hook that JSON-parses `marketplace.json` and `plugin.json` on every
+  `Edit`/`Write`/`MultiEdit`, asserts balanced brackets, and exits 2 (blocking) with the
+  offending file path and line on failure.  Unrelated files pass through silently (exit 0).
+  Addresses R13 (Epic 3 hook harness).
+
 ## 0.26.0 - 2026-06-21
 
 - Split the recommender's `needs_consensus` signal on the **governance** axis (R7 keystone). A consensus

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.25.0 - 2026-06-21
+
+- Rewrite the `/plan` (`skills/plan/SKILL.md`) and `/code-review` execution-backend offers to name
+  **both** dynamic-workflow purposes from `operator-choice.md` §3.2 — **breadth / scale** fan-out **and**
+  **adversarial confidence** (judge-panel / refute-N / perspective-diverse) — instead of underselling
+  `cc-workflows-ultracode` as fan-out only (R5).
+- Reframe the team↔workflow fork on the **governance** axis ("does the verdict need to stick?" — gated
+  consensus that blocks a merge/deploy and persists vs. advisory throwaway votes), not on "review depth"
+  (which both backends have) (R6).
+- Add `tests/test_operator_choice_drift.py` — a drift guard asserting every offer surface stays a
+  SUPERSET of the §3.2 purpose list (anchored on stable content markers, not line numbers), so a future
+  rebuild cannot silently drop a purpose or reintroduce the "review depth" framing.
+
 ## 0.24.0 - 2026-06-21
 
 - Add `orchestration_recommended` and `orchestration_operator_choice` fields to the saga envelope

@@ -248,12 +248,27 @@ nonprod-deploy**. This becomes the saga `--destination`.
 Offer the execution backend per `references/operator-choice.md` (the decision contract). There are
 exactly three backends — `inline` ("inline") | `team-execution` ("team execution") |
 `cc-workflows-ultracode` ("dynamic workflows"). Read the work shape, **recommend the cheapest-correct**
-backend and pre-select it, but always surface the alternatives so escalation is one step. Escalate to
-`team-execution` ("team execution") for risky/consensus work (≥8 files, ≥4 phases, security, infra,
-cross-repo, deployment-sensitive, plus a needs-consensus signal); to `cc-workflows-ultracode`
-("dynamic workflows") for broad independent fan-out without elevated risk. Omit `cc-workflows-ultracode`
-("dynamic workflows") from the offer when the Workflow tool is observably absent in this session.
-Confirm with the operator and record what they picked via `--orchestration-mode`.
+backend and pre-select it, but always surface the alternatives so escalation is one step.
+
+**Dynamic workflows serve BOTH purposes** (per `references/operator-choice.md` §3.2) — escalate to
+`cc-workflows-ultracode` ("dynamic workflows"), without elevated risk, for **either**:
+
+- **Breadth / scale** — broad independent fan-out, the same operation across many enumerated targets, or
+  an exhaustive probe-all sweep where missing a target is the failure mode.
+- **Adversarial confidence** — a judge panel over N independent attempts, prove-by-refutation (refute-N),
+  or perspective-diverse verifiers each applying a distinct lens. This is real review depth; the Workflow
+  tool names *confidence* as a first-class purpose. Set it only on an **explicit** request for
+  many-independent-attempt verification, not on a generic "be more sure."
+
+**The team↔workflow fork is GOVERNANCE, not "review depth"** (both have review depth). The question is:
+**does the verdict need to stick?** Escalate to `team-execution` ("team execution") when the work needs
+**gated** consensus — a verdict that blocks a merge/deploy and persists as standing evidence (a reviewer-
+CONSENSUS gate, named scanners, a guarded deploy), or the size/risk signals fire (≥8 files, ≥4 phases,
+security, infra, cross-repo, deployment-sensitive). When the consensus signal is **advisory** — N
+throwaway in-session votes you act on yourself, nothing recorded or blocking — it is a dynamic-workflow
+judge-panel, not a team-execution job. Omit `cc-workflows-ultracode` ("dynamic workflows") from the offer
+when the Workflow tool is observably absent in this session. Confirm with the operator and record what
+they picked via `--orchestration-mode`.
 
 ### 5.3 Write the saga tick
 

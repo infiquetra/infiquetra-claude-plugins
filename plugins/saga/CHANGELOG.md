@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.30.0 - 2026-06-21
+
+- Add `plugins/saga/agents/mechanical-executor.md`: cheap-tier (haiku, Bash-only)
+  op-discriminated executor agent for deterministic mechanical ops dispatched by saga
+  commands.  Approved ops: `census` (file enumeration), `file-exist` (path presence),
+  `json-validate` (JSON parse check), `grep-count` (pattern match count), `link-check`
+  (HTTP 2xx probe).  Unknown ops are rejected with a clear error message — never guessed.
+  The agent is inert until called; it has no auto-trigger.  Addresses R16 / Epic 4 (U14).
+- Update `plugins/saga/skills/work/references/execution-strategy.md`: add a `mechanical-executor`
+  dispatch paragraph to the subagent dispatch section, naming the approved ops, the haiku/Bash-only
+  scope, the op-discriminated rejection contract, and an example dispatch payload.  Wires the
+  agent into the saga `/work` dispatch path without duplicating agent prose.
+
 ## 0.29.0 - 2026-06-21
 
 - Add `tools/gate-manifest.json`: single-source declarative listing of the pre-push gate steps

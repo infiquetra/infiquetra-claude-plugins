@@ -69,12 +69,27 @@ constraints below mitigate them.
 
 ## Subagent dispatch (U-ID preservation)
 
-Use the generic `Explore` / `Task` agents (this plugin has no `agents/` dir — do **not** reference named
-`ce-*` agents). For each unit, give the subagent: the full plan path (overall context), the unit's Goal /
-Files / Approach / Execution note / Patterns / Test scenarios / Verification, any resolved
+Use the generic `Explore` / `Task` agents for judgment and code-authoring units.  Do **not** reference
+named `ce-*` agents.  For each unit, give the subagent: the full plan path (overall context), the
+unit's Goal / Files / Approach / Execution note / Patterns / Test scenarios / Verification, any resolved
 deferred-implementation questions, and the instruction to check the unit's test scenarios against all
 four applicable categories (happy / edge / error / integration) and supplement gaps. **Preserve the
 U-ID** in the dispatch and in everything the subagent reports back.
+
+**Mechanical units (census, file-exist checks, JSON validation, grep counts, link checks) should use
+the `mechanical-executor` agent** (`plugins/saga/agents/mechanical-executor.md`) instead of a generic
+`Task` agent.  The mechanical executor runs on haiku (cheap tier), is Bash-only, and is op-discriminated
+— pass it a single `op:` payload; it rejects unknown ops rather than guessing.  Dispatch it inline
+(not as a parallel subagent) because its output feeds the calling phase directly.  Example dispatch
+payload:
+
+```
+op: census
+glob: plugins/*/agents/*.md
+```
+
+The mechanical executor is **inert until called** — it has no auto-trigger and takes no action without
+an explicit dispatch from the calling skill.
 
 - **Worktree-isolated:** subagents may stage, commit, and run their unit's tests inside their own worktree
   branch. After the batch, merge those branches in dependency order; on a merge conflict, abort

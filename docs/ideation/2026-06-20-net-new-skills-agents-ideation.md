@@ -334,3 +334,15 @@ NOT a helper candidate: reconcile/self-heal/drift churn in team-mimir/home-lab/o
   set, the haiku-vs-sonnet split for the commit message).
 - Honor `workflow_structuredoutput_budget` in any cheap-tier dispatch: cap `evidence_tail`, make the emit
   explicit, skim not full-read.
+
+## Related ideation — dynamic-workflow representation & authoring
+
+A sibling run (operator seed, 2026-06-20):
+[`2026-06-20-execution-backend-representation-ideation.md`](./2026-06-20-execution-backend-representation-ideation.md)
+ideates on how saga's `/plan` flow represents, names, defaults toward, and authors the execution
+backends — especially Claude Code dynamic (ultracode) workflows. It directly extends the **tiering**
+items (#4/#5) above: its survivor **S5** reframes per-agent model+effort tiering as a *plan property*
+(judgment→Opus / mechanical→Sonnet-Haiku, with the pilot↔fan-out same-tier invariant), the
+authoring-time home for the same tier policy this doc enforces in agent frontmatter. Sequence the two as
+one thread; its keystone (S2 — split `needs_consensus` into gated vs advisory so the recommender can
+route consensus work to a workflow judge-panel) is the natural first `/brainstorm` seed.

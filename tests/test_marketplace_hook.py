@@ -241,6 +241,41 @@ def test_edit_producing_invalid_json_is_blocked(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# MultiEdit tool: post-edit validation over the on-disk file + edits list
+# ---------------------------------------------------------------------------
+
+
+def test_multiedit_producing_invalid_json_is_blocked(tmp_path: Path) -> None:
+    """A MultiEdit whose applied edits yield invalid JSON → exit 2, offending line named.
+
+    The hook reads the on-disk file and applies the ``edits`` list in-memory
+    (validate_json_hook.py:81-93), so this drives the real MultiEdit branch with
+    the stdin shape the hook parses (``tool_input.edits``).
+    """
+    target = tmp_path / "marketplace.json"
+    target.write_text('{\n  "plugins": [],\n  "version": "3.0.0"\n}\n')
+
+    payload = {
+        "tool_name": "MultiEdit",
+        "tool_input": {
+            "file_path": str(target),
+            "edits": [
+                # First edit is fine on its own; the second introduces an extra
+                # closer so the post-edit content no longer parses.
+                {"old_string": '"3.0.0"', "new_string": '"3.1.0"'},
+                {"old_string": '"plugins": []', "new_string": '"plugins": []]'},
+            ],
+        },
+    }
+    result = _run_hook(payload)
+    assert result.returncode == 2, (
+        f"Expected exit 2 (block); got {result.returncode}, stderr={result.stderr!r}"
+    )
+    assert "marketplace.json" in result.stderr, f"stderr must name the file; got: {result.stderr!r}"
+    assert "line" in result.stderr, f"stderr must name the offending line; got: {result.stderr!r}"
+
+
+# ---------------------------------------------------------------------------
 # Offending-line helper unit tests
 # ---------------------------------------------------------------------------
 

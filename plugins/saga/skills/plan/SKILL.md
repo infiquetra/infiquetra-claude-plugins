@@ -300,14 +300,19 @@ python3 plugins/saga/scripts/saga.py save \
   --destination <plan-only|pr|merge|nonprod-deploy> \
   --adr-refs "ADR-NNNN|ADR-MMMM" \
   --decisions "KTD1: rationale. KTD2: rationale." \
-  --orchestration-mode <inline|team-execution|cc-workflows-ultracode>
+  --orchestration-mode <inline|team-execution|cc-workflows-ultracode> \
+  --orchestration-recommended <recommend_execution_backend() output>
 ```
+
+Also pass `--orchestration-recommended <the backend the recommender suggested>` so the tick records
+recommended-vs-chosen on this decision (R12 override-rate telemetry); `orchestration_operator_choice`
+auto-derives from `--orchestration-mode`, so the only added burden is naming the recommendation.
 
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc work pass
 `--kind task --id <slug>`. `--lifecycle-phase plan`, `--plan-path`, `--destination`, `--adr-refs`,
-`--decisions` (the KTD mirror), and `--orchestration-mode` carry the `/plan` consumer row from
-`references/saga-spec.md` §11. When resuming (Phase 0.3 matched), this appends a tick to the existing
-saga directory rather than minting a new one.
+`--decisions` (the KTD mirror), `--orchestration-mode`, and `--orchestration-recommended` carry the
+`/plan` consumer row from `references/saga-spec.md` §11. When resuming (Phase 0.3 matched), this appends
+a tick to the existing saga directory rather than minting a new one.
 
 ### 5.4 Route
 

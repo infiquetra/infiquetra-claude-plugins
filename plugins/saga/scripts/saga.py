@@ -1067,6 +1067,13 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         next_step=args.next_step,
         orchestration_mode=args.orchestration_mode,
         orchestration_ref=args.orchestration_ref,
+        orchestration_recommended=args.orchestration_recommended,
+        # The operator's explicit pick. Absent flag → the chosen backend IS the
+        # operator's choice (record it as ``--orchestration-mode``); a literal ""
+        # mode stays "" so older callers don't fabricate a decision.
+        orchestration_operator_choice=(
+            args.orchestration_operator_choice or args.orchestration_mode
+        ),
         orchestration_downgrade=args.orchestration_downgrade,
         issue_ref=args.issue_ref,
         destination=args.destination,
@@ -1108,6 +1115,18 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--progress-pct", type=int, default=0)
     p.add_argument("--destination", choices=list(DESTINATIONS), default="plan-only")
     p.add_argument("--orchestration-mode", choices=list(ORCHESTRATION_MODES), default="inline")
+    p.add_argument(
+        "--orchestration-recommended",
+        choices=list(ORCHESTRATION_MODES),
+        default="",
+        help="what recommend_execution_backend() suggested (R12; pairs with the chosen mode)",
+    )
+    p.add_argument(
+        "--orchestration-operator-choice",
+        choices=list(ORCHESTRATION_MODES),
+        default="",
+        help="the operator's explicit pick (R12; omit to derive from --orchestration-mode)",
+    )
     p.add_argument("--orchestration-ref", default="")
     p.add_argument(
         "--orchestration-downgrade",

@@ -359,6 +359,103 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Capability-portable inline/serial baseline (R11 / U12)
+# ---------------------------------------------------------------------------
+#
+# Every authored plan carries a runnable inline/serial baseline so it executes on ANY
+# host, with or without the Workflow tool. The dynamic-workflow layer (emit_workflow_script)
+# applies only on a capable host; on an off-host resume the orchestration tier recompiles
+# DOWN (lifecycle_state.recheck_orchestration_capability) and this baseline is what the
+# inline floor runs. The recompile preserves every unit spec and its per-unit {model,
+# effort} tier -- the baseline below annotates each unit with the SAME tier it carried in
+# the dynamic script, so a downgrade changes only HOW units are dispatched (serial, inline)
+# and never WHICH units run or AT WHAT tier.
+
+
+def emit_inline_baseline(spec: ExecutionSpec) -> str:
+    """Emit the runnable inline/serial baseline plan from the spec (R11 floor).
+
+    Validates first (the same R3/R10 invariants -- a mis-built spec has no valid baseline
+    either), then renders a deterministic, host-independent serial checklist: each unit in
+    declared order, dependency barriers honored by ordering, the per-unit ``{model, effort}``
+    tier PRESERVED on every unit (the recompile preserves tiers -- R11), fan-out targets
+    enumerated inline (R10, never a silent filter). This is the always-runnable floor an
+    off-host resume degrades to; it requires no Workflow tool.
+
+    Returned as a Markdown checklist string (the inline executor reads it as its serial
+    run order). It is NOT a .workflow.js -- by construction it dispatches nothing in
+    parallel and calls no agent() harness.
+    """
+    spec.validate()
+
+    lines: list[str] = []
+    lines.append(f"# Inline/serial baseline -- {spec.name}")
+    lines.append("")
+    lines.append(
+        "Runnable on ANY host (no Workflow tool required). The orchestration tier "
+        "recompiled DOWN to inline; unit specs and per-unit {model, effort} tiers preserved."
+    )
+    if spec.description:
+        lines.append("")
+        lines.append(spec.description)
+    if spec.repo:
+        lines.append("")
+        lines.append(f"Repo: {spec.repo}")
+    lines.append("")
+    lines.append("Run each unit IN ORDER (serial); honor the declared dependency barriers.")
+    lines.append("")
+
+    for idx, unit in enumerate(spec.units, start=1):
+        tier = f"{unit.tier.model}/{unit.tier.effort}"
+        lines.append(f"## {idx}. {unit.unit_id}: {unit.label}  [tier: {tier}]")
+        if unit.depends_on:
+            lines.append(f"- depends_on (run after): {', '.join(unit.depends_on)}")
+        if unit.pilot:
+            lines.append(f"- pilot (run first, same tier): {unit.pilot}")
+        if unit.escalation:
+            lines.append(f"- escalation: {unit.escalation}")
+        if unit.fanout:
+            lines.append(
+                f"- fan-out over {len(unit.targets)} enumerated targets "
+                f"(serial, reconcile after -- report any not completed): "
+                f"{', '.join(unit.targets)}"
+            )
+        prompt = _agent_prompt(spec, unit)
+        lines.append("")
+        for prompt_line in prompt.splitlines():
+            lines.append(f"  {prompt_line}" if prompt_line else "")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+# The orchestration tiers, mirrored from lifecycle_state.ORCHESTRATION_TIERS, so the
+# emitter can render the correct floor for a given (possibly downgraded) tier without a
+# cross-module import at module scope (the scripts load standalone in tests).
+_WORKFLOW_TIER = "cc-workflows-ultracode"
+_INLINE_TIER = "inline"
+
+
+def recompile_for_tier(spec: ExecutionSpec, orchestration_mode: str) -> str:
+    """Re-emit the spec for a (possibly downgraded) orchestration tier (R11 recompile).
+
+    ONLY the orchestration tier changes -- unit specs and per-unit ``{model, effort}`` tiers
+    are preserved in BOTH emitters. ``cc-workflows-ultracode`` re-emits the dynamic
+    ``.workflow.js`` harness; any other tier (``team-execution`` / ``inline`` / an unknown
+    floor) re-emits the inline/serial baseline, the always-runnable floor. This is the
+    function an off-host resume calls after ``recheck_orchestration_capability`` decides the
+    new tier: it never errors and always returns a runnable artifact (AE3).
+    """
+    spec.validate()
+    if orchestration_mode == _WORKFLOW_TIER:
+        return emit_workflow_script(spec)
+    # team-execution's own emitter is U11's team_emitter.py (markdown protocol); for the
+    # inline floor and as the safe default for any other/unknown tier we emit the
+    # host-independent serial baseline -- never an empty or un-runnable artifact.
+    return emit_inline_baseline(spec)
+
+
+# ---------------------------------------------------------------------------
 # CLI -- validate or emit from a JSON spec file (offline-deterministic)
 # ---------------------------------------------------------------------------
 
@@ -378,6 +475,12 @@ def main(argv: list[str] | None = None) -> int:
     p_emit.add_argument("spec", type=Path)
     p_emit.add_argument("-o", "--out", type=Path, help="write the script here (default: stdout)")
 
+    p_base = sub.add_parser(
+        "baseline", help="emit the runnable inline/serial baseline (R11 floor) from a spec JSON"
+    )
+    p_base.add_argument("spec", type=Path)
+    p_base.add_argument("-o", "--out", type=Path, help="write the baseline here (default: stdout)")
+
     args = parser.parse_args(argv)
     try:
         spec = _load_spec(args.spec)
@@ -385,7 +488,10 @@ def main(argv: list[str] | None = None) -> int:
             spec.validate()
             print(f"OK: {spec.name} ({len(spec.units)} units) is a valid execution-spec.")
             return 0
-        script = emit_workflow_script(spec)
+        if args.cmd == "baseline":
+            script = emit_inline_baseline(spec)
+        else:
+            script = emit_workflow_script(spec)
     except SpecError as exc:
         print(f"SPEC ERROR: {exc}", file=sys.stderr)
         return 2

@@ -66,6 +66,48 @@ emit** (the final action MUST be the StructuredOutput call, even on partial work
 tool calls). A budget-exhausted cheap agent that never emits its result is the failure this
 prevents.
 
+## Capability-portable degradation (R11 / U12)
+
+Every authored plan is **capability-portable**: it carries a runnable **inline/serial
+baseline** alongside the dynamic-workflow script, so it executes on ANY host — with or
+without the Workflow tool. The dynamic-workflow layer (`emit_workflow_script`) applies only
+on a capable host.
+
+On an **off-host resume** the Workflow tool is re-checked and the orchestration tier
+recompiles DOWN — and **only the orchestration tier**. The unit specs and per-unit
+`{model, effort}` tiers are PRESERVED across the recompile; a downgrade changes only *how*
+units are dispatched (serial, inline), never *which* units run or *at what tier*.
+
+The flow has three moving parts:
+
+1. **`lifecycle_state.recheck_orchestration_capability(...)`** — the capability probe. Given
+   the resumed `orchestration_mode` and whether the Workflow tool is available, it returns a
+   structured decision: `{downgraded, from, to, note, workflow_available}`. It **never errors
+   and never silently runs nothing** (AE3): on a capable host `downgraded=False` and the
+   authored tier is kept; off-host it returns a runnable lower tier (`team-execution`, or the
+   always-runnable `inline` floor) plus a one-line `note`. An unknown stored mode floors to
+   `inline` rather than raising. Tiers ladder, most-capable first:
+   `cc-workflows-ultracode → team-execution → inline`.
+
+2. **`execution_spec.recompile_for_tier(spec, mode)`** — re-emits the *same* spec for the
+   (possibly downgraded) tier: `cc-workflows-ultracode` → the dynamic `.workflow.js`; any
+   other tier → the inline/serial baseline (`emit_inline_baseline`). Both preserve unit specs
+   and per-unit tiers; the function always returns a runnable artifact.
+
+3. **`saga.orchestration_downgrade`** — the recorded note. The downgrade is durable, not
+   silent: the one-line note from step 1 is written to the saga so a later `/retro`/`/optimize`
+   pass (and the operator) can see the plan ran degraded and why.
+
+```bash
+# Re-check host capability on an off-host resume and recompile the orchestration tier.
+uv run python plugins/saga/scripts/lifecycle_state.py recheck-capability \
+    --orchestration-mode cc-workflows-ultracode --no-workflow
+# -> {"downgraded": true, "from": "cc-workflows-ultracode", "to": "team-execution", "note": "...", ...}
+
+# Emit the runnable inline/serial baseline (the R11 floor) from a spec.
+uv run python plugins/saga/scripts/execution_spec.py baseline spec.json -o baseline.md
+```
+
 ## CLI
 
 ```bash
@@ -74,4 +116,7 @@ uv run python plugins/saga/scripts/execution_spec.py validate spec.json
 
 # Emit a runnable workflow script (stdout, or -o to a file).
 uv run python plugins/saga/scripts/execution_spec.py emit spec.json -o out.workflow.js
+
+# Emit the runnable inline/serial baseline (R11 floor — runs on any host).
+uv run python plugins/saga/scripts/execution_spec.py baseline spec.json -o baseline.md
 ```

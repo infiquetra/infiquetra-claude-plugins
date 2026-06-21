@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.32.0 - 2026-06-21
+
+- Capability-portable degradation (R11 / U12): every authored plan now carries a runnable
+  inline/serial **baseline** alongside the dynamic-workflow script, so a plan executes on ANY
+  host. Add `execution_spec.emit_inline_baseline()` (the always-runnable floor — no Workflow
+  tool, no `agent()` harness; preserves every unit and its per-unit `{model, effort}` tier and
+  enumerates fan-out targets) and `execution_spec.recompile_for_tier()` (re-emit the same spec
+  for a possibly-downgraded orchestration tier). New `execution_spec.py baseline` CLI subcommand.
+- Add `lifecycle_state.recheck_orchestration_capability()`: on an off-host resume it re-checks the
+  Workflow tool and recompiles **only** the orchestration tier DOWN
+  (`cc-workflows-ultracode → team-execution → inline`), preserving unit specs + per-unit tiers and
+  surfacing a one-line downgrade note. AE3: it never errors and never silently runs nothing — an
+  unknown or unavailable tier floors to the always-runnable inline baseline. New
+  `lifecycle_state.py recheck-capability` CLI subcommand.
+- Record the downgrade durably: add the `orchestration_downgrade` saga field (one-line note;
+  empty on a host that ran the authored tier; backward-compatible default for older sagas).
+- Document the degradation flow in `references/execution-spec.md` and the new field in
+  `references/saga-spec.md`.
+
 ## 0.31.0 - 2026-06-21
 
 - Add `scripts/execution_spec.py` (R9 keystone): the structured execution-spec schema and the

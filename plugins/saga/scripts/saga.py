@@ -173,6 +173,11 @@ class Saga:
     # Both default to "" so older sagas that lack these fields still parse without error.
     orchestration_recommended: str = ""
     orchestration_operator_choice: str = ""
+    # Capability-portable degradation record (R11 / U12). On an off-host resume the
+    # orchestration tier recompiles DOWN (Workflow tool unavailable); the one-line
+    # downgrade note is recorded here so the degradation is durable, not silent. Empty
+    # on a host that ran the authored tier; defaults to "" so older sagas still parse.
+    orchestration_downgrade: str = ""
 
     # Pointers (link, never duplicate, another owner's state).
     issue_ref: str = ""  # owner/repo#N (empty for plan-only)
@@ -237,6 +242,7 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "orchestration_ref",
     "orchestration_recommended",
     "orchestration_operator_choice",
+    "orchestration_downgrade",
     "issue_ref",
     "destination",
     "round",
@@ -1061,6 +1067,7 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         next_step=args.next_step,
         orchestration_mode=args.orchestration_mode,
         orchestration_ref=args.orchestration_ref,
+        orchestration_downgrade=args.orchestration_downgrade,
         issue_ref=args.issue_ref,
         destination=args.destination,
         round=args.round or 0,
@@ -1102,6 +1109,11 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--destination", choices=list(DESTINATIONS), default="plan-only")
     p.add_argument("--orchestration-mode", choices=list(ORCHESTRATION_MODES), default="inline")
     p.add_argument("--orchestration-ref", default="")
+    p.add_argument(
+        "--orchestration-downgrade",
+        default="",
+        help="one-line capability-portable downgrade note (R11; recorded on off-host resume)",
+    )
     p.add_argument("--issue-ref", default="")
     p.add_argument("--next-step", default="")
     p.add_argument("--plan-path", default="")

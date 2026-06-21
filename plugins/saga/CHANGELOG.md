@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.28.0 - 2026-06-21
+
+- Add `plugins/saga/hooks/journal_nudge_hook.py`: a non-blocking `PostToolUse` hook (exit 0 always)
+  that fires on a `feat`/`fix` Bash commit touching code files with no `docs/engineering-journal/`
+  entry staged, and prints a one-line nudge to stderr.  Does not write the entry and does not block.
+  Ships cross-repo-safe: degrades silently when the journal dir is absent or git is unavailable.
+  Co-located with U7 in `hooks/hooks.json` under a new `PostToolUse` / `Bash` matcher.
+  Addresses R14 (Epic 3 hook harness, U8).
+
 ## 0.27.0 - 2026-06-21
 
 - Add `plugins/saga/hooks/hooks.json` and `hooks/validate_json_hook.py`: the repo's first hook.

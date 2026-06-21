@@ -22,6 +22,20 @@
 
 ---
 
+## 2026-06-21
+
+### Plan the saga tiering + execution-mechanism campaign as one workflow-built, per-unit-tiered build (plan PR pending — SHA-fill on merge)  {#saga-tiering-execution-campaign-plan}
+
+**Decision.** Plan the **whole** campaign (5 epics, 17 units U1-U17, requirements R1-R18) in one Deep plan and execute it through **one hand-authored ultracode workflow** (`docs/plans/2026-06-21-saga-tiering-and-execution-campaign.workflow.js`) with a per-unit `{model, effort}` tier on every step (**5 Opus / 11 Sonnet / 1 Haiku**, operator-approved). Topology: `Preflight → parallel(Epic0, Epic1, Epic3) → barrier(E0+E1 merged) → parallel(Epic2, Epic4) → Final`, each epic an isolated worktree+branch landing as one PR, **full hands-off auto-merge** when the 5 required CI checks are green. Four operator/derived locks: **R7** gated-vs-advisory consensus via an explicit `/plan` interrogation question with a work-shape default (advisory → the existing `adversarial_confidence` ultracode branch); **R8** decouple-not-rename (display-label map → "dynamic workflows", enum `cc-workflows-ultracode` frozen); **R9** one spec, two emitters, saga points; **Epic 0** pins **4** callable agents (`redis-channel-coach` exempt — an MCP-instructions pointer, not Agent-dispatched).
+
+**Rejected alternatives.** (a) Plan epic-by-epic as separate docs (the brainstorm's KD6) — the operator chose to plan the whole thing; each epic still lands as its own PR, so independent execution is preserved. (b) Per-unit PRs — rejected for CI volume (~16 CI runs); epic-grouped PRs (~5 runs) with serial intra-epic units keep isolation without the churn. (c) Rename the enum to `dynamic-workflows` — rejected: the enum is a stored contract carried in persisted sagas; a display-label map is cheaper and reversible. (d) Infer R7 purely from work-shape, or always-ask with no default — rejected for explicit-question-**with**-default: the governance call ("does the verdict need to stick?") is the operator's, but the default removes friction. (e) Edit `~/.claude/CLAUDE.md` (R4) from inside the autonomous workflow — rejected: a global file outside the repo must not be in an unattended fan-out; applied inline with confirmation (KTD8).
+
+**Rationale.** Tiering is the genuine cross-doc seam, so it is the spine and lands first. Building the campaign **via** the workflow dogfoods R9 and validates the execution-spec by walking it manually before Epic 2 automates it. The autonomous oracle is sound — the test suite + the two plugin validators + the drift-guards gate every PR, and a red gate blocks the auto-merge — so full hands-off is safe behind green CI. R7 is a *surgical* split, not new plumbing: `adversarial_confidence` already exists as an ultracode trigger one branch from the `or needs_consensus` hard-force (`lifecycle_state.py:163` vs `:158`).
+
+**Revisit when.** Real override-rate data (R12) justifies re-weighting a recommender default; a second workflow-built campaign shows epic-PR auto-merge is too coarse (drop to per-unit checkpoints); the Workflow tool's `model`/`effort`/`budget` API changes; or a future rebuild needs the enum renamed after all (then do the migration the display-label map deferred).
+
+**Refs.** Plan `docs/plans/2026-06-21-saga-tiering-and-execution-campaign-plan.md` + sibling `.workflow.js`; requirements `docs/brainstorms/2026-06-20-saga-tiering-and-execution-campaign-requirements.md`; reference harness `infiquetra-context-library/scripts/context-fleet-audit.workflow.js`; [#operator-choice-docs-and-confidence](#operator-choice-docs-and-confidence); Track-1 builds queued under [#plugin-portfolio-groom-17-to-7](#plugin-portfolio-groom-17-to-7). Campaign-level LEARNINGS land at build time (U17).
+
 ## 2026-06-20
 
 ### Plugin portfolio groomed 17 → 7; marketplace version majors on plugin removal (04fa93e)  {#plugin-portfolio-groom-17-to-7}

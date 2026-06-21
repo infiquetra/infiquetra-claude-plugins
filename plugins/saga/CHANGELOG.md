@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.36.0 - 2026-06-21
+
+- Generalize the stale-main `SessionStart` hook to run in ANY git repo. The hook
+  (`plugins/saga/hooks/stale_main_session_hook.py`) is now fully SELF-CONTAINED — it no longer
+  depends on the repo-local `tools/stale_main_guard.py` (which remains the repo's manual tool /
+  R18 artifact), so the distributed plugin's hook is active everywhere saga is installed (user
+  scope), not just this repo.
+- Preconditions, each → exit 0 SILENT: CWD is inside a git repo (`git rev-parse --show-toplevel`);
+  an `origin` remote exists (`git remote get-url origin`); the default branch is determinable.
+- Default-branch detection is GENERIC (never hardcodes `main`): `git symbolic-ref --short
+  refs/remotes/origin/HEAD` stripped of the `origin/` prefix, falling back to probing
+  `origin/main` then `origin/master` via `git show-ref --verify`.
+- Auto-fast-forward when safe (the chosen policy): if the local default branch is behind
+  `origin/<default>` AND the current branch IS the default branch AND the tree is clean, the hook
+  runs `git merge --ff-only origin/<default>` and confirms. Otherwise (feature branch, dirty tree,
+  or a linked worktree) it WARNs only and mutates nothing. `git fetch origin` degrades quietly
+  when offline. Always non-blocking (exit 0); emits the standard SessionStart `additionalContext`
+  shape only when there is a message.
+- Tests (`tests/test_stale_main_session_hook.py`) rebuilt around REAL temp git repos (bare origin
+  + clone + advanced origin) — no mocks of git: not-a-repo (silent), no-origin (silent), up-to-date
+  (silent), behind-on-default-clean (auto-FF actually moves the branch), behind-on-feature-branch
+  (warn only, branch not moved), and a `master`-default repo (detected + handled).
+
 ## 0.35.0 - 2026-06-21
 
 - Install the stale-main guard as a `SessionStart` hook (`startup|resume`). New wrapper

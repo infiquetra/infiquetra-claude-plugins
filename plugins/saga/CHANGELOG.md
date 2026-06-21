@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.31.0 - 2026-06-21
+
+- Add `scripts/execution_spec.py` (R9 keystone): the structured execution-spec schema and the
+  Claude Code workflow-script emitter. `/plan` authors **one** spec (units with a per-unit
+  `{model, effort}` tier, return contracts, dependency barriers, escalations, and enumerated
+  fan-out targets) and emits a runnable `.workflow.js` from it; saga records only an
+  `orchestration_ref`, never vendoring backend machinery.
+- Enforce two authoring-time invariants at EMIT time so a mis-built spec fails loudly: a fan-out
+  unit with no enumerated targets fails emit (R10, never a silent filter), and a pilot at a
+  different tier than its fan-out fails emit (R3, a mis-tiered pilot is an invalid oracle).
+- Bake the `workflow_structuredoutput_budget` lesson (cap output, mandatory final emit, skim, batch)
+  into generated cheap-tier (haiku) agents, and bake enumerated-target post-run reconciliation into
+  fan-out agents.
+- Add `references/execution-spec.md` documenting the spec shape, the R3/R10 invariants, and the CLI
+  (`validate` / `emit`).
+
 ## 0.30.0 - 2026-06-21
 
 - Add `plugins/saga/agents/mechanical-executor.md`: cheap-tier (haiku, Bash-only)

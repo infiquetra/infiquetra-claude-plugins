@@ -103,7 +103,7 @@ _USER_DEFAULTS_PATH = Path.home() / ".claude" / "sdlc-defaults.json"
 # Listed here so callers and the wizard agree on the set:
 _USER_DEFAULTS_KEYS = (
     "assignee",  # gh login (NOT OS $USER) — fetched via `gh api user --jq .login`
-    "default_project",  # e.g., "mount-olympus"
+    "default_project",  # e.g., "jeff-intent"
     "default_status",  # e.g., "Backlog"
     "default_priority",  # e.g., "medium-priority"
     "default_initiative",  # option name on Olympus board (None until field is created)
@@ -4652,7 +4652,7 @@ def main() -> None:
             "Target a specific project instead of repo-based default routing. "
             "Repeatable: pass --project more than once to place the item on "
             "multiple boards as independent memberships "
-            "(e.g. --project mount-olympus --project asgard)."
+            "(e.g. --project jeff-intent --project asgard)."
         ),
     )
     board_add_p.add_argument("--repo", required=True, help="Repository name (without org)")
@@ -4926,7 +4926,7 @@ def main() -> None:
         help="Set a single-select project field on a card",
     )
     flow_setfield_p.add_argument(
-        "--project", required=True, help="Project name (e.g., mount-olympus)"
+        "--project", required=True, help="Project name (e.g., jeff-intent)"
     )
     flow_setfield_p.add_argument("--repo", required=True)
     flow_setfield_p.add_argument("--number", required=True, type=int)

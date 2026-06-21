@@ -25,6 +25,58 @@
 
 ---
 
+## 2026-06-21
+
+### `validate_plugins.py` only scans top-level `plugins/*.md` — its "no plugin files found" is a healthy pass, not a worktree artifact  {#validate-plugins-only-scans-top-level-md}
+
+**Context.** Running the U17 final gate fleet-wide from a fresh worktree, `scripts/validate_plugins.py` printed `⚠️ No plugin files found in .../plugins` and exited 0. The instinct is "the worktree broke path resolution." It did not.
+
+**Evidence.** `scripts/validate_plugins.py` main: `plugin_files = list(plugins_dir.glob("*.md"))` — a **non-recursive** glob of the `plugins/` dir for top-level `.md` files. The 7 plugins live in `plugins/<name>/` subdirs (no top-level `.md`), so the glob is empty and the script exits 0 by design. CI hits the identical code path; the worktree changes nothing. Marketplace coverage comes from the *other* validator, `marketplace/validator/validate.py` (validated 7 plugins, 0 errors).
+
+**Mechanism.** The two validators split responsibility: `validate_plugins.py` was written for a flat-file plugin layout (top-level `.md` per plugin) that this repo no longer uses; `marketplace/validator/validate.py` is the one that actually walks the 7 subdir plugins. The first validator is effectively a no-op on the current tree but is kept in CI as a named green signal.
+
+**Generalizable rule.** Before treating a validator's empty/skip output as a worktree or environment fault, read its glob/path logic — a non-recursive `glob("*.md")` over a subdir-structured tree is a *designed* no-op, and "found 0, exit 0" is the same in CI as in any worktree. Verify the claim against the source, don't extrapolate from the surprising message.
+
+**Refs.** [#saga-tiering-execution-campaign-shipped](DECISIONS.md#saga-tiering-execution-campaign-shipped); CI `.github/workflows/ci.yml` `validate` job.
+
+### CI parity needs both the pinned interpreter AND the locked extras — Python 3.14 + missing `mcp` extra fails collection where 3.12 + `--extra dev` is green  {#ci-parity-needs-pinned-python-and-extras}
+
+**Context.** The first U17 `uv run pytest` from the worktree errored during collection: `ModuleNotFoundError: No module named 'mcp'` on `test_redis_channel_*`, running under Python 3.14. CI is green. The gate is not actually red — the *local* invocation diverged from CI's.
+
+**Evidence.** `.github/workflows/ci.yml` pins `python-version: "3.12"` and runs `uv sync --locked --extra dev` before any gate; the bare `uv run` picked the system's 3.14 and the default (no-`mcp`) dependency set. `plugins/redis-channel/server/notifier.py:39` imports `from mcp.types import Notification`, so without the `mcp`-carrying dev extra, collection of two redis-channel test modules aborts. After `uv python pin 3.12` + `uv sync --locked --extra dev`, the suite ran 926 passed.
+
+**Mechanism.** `uv run` resolves an interpreter and an environment independently of CI; reproducing a CI gate locally means reproducing **both** axes — the pinned Python and the locked extras — not just typing the same `pytest` command. A missing optional dependency surfaces as a *collection* error (whole modules fail to import), which is easy to misread as a real test failure.
+
+**Fix.** `uv python pin 3.12` writes a worktree-local `.python-version` — useful to reproduce CI, but a build artifact that must NOT be committed (remove before the release commit). `uv sync --locked --extra dev` installs the `mcp`-bearing set.
+
+**Generalizable rule.** "The gate is red locally" is a hypothesis until the local env matches CI on interpreter version AND locked extras. Read the CI workflow's setup steps first; a `ModuleNotFoundError` at collection time is almost always an env-parity gap, not a code regression. And `uv python pin` leaves a tracked file — clean it before committing.
+
+**Refs.** `.github/workflows/ci.yml` `tests` job (`uv sync --locked --extra dev`); validation-discipline corollary to "verify against the actual run."
+
+### A display-label map decouples operator-facing prose from a frozen wire enum — rename the *label*, never the stored value  {#display-label-map-decouples-enum-from-prose}
+
+**Context.** R8 wanted the operator to read "dynamic workflows" instead of the opaque enum `cc-workflows-ultracode`, but that enum is carried in persisted sagas — renaming it would break every stored envelope. Epic 1 (U4) shipped a display-label map instead of a rename.
+
+**Evidence.** `plugins/saga/scripts/saga.py:79` maps `"cc-workflows-ultracode": "dynamic workflows"` (plus `team-execution`→"team execution", `inline`→"inline"); every offer surface renders through the map while `ORCHESTRATION_MODES` stays byte-for-byte unchanged, asserted by the U4 test. A map miss falls back to the raw enum string rather than erroring.
+
+**Mechanism.** The enum is a *wire contract* (serialized into durable sagas); the label is *presentation*. Coupling them forces a data migration for a cosmetic change. A one-way display map renders the friendly name at the edge and keeps the contract frozen — cheap, reversible, and migration-free, with a safe fallback so an unmapped value degrades to legible rather than crashing.
+
+**Generalizable rule.** When a stored/serialized identifier is also shown to humans and the human-facing name needs to change, add a display-label map at the render edge and freeze the stored value. Reserve the actual rename (and its migration) for when the *contract* genuinely must change, not when only the prose does.
+
+**Refs.** [#saga-tiering-execution-campaign-shipped](DECISIONS.md#saga-tiering-execution-campaign-shipped); R8/KTD5 in the campaign plan.
+
+### Gated-vs-advisory consensus is a governance split, not a review-depth split — and the advisory branch already existed one line away  {#gated-vs-advisory-consensus-is-a-governance-split}
+
+**Context.** The recommender hard-forced team-execution on *any* consensus signal (`team = … or needs_consensus`), so a dynamic-workflow judge-panel was never recommendable even though both team-execution and workflows do independent adversarial verification. R7 (U6) split consensus on the governance axis.
+
+**Evidence.** `plugins/saga/scripts/lifecycle_state.py` now distinguishes `consensus_is_gated` (default `True`): **gated** consensus (the verdict must block a merge/deploy or persist as evidence) → team-execution unchanged; **advisory** consensus (N throwaway in-session votes) → OR'd into the existing `adversarial_confidence` ultracode trigger that already lived one branch from the old hard-force. A contested-but-not-gated job now reaches the advisory ultracode branch instead of regressing to inline; the docs-gating (`has_code_surface`) is preserved. AE1/AE2/overlap/docs-gating tests gate it.
+
+**Mechanism.** Team-execution and dynamic-workflow judge-panels both do *independent* verification — the real axis between them is **governance** (does the verdict need to stick?), not "review depth" (which both have). The old `or needs_consensus` flattened that axis. Because `adversarial_confidence` was already a recommender trigger, the fix was a surgical re-route of the advisory case, not new plumbing.
+
+**Generalizable rule.** When a router hard-forces one backend on a signal, check whether the signal actually has two sub-cases on a *different* axis (here: governance, not depth) — and whether the alternate destination already exists in the code one branch away. A one-signal force is often a missing distinction, and the cheapest fix re-routes into existing machinery rather than building new.
+
+**Refs.** [#saga-tiering-execution-campaign-shipped](DECISIONS.md#saga-tiering-execution-campaign-shipped); R7/KTD4; the 2026-06-13 LEARNINGS line (team↔workflow is governance, not review depth) this build operationalized.
+
 ## 2026-06-20
 
 ### Adopting a plan's coordination *label* is not the same as running its execution *mechanism*  {#work-mechanism-not-just-label}

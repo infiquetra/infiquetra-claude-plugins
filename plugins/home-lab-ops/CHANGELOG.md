@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.0] - 2026-06-21
+
+### Changed
+- `homelab-sre` agent: pin `model: opus` in frontmatter (R1/R2a tiering; judgment-heavy SRE
+  diagnosis warrants the richest model).
+
 ## [1.1.0] - 2026-06-01
 
 ### Added

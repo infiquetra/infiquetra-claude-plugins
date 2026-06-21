@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2 - 2026-06-21
+
+- `release-orchestrator` agent: pin `model: sonnet` in frontmatter (R1/R2a tiering;
+  release coordination is structured/procedural — Sonnet is the right cost-quality tier).
+
 ## 0.1.0 - 2026-05-29
 
 - Add Infiquetra tag-promotion deploy commands and deploy-state skill.

@@ -1,3 +1,9 @@
+---
+name: homelab-sre
+model: opus
+description: SRE agent for the olympus home lab Proxmox/Ceph cluster — triage, Ansible, Ceph ops, VM lifecycle, capacity planning.
+---
+
 # Homelab SRE Agent
 
 ## Role

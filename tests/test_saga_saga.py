@@ -1252,6 +1252,90 @@ def test_load_saga_context_journal_matches_issue_and_adr(
 
 
 # ===========================================================================
+# Engine: orchestration choice-vs-recommendation recording (U3 — R12)
+# ===========================================================================
+
+
+def test_orchestration_recommended_and_choice_round_trip(saga: ModuleType) -> None:
+    """Both new fields survive a render→parse round-trip."""
+    s = _make_saga(
+        saga,
+        orchestration_recommended="cc-workflows-ultracode",
+        orchestration_operator_choice="team-execution",
+    )
+    restored = saga.parse_envelope(saga.render_envelope(s))
+    assert restored.orchestration_recommended == "cc-workflows-ultracode"
+    assert restored.orchestration_operator_choice == "team-execution"
+
+
+def test_orchestration_recommended_and_choice_persist_via_save(
+    saga: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fields written through save() are readable via restore()."""
+    _stub_no_git(saga, monkeypatch)
+    s = _make_saga(
+        saga,
+        orchestration_recommended="cc-workflows-ultracode",
+        orchestration_operator_choice="inline",
+    )
+    saga.save(tmp_path, s, now=FIXED_NOW)
+    restored = saga.restore(tmp_path, "issue-42")
+    assert restored is not None
+    assert restored.orchestration_recommended == "cc-workflows-ultracode"
+    assert restored.orchestration_operator_choice == "inline"
+
+
+def test_older_saga_without_recommendation_fields_loads_with_defaults(saga: ModuleType) -> None:
+    """An envelope that lacks orchestration_recommended / orchestration_operator_choice
+    must still parse cleanly -- backward-compatible with pre-U3 sagas.
+
+    Uses render_envelope on a saga WITHOUT the new fields set (relying on their
+    empty-string defaults), then manually strips the two new fields from the rendered
+    text to simulate an older envelope written before U3 existed.
+    """
+    # Build a saga with new fields at default (empty) and render it.
+    s = _make_saga(saga, orchestration_mode="inline")
+    rendered = saga.render_envelope(s)
+    # Strip the two new lines to simulate a pre-U3 envelope.
+    old_envelope_lines = [
+        line
+        for line in rendered.splitlines(keepends=True)
+        if not line.startswith("orchestration_recommended:")
+        and not line.startswith("orchestration_operator_choice:")
+    ]
+    old_envelope = "".join(old_envelope_lines)
+    assert "orchestration_recommended" not in old_envelope
+    assert "orchestration_operator_choice" not in old_envelope
+
+    restored = saga.parse_envelope(old_envelope)
+    # The saga_id / orchestration_mode must survive normally.
+    assert restored.saga_id == "issue-42"
+    assert restored.orchestration_mode == "inline"
+    # New fields default to empty string when absent from the envelope.
+    assert restored.orchestration_recommended == ""
+    assert restored.orchestration_operator_choice == ""
+
+
+def test_orchestration_fields_default_to_empty_string_in_saga(saga: ModuleType) -> None:
+    """The new fields have empty-string defaults so callers need not supply them."""
+    s = _make_saga(saga)
+    assert s.orchestration_recommended == ""
+    assert s.orchestration_operator_choice == ""
+
+
+def test_orchestration_override_rate_fields_present_in_frontmatter_output(saga: ModuleType) -> None:
+    """render_envelope emits both new fields into the frontmatter."""
+    s = _make_saga(
+        saga,
+        orchestration_recommended="team-execution",
+        orchestration_operator_choice="team-execution",
+    )
+    rendered = saga.render_envelope(s)
+    assert "orchestration_recommended: team-execution" in rendered
+    assert "orchestration_operator_choice: team-execution" in rendered
+
+
+# ===========================================================================
 # Suite guard: nothing writes a .claude/ under the repo root during the run.
 # ===========================================================================
 

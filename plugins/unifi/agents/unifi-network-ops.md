@@ -1,3 +1,9 @@
+---
+name: unifi-network-ops
+model: sonnet
+description: Network and surveillance operations agent for the Infiquetra home lab UniFi environment.
+---
+
 # UniFi Network & Protect Operations Agent
 
 ## Role

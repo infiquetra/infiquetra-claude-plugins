@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.0] - 2026-06-21
+
+### Changed
+- `unifi-network-ops` agent: add frontmatter and pin `model: sonnet` (R1/R2a tiering;
+  network ops are structured/investigative, not judgment-heavy decisions).
+
 ## [1.0.0] - 2026-03-17
 
 ### Added

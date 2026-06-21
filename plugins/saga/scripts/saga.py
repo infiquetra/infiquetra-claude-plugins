@@ -149,6 +149,13 @@ class Saga:
     next_step: str = ""
     orchestration_mode: str = "inline"
     orchestration_ref: str = ""
+    # Choice-vs-recommendation recording (R12 — enables override-rate computation in /retro+/optimize).
+    # orchestration_recommended = what the recommender suggested;
+    # orchestration_operator_choice = what the operator actually picked.
+    # Either can differ from orchestration_mode when the operator overrides the recommendation.
+    # Both default to "" so older sagas that lack these fields still parse without error.
+    orchestration_recommended: str = ""
+    orchestration_operator_choice: str = ""
 
     # Pointers (link, never duplicate, another owner's state).
     issue_ref: str = ""  # owner/repo#N (empty for plan-only)
@@ -211,6 +218,8 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "next_step",
     "orchestration_mode",
     "orchestration_ref",
+    "orchestration_recommended",
+    "orchestration_operator_choice",
     "issue_ref",
     "destination",
     "round",

@@ -1,5 +1,11 @@
 # Changelog — mission-control
 
+## [2.2.0] — 2026-06-21
+
+### Changed
+- `sdlc-operator` agent: pin `model: sonnet` (was `inherit`). Orchestration work is
+  structured/mechanical — Sonnet is the right cost-quality tier (R1/R2a tiering).
+
 ## [2.1.0] — 2026-06-17
 
 ### Migration notes

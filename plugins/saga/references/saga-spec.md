@@ -1,6 +1,6 @@
 # Saga Specification (saga)
 
-**Status:** canonical contract · **schema_version:** `1.0` · **plugin version:** 0.4.0
+**Status:** canonical contract · **schema_version:** `1.0` · **plugin version:** 0.24.0
 **Engine:** [`scripts/saga.py`](../scripts/saga.py)
 **Audience:** the four execution-loop commands (`/plan`, `/work`, `/resume`, `/loop`) implement against this
 file when they are rebuilt. They MUST treat the field names, enum values, and operation semantics below as
@@ -120,6 +120,8 @@ construct a `Saga` (no default); all others have the listed default.
 | `next_step` | str | — | `""` | The one imperative resume anchor (top of `## Remaining`). |
 | `orchestration_mode` | enum | — | `inline` | How work runs — decision contract in `references/operator-choice.md`; **MUST** be in `ORCHESTRATION_MODES`. |
 | `orchestration_ref` | str | — | `""` | Pointer into the orchestration (team name, workflow id, …). |
+| `orchestration_recommended` | str | — | `""` | The backend the recommender suggested for this decision (R12). Empty on older sagas. |
+| `orchestration_operator_choice` | str | — | `""` | The backend the operator actually picked (R12). Differs from `orchestration_mode` when overriding. Empty on older sagas. |
 | `issue_ref` | str | — | `""` | `owner/repo#N` pointer; empty for plan-only / pre-issue work. |
 | `destination` | enum | — | `plan-only` | Routing intent — **MUST** be in `DESTINATIONS`. Mirrors `lifecycle_state`. |
 | `round` | int | — | `0` | Current PR/iteration round. |
@@ -214,6 +216,8 @@ status: active
 next_step: "wire /resume to call saga.restore"
 orchestration_mode: cc-workflows-ultracode
 orchestration_ref: "wf-saga-foundation"
+orchestration_recommended: cc-workflows-ultracode
+orchestration_operator_choice: cc-workflows-ultracode
 issue_ref: "infiquetra/infiquetra-claude-plugins#42"
 destination: pr
 round: 2

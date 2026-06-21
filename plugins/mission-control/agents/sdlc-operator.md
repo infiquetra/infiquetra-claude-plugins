@@ -48,7 +48,7 @@ description: |
   - Single metric pull (use metrics skill directly)
   - Quick issue creation for a known type (use issues skill directly)
   - Setting a single project field on a single card (use flow skill directly with `flow set-field`)
-model: inherit
+model: sonnet
 color: orange
 ---
 

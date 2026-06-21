@@ -2,6 +2,7 @@
 name: release-orchestrator
 description: Coordinate Infiquetra tag-promotion releases, rollback evidence, and hotfix gates
 tools: Read, Glob, Bash, WebFetch
+model: sonnet
 ---
 
 # Release Orchestrator

@@ -1,6 +1,7 @@
 ---
 name: redis-channel-coach
 description: Reference doc for redis-channel session behavior. The load-bearing runtime guidance lives in the MCP server's `instructions=` field (see server/channel.py build_app) so Claude reads it on every turn including notification-triggered ones. This file is a human-readable pointer; subagent invocations not expected.
+tiering_exempt: "KTD7 — reference pointer, not a dispatched subagent; model: pin is inert here"
 ---
 
 The runtime behavior coaching for redis-channel sessions is delivered through the MCP server's `instructions` field — see `server/channel.py::build_app` and the corresponding "MCP Server Instructions" section that Claude Code injects into the system prompt at session start.

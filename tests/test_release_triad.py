@@ -72,16 +72,18 @@ def _version_from_plugin_json(plugin_name: str) -> str | None:
     path = PLUGINS_ROOT / plugin_name / ".claude-plugin" / "plugin.json"
     if not path.exists():
         return None
-    data = json.loads(path.read_text())
-    return data.get("version")
+    data: dict[str, object] = json.loads(path.read_text())
+    v = data.get("version")
+    return str(v) if v is not None else None
 
 
 def _version_from_marketplace(plugin_name: str) -> str | None:
     """Return this plugin's ``version`` from ``.claude-plugin/marketplace.json``."""
-    data = json.loads(MARKETPLACE_PATH.read_text())
+    data: dict[str, list[dict[str, str]]] = json.loads(MARKETPLACE_PATH.read_text())
     for entry in data.get("plugins", []):
         if entry.get("name") == plugin_name:
-            return entry.get("version")
+            v = entry.get("version")
+            return v if v is not None else None
     return None
 
 

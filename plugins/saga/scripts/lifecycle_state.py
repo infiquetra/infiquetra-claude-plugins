@@ -105,6 +105,7 @@ def recommend_execution_backend(
     cross_repo: bool = False,
     deployment_sensitive: bool = False,
     needs_consensus: bool = False,
+    consensus_is_gated: bool = True,
     broad_independent_fanout: bool = False,
     adversarial_confidence: bool = False,
     has_code_surface: bool = True,
@@ -117,12 +118,26 @@ def recommend_execution_backend(
     precedence is lean (operator-choice section 3.3): team-execution wins over
     ultracode wins over inline.
 
-    DELIBERATE DIVERGENCE from operator-choice section 3.1: that section frames
-    the consensus signal as a **PLUS** on top of a size/risk trigger. Here a
-    ``needs_consensus`` signal is **sufficient on its own** (``or
-    needs_consensus``) — a small-but-contested job is a team-execution job even
-    without a size/risk trigger, which is the more useful behavior for a real
-    caller. This is intentional, not a transcription error.
+    GATED vs ADVISORY consensus (R7 keystone). A ``needs_consensus`` signal is
+    no longer an unconditional hard-force to team-execution. The governance axis
+    (operator-choice section 3.1) splits it:
+
+    * **gated** consensus (``consensus_is_gated=True``, the default) — the verdict
+      must BLOCK a merge/deploy and PERSIST as standing evidence. Only
+      team-execution offers a reviewer-CONSENSUS gate + named scanners + a guarded
+      deploy, so gated consensus is a team-execution job even when small. Default
+      True keeps every existing caller's behavior (a bare ``needs_consensus=True``
+      still recommends team-execution).
+    * **advisory** consensus (``consensus_is_gated=False``) — N throwaway
+      in-session votes the operator acts on themselves; nothing is recorded or
+      blocks. That is a dynamic-workflow judge-panel, so advisory consensus feeds
+      the existing ``adversarial_confidence`` ultracode trigger instead of forcing
+      team-execution. A contested-but-not-gated job therefore reaches the advisory
+      ultracode branch and never regresses to inline.
+
+    This stops the old unconditional ``or needs_consensus`` hard-force: only the
+    GATED branch reaches team-execution; the advisory branch is OR'd into the
+    ultracode trigger beside ``adversarial_confidence``.
 
     ``has_code_surface`` (default True) neutralizes the code-shaped team-execution
     proxies for pure docs/spec/research work (see ``should_offer_team_execution``).
@@ -134,17 +149,20 @@ def recommend_execution_backend(
     ``adversarial_confidence`` (default False) is the second ultracode trigger
     beside ``broad_independent_fanout``: prove-by-refutation / judge-panel /
     perspective-diverse verification is an ultracode shape (deterministic
-    INDEPENDENT verification, not merely breadth). Without it, "stress-test this
-    from many angles" work with no deploy/security signal would fall to inline.
+    INDEPENDENT verification, not merely breadth). Advisory consensus rides the
+    same branch. Without either, "stress-test this from many angles" work with no
+    deploy/security signal would fall to inline.
 
     ``alternatives`` lists every *reachable* backend (capability-gated by
     ``workflow_available``) computed INDEPENDENTLY of which backend won
-    precedence, so an overlap job (e.g. ``needs_consensus`` AND
+    precedence, so an overlap job (e.g. GATED ``needs_consensus`` AND
     ``broad_independent_fanout``) recommends ``team-execution`` yet still lists
     ``cc-workflows-ultracode`` in ``alternatives`` — escalation stays one
     keystroke (operator-choice section 3.3).
     """
 
+    gated_consensus = needs_consensus and consensus_is_gated
+    advisory_consensus = needs_consensus and not consensus_is_gated
     team = (
         should_offer_team_execution(
             file_count=file_count,
@@ -155,12 +173,14 @@ def recommend_execution_backend(
             deployment_sensitive=deployment_sensitive,
             has_code_surface=has_code_surface,
         )
-        or needs_consensus
+        or gated_consensus
     )
     # The risk suppressor only bites when there is a real code/scanner surface:
     # has_infra / has_security are keyword matches that false-positive on docs.
     elevated_risk = (has_security or has_infra or deployment_sensitive) and has_code_surface
-    ultracode = (broad_independent_fanout or adversarial_confidence) and not elevated_risk
+    ultracode = (
+        broad_independent_fanout or adversarial_confidence or advisory_consensus
+    ) and not elevated_risk
 
     if team:
         recommended = "team-execution"
@@ -205,6 +225,11 @@ def _build_parser() -> argparse.ArgumentParser:
     backend.add_argument("--cross-repo", action="store_true")
     backend.add_argument("--deployment-sensitive", action="store_true")
     backend.add_argument("--needs-consensus", action="store_true")
+    backend.add_argument(
+        "--advisory-consensus",
+        action="store_true",
+        help="treat the consensus signal as ADVISORY (throwaway votes) -> ultracode, not gated team-execution",
+    )
     backend.add_argument("--broad-fanout", action="store_true")
     backend.add_argument("--adversarial-confidence", action="store_true")
     backend.add_argument("--no-code-surface", action="store_true")
@@ -231,6 +256,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             cross_repo=args.cross_repo,
             deployment_sensitive=args.deployment_sensitive,
             needs_consensus=args.needs_consensus,
+            consensus_is_gated=not args.advisory_consensus,
             broad_independent_fanout=args.broad_fanout,
             adversarial_confidence=args.adversarial_confidence,
             has_code_surface=not args.no_code_surface,

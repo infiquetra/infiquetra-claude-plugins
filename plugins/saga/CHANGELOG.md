@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.26.0 - 2026-06-21
+
+- Split the recommender's `needs_consensus` signal on the **governance** axis (R7 keystone). A consensus
+  signal is no longer an unconditional hard-force to `team-execution`: `recommend_execution_backend`
+  gains `consensus_is_gated` (default True). **Gated** consensus (the verdict must block a merge/deploy and
+  persist as evidence) → `team-execution`; **advisory** consensus (throwaway in-session votes) is OR'd into
+  the existing `adversarial_confidence` ultracode trigger → `cc-workflows-ultracode`. A
+  contested-but-not-gated job now reaches the advisory judge-panel and never regresses to `inline`.
+- Add `--advisory-consensus` to the `recommend-backend` CLI so the markdown caller can reach the advisory
+  branch; gated stays the default when the flag is omitted.
+- Add the KTD4 gated-vs-advisory interrogation question + work-shape default to `skills/plan/SKILL.md` §5.2
+  (default *gated* when deploy/security/persist signals are present, *advisory* otherwise; the operator
+  confirms).
+- Update `references/operator-choice.md` §3.1 to record the gated/advisory governance split and that only
+  gated consensus reaches `team-execution`.
+- Cover AE1 (advisory → ultracode), AE2 (gated → team), the overlap case, the docs-gating case, and the
+  CLI round-trip in `tests/test_saga_plugin.py`.
+
 ## 0.25.0 - 2026-06-21
 
 - Rewrite the `/plan` (`skills/plan/SKILL.md`) and `/code-review` execution-backend offers to name

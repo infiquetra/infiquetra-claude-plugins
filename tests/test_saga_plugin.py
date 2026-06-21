@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.25.0"
+    assert plugin_json["version"] == "0.26.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -2546,6 +2546,96 @@ def test_recommend_execution_backend_adversarial_confidence() -> None:
     overlap = rec(adversarial_confidence=True, needs_consensus=True)
     assert overlap["recommended"] == "team-execution"
     assert "cc-workflows-ultracode" in overlap["alternatives"]
+
+
+def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
+    """R7 keystone: needs_consensus splits on the GOVERNANCE axis (gated vs advisory).
+
+    The old behavior hard-forced team-execution on EVERY consensus signal
+    (``or needs_consensus``). U6 replaces that with consensus_is_gated:
+
+    * GATED (default) -> team-execution: the verdict must block/persist.
+    * ADVISORY        -> cc-workflows-ultracode: throwaway in-session votes
+      ride the existing adversarial_confidence ultracode branch.
+
+    A contested-but-not-gated job must reach the ADVISORY ultracode branch and
+    NEVER regress to inline. The docs-gating (has_code_surface) and the overlap
+    alternatives behavior are preserved.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+    rec = lifecycle.recommend_execution_backend
+
+    # AE2 — GATED consensus (the default) -> team-execution. A bare
+    # needs_consensus=True keeps the legacy behavior (default consensus_is_gated=True).
+    gated = rec(needs_consensus=True)
+    assert gated["recommended"] == "team-execution"
+    assert rec(needs_consensus=True, consensus_is_gated=True)["recommended"] == "team-execution"
+
+    # AE1 — ADVISORY consensus, no risk -> cc-workflows-ultracode (the judge-panel),
+    # NOT team-execution and NOT inline.
+    advisory = rec(needs_consensus=True, consensus_is_gated=False)
+    assert advisory["recommended"] == "cc-workflows-ultracode"
+
+    # The hard-force is gone: advisory consensus alone no longer routes to team.
+    assert advisory["recommended"] != "team-execution"
+    # team-execution stays a one-keystroke alternative for the advisory pick.
+    assert "team-execution" in advisory["alternatives"]
+
+    # consensus_is_gated is INERT when there is no consensus signal at all:
+    # a bare job stays inline whether the flag is set or not.
+    assert rec(consensus_is_gated=False)["recommended"] == "inline"
+    assert rec(consensus_is_gated=True)["recommended"] == "inline"
+
+    # Advisory consensus rides the SAME risk gate as the other ultracode triggers:
+    # an elevated-risk code surface suppresses the ultracode branch -> team-execution.
+    assert (
+        rec(needs_consensus=True, consensus_is_gated=False, has_security=True)["recommended"]
+        == "team-execution"
+    )
+
+    # Advisory consensus rides the SAME capability gate: absent the Workflow tool
+    # it degrades to inline and drops ultracode from the offer.
+    no_wf = rec(needs_consensus=True, consensus_is_gated=False, workflow_available=False)
+    assert no_wf["recommended"] == "inline"
+    assert no_wf["omit_ultracode"] is True
+    assert "cc-workflows-ultracode" not in no_wf["alternatives"]
+
+    # OVERLAP — gated consensus AND broad fan-out: team wins precedence, but
+    # cc-workflows-ultracode is still listed as a one-keystroke escalation.
+    overlap = rec(needs_consensus=True, consensus_is_gated=True, broad_independent_fanout=True)
+    assert overlap["recommended"] == "team-execution"
+    assert "cc-workflows-ultracode" in overlap["alternatives"]
+    assert "team-execution" not in overlap["alternatives"]
+
+    # DOCS-GATING preserved. Advisory consensus on a pure-docs change (no code
+    # surface) still reaches the ultracode judge-panel — has_code_surface gates the
+    # code-shaped proxies, not the governance-shaped consensus routing.
+    docs_advisory = rec(needs_consensus=True, consensus_is_gated=False, has_code_surface=False)
+    assert docs_advisory["recommended"] == "cc-workflows-ultracode"
+    # GATED consensus survives the docs neutralizer (it is governance, not code).
+    docs_gated = rec(needs_consensus=True, consensus_is_gated=True, has_code_surface=False)
+    assert docs_gated["recommended"] == "team-execution"
+
+
+def test_recommend_backend_cli_advisory_consensus(capsys: pytest.CaptureFixture[str]) -> None:
+    """--advisory-consensus round-trips through main(): the new branch is CLI-reachable.
+
+    Without a runnable flag the gated/advisory split is unreachable from the
+    markdown caller, so the flag must flow end-to-end. Omitting it keeps the
+    gated default (team-execution); setting it routes to the ultracode judge-panel.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+
+    # Default (gated): --needs-consensus alone -> team-execution.
+    assert lifecycle.main(["recommend-backend", "--needs-consensus"]) == 0
+    gated = json.loads(capsys.readouterr().out)
+    assert gated["recommended"] == "team-execution"
+
+    # --advisory-consensus flips it to the ultracode judge-panel.
+    assert lifecycle.main(["recommend-backend", "--needs-consensus", "--advisory-consensus"]) == 0
+    advisory = json.loads(capsys.readouterr().out)
+    assert advisory["recommended"] == "cc-workflows-ultracode"
+    assert "team-execution" in advisory["alternatives"]
 
 
 def test_recommend_execution_backend_docs_no_code_surface() -> None:

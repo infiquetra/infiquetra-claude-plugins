@@ -270,6 +270,22 @@ judge-panel, not a team-execution job. Omit `cc-workflows-ultracode` ("dynamic w
 when the Workflow tool is observably absent in this session. Confirm with the operator and record what
 they picked via `--orchestration-mode`.
 
+**KTD4 — the gated-vs-advisory interrogation (R7).** When a consensus / multi-reviewer / many-attempt
+signal is present, do **not** silently force `team-execution`. Ask the operator (`AskUserQuestion`, or
+channel-inline) one question, with the work-shape default pre-selected:
+
+> **Does this verdict need to BLOCK a merge/deploy or PERSIST as evidence — or are these throwaway
+> in-session votes you act on yourself?**
+> **A) Gated** — block/persist (a reviewer-CONSENSUS gate, named scanners, a guarded deploy) → `team-execution`.
+> **B) Advisory** — N throwaway votes, nothing recorded/blocking → `cc-workflows-ultracode` (a judge-panel).
+
+**Work-shape default:** pre-select **Gated** when any deploy / security / persist signal is present
+(`--destination merge|nonprod-deploy`, security/infra work, or a verdict that must be recorded); pre-select
+**Advisory** otherwise. Pass the answer into the recommender as `--advisory-consensus` (set for B; omit for
+A — gated is the default). The advisory path feeds the existing `adversarial_confidence` ultracode trigger,
+so a contested-but-not-gated job reaches the judge-panel and never regresses to `inline`. If the work is
+**both** gated **and** broadly parallel, list both backends (per `references/operator-choice.md` §3.3).
+
 ### 5.3 Write the saga tick
 
 Emit a **runnable** saga `save` command — never prose like "write a saga", and never `git add` the

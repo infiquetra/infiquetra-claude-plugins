@@ -24,7 +24,7 @@
 
 ## 2026-06-21
 
-### Parallel-layer emitter, refute-N judge-panels, /plan author-validate-approve-persist-emit, /work halt-not-degrade, and provenance guard at save() (PR pending — SHA-fill on merge)  {#parallel-refuteN-emitter-plan-work-wiring}
+### Parallel-layer emitter, refute-N judge-panels, /plan author-validate-approve-persist-emit, /work halt-not-degrade, and provenance guard at save() (#250, 88b61be)  {#parallel-refuteN-emitter-plan-work-wiring}
 
 **Decision.** Seven key design calls that together close the R9 keystone:
 

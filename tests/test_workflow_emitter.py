@@ -355,6 +355,266 @@ def test_empty_units_fails() -> None:
 
 
 # ---------------------------------------------------------------------------
+# U1: dependency_layers (Kahn) -- topological waves, pilot-as-barrier, cycles.
+# ---------------------------------------------------------------------------
+
+
+def test_dependency_layers_two_independent_plus_one_dependent() -> None:
+    mod = _load()
+    data: dict[str, object] = {
+        "name": "layered",
+        "description": "two independent + one dependent",
+        "units": [
+            {
+                "unit_id": "A",
+                "label": "a",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "a",
+            },
+            {
+                "unit_id": "B",
+                "label": "b",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "b",
+            },
+            {
+                "unit_id": "C",
+                "label": "c",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "c",
+                "depends_on": ["A", "B"],
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    layers = mod.dependency_layers(spec)
+    # 2 layers: {A, B} ready together, then C behind the barrier.
+    assert layers == [["A", "B"], ["C"]]
+
+
+def test_dependency_layers_single_unit() -> None:
+    mod = _load()
+    data: dict[str, object] = {
+        "name": "solo",
+        "description": "one unit, one layer",
+        "units": [
+            {
+                "unit_id": "U1",
+                "label": "only",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "x",
+            }
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    assert mod.dependency_layers(spec) == [["U1"]]
+
+
+def test_dependency_layers_pilot_is_an_implicit_barrier() -> None:
+    mod = _load()
+    # The pilot has NO explicit depends_on edge from the fan-out, yet R3 requires it to
+    # land in an EARLIER layer than the fan-out it gates.
+    data: dict[str, object] = {
+        "name": "piloted",
+        "description": "pilot gates a fan-out",
+        "units": [
+            {
+                "unit_id": "Upilot",
+                "label": "pilot",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "pilot one",
+            },
+            {
+                "unit_id": "Ufan",
+                "label": "fan",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "fan out",
+                "fanout": True,
+                "targets": ["a", "b"],
+                "pilot": "Upilot",
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    layers = mod.dependency_layers(spec)
+    assert layers == [["Upilot"], ["Ufan"]]
+
+
+def test_dependency_layers_cycle_fails() -> None:
+    mod = _load()
+    data: dict[str, object] = {
+        "name": "cyclic",
+        "description": "A->B->A",
+        "units": [
+            {
+                "unit_id": "A",
+                "label": "a",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "a",
+                "depends_on": ["B"],
+            },
+            {
+                "unit_id": "B",
+                "label": "b",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "b",
+                "depends_on": ["A"],
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError) as exc:
+        mod.dependency_layers(spec)
+    assert "cycle" in str(exc.value)
+
+
+def test_dependency_cycle_fails_validate() -> None:
+    mod = _load()
+    data: dict[str, object] = {
+        "name": "cyclic",
+        "description": "A->B->A",
+        "units": [
+            {
+                "unit_id": "A",
+                "label": "a",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "a",
+                "depends_on": ["B"],
+            },
+            {
+                "unit_id": "B",
+                "label": "b",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "b",
+                "depends_on": ["A"],
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError):
+        spec.validate()
+
+
+# ---------------------------------------------------------------------------
+# U1: the optional Verify (refute-N) panel -- validate, bounds, round-trip.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_panel_validates_and_round_trips() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": "majority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    spec.validate()  # no raise
+    # to_dict -> from_dict preserves the verify panel.
+    rebuilt = mod.ExecutionSpec.from_dict(spec.to_dict())
+    panel = rebuilt.units[1].verify
+    assert panel is not None
+    assert panel.n == 3
+    assert panel.pass_rule == "majority"
+
+
+def test_verify_absent_round_trips_unchanged() -> None:
+    mod = _load()
+    # No verify on any unit -> to_dict emits no 'verify' key (team_emitter compat / R5).
+    spec = mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    for unit_dict in (u.to_dict() for u in spec.units):
+        assert "verify" not in unit_dict
+    rebuilt = mod.ExecutionSpec.from_dict(spec.to_dict())
+    assert all(u.verify is None for u in rebuilt.units)
+
+
+def test_verify_n_at_cap_boundary_validates() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    first = units[0]
+    assert isinstance(first, dict)
+    first["verify"] = {"n": mod.VERIFY_N_CAP, "pass_rule": "unanimous"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    spec.validate()  # N == CAP is allowed (no raise)
+
+
+def test_verify_on_a_fanout_unit_validates() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    units.append(
+        {
+            "unit_id": "U4",
+            "label": "fan with a panel",
+            "tier": {"model": "sonnet", "effort": "high"},
+            "prompt": "fan it out",
+            "fanout": True,
+            "targets": ["a", "b"],
+            "verify": {"n": 3, "pass_rule": "majority"},
+        }
+    )
+    spec = mod.ExecutionSpec.from_dict(data)
+    spec.validate()  # no raise
+    panel = spec.units[-1].verify
+    assert panel is not None and panel.n == 3
+
+
+def test_verify_n_zero_fails() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    first = units[0]
+    assert isinstance(first, dict)
+    first["verify"] = {"n": 0, "pass_rule": "majority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError):
+        spec.validate()
+
+
+def test_verify_missing_pass_rule_fails() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    first = units[0]
+    assert isinstance(first, dict)
+    first["verify"] = {"n": 3}  # pass_rule omitted -> rejected at from_dict
+    with pytest.raises(mod.SpecError):
+        mod.ExecutionSpec.from_dict(data)
+
+
+def test_verify_bad_pass_rule_fails() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    first = units[0]
+    assert isinstance(first, dict)
+    first["verify"] = {"n": 3, "pass_rule": "supermajority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError):
+        spec.validate()
+
+
+def test_verify_n_above_cap_fails() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    first = units[0]
+    assert isinstance(first, dict)
+    first["verify"] = {"n": mod.VERIFY_N_CAP + 1, "pass_rule": "majority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError) as exc:
+        spec.validate()
+    assert "cap" in str(exc.value).lower()
+
+
+# ---------------------------------------------------------------------------
 # CLI surface (validate / emit) round-trips through a temp JSON file.
 # ---------------------------------------------------------------------------
 
@@ -399,3 +659,220 @@ def test_cli_emit_writes_file(tmp_path: Path) -> None:
     rc = mod.main(["emit", str(spec_path), "-o", str(out)])
     assert rc == 0
     assert "await agent(" in out.read_text()
+
+
+# ---------------------------------------------------------------------------
+# U2: layer-parallel emission -- independent units share one parallel() wave;
+# a dependent unit sits behind an await barrier in a later layer.
+# ---------------------------------------------------------------------------
+
+
+def _layered_spec_dict() -> dict[str, object]:
+    """Two independent units (A, B) and a 3rd (C) dependent on both."""
+    return {
+        "name": "layered-emit",
+        "description": "two independent + one dependent",
+        "repo": "/tmp/repo",
+        "units": [
+            {
+                "unit_id": "A",
+                "label": "alpha",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "do a",
+            },
+            {
+                "unit_id": "B",
+                "label": "beta",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "do b",
+            },
+            {
+                "unit_id": "C",
+                "label": "gamma",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "do c",
+                "depends_on": ["A", "B"],
+            },
+        ],
+    }
+
+
+def test_independent_units_emit_a_parallel_wave() -> None:
+    mod = _load()
+    spec = mod.ExecutionSpec.from_dict(_layered_spec_dict())
+    script = mod.emit_workflow_script(spec)
+    # A and B are independent -> one parallel([...]) wave, destructured into both vars.
+    assert "await parallel([" in script
+    assert "const [A, B] = await parallel([" in script
+    # Two thunks in the wave, one per independent unit.
+    assert script.count("() =>") == 2
+    # The dependent unit C sits in a later layer, behind an await barrier (singleton).
+    assert "const C = await agent(" in script
+    # The parallel wave appears BEFORE C's awaited agent() (topological order).
+    assert script.index("await parallel([") < script.index("const C = await agent(")
+    # Per-unit tiers are preserved on the parallel members and the dependent unit.
+    assert 'model: "sonnet"' in script
+    assert 'model: "opus"' in script
+
+
+def test_single_layer_singleton_uses_await_agent_not_parallel() -> None:
+    mod = _load()
+    # The all-serial _valid_spec_dict is three singleton layers -> no parallel().
+    spec = mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    script = mod.emit_workflow_script(spec)
+    assert "await parallel([" not in script
+    assert script.count("await agent(") == 3
+
+
+# ---------------------------------------------------------------------------
+# U2: a verify {n, pass_rule} unit -> N verifier agent() calls in a parallel()
+# panel + the pass-rule reconciliation, at the unit's own tier (R4).
+# ---------------------------------------------------------------------------
+
+
+def test_verify_panel_emits_n_verifier_agents_and_majority_check() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]  # U2, sonnet/high
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": "majority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+    # The panel is a parallel([...]) of N verifier thunks over U2's result.
+    assert "U2_verdicts = await parallel([" in script
+    # N=3 verifier agent() calls inside the panel.
+    assert script.count("() => agent(") == 3
+    # The verifiers are adversarial skeptics over the unit's output (refute, not redo).
+    assert "REFUTE-N VERIFIER" in script
+    # Majority pass-rule reconciliation: a finding survives unless >= ceil(3/2)=2 refute.
+    assert "U2_refute_count >= 2" in script
+    assert "majority" in script
+    # The verifier tier == the unit tier (R4): U2 is sonnet/high -> verifiers are too.
+    assert 'label: "build verifier"' in script
+
+
+def test_unanimous_verify_panel_requires_all_to_refute() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    first = units[0]  # U1, haiku/low
+    assert isinstance(first, dict)
+    first["verify"] = {"n": 3, "pass_rule": "unanimous"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+    # Unanimous: a finding survives unless ALL N refute -> threshold == n == 3.
+    assert "U1_refute_count >= 3" in script
+    assert "unanimous" in script
+
+
+def test_haiku_verify_panel_carries_budget_rider() -> None:
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    first = units[0]  # U1 is haiku/low -> verifiers are haiku too (R4) -> budget rider.
+    assert isinstance(first, dict)
+    first["verify"] = {"n": 3, "pass_rule": "majority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+    # The cheap-tier verifier carries the structuredoutput-budget rider.
+    assert "BUDGET DISCIPLINE" in script
+    # The verifier panel is at haiku tier (R4).
+    assert 'label: "preflight verifier"' in script
+    assert 'model: "haiku"' in script
+
+
+# ---------------------------------------------------------------------------
+# U2 integration: a layered spec with a verify panel emits a script whose
+# substrings confirm parallel waves, the verifier panel, the meta block, and
+# every unit's tier; the inline baseline of the SAME spec stays serial.
+# ---------------------------------------------------------------------------
+
+
+def test_layered_spec_with_verify_panel_full_emission() -> None:
+    mod = _load()
+    data = _layered_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    # Put a verify panel on the dependent unit C.
+    third = units[2]
+    assert isinstance(third, dict)
+    third["verify"] = {"n": 3, "pass_rule": "majority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # meta block.
+    assert "export const meta" in script
+    # A parallel( wave for the independent A/B layer.
+    assert "await parallel([" in script
+    # N=3 verifier agent() calls for C's panel.
+    assert "C_verdicts = await parallel([" in script
+    assert script.count("() => agent(") == 3
+    assert "C_refute_count >= 2" in script
+    # Every unit's model/effort tier is present.
+    assert 'model: "sonnet"' in script
+    assert 'model: "opus"' in script
+    assert 'effort: "high"' in script
+
+
+def test_inline_baseline_of_layered_spec_stays_serial() -> None:
+    mod = _load()
+    data = _layered_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    third = units[2]
+    assert isinstance(third, dict)
+    third["verify"] = {"n": 3, "pass_rule": "majority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    baseline = mod.emit_inline_baseline(spec)
+    # The off-host floor is serial: no parallel() and no agent() harness.
+    assert "parallel(" not in baseline
+    assert "agent(" not in baseline
+    # It still preserves every unit's tier annotation.
+    assert "[tier: sonnet/high]" in baseline
+    assert "[tier: opus/high]" in baseline
+
+
+def test_parallel_and_verify_agents_each_carry_their_own_tier() -> None:
+    """Mutation guard: each emitted agent (parallel-wave thunk AND refute-N verifier) must
+    carry ITS OWN {model, effort} — not a same-tier sibling's. Two independent units with
+    DISTINCT tiers land in one parallel wave; the haiku/low unit also runs a 3-verifier
+    panel (verifiers inherit the unit tier per R4). Asserting exact COUNTS (not bare
+    substring presence) means dropping the `model:`/`effort:` line from `_emit_thunk` or
+    `_emit_verify_panel` changes a count and fails this test — closing the tautology the
+    `in`-based tier checks left open."""
+    mod = _load()
+    data = {
+        "name": "tier-fidelity",
+        "description": "distinct per-agent tiers",
+        "units": [
+            {
+                "unit_id": "alpha",
+                "label": "alpha worker",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "do the first independent piece",
+            },
+            {
+                "unit_id": "beta",
+                "label": "beta worker",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "do the second independent piece",
+                "verify": {"n": 3, "pass_rule": "majority"},
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+    # alpha and beta are independent -> one parallel() wave of two thunks.
+    assert "await parallel([" in script
+    # beta (haiku/low) emits 1 thunk + 3 verifiers = 4 agents at haiku/low.
+    assert script.count('model: "haiku"') == 4
+    assert script.count('effort: "low"') == 4
+    # alpha (opus/high) emits exactly 1 thunk; no other agent is opus/high here.
+    assert script.count('model: "opus"') == 1
+    assert script.count('effort: "high"') == 1
+    # model/effort are emitted in pairs on every agent -> the two counts track together.
+    assert script.count("model: ") == script.count("effort: ")

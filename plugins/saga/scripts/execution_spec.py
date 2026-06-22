@@ -54,6 +54,19 @@ EFFORTS = ("low", "medium", "high")
 # (workflow_structuredoutput_budget: brevity + mandatory emit + skim + batch).
 _CHEAP_MODELS = ("haiku",)
 
+# refute-N pass rules (KTD3 / KTD5). A finding survives unless refuted per this rule:
+# majority => >= ceil(N/2) verifiers refute; unanimous => all N refute.
+PASS_RULES = ("majority", "unanimous")
+
+# Hard upper bound on a verify panel's verifier count. N above this FAILS validate/emit --
+# the bound directly guards the rate-limit overcorrection (R3: the 22/23-judges panel that
+# tripped the concurrency cap). N <= CAP is allowed; a soft warn band starts at WARN below.
+VERIFY_N_CAP = 7
+
+# Soft threshold: a panel size in (WARN, CAP] validates but emits a stderr warning -- big
+# panels are legal but smell like the overcorrection, so they are surfaced, not silently run.
+VERIFY_N_WARN = 5
+
 # The verbatim budget-discipline rider baked into cheap-tier generated agents. This is
 # the workflow_structuredoutput_budget lesson as an instruction the emitted agent reads.
 BUDGET_RIDER = (
@@ -102,6 +115,51 @@ class Tier:
         return {"model": self.model, "effort": self.effort}
 
 
+@dataclass(frozen=True)
+class Verify:
+    """An optional refute-N judge-panel over a unit's output (KTD5).
+
+    ``n`` verifier agents (same tier as the unit) review the unit's result; a finding
+    survives unless refuted per ``pass_rule`` (majority / unanimous). The panel is
+    bounded (KTD3): ``1 <= n <= VERIFY_N_CAP``, with a soft warn band above
+    ``VERIFY_N_WARN`` -- the bound guards the rate-limit overcorrection.
+    """
+
+    n: int
+    pass_rule: str
+
+    def validate(self, where: str) -> None:
+        if self.n < 1:
+            raise SpecError(f"{where}: verify n={self.n} must be >= 1")
+        if self.n > VERIFY_N_CAP:
+            raise SpecError(
+                f"{where}: verify n={self.n} exceeds the cap {VERIFY_N_CAP} "
+                f"(KTD3 -- a bounded panel guards the rate-limit overcorrection)"
+            )
+        if self.n > VERIFY_N_WARN:
+            print(
+                f"WARN {where}: verify n={self.n} is in the warn band "
+                f"({VERIFY_N_WARN} < n <= {VERIFY_N_CAP}) -- large panels risk the "
+                f"rate-limit overcorrection.",
+                file=sys.stderr,
+            )
+        if self.pass_rule not in PASS_RULES:
+            raise SpecError(f"{where}: verify pass_rule {self.pass_rule!r} not in {PASS_RULES}")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], where: str) -> Verify:
+        if "n" not in data or "pass_rule" not in data:
+            raise SpecError(f"{where}: verify needs both 'n' and 'pass_rule'")
+        try:
+            n = int(data["n"])
+        except (TypeError, ValueError) as exc:
+            raise SpecError(f"{where}: verify n {data['n']!r} is not an integer") from exc
+        return cls(n=n, pass_rule=str(data["pass_rule"]))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"n": self.n, "pass_rule": self.pass_rule}
+
+
 @dataclass
 class Unit:
     """One execution unit -- one ``agent()`` call in the emitted script.
@@ -129,11 +187,16 @@ class Unit:
     targets: list[str] = field(default_factory=list)
     # A pilot unit_id that gates this fan-out (run one first). Same-tier required (R3).
     pilot: str = ""
+    # An optional refute-N judge-panel over this unit's output (KTD5). Absent => no panel;
+    # an absent field round-trips unchanged so team_emitter / existing specs are untouched.
+    verify: Verify | None = None
 
     def validate(self, where: str) -> None:
         if not self.unit_id:
             raise SpecError(f"{where}: a unit needs a non-empty unit_id")
         self.tier.validate(f"unit {self.unit_id}")
+        if self.verify is not None:
+            self.verify.validate(f"unit {self.unit_id}")
         if self.fanout and not self.targets:
             # R10: a fan-out unit MUST enumerate its targets -- never a silent filter.
             raise SpecError(
@@ -163,10 +226,11 @@ class Unit:
             fanout=bool(data.get("fanout", False)),
             targets=[str(t) for t in data.get("targets", [])],
             pilot=str(data.get("pilot", "")),
+            verify=(Verify.from_dict(data["verify"], where) if data.get("verify") else None),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "unit_id": self.unit_id,
             "label": self.label,
             "tier": self.tier.to_dict(),
@@ -178,6 +242,11 @@ class Unit:
             "targets": list(self.targets),
             "pilot": self.pilot,
         }
+        # Only emit verify when present so an absent panel round-trips unchanged --
+        # team_emitter and existing specs never gain a new key (R5).
+        if self.verify is not None:
+            out["verify"] = self.verify.to_dict()
+        return out
 
 
 @dataclass
@@ -247,6 +316,11 @@ class ExecutionSpec:
                         f"(R3 -- a mis-tiered pilot is an invalid oracle)"
                     )
 
+        # The dependency graph (depends_on + implicit pilot barriers) must be acyclic --
+        # a cycle has no valid layering, so it fails validate (KTD4). This also re-checks
+        # that every depends_on / pilot id resolves to a declared unit.
+        dependency_layers(self)
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExecutionSpec:
         if "units" not in data or not isinstance(data["units"], list):
@@ -268,6 +342,57 @@ class ExecutionSpec:
 
 
 # ---------------------------------------------------------------------------
+# Topological dependency layering (KTD4) -- the input to layer-parallel emission
+# ---------------------------------------------------------------------------
+
+
+def dependency_layers(spec: ExecutionSpec) -> list[list[str]]:
+    """Compute topological layers (Kahn) of unit ids ready to run together (KTD4).
+
+    Each returned layer is a list of unit ids whose dependencies are all satisfied by
+    earlier layers, so a layer of >1 id renders as one ``parallel([...])`` wave and
+    layers are sequenced by ``await``. Edges come from each unit's ``depends_on`` AND --
+    so R3 is preserved -- from a fan-out unit's ``pilot``: the pilot is an implicit
+    barrier edge (pilot -> fan-out), guaranteeing the pilot lands in an EARLIER layer
+    than the fan-out it gates (otherwise both would share a parallel wave and the gate
+    would be lost).
+
+    Raises ``SpecError`` on a cycle (the remaining un-layered units are named) or on a
+    ``depends_on`` / ``pilot`` id that resolves to no declared unit. Within a layer, ids
+    keep declaration order for deterministic emission.
+    """
+    ids = [u.unit_id for u in spec.units]
+    id_set = set(ids)
+
+    # Build edges (predecessor -> successor) and an in-degree per unit. A pilot edge is
+    # an IMPLICIT barrier (pilot before fan-out) on top of any explicit depends_on.
+    preds: dict[str, set[str]] = {uid: set() for uid in ids}
+    for unit in spec.units:
+        for dep in unit.depends_on:
+            if dep not in id_set:
+                raise SpecError(f"unit {unit.unit_id}: depends_on {dep!r} is not a declared unit")
+            preds[unit.unit_id].add(dep)
+        if unit.pilot:
+            if unit.pilot not in id_set:
+                raise SpecError(f"unit {unit.unit_id}: pilot {unit.pilot!r} is not a declared unit")
+            preds[unit.unit_id].add(unit.pilot)
+
+    layers: list[list[str]] = []
+    placed: set[str] = set()
+    remaining = list(ids)  # declaration order preserved
+    while remaining:
+        ready = [uid for uid in remaining if preds[uid] <= placed]
+        if not ready:
+            # No unit is unblocked -> a cycle among the remaining units.
+            raise SpecError(f"dependency cycle among units: {', '.join(sorted(remaining))}")
+        layers.append(ready)
+        placed.update(ready)
+        remaining = [uid for uid in remaining if uid not in placed]
+
+    return layers
+
+
+# ---------------------------------------------------------------------------
 # Emitter -- spec -> runnable Claude Code workflow script
 # ---------------------------------------------------------------------------
 
@@ -279,6 +404,81 @@ def _js_string(value: str) -> str:
     it is the safest encoder for arbitrary prompt text.
     """
     return json.dumps(value)
+
+
+def _verifier_prompt(unit: Unit) -> str:
+    """Assemble the prompt text a verifier agent in ``unit``'s refute-N panel reads.
+
+    A verifier is an adversarial skeptic over the unit's result: it tries to REFUTE the
+    unit's findings, not to re-do the work. Cheap-tier panels (same tier as the unit per
+    R4) carry the budget rider so a budget-exhausted verifier still emits its verdict.
+    """
+    parts: list[str] = [
+        f"REFUTE-N VERIFIER over unit {unit.unit_id} ({unit.label}). You are an adversarial "
+        f"skeptic: attempt to REFUTE the unit's result, do NOT re-do its work. Read the unit's "
+        f"output and the evidence it cites; for each claimed finding decide REFUTED (with a "
+        f"concrete reason) or UPHELD. Emit a structured verdict {{refuted: [...], upheld: [...]}}."
+    ]
+    if unit.tier.is_cheap:
+        parts.append(BUDGET_RIDER)
+    return "\n\n".join(parts)
+
+
+def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
+    """Append one ``() => agent(...),`` thunk entry for ``unit`` inside a ``parallel([...])``.
+
+    Every thunk carries the unit's per-unit ``{model, effort}`` tier (R2(b)) and the same
+    budget-rider / R10 reconciliation prompt as a singleton agent() call.
+    """
+    prompt = _agent_prompt(spec, unit)
+    opts = [
+        f"label: {_js_string(unit.label)}",
+        f"model: {_js_string(unit.tier.model)}",
+        f"effort: {_js_string(unit.tier.effort)}",
+    ]
+    lines.append("  () =>")
+    lines.append("    agent(")
+    lines.append(f"      {_js_string(prompt)},")
+    lines.append("      { " + ", ".join(opts) + " },")
+    lines.append("    ),")
+
+
+def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
+    """Append a refute-N judge-panel + pass-rule reconciliation for ``unit`` to ``lines``.
+
+    Renders a ``parallel([...])`` of ``unit.verify.n`` verifier ``agent()`` calls over the
+    unit's result (each at the SAME ``{model, effort}`` tier as the unit per R4), then a
+    pass-rule check: a finding survives unless refuted per the rule -- ``majority`` =>
+    ``>= ceil(N/2)`` verifiers refute; ``unanimous`` => all N must refute. The reconciliation
+    is rendered as JS control flow the runtime evaluates over the verifier verdicts.
+    """
+    panel = unit.verify
+    assert panel is not None  # caller guards this
+    n = panel.n
+    threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
+    verifier_prompt = _verifier_prompt(unit)
+    opts = [
+        f"label: {_js_string(unit.label + ' verifier')}",
+        f"model: {_js_string(unit.tier.model)}",
+        f"effort: {_js_string(unit.tier.effort)}",
+    ]
+
+    lines.append(f"// verify: refute-{n} panel over {unit.unit_id} (pass_rule: {panel.pass_rule};")
+    lines.append(f"// a finding survives unless >= {threshold} of {n} verifiers refute it)")
+    lines.append(f"const {var}_verdicts = await parallel([")
+    for _ in range(n):
+        lines.append("  () => agent(")
+        lines.append(f"    {_js_string(verifier_prompt)},")
+        lines.append("    { " + ", ".join(opts) + f", input: {var} }},")
+        lines.append("  ),")
+    lines.append("])")
+    # Pass-rule reconciliation: a finding is refuted only when >= threshold verifiers refute.
+    lines.append(
+        f"const {var}_refute_count = {var}_verdicts.filter((v) => v && v.refuted "
+        f"&& v.refuted.length > 0).length"
+    )
+    lines.append(f"const {var}_refuted = {var}_refute_count >= {threshold}  // {panel.pass_rule}")
+    lines.append("")
 
 
 def _agent_prompt(spec: ExecutionSpec, unit: Unit) -> str:
@@ -334,8 +534,13 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
         lines.append(f"const REPO = {_js_string(spec.repo)}")
         lines.append("")
 
-    for unit in spec.units:
-        prompt = _agent_prompt(spec, unit)
+    # Topological waves (KTD4): each layer's units are mutually independent and run in a
+    # single parallel() wave; layers are sequenced by await (the dependency barrier). A
+    # singleton layer renders as a plain `const x = await agent(...)`.
+    def _var(unit_id: str) -> str:
+        return unit_id.replace("-", "_").replace(".", "_")
+
+    def _emit_unit_header(unit: Unit) -> None:
         lines.append(f"// ---- {unit.unit_id}: {unit.label} ----")
         if unit.depends_on:
             lines.append(f"// depends_on: {', '.join(unit.depends_on)} (barrier)")
@@ -343,17 +548,45 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
             lines.append(f"// pilot: {unit.pilot} (R3 same-tier gate)")
         if unit.escalation:
             lines.append(f"// escalation: {unit.escalation}")
-        opts = [
-            f"label: {_js_string(unit.label)}",
-            f"model: {_js_string(unit.tier.model)}",
-            f"effort: {_js_string(unit.tier.effort)}",
-        ]
-        var = unit.unit_id.replace("-", "_").replace(".", "_")
-        lines.append(f"const {var} = await agent(")
-        lines.append(f"  {_js_string(prompt)},")
-        lines.append("  { " + ", ".join(opts) + " },")
-        lines.append(")")
+
+    for layer in dependency_layers(spec):
+        layer_units = [spec.unit_by_id(uid) for uid in layer]
+        if len(layer_units) == 1:
+            unit = layer_units[0]
+            assert unit is not None
+            _emit_unit_header(unit)
+            var = _var(unit.unit_id)
+            lines.append(f"const {var} = await agent(")
+            prompt = _agent_prompt(spec, unit)
+            opts = [
+                f"label: {_js_string(unit.label)}",
+                f"model: {_js_string(unit.tier.model)}",
+                f"effort: {_js_string(unit.tier.effort)}",
+            ]
+            lines.append(f"  {_js_string(prompt)},")
+            lines.append("  { " + ", ".join(opts) + " },")
+            lines.append(")")
+            lines.append("")
+            if unit.verify is not None:
+                _emit_verify_panel(lines, unit, var)
+            continue
+
+        # A layer of >1 ready unit -> one parallel() wave of thunks. The wave's results
+        # are destructured back into the per-unit vars so dependents/verify panels read them.
+        for unit in layer_units:
+            assert unit is not None
+            _emit_unit_header(unit)
+        layer_vars = [_var(uid) for uid in layer]
+        lines.append(f"const [{', '.join(layer_vars)}] = await parallel([")
+        for unit in layer_units:
+            assert unit is not None
+            _emit_thunk(lines, spec, unit)
+        lines.append("])")
         lines.append("")
+        for unit in layer_units:
+            assert unit is not None
+            if unit.verify is not None:
+                _emit_verify_panel(lines, unit, _var(unit.unit_id))
 
     return "\n".join(lines)
 

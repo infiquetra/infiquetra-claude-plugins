@@ -33,11 +33,50 @@ by hand validated the spec by walking it (KTD1) before this emitter automated it
       "escalation": "HALT on drift",   // operator note surfaced on a resumable HALT
       "fanout": false,                 // same op over many enumerated targets?
       "targets": [],                   // REQUIRED & non-empty when fanout=true (R10)
-      "pilot": ""                      // a unit_id that gates the fan-out (same tier, R3)
+      "pilot": "",                     // a unit_id that gates the fan-out (same tier, R3)
+      "verify": { "n": 3, "pass_rule": "majority" }
+                                       // optional refute-N panel (KTD5); absent = no panel
     }
   ]
 }
 ```
+
+### Unit.verify — refute-N judge-panel (optional, KTD5)
+
+A unit may carry an optional `verify` block that attaches a **refute-N judge-panel** over that unit's
+output. When present, the emitter appends a `parallel([...])` of `n` verifier `agent()` calls (each at the
+**same `{model, effort}` tier** as the parent unit — R4), followed by a pass-rule reconciliation in the
+generated script:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `n` | integer ≥ 1 | Number of independent adversarial verifiers. Hard cap: `VERIFY_N_CAP = 7` (above the cap, `validate` hard-blocks — guards the rate-limit overcorrection). Soft warn band: `n > 5` validates but emits a stderr warning. |
+| `pass_rule` | `"majority"` \| `"unanimous"` | A finding **survives** unless refuted per this rule. `majority` → ≥ ⌈N/2⌉ verifiers refute it; `unanimous` → all N must refute. |
+
+**Defaults for `/plan` authoring (KTD3):** `n=3`, `pass_rule="majority"` — a finding survives unless ≥2 of
+3 verifiers refute it. Override per unit when the operator requests a different panel size. N=3/majority is
+the conservative default: enough independent skeptics to surface noise without hitting the rate-limit
+overcorrection that prompted the cap.
+
+Absent `verify` round-trips unchanged — existing specs and the `team_emitter.py` never gain a spurious key.
+
+## Topological-layer parallelism (KTD4)
+
+The emitter computes **topological dependency layers** (Kahn) from each unit's `depends_on` list and any
+implicit pilot barrier (`pilot` → fan-out). Units whose full dependency set is satisfied by earlier layers
+run together in one `parallel([...])` wave; layers are sequenced by `await`:
+
+- **Singleton layer** → plain `const x = await agent(...)`.
+- **Multi-unit layer** → `const [x, y, z] = await parallel([...])` — one wave of thunks, destructured
+  back into per-unit vars so verify panels and dependents read them.
+
+Verify panels for units in a parallel wave are emitted **after** the wave closes (so the panel reads the
+result from the already-resolved var). Within a layer, units keep their declaration order for deterministic
+emission. A dependency cycle among the remaining units raises a `SpecError` at emit time (fail loudly, not
+silently).
+
+The pilot implicit barrier is included in the layer computation: a fan-out unit's pilot always lands in a
+strictly earlier layer than the fan-out itself, preserving the R3 gate even in a complex topology.
 
 ## The two authoring-time invariants (fail emit)
 
@@ -107,6 +146,50 @@ uv run python plugins/saga/scripts/lifecycle_state.py recheck-capability \
 # Emit the runnable inline/serial baseline (the R11 floor) from a spec.
 uv run python plugins/saga/scripts/execution_spec.py baseline spec.json -o baseline.md
 ```
+
+## `/plan` author-validate-emit-approve-persist flow
+
+When the operator chooses `cc-workflows-ultracode`, `/plan` follows this five-step flow before writing the
+saga tick (Phase 5.2a in `skills/plan/SKILL.md`). Emit comes BEFORE approve so the operator confirms the
+actual generated script, not a description of it:
+
+1. **Author** — derive per-unit `{model, effort}` tiers from the work-shape heuristic; write thin per-unit
+   prompts (KTD2 — a thin pointer to the plan, not a prose transcription); wire `depends_on` barriers and
+   optional `verify` panels. Surface the tier table for operator review.
+
+2. **Validate (HARD BLOCK)** — run the validator. A non-zero exit means the spec is malformed; do NOT
+   proceed until fixed. Common failures: `depends_on` cycle, fan-out with no `targets` (R10), pilot tier
+   mismatch (R3), `verify.n` above `VERIFY_N_CAP`, two unit_ids that sanitize to the same JS var.
+
+   ```bash
+   python3 plugins/saga/scripts/execution_spec.py validate docs/plans/<name>-spec.json
+   ```
+
+3. **Emit** — write the `.workflow.js` beside the spec (`emit` re-validates, so a malformed spec fails here
+   too):
+
+   ```bash
+   python3 plugins/saga/scripts/execution_spec.py emit docs/plans/<name>-spec.json \
+     -o docs/plans/<name>.workflow.js
+   ```
+
+4. **Approve** — surface the now-emitted `.workflow.js` and the per-unit tier table for explicit operator
+   confirmation. The operator must confirm the tier assignments and the control-flow structure; a rejection
+   means revising the spec and re-running validate + emit.
+
+5. **Persist** — write the saga tick with `--orchestration-ref` pointing at the **spec JSON** (the
+   canonical artifact — the `.workflow.js` is regenerable, so the ref is the spec, not the script):
+
+   ```bash
+   python3 plugins/saga/scripts/saga.py save \
+     --orchestration-mode cc-workflows-ultracode \
+     --orchestration-ref docs/plans/<name>-spec.json \
+     --orchestration-recommended <recommend_execution_backend() output>
+   ```
+
+The spec JSON is the durable canonical artifact; the `.workflow.js` can be regenerated at any time via
+`emit`. `/work` re-emits fresh from the spec at execution time, so an intermediate re-plan that changed the
+spec is automatically reflected.
 
 ## CLI
 

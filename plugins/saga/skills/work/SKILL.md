@@ -201,11 +201,77 @@ keys). `save` mints unconditionally (correct here — `/work` is the minter), an
 appends a tick to the existing directory rather than forking. Never `git add` the tick (saga state is
 git-ignored, machine-local). Never set `next_round` — it is derived from `rounds_seen` (saga-spec §6.1).
 
+### 1.5 cc-workflows-ultracode: re-emit and run, or HALT
+
+When `orchestration_mode == cc-workflows-ultracode`, the recorded backend choice **and** the saved spec
+are the opt-in — ultracode mode is not required to launch a Workflow. `/work` does **not** hand-roll
+sequential subagents as a substitute (that was the campps issue-38 failure: parallel + refute-N silently
+dropped). It either runs the real Workflow tool or halts visibly.
+
+**Re-emit for freshness (KD3).** Read the saga's `orchestration_ref` to locate the canonical spec JSON
+the plan authored. Re-emit a fresh `.workflow.js` from it — any intermediate re-plan that changed the
+spec is reflected:
+
+```bash
+python3 plugins/saga/scripts/execution_spec.py emit <orchestration_ref_spec.json> \
+  -o docs/plans/<topic>.workflow.js
+```
+
+Then launch it:
+
+```
+Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })
+```
+
+The Workflow tool owns execution from this point. `/work` records the returned workflow id as
+`orchestration_ref` via a saga tick:
+
+```bash
+python3 plugins/saga/scripts/saga.py save \
+  --kind <issue|task> --id <...> \
+  --orchestration-ref <workflow-id>
+```
+
+**HALT conditions.** If **either** of the following holds, `/work` MUST halt — never substitute with
+hand-rolled serial subagents or any other inline fallback:
+
+1. The **Workflow tool is genuinely absent** from this session (not found in the available tools).
+2. The **spec or orchestration_ref is missing** from the saga (the plan did not author a spec, or the
+   saga tick never recorded the ref).
+
+On a HALT, surface the reason and one recovery line, e.g.:
+
+- Workflow tool absent: "HALT — Workflow tool not available in this session. Recovery: resume in a
+  Claude Code session where the Workflow tool is present, or ask the operator to switch the backend to
+  `team-execution` or `inline`."
+- Spec/ref missing: "HALT — saga `orchestration_ref` is empty or the spec file does not exist at
+  `<path>`. Recovery: re-run `/plan` to author the spec and record the ref, then resume `/work`."
+
+This is **explicitly not** the off-host recompile-down path (`recheck_orchestration_capability` in
+`lifecycle_state.py`), which is reserved for `/loop` and `/resume`. A guarantee-bearing ultracode
+choice halts rather than silently losing the parallel fan-out and refute-N verification (KD2/KTD6).
+
+**Provenance guard.** `/work` NEVER writes `operator_choice` to record its own substitution. The
+`saga.py` save guard rejects a tick that newly asserts `orchestration_mode != orchestration_operator_choice`
+without an `orchestration_downgrade` note justifying that divergence — exactly the issue-38 shape (an AI
+swap masquerading as the operator's pick). The guard is precise, not blunt: it is a no-op when no
+`operator_choice` is asserted, and it lets an *unchanged* carry-forward of a prior, already-vetted
+divergence through (its note was checked when that earlier tick saved). The only legitimate path is:
+the operator picks a backend, `/work` records exactly that pick via `--orchestration-mode` (so
+`orchestration_operator_choice` derives equal to it — no divergence), and a genuine capability degrade is
+recorded as `orchestration_downgrade` WITH the divergence (operator-choice §6).
+
 ---
 
 ## Phase 2 — Execute phase by phase
 
-Execute **one meaningful phase at a time** per `references/execution-strategy.md`:
+**When `orchestration_mode == cc-workflows-ultracode`:** Phase 1.5 already launched the Workflow tool.
+The Workflow runtime owns execution; `/work` does not re-enter Phase 2 execution steps for those units.
+Resume here only for post-workflow wrap-up (Phase 3 gate, Phase 4 record, Phase 5 PR-ready) once the
+Workflow run returns.
+
+Execute **one meaningful phase at a time** per `references/execution-strategy.md` (for `inline` and
+`team-execution` modes, and for post-workflow Phase 2 wrap-up):
 
 - **Execution strategy** — inline / serial subagents / parallel subagents, chosen from task count and
   dependency structure, gated by the **Parallel Safety Check** (file-to-unit overlap → worktree

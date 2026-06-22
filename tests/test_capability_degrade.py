@@ -313,3 +313,211 @@ def test_absent_downgrade_field_still_loads(tmp_path: Path) -> None:
     assert "orchestration_downgrade:" not in stripped
     reloaded = saga_mod.parse_envelope(stripped)
     assert reloaded.orchestration_downgrade == ""
+
+
+# ---------------------------------------------------------------------------
+# operator_choice provenance guard at SAVE time (U3 — R13/R14/R15)
+#
+# operator_choice = the authoritative operator pick; mode = the effective backend.
+# They diverge legitimately ONLY on a recorded capability downgrade. A mode !=
+# operator_choice tick with an EMPTY orchestration_downgrade is the issue-38 shape
+# (mode masquerading as a choice the operator never made) and is rejected at save().
+# A recommendation override (recommended-vs-operator_choice) is a SEPARATE pair and
+# is NOT guarded here.
+# ---------------------------------------------------------------------------
+
+
+def test_normal_save_with_derived_operator_choice_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Happy path — a plain --orchestration-mode save (operator_choice derives equal to
+    mode) is accepted; the derived operator_choice matches the mode."""
+    saga_mod = _load("saga.py")
+    monkeypatch.chdir(tmp_path)
+    rc = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "happy-degrade",
+            "--orchestration-mode",
+            "cc-workflows-ultracode",
+        ]
+    )
+    assert rc == 0
+    restored = saga_mod.restore(tmp_path, "task-happy-degrade")
+    assert restored is not None
+    assert restored.orchestration_mode == "cc-workflows-ultracode"
+    assert restored.orchestration_operator_choice == "cc-workflows-ultracode"
+
+
+def test_explicit_degrade_with_downgrade_note_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Edge — an explicit degrade (mode=inline, operator_choice=cc-workflows-ultracode,
+    NON-EMPTY downgrade) is accepted and records the provenance: the effective backend,
+    the operator's true pick, and the downgrade reason all persist."""
+    saga_mod = _load("saga.py")
+    monkeypatch.chdir(tmp_path)
+    note = "Downgraded cc-workflows-ultracode -> inline: Workflow tool unavailable off-host."
+    rc = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "degrade-ok",
+            "--orchestration-mode",
+            "inline",
+            "--orchestration-operator-choice",
+            "cc-workflows-ultracode",
+            "--orchestration-downgrade",
+            note,
+        ]
+    )
+    assert rc == 0
+    restored = saga_mod.restore(tmp_path, "task-degrade-ok")
+    assert restored is not None
+    assert restored.orchestration_mode == "inline"
+    assert restored.orchestration_operator_choice == "cc-workflows-ultracode"
+    assert restored.orchestration_downgrade == note
+
+
+def test_mode_masquerading_as_choice_without_downgrade_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Error — the issue-38 shape: mode=cc-workflows-ultracode, operator_choice=inline,
+    EMPTY downgrade. The effective backend differs from the operator's pick with no
+    recorded reason → non-zero exit and a clear message; nothing is persisted."""
+    saga_mod = _load("saga.py")
+    monkeypatch.chdir(tmp_path)
+    rc = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "issue-38-shape",
+            "--orchestration-mode",
+            "cc-workflows-ultracode",
+            "--orchestration-operator-choice",
+            "inline",
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "orchestration_mode" in err
+    assert "orchestration_operator_choice" in err
+    assert "downgrade" in err.lower()
+    # Nothing was persisted.
+    assert saga_mod.restore(tmp_path, "task-issue-38-shape") is None
+
+
+def test_provenance_guard_raises_in_save_not_in_render_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard is SAVE-scoped: an unsaved render→parse round-trip with
+    operator_choice != mode (and no downgrade) stays valid; only save() rejects it."""
+    saga_mod = _load("saga.py")
+    saga = saga_mod.Saga(
+        saga_id="task-rp",
+        kind="task",
+        id="rp",
+        orchestration_mode="cc-workflows-ultracode",
+        orchestration_operator_choice="inline",
+    )
+    # render/parse never raises.
+    reloaded = saga_mod.parse_envelope(saga_mod.render_envelope(saga))
+    assert reloaded.orchestration_operator_choice == "inline"
+    # save() rejects the same shape.
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(saga_mod.SagaSaveError):
+        saga_mod.save(tmp_path, saga)
+
+
+def test_carried_downgrade_note_does_not_launder_a_fresh_issue38_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Regression — a legit degrade tick records a downgrade note; a LATER issue-38-shape
+    tick (mode=cc-workflows-ultracode, operator_choice=inline, NO new note) must STILL be
+    rejected. _merge carries the prior note forward as a scalar, but a stale note from a
+    DIFFERENT divergence cannot justify a fresh, opposite one (the guard validates this
+    tick's assertion, not the laundered carry-forward)."""
+    saga_mod = _load("saga.py")
+    monkeypatch.chdir(tmp_path)
+    note = "Downgraded cc-workflows-ultracode -> inline: Workflow tool unavailable off-host."
+    # Tick 1: a legitimate degrade — accepted, note recorded.
+    rc1 = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "launder",
+            "--orchestration-mode",
+            "inline",
+            "--orchestration-operator-choice",
+            "cc-workflows-ultracode",
+            "--orchestration-downgrade",
+            note,
+        ]
+    )
+    assert rc1 == 0
+    # Tick 2: the issue-38 shape with NO fresh downgrade — the carried note must not launder it.
+    rc2 = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "launder",
+            "--orchestration-mode",
+            "cc-workflows-ultracode",
+            "--orchestration-operator-choice",
+            "inline",
+        ]
+    )
+    assert rc2 != 0
+    err = capsys.readouterr().err
+    assert "orchestration_mode" in err and "downgrade" in err.lower()
+    # The rejected tick was not persisted: the saga still reflects tick 1's legit degrade.
+    restored = saga_mod.restore(tmp_path, "task-launder")
+    assert restored is not None
+    assert restored.orchestration_mode == "inline"
+    assert restored.orchestration_operator_choice == "cc-workflows-ultracode"
+
+
+def test_partial_tick_introducing_divergence_via_carry_forward_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression — a partial tick that sets ONLY --orchestration-operator-choice (so the
+    incoming mode defaults equal to it, but the prior tick's higher mode carries forward)
+    produces a mode != operator_choice divergence in the merged saga with no note. The
+    guard validates the merged state, so this asymmetric-carry-forward issue-38 shape is
+    rejected even though the incoming tick alone looked self-consistent."""
+    saga_mod = _load("saga.py")
+    monkeypatch.chdir(tmp_path)
+    # Tick 1: a clean cc-workflows-ultracode run (operator_choice derives equal, no divergence).
+    rc1 = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "partial",
+            "--orchestration-mode",
+            "cc-workflows-ultracode",
+        ]
+    )
+    assert rc1 == 0
+    # Tick 2: set ONLY operator_choice=inline. Incoming mode defaults to "inline" (== choice, no
+    # incoming divergence), but merged carries mode=cc-workflows-ultracode forward -> divergence, no note.
+    rc2 = saga_mod.main(
+        ["save", "--kind", "task", "--id", "partial", "--orchestration-operator-choice", "inline"]
+    )
+    assert rc2 != 0
+    restored = saga_mod.restore(tmp_path, "task-partial")
+    assert restored is not None
+    assert restored.orchestration_mode == "cc-workflows-ultracode"
+    assert restored.orchestration_operator_choice == "cc-workflows-ultracode"

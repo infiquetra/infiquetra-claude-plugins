@@ -610,6 +610,58 @@ def _atomic_write(path: Path, content: str) -> None:
     os.replace(tmp, path)
 
 
+class SagaSaveError(ValueError):
+    """A save was rejected for violating a saga invariant (non-zero exit)."""
+
+
+def _assert_orchestration_provenance(incoming: Saga, merged: Saga, prior: Saga | None) -> None:
+    """Guard the orchestration-choice provenance at SAVE time only.
+
+    Field semantics: ``orchestration_operator_choice`` is the AUTHORITATIVE operator
+    pick; ``orchestration_mode`` is the EFFECTIVE backend that actually runs. The two
+    diverge legitimately ONLY on a capability-portable downgrade — when an off-host
+    resume recompiles the effective tier DOWN and records a one-line
+    ``orchestration_downgrade`` note. A ``mode != operator_choice`` save with NO
+    downgrade note is the issue-38 shape (mode masquerading as a choice the operator
+    never made) and is rejected.
+
+    The divergence must be JUSTIFIED on the tick that asserts it — a stale note carried
+    forward from a DIFFERENT prior divergence must not launder a fresh or changed one.
+    ``_merge`` carries scalars forward, so the persisted (``merged``) divergence is
+    allowed ONLY when (a) it is byte-identical to the prior tick's already-vetted
+    divergence (an unchanged carry-forward — its note passed this guard when the prior
+    tick saved), or (b) THIS tick (``incoming``) explicitly provides a fresh
+    ``orchestration_downgrade`` note. This also catches a divergence introduced by
+    asymmetric carry-forward (e.g. a partial tick that sets only ``operator_choice``
+    while ``mode`` carries forward). A recommendation override is a SEPARATE concern —
+    the ``orchestration_recommended``-vs-``operator_choice`` pair — and is NOT guarded
+    here. Lives in ``save()`` (not the dataclass or render/parse) so an unsaved
+    render→parse round-trip with ``operator_choice != mode`` stays valid.
+    """
+    if not (
+        merged.orchestration_operator_choice
+        and merged.orchestration_mode != merged.orchestration_operator_choice
+    ):
+        return
+    unchanged_carry_forward = (
+        prior is not None
+        and prior.orchestration_mode == merged.orchestration_mode
+        and prior.orchestration_operator_choice == merged.orchestration_operator_choice
+        and prior.orchestration_downgrade == merged.orchestration_downgrade
+    )
+    if unchanged_carry_forward or incoming.orchestration_downgrade:
+        return
+    raise SagaSaveError(
+        "orchestration_mode "
+        f"({merged.orchestration_mode!r}) != orchestration_operator_choice "
+        f"({merged.orchestration_operator_choice!r}) with no orchestration_downgrade note "
+        "on this tick: the effective backend may differ from the operator's pick ONLY on a "
+        "downgrade recorded WITH the divergence (a stale carried-forward note cannot justify "
+        "a new one). Pass --orchestration-downgrade to record the reason, or align "
+        "--orchestration-mode with the operator's choice."
+    )
+
+
 def save(
     root: Path,
     saga: Saga,
@@ -635,6 +687,8 @@ def save(
         merged = _replace(merged, head_sha=git["head"])
     if not merged.last_commit_sha and git["last_commit"]:
         merged = _replace(merged, last_commit_sha=git["last_commit"])
+
+    _assert_orchestration_provenance(saga, merged, prior)
 
     saga_dir = root / SAGAS_DIR / merged.saga_id
     saga_dir.mkdir(parents=True, exist_ok=True)
@@ -1068,9 +1122,13 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         orchestration_mode=args.orchestration_mode,
         orchestration_ref=args.orchestration_ref,
         orchestration_recommended=args.orchestration_recommended,
-        # The operator's explicit pick. Absent flag → the chosen backend IS the
-        # operator's choice (record it as ``--orchestration-mode``); a literal ""
-        # mode stays "" so older callers don't fabricate a decision.
+        # operator_choice = the authoritative operator pick; mode = the effective
+        # backend that runs. Absent flag → the chosen backend IS the operator's
+        # choice (record it as ``--orchestration-mode``); a literal "" mode stays ""
+        # so older callers don't fabricate a decision. The two diverge only on a
+        # recorded capability downgrade — ``save()`` rejects a mode != choice tick
+        # with an empty downgrade (see _assert_orchestration_provenance). A
+        # recommendation override is the SEPARATE recommended-vs-choice pair below.
         orchestration_operator_choice=(
             args.orchestration_operator_choice or args.orchestration_mode
         ),
@@ -1183,7 +1241,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     root = Path.cwd()
 
     if args.command == "save":
-        result = save(root, _build_save_saga(args))
+        try:
+            result = save(root, _build_save_saga(args))
+        except SagaSaveError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         print(json.dumps(result, indent=2))
         return 0
 

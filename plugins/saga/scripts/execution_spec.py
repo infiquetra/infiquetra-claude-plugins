@@ -284,11 +284,23 @@ class ExecutionSpec:
             raise SpecError("spec needs at least one unit")
 
         seen: set[str] = set()
+        var_owner: dict[str, str] = {}
         for unit in self.units:
             unit.validate(f"spec {self.name}")
             if unit.unit_id in seen:
                 raise SpecError(f"duplicate unit_id {unit.unit_id!r}")
             seen.add(unit.unit_id)
+            # The emitted result var is the sanitized unit_id; two ids that sanitize to the
+            # same JS identifier would emit a duplicate `const` (a SyntaxError in the ESM the
+            # emitter produces). Reject the collision here rather than emit unloadable JS.
+            js_var = _js_var(unit.unit_id)
+            if js_var in var_owner:
+                raise SpecError(
+                    f"unit_id {unit.unit_id!r} and {var_owner[js_var]!r} both map to the JS "
+                    f"identifier {js_var!r} (- and . both become _); rename one so the emitted "
+                    f"script has unique result vars"
+                )
+            var_owner[js_var] = unit.unit_id
 
         for unit in self.units:
             for dep in unit.depends_on:
@@ -406,6 +418,18 @@ def _js_string(value: str) -> str:
     return json.dumps(value)
 
 
+def _js_var(unit_id: str) -> str:
+    """Sanitize a unit_id into a JS identifier used as the emitted result var.
+
+    ``-`` and ``.`` are not legal in JS identifiers, so both map to ``_``. Two distinct
+    unit_ids can therefore collide to the same var (``a-b`` and ``a.b`` both -> ``a_b``),
+    which would emit a duplicate ``const`` -- a SyntaxError in the ESM the emitter produces.
+    ``ExecutionSpec.validate`` rejects that collision up front (fail emit, never emit
+    unloadable JS).
+    """
+    return unit_id.replace("-", "_").replace(".", "_")
+
+
 def _verifier_prompt(unit: Unit) -> str:
     """Assemble the prompt text a verifier agent in ``unit``'s refute-N panel reads.
 
@@ -448,9 +472,13 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
 
     Renders a ``parallel([...])`` of ``unit.verify.n`` verifier ``agent()`` calls over the
     unit's result (each at the SAME ``{model, effort}`` tier as the unit per R4), then a
-    pass-rule check: a finding survives unless refuted per the rule -- ``majority`` =>
-    ``>= ceil(N/2)`` verifiers refute; ``unanimous`` => all N must refute. The reconciliation
-    is rendered as JS control flow the runtime evaluates over the verifier verdicts.
+    PANEL-LEVEL pass-rule verdict: count the verifiers that returned at least one refutation
+    and compare to the threshold -- ``majority`` => ``>= ceil(N/2)`` verifiers refuted;
+    ``unanimous`` => all N refuted. (This is a panel-level signal, not per-finding survival:
+    a generic emitter cannot match findings across verifiers, so it surfaces "did enough
+    skeptics refute anything" for the operator/runtime to act on.) The resulting
+    ``<var>_refuted`` boolean is CONSUMED: when set, the script ``log()``s a review warning so
+    a refuted unit result is surfaced rather than silently relied upon.
     """
     panel = unit.verify
     assert panel is not None  # caller guards this
@@ -464,7 +492,9 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
     ]
 
     lines.append(f"// verify: refute-{n} panel over {unit.unit_id} (pass_rule: {panel.pass_rule};")
-    lines.append(f"// a finding survives unless >= {threshold} of {n} verifiers refute it)")
+    lines.append(
+        f"// panel-level: the unit result is refuted when >= {threshold} of {n} verifiers refute)"
+    )
     lines.append(f"const {var}_verdicts = await parallel([")
     for _ in range(n):
         lines.append("  () => agent(")
@@ -472,12 +502,17 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
         lines.append("    { " + ", ".join(opts) + f", input: {var} }},")
         lines.append("  ),")
     lines.append("])")
-    # Pass-rule reconciliation: a finding is refuted only when >= threshold verifiers refute.
+    # Pass-rule reconciliation: count verifiers that refuted at least one finding.
     lines.append(
         f"const {var}_refute_count = {var}_verdicts.filter((v) => v && v.refuted "
         f"&& v.refuted.length > 0).length"
     )
     lines.append(f"const {var}_refuted = {var}_refute_count >= {threshold}  // {panel.pass_rule}")
+    # Consume the verdict: surface a refuted unit result instead of relying on it silently.
+    lines.append(
+        f"if ({var}_refuted) log(`refute-{n} ({panel.pass_rule}): {unit.unit_id} result refuted by "
+        f"${{{var}_refute_count}}/{n} verifiers -- review before relying on it`)"
+    )
     lines.append("")
 
 
@@ -536,9 +571,10 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
 
     # Topological waves (KTD4): each layer's units are mutually independent and run in a
     # single parallel() wave; layers are sequenced by await (the dependency barrier). A
-    # singleton layer renders as a plain `const x = await agent(...)`.
-    def _var(unit_id: str) -> str:
-        return unit_id.replace("-", "_").replace(".", "_")
+    # singleton layer renders as a plain `const x = await agent(...)`. _js_var (module-level)
+    # sanitizes the unit_id into the result var; validate() has already rejected any two ids
+    # that would collide to the same identifier.
+    _var = _js_var
 
     def _emit_unit_header(unit: Unit) -> None:
         lines.append(f"// ---- {unit.unit_id}: {unit.label} ----")

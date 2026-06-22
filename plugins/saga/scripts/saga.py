@@ -614,29 +614,45 @@ class SagaSaveError(ValueError):
     """A save was rejected for violating a saga invariant (non-zero exit)."""
 
 
+def _orchestration_rank(mode: str) -> int | None:
+    """Tier rank of an orchestration mode (inline < team-execution < cc-workflows-ultracode).
+
+    Returns the index in ``ORCHESTRATION_MODES`` (a higher index is a richer/costlier tier),
+    or ``None`` for an unrecognized value (the guard then can't reason about direction and is
+    lenient).
+    """
+    try:
+        return ORCHESTRATION_MODES.index(mode)
+    except ValueError:
+        return None
+
+
 def _assert_orchestration_provenance(incoming: Saga, merged: Saga, prior: Saga | None) -> None:
     """Guard the orchestration-choice provenance at SAVE time only.
 
     Field semantics: ``orchestration_operator_choice`` is the AUTHORITATIVE operator
     pick; ``orchestration_mode`` is the EFFECTIVE backend that actually runs. The two
-    diverge legitimately ONLY on a capability-portable downgrade — when an off-host
-    resume recompiles the effective tier DOWN and records a one-line
-    ``orchestration_downgrade`` note. A ``mode != operator_choice`` save with NO
-    downgrade note is the issue-38 shape (mode masquerading as a choice the operator
-    never made) and is rejected.
+    diverge legitimately ONLY on a capability-portable DOWNGRADE — when an off-host
+    resume recompiles the effective tier DOWN (to a cheaper tier than the operator picked)
+    and records a one-line ``orchestration_downgrade`` note. A ``mode != operator_choice``
+    save with NO downgrade note is the issue-38 shape (mode masquerading as a choice the
+    operator never made) and is rejected.
 
     The divergence must be JUSTIFIED on the tick that asserts it — a stale note carried
     forward from a DIFFERENT prior divergence must not launder a fresh or changed one.
     ``_merge`` carries scalars forward, so the persisted (``merged``) divergence is
     allowed ONLY when (a) it is byte-identical to the prior tick's already-vetted
     divergence (an unchanged carry-forward — its note passed this guard when the prior
-    tick saved), or (b) THIS tick (``incoming``) explicitly provides a fresh
-    ``orchestration_downgrade`` note. This also catches a divergence introduced by
-    asymmetric carry-forward (e.g. a partial tick that sets only ``operator_choice``
-    while ``mode`` carries forward). A recommendation override is a SEPARATE concern —
-    the ``orchestration_recommended``-vs-``operator_choice`` pair — and is NOT guarded
-    here. Lives in ``save()`` (not the dataclass or render/parse) so an unsaved
-    render→parse round-trip with ``operator_choice != mode`` stays valid.
+    tick saved), or (b) THIS tick (``incoming``) provides a fresh, non-blank
+    ``orchestration_downgrade`` note AND the divergence is a genuine downgrade (effective
+    ``mode`` is a LOWER tier than ``operator_choice``). A blank/whitespace note, or an
+    "upgrade" (effective mode RICHER than the pick) labeled a downgrade, does not justify
+    the divergence. This also catches a divergence introduced by asymmetric carry-forward
+    (e.g. a partial tick that sets only ``operator_choice`` while ``mode`` carries forward).
+    A recommendation override is a SEPARATE concern — the
+    ``orchestration_recommended``-vs-``operator_choice`` pair — and is NOT guarded here.
+    Lives in ``save()`` (not the dataclass or render/parse) so an unsaved render→parse
+    round-trip with ``operator_choice != mode`` stays valid.
     """
     if not (
         merged.orchestration_operator_choice
@@ -649,14 +665,28 @@ def _assert_orchestration_provenance(incoming: Saga, merged: Saga, prior: Saga |
         and prior.orchestration_operator_choice == merged.orchestration_operator_choice
         and prior.orchestration_downgrade == merged.orchestration_downgrade
     )
-    if unchanged_carry_forward or incoming.orchestration_downgrade:
+    if unchanged_carry_forward:
         return
+    note = incoming.orchestration_downgrade.strip()
+    if note:
+        mode_rank = _orchestration_rank(merged.orchestration_mode)
+        choice_rank = _orchestration_rank(merged.orchestration_operator_choice)
+        # A note justifies the divergence only for a genuine downgrade (mode tier < pick tier),
+        # or when a tier is unrecognized and direction can't be judged (be lenient there).
+        if mode_rank is None or choice_rank is None or mode_rank < choice_rank:
+            return
+        raise SagaSaveError(
+            f"orchestration_mode ({merged.orchestration_mode!r}) is a RICHER tier than "
+            f"orchestration_operator_choice ({merged.orchestration_operator_choice!r}); a "
+            "downgrade note cannot justify an UPGRADE divergence. operator_choice must name the "
+            "tier the operator actually picked (>= the effective mode), or record a real downgrade."
+        )
     raise SagaSaveError(
         "orchestration_mode "
         f"({merged.orchestration_mode!r}) != orchestration_operator_choice "
         f"({merged.orchestration_operator_choice!r}) with no orchestration_downgrade note "
         "on this tick: the effective backend may differ from the operator's pick ONLY on a "
-        "downgrade recorded WITH the divergence (a stale carried-forward note cannot justify "
+        "downgrade recorded WITH the divergence (a stale or blank note cannot justify "
         "a new one). Pass --orchestration-downgrade to record the reason, or align "
         "--orchestration-mode with the operator's choice."
     )

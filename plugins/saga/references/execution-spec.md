@@ -147,10 +147,11 @@ uv run python plugins/saga/scripts/lifecycle_state.py recheck-capability \
 uv run python plugins/saga/scripts/execution_spec.py baseline spec.json -o baseline.md
 ```
 
-## `/plan` author-validate-approve-persist-emit flow
+## `/plan` author-validate-emit-approve-persist flow
 
 When the operator chooses `cc-workflows-ultracode`, `/plan` follows this five-step flow before writing the
-saga tick (Phase 5.2a in `skills/plan/SKILL.md`):
+saga tick (Phase 5.2a in `skills/plan/SKILL.md`). Emit comes BEFORE approve so the operator confirms the
+actual generated script, not a description of it:
 
 1. **Author** — derive per-unit `{model, effort}` tiers from the work-shape heuristic; write thin per-unit
    prompts (KTD2 — a thin pointer to the plan, not a prose transcription); wire `depends_on` barriers and
@@ -158,17 +159,25 @@ saga tick (Phase 5.2a in `skills/plan/SKILL.md`):
 
 2. **Validate (HARD BLOCK)** — run the validator. A non-zero exit means the spec is malformed; do NOT
    proceed until fixed. Common failures: `depends_on` cycle, fan-out with no `targets` (R10), pilot tier
-   mismatch (R3), `verify.n` above `VERIFY_N_CAP`.
+   mismatch (R3), `verify.n` above `VERIFY_N_CAP`, two unit_ids that sanitize to the same JS var.
 
    ```bash
    python3 plugins/saga/scripts/execution_spec.py validate docs/plans/<name>-spec.json
    ```
 
-3. **Approve** — surface the emitted `.workflow.js` and the per-unit tier table for explicit operator
+3. **Emit** — write the `.workflow.js` beside the spec (`emit` re-validates, so a malformed spec fails here
+   too):
+
+   ```bash
+   python3 plugins/saga/scripts/execution_spec.py emit docs/plans/<name>-spec.json \
+     -o docs/plans/<name>.workflow.js
+   ```
+
+4. **Approve** — surface the now-emitted `.workflow.js` and the per-unit tier table for explicit operator
    confirmation. The operator must confirm the tier assignments and the control-flow structure; a rejection
    means revising the spec and re-running validate + emit.
 
-4. **Persist** — write the saga tick with `--orchestration-ref` pointing at the **spec JSON** (the
+5. **Persist** — write the saga tick with `--orchestration-ref` pointing at the **spec JSON** (the
    canonical artifact — the `.workflow.js` is regenerable, so the ref is the spec, not the script):
 
    ```bash
@@ -176,13 +185,6 @@ saga tick (Phase 5.2a in `skills/plan/SKILL.md`):
      --orchestration-mode cc-workflows-ultracode \
      --orchestration-ref docs/plans/<name>-spec.json \
      --orchestration-recommended <recommend_execution_backend() output>
-   ```
-
-5. **Emit** — write the `.workflow.js` beside the spec for operator/`/work` consumption:
-
-   ```bash
-   python3 plugins/saga/scripts/execution_spec.py emit docs/plans/<name>-spec.json \
-     -o docs/plans/<name>.workflow.js
    ```
 
 The spec JSON is the durable canonical artifact; the `.workflow.js` can be regenerated at any time via

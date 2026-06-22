@@ -836,6 +836,39 @@ def test_inline_baseline_of_layered_spec_stays_serial() -> None:
     assert "[tier: opus/high]" in baseline
 
 
+def test_unit_ids_colliding_to_one_js_var_fail_validate() -> None:
+    """Two distinct unit_ids that sanitize to the same JS identifier (- and . both -> _) would
+    emit a duplicate `const` — a SyntaxError in the emitted ESM. validate() must reject the
+    collision up front rather than emit unloadable JS."""
+    mod = _load()
+    data = {
+        "name": "collide",
+        "description": "var collision",
+        "units": [
+            {
+                "unit_id": "a-b",
+                "label": "alpha",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "x",
+            },
+            {
+                "unit_id": "a.b",
+                "label": "beta",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "y",
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError) as exc:
+        spec.validate()
+    msg = str(exc.value)
+    assert "a-b" in msg and "a.b" in msg
+    # emit() calls validate() first, so it fails there too (never emits unloadable JS).
+    with pytest.raises(mod.SpecError):
+        mod.emit_workflow_script(spec)
+
+
 def test_parallel_and_verify_agents_each_carry_their_own_tier() -> None:
     """Mutation guard: each emitted agent (parallel-wave thunk AND refute-N verifier) must
     carry ITS OWN {model, effort} — not a same-tier sibling's. Two independent units with

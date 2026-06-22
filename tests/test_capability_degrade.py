@@ -573,3 +573,89 @@ def test_progress_tick_without_orchestration_args_carries_choice_forward(
     assert restored.orchestration_mode == "cc-workflows-ultracode"
     assert restored.orchestration_operator_choice == "cc-workflows-ultracode"
     assert restored.phase == 2
+
+
+def test_upgrade_masquerade_with_a_note_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Error — a divergence where the effective mode is a RICHER tier than the operator's pick
+    (mode=cc-workflows-ultracode, operator_choice=inline) is an UPGRADE, not a capability
+    downgrade; a downgrade note must not justify it. The note is direction-checked: only
+    mode tier < operator_choice tier is a legitimate downgrade."""
+    saga_mod = _load("saga.py")
+    monkeypatch.chdir(tmp_path)
+    rc = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "upgrade",
+            "--orchestration-mode",
+            "cc-workflows-ultracode",
+            "--orchestration-operator-choice",
+            "inline",
+            "--orchestration-downgrade",
+            "bogus note claiming a downgrade",
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "RICHER" in err or "UPGRADE" in err
+    assert saga_mod.restore(tmp_path, "task-upgrade") is None
+
+
+def test_whitespace_only_downgrade_note_does_not_justify_divergence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Error — a blank/whitespace-only downgrade note is not a justification; a genuine-direction
+    degrade (mode=inline < operator_choice=cc-workflows-ultracode) with a "   " note is still
+    rejected (the note is stripped before the truthiness check)."""
+    saga_mod = _load("saga.py")
+    monkeypatch.chdir(tmp_path)
+    rc = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "blank-note",
+            "--orchestration-mode",
+            "inline",
+            "--orchestration-operator-choice",
+            "cc-workflows-ultracode",
+            "--orchestration-downgrade",
+            "   ",
+        ]
+    )
+    assert rc != 0
+    assert saga_mod.restore(tmp_path, "task-blank-note") is None
+
+
+def test_genuine_downgrade_direction_with_a_real_note_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Happy — the legitimate degrade direction (effective mode a LOWER tier than the pick) with
+    a real note is accepted, confirming the direction check doesn't reject valid downgrades."""
+    saga_mod = _load("saga.py")
+    monkeypatch.chdir(tmp_path)
+    rc = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "real-degrade",
+            "--orchestration-mode",
+            "team-execution",
+            "--orchestration-operator-choice",
+            "cc-workflows-ultracode",
+            "--orchestration-downgrade",
+            "Workflow tool unavailable; recompiled to team-execution.",
+        ]
+    )
+    assert rc == 0
+    restored = saga_mod.restore(tmp_path, "task-real-degrade")
+    assert restored is not None
+    assert restored.orchestration_mode == "team-execution"
+    assert restored.orchestration_operator_choice == "cc-workflows-ultracode"

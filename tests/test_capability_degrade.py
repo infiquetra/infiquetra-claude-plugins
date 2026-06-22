@@ -521,3 +521,55 @@ def test_partial_tick_introducing_divergence_via_carry_forward_is_rejected(
     assert restored is not None
     assert restored.orchestration_mode == "cc-workflows-ultracode"
     assert restored.orchestration_operator_choice == "cc-workflows-ultracode"
+
+
+def test_progress_tick_without_orchestration_args_carries_choice_forward(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (no false positive) — after a cc-workflows-ultracode tick, a plain progress
+    save that passes NO orchestration args must SUCCEED: mode and operator_choice both carry
+    forward (not re-stamped to "inline"), so the guard sees no divergence. Without this, every
+    multi-tick /work or /loop run on a non-inline saga would wrongly reject its own progress
+    ticks (the auto-derive must not fabricate an operator_choice on a tick that asserts none)."""
+    saga_mod = _load("saga.py")
+    monkeypatch.chdir(tmp_path)
+    # Tick 1: explicit cc-workflows-ultracode.
+    rc1 = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "progress",
+            "--orchestration-mode",
+            "cc-workflows-ultracode",
+            "--lifecycle-phase",
+            "work",
+            "--phase",
+            "1",
+        ]
+    )
+    assert rc1 == 0
+    # Tick 2: a plain phase-progress save, NO orchestration args at all.
+    rc2 = saga_mod.main(
+        [
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "progress",
+            "--lifecycle-phase",
+            "work",
+            "--phase",
+            "2",
+            "--phase-status",
+            "complete",
+        ]
+    )
+    assert rc2 == 0
+    restored = saga_mod.restore(tmp_path, "task-progress")
+    assert restored is not None
+    # The real backend choice carried forward, not re-stamped to inline.
+    assert restored.orchestration_mode == "cc-workflows-ultracode"
+    assert restored.orchestration_operator_choice == "cc-workflows-ultracode"
+    assert restored.phase == 2

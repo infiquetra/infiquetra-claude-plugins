@@ -1111,6 +1111,21 @@ def _split_int_list(value: str | None) -> ListOrAbsent:
 
 def _build_save_saga(args: argparse.Namespace) -> Saga:
     saga_id = args.saga_id or derive_saga_id(args.kind, args.id)
+    # operator_choice = the AUTHORITATIVE operator pick; mode = the EFFECTIVE backend.
+    # --orchestration-mode defaults to None (NOT "inline") so a progress tick that passes
+    # NO orchestration signal leaves BOTH mode and operator_choice at their dataclass
+    # defaults -> _merge carries the prior tick's real values forward. A progress tick must
+    # not silently re-stamp an "inline" choice over a cc-workflows-ultracode saga, which
+    # would manufacture a false mode != operator_choice divergence (rejected by the save-time
+    # provenance guard). When --orchestration-mode IS given, the chosen backend IS the
+    # operator's pick unless an explicit --orchestration-operator-choice overrides it (the
+    # recorded-degrade / override case). A recommendation override is the SEPARATE
+    # recommended-vs-choice pair below.
+    mode_explicit = args.orchestration_mode is not None
+    orchestration_mode = args.orchestration_mode if mode_explicit else "inline"
+    orchestration_operator_choice = args.orchestration_operator_choice or (
+        args.orchestration_mode if mode_explicit else ""
+    )
     return Saga(
         saga_id=saga_id,
         kind=args.kind,
@@ -1119,19 +1134,10 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         phase_status=args.phase_status,
         status=args.status,
         next_step=args.next_step,
-        orchestration_mode=args.orchestration_mode,
+        orchestration_mode=orchestration_mode,
         orchestration_ref=args.orchestration_ref,
         orchestration_recommended=args.orchestration_recommended,
-        # operator_choice = the authoritative operator pick; mode = the effective
-        # backend that runs. Absent flag → the chosen backend IS the operator's
-        # choice (record it as ``--orchestration-mode``); a literal "" mode stays ""
-        # so older callers don't fabricate a decision. The two diverge only on a
-        # recorded capability downgrade — ``save()`` rejects a mode != choice tick
-        # with an empty downgrade (see _assert_orchestration_provenance). A
-        # recommendation override is the SEPARATE recommended-vs-choice pair below.
-        orchestration_operator_choice=(
-            args.orchestration_operator_choice or args.orchestration_mode
-        ),
+        orchestration_operator_choice=orchestration_operator_choice,
         orchestration_downgrade=args.orchestration_downgrade,
         issue_ref=args.issue_ref,
         destination=args.destination,
@@ -1172,7 +1178,10 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--round", type=int, default=0)
     p.add_argument("--progress-pct", type=int, default=0)
     p.add_argument("--destination", choices=list(DESTINATIONS), default="plan-only")
-    p.add_argument("--orchestration-mode", choices=list(ORCHESTRATION_MODES), default="inline")
+    # default=None (not "inline") so a save with NO --orchestration-mode leaves the mode at
+    # its dataclass default and carries the prior tick's mode/operator_choice forward (see
+    # _build_save_saga); only an explicit flag stamps a new orchestration decision.
+    p.add_argument("--orchestration-mode", choices=list(ORCHESTRATION_MODES), default=None)
     p.add_argument(
         "--orchestration-recommended",
         choices=list(ORCHESTRATION_MODES),

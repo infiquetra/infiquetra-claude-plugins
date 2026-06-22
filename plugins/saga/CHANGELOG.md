@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.37.0 - 2026-06-21
+
+- Document the parallel-layer + refute-N emitter constructs in `references/execution-spec.md`:
+  topological-layer parallelism (KTD4) — independent units in the same dependency layer emit as a
+  single `parallel([...])` wave; `Unit.verify` (KTD5) — optional refute-N judge-panel with `n` and
+  `pass_rule` fields, default `n=3/majority`, hard cap `VERIFY_N_CAP=7`; `pass_rule` vocabulary
+  (`majority`/`unanimous`); `/plan` author-validate-approve-persist-emit five-step flow for
+  `cc-workflows-ultracode`; spec naming convention.
+- Document the `/work` halt-not-degrade guarantee and `orchestration_ref` lifecycle in
+  `references/operator-choice.md` §6: a `cc-workflows-ultracode` choice is guarantee-bearing (parallel
+  fan-out + refute-N); `/work` halts when the Workflow tool is absent or the spec/ref is missing rather
+  than silently substituting inline subagents; `orchestration_ref` points at the **spec JSON** at
+  `/plan` time (canonical artifact — the `.workflow.js` is regenerable), then is overwritten with the
+  workflow id after `/work` launches; the `saga.py` provenance guard backstops substitution attempts.
+- Add `DECISIONS.md` entry `#parallel-refuteN-emitter-plan-work-wiring` covering KTD1-KTD7 rationale
+  and the dogfooding fix (auto-derive must not fire on no-orchestration-args ticks).
+- Bump saga to **0.37.0** (feature: parallel + refute-N emitter, /plan + /work wiring, provenance guard).
+
 ## 0.36.0 - 2026-06-21
 
 - Generalize the stale-main `SessionStart` hook to run in ANY git repo. The hook

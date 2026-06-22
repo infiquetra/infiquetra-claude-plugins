@@ -195,7 +195,31 @@ but never reads `orchestration_mode`). A command that does not yet write a saga 
 |---|---|
 | `inline` | empty string `""` |
 | `team-execution` | the team name |
-| `cc-workflows-ultracode` | the workflow id |
+| `cc-workflows-ultracode` | the **spec JSON path** (at `/plan` tick time); the workflow id (after `/work` launches the Workflow) |
+
+**`cc-workflows-ultracode` ref lifecycle.** At `/plan` time, `orchestration_ref` is set to the **canonical
+spec JSON** (`docs/plans/<date>-<topic>-spec.json`). The `.workflow.js` is a derived artifact — regenerable
+at any time via `execution_spec.py emit <spec.json>` — so the spec JSON is the durable pointer. When `/work`
+subsequently launches the Workflow tool and receives a workflow id, it overwrites `orchestration_ref` with
+that id via a second saga tick, preserving the spec path in the plan artifact itself. The spec JSON is
+therefore always the canonical authoring artifact; the workflow id is the transient execution handle.
+
+**The halt-not-degrade guarantee.** A `cc-workflows-ultracode` choice is a **guarantee-bearing** commitment —
+the operator chose parallel fan-out **and** refute-N adversarial verification. `/work` honors this guarantee by
+halting rather than silently degrading when execution is impossible in the current session:
+
+- **Workflow tool absent:** HALT with a recovery line pointing to a capable session or a backend switch.
+- **Spec or orchestration_ref missing:** HALT with a recovery line pointing back to `/plan` to author the spec.
+
+This halt-not-degrade rule is **explicitly NOT** the off-host recompile-down path
+(`recheck_orchestration_capability` in `lifecycle_state.py`), which is reserved for `/loop`'s phase-walk
+fallback and `/resume`'s capability probe — both of which run in a polling/recovery context where the operator
+is absent. `/work`, by contrast, runs with the operator present and can surface the halt for a real decision.
+Silently substituting hand-rolled sequential subagents would lose the parallel fan-out and refute-N panels
+that make the `cc-workflows-ultracode` choice meaningful (the campps issue-38 failure). The
+**provenance guard** in `saga.py save` backstops this: a tick where
+`orchestration_mode != orchestration_operator_choice` with no `orchestration_downgrade` note is rejected, so
+`/work` cannot cover a secret substitution by rewriting `operator_choice`.
 
 ---
 

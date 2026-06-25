@@ -216,6 +216,39 @@ editable source of truth (so it physically can't drift). The **GitHub board is t
 projection only (board-state vs saga-state stay distinct coordinate systems). A hand-maintained
 `OUTCOME.md` log is rejected (dead-wiring drift). Form to be nailed in `/brainstorm`.
 
+## Storage model — leaf-local ticks + a shared outcome store
+
+The coordinator/executor split applies to storage too. Saga state today (`saga-spec.md §5.3`) is
+**per-working-directory, git-ignored, volatile** — `<cwd>/.claude/saga/sagas/<saga_id>/`; the spec is
+explicit that worktree saga state "lives only in that worktree's ignored `.claude/` and is discarded
+on cleanup." So an outcome whose subplots run in **different worktrees / sessions** scatters its ticks
+across isolated, throwaway dirs that neither the siblings nor the coordinator can see. That
+per-worktree store **cannot** be the outcome's memory (the concrete form of #8 + #14).
+
+**Two stores:**
+
+| | Leaf saga (executor) | Outcome (coordinator) |
+|---|---|---|
+| holds | one thread's detailed ticks | the DAG · locks · subplot→saga pointers · append-only completion log · decision trail |
+| where | stays `<worktree>/.claude/saga/` — bound to the worktree its branch/diff lives in | a **separate shared store** keyed by `outcome-id`, outside any worktree |
+| lifetime | volatile; real output is the merged PR + a completion event published *up* | durable; survives worktree cleanup, session death, a multi-day gap |
+
+When a leaf finishes it **appends a completion event** (done + PR ref + evidence pointer) to the
+shared store; that **append-only** log is what the orchestrator reads to unlock the next Kahn layer —
+append-only because the racy last-writer-wins `state.json` would eat completion events and deadlock the
+DAG (#14). It is saga's own immutable-tick model, lifted to a shared home.
+
+**Where the shared store lives, by reach:**
+- **Same machine, many worktrees (the common case):** `$(git rev-parse --git-common-dir)/saga-outcomes/<outcome-id>/` — git worktrees share one `.git`, so this path resolves identically from every worktree and survives worktree cleanup. Zero new infra. (Or `~/.claude/saga/outcomes/`.)
+- **Across machines:** promote the completion log to a networked store — **GitHub** (the objective + sub-issue tree is the durable, machine-independent DAG skeleton; PR-merged / issue-closed is completion; aligns with mission-control — it just can't hold `depends_on` edges, which live in the outcome spec) and/or **a networked Redis stream** (fast cross-host completion events).
+
+**Decided shape** (the exact home is a `/brainstorm` detail): the orchestrator's working state lives at
+the git-common-dir path as a **rebuildable cache**; the **durable source of truth is GitHub** (any
+machine reconstructs the outcome from the sub-issue tree + PR/issue state); a networked Redis stream is
+added only when subplots actually fan across hosts and sub-second completion matters. This mirrors
+saga's existing philosophy — a durable canonical record + a rebuildable derived index — with GitHub as
+the canonical record.
+
 ## Second opinion (Codex gpt-5.5, xhigh, read-only)
 
 Independent read against both ideation docs, the source chat, and the saga/team-execution code.
@@ -260,3 +293,4 @@ Independent THIRD read, tasked with breaking what Claude and Codex agreed on. Ve
 | frame-agent | Phase 2 | dispatcher / envelope / cockpit / decomposition / backend / portfolio | survived as #1–#7 |
 | second-opinion | Codex gpt-5.5 | scope recursion to dispatch; explicit cockpit; portability; concurrency; measurement; forks+`/goal`; persistent session | folded as #2/#3 revisions + #8–#12 |
 | second-opinion | Antigravity Gemini 3.1 Pro (High) | outcome ≠ self-similar saga (linear phase can't model a concurrent DAG) → distinct in-saga `OutcomeOrchestrator` over leaf sagas; degrade only leaves; ticks-not-`state.json` sync; failure cascades; attention consolidator | reframed the spine + folded as #13–#16 |
+| user-question | storage | where does outcome state live across worktrees / sessions / machines? | **Storage model** section — two stores: leaf-local volatile ticks + a shared append-only outcome store (git-common-dir cache · GitHub canonical · optional networked Redis) |

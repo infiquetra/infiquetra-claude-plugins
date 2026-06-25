@@ -109,3 +109,22 @@ prior #5/#6 (incubation, journal-as-fuel), and prior #4 (don't replace office-ho
 Codex #2/#3 (inchoate-elicitation + first-class method engine), #6 (visual surface, divergence-shaped),
 #9 (third-party satellite round-trip, manual in v1 / automation as a spike), and #5 (muse keeps its own
 durable corpus). That is `/muse` as an *imagination studio*, not "`/ideate` with critique switched off."
+
+## Visuals — what the synthesized studio looks like
+
+Two views of the corrected studio direction (SVG source + rendered PNG under `assets/`):
+
+- **The studio (anatomy)** — the room and its surfaces: the yes-and conversation, the living visual
+  canvas, method state, the quarantine parking lot, the addressable seed log, the satellite round-trip
+  ring, and the exit airlock into `/ideate`.
+  ![/muse studio anatomy](assets/muse-studio-anatomy.png)
+
+- **A session (storyboard)** — a feeling becoming a routable seed in three moments: the itch →
+  a method fan-out → clustering into a nameable bundle that graduates to `/ideate`.
+  ![/muse session storyboard](assets/muse-session-storyboard.png)
+
+Solid surfaces are agreed core; dashed/violet elements are the open product decisions `/brainstorm`
+pins down (canvas-as-thinking-surface vs render, bundle graduation, resurfacing cadence, mode defaults,
+which satellites ship first). Dogfood note: these are committed SVGs — the same model→SVG pattern saga
+already uses (`plugins/saga/docs/assets/`), which is exactly the precedent the prior pass's "text-only"
+cut overlooked.

@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="790" viewBox="0 0 1200 790" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif">
+  <defs>
+    <linearGradient id="hdr" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fb7185"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="790" fill="#eef2f7"/>
+
+  <!-- header -->
+  <rect x="0" y="0" width="1200" height="76" fill="url(#hdr)"/>
+  <text x="32" y="34" font-size="26" font-weight="700" fill="#ffffff">&#10022; /muse &#8212; the imagination studio</text>
+  <text x="33" y="60" font-size="14" fill="#fff7ed">critique is banned in this room &#183; off-chain &#183; resumable across days</text>
+  <text x="1168" y="34" font-size="14" font-style="italic" fill="#ffffff" text-anchor="end">a midwife for the thing on the tip of your tongue</text>
+  <text x="1168" y="58" font-size="13" fill="#fff7ed" text-anchor="end">dual role: provocateur + scribe</text>
+
+  <!-- CONVERSATION -->
+  <rect x="24" y="96" width="332" height="448" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="44" cy="124" r="6" fill="#fb7185"/>
+  <text x="58" y="129" font-size="15" font-weight="700" fill="#0f172a">CONVERSATION</text>
+  <text x="58" y="147" font-size="12" fill="#64748b">the live riff — keep it flowing</text>
+
+  <rect x="44" y="166" width="252" height="46" rx="10" fill="#e0f2fe"/>
+  <text x="58" y="186" font-size="12.5" fill="#0c4a6e">you: "my home-lab feels dead.</text>
+  <text x="58" y="203" font-size="12.5" fill="#0c4a6e">I don't know what I mean."</text>
+
+  <rect x="60" y="222" width="276" height="62" rx="10" fill="#fff1e6"/>
+  <text x="74" y="242" font-size="12.5" fill="#7c2d12">muse: "stay with 'dead'. Dead like</text>
+  <text x="74" y="259" font-size="12.5" fill="#7c2d12">a museum, a voicemail tree, or an</text>
+  <text x="74" y="276" font-size="12.5" fill="#7c2d12">abandoned mall? pick the wrong one."</text>
+
+  <rect x="44" y="294" width="200" height="30" rx="10" fill="#e0f2fe"/>
+  <text x="58" y="314" font-size="12.5" fill="#0c4a6e">you: "abandoned mall."</text>
+
+  <rect x="60" y="334" width="276" height="62" rx="10" fill="#fff1e6"/>
+  <text x="74" y="354" font-size="12.5" fill="#7c2d12">muse: "then it's missing signs of</text>
+  <text x="74" y="371" font-size="12.5" fill="#7c2d12">life, not features. finish: 'I'd know</text>
+  <text x="74" y="388" font-size="12.5" fill="#7c2d12">it was alive if&#8230;'"</text>
+
+  <rect x="44" y="406" width="292" height="28" rx="8" fill="#f1f5f9"/>
+  <text x="58" y="424" font-size="11.5" fill="#475569">&#127908; voice or type &#183; nothing is "too small to say"</text>
+
+  <text x="44" y="462" font-size="11.5" fill="#94a3b8">no "but", no feasibility, no downside —</text>
+  <text x="44" y="479" font-size="11.5" fill="#94a3b8">those are captured to the parking lot &#8594;</text>
+  <text x="44" y="512" font-size="12" font-weight="700" fill="#fb7185">YES-AND CONTRACT</text>
+  <text x="44" y="530" font-size="11.5" fill="#64748b">the partner builds, mirrors, mutates —</text>
+
+  <!-- LIVING CANVAS -->
+  <rect x="372" y="96" width="384" height="448" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="392" cy="124" r="6" fill="#10b981"/>
+  <text x="406" y="129" font-size="15" font-weight="700" fill="#0f172a">LIVING CANVAS</text>
+  <text x="406" y="147" font-size="12" fill="#64748b">you BOTH move ideas here — see the shape</text>
+
+  <!-- cluster shadings -->
+  <ellipse cx="500" cy="300" rx="96" ry="86" fill="#ecfdf5" stroke="#a7f3d0" stroke-dasharray="4 4"/>
+  <ellipse cx="648" cy="362" rx="86" ry="74" fill="#eff6ff" stroke="#bfdbfe" stroke-dasharray="4 4"/>
+
+  <!-- links -->
+  <line x1="540" y1="222" x2="500" y2="276" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="540" y1="222" x2="452" y2="312" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="540" y1="222" x2="556" y2="330" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="556" y1="330" x2="636" y2="350" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="540" y1="222" x2="664" y2="392" stroke="#cbd5e1" stroke-width="1.3" stroke-dasharray="5 4"/>
+
+  <!-- central node -->
+  <rect x="476" y="196" width="128" height="40" rx="9" fill="#fde68a" stroke="#f59e0b"/>
+  <text x="540" y="220" font-size="12.5" font-weight="700" fill="#78350f" text-anchor="middle">home-lab feels "dead"</text>
+
+  <!-- child nodes -->
+  <rect x="438" y="276" width="124" height="34" rx="8" fill="#d1fae5" stroke="#10b981"/>
+  <text x="500" y="297" font-size="11.5" fill="#065f46" text-anchor="middle">signs of life</text>
+
+  <rect x="396" y="320" width="120" height="34" rx="8" fill="#d1fae5" stroke="#10b981"/>
+  <text x="456" y="341" font-size="11.5" fill="#065f46" text-anchor="middle">ambient presence</text>
+
+  <rect x="500" y="318" width="118" height="34" rx="8" fill="#d1fae5" stroke="#10b981"/>
+  <text x="559" y="339" font-size="11.5" fill="#065f46" text-anchor="middle">a heartbeat ping</text>
+
+  <rect x="592" y="346" width="120" height="34" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="652" y="367" font-size="11.5" fill="#1e3a8a" text-anchor="middle">it greets you</text>
+
+  <rect x="588" y="388" width="128" height="34" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="652" y="409" font-size="11" fill="#1e3a8a" text-anchor="middle">"weather" of the cluster</text>
+
+  <text x="392" y="470" font-size="11" fill="#10b981">&#9679; cluster: PRESENCE</text>
+  <text x="560" y="470" font-size="11" fill="#3b82f6">&#9679; cluster: IT-SPEAKS</text>
+  <text x="392" y="520" font-size="11.5" fill="#475569">scatter &#183; cluster &#183; link &#8212; never rank.</text>
+  <text x="392" y="537" font-size="11.5" fill="#94a3b8">(ranking is a convergent act — it lives in /ideate)</text>
+
+  <!-- RIGHT STACK -->
+  <!-- method state -->
+  <rect x="772" y="96" width="324" height="138" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="792" cy="124" r="6" fill="#8b5cf6"/>
+  <text x="806" y="129" font-size="14" font-weight="700" fill="#0f172a">METHOD STATE</text>
+  <text x="792" y="156" font-size="12.5" fill="#5b21b6">&#9654; now: Synectics (forced analogy)</text>
+  <text x="792" y="177" font-size="12" fill="#475569">why: you were circling, not landing</text>
+  <text x="792" y="196" font-size="12" fill="#475569">next: rotate in ~2 turns (cooldown)</text>
+  <text x="792" y="220" font-size="11.5" fill="#8b5cf6">every seed tagged with its method ancestry</text>
+
+  <!-- parking lot -->
+  <rect x="772" y="248" width="324" height="138" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+  <circle cx="792" cy="276" r="6" fill="#94a3b8"/>
+  <text x="806" y="281" font-size="14" font-weight="700" fill="#475569">PARKING LOT &#183; quarantine</text>
+  <text x="792" y="308" font-size="12" fill="#94a3b8">"is this scope creep?" &#8212; held</text>
+  <text x="792" y="328" font-size="12" fill="#94a3b8">"NotebookLM ToS ok?" &#8212; held</text>
+  <text x="792" y="348" font-size="12" fill="#94a3b8">"do I even have time?" &#8212; held</text>
+  <text x="792" y="372" font-size="11.5" fill="#64748b">captured, never answered here &#8212; travels to /ideate</text>
+
+  <!-- seed log -->
+  <rect x="772" y="400" width="324" height="144" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="792" cy="428" r="6" fill="#3b82f6"/>
+  <text x="806" y="433" font-size="14" font-weight="700" fill="#0f172a">SEED LOG &#183; addressable</text>
+  <text x="792" y="460" font-size="12.5" fill="#1e3a8a" font-family="monospace">{#signs-of-life}</text>
+  <text x="792" y="481" font-size="12.5" fill="#1e3a8a" font-family="monospace">{#ambient-presence}</text>
+  <text x="792" y="502" font-size="12.5" fill="#1e3a8a" font-family="monospace">{#heartbeat-ping}</text>
+  <text x="792" y="526" font-size="11.5" fill="#64748b">append-to-top &#183; resurfaces days later (incubation)</text>
+
+  <!-- AIRLOCK -->
+  <line x1="1116" y1="96" x2="1116" y2="544" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 5"/>
+  <rect x="1126" y="96" width="50" height="448" rx="10" fill="#475569"/>
+  <text x="1151" y="320" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle" transform="rotate(90 1151 320)">EXIT AIRLOCK &#8594; /ideate</text>
+  <text x="1151" y="300" font-size="11" fill="#fbbf24" text-anchor="middle" transform="rotate(90 1151 300)">&#9888; critique begins here</text>
+
+  <!-- SATELLITES -->
+  <rect x="24" y="564" width="1072" height="150" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="44" y="592" font-size="14" font-weight="700" fill="#0f172a">SATELLITES &#8212; round-trip, never load-bearing</text>
+  <text x="44" y="611" font-size="11.5" fill="#64748b">you go imagine in a real creative app; its output folds back into the spine. manual in v1; deep automation = a spike.</text>
+
+  <rect x="470" y="636" width="180" height="56" rx="10" fill="#f1f5f9" stroke="#cbd5e1"/>
+  <text x="560" y="660" font-size="12.5" font-weight="700" fill="#0f172a" text-anchor="middle">SPINE</text>
+  <text x="560" y="679" font-size="11" fill="#475569" text-anchor="middle" font-family="monospace">markdown + .canvas</text>
+
+  <g font-size="11.5" fill="#334155">
+    <rect x="44"  y="640" width="118" height="48" rx="9" fill="#eef2ff" stroke="#c7d2fe"/>
+    <text x="103" y="662" text-anchor="middle">NotebookLM</text>
+    <text x="103" y="679" text-anchor="middle" font-size="10.5" fill="#6366f1">source pack &#8644;</text>
+
+    <rect x="172" y="640" width="118" height="48" rx="9" fill="#eef2ff" stroke="#c7d2fe"/>
+    <text x="231" y="662" text-anchor="middle">Gemini Canvas</text>
+    <text x="231" y="679" text-anchor="middle" font-size="10.5" fill="#6366f1">visual &#8644;</text>
+
+    <rect x="300" y="640" width="118" height="48" rx="9" fill="#ecfdf5" stroke="#a7f3d0"/>
+    <text x="359" y="662" text-anchor="middle">MindNode</text>
+    <text x="359" y="679" text-anchor="middle" font-size="10.5" fill="#059669">OPML &#8644;</text>
+
+    <rect x="662" y="640" width="118" height="48" rx="9" fill="#fef3c7" stroke="#fcd34d"/>
+    <text x="721" y="662" text-anchor="middle">Excalidraw</text>
+    <text x="721" y="679" text-anchor="middle" font-size="10.5" fill="#d97706">sketch &#8644;</text>
+
+    <rect x="790" y="640" width="118" height="48" rx="9" fill="#eef2ff" stroke="#c7d2fe"/>
+    <text x="849" y="662" text-anchor="middle">Google Docs</text>
+    <text x="849" y="679" text-anchor="middle" font-size="10.5" fill="#6366f1">text &#8644;</text>
+
+    <rect x="918" y="640" width="156" height="48" rx="9" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="996" y="662" text-anchor="middle">your screen / artifact</text>
+    <text x="996" y="679" text-anchor="middle" font-size="10.5" fill="#475569">riff from the real thing</text>
+  </g>
+
+  <line x1="162" y1="664" x2="468" y2="664" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <line x1="652" y1="664" x2="650" y2="664" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <!-- footer legend -->
+  <text x="24" y="744" font-size="12" fill="#0f172a" font-weight="700">Both engines agree on the room itself.</text>
+  <text x="266" y="744" font-size="12" fill="#475569">Solid surfaces = core. Dashed = /brainstorm refines the details (canvas schema, resurfacing cadence, which satellites ship first).</text>
+  <text x="24" y="768" font-size="11.5" fill="#94a3b8">Critique-banned interior &#183; the only judgment-free room in saga. The wall on the right is where grounding (and the basis-cut) start.</text>
+</svg>

@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif">
+  <defs>
+    <linearGradient id="hdr2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#10b981"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowg" markerWidth="12" markerHeight="12" refX="8" refY="3.5" orient="auto">
+      <path d="M0,0 L8,3.5 L0,7 Z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="650" fill="#eef2f7"/>
+
+  <!-- header -->
+  <rect x="0" y="0" width="1200" height="70" fill="url(#hdr2)"/>
+  <text x="32" y="32" font-size="24" font-weight="700" fill="#ffffff">Imagining something with the partner &#8212; one thread, three moments</text>
+  <text x="33" y="56" font-size="14" fill="#eef2ff">watch a feeling become a routable seed &#183; example thread: "my home-lab feels dead"</text>
+
+  <!-- ============ FRAME 1 ============ -->
+  <rect x="24" y="86" width="360" height="500" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="44" y="116" font-size="15" font-weight="700" fill="#0f172a">1 &#183; THE ITCH</text>
+  <text x="44" y="135" font-size="12" fill="#64748b">no idea yet &#8212; just a feeling</text>
+
+  <rect x="128" y="276" width="152" height="46" rx="10" fill="#fde68a" stroke="#f59e0b" stroke-dasharray="5 4"/>
+  <text x="204" y="298" font-size="12.5" font-weight="700" fill="#78350f" text-anchor="middle">home-lab</text>
+  <text x="204" y="314" font-size="12.5" font-weight="700" fill="#78350f" text-anchor="middle">feels "dead"</text>
+  <text x="306" y="290" font-size="30" fill="#cbd5e1">?</text>
+  <text x="204" y="356" font-size="11.5" fill="#94a3b8" text-anchor="middle">a feeling, not a proposal</text>
+
+  <rect x="44" y="430" width="320" height="58" rx="9" fill="#fff1e6"/>
+  <text x="58" y="452" font-size="12" fill="#7c2d12">muse: "stay with it &#8212; abandoned mall?</text>
+  <text x="58" y="470" font-size="12" fill="#7c2d12">voicemail tree? pick the WRONG metaphor."</text>
+  <text x="44" y="520" font-size="11" fill="#fb7185" font-weight="700">&#9210; critique OFF &#183; nothing to justify yet</text>
+  <text x="44" y="540" font-size="11" fill="#94a3b8">move: inchoate elicitation (forced metaphor)</text>
+
+  <!-- arrow 1->2 -->
+  <line x1="392" y1="330" x2="416" y2="330" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="404" y="312" font-size="10.5" fill="#475569" text-anchor="middle">same</text>
+  <text x="404" y="324" font-size="10.5" fill="#475569" text-anchor="middle">session</text>
+
+  <!-- ============ FRAME 2 ============ -->
+  <rect x="420" y="86" width="360" height="500" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="440" y="116" font-size="15" font-weight="700" fill="#0f172a">2 &#183; A METHOD OPENS IT</text>
+  <text x="440" y="135" font-size="12" fill="#64748b">one named move &#8594; a fan-out of seeds</text>
+
+  <rect x="528" y="170" width="144" height="40" rx="9" fill="#d1fae5" stroke="#10b981"/>
+  <text x="600" y="195" font-size="12.5" font-weight="700" fill="#065f46" text-anchor="middle">signs of life</text>
+
+  <line x1="600" y1="210" x2="506" y2="276" stroke="#94a3b8" stroke-width="1.4"/>
+  <line x1="600" y1="210" x2="600" y2="330" stroke="#94a3b8" stroke-width="1.4"/>
+  <line x1="600" y1="210" x2="700" y2="276" stroke="#94a3b8" stroke-width="1.4"/>
+
+  <rect x="438" y="278" width="132" height="36" rx="8" fill="#ecfdf5" stroke="#34d399"/>
+  <text x="504" y="301" font-size="11.5" fill="#065f46" text-anchor="middle">ambient presence</text>
+
+  <rect x="534" y="332" width="132" height="36" rx="8" fill="#ecfdf5" stroke="#34d399"/>
+  <text x="600" y="355" font-size="11.5" fill="#065f46" text-anchor="middle">a heartbeat ping</text>
+
+  <rect x="636" y="278" width="126" height="36" rx="8" fill="#ecfdf5" stroke="#34d399"/>
+  <text x="699" y="301" font-size="11.5" fill="#065f46" text-anchor="middle">it greets you</text>
+
+  <!-- doubt peeling off -->
+  <line x1="504" y1="314" x2="470" y2="396" stroke="#cbd5e1" stroke-width="1.3" stroke-dasharray="4 4"/>
+  <rect x="436" y="398" width="150" height="34" rx="8" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="4 4"/>
+  <text x="511" y="419" font-size="11" fill="#94a3b8" text-anchor="middle">"scope creep?" &#8594; parked</text>
+
+  <rect x="440" y="446" width="320" height="40" rx="9" fill="#f5f3ff"/>
+  <text x="454" y="470" font-size="12" fill="#5b21b6">muse: "treat the lab as a body &#8212; where's its pulse?"</text>
+  <text x="440" y="520" font-size="11" fill="#8b5cf6" font-weight="700">move: Synectics (forced analogy)</text>
+  <text x="440" y="540" font-size="11" fill="#94a3b8">doubts captured, never answered here</text>
+
+  <!-- arrow 2->3 -->
+  <line x1="788" y1="330" x2="812" y2="330" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="800" y="306" font-size="10.5" fill="#475569" text-anchor="middle">days</text>
+  <text x="800" y="318" font-size="10.5" fill="#475569" text-anchor="middle">later</text>
+  <text x="800" y="352" font-size="9.5" fill="#94a3b8" text-anchor="middle">it re-floats</text>
+
+  <!-- ============ FRAME 3 ============ -->
+  <rect x="816" y="86" width="360" height="500" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="836" y="116" font-size="15" font-weight="700" fill="#0f172a">3 &#183; IT TAKES SHAPE</text>
+  <text x="836" y="135" font-size="12" fill="#64748b">clusters form &#183; a bundle graduates</text>
+
+  <ellipse cx="828" cy="300" rx="0" ry="0"/>
+  <ellipse cx="930" cy="288" rx="78" ry="66" fill="#ecfdf5" stroke="#a7f3d0" stroke-dasharray="4 4"/>
+  <ellipse cx="1058" cy="330" rx="70" ry="60" fill="#eff6ff" stroke="#bfdbfe" stroke-dasharray="4 4"/>
+
+  <rect x="876" y="250" width="118" height="34" rx="8" fill="#d1fae5" stroke="#10b981"/>
+  <text x="935" y="271" font-size="11" fill="#065f46" text-anchor="middle">ambient presence</text>
+  <rect x="882" y="300" width="104" height="34" rx="8" fill="#d1fae5" stroke="#10b981"/>
+  <text x="934" y="321" font-size="11" fill="#065f46" text-anchor="middle">heartbeat</text>
+
+  <rect x="1006" y="292" width="108" height="34" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="1060" y="313" font-size="11" fill="#1e3a8a" text-anchor="middle">it greets you</text>
+  <rect x="1010" y="338" width="104" height="34" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="1062" y="359" font-size="10.5" fill="#1e3a8a" text-anchor="middle">"weather" mode</text>
+
+  <line x1="934" y1="284" x2="934" y2="300" stroke="#94a3b8" stroke-width="1.3"/>
+  <line x1="986" y1="316" x2="1006" y2="312" stroke="#94a3b8" stroke-width="1.3"/>
+
+  <text x="900" y="372" font-size="10.5" fill="#10b981">&#9679; PRESENCE</text>
+  <text x="1024" y="392" font-size="10.5" fill="#3b82f6">&#9679; IT-SPEAKS</text>
+
+  <!-- graduation lasso -->
+  <rect x="864" y="232" width="266" height="160" rx="16" fill="none" stroke="#7c3aed" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="868" y="226" font-size="11" fill="#7c3aed" font-weight="700">graduation bundle</text>
+
+  <rect x="440" y="446" width="0" height="0"/>
+  <rect x="836" y="446" width="320" height="40" rx="9" fill="#eef2ff"/>
+  <text x="850" y="470" font-size="12" fill="#3730a3">you: "the lab should have a heartbeat."</text>
+  <text x="836" y="520" font-size="11" fill="#7c3aed" font-weight="700">&#8594; route to /ideate &#8212; now it can be judged</text>
+  <text x="836" y="540" font-size="11" fill="#94a3b8">doubts ride along to be answered THERE</text>
+
+  <!-- arrow to ideate -->
+  <line x1="1130" y1="300" x2="1168" y2="300" stroke="#7c3aed" stroke-width="2.4" marker-end="url(#arrowg)"/>
+  <text x="1150" y="284" font-size="11" fill="#7c3aed" text-anchor="middle" font-weight="700">/ideate</text>
+
+  <!-- footer legend -->
+  <text x="24" y="616" font-size="12" fill="#0f172a" font-weight="700">Solid = it happened in the session.</text>
+  <text x="248" y="616" font-size="12" fill="#475569">Dashed/violet = a GUESS /brainstorm will pin down: how the bundle is lassoed, the resurfacing cadence, whether the metaphor step is always offered or only when you're circling.</text>
+  <text x="24" y="638" font-size="11.5" fill="#94a3b8">The partner never says "that won't work." It mutates, mirrors, and remembers &#8212; until a feeling is solid enough to hand to the critic next door.</text>
+</svg>

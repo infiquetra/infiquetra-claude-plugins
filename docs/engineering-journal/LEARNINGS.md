@@ -25,6 +25,22 @@
 
 ---
 
+## 2026-06-25
+
+### Running `/ideate` on a feasibility-out-of-frame imagination doc imports the convergent engine's own constraints and clear-cuts the divergent material  {#ideate-on-imagination-doc-imports-constraints}
+
+**Context.** The `/muse` 28-seed doc was authored at "all the time, money, people — feasibility deliberately out of frame" altitude (the input to a critique-*banned* imagination command). It was then run through `/ideate`, whose Phase-3 filter cuts any idea with no articulated basis. The survivors read as boundary-only — 3 of the top 4 were contract/removal decisions — and the operator's three priorities (a visual thinking surface, third-party creative apps, a first-class methodology library) were respectively CUT, DEFERRED-"never v1", and DEMOTED-to-a-registry.
+
+**Evidence.** `docs/ideation/2026-06-25-muse-codex-gpt55-ideation.md` (an independent `codex exec -m gpt-5.5 -c model_reasoning_effort=xhigh` run on the same doc) and `docs/ideation/2026-06-25-muse-ideation-comparison.md` (head-to-head). The visual cut cited `DECISIONS {#saga-docs-source-model}` as "diagram deps rejected" — but that decision is titled "…**and generated SVG visual kit**", saga ships 4 committed SVGs (`plugins/saga/docs/assets/*.svg`), and its rationale says "the user explicitly wanted presentation-worthy visuals". The third-party deferral rested on a feasibility argument (ToS-gray/brittle) the seed doc explicitly excluded.
+
+**Mechanism.** `/ideate` is a grounding + basis-cutting CONVERGENT engine; an imagination doc is DIVERGENT material that deliberately lacks articulated basis. Running one on the other is a category mismatch: the filter imports (a) repo-internal architecture constraints (the dead-wiring rule → "no new artifact"; a docs-sourcing decision over-generalized — and misread — onto product UX) and (b) the very feasibility dimension the doc placed out of frame. The convergent engine cannot help but suppress exactly the ungrounded, can't-justify-it-yet material that `/muse` exists to protect — the limitation `/muse` was invented to escape, reproduced on `/muse`'s own design.
+
+**Validation.** Three independent lines converged: the prior artifact's own stated reasons, the Codex second opinion, and a direct re-read of the cited source decision. Codex was NOT a yes-man — it agreed with `/ideate` on critique-ban, plain-text-as-truth, incubation, and the eventual `/ideate` handoff, and it ranked "replace office-hours" last (conceding the prior pass's concrete repo-coupling argument that office-hours stays for v1).
+
+**Generalizable rule.** Do not use a convergent/grounding engine (`/ideate`) to refine an explicitly feasibility-out-of-frame imagination doc — it imports repo-internal + feasibility constraints the doc excluded and clear-cuts the divergent material. When an ideation feels "infected" by the first engine's constraints, get an independent second-engine opinion (`codex exec -m gpt-5.5 -c model_reasoning_effort=xhigh`, read-only sandbox, via the Headroom proxy). And before any filter invokes a "settled decision," re-read that decision in full — `{#saga-docs-source-model}` is pro-visual, not anti-visual.
+
+**Refs.** [#dead-wiring-needs-producer-and-consumer](#dead-wiring-needs-producer-and-consumer); `DECISIONS.md` {#saga-docs-source-model}; the `/muse` initiative (memory `muse-imagination-plugin`).
+
 ## 2026-06-21
 
 ### Dead-wiring has TWO axes — a new saga field needs BOTH a real producer AND a real consumer, or the telemetry is silently inert  {#dead-wiring-needs-producer-and-consumer}

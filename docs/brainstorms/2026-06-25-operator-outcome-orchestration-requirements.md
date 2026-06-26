@@ -52,8 +52,10 @@ These framing choices are settled; Requirements and Flows below inherit them.
   in `work`, B in `qa`, C blocked in `plan` has no single phase). The orchestrator *reuses* saga
   machinery; the leaves *are* sagas. Self-similar **operator experience**, not self-similar **data
   structure**.
-- **All components co-equal.** No secondary tier and no phasing — the build is complete only when every
-  component ships. "All or nothing," confirmed.
+- **All components co-equal, with an internal build spine.** No secondary tier and no phasing — the
+  *release* is complete only when every component ships ("all or nothing," confirmed). But `/plan`
+  sequences an internal validation spine (minimal coordinator → one backend → auto-merge → projection →
+  economics) so the build is verifiable as it grows. Co-equal at release ≠ co-equal as work order.
 - **Independent branches survive a block.** When a subplot hard-blocks, only its downstream subtree
   pauses; independent branches keep running; blocks bubble into one consolidated page; the operator can
   manually halt-all for a plan-level block.
@@ -79,6 +81,17 @@ These framing choices are settled; Requirements and Flows below inherit them.
   lifecycle, route the operator's *attention* (the consolidator, gates, cold-reentry-with-why), or
   instrument realized cost to prove the thesis. The orchestrator earns its existence on those four; it
   reuses GitHub / Actions / the board as projections and gates, not as the engine.
+- **The orchestrator host is a level-triggered reconcile loop.** Each tick reconstructs state from the
+  durable store, advances the ready frontier, dispatches non-gated leaves, auto-merges clean ones, and
+  pages on exceptions — the K8s reconcile shape (R17 derived-on-read). Because it re-derives from the
+  store every tick it holds no in-memory DAG to lose (crash-tolerant) and is **host-agnostic**: it runs
+  as a local `/loop` session or a scheduled routine for lights-out. `/goal` and a compiled dynamic
+  workflow are **executors, not the host** — a workflow is ephemeral/single-session and `/goal` in the
+  coordinator seat is the R3 context-collapse failure; both stay in the R6 executor menu.
+- **The operational state machine is in scope.** The round-2 second opinions (Codex + Antigravity)
+  agreed the architecture is sound but the autonomous-execution state machine was missing: crash/replay,
+  stale-base merge conflicts, PR/branch/worktree negative states, liveness, and side-effect idempotency.
+  These are first-class requirements (R29–R34), not `/plan` mechanics.
 
 ## Requirements
 
@@ -104,8 +117,12 @@ What must be true of the built capability. Grouped by concern; IDs continuous.
   When a chosen backend cannot actually run, the seam emits a visible HALT-not-degrade receipt rather
   than silently substituting.
 - R6. The per-subplot executor menu is the full set: inline / fork / subagent / team-execution /
-  cc-workflows-ultracode / `/goal`. Forks (share the parent prompt cache) and `/goal` (bounded
-  autonomous loops) are first-class, not just the current three backends.
+  cc-workflows-ultracode / `/goal`. Forks and `/goal` (bounded autonomous loops) are first-class, not
+  just the current three backends. The fork cost lever is **real but conditional** (verified against the
+  caching reference): a fork reuses the parent's cached prefix at ~0.1× only if it copies the parent's
+  model + system + tool order byte-identically and runs within the cache TTL, and it is in direct
+  tension with downgrading the fork to a cheaper model — a model switch invalidates the cache. The
+  recommender (R7) weighs that tradeoff; R24 measures whether a given fork actually paid off.
 - R7. The backend is recommended by `recommend_execution_backend`, auto-bound for non-gated subplots,
   and operator-overridden only — decided at the ready-frontier under a remaining attention/token
   budget, not per-node in isolation. Overrides feed the R12 override telemetry consumed by `/optimize`.
@@ -127,14 +144,18 @@ What must be true of the built capability. Grouped by concern; IDs continuous.
   coordinator's own DAG / lock / frontier state stays out of any merged summary; those mutations are
   single-writer (the orchestrator), so R13's locks cover only them, not the completion log.
 - R11. Completion is a per-subplot contract: a code subplot unlocks its dependents on **PR-merged**; a
-  non-code subplot (docs, research) on the **local completion tick**. The contract is the concrete form
-  of R9's barrier predicate.
+  non-code subplot (docs, research) on the **local completion tick** — but that tick must also write a
+  durable completion marker into the canonical store (close its tracking sub-issue / record in the
+  spec's completion log), or a fresh machine reconstructing from GitHub would not know it finished and
+  would re-run it. Completion is the concrete form of R9's barrier predicate; it is never *only* local.
 - R12. A non-gated subplot **auto-merges** (squash) to unlock its dependents — where "clean" means all
   required CI checks green AND the reviewer-consensus threshold met (team-execution backend) or
-  `/code-review` clean of P0/P1 (other backends) AND not flagged risky/destructive. The merge is a
-  server-side PR squash-merge (the leaf's own work already passed the local pre-push gate), so an
-  autonomous DAG advances through code layers unattended; gated, risky, or non-clean subplots wait for
-  the operator.
+  `/code-review` clean of P0/P1 (other backends) AND not flagged risky/destructive AND its branch base
+  is current. Concurrent siblings can both be "clean" on stale bases, so before each auto-merge the
+  runner checks base freshness and **rebases-then-re-verifies, or serializes merges through a queue**; a
+  merge that conflicts fails the leaf back to `work` (never a silent skip) and pages per R18. The merge
+  is a server-side PR squash-merge (the leaf's own work already passed the local pre-push gate); gated,
+  risky, conflicted, or non-clean subplots wait for the operator.
 
 **Concurrency and state**
 
@@ -145,7 +166,10 @@ What must be true of the built capability. Grouped by concern; IDs continuous.
 - R14. Outcome state is portable across machines / worktrees / sessions via an explicit export/import
   story, so the DAG survives worktree cleanup and the operator's real multi-machine pattern.
 - R15. The runner maintains one durable persistent session + worktree **per sub-outcome** (not per
-  subtask), naming and owning it, coupled to the re-entry token (R9) and portable state (R14).
+  subtask), naming and owning it, coupled to the re-entry token (R9) and portable state (R14). Worktree
+  proliferation is bounded and lifecycle-managed: the runner caps concurrent worktrees, reaps a
+  sub-outcome's worktree on completion/abandon, and shares heavy dependency installs where possible, so
+  an N-subplot outcome does not exhaust a solo machine's disk/inodes.
 
 **Operator surface**
 
@@ -185,7 +209,10 @@ What must be true of the built capability. Grouped by concern; IDs continuous.
 - R23. Leaf degradation is conditional on operator presence: halt + page when the operator is attending
   the leaf; auto-degrade one rung (`cc-workflows → team-execution → inline`) when the leaf is autonomous
   and the operator is away, recording a visible downgrade receipt surfaced in the report; a leaf tagged
-  guarantee-bearing halts even when away.
+  guarantee-bearing halts even when away. Degrade applies **only when the backend was unavailable before
+  any side effect** — a leaf that already executed partially (a deploy, migration, write, or repo
+  mutation) HALTs for the operator rather than re-running on a lesser backend, so degradation never
+  duplicates a side effect.
 
 **Economics and portfolio**
 
@@ -198,9 +225,11 @@ What must be true of the built capability. Grouped by concern; IDs continuous.
 **Storage**
 
 - R26. The durable record splits by **facet**: the version-controlled outcome-spec artifact (and its
-  companion decision/cost log), committed + pushed, is canonical for **structure** — subplot nodes,
-  their `depends_on` edges, the decision trail (R19), and the cost rollup (R24) — while **GitHub**
-  issues/PRs are canonical for **completion state** (PR-merged / issue-closed). The artifact is the
+  companion decision/cost log), committed + pushed to the **outcome's own branch** (not `main` mid-run —
+  avoids polluting `main` history while keeping the remote current for cross-machine reconstruction), is
+  canonical for **structure** — subplot nodes, their `depends_on` edges, the decision trail (R19), and
+  the cost rollup (R24) — while **GitHub** issues/PRs are canonical for **completion state** (PR-merged
+  / issue-closed). The artifact is the
   single source for the node set; GitHub sub-issues are a generated projection of it, so structure and
   completion cannot drift against each other.
 - R27. The git-common-dir store is a **pure performance cache** (verified to resolve identically from
@@ -212,6 +241,34 @@ What must be true of the built capability. Grouped by concern; IDs continuous.
   durable output is its merged PR plus a completion event published up to the shared store as its own
   immutable file (no shared-file append — multi-writer-safe by construction, mirroring saga's
   one-file-per-tick model).
+
+**Operational state machine (autonomous-execution safety)**
+
+- R29. The orchestrator runs as a **level-triggered reconcile loop**, not a long-lived imperative
+  process: each tick reconstructs from the durable store, advances the ready frontier, dispatches
+  non-gated leaves to their executors, auto-merges clean ones, pages on exceptions, then sleeps. It
+  holds no authoritative in-memory DAG, so it is crash-tolerant and host-agnostic (a local `/loop`
+  session or a scheduled routine). `/goal` and compiled dynamic workflows are executors it dispatches
+  to, never the host.
+- R30. Crash and replay are first-class: a transition ledger plus idempotent reconcile make every
+  multi-step transition (dispatch → spec update → GitHub mutation → merge → cost/report) recoverable
+  from "crashed after X before Y" without duplicate dispatch, lost unlocks, or stale reports. R13's
+  idempotency keys are the dedup primitive.
+- R31. Liveness and graph validity are enforced: each leaf carries a heartbeat/timeout so a hung
+  `cc-workflows`/`/goal` leaf is reclaimed and paged rather than waited on forever; the drafted/edited
+  DAG is machine-validated for cycles, self-dependencies, unreachable nodes, and invalid child specs
+  before dispatch.
+- R32. Git/PR/worktree **negative terminal states are modeled**, each with a defined terminal state and
+  recovery/cascade: PR closed-unmerged (dependents do not hang — the subplot enters a terminal
+  `rejected` state that cascades like a block), branch deleted, worktree removed, force-push, manual
+  out-of-band merge, stale required checks, and required rebase. `/plan` does not get to invent these.
+- R33. In-flight DAG mutation has **rules**: which edits are legal after a leaf is dispatched, how graph
+  revisions are versioned, and how orphans are reconciled — pruning or re-elaborating a node closes its
+  generated GitHub sub-issue, reaps its worktree, and reconciles its cost/evidence rather than leaving
+  zombies.
+- R34. GitHub offline / rate-limit behavior is **explicit**: a degraded mode with queued writes, a
+  retry budget, and reconcile-on-reconnect conflict resolution — plus an honest statement of what F5 can
+  and cannot reconstruct while the canonical store is unreachable.
 
 ## Key Flows
 
@@ -263,8 +320,9 @@ What this build includes, defers to planning, and deliberately excludes.
 
 **In scope (built whole):**
 
-- Every requirement R1–R28 — the coordinator, dispatch seam, envelope, concurrency/state, operator
-  surface, decomposition, failure/degrade policy, economics, and storage.
+- Every requirement R1–R34 — the coordinator, dispatch seam, envelope, concurrency/state, operator
+  surface, decomposition, failure/degrade policy, economics, storage, and the operational state machine
+  (host, crash/replay, liveness, negative states, in-flight mutation, offline mode).
 - The team-execution friend-plugin change (R8): strip tmux, delete `team-setup`, re-home the
   validator-state check.
 
@@ -317,13 +375,15 @@ What this rides on, and the load-bearing assumptions to keep visible.
 
 What "built right" looks like for this all-or-nothing build.
 
-- All R1–R28 ship together; no component is left as a stub.
+- All R1–R34 ship together; no component is left as a stub (the release bar — `/plan` still sequences
+  an internal build spine).
 - The cost thesis is **measurable**, not asserted — R24's rollup can answer "did the DAG of right-sized
   executions beat one long thread?" with real per-outcome numbers.
 - Cold re-entry on a *different machine* after a multi-day gap reconstructs where / what / why with
   nothing lost (F5).
 - An overnight autonomous run **progresses through code layers** (auto-merge unlocks dependents) rather
-  than stalling at the first merge boundary.
+  than stalling at the first merge boundary — and survives a mid-run crash, a stale-base merge conflict,
+  and a hung leaf without corrupting the DAG or duplicating a side effect.
 - Concurrent blocks reach the operator as **one** ranked page, not N (R18).
 - team-execution runs with **zero** tmux and no setup step, validators intact.
 
@@ -338,9 +398,29 @@ What "built right" looks like for this all-or-nothing build.
 - **Deferred to planning:** exact paths/formats/schemas (the outcome-spec artifact format and its
   embedded decision/cost log, the completion-event file shape, the `/outcome report` layout); the
   `/outcome` subcommand vocabulary; the leaf "guarantee-bearing" tagging mechanism; the validator-state
-  re-home mechanic; the artifact commit cadence (how often structure/trail/cost is committed); the
-  operator's edge-review CLI affordance; and the trigger for introducing the networked completion
-  stream.
+  re-home mechanic; the artifact commit cadence; the operator's edge-review CLI affordance; the trigger
+  for introducing the networked completion stream; and the round-2 mechanism details — the reconcile
+  loop's concrete runtime (local `/loop` vs scheduled routine), the transition-ledger format, the
+  rebase-vs-merge-queue choice for R12, and the heartbeat/timeout values for R31.
+
+## Second opinions — Codex + Antigravity (round 2)
+
+After the doc-review, the resolved doc was handed to two independent reviewers (Codex gpt-5.5 xhigh,
+Antigravity Gemini 3.1 Pro High) to find what remained. They converged: the architecture and store
+shape are sound, but the **operational state machine for autonomous execution** was missing. Their
+findings are folded into the requirements above.
+
+- **Both flagged:** stale-base sibling merge conflicts (→ R12); no orchestrator host + no crash/replay
+  (→ R29/R30); PR/branch/worktree negative states (→ R32); non-code completion not durable in the
+  canonical store (→ R11, correcting the doc-review's F1 resolution); liveness/zombie leaves + DAG
+  validation (→ R31); the all-co-equal delivery risk (→ the build-spine in Key Decisions).
+- **Codex also:** degrade-after-side-effects duplication (→ R23); in-flight DAG mutation rules (→ R33);
+  GitHub offline/rate-limit semantics (→ R34).
+- **Antigravity also:** worktree resource explosion (→ R15); spec-artifact commit cadence (→ R26);
+  sub-issue orphaning on prune (→ R33).
+- **Forks-share-cache (R6/R24), verified against the caching reference:** real but conditional — a fork
+  reuses the parent prefix only with byte-identical model/system/tools and within TTL, and the lever is
+  in tension with downgrading the fork's model. Not a blanket "forks are cheap"; R24 measures it.
 
 ## Sources / Research
 
@@ -351,6 +431,8 @@ Breadcrumbs for a planner reading cold.
 - UX walkthrough: `docs/ideation/2026-06-25-operator-outcome-orchestration-ux-walkthrough.md`
   (illustrative operator experience at small and epic scale).
 - Source problem: `docs/analysis/2026-06-25-claude-cache-and-orchestration-chatgpt-source.md`.
+- Reviews: `docs/reviews/2026-06-25-operator-outcome-orchestration-requirements-review.md` (the
+  verify-everything doc-review and its 7 resolved findings).
 - Code substrate: `plugins/saga/scripts/execution_spec.py` (`dependency_layers`,
   `recompile_for_tier` ~`:708`, the emitters), `plugins/saga/scripts/team_emitter.py`
   (`emit_team_structure` ~`:71`), `plugins/saga/scripts/lifecycle_state.py:99`

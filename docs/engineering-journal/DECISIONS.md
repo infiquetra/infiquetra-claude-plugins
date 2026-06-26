@@ -24,6 +24,26 @@
 
 ## 2026-06-26
 
+### Outcome completion barrier (U5): GitHub-canonical completion materialized into the cache, parent-owned predicate over evidence, unknown is the safe degraded value (U5 PR pending — SHA-fill on merge)  {#outcome-completion-barrier-stance}
+
+**Decision.** Completion is decided by a **parent-owned barrier predicate** (`outcome_orchestrator.barrier_satisfied`, R9) over evidence the parent can re-verify on GitHub — never a child's self-report. Conventions later units (U6 auto-merge/negative-states, U8 report) must follow:
+- **GitHub is canonical for completion; the cache is a materialization.** The barrier reads canonical truth from GitHub via `outcome_github` (a code leaf's **PR merged**, a non-code leaf's **tracking issue closed**); `harvest` writes that truth into the store as a success completion event so the existing `completed_subplots` frontier read unlocks the next Kahn layer (R10). A wiped cache is **re-harvested from GitHub** — this is the concrete realization of R27's "cache-loss loses no canonical state" that the U2 cache-loss test had to stand in for.
+- **`unknown` is the safe degraded value (R34).** Every GitHub read degrades to `unknown` on a `gh` failure, and `merged` requires a real `mergedAt` (a closed-unmerged PR reads `closed`, R32, not `merged`). Only positive terminals unlock; a GitHub outage can DELAY an unlock, never fabricate one.
+- **The barrier returns a verdict object** (contract + canonical state + evidence + reason), so a HALT is explainable and re-verifiable, and the cockpit (U8) can show *why* a leaf is not done.
+- **Harvest is success-only in U5.** Negative-terminal harvest (closed-unmerged PR → `rejected` cascade) is U6; U5 unlocks on success. `blocked_subtree` (R22) pauses only a block's downstream subtree.
+- **The reconcile loop's harvest half is an injected hook.** `advance(harvester=...)` runs the harvest before the frontier read each tick; the engine stays decoupled from `outcome_orchestrator` (which reads GitHub), mirroring the injected-dispatcher pattern.
+
+**Rejected alternatives.**
+- *Trust the leaf's own completion tick as "done".* Rejected per R9 — "done" is the parent's predicate over evidence; a child self-reporting done (without a merged PR / closed issue) must not unlock dependents.
+- *Make the cache the source of completion truth.* Rejected: a cache wipe would then lose completion (the exact gap the U2/U3 verifiers flagged). GitHub-canonical + harvest-materialize keeps cache-loss lossless.
+- *Coerce a GitHub read failure to "open" or "not done" silently.* Rejected in favor of an explicit `unknown` so the degraded state is visible and never mistaken for a real negative terminal.
+
+**Rationale.** Encoding completion as a parent predicate over GitHub-canonical evidence makes the two honesty gaps from earlier units real: U2's "cache holds no canonical state" and U3's "resume reconstructs from GitHub" both now have a concrete read+harvest path. Generalizable rule: **when a cache claims to be non-authoritative, there must be an actual re-derive-from-canonical path that a test exercises — not just an assertion that the cache holds nothing.**
+
+**Revisit when.** U6 adds the merge *action* + negative-state handling (the harvest gains negative terminals → `rejected`/`stalled` and the R22 cascade fires on them); U8 consumes `barrier_report` for the cockpit. If GitHub read latency dominates the tick, add a short-TTL state cache keyed on PR/issue number (invalidated by an event), but never a committed completion field.
+
+**Refs.** `plugins/saga/scripts/outcome_orchestrator.py`, `plugins/saga/scripts/outcome_github.py`, `tests/test_outcome_completion.py`; work log `docs/work-sessions/2026-06-25-outcome-orchestration.md`. Implements U5 of the [outcome-orchestration build plan](#outcome-orchestration-plan); builds on the U2 [store durability stance](#outcome-store-durability-stance) (closes its cache-loss honesty gap) + the U4 [dispatcher seam stance](#outcome-dispatcher-seam-stance).
+
 ### Outcome dispatcher seam (U4): HALT is the absence of a fallback path, team-execution as first backend, recompile_for_tier's third leg, R8 destructive cleanup carries its own guard (U4 PR pending — SHA-fill on merge)  {#outcome-dispatcher-seam-stance}
 
 **Decision.** U4 added the single backend dispatcher seam (`outcome_dispatcher.py`) + reshaped team-execution (R8). Conventions every later backend/degrade unit (U6 auto-merge, U9 full menu + degrade) must follow:

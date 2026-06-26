@@ -304,6 +304,9 @@ def status(
 @dataclass
 class AdvanceResult:
     dispatched: list[str] = field(default_factory=list)  # subplots handed to a backend this tick
+    harvested: list[str] = field(
+        default_factory=list
+    )  # completions materialized from GitHub (U5/R10)
     halted: list[dict[str, Any]] = field(
         default_factory=list
     )  # HALT receipts (R5/R23 — backend down)
@@ -314,6 +317,7 @@ class AdvanceResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "dispatched": self.dispatched,
+            "harvested": self.harvested,
             "halted": self.halted,
             "skipped_busy": self.skipped_busy,
             "ticks": self.ticks,
@@ -328,6 +332,7 @@ def advance(
     loop: bool = False,
     max_ticks: int = 100,
     dispatcher: Dispatcher | None = None,
+    harvester: Callable[[Any, Any], list[str]] | None = None,
     holder: str | None = None,
     lease_ttl: float = DEFAULT_LEASE_TTL,
     now: Callable[[], float] = time.time,
@@ -337,12 +342,13 @@ def advance(
 
     A tick: acquire the coordinator lease under a per-invocation unique ``holder`` (a second
     concurrent / re-entrant ``advance`` is a different holder, so it no-ops on the held lease, R13);
-    recompute the ready frontier from the durable store; for each ready, not-yet-dispatched,
-    not-completed leaf, take its per-subplot dispatch lock and **dispatch** it (record an intent,
-    call the injected backend dispatcher, record a commit) — never running the leaf's work here (R3);
-    then return the derived status. Idempotent: a leaf with a settled (``commit``) dispatch record is
-    skipped, so repeated ticks never double-dispatch. ``loop`` repeats until the frontier is empty or
-    ``max_ticks``, which the host (`/loop`/cron) would otherwise drive.
+    **harvest** GitHub-canonical completions into the cache (the optional ``harvester``, U5 — a
+    code leaf's merged PR / a non-code leaf's closed issue becomes a completion event that unlocks the
+    next Kahn layer, R10/R11); recompute the ready frontier; for each ready, not-yet-dispatched,
+    not-completed leaf, take its per-subplot dispatch lock and **dispatch** it — never running the
+    leaf's work here (R3); then return the derived status. Idempotent: a leaf with a settled
+    (``commit``) dispatch record is skipped, so repeated ticks never double-dispatch. ``loop`` repeats
+    until the frontier is empty or ``max_ticks``, which the host (`/loop`/cron) would otherwise drive.
     """
     holder = holder if holder is not None else _default_holder()
     dispatch = dispatcher if dispatcher is not None else _default_dispatcher
@@ -356,10 +362,15 @@ def advance(
 
     all_dispatched: list[str] = []
     all_halted: list[dict[str, Any]] = []
+    all_harvested: list[str] = []
     ticks = 0
     try:
         while True:
             ticks += 1
+            if harvester is not None:
+                # Materialize GitHub-canonical completions BEFORE the frontier read so a leaf whose
+                # PR just merged unlocks its dependents this same tick (R10/R11).
+                all_harvested.extend(harvester(spec, store))
             tick_dispatched, tick_halted = _reconcile_once(
                 repo_root, spec, store, dispatch, holder, lease_ttl, now
             )
@@ -376,6 +387,7 @@ def advance(
 
     return AdvanceResult(
         dispatched=all_dispatched,
+        harvested=all_harvested,
         halted=all_halted,
         ticks=ticks,
         status=status(repo_root, outcome_id, spec=spec, store=store),
@@ -563,6 +575,54 @@ def graph_mermaid(repo_root: Path, outcome_id: str, *, store: Any | None = None)
 
 
 # ---------------------------------------------------------------------------
+# Production harvester — the completion-barrier injector for the live advance loop (U5)
+# ---------------------------------------------------------------------------
+
+
+def production_harvester(
+    repo_root: Path, *, github_runner: Callable[..., Any] | None = None
+) -> Callable[[Any, Any], list[str]]:
+    """Build the harvester ``advance`` runs each tick: it materializes GitHub-canonical completions
+    (a merged PR / closed issue) into the store so the frontier unlocks the next Kahn layer (U5).
+
+    Child-outcome nodes (``child_spec_ref``, KTD10) resolve their terminal state by **recursing**
+    into the child outcome — load its branch spec, harvest it, and report ``done`` iff every child
+    node is success-complete. A ``seen`` set guards against a ``child_spec_ref`` ancestor cycle (the
+    deep static cycle check lands with the decompose flow, U7); a missing/unstarted child reads
+    ``unknown`` (so the parent waits, never falsely unlocks).
+    """
+    import outcome_orchestrator
+
+    def child_state_reader(child_id: str, seen: frozenset[str] = frozenset()) -> str:
+        if child_id in seen:
+            return "unknown"  # ancestor cycle — do not recurse forever
+        try:
+            child_spec = load_spec(repo_root, child_id)
+        except OutcomeError:
+            return "unknown"  # child not started yet -> parent keeps waiting
+        # NOTE: the store's runner resolves the git-common-dir (NOT GitHub) — it must stay the
+        # default git resolver, never the ``github_runner`` (that is only for ``gh`` reads in harvest).
+        child_store = _store(repo_root, child_id)
+        nxt = seen | {child_id}
+        outcome_orchestrator.harvest(
+            child_spec,
+            store=child_store,
+            github_runner=github_runner,
+            child_state_reader=lambda cid: child_state_reader(cid, nxt),
+        )
+        done_set = outcome_store.completed_subplots(child_store)
+        all_done = all(n.subplot_id in done_set for n in child_spec.nodes)
+        return "done" if all_done else "running"
+
+    def harvester(spec: Any, store: Any) -> list[str]:
+        return outcome_orchestrator.harvest(
+            spec, store=store, github_runner=github_runner, child_state_reader=child_state_reader
+        )
+
+    return harvester
+
+
+# ---------------------------------------------------------------------------
 # CLI — the thin /outcome verbs (KTD11). No I/O at import.
 # ---------------------------------------------------------------------------
 
@@ -603,13 +663,16 @@ def main(argv: list[str] | None = None) -> int:
             spec = start(root, args.outcome_id, args.objective)
             print(json.dumps({"started": spec.outcome_id, "nodes": len(spec.nodes)}))
         elif args.command == "advance":
-            # The production /outcome advance routes through the REAL backend seam (R5/R6): the
-            # record-only default dispatcher is the test/skeleton fallback only.
+            # The production /outcome advance routes through the REAL backend seam (R5/R6, the
+            # record-only default dispatcher is the test/skeleton fallback only) AND the REAL
+            # completion barrier (U5): the harvester materializes GitHub-canonical completions each
+            # tick so a merged PR / closed issue unlocks the next Kahn layer (R10/R11).
             result = advance(
                 root,
                 args.outcome_id,
                 loop=args.loop,
                 dispatcher=outcome_dispatcher.make_dispatcher(),
+                harvester=production_harvester(root),
             )
             print(json.dumps(result.to_dict()))
         elif args.command == "resume":

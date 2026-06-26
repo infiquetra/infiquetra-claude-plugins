@@ -336,6 +336,9 @@ class AdvanceResult:
         default_factory=list
     )  # per-tick worktree reap/removed/provision (U7/R15/R32)
     liveness: list[Any] = field(default_factory=list)  # per-tick stalled-leaf reclaim (U9/R31)
+    costs: list[Any] = field(
+        default_factory=list
+    )  # per-tick realized-cost rollup materialization (U10/R24)
     gated: list[str] = field(
         default_factory=list
     )  # ready leaves held back by the approval gate (U7/R20)
@@ -354,6 +357,7 @@ class AdvanceResult:
             "merges": self.merges,
             "worktrees": self.worktrees,
             "liveness": self.liveness,
+            "costs": self.costs,
             "gated": self.gated,
             "degraded": self.degraded,
             "skipped_busy": self.skipped_busy,
@@ -373,6 +377,7 @@ def advance(
     merge_processor: Callable[[Any, Any], Any] | None = None,
     worktree_processor: Callable[[Any, Any], Any] | None = None,
     liveness_processor: Callable[[Any, Any], Any] | None = None,
+    cost_processor: Callable[[Any, Any], Any] | None = None,
     gate_factory: Callable[[Any, Any], Callable[[str], bool]] | None = None,
     available: Sequence[str] | None = None,
     attending: bool = True,
@@ -414,6 +419,7 @@ def advance(
     merge_runs: list[Any] = []
     worktree_runs: list[Any] = []
     liveness_runs: list[Any] = []
+    cost_runs: list[Any] = []
     ticks = 0
     try:
         while True:
@@ -450,6 +456,10 @@ def advance(
             all_halted.extend(tick_halted)
             all_gated.extend(tick_gated)
             all_degraded.extend(tick_degraded)
+            if cost_processor is not None:
+                # Materialize the realized-cost rollup into spec.cost_rollup AFTER dispatch/harvest so it
+                # reflects this tick's completions (U10/R24). The U8 report renders spec.cost_rollup.
+                cost_runs.append(cost_processor(spec, store))
             if not loop:
                 break
             if not tick_dispatched:
@@ -466,6 +476,7 @@ def advance(
         merges=merge_runs,
         worktrees=worktree_runs,
         liveness=liveness_runs,
+        costs=cost_runs,
         gated=sorted(set(all_gated)),
         degraded=all_degraded,
         ticks=ticks,
@@ -814,6 +825,21 @@ def production_liveness_processor(
     return processor
 
 
+def production_cost_processor(repo_root: Path) -> Callable[[Any, Any], Any]:
+    """Build the cost processor ``advance`` runs each tick (U10): it materializes the realized-cost
+    rollup (R24) into ``spec.cost_rollup`` and persists the spec WHEN the rollup changed, so the U8
+    report renders it (the producer -> spec -> consumer edge, no U8->U10 code dependency)."""
+    import outcome_costs
+
+    def processor(spec: Any, store: Any) -> Any:
+        changed = outcome_costs.materialize(spec, store)
+        if changed:
+            save_spec(repo_root, spec)
+        return {"rollup": spec.cost_rollup, "changed": changed}
+
+    return processor
+
+
 # ---------------------------------------------------------------------------
 # CLI — the thin /outcome verbs (KTD11). No I/O at import.
 # ---------------------------------------------------------------------------
@@ -924,6 +950,7 @@ def main(argv: list[str] | None = None) -> int:
                 merge_processor=production_merge_processor(),
                 worktree_processor=production_worktree_processor(root),
                 liveness_processor=production_liveness_processor(),
+                cost_processor=production_cost_processor(root),
                 gate_factory=lambda spec, store: outcome_decompose.make_dispatch_gate(store, spec),
                 available=avail,
                 attending=not args.autonomous,

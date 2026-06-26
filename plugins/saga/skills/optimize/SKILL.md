@@ -199,6 +199,28 @@ diagnostics, with the key kept experiments and their deltas.
 **only when it is routed to `/work`** to ship. There is **NO saga write**. Never run `gh issue create` —
 `mission-control` owns issue bodies.
 
+## Outcome economics — the portfolio consumer (R24)
+
+When the thing being optimized is an **OutcomeOrchestrator** outcome (a DAG of leaf sagas), `/optimize`
+has a **portfolio-shaped baseline** ready-made: the realized-cost rollup (`scripts/outcome_costs.py`
+`rollup` / the materialized `spec.cost_rollup`, surfaced in `/outcome report`). Read it instead of
+re-deriving cost by hand:
+
+- per-outcome **tokens / operator_touches / retries** (summed across leaves, R24) and **by_executor**
+  (the backend **mix** — how many leaves ran on each backend; counts, not per-executor cost) — the
+  portfolio surface for "where did this outcome's budget go, and on which backends". For **per-leaf** cost
+  (which single leaf cost the most), read `scripts/outcome_costs.py` `subplot_cost(store, sid)`; the
+  rollup itself carries only the global sums + the backend mix, not a per-leaf or per-executor breakdown;
+- the **DAG-vs-one-thread** answer — `wall_seconds_parallel` (critical path) vs `wall_seconds_serial`
+  (the one-long-thread sum) and `beat_one_thread` — the **falsifiable** cost-vs-operator-time evidence,
+  not a slogan;
+- `leaves_with_cost` / `leaves_total` make missing telemetry explicit (`no data yet`, never a fabricated
+  zero — do not optimize against a fabricated baseline), and `sunk` accounts the cost of pruned leaves.
+
+This is a **read-only** consumer (the off-chain rule below still holds): `/optimize` cites the rollup as
+its baseline + measures experiment deltas against it; it does not write cost telemetry (the leaves do, via
+`record_cost`). The complementary operator-override-rate signal is `scripts/override_rate_reader.py`.
+
 ## Hard boundary
 
 `/optimize` defines, baselines, experiments, measures, keeps-the-best, writes the log, and routes — then

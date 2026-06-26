@@ -175,6 +175,21 @@
   `liveness_processor` (under the held lease) + `available` / `attending` (`--autonomous`) driving the
   degrade decision in `_reconcile_once`; `AdvanceResult.liveness` / `.degraded`. (U9 ships R3 + R5 + R6 +
   R7 + R23 + R24-telemetry-capture + R31.)
+- **U10** — Add **realized economics + the optimize/retro consumers** (`scripts/outcome_costs.py`,
+  `skills/optimize/SKILL.md` §Outcome-economics, `skills/retro/SKILL.md` §1.7,
+  `tests/test_outcome_economics.py`). **Producer** `record_cost` (a leaf saga reports its realized
+  executor / tokens / wall-clock / operator-touches / retries / evidence into the shared store — the
+  coordinator never runs the leaf, R3). **Consumer** `rollup` aggregates per outcome (R24): summed
+  tokens/operator_touches/retries, `by_executor`, and the load-bearing **DAG-vs-one-thread** answer —
+  `wall_seconds_parallel` (the critical path) vs `wall_seconds_serial` (the one-long-thread sum) +
+  `beat_one_thread` — the falsifiable cost-vs-operator-time proof. Honest: an empty rollup is **"no data
+  yet"** (never a fabricated zero), missing leaves are **counted** (`leaves_with_cost` / `leaves_total`)
+  not summed as 0, and cost against a **pruned** subplot is reconciled into **`sunk`** (the pruned-node
+  cost reconcile U7 deferred, R33). **Wired** as a `cost_processor` in `advance` that **materializes the
+  rollup into `spec.cost_rollup`** (the producer → spec → U8-report edge — no U8→U10 dependency, the
+  acyclicity rule). `/optimize` cites the rollup as a portfolio baseline + the override-rate reader;
+  `/retro` adds a §1.7 read-only outcome-economics evidence pass. (U10 ships R7 + R24, and fills the U8
+  report's "no data yet" cost slot + the U7 pruned-node cost reconcile.)
 
 ## 0.37.0 - 2026-06-21
 

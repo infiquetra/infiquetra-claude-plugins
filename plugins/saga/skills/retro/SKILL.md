@@ -207,6 +207,21 @@ the Phase-1 evidence block. A non-zero override rate or a skew toward over/under
 signal worth surfacing in Phase 2 interview and the Phase-3 retro doc, so any future default
 re-weighting is evidence-driven (R12's intent: measure before re-weighting).
 
+**1.7 OutcomeOrchestrator realized economics (read-only, R24).** When the retro covers an **outcome**
+(a DAG of leaf sagas), read its per-outcome realized-cost rollup — the falsifiable proof of the
+cost-vs-operator-time thesis — from the materialized `spec.cost_rollup` (in `/outcome report`) or live
+via `scripts/outcome_costs.py` `rollup(spec, store)`. Surface, in the evidence block:
+
+- **tokens / operator_touches / retries** (per outcome) + **by_executor** (which backends actually ran);
+- the **DAG-vs-one-thread** verdict — `wall_seconds_parallel` (critical path) vs `wall_seconds_serial`
+  (the one-long-thread sum) and **`beat_one_thread`** — so the retro states, with numbers, whether the
+  coordinated DAG actually beat a single inline thread (or did not — both are honest learnings);
+- `sunk` (cost of pruned leaves, R33) — work spent then abandoned, a real signal for the interview.
+
+**Zero-data contract** (same as 1.6): an empty rollup is **"no data yet"** — carry it verbatim, never
+fabricate a zero. This pass is **read-only**; the leaves produce the telemetry (`record_cost`), the retro
+only consumes it.
+
 ---
 
 ## Phase 2 — Structured interview

@@ -389,3 +389,77 @@ is the sole success-event writer). Folded in:
 **Refuted (no change):** GitHub-read fail-safety (R34), per-kind barrier HALT correctness, parent-
 ownership (no child self-report), harvest idempotency, `blocked_subtree` exactness, and that U5 does NOT
 overreach into the merge action / negative-state handling (correctly U6).
+
+## U6 — Auto-merge queue + GitHub negative states
+
+**Built:** `plugins/saga/scripts/outcome_merge.py` (the queue + negative cascade) +
+`plugins/saga/scripts/outcome_github.py` write side + `tests/test_outcome_merge_queue.py` (16 tests).
+This is the auto-merge **action** + the negative-state handling U5 deferred (U5 only *read* completion).
+
+**What it ships:**
+- **`outcome_github` write side** (R32/R34): `base_ref_oid` / `merge_state` (clean/behind/blocked/dirty)
+  / `squash_merge` / `update_branch` / `branch_exists`, all via `gh` with an injectable runner. Every
+  one **degrades to a safe value** (empty SHA / `unknown` / `conflict` / branch-present) so a `gh`
+  outage defers or fails-safe, never performs a wrong merge or falsely rejects a live branch.
+- **`auto_merge_one`** (R12): the guarded rebase-reverify-squash loop. Out-of-band/negative checks
+  FIRST (already-merged → no duplicate; closed-unmerged / deleted-branch → `rejected`, R32);
+  gated/risky/destructive → wait for operator; `behind` → rebase + re-verify; the squash is guarded by
+  an **expected base SHA** (a manual merge landing during re-verify → `base-changed` → reloop, never a
+  stale-tree merge); base churn **capped at 3** → halt + page; a conflict → fail the leaf back to
+  `work` + page.
+- **`process_merge_queue`** (R12/R22/R32): serializes the eligible code leaves (one squash at a time —
+  two siblings can't both merge on stale bases), records `rejected`/`failed` negative terminals, and
+  returns the **cascade** (`blocked_subtree` over the rejected set — only their downstream pauses).
+- GitHub ops injected as a `MergeOps` adapter (`github_merge_ops` wires the real `gh`), so the whole
+  queue is unit-tested offline.
+
+**Key decisions:**
+- **The squash is SHA-guarded, not just freshness-checked.** A base-freshness check alone races a
+  manual merge landing during re-verify; the expected-base-SHA guard (re-read the base tip right before
+  merging, reloop if it changed) is what makes "never merge a stale tree" hold under concurrency
+  (R12/R30). The cap (3) turns an adversarial base-churn from a spin into a halt+page.
+- **Negative terminals cascade like a block (R22), and are recorded as sticky terminal events.** A
+  `rejected`/`failed` is written to the store at a fresh attempt (the U5 attempt-fix pattern), so the
+  frontier sees the leaf as not-success and its downstream pauses — dependents never hang on a dead PR.
+- **Safe-degrade everywhere on the write side too.** `branch_exists` returns *present* on an
+  indeterminate read (a flake must not falsely reject a live subplot); `squash_merge` non-zero is a
+  `conflict` (leaf → work), never a silent skip.
+
+**Requirements (honest facet scope):** U6 owns **R12** (the auto-merge queue) + **R32** (PR/branch
+negative terminals) + the **R22 negative cascade** + **R30** (the SHA-guarded merge atomicity). The
+**worktree-removed** terminal is U7; the offline merge-queue reuses U2's `enqueue/drain_offline`
+(GitHub-wins) — `outcome_merge`'s own degraded-safe reads cover the read side here.
+
+**Checks run:** `ruff check .` ✓, `ruff format` ✓, `mypy plugins/ scripts/ tests/` ✓ (76 files),
+`pytest tests/test_outcome_merge_queue.py` ✓ 16 passed; full suite ✓ 1120 passed; validators ✓.
+
+**Adversarial verification:** committed first (per the U4 lesson; verify prompt forbade destructive
+git), then ultracode workflow `verify-outcome-u6` (3 lenses), each running the modules standalone +
+the REAL `github_merge_ops` with an injected failing `gh`. The base-churn cap, cascade exactness, and
+negative-state classification were refuted (correct). A cluster of real defects — all pointing at the
+same root (the fake-CAS guard + a non-representative test) — folded in:
+- **P1 (R34 violation)** — a `gh` outage made `merge_state`→`unknown` fall through to a squash, and
+  `squash_merge` returned `"conflict"` on *any* non-zero exit → a permanent `failed` terminal. The unit
+  test masked it with `squash="error"`, a value the real adapter could never emit. **Fix:** GitHub is
+  now the authoritative guard — `squash_merge` returns `merged`/`error` (conflicts are detected via
+  `merge_state="dirty"`), `unknown`/unreadable-base → **defer** (`not-ready`), never a terminal. A
+  real-adapter regression test (failing `gh` → defer, no terminal recorded) replaces the masked one.
+- **P2 (fake CAS)** — the "expected-base-SHA guard" was two adjacent reads with the SHA never bound to
+  the merge — a base change after the read still squashed a stale tree. **Fix:** dropped the local
+  double-read; GitHub is the atomic guard via `--match-head-commit` (it rejects a moved-head/behind PR),
+  and a rejected squash reloops.
+- **P2 (conflict-recovery deadlock)** — the skip-set used `successful_only=False`, so a `failed`
+  (conflict) leaf was skipped forever even after /work fixed it. **Fix:** the skip-set is success ∪
+  `rejected`/`stalled`; `failed` is retryable (regression test: conflict → fixed → re-merged).
+- **P2 (dead-wiring + no cross-process serialization, same class as U4/U5)** — `process_merge_queue`
+  was never wired into `advance`. **Fix:** wired as a `merge_processor` hook run under the held
+  coordinator lease → single-writer cross-process (R13).
+- **P2 (`branch_exists` can't see a real 404)** — returned `True` on every non-zero. **Fix:** a definite
+  `404`/`not found` in stderr → gone; transient → present.
+- **P3 (honesty)** — corrected the offline claim (it's **defer-and-retry** via safe-degrade, not the U2
+  enqueue/drain queue) and noted the gate-evidence (CI-green/review) is enforced via GitHub's
+  `mergeStateStatus=blocked`, not re-run by the coordinator.
+
+**Refuted (no change):** base-churn cap exactness, `blocked_subtree` cascade exactness, out-of-band /
+closed-unmerged classification, rejected-terminal idempotency, and that U6 does NOT overreach into the
+worktree terminal (U7) or degrade decision (U9).

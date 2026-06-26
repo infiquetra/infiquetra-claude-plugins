@@ -43,6 +43,11 @@ from typing import Any
 # Make sibling scripts importable when loaded by path (tests, CLI).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# The backend dispatcher module owns the HALT contract (it is never run as ``__main__``, so there is
+# exactly one ``BackendHaltError`` class regardless of how the engine is launched). The reconcile loop
+# catches ``outcome_dispatcher.BackendHaltError`` per leaf. outcome_dispatcher does NOT import this
+# module (it duck-types the request), so there is no import cycle.
+import outcome_dispatcher  # noqa: E402
 import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 import outcome_store  # noqa: E402
 
@@ -299,6 +304,9 @@ def status(
 @dataclass
 class AdvanceResult:
     dispatched: list[str] = field(default_factory=list)  # subplots handed to a backend this tick
+    halted: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # HALT receipts (R5/R23 — backend down)
     skipped_busy: bool = False  # coordinator lease held by another tick -> no-op (R13)
     ticks: int = 1
     status: dict[str, Any] = field(default_factory=dict)
@@ -306,6 +314,7 @@ class AdvanceResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "dispatched": self.dispatched,
+            "halted": self.halted,
             "skipped_busy": self.skipped_busy,
             "ticks": self.ticks,
             "status": self.status,
@@ -346,18 +355,20 @@ def advance(
         )
 
     all_dispatched: list[str] = []
+    all_halted: list[dict[str, Any]] = []
     ticks = 0
     try:
         while True:
             ticks += 1
-            tick_dispatched = _reconcile_once(
+            tick_dispatched, tick_halted = _reconcile_once(
                 repo_root, spec, store, dispatch, holder, lease_ttl, now
             )
             all_dispatched.extend(tick_dispatched)
+            all_halted.extend(tick_halted)
             if not loop:
                 break
             if not tick_dispatched:
-                break  # quiescent: nothing new to dispatch this tick
+                break  # quiescent: nothing new to dispatch this tick (HALTed leaves wait on backend)
             if ticks >= max_ticks:
                 break
     finally:
@@ -365,6 +376,7 @@ def advance(
 
     return AdvanceResult(
         dispatched=all_dispatched,
+        halted=all_halted,
         ticks=ticks,
         status=status(repo_root, outcome_id, spec=spec, store=store),
     )
@@ -378,18 +390,25 @@ def _reconcile_once(
     holder: str,
     lease_ttl: float,
     now: Callable[[], float],
-) -> list[str]:
+) -> tuple[list[str], list[dict[str, Any]]]:
     """One level-triggered pass: dispatch every ready, not-yet-settled leaf exactly once.
 
-    Each dispatch is recorded **intent -> effect -> commit** (the store's replay protocol): the
-    intent is written BEFORE the backend is invoked, so a crash/append-failure after the effect
-    leaves a durable dangling intent that ``replay_pending`` surfaces and the next reconcile re-drives
-    (the dispatcher must be idempotent on its leaf id) rather than the leaf being silently lost. The
+    Returns ``(dispatched, halted)``. Each dispatch is recorded **intent -> effect -> commit** (the
+    store's replay protocol): the intent is written BEFORE the backend is invoked, so a
+    crash/append-failure after the effect leaves a durable dangling intent that ``replay_pending``
+    surfaces and the next reconcile re-drives (the dispatcher must be idempotent on its leaf id). The
     ``commit`` is the durable dedup marker — a settled dispatch is skipped on every later tick.
+
+    A backend HALT (``BackendHaltError``, R5/R23) is caught **per leaf**: the leaf's dispatch lock is
+    released (so the next tick re-attempts and re-surfaces the HALT immediately rather than the leaked
+    lease silently masking it for the TTL), the receipt is recorded in the ledger (durable + visible),
+    and reconcile CONTINUES to other runnable leaves — one unavailable backend never starves the rest
+    of the frontier, and a HALT is never a silent substitution.
     """
     success = outcome_store.completed_subplots(store)  # success-only -> the frontier input
     settled = set(_dispatch_records(store))  # subplots with a COMMIT dispatch record
     dispatched: list[str] = []
+    halted: list[dict[str, Any]] = []
     for sid in outcome_spec.ready_frontier(spec, success):
         if sid in settled:
             continue  # settled dispatch record exists -> idempotent skip (no double-dispatch)
@@ -404,15 +423,29 @@ def _reconcile_once(
         outcome_store.append_ledger(
             store, {"phase": "intent", "kind": "dispatch", "key": key, "subplot_id": sid}
         )
-        leaf_saga_id = dispatch(
-            DispatchRequest(
-                outcome_id=spec.outcome_id,
-                subplot_id=sid,
-                title=node.title,
-                backend=node.backend,
-                repo_root=Path(repo_root),
+        try:
+            leaf_saga_id = dispatch(
+                DispatchRequest(
+                    outcome_id=spec.outcome_id,
+                    subplot_id=sid,
+                    title=node.title,
+                    backend=node.backend,
+                    repo_root=Path(repo_root),
+                )
             )
-        )
+        except outcome_dispatcher.BackendHaltError as halt:
+            # The chosen backend cannot run. Release the lock so a later tick (once the backend is
+            # available, or each manual advance) re-attempts and re-surfaces this HALT, and record the
+            # receipt durably. Never substitute a lesser backend; never abort the rest of the tick.
+            outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+            receipt = (
+                halt.receipt.to_dict() if hasattr(halt.receipt, "to_dict") else dict(halt.receipt)
+            )
+            outcome_store.append_ledger(
+                store, {"phase": "halt", "kind": "dispatch", "key": key, **receipt}
+            )
+            halted.append(receipt)
+            continue
         outcome_store.append_ledger(
             store,
             {
@@ -425,7 +458,7 @@ def _reconcile_once(
             },
         )
         dispatched.append(sid)
-    return dispatched
+    return dispatched, halted
 
 
 # ---------------------------------------------------------------------------
@@ -570,7 +603,15 @@ def main(argv: list[str] | None = None) -> int:
             spec = start(root, args.outcome_id, args.objective)
             print(json.dumps({"started": spec.outcome_id, "nodes": len(spec.nodes)}))
         elif args.command == "advance":
-            print(json.dumps(advance(root, args.outcome_id, loop=args.loop).to_dict()))
+            # The production /outcome advance routes through the REAL backend seam (R5/R6): the
+            # record-only default dispatcher is the test/skeleton fallback only.
+            result = advance(
+                root,
+                args.outcome_id,
+                loop=args.loop,
+                dispatcher=outcome_dispatcher.make_dispatcher(),
+            )
+            print(json.dumps(result.to_dict()))
         elif args.command == "resume":
             print(json.dumps(resume(root, args.outcome_id)))
         elif args.command == "status":

@@ -24,6 +24,25 @@
 
 ## 2026-06-26
 
+### Outcome dispatcher seam (U4): HALT is the absence of a fallback path, team-execution as first backend, recompile_for_tier's third leg, R8 destructive cleanup carries its own guard (U4 PR pending — SHA-fill on merge)  {#outcome-dispatcher-seam-stance}
+
+**Decision.** U4 added the single backend dispatcher seam (`outcome_dispatcher.py`) + reshaped team-execution (R8). Conventions every later backend/degrade unit (U6 auto-merge, U9 full menu + degrade) must follow:
+- **"Never silently substitute" is encoded as a missing capability, not a runtime check.** `dispatch` has NO code branch that falls back to a lesser backend — an unavailable backend *always* returns a HALT receipt (`HaltReceipt` / `BackendHaltError`). So R5/R23's "emit a visible HALT-not-degrade receipt rather than silently substituting" is structural and provable (parametrized over every NODE_BACKEND), the same "encode the invariant as the absence of a code path" rule from the U3 R3 invariant.
+- **team-execution is the first real backend; the rest of the menu HALTs until U9.** `DEFAULT_AVAILABLE = (inline, team-execution)`. Choosing fork/subagent/cc-workflows-ultracode/goal/manual today HALTs visibly — the full menu (R6) and the operator-presence degrade-vs-halt *decision* (R23) land in U9. U4 owns only the seam + the HALT receipt.
+- **The dispatcher seam wires `team_emitter` through `recompile_for_tier`'s third leg.** `execution_spec.recompile_for_tier(spec, "team-execution")` now emits the `## Team Structure` markdown (lazy import-by-path to avoid the `execution_spec ↔ team_emitter` cycle), rather than reinventing emission in the dispatcher.
+- **A destructive deletion ships its own guard (KTD13) + its own release-triad bump (KTD14) in the same PR.** The tmux/`team-setup` deletion replaced the asset-pinning test with one that fails if any deleted asset returns OR any tmux ref reappears outside CHANGELOG; team-execution bumped to 2.2.0 (plugin.json + marketplace + CHANGELOG) so the interim merge stays releasable.
+
+**Rejected alternatives.**
+- *Let the seam degrade an unavailable backend to inline.* Rejected: that is the silent-substitution R5/R23 forbids — a leaf could run on an inferior tier (or duplicate a side effect) without the operator knowing. HALT + page instead.
+- *Leave `recompile_for_tier`'s team-execution leg falling through to the inline baseline.* Rejected: it was a documented gap (`outcome_spec.py:88` flagged it as "waiting for R5"); wiring `team_emitter` is the intended correction, and it is safe because no test pinned `team-execution` → baseline.
+- *Defer the team-execution release-triad bump / the deleted-asset guard to U11.* Rejected per KTD14/KTD13 — that would red the drift guard at this interim merge or ship a gutted plugin early.
+
+**Rationale.** The merged-engine change (`recompile_for_tier`) was de-risked by first proving no released test pins `team-execution` → baseline (only inline / cc-workflows / unknown-tier are pinned), so the change is additive to released behavior. Generalizable rule: **before changing a by-mode dispatcher in merged engine code, grep for which modes its tests actually pin — an unpinned mode is safe to wire; a pinned one needs the test updated in the same change.**
+
+**Revisit when.** U9 adds the full backend menu (fork/subagent/goal/manual become available, shrinking the HALT set) + the R7 recommender + the R23 operator-presence degrade decision (the dispatcher gains a degrade-one-rung path *guarded* by operator-away + no-side-effect-yet, distinct from HALT). U6's auto-merge consumes the dispatch return channel.
+
+**Refs.** `plugins/saga/scripts/outcome_dispatcher.py`, `plugins/saga/scripts/execution_spec.py` (recompile_for_tier), `plugins/team-execution/**` (R8 reshape), `tests/test_outcome_dispatcher.py`, `tests/test_team_execution_plugin.py`; work log `docs/work-sessions/2026-06-25-outcome-orchestration.md`. Implements U4 of the [outcome-orchestration build plan](#outcome-orchestration-plan); builds on the U3 [reconcile engine stance](#outcome-reconcile-engine-stance).
+
 ### Outcome reconcile engine (U3): node state is derived-on-read not committed, dispatch-not-execute via injected dispatcher, command surface lands now but releases at U11 (U3 PR pending — SHA-fill on merge)  {#outcome-reconcile-engine-stance}
 
 **Decision.** `outcome.py` is the OutcomeOrchestrator coordinator runtime over the spec (U1) + store (U2). Three conventions every later coordinator unit (U4 backends, U5 barrier, U6 auto-merge, U7 decompose, U8 report, U9 degrade) must follow:

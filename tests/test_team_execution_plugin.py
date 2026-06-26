@@ -36,7 +36,6 @@ VALIDATOR_REFERENCES = {
     "validator-execution-order.md",
     "validator-evidence-state.md",
     "validator-spawn-quirks.md",
-    "validator-pane-behavior.md",
 }
 
 
@@ -58,7 +57,7 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
-    assert plugin_json["version"] == "2.1.0"
+    assert plugin_json["version"] == "2.2.0"
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()
@@ -97,12 +96,30 @@ def test_appsec_audit_skill_documents_url_trust_boundaries() -> None:
         assert required in skill_doc
 
 
-def test_team_setup_references_existing_assets() -> None:
-    setup_doc = _read(PLUGIN_ROOT / "commands" / "team-setup.md")
+def test_team_setup_and_tmux_assets_are_removed() -> None:
+    # R8 reshape (replaces the old test_team_setup_references_existing_assets, KTD13):
+    # team-execution is a native-agent-teams wrapper — /team-setup, the tmux assets, and the
+    # validator-pane-behavior reference are gone, and no tmux reference survives outside CHANGELOG.
+    for gone in (
+        "commands/team-setup.md",
+        "docs/example_tmux.conf",
+        "docs/agent-overflow.sh",
+        "skills/team-execution/references/validator-pane-behavior.md",
+    ):
+        assert not (PLUGIN_ROOT / gone).exists(), f"R8: {gone} should be deleted"
 
-    for asset in ("docs/example_tmux.conf", "docs/agent-overflow.sh"):
-        assert asset in setup_doc
-        assert (PLUGIN_ROOT / asset).exists(), f"setup references missing asset: {asset}"
+    for path in PLUGIN_ROOT.rglob("*"):
+        if not path.is_file() or path.name == "CHANGELOG.md":
+            continue  # an intentional CHANGELOG history note is the one allowed mention
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        assert "tmux" not in text.lower(), (
+            f"R8: tmux reference still in {path.relative_to(PLUGIN_ROOT)}"
+        )
+        # No dangling reference to the DELETED validator-pane-behavior reference may survive
+        # (the deletion's own guard — catches a SKILL.md/README/_REFERENCE_FILES regression).
+        assert "validator-pane-behavior" not in text, (
+            f"R8: dangling validator-pane-behavior reference in {path.relative_to(PLUGIN_ROOT)}"
+        )
 
 
 def test_skill_documents_validator_state_and_automation_gates() -> None:

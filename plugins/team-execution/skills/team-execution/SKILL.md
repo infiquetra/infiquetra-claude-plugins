@@ -53,17 +53,7 @@ Check for the handoff rule:
 grep -q "Team Execution Auto-Handoff" ~/.claude/CLAUDE.md 2>/dev/null && echo "FOUND" || echo "MISSING"
 ```
 
-If missing, tell the user to run `/team-setup` or add the rule manually. Do not block plan
-creation.
-
-### A0b. Setup Assets
-
-If setup is requested, `/team-setup` must reference packaged assets that exist in this plugin:
-
-- `team-execution/docs/example_tmux.conf`
-- `team-execution/docs/agent-overflow.sh`
-
-If either asset is unavailable in the installed plugin, fail loud with manual setup guidance.
+If missing, tell the user to add the rule manually. Do not block plan creation.
 
 ---
 
@@ -154,7 +144,6 @@ Read:
 - `team-execution/skills/team-execution/references/validator-execution-order.md`
 - `team-execution/skills/team-execution/references/validator-evidence-state.md`
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
-- `team-execution/skills/team-execution/references/validator-pane-behavior.md`
 
 Select validators by context:
 
@@ -266,7 +255,6 @@ Append a plan section like this:
 - `team-execution/skills/team-execution/references/validator-execution-order.md`
 - `team-execution/skills/team-execution/references/validator-evidence-state.md`
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
-- `team-execution/skills/team-execution/references/validator-pane-behavior.md`
 ```
 
 Then submit the plan for approval. Do not start implementation during Phase A.
@@ -283,6 +271,23 @@ Read the approved `## Team Structure`, selected validators, reference files, aut
 eligibility, and state location.
 
 If the plan has no `## Team Structure`, stop and tell the user to run `/team-execute`.
+
+---
+
+## Step B0a: Validator-State Preflight
+
+Before any worker runs (pre-execution, so the safety check survives without `/team-setup`), re-verify
+the validator-state location is safe — the same `.claude/`-ignored check from Step A5, now enforced at
+execution time:
+
+```text
+.claude/team-execution/validators/   (valid only when .claude/ is git-ignored in the target repo)
+```
+
+If `.claude/` is NOT ignored in the target repo, do not write run-state there — fail loud and either
+have the user add an ignore rule or fall back to `~/.claude/team-execution/state/<repo>/`. This guards
+against committing validator run-state into the repo and runs in BOTH Phase A planning (Step A5) and
+here in Phase B preflight.
 
 ---
 
@@ -378,9 +383,6 @@ explicitly accepts the residual risk.
 ```text
 team-execution/
 ├── .claude-plugin/plugin.json
-├── docs/
-│   ├── agent-overflow.sh
-│   └── example_tmux.conf
 ├── skills/
 │   ├── appsec-audit/SKILL.md
 │   └── team-execution/
@@ -392,7 +394,6 @@ team-execution/
 │           ├── validator-criteria.md
 │           ├── validator-evidence-state.md
 │           ├── validator-execution-order.md
-│           ├── validator-pane-behavior.md
 │           ├── validator-registry.md
 │           └── validator-spawn-quirks.md
 ├── agents/
@@ -402,5 +403,4 @@ team-execution/
 │   └── [reviewer and validator agents]
 └── commands/
     ├── team-execute.md
-    └── team-setup.md
 ```

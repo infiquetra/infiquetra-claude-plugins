@@ -244,3 +244,79 @@ all held; the surface wiring is CI-green. Folded in:
 
 **Next step:** U4 — team-execution backend + R8 cleanup (DESTRUCTIVE: delete `team-setup`, strip ~60
 tmux refs from team-execution; update the asset-reference guard test in the same PR).
+
+## U4 — Team-execution backend + R8 cleanup (DESTRUCTIVE)
+
+**Built (two halves):**
+1. **The dispatcher seam** (R5/R6/R23) — `plugins/saga/scripts/outcome_dispatcher.py` +
+   `tests/test_outcome_dispatcher.py`: the single seam every subplot routes through. `dispatch(req)`
+   either mints a leaf saga id + a `/resume` return channel (R9 re-entry token out) or, when the chosen
+   backend cannot run, returns a **HALT-not-degrade receipt** (`HaltReceipt`); `make_dispatcher` is the
+   `Dispatcher` for `/outcome advance` (HALT raises `BackendHaltError`, never a silent substitute).
+   **team-execution is the first real backend** (R6); the rest of the menu HALTs until U9. Wired
+   `team_emitter` as the **third leg of `recompile_for_tier`** in `execution_spec.py` (team-execution
+   mode → `## Team Structure` markdown, not the inline baseline — R5) with a new degrade test.
+2. **The R8 reshape of team-execution** (bumped to **2.2.0** — plugin.json + marketplace + CHANGELOG):
+   deleted `commands/team-setup.md` (whole command), `docs/example_tmux.conf`, `docs/agent-overflow.sh`,
+   and `skills/.../references/validator-pane-behavior.md`; stripped tmux from README + SKILL.md +
+   `team_emitter._REFERENCE_FILES`. **Zero tmux refs survive outside the team-execution CHANGELOG
+   history** (the unrelated redis-channel tmux-foreground note is a different plugin, left alone). The
+   `.claude/`-git-ignored **validator-state safety check was re-homed** into a new Phase B preflight
+   (Step B0a) so it survives the `/team-setup` deletion — it now runs in BOTH Phase A (Step A5) and
+   Phase B preflight; `validator-evidence-state.md` stays the state-location contract.
+
+**Key decisions:**
+- **HALT is encoded as the absence of a fallback path, not a runtime flag.** `dispatch` has no code
+  branch that substitutes inline for an unavailable backend — an unavailable backend *always* yields a
+  receipt, so "never silently substitute" (R5/R23) is structural and testable (every NODE_BACKEND
+  parametrized). The operator-presence degrade-vs-halt *decision* (R23) is U9; U4 owns only the receipt.
+- **The `recompile_for_tier` 3rd leg is the explicit R5 correction** (`outcome_spec.py:88` already flagged
+  it as awaited). Safe: no test pinned `team-execution` → inline baseline (only inline / cc-workflows /
+  unknown-tier are pinned), so wiring `team-execution` → `team_emitter` is additive; the inline/workflow/
+  downgrade-floor paths are unchanged. Lazy import-by-path avoids the `execution_spec ↔ team_emitter`
+  cycle.
+- **KTD13 — the deletion carries its own guard.** Replaced `test_team_setup_references_existing_assets`
+  (which pinned the now-deleted tmux assets) with `test_team_setup_and_tmux_assets_are_removed`, which
+  fails if any deleted asset returns OR any tmux ref is reintroduced outside CHANGELOG.
+- **KTD14 — team-execution carries its own 2.2.0 triad bump in this PR** (not deferred to U11), so the
+  release-triad guard stays green at this interim merge.
+
+**Requirements (honest facet scope):** U4 ships **R8** (full reshape) and **R5** (the seam + team_emitter
+wiring), the **R6 first-backend** slice (team-execution; the full menu is U9), and the **R23 HALT
+receipt** (the degrade-one-rung-vs-halt operator-presence decision is U9). The R7 recommender is U9.
+
+**Checks run:** `ruff check .` ✓, `ruff format` ✓, `mypy plugins/ scripts/ tests/` ✓ (74 files),
+`pytest tests/test_outcome_dispatcher.py` ✓ 15 passed (`outcome_dispatcher.py` 96%), team-execution +
+release guards ✓ 53 passed, degrade tests ✓ 38 passed; full suite ✓ 1086 passed; validators ✓.
+
+**Adversarial verification:** ultracode workflow `verify-outcome-u4` (3 lenses: R8-cleanup-completeness,
+dispatcher+recompile, requirements+release-surface), each proving claims by running grep/pytest + the
+modules standalone with crash injection. R8 removal verified clean; HALT-never-silent-substitute,
+no-degrade-regression, closed-vocab rejection, and the team_emitter wiring all held. Folded in:
+- **P1 (lock leak)** — a HALTed leaf leaked its per-subplot dispatch lease, so the HALT was *silently
+  masked* on every re-tick for the 900s TTL. Now `_reconcile_once` **catches the HALT per leaf**,
+  releases the dispatch lock, records the receipt in the ledger, and re-surfaces it on the next advance.
+- **P2 (tick starvation)** — one HALT leaf aborted the whole reconcile tick (raised out of `advance`),
+  starving independent runnable leaves. Now the loop **continues** past a HALT; `AdvanceResult.halted`
+  carries the receipts. Regression tests pin both (re-surfaces each advance; a runnable leaf dispatches
+  despite a sibling HALT).
+- **P2 (R5 not actually wired)** — `make_dispatcher` was never wired into the production `/outcome
+  advance` (it still used the U3 record-only default), so the CHANGELOG overclaimed. **The advance CLI
+  now routes through the real seam**; the record-only dispatcher is the test fallback only.
+- **P3** — softened `recompile_for_tier`'s docstring (the team-execution leg renders roles, not per-unit
+  `{model,effort}`). Strengthened the R8 guard to also fail on a dangling `validator-pane-behavior`
+  reference (the gap that hid the clobber damage below).
+- **P2 (CHANGELOG overclaim)** — narrowed "no tmux remains" to **in this plugin**: three pre-existing
+  repo-root tmux dev scripts under `docs/` are out of R8's plugin charter (the plan's tmux count was
+  plugin-scoped). Left them untouched (scope discipline) rather than expand U4 into unrelated files.
+
+**⚠️ Review incident (recovered).** A verify agent ran `git checkout SKILL.md` during a guard
+mutation-test, which **clobbered the uncommitted U4 SKILL.md** (the changeset wasn't committed yet) and
+left an imperfect reconstruction (`validator-pane-behavior.md` reappeared in Step A4). Recovery was
+**deterministic, not trusting the reconstruction**: `git checkout HEAD -- SKILL.md` to the clean U3
+base, then re-applied the exact 5 U4 edits; `git diff HEAD` confirms only the intended changes (A0b
+removed, both pane refs gone, Step B0a added, tree entries removed). **Lesson → memory + journal:
+commit/stash a changeset before launching an adversarial-verify** (the agents have write+bash and can
+run destructive git on an uncommitted tree). Design fix to encode it: the HALT-contract class lives in
+`outcome_dispatcher` (never `__main__`) so the engine's `except` and the dispatcher's `raise` reference
+the same class regardless of launch path.

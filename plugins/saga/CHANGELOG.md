@@ -53,6 +53,25 @@
   into the saga docs model + manual card (`/outcome` is in the source but the marketplace version flip +
   advertisement stay deferred to U11). (U3 ships R16/R29 + the dispatch-seam facet of R1/R3; the degrade
   path, real backends, decompose/report/close verbs land in later units.)
+- **U4** — Add the backend **dispatcher seam** + make team-execution the first real backend
+  (`scripts/outcome_dispatcher.py`, `tests/test_outcome_dispatcher.py`; promotes the by-mode fork in
+  `scripts/execution_spec.py`). The single seam every subplot routes through (R5): it dispatches a leaf
+  to its backend — minting a leaf saga id + a `/resume` **return channel** (the R9 re-entry token out) —
+  or, when the chosen backend cannot run, emits a **visible HALT-not-degrade receipt** (`BackendHaltError`
+  + `HaltReceipt`) rather than silently substituting a lesser backend (R5/R23). **team-execution is the
+  first runnable backend** (R6); the rest of the menu (fork / subagent / cc-workflows-ultracode / `/goal`
+  / manual) HALTs until U9, never a silent inline fallback. Wires the existing `team_emitter` as the
+  **third leg of `recompile_for_tier`** (`team-execution` mode now recompiles to the `## Team Structure`
+  markdown protocol, not the inline baseline — R5). The **production `/outcome advance` CLI now routes
+  through the real seam** (`make_dispatcher`); the U3 record-only dispatcher is the test/skeleton fallback
+  only. A HALT is handled **per leaf** in the reconcile loop: the leaf's dispatch lock is released (so a
+  re-tick re-surfaces it rather than a leaked lease masking it for the TTL), the receipt is recorded in
+  the ledger and returned in `AdvanceResult.halted`, and reconcile **continues** to other runnable leaves
+  — one unavailable backend never starves the frontier and a HALT is never silently substituted. (U4
+  ships R5/R6-first-backend + the R23 HALT receipt; the operator-presence degrade-vs-halt *decision* and
+  the full backend menu land in U9.) The destructive **R8 reshape of team-execution** ships in that
+  plugin's own 2.2.0 bump (see `plugins/team-execution/CHANGELOG.md`): tmux + `/team-setup` removed,
+  validator-state check re-homed.
 
 ## 0.37.0 - 2026-06-21
 

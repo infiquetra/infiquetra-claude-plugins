@@ -25,6 +25,28 @@
 
 ---
 
+## 2026-06-26
+
+### An adversarial-verify agent ran destructive git on the uncommitted working tree and clobbered live work  {#verify-agent-git-checkout-clobber}
+
+**Context.** During the OutcomeOrchestrator U4 verify ([[outcome-dispatcher-seam-stance]]), the build vehicle was build-inline → adversarial-verify Workflow → fold findings → commit. The U4 changeset was still **uncommitted** when the verify ran.
+
+**Evidence.** A verify lens agent, mutation-testing the R8 guard, ran `git checkout plugins/team-execution/skills/team-execution/SKILL.md`. HEAD was the U3 commit (`d6dd7b9`), so the checkout reverted the uncommitted U4 SKILL.md edits — re-introducing tmux refs + `validator-pane-behavior.md` (Step A4) and dropping the re-homed Step B0a. `git fsck --unreachable` held no copy; it was unrecoverable from git. The agent's own self-reconstruction was imperfect (`validator-pane-behavior.md` reappeared at line 146).
+
+**Mechanism.** Workflow/subagent verifiers have full Bash + write access. A `git checkout <path>` / `git restore` on a tracked file silently discards uncommitted edits to it with no undo (the content was never in a git object or the index). Verifying *uncommitted* work means a single agent keystroke can destroy it.
+
+**Fix.** Recovered deterministically (not trusting the reconstruction): `git checkout HEAD -- SKILL.md` → clean U3 base, re-applied the exact 5 U4 edits, `git diff HEAD` confirmed only the intended changes. Captured the workflow rule to memory ([[commit-before-verify-workflows]]).
+
+**Validation.** Post-recovery: 0 tmux / 0 `validator-pane` refs in the plugin, validator-state check present in both Step A5 + B0a, 91 team-execution/release/degrade guards green, full suite 1089 passed.
+
+**What surprised.** I'd run verify-before-commit for U1–U3 without incident — the risk was invisible until an agent happened to choose `git checkout` as a mutation-test mechanism. The hazard is latent in *every* verify-against-uncommitted run, not specific to destructive units.
+
+**Generalizable rule.** **Commit or stash before launching any Bash-capable verifier against a changeset** — a verify against committed work is non-destructive (worst case reverts to your own commit). If you must verify uncommitted work, the verifier prompt must forbid destructive git and require guard-mutation in a temp copy, not in-place on tracked files.
+
+**Refs.** [[commit-before-verify-workflows]] (memory); DECISIONS [[outcome-dispatcher-seam-stance]]; work log `docs/work-sessions/2026-06-25-outcome-orchestration.md` (U4 review-incident note).
+
+---
+
 ## 2026-06-25
 
 ### Running `/ideate` on a feasibility-out-of-frame imagination doc imports the convergent engine's own constraints and clear-cuts the divergent material  {#ideate-on-imagination-doc-imports-constraints}

@@ -702,25 +702,46 @@ def emit_inline_baseline(spec: ExecutionSpec) -> str:
 # emitter can render the correct floor for a given (possibly downgraded) tier without a
 # cross-module import at module scope (the scripts load standalone in tests).
 _WORKFLOW_TIER = "cc-workflows-ultracode"
+_TEAM_TIER = "team-execution"
 _INLINE_TIER = "inline"
+
+
+def _emit_team_structure(spec: ExecutionSpec) -> str:
+    """Lazily load ``team_emitter`` and emit the team-execution ``## Team Structure`` markdown.
+
+    Imported by path (not at module scope) so ``execution_spec`` stays importable standalone in
+    tests and there is no import cycle with ``team_emitter`` (which lazily loads this module).
+    """
+    import importlib.util
+
+    path = Path(__file__).parent / "team_emitter.py"
+    loaded = importlib.util.spec_from_file_location("team_emitter", path)
+    assert loaded is not None and loaded.loader is not None
+    module = importlib.util.module_from_spec(loaded)
+    loaded.loader.exec_module(module)
+    return module.emit_team_structure(spec)  # type: ignore[no-any-return]
 
 
 def recompile_for_tier(spec: ExecutionSpec, orchestration_mode: str) -> str:
     """Re-emit the spec for a (possibly downgraded) orchestration tier (R11 recompile).
 
-    ONLY the orchestration tier changes -- unit specs and per-unit ``{model, effort}`` tiers
-    are preserved in BOTH emitters. ``cc-workflows-ultracode`` re-emits the dynamic
-    ``.workflow.js`` harness; any other tier (``team-execution`` / ``inline`` / an unknown
-    floor) re-emits the inline/serial baseline, the always-runnable floor. This is the
-    function an off-host resume calls after ``recheck_orchestration_capability`` decides the
-    new tier: it never errors and always returns a runnable artifact (AE3).
+    ONLY the orchestration tier changes -- every unit survives in every emitter. The inline and
+    workflow emitters additionally render each unit's ``{model, effort}`` tier verbatim;
+    ``team-execution`` re-emits the ``team_emitter`` ``## Team Structure`` markdown protocol (the R5
+    third leg of the by-mode dispatcher seam), which renders the team roles/units but not the
+    per-unit ``{model, effort}`` (the team-execution protocol selects models per its own roster).
+    ``cc-workflows-ultracode`` re-emits the dynamic ``.workflow.js`` harness; ``inline`` or any
+    unknown floor re-emits the inline/serial baseline, the always-runnable floor. This is the
+    function an off-host resume calls after ``recheck_orchestration_capability`` decides the new
+    tier: it never errors and always returns a runnable artifact (AE3).
     """
     spec.validate()
     if orchestration_mode == _WORKFLOW_TIER:
         return emit_workflow_script(spec)
-    # team-execution's own emitter is U11's team_emitter.py (markdown protocol); for the
-    # inline floor and as the safe default for any other/unknown tier we emit the
-    # host-independent serial baseline -- never an empty or un-runnable artifact.
+    if orchestration_mode == _TEAM_TIER:
+        return _emit_team_structure(spec)
+    # The inline floor and any other/unknown tier emit the host-independent serial baseline --
+    # never an empty or un-runnable artifact.
     return emit_inline_baseline(spec)
 
 

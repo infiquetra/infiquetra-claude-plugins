@@ -72,6 +72,25 @@
   the full backend menu land in U9.) The destructive **R8 reshape of team-execution** ships in that
   plugin's own 2.2.0 bump (see `plugins/team-execution/CHANGELOG.md`): tmux + `/team-setup` removed,
   validator-state check re-homed.
+- **U5** — Add the **completion barrier** + GitHub-canonical completion read + harvest + cascade
+  (`scripts/outcome_orchestrator.py`, `scripts/outcome_github.py`, `tests/test_outcome_completion.py`).
+  "Done" is a **parent-owned barrier predicate over the returned evidence** (R9), never a child's
+  self-report, HALTing on an unmet contract. Per-subplot completion **contract** (R11): a **code** leaf
+  is done only when its **PR reads merged**; a **non-code** leaf when its **tracking sub-issue reads
+  closed** (the cache-less-reconstructable canonical marker) or, untracked, a `canonical`-flagged
+  completion event (cache-resident only — a wipe loses it; tracked work uses the issue path); a
+  **child-outcome** node (`child_spec_ref`, KTD10) only when the child's terminal state reads
+  successful — the production harvester **recurses** into the child outcome (cycle-guarded) to read it.
+  `outcome_github` is the read-only PR/issue-state primitive (merged/closed/open) — **degrades to
+  `unknown` on any `gh` failure, never a false completion** (R34); the merge/close *actions* are U6.
+  `harvest` runs the barrier each tick and **materializes** GitHub-canonical completions as success
+  events in the store (at a fresh attempt slot, so a prior negative terminal never collides), unlocking
+  the next Kahn layer (R10) and surviving a cache wipe (re-derived from GitHub, R27). `blocked_subtree`
+  is the R22 cascade — only a block's downstream subtree pauses, independent siblings keep running.
+  **Wired into the production `/outcome advance` CLI** via an injected `harvester` (`AdvanceResult.harvested`),
+  so a merged PR / closed issue unlocks dependents in the live loop. (U5 ships the **barrier-predicate
+  half of R9** — the re-entry-token-out is U4's dispatch — plus R10/R11/R22 + the R27/R28 completion-read
+  leg the U2/U3 honesty passes deferred here; the auto-merge action + negative-state cascade land in U6.)
 
 ## 0.37.0 - 2026-06-21
 

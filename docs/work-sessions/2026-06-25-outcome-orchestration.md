@@ -320,3 +320,72 @@ commit/stash a changeset before launching an adversarial-verify** (the agents ha
 run destructive git on an uncommitted tree). Design fix to encode it: the HALT-contract class lives in
 `outcome_dispatcher` (never `__main__`) so the engine's `except` and the dispatcher's `raise` reference
 the same class regardless of launch path.
+
+## U5 — Completion barrier + recursive child outcomes
+
+**Built:** `plugins/saga/scripts/outcome_github.py` (read-only GitHub PR/issue state) +
+`plugins/saga/scripts/outcome_orchestrator.py` (the parent-owned barrier) + `tests/test_outcome_completion.py`
+(12 tests). This is the **GitHub-canonical completion** leg the U2/U3 honesty passes explicitly deferred
+to U5.
+
+**What it ships:**
+- **`outcome_github`** (R10/R27/R34): `pr_state` (merged/closed/open/unknown) + `issue_state`
+  (closed/open/unknown), via `gh` with an injectable runner. Every read **degrades to `unknown`** on a
+  `gh` failure — a `merged` requires a real `mergedAt`, so a closed-unmerged PR reads `closed` (R32),
+  never `merged`. A GitHub outage can only DELAY an unlock, never fabricate one.
+- **`barrier_satisfied`** (R9/R11): the parent's predicate over evidence — code=PR-merged,
+  non-code=closed-tracking-issue (or a `canonical`-flagged event for untracked work), child=child
+  terminal-successful (KTD10 recursion via an injected reader). Returns a `BarrierVerdict` that HALTs
+  (satisfied=False, with the reason + evidence) on an unmet contract.
+- **`harvest`** (R10): runs the barrier over the spec each tick and materializes each newly-satisfied
+  contract as a success completion event in the store → the existing `completed_subplots` frontier read
+  unlocks the next Kahn layer. Idempotent; a cache-less machine re-harvests from GitHub (R27 — tested:
+  wipe the store, re-harvest, the closed-issue completion comes back).
+- **`blocked_subtree`** (R22): only a hard-blocked node's downstream subtree pauses; independent
+  siblings keep running.
+- Wired into `advance` as an optional injected **`harvester` hook** (runs before the frontier read each
+  tick); `AdvanceResult.harvested` surfaces what was materialized.
+
+**Key decisions:**
+- **Completion is GitHub-canonical, the cache is a materialization.** The barrier reads canonical truth
+  from GitHub (PR merged / issue closed); `harvest` writes it into the store cache. This makes the
+  frontier logic (which reads the cache) GitHub-backed AND keeps the cache-loss-loses-nothing property
+  (R27) real — a wiped cache is re-harvested from GitHub. This closes the honest gap the U2 cache-loss
+  test flagged ("the GitHub-read reconstruct leg is U5").
+- **The barrier is the parent's predicate over evidence (R9), encoded as a verdict object** carrying
+  the contract + the canonical state + the evidence, so a HALT is explainable (the report/U8 shows
+  *why* a leaf isn't done) and re-verifiable — never a child's self-asserted "done".
+- **`unknown` is the safe degraded value** everywhere — a GitHub read failure is never coerced to a
+  completion. Only `merged`/`closed` (positive) unlock; `unknown`/`open` hold.
+- **Harvest is success-only in U5.** Negative-terminal harvest (a closed-unmerged PR → `rejected`
+  cascade) is U6 (GitHub negative states + auto-merge); U5 unlocks on success.
+
+**Requirements (honest facet scope):** U5 owns **R9** (barrier predicate), **R10/R11** (completion
+contract + Kahn unlock), **R22** (cascade), and the **R27/R28 GitHub-read completion leg**. The merge
+*action* (R12) + negative-state handling (R32) land in U6; U5 only *reads* completion truth.
+
+**Checks run:** `ruff check .` ✓, `ruff format` ✓, `mypy plugins/ scripts/ tests/` ✓ (75 files),
+`pytest tests/test_outcome_completion.py` ✓ 12 passed; full suite ✓ 1101 passed; validators ✓.
+
+**Adversarial verification:** committed first (per the U4 lesson — the verify prompt also forbade
+destructive git on the working tree), then ultracode workflow `verify-outcome-u5` (3 lenses:
+barrier+GitHub-safety, harvest+cache-less+cascade, requirements-honesty), each proving claims by running
+the modules standalone with injected fake `gh` runners + crash injection. **The false-unlock / degraded-
+read attacks were all refuted** — every `gh` failure mode degrades to `unknown`, a closed-unmerged PR
+reads `closed` not `merged`, the barrier HALTs per-kind correctly, and no child can self-report (harvest
+is the sole success-event writer). Folded in:
+- **P1 (loop wedge)** — `harvest` hardcoded `attempt=1`, so a subplot holding a prior `failed`/`rejected`
+  terminal at attempt 1 collided → `OutcomeStoreError` propagated out of `advance` and wedged every
+  future tick. Now it materializes at `max(attempt)+1`; regression test pins it.
+- **P2 (dead-wiring, same class as U4)** — the production `/outcome advance` never passed a `harvester`,
+  so U5 was inert in the live loop and "wired into advance" overclaimed. Now a `production_harvester`
+  (with the recursive, cycle-guarded child-outcome reader, KTD10) is wired into the CLI; an
+  advance→harvest→unlock→dispatch end-to-end test + a child-recursion test pin it.
+- **P3 (honesty)** — corrected the contradictory "canonical event recorded in the committed spec"
+  claim: the untracked-non-code canonical event is **cache-resident** (lost on wipe), NOT cache-less;
+  the tracked-issue path is the cache-less one. Softened "U5 ships R9" to the **barrier-predicate half**
+  (the re-entry-token-out is U4's dispatch).
+
+**Refuted (no change):** GitHub-read fail-safety (R34), per-kind barrier HALT correctness, parent-
+ownership (no child self-report), harvest idempotency, `blocked_subtree` exactness, and that U5 does NOT
+overreach into the merge action / negative-state handling (correctly U6).

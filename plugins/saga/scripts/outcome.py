@@ -35,7 +35,7 @@ import json
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -89,6 +89,24 @@ def _default_dispatcher(req: DispatchRequest) -> str:
     handoff address; the leaf is executed by its own native saga, never here.
     """
     return f"leaf-{req.outcome_id}-{req.subplot_id}"
+
+
+def _append_ledger_once(store: Any, record: dict[str, Any]) -> bool:
+    """Append a ledger record only if no record with the same ``(phase, key)`` already exists.
+
+    The ``commit`` dispatch record is the dedup marker for SUCCESSFUL dispatch, but a HALTed or
+    degrade-then-crashed leaf never writes a commit, so it is re-evaluated every tick. Without this, an
+    attended leaf polling ``advance`` against a persistently-unavailable backend re-appends a ``halt``
+    record on every tick (unbounded ledger growth), and a crash in the degrade->commit window
+    double-lists the degradation. Deduping on ``(phase, key)`` (the ``import_bundle`` pattern) bounds
+    both. Returns True if the record was appended, False if it was already present.
+    """
+    phase, key = record.get("phase"), record.get("key")
+    for rec in outcome_store.read_ledger(store):
+        if rec.get("phase") == phase and rec.get("key") == key:
+            return False
+    outcome_store.append_ledger(store, record)
+    return True
 
 
 def _default_holder() -> str:
@@ -317,9 +335,13 @@ class AdvanceResult:
     worktrees: list[Any] = field(
         default_factory=list
     )  # per-tick worktree reap/removed/provision (U7/R15/R32)
+    liveness: list[Any] = field(default_factory=list)  # per-tick stalled-leaf reclaim (U9/R31)
     gated: list[str] = field(
         default_factory=list
     )  # ready leaves held back by the approval gate (U7/R20)
+    degraded: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # leaves degraded one rung autonomous+away (U9/R23)
     skipped_busy: bool = False  # coordinator lease held by another tick -> no-op (R13)
     ticks: int = 1
     status: dict[str, Any] = field(default_factory=dict)
@@ -331,7 +353,9 @@ class AdvanceResult:
             "halted": self.halted,
             "merges": self.merges,
             "worktrees": self.worktrees,
+            "liveness": self.liveness,
             "gated": self.gated,
+            "degraded": self.degraded,
             "skipped_busy": self.skipped_busy,
             "ticks": self.ticks,
             "status": self.status,
@@ -348,7 +372,10 @@ def advance(
     harvester: Callable[[Any, Any], list[str]] | None = None,
     merge_processor: Callable[[Any, Any], Any] | None = None,
     worktree_processor: Callable[[Any, Any], Any] | None = None,
+    liveness_processor: Callable[[Any, Any], Any] | None = None,
     gate_factory: Callable[[Any, Any], Callable[[str], bool]] | None = None,
+    available: Sequence[str] | None = None,
+    attending: bool = True,
     holder: str | None = None,
     lease_ttl: float = DEFAULT_LEASE_TTL,
     now: Callable[[], float] = time.time,
@@ -383,8 +410,10 @@ def advance(
     all_halted: list[dict[str, Any]] = []
     all_harvested: list[str] = []
     all_gated: list[str] = []
+    all_degraded: list[dict[str, Any]] = []
     merge_runs: list[Any] = []
     worktree_runs: list[Any] = []
+    liveness_runs: list[Any] = []
     ticks = 0
     try:
         while True:
@@ -401,7 +430,11 @@ def advance(
                 # Reap terminal sub-outcomes' worktrees + record the worktree-removed terminal (R32)
                 # BEFORE the frontier read so a vanished worktree cascades this tick (R22/R15).
                 worktree_runs.append(worktree_processor(spec, store))
-            tick_dispatched, tick_halted, tick_gated = _reconcile_once(
+            if liveness_processor is not None:
+                # Reclaim any hung dispatched leaf as `stalled` (R31) BEFORE the frontier read so its
+                # downstream cascade is reflected this tick (R22).
+                liveness_runs.append(liveness_processor(spec, store))
+            tick_dispatched, tick_halted, tick_gated, tick_degraded = _reconcile_once(
                 repo_root,
                 spec,
                 store,
@@ -410,10 +443,13 @@ def advance(
                 lease_ttl,
                 now,
                 dispatch_gate=dispatch_gate,
+                available=available,
+                attending=attending,
             )
             all_dispatched.extend(tick_dispatched)
             all_halted.extend(tick_halted)
             all_gated.extend(tick_gated)
+            all_degraded.extend(tick_degraded)
             if not loop:
                 break
             if not tick_dispatched:
@@ -429,7 +465,9 @@ def advance(
         halted=all_halted,
         merges=merge_runs,
         worktrees=worktree_runs,
+        liveness=liveness_runs,
         gated=sorted(set(all_gated)),
+        degraded=all_degraded,
         ticks=ticks,
         status=status(repo_root, outcome_id, spec=spec, store=store),
     )
@@ -445,31 +483,37 @@ def _reconcile_once(
     now: Callable[[], float],
     *,
     dispatch_gate: Callable[[str], bool] | None = None,
-) -> tuple[list[str], list[dict[str, Any]], list[str]]:
+    available: Sequence[str] | None = None,
+    attending: bool = True,
+) -> tuple[list[str], list[dict[str, Any]], list[str], list[dict[str, Any]]]:
     """One level-triggered pass: dispatch every ready, not-yet-settled leaf exactly once.
 
-    Returns ``(dispatched, halted, gated)``. Each dispatch is recorded **intent -> effect -> commit**
-    (the store's replay protocol): the intent is written BEFORE the backend is invoked, so a
+    Returns ``(dispatched, halted, gated, degraded)``. Each dispatch is recorded **intent -> effect ->
+    commit** (the store's replay protocol): the intent is written BEFORE the backend is invoked, so a
     crash/append-failure after the effect leaves a durable dangling intent that ``replay_pending``
-    surfaces and the next reconcile re-drives (the dispatcher must be idempotent on its leaf id). The
-    ``commit`` is the durable dedup marker — a settled dispatch is skipped on every later tick.
+    surfaces and the next reconcile re-drives. The ``commit`` is the durable dedup marker (and carries an
+    ``at`` timestamp for the U9 liveness check) — a settled dispatch is skipped on every later tick.
 
     The optional ``dispatch_gate`` is the R20 approval gate: a ready leaf the gate rejects is **held
-    back** (added to ``gated``, NOT dispatched) until the operator approves the current frontier — so a
-    mis-drafted graph can never auto-dispatch before review. A gated leaf takes no dispatch lock and
-    writes no ledger intent, so it is cleanly re-evaluated next tick once approved.
+    back** (added to ``gated``, NOT dispatched) until the operator approves the current frontier.
 
-    A backend HALT (``BackendHaltError``, R5/R23) is caught **per leaf**: the leaf's dispatch lock is
-    released (so the next tick re-attempts and re-surfaces the HALT immediately rather than the leaked
-    lease silently masking it for the TTL), the receipt is recorded in the ledger (durable + visible),
-    and reconcile CONTINUES to other runnable leaves — one unavailable backend never starves the rest
-    of the frontier, and a HALT is never a silent substitution.
+    The presence-conditional **degrade decision** (R23/AE1, ``outcome_dispatcher.degrade_decision``) runs
+    per leaf before dispatch when ``available`` is given: a leaf whose chosen backend is unavailable
+    **HALTs** if the operator is attending / it is guarantee-bearing / it already side-effected
+    (destructive), else **degrades one rung** down the ladder (recording a visible :class:`DegradeReceipt`
+    in the ledger) and dispatches on the lower backend. ``available=None`` keeps the legacy behavior (the
+    chosen backend is dispatched as-is, and a dispatcher that raises ``BackendHaltError`` still HALTs).
+
+    A backend HALT is recorded in the ledger (durable + visible) and reconcile CONTINUES to other
+    runnable leaves — one unavailable backend never starves the frontier, and a HALT/degrade is never a
+    silent substitution.
     """
     success = outcome_store.completed_subplots(store)  # success-only -> the frontier input
     settled = set(_dispatch_records(store))  # subplots with a COMMIT dispatch record
     dispatched: list[str] = []
     halted: list[dict[str, Any]] = []
     gated: list[str] = []
+    degraded: list[dict[str, Any]] = []
     for sid in outcome_spec.ready_frontier(spec, success):
         if sid in settled:
             continue  # settled dispatch record exists -> idempotent skip (no double-dispatch)
@@ -483,6 +527,44 @@ def _reconcile_once(
         # is the durable dedup. If another tick holds the lock right now, skip — it owns this leaf.
         if not outcome_store.acquire_dispatch(store, sid, holder, lease_ttl, now=now):
             continue
+
+        # The presence-conditional degrade decision (R23). Resolves the backend to dispatch on, or HALTs.
+        resolved_backend = node.backend
+        degrade_receipt: dict[str, Any] | None = None
+        if available is not None:
+            action, resolved_backend, reason = outcome_dispatcher.degrade_decision(
+                node.backend,
+                available=available,
+                attending=attending,
+                guarantee_bearing=outcome_dispatcher.is_guarantee_bearing(node),
+                had_side_effect=node.destructive,
+            )
+            if action == "halt":
+                outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+                receipt = outcome_dispatcher.HaltReceipt(
+                    outcome_id=spec.outcome_id,
+                    subplot_id=sid,
+                    backend=node.backend,
+                    reason=reason,
+                    available=tuple(available),
+                ).to_dict()
+                # Append-once on (halt, key): an attended leaf polling against a persistently-unavailable
+                # backend must not re-append a halt record every tick (unbounded ledger growth).
+                _append_ledger_once(
+                    store,
+                    {"phase": "halt", "kind": "dispatch", "key": f"dispatch:{sid}", **receipt},
+                )
+                halted.append(receipt)
+                continue
+            if action == "degrade":
+                degrade_receipt = outcome_dispatcher.DegradeReceipt(
+                    outcome_id=spec.outcome_id,
+                    subplot_id=sid,
+                    from_backend=node.backend,
+                    to_backend=resolved_backend,
+                    reason=reason,
+                ).to_dict()
+
         key = f"dispatch:{sid}"
         outcome_store.append_ledger(
             store, {"phase": "intent", "kind": "dispatch", "key": key, "subplot_id": sid}
@@ -493,23 +575,26 @@ def _reconcile_once(
                     outcome_id=spec.outcome_id,
                     subplot_id=sid,
                     title=node.title,
-                    backend=node.backend,
+                    backend=resolved_backend,
                     repo_root=Path(repo_root),
                 )
             )
         except outcome_dispatcher.BackendHaltError as halt:
-            # The chosen backend cannot run. Release the lock so a later tick (once the backend is
-            # available, or each manual advance) re-attempts and re-surfaces this HALT, and record the
-            # receipt durably. Never substitute a lesser backend; never abort the rest of the tick.
+            # A dispatcher-raised HALT (legacy / a restricted injected dispatcher). Release the lock so a
+            # later tick re-attempts + re-surfaces it; record the receipt durably; never abort the tick.
             outcome_store.release_lease(store, f"dispatch-{sid}", holder)
             receipt = (
                 halt.receipt.to_dict() if hasattr(halt.receipt, "to_dict") else dict(halt.receipt)
             )
-            outcome_store.append_ledger(
-                store, {"phase": "halt", "kind": "dispatch", "key": key, **receipt}
-            )
+            _append_ledger_once(store, {"phase": "halt", "kind": "dispatch", "key": key, **receipt})
             halted.append(receipt)
             continue
+        if degrade_receipt is not None:
+            # A visible downgrade receipt (R23) — surfaced in the report's Degradations section.
+            # Append-once on (degrade, key) so a crash in the degrade->commit window (recovery re-runs the
+            # intent) cannot double-list the degradation.
+            _append_ledger_once(store, {"phase": "degrade", "key": key, **degrade_receipt})
+            degraded.append(degrade_receipt)
         outcome_store.append_ledger(
             store,
             {
@@ -518,11 +603,12 @@ def _reconcile_once(
                 "key": key,
                 "subplot_id": sid,
                 "leaf_saga_id": leaf_saga_id,
-                "backend": node.backend,
+                "backend": resolved_backend,
+                "at": now(),  # dispatch timestamp for the U9 liveness check (R31)
             },
         )
         dispatched.append(sid)
-    return dispatched, halted, gated
+    return dispatched, halted, gated, degraded
 
 
 # ---------------------------------------------------------------------------
@@ -715,6 +801,19 @@ def production_worktree_processor(
     return processor
 
 
+def production_liveness_processor(
+    *, now: Callable[[], float] = time.time
+) -> Callable[[Any, Any], Any]:
+    """Build the liveness processor ``advance`` runs each tick under the held coordinator lease (U9): it
+    reclaims every hung dispatched leaf (breaching its heartbeat/timeout budget) as ``stalled`` (R31)."""
+    import outcome_liveness
+
+    def processor(spec: Any, store: Any) -> Any:
+        return outcome_liveness.harvest_liveness(spec, store, now=now())
+
+    return processor
+
+
 # ---------------------------------------------------------------------------
 # CLI — the thin /outcome verbs (KTD11). No I/O at import.
 # ---------------------------------------------------------------------------
@@ -734,6 +833,21 @@ def main(argv: list[str] | None = None) -> int:
     p_advance = sub.add_parser("advance", help="run a reconcile tick (dispatch the ready frontier)")
     p_advance.add_argument("outcome_id")
     p_advance.add_argument("--loop", action="store_true")
+    p_advance.add_argument(
+        "--autonomous",
+        action="store_true",
+        help="operator is away — an unavailable backend degrades one rung instead of HALTing (R23)",
+    )
+    p_advance.add_argument(
+        "--host-capable",
+        action="store_true",
+        help="this host can run the forked-context backends (fork/subagent/goal)",
+    )
+    p_advance.add_argument(
+        "--workflow-available",
+        action="store_true",
+        help="this host can run cc-workflows-ultracode (the Workflow tool is present)",
+    )
 
     for verb in ("resume", "status", "graph"):
         p = sub.add_parser(verb, help=f"{verb} an outcome")
@@ -788,22 +902,31 @@ def main(argv: list[str] | None = None) -> int:
             spec = start(root, args.outcome_id, args.objective)
             print(json.dumps({"started": spec.outcome_id, "nodes": len(spec.nodes)}))
         elif args.command == "advance":
-            # The production /outcome advance routes through the REAL backend seam (R5/R6, the
-            # record-only default dispatcher is the test/skeleton fallback only), the REAL completion
-            # barrier (U5, harvester), the REAL auto-merge queue (U6, merge_processor), the REAL
-            # worktree lifecycle (U7, worktree_processor: reap + worktree-removed terminal + provision),
-            # and the REAL approval gate (U7, gate_factory: no dispatch before the frontier is approved).
+            # The production /outcome advance routes through the REAL backend seam (R5/R6), the REAL
+            # completion barrier (U5, harvester), the REAL auto-merge queue (U6, merge_processor), the
+            # REAL worktree lifecycle (U7, worktree_processor), the REAL approval gate (U7, gate_factory),
+            # the REAL liveness reclaim (U9, liveness_processor: hung leaf -> stalled), and the REAL
+            # presence-conditional degrade decision (U9, available + attending): an unavailable backend
+            # HALTs when attended/guaranteed/side-effected, else degrades one rung when --autonomous.
             import outcome_decompose
 
+            avail = outcome_dispatcher.resolve_available(
+                host_capable=args.host_capable, workflow_available=args.workflow_available
+            )
+            # The dispatcher mints any backend the degrade decision resolves to (it never halts here —
+            # _reconcile_once owns the HALT/degrade decision via degrade_decision with `avail`).
             result = advance(
                 root,
                 args.outcome_id,
                 loop=args.loop,
-                dispatcher=outcome_dispatcher.make_dispatcher(),
+                dispatcher=outcome_dispatcher.make_dispatcher(available=outcome_spec.NODE_BACKENDS),
                 harvester=production_harvester(root),
                 merge_processor=production_merge_processor(),
                 worktree_processor=production_worktree_processor(root),
+                liveness_processor=production_liveness_processor(),
                 gate_factory=lambda spec, store: outcome_decompose.make_dispatch_gate(store, spec),
+                available=avail,
+                attending=not args.autonomous,
             )
             print(json.dumps(result.to_dict()))
         elif args.command == "approve":

@@ -155,6 +155,26 @@
   status, R17) and **never auto-closes the parent** (`parent_close = operator-keystroke-only`). New
   `/outcome report` / `project` verbs + a consolidated `/outcome attend` (no subplot → the ranked prompt).
   (U8 ships R17 + R18 + R19 + R25 + AE5 + F3/F5/F6.)
+- **U9** — Add the **full backend menu + the presence-conditional degrade policy + leaf liveness**
+  (`scripts/outcome_dispatcher.py` extended, `scripts/outcome_liveness.py`, `references/operator-choice.md`
+  §8, `tests/test_outcome_backends.py`, `tests/test_outcome_liveness.py`). **Full menu** (R6):
+  `resolve_available()` exposes the host-conditional set — the always-available floor (`inline` /
+  `team-execution` / `manual`) plus the host-dependent `fork` / `subagent` / `goal` / `cc-workflows-ultracode`
+  (off by default; enabled via `--host-capable` / `--workflow-available`). **Presence-conditional degrade**
+  (R23/AE1): `degrade_decision` — an unavailable backend **HALTs** when the operator is attending / the
+  leaf is guarantee-bearing (`guarantee_tags` or `degrade_policy="halt"`) / it already side-effected (a
+  `destructive` leaf), else **degrades one rung** down the `cc-workflows-ultracode → team-execution →
+  inline` ladder (recording a visible `DegradeReceipt` surfaced in the report's **Degradations** section)
+  when the leaf is autonomous and the operator is away; a backend off the ladder HALTs (no silent
+  substitution, R5). **Liveness** (R31): `outcome_liveness.harvest_liveness` reclaims a dispatched leaf
+  that breaches its `heartbeat_seconds` / `timeout_seconds` budget as the **`stalled`** terminal (pages
+  once, cascades R22); `record_heartbeat` pushes back the deadline. **Frontier-budget + fork-cost levers**
+  (R7): `recommend_outcome_backend` downgrades a per-leaf `cc-workflows-ultracode` recommendation to
+  `team-execution` on a wide frontier, and `fork_is_cheap` claims the fork lever only when model + system
+  + tools match the parent within the cache TTL. **Wired into the production `/outcome advance`**: a
+  `liveness_processor` (under the held lease) + `available` / `attending` (`--autonomous`) driving the
+  degrade decision in `_reconcile_once`; `AdvanceResult.liveness` / `.degraded`. (U9 ships R3 + R5 + R6 +
+  R7 + R23 + R24-telemetry-capture + R31.)
 
 ## 0.37.0 - 2026-06-21
 

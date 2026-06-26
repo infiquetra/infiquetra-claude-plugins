@@ -8,14 +8,19 @@ leaf saga id and a ``/resume`` return channel (the R9 bidirectional envelope's r
 or, when the backend cannot actually run, emits a **visible HALT-not-degrade receipt** (R5/R23) rather
 than silently substituting a lesser backend.
 
-U4 makes **team-execution the first real backend** (R6); the rest of the menu (fork / subagent /
-cc-workflows-ultracode / `/goal` / manual) is wired in U9, so dispatching to one of those today yields a
-HALT receipt — never a silent inline fallback. The *degrade-one-rung vs halt* decision based on operator
-presence (R23) is U9; U4 owns only the HALT receipt: a chosen-but-unavailable backend halts and pages.
+U4 made **team-execution the first real backend** (R6); **U9 completes the menu** (R6): ``resolve_available``
+exposes the full host-conditional set (the always-available floor inline / team-execution / manual + the
+host-dependent fork / subagent / cc-workflows-ultracode / goal), and ``degrade_decision`` is the
+**presence-conditional degrade policy** (R23/AE1) — an unavailable backend HALTs when the operator is
+attending / the leaf is guarantee-bearing / it already side-effected, else degrades **one rung** down the
+``DEGRADE_LADDER`` (recording a visible :class:`DegradeReceipt`) when the leaf is autonomous and the
+operator is away. ``recommend_outcome_backend`` adds the R7 frontier-budget + fork-cost levers, and
+``outcome_liveness`` (a sibling module) enforces the R31 heartbeat/timeout ``stalled`` terminal.
 
-``make_dispatcher`` returns a ``Dispatcher`` (the callable ``outcome.advance`` consumes): it returns the
-leaf saga id on a successful dispatch and raises ``BackendHaltError`` (carrying the receipt) on a HALT,
-which the reconcile loop records and surfaces instead of dispatching to a lesser backend.
+``make_dispatcher`` returns a ``Dispatcher`` (the callable ``outcome.advance`` consumes): it mints the
+leaf saga id (the production loop gives it the full menu so it never HALTs — ``outcome._reconcile_once``
+owns the HALT/degrade decision via ``degrade_decision``); it still raises ``BackendHaltError`` for a
+restricted/unit caller, which the reconcile loop records as a HALT.
 
 House pattern (mirrors the other ``outcome_*`` modules): pure functions over explicit values, the
 ``team_emitter`` wiring loaded lazily by path, no I/O at import.
@@ -33,11 +38,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 
-# The backends actually runnable as of U4. team-execution is the first real backend (R6); inline is
-# the always-available floor. The full menu (fork/subagent/cc-workflows-ultracode/goal/manual) is R6's
-# remit but lands in U9 — until then, choosing one of those HALTs with a visible receipt (R5), never a
-# silent substitution. Validated against the spec's closed NODE_BACKENDS vocabulary.
-DEFAULT_AVAILABLE: tuple[str, ...] = ("inline", "team-execution")
+# The always-available floor (R6): the agent can always run inline, emit a team-execution artifact, or
+# hand a leaf to the operator (manual). The host-dependent backends (fork / subagent /
+# cc-workflows-ultracode / goal) are only available when the host advertises them (KTD9) — the
+# coordinator is a Python script that cannot itself probe the Claude Code host, so they stay OFF by
+# default and an unavailable choice HALTs or DEGRADES (R23), never a silent substitution (R5).
+ALWAYS_AVAILABLE: tuple[str, ...] = ("inline", "team-execution", "manual")
+HOST_DEPENDENT: frozenset[str] = frozenset({"fork", "subagent", "cc-workflows-ultracode", "goal"})
+DEFAULT_AVAILABLE: tuple[str, ...] = ALWAYS_AVAILABLE
+
+# The capability ladder degrade walks DOWN (R23): most-capable dynamic workflows -> review-gated
+# team-execution -> the always-runnable inline floor. A backend NOT on this ladder
+# (fork/subagent/goal/manual) has no defined lower rung, so an unavailable one HALTs rather than
+# silently substituting (R5). Mirrors lifecycle_state.ORCHESTRATION_TIERS.
+DEGRADE_LADDER: tuple[str, ...] = ("cc-workflows-ultracode", "team-execution", "inline")
 
 
 class DispatcherError(ValueError):
@@ -163,6 +177,178 @@ def team_execution_artifact(execution_spec_obj: Any) -> str:
     sys.modules.setdefault("execution_spec", module)
     loaded.loader.exec_module(module)
     return str(module.recompile_for_tier(execution_spec_obj, "team-execution"))
+
+
+# ---------------------------------------------------------------------------
+# Full backend menu + the presence-conditional degrade decision (U9 — R6/R23/AE1)
+# ---------------------------------------------------------------------------
+
+
+def resolve_available(
+    *, host_capable: bool = False, workflow_available: bool = False
+) -> tuple[str, ...]:
+    """The runnable backend set for this host (R6), ordered by the spec's ``NODE_BACKENDS`` vocabulary.
+
+    ``ALWAYS_AVAILABLE`` (inline / team-execution / manual) is unconditional. ``host_capable`` enables
+    the forked-context backends (``fork`` / ``subagent`` / ``goal``); ``workflow_available`` additionally
+    enables ``cc-workflows-ultracode``. The conservative default (both False) is the always-available
+    floor — the coordinator never claims a host-dependent backend it cannot verify.
+    """
+    avail = set(ALWAYS_AVAILABLE)
+    if host_capable:
+        avail |= {"fork", "subagent", "goal"}
+    if host_capable and workflow_available:
+        avail.add("cc-workflows-ultracode")
+    return tuple(b for b in outcome_spec.NODE_BACKENDS if b in avail)
+
+
+def is_guarantee_bearing(node: Any) -> bool:
+    """A leaf that must HALT rather than degrade (R23): it carries guarantee tags OR opts into the
+    ``halt`` degrade policy. Such a leaf never silently runs on a lesser backend, even autonomous + away.
+    """
+    return (
+        bool(getattr(node, "guarantee_tags", None)) or getattr(node, "degrade_policy", "") == "halt"
+    )
+
+
+@dataclass(frozen=True)
+class DegradeReceipt:
+    """A visible record that an autonomous, away leaf was DEGRADED one rung (R23) — surfaced in the report."""
+
+    outcome_id: str
+    subplot_id: str
+    from_backend: str
+    to_backend: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "degrade",
+            "outcome_id": self.outcome_id,
+            "subplot_id": self.subplot_id,
+            "from_backend": self.from_backend,
+            "to_backend": self.to_backend,
+            "reason": self.reason,
+        }
+
+
+def degrade_decision(
+    backend: str,
+    *,
+    available: Sequence[str],
+    attending: bool,
+    guarantee_bearing: bool,
+    had_side_effect: bool,
+) -> tuple[str, str, str]:
+    """The presence-conditional degrade decision (R23/AE1). Returns ``(action, backend, reason)`` where
+    ``action`` is ``dispatch`` (run on ``backend``) / ``degrade`` (run on the returned lower rung) /
+    ``halt`` (page the operator, never substitute).
+
+    * backend **available** -> ``dispatch`` on it.
+    * **operator attending** the leaf -> ``halt`` (the operator decides; never auto-degrade under their nose).
+    * **guarantee-bearing** -> ``halt`` even when away (never run a guaranteed leaf on a lesser backend).
+    * **already side-effected** (a destructive leaf: deploy/migration/write/repo-mutation) -> ``halt``,
+      never re-run on a lesser backend (R23 no-duplicate-side-effect).
+    * else (autonomous + away + no guarantee + no side effect) -> ``degrade`` to the first AVAILABLE
+      lower rung of the ``DEGRADE_LADDER``; if ``backend`` is not on the ladder, or no lower rung is
+      available -> ``halt`` (no silent substitution, R5).
+    """
+    avail = set(available)
+    if backend in avail:
+        return ("dispatch", backend, "")
+    if attending:
+        return (
+            "halt",
+            backend,
+            f"{backend} unavailable and the operator is attending -> HALT + page (R23)",
+        )
+    if guarantee_bearing:
+        return (
+            "halt",
+            backend,
+            f"{backend} unavailable but the leaf is guarantee-bearing -> HALT even when away (R23)",
+        )
+    if had_side_effect:
+        return (
+            "halt",
+            backend,
+            f"{backend} unavailable after a side effect -> HALT, never re-run on a lesser backend (R23)",
+        )
+    if backend in DEGRADE_LADDER:
+        below = DEGRADE_LADDER[DEGRADE_LADDER.index(backend) + 1 :]
+        for lower in below:
+            if lower in avail:
+                return (
+                    "degrade",
+                    lower,
+                    f"{backend} unavailable; autonomous + away -> degraded to {lower} (R23)",
+                )
+    return (
+        "halt",
+        backend,
+        f"{backend} unavailable and no lower rung is available -> HALT (no silent substitution, R5)",
+    )
+
+
+def fork_is_cheap(
+    *, model_matches: bool, system_matches: bool, tools_match: bool, within_ttl: bool
+) -> bool:
+    """Whether the ``fork`` cost lever is actually cheap (R7 / the operator-choice fork note).
+
+    A fork only shares the parent's warm prompt cache — and is therefore the cheap option — when the
+    child's **model + system prompt + tools** all match the parent AND the request is **within the cache
+    TTL**. If any differs, the fork pays a full cache miss and must NOT be claimed as cheap.
+    """
+    return model_matches and system_matches and tools_match and within_ttl
+
+
+# How wide the ready frontier must be before per-leaf dynamic workflows become a budget concern (R7).
+_FRONTIER_BUDGET_THRESHOLD = 5
+
+
+def recommend_outcome_backend(
+    *,
+    frontier_width: int = 1,
+    fork_candidate: bool = False,
+    fork_signals: dict[str, bool] | None = None,
+    **leaf_signals: Any,
+) -> dict[str, Any]:
+    """Outcome-level backend recommender (R7): wraps the leaf recommender with two outcome concerns.
+
+    1. **Fork cost lever** — when the caller offers ``fork`` as a candidate, recommend it ONLY if
+       :func:`fork_is_cheap` holds for ``fork_signals``; otherwise fall through so a cache-missing fork is
+       never claimed as the cheap option.
+    2. **Frontier-budget awareness** — a wide ready frontier (``frontier_width`` above the threshold)
+       makes a dynamic workflow *per leaf* expensive, so a ``cc-workflows-ultracode`` recommendation is
+       downgraded to ``team-execution`` with a ``budget_note`` (escalation stays one keystroke via
+       ``alternatives``). A narrow frontier is unaffected.
+    """
+    import lifecycle_state
+
+    if fork_candidate and fork_signals is not None and fork_is_cheap(**fork_signals):
+        return {
+            "recommended": "fork",
+            "rationale": "fork shares the parent's warm cache (model+system+tools match within TTL) -> cheap (R7)",
+            "alternatives": ["inline", "team-execution"],
+            "frontier_width": frontier_width,
+        }
+
+    rec = dict(lifecycle_state.recommend_execution_backend(**leaf_signals))
+    rec["frontier_width"] = frontier_width
+    if (
+        frontier_width > _FRONTIER_BUDGET_THRESHOLD
+        and rec["recommended"] == "cc-workflows-ultracode"
+    ):
+        rec["budget_note"] = (
+            f"frontier width {frontier_width} > {_FRONTIER_BUDGET_THRESHOLD}: a dynamic workflow per "
+            f"leaf is expensive -> downgraded to team-execution (R7 frontier budget)"
+        )
+        alts = [a for a in rec.get("alternatives", []) if a != "team-execution"]
+        if "cc-workflows-ultracode" not in alts:
+            alts.append("cc-workflows-ultracode")
+        rec["recommended"] = "team-execution"
+        rec["alternatives"] = [a for a in alts if a != "team-execution"]
+    return rec
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -36,6 +36,23 @@
   operator). Dependency-injected `runner`/`now` → unit-testable offline with no real git repo or wall
   clock; no I/O at import. (U2 ships the cache/durability facets of R9/R10/R13/R14/R27/R28/R30/R34; the
   parent-owned barrier predicate lands in U5, real GitHub/export wiring in U5/U6/U7.)
+- **U3** — Add the thin `/outcome` command + skill + the reconcile engine (`commands/outcome.md`,
+  `skills/outcome/SKILL.md`, `scripts/outcome.py`, `tests/test_outcome_command.py`): the
+  **OutcomeOrchestrator** coordinator over a DAG of leaf sagas. A **level-triggered reconcile loop**
+  (R29) — each `advance` tick reconstructs live state from the durable store, dispatches the ready
+  frontier to executors via an injected dispatcher, and pages only on exceptions; it holds no
+  authoritative in-memory DAG (crash-tolerant, host-agnostic). Enforces two invariants structurally:
+  the **coordinator routes, never executes** (R2/R3 — `advance` only dispatches + harvests, never runs
+  a leaf's work in-process; the record-only default dispatcher proves it, real backends arrive U4/U9),
+  and **status is derived on read** (R17 — node live-state is computed each call from spec + completion
+  events + dispatch records, never a stored field). Idempotent (the per-subplot dispatch lock + ledger
+  record dedup repeated ticks); a second concurrent `advance` no-ops on the held coordinator lease
+  (R13). Thin coordinator verbs only (KTD11/R16): `start` / `graph` / `advance` / `attend` / `resume` /
+  `status` / `export` / `import` — `attend` prints the native `/resume <leaf-saga-id>` handoff; leaf
+  work stays the native verbs (no `/outcome work`). Ships the R14 export/import portable bundle. Wired
+  into the saga docs model + manual card (`/outcome` is in the source but the marketplace version flip +
+  advertisement stay deferred to U11). (U3 ships R16/R29 + the dispatch-seam facet of R1/R3; the degrade
+  path, real backends, decompose/report/close verbs land in later units.)
 
 ## 0.37.0 - 2026-06-21
 

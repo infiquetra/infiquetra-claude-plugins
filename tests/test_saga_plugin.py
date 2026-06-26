@@ -75,6 +75,7 @@ def test_infiquetra_lifecycle_commands_are_packaged() -> None:
         "optimize",
         "investigate",
         "spec",
+        "outcome",
     ):
         assert (PLUGIN_ROOT / "commands" / f"{command}.md").exists()
 
@@ -99,6 +100,7 @@ def test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior() -> N
         "optimize",
         "investigate",
         "spec",
+        "outcome",
     }
     for skill in expected_skills:
         skill_path = PLUGIN_ROOT / "skills" / skill / "SKILL.md"

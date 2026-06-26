@@ -24,6 +24,24 @@
 
 ## 2026-06-26
 
+### Outcome reconcile engine (U3): node state is derived-on-read not committed, dispatch-not-execute via injected dispatcher, command surface lands now but releases at U11 (U3 PR pending — SHA-fill on merge)  {#outcome-reconcile-engine-stance}
+
+**Decision.** `outcome.py` is the OutcomeOrchestrator coordinator runtime over the spec (U1) + store (U2). Three conventions every later coordinator unit (U4 backends, U5 barrier, U6 auto-merge, U7 decompose, U8 report, U9 degrade) must follow:
+- **Node operational state is DERIVED on read, never committed per tick.** The committed branch spec carries *structure* (nodes/edges/decision-trail/cost); a node's live state (`ready`/`dispatched`/`done`/`blocked`/`pending`) is recomputed every call from completion events (store) + dispatch records (ledger) via `derive_states`. There is no stored status field (R17). This keeps branch history free of per-tick state churn and makes the loop level-triggered + crash-tolerant (R29) — a crash mid-tick just re-derives.
+- **The coordinator dispatches, it never executes (R2/R3).** `advance` only calls an **injected `dispatcher`** (record-only by default; real backends are dispatcher implementations in U4/U9) and harvests completion events. It never runs a leaf's work in-process, so a coordinator failure can never collapse the DAG into one inline context.
+- **Dispatch idempotency = per-subplot lock (concurrent-tick guard) + durable ledger dispatch-record (skip marker).** A second concurrent `advance` no-ops on the held coordinator lease, released in a `finally` so a raising dispatcher can't brick the loop.
+
+**Rejected alternatives.**
+- *Persist node.state into the committed spec each tick.* Rejected: pollutes branch history with bot state-churn commits (the R21-vs-R26 cadence tension) and creates a stored status field that can drift (violates R17). Derive-on-read is canonical.
+- *Let the coordinator run the leaf inline when a backend is cheap.* Rejected: that is exactly the R3 context-collapse failure — the coordinator must always route, never execute, regardless of backend.
+- *Defer the command/skill markdown + model/manual integration to U11.* Rejected: the plan lists them as U3 files, and landing `commands/outcome.md` without the model entry breaks the `wrappers == commands | aliases` guard — it is all-or-nothing. So the full surface lands in U3 (dogfoodable now); only the marketplace **version flip + advertisement** defer to U11. The generated command-matrix visual stays at the released 18 because the renderer uses a hardcoded command list (adding `/outcome` to the model changes no SVG) — a deliberate "in source, not yet released" state.
+
+**Rationale.** The derive-on-read model falls directly out of R17 (no operator-writable status) + R29 (level-triggered, holds no authoritative in-memory DAG). The injected-dispatcher seam makes the R3 invariant *structural and testable* — the engine has no code path that runs a leaf body, so a record-only dispatcher proves "dispatched, not executed" by construction. Generalizable rule: **when an invariant says "X never happens," encode it as a missing capability (no code path), not a runtime check — then a test that would trip the path proves it.**
+
+**Revisit when.** U9 wires the recommender + real backends (the dispatcher gains tier selection + degrade-only-leaves, completing R3/R6/R7); U8 adds the full report + attention consolidator (completing R17/R18); U11 flips the version + advertises `/outcome` (and adds it to the command-matrix renderer + regenerates the visual). If derive-on-read ever proves too slow at scale (large DAGs re-deriving each tick), add a derived-state cache invalidated by spec_revision + completion-event count — but never a committed status field.
+
+**Refs.** `plugins/saga/scripts/outcome.py`, `plugins/saga/commands/outcome.md`, `plugins/saga/skills/outcome/SKILL.md`, `tests/test_outcome_command.py`; work log `docs/work-sessions/2026-06-25-outcome-orchestration.md`. Implements U3 of the [outcome-orchestration build plan](#outcome-orchestration-plan); builds on the U1 [validator stance](#outcome-spec-validator-stance) + U2 [store durability stance](#outcome-store-durability-stance).
+
 ### Outcome store (U2): write-once-vs-atomic split, self-healing ledger, sticky success, best-effort lease with defense-in-depth (U2 PR pending — SHA-fill on merge)  {#outcome-store-durability-stance}
 
 **Decision.** `outcome_store.py` is the git-common-dir **cache** (R27) beside the canonical spec + GitHub — never committed, deleting it loses nothing. KTD15's durability primitives lock these conventions every later unit (U5 barrier, U6 auto-merge/negative-states, U7 graph editing) must honor:

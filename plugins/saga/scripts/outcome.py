@@ -310,6 +310,7 @@ class AdvanceResult:
     halted: list[dict[str, Any]] = field(
         default_factory=list
     )  # HALT receipts (R5/R23 — backend down)
+    merges: list[Any] = field(default_factory=list)  # per-tick auto-merge queue results (U6/R12)
     skipped_busy: bool = False  # coordinator lease held by another tick -> no-op (R13)
     ticks: int = 1
     status: dict[str, Any] = field(default_factory=dict)
@@ -319,6 +320,7 @@ class AdvanceResult:
             "dispatched": self.dispatched,
             "harvested": self.harvested,
             "halted": self.halted,
+            "merges": self.merges,
             "skipped_busy": self.skipped_busy,
             "ticks": self.ticks,
             "status": self.status,
@@ -333,6 +335,7 @@ def advance(
     max_ticks: int = 100,
     dispatcher: Dispatcher | None = None,
     harvester: Callable[[Any, Any], list[str]] | None = None,
+    merge_processor: Callable[[Any, Any], Any] | None = None,
     holder: str | None = None,
     lease_ttl: float = DEFAULT_LEASE_TTL,
     now: Callable[[], float] = time.time,
@@ -363,10 +366,15 @@ def advance(
     all_dispatched: list[str] = []
     all_halted: list[dict[str, Any]] = []
     all_harvested: list[str] = []
+    merge_runs: list[Any] = []
     ticks = 0
     try:
         while True:
             ticks += 1
+            if merge_processor is not None:
+                # Auto-merge clean PRs FIRST (under the held coordinator lease, so serialized
+                # cross-process, R12/R13), then harvest reads the now-merged PRs as completions.
+                merge_runs.append(merge_processor(spec, store))
             if harvester is not None:
                 # Materialize GitHub-canonical completions BEFORE the frontier read so a leaf whose
                 # PR just merged unlocks its dependents this same tick (R10/R11).
@@ -389,6 +397,7 @@ def advance(
         dispatched=all_dispatched,
         harvested=all_harvested,
         halted=all_halted,
+        merges=merge_runs,
         ticks=ticks,
         status=status(repo_root, outcome_id, spec=spec, store=store),
     )
@@ -622,6 +631,21 @@ def production_harvester(
     return harvester
 
 
+def production_merge_processor(
+    *, github_runner: Callable[..., Any] | None = None
+) -> Callable[[Any, Any], Any]:
+    """Build the merge processor ``advance`` runs each tick under the held coordinator lease (U6): it
+    auto-merges every clean, non-gated code leaf (serialized) and records GitHub negative terminals."""
+    import outcome_merge
+
+    ops = outcome_merge.github_merge_ops(github_runner)
+
+    def processor(spec: Any, store: Any) -> Any:
+        return outcome_merge.process_merge_queue(spec, store, ops)
+
+    return processor
+
+
 # ---------------------------------------------------------------------------
 # CLI — the thin /outcome verbs (KTD11). No I/O at import.
 # ---------------------------------------------------------------------------
@@ -673,6 +697,7 @@ def main(argv: list[str] | None = None) -> int:
                 loop=args.loop,
                 dispatcher=outcome_dispatcher.make_dispatcher(),
                 harvester=production_harvester(root),
+                merge_processor=production_merge_processor(),
             )
             print(json.dumps(result.to_dict()))
         elif args.command == "resume":

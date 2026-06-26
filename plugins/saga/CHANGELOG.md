@@ -91,6 +91,25 @@
   so a merged PR / closed issue unlocks dependents in the live loop. (U5 ships the **barrier-predicate
   half of R9** — the re-entry-token-out is U4's dispatch — plus R10/R11/R22 + the R27/R28 completion-read
   leg the U2/U3 honesty passes deferred here; the auto-merge action + negative-state cascade land in U6.)
+- **U6** — Add the **auto-merge queue** + GitHub negative terminal states (`scripts/outcome_merge.py`,
+  `scripts/outcome_github.py` write side, `tests/test_outcome_merge_queue.py`). A non-gated, clean code
+  subplot **auto-merges** (server-side squash) to unlock dependents (R12). Merges are **serialized**, and
+  **GitHub is the authoritative atomic guard** (not a local SHA compare): `gh pr merge --squash
+  --match-head-commit <head>` is rejected by GitHub if the PR is not mergeable — base moved (`behind`),
+  conflict (`dirty`), head moved, or required checks unmet — so a **stale tree can never be squashed**
+  (R12/R30). The loop classifies via GitHub's `mergeStateStatus`: `behind` → **rebase (update-branch)
+  then re-verify**; `dirty` → **conflict** (fail the leaf back to `work` + page, never a silent skip);
+  `blocked` → wait for gates (the CI-green/review evidence is GitHub's own readiness); a rejected squash
+  → **reloop**, base churn **capped at 3** → halt + page (no spin). **R34 safe-degrade:** an `unknown`
+  merge-state or unreadable base (gh outage) **defers** (`not-ready`) — a gh outage never fails a leaf or
+  merges wrongly. **Negative GitHub terminals** (R32): a PR **closed-unmerged** or a **definite-404
+  deleted branch** records a sticky `rejected` terminal that **cascades** like a block (R22); an
+  out-of-band merge is never double-merged; a `conflict` records a **retryable** `failed` terminal
+  (re-enters the queue once /work fixes it — only `rejected`/`stalled` permanently skip). **Wired into
+  the production `/outcome advance`** (`merge_processor`, `AdvanceResult.merges`) under the held
+  coordinator lease, so it is single-writer **cross-process** too (R13). GitHub ops are an injected
+  `MergeOps` adapter → fully unit-testable offline. (U6 ships R12 + R32-PR/branch + R22 negative cascade +
+  R30 merge atomicity; the worktree-removed terminal is U7, the degrade decision U9.)
 
 ## 0.37.0 - 2026-06-21
 

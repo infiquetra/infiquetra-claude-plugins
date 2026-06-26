@@ -24,6 +24,28 @@
 
 ## 2026-06-26
 
+### Outcome auto-merge queue (U6): GitHub is the atomic merge guard (not a local SHA compare), churn cap not spin, conflict is retryable, gh-outage defers never fails (U6 PR pending — SHA-fill on merge)  {#outcome-merge-queue-stance}
+
+**Decision.** `outcome_merge` is the serialized auto-merge queue + GitHub negative-state handler (R12/R32). Conventions later units (U7 worktree terminal, U9 degrade) build on:
+- **GitHub itself is the atomic stale-tree guard — not a local SHA compare.** `gh pr merge --squash --match-head-commit <head>` is rejected by GitHub if the PR is not mergeable (base moved/`behind`, conflict/`dirty`, head moved, checks unmet), so a stale tree can never be squashed (R12/R30). The loop reads GitHub's `mergeStateStatus` to *classify* (behind→rebase, dirty→conflict, blocked→wait) and treats a rejected squash as a reloop. (A local "read the base SHA twice and compare" is a TOCTOU, not a CAS — the SHA was never bound to the merge; the verify panel proved a base change after the read still squashed. The CAS must be performed by the server that owns the ref.)
+- **A gh outage DEFERS, never fails the leaf (R34).** `unknown` merge-state or an unreadable base → `not-ready` (defer); `squash_merge` returns `merged`/`error` (a non-zero exit is NOT assumed to be a conflict — conflicts come from `merge_state="dirty"`). The earlier "non-zero exit → conflict → permanent `failed` terminal" turned a transient outage into a wrong, sticky action.
+- **A conflict is RETRYABLE; only `rejected`/`stalled` permanently skip.** The merge-queue skip-set is success ∪ truly-terminal-negative — a `failed` (conflict) leaf re-enters the queue once /work fixes it (a `successful_only=False` skip-set was a conflict-recovery deadlock). Negative terminals are sticky completion events at a fresh attempt (the U5 attempt-fix pattern) and `blocked_subtree` cascades only their downstream (R22).
+- **Single-writer cross-process via the coordinator lease.** `process_merge_queue` is serialized within a process (sequential) AND the caller (`advance`) holds the coordinator lease (R13), so two coordinators can't both squash on stale bases — the in-process loop alone is not enough.
+- **`branch_exists` rejects only on a DEFINITE 404.** A transient gh error degrades to *present* (a flake must never falsely reject a live subplot); the deleted-branch terminal fires only when GitHub says `404`/not-found.
+- **GitHub ops are an injected `MergeOps` adapter**, so the queue's logic is fully unit-testable with no real `gh` — but tests MUST use values the real adapter can actually emit (a `squash="error"` fake masked the R34 violation; the regression now drives the REAL `github_merge_ops` with a failing runner).
+
+**Rejected alternatives.**
+- *Local read-the-base-SHA-twice "guard".* Rejected: it is a TOCTOU, not a CAS (the SHA is never bound to the merge); GitHub's `--match-head-commit` is the real atomic guard.
+- *Non-zero `gh pr merge` exit → conflict → `failed` terminal.* Rejected: it fails a leaf on a transient outage (R34) and conflates transient with conflict; classify conflicts via `merge_state`, defer on uncertainty.
+- *Skip `failed` leaves permanently (`successful_only=False`).* Rejected: conflict-recovery deadlock — a fixed leaf must re-enter the queue.
+- *Treat an indeterminate `branch_exists` as "gone".* Rejected — a gh flake would falsely reject a live subplot; only a definite 404 rejects.
+
+**Rationale.** The first cut tried to be the guard locally (read the base SHA, then squash) — the adversarial-verify panel proved that is a TOCTOU, not a CAS: the SHA is never bound to the merge, so a base change after the read still squashes. The correct shape is the same "encode the invariant as a guard the adversarial interleaving must pass" as the U2 atomic-redirect and U4 HALT-no-fallback, but the guard must be performed by **the party that owns the resource** — GitHub, via `--match-head-commit`. Generalizable rule: **a "still-current" precondition for a mutation must be enforced atomically by the system that owns the resource (a server-side CAS), not by a local read-then-act — and "degrade safe" means a transient failure DEFERS, never fabricates a terminal (a test that can't emit the real failure value gives false safety confidence).**
+
+**Revisit when.** U7 adds the worktree-removed terminal (another R32 negative → same sticky-event + cascade path); U9 adds the degrade decision (a non-clean leaf may degrade rather than wait). If `gh pr merge --match-head-commit` proves insufficient under heavy base churn, add a server-side merge-queue (GitHub's native one) rather than re-introducing a local SHA compare.
+
+**Refs.** `plugins/saga/scripts/outcome_merge.py`, `plugins/saga/scripts/outcome_github.py` (write side), `tests/test_outcome_merge_queue.py`; work log `docs/work-sessions/2026-06-25-outcome-orchestration.md`. Implements U6 of the [outcome-orchestration build plan](#outcome-orchestration-plan); builds on the U5 [completion barrier stance](#outcome-completion-barrier-stance) (its negative-terminal half) + the U2 [store durability stance](#outcome-store-durability-stance).
+
 ### Outcome completion barrier (U5): GitHub-canonical completion materialized into the cache, parent-owned predicate over evidence, unknown is the safe degraded value (U5 PR pending — SHA-fill on merge)  {#outcome-completion-barrier-stance}
 
 **Decision.** Completion is decided by a **parent-owned barrier predicate** (`outcome_orchestrator.barrier_satisfied`, R9) over evidence the parent can re-verify on GitHub — never a child's self-report. Conventions later units (U6 auto-merge/negative-states, U8 report) must follow:

@@ -81,4 +81,86 @@ fair over-claiming) drove the docstring + facet-scope corrections above and the 
 **Files modified:** `plugins/saga/scripts/outcome_spec.py` | `plugins/saga/references/outcome-spec.md` |
 `tests/test_outcome_spec.py` | `plugins/saga/CHANGELOG.md`
 
+**Merged:** PR #264 (squash `5e18999`). CI caught one red — `Type Check` runs `mypy plugins/ scripts/
+tests/` (the whole tree, incl. tests) while the local check had only covered the one script; the
+`dict[str, object]` test-fixture builders needed `dict[str, Any]`. Fixed in a follow-up commit, re-green,
+auto-merged. (Memory `reference-ci-gates` updated with the full mypy scope.)
+
 **Next step:** U2 — shared store + completion events + transition ledger.
+
+## U2 — Shared store, completion events, transition ledger
+
+**Built:** `plugins/saga/scripts/outcome_store.py` + `tests/test_outcome_store.py` +
+`tests/test_outcome_replay.py` — the git-common-dir **cache** beside the canonical spec + GitHub
+(KTD15). The store is the durability/coordination substrate the plan reviewers all flagged as
+under-defined; this unit makes every primitive concrete and runnable.
+
+**What it ships:**
+- **`Store` + git-common-dir resolution** (R27): `git rev-parse --git-common-dir` → the same absolute
+  store root from every worktree; injectable `runner` so it's testable with no real git repo.
+- **Completion events** (R9/R10/R28): immutable write-once JSON per leaf per attempt (`os.link`), so two
+  leaves finishing at once never contend; idempotency-key dedup, with a genuine new-`attempt` retry
+  proceeding to its own file. `completed_subplots` feeds U1's `ready_frontier`.
+- **Atomic writes + quarantine** (R30): `os.replace` for mutable files (no torn read); a malformed file
+  is moved to `quarantine/` and skipped, never fatal.
+- **Replay ledger** (R30): append-only `O_APPEND` JSONL tolerating a torn **trailing** line (a mid-file
+  malformed line is real corruption → raises); `replay_pending` pairs intents to commits by idempotency
+  key so a crash *after* a side effect but *before* its commit re-drives without duplicating (composes
+  with completion-event idempotency).
+- **Leases** (R13): lease-based `coordinator` lock (a second `advance` no-ops on a held lease, reclaims a
+  stale one) + per-subplot dispatch locks (no duplicate dispatch); injectable `now`.
+- **Offline queue** (R34, made concrete): GitHub wins for completion → a server-superseded queued write
+  is **dropped** (not replayed); a retry budget pages the operator on exhaustion instead of looping.
+
+**Key decisions:**
+- **Write-once via temp + `os.link`** (atomic create that refuses to clobber) for completion events,
+  separate from temp + `os.replace` (overwrite) for mutable files — the immutability vs atomicity split.
+- **Torn-tail tolerance is a precise allowance**, not "skip bad lines": only a malformed *trailing*
+  ledger line is dropped; a mid-file bad line raises (genuine corruption, not a crash tail).
+- **`runner`/`now` resolved at call-time** (None-sentinel default, not a bound default arg) so the CLI
+  path is monkeypatch-testable offline — fixed after the first cut bound `subprocess.run` at def-time.
+- **GitHub is authoritative for completion**: the cache holds nothing canonical, so blowing it away
+  (`git worktree remove`, a wipe) loses nothing — reconcile rebuilds from spec + GitHub.
+
+**Requirements (honest facet scope):** U2 ships the **cache + durability + coordination** facets of
+R9/R10/R13/R27/R28/R30/R34. The parent-owned **barrier predicate** (R9) lands in U5; real GitHub reads +
+**export/import** (R14) and the auto-merge/negative-state side of R30/R34 land in U5/U6/U7. U2 has no
+network and no coordinator runtime by design (that's U3+).
+
+**Checks run:** `ruff check .` ✓, `ruff format` ✓, `mypy plugins/ scripts/ tests/ --ignore-missing-imports`
+✓ (72 files), `pytest tests/test_outcome_store.py tests/test_outcome_replay.py` ✓ 34 passed
+(`outcome_store.py` 90%); full suite ✓ 1047 passed (+ the same known local false-positive).
+
+**Adversarial verification:** ultracode workflow `verify-outcome-u2` (3 lenses: concurrency/atomicity,
+durability/replay, requirements-honesty), each proving claims by running the store standalone with real
+threads + clock injection + crash sequences. Two genuine **P1s** + several P3s; several attacks
+correctly refuted. Folded in:
+- **P1 (concurrency)** — under a concurrent *identical-key* delivery, the `os.link` loser raised (with a
+  self-contradictory `key K != K` message) instead of deduping. Now the loser compares keys and returns
+  `"skipped"` when they match, raising only on a genuine divergent-completion conflict.
+- **P1 (durability)** — the ledger's torn-tail tolerance was read-only, not self-healing: a post-crash
+  append merged into the broken line (first append lost) and a second *bricked* `read_ledger` forever.
+  `append_ledger` now `_heal_torn_tail`s (truncates the unterminated fragment) before writing and loops
+  on short writes — the exact R30 crash now survives an append.
+- **P2** — `_atomic_write`'s pid-only temp name collided across same-process threads → now pid + thread
+  id + monotonic nonce (shared `_unique_tmp`, mirroring `_write_once`).
+- **P3s** — a non-object mid-file ledger line now raises (was silently skipped); `completed_subplots`
+  makes **success sticky** (a later `failed` attempt no longer un-completes a `done` leaf — it removed
+  the latest-attempt-wins logic); the offline queue gained real **exponential backoff** (`next_retry_at`
+  consumed by `drain_offline`, which now defers not-yet-due entries) so R34's "exponential backoff, cap
+  N" is genuinely delivered, not just the cap.
+- **Honesty (P2/P3)** — the lease-reclaim TOCTOU is documented as best-effort with dispatch-lock +
+  idempotency as defense-in-depth (a fencing token is deferred to U6's coordinator — adding it now with
+  no consumer would be dead-wiring); R9/R14/R27/R28 facet scoping clarified (U2 ships the cache/durability
+  facets; barrier predicate → U5, export/import → U3/U7, GitHub-read reconstruct leg → U5). The
+  cache-loss test comment was rescoped to "cache holds no canonical state" with the GitHub-read leg
+  flagged as U5.
+
+**Correctly refuted (no change):** lease held-vs-stale boundary, `replay_pending` set-logic,
+crash-after-effect-no-duplicate, quarantine-stops-tripping-reads, and that R10/R13/R30/R34-policy are
+genuinely satisfied + tested (not name-dropped).
+
+**Files modified:** `plugins/saga/scripts/outcome_store.py` | `tests/test_outcome_store.py` |
+`tests/test_outcome_replay.py` | `plugins/saga/CHANGELOG.md` | `docs/engineering-journal/DECISIONS.md`
+
+**Next step:** U3 — thin `/outcome` command + local reconcile skeleton.

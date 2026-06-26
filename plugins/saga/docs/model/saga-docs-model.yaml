@@ -2,8 +2,8 @@ schema_version: 1
 model_name: saga-comprehensive-documentation
 source_of_truth: Claude Saga in this repository
 command_surface:
-  command_files: 19
-  routable_commands: 18
+  command_files: 20
+  routable_commands: 19
   alias_count: 1
   alias_note: /ceo-review is an alias for /founder-review, not a separate lifecycle node.
 
@@ -611,6 +611,33 @@ commands:
       - Asking /loop to implement code.
       - Routing normal team handoff through /loop.
     example_invocation: /loop docs/plans/2026-06-09-example-plan.md
+  outcome:
+    command: /outcome
+    phase: orchestrate
+    lifecycle_role: outcome coordinator over a DAG of leaf sagas
+    source_refs:
+      - plugins/saga/commands/outcome.md
+      - plugins/saga/skills/outcome/SKILL.md
+      - plugins/saga/scripts/outcome.py
+    purpose: Coordinate a whole outcome as a durable DAG of leaf sagas via a level-triggered reconcile loop that dispatches the ready frontier and pages only on exceptions.
+    use_when:
+      - An outcome spans multiple concurrent subplots that each run their own saga.
+      - The operator wants to advance the ready frontier, attend a leaf, or resume an outcome.
+    do_not_use_when:
+      - The work is a single linear work-thread (use /work directly).
+      - The graph still needs authoring from scratch (use /plan and the decompose flow).
+    inputs: Outcome id, objective, or a portable outcome bundle.
+    outputs: Branch-local outcome spec, dispatched leaf sagas, derived-on-read status, Mermaid graph.
+    durable_artifacts: [docs/outcomes/]
+    saga_state_behavior: Coordinates leaf sagas; live node state is derived on read from spec plus completion events, never a stored status field.
+    routes_in: [outcome coordination ask, /plan decompose]
+    routes_out: [/resume, /work, /code-review, /qa]
+    gates: Coordinator routes and dispatches but never runs leaf work; pages only at gates, unsatisfiable barriers, ambiguity, and parent-close.
+    ownership_boundary: Owns frontier dispatch, harvest, and operator-attention routing; does not run leaf implementations, file issues, or deploy.
+    common_mistakes:
+      - Expecting an /outcome work verb (leaf work stays the native verbs).
+      - Treating status as stored rather than derived on read.
+    example_invocation: /outcome advance ship-feature-x
 
 aliases:
   ceo-review:

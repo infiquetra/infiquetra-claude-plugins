@@ -378,3 +378,22 @@ Lifecycle router and lightweight resume substrate.
 | Boundary | Owns routing and handoff envelope, not phase work, backend choice, issue filing, deploy, or heavy forensics. |
 | Common mistakes | Asking it to implement; routing normal team handoff through it. |
 | Example | `/loop docs/plans/2026-06-09-example-plan.md` |
+
+### /outcome
+
+Outcome coordinator over a DAG of leaf sagas — the layer above a single work-thread.
+
+| Field | Value |
+|-------|-------|
+| Purpose | Coordinate a whole outcome as a durable DAG of leaf sagas via a level-triggered reconcile loop that dispatches the ready frontier and pages only on exceptions. |
+| Use when | An outcome spans multiple concurrent subplots that each run their own saga; the operator wants to advance the frontier, attend a leaf, or resume an outcome. |
+| Do not use when | The work is a single linear work-thread (use `/work`), or the graph still needs authoring from scratch (use `/plan` and the decompose flow). |
+| Inputs | Outcome id, objective, or a portable outcome bundle. |
+| Outputs | Branch-local outcome spec, dispatched leaf sagas, derived-on-read status, Mermaid graph. |
+| Saga state | Coordinates leaf sagas; live node state is derived on read from spec + completion events, never a stored status field. |
+| Routes in | outcome coordination ask, `/plan` decompose. |
+| Routes out | `/resume`, `/work`, `/code-review`, `/qa`. |
+| Gates | Coordinator routes and dispatches but never runs leaf work; pages only at gates, unsatisfiable barriers, ambiguity, and parent-close. |
+| Boundary | Owns frontier dispatch, harvest, and operator-attention routing; does not run leaf implementations, file issues, or deploy. |
+| Common mistakes | Expecting an `/outcome work` verb; treating status as stored rather than derived on read. |
+| Example | `/outcome advance ship-feature-x` |

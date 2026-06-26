@@ -163,4 +163,84 @@ genuinely satisfied + tested (not name-dropped).
 **Files modified:** `plugins/saga/scripts/outcome_store.py` | `tests/test_outcome_store.py` |
 `tests/test_outcome_replay.py` | `plugins/saga/CHANGELOG.md` | `docs/engineering-journal/DECISIONS.md`
 
+**Merged:** PR #265 (squash `db16773`). CI green first try — the U1 full-tree-mypy lesson held.
+
 **Next step:** U3 — thin `/outcome` command + local reconcile skeleton.
+
+## U3 — Thin `/outcome` command + reconcile skeleton
+
+**Built:** the OutcomeOrchestrator coordinator surface + engine, composing U1 (spec) + U2 (store):
+- `plugins/saga/scripts/outcome.py` — the **reconcile engine**: `start` / `resume` / `advance`
+  (`--loop`) / `attend` / `status` / `graph` / `export` / `import`, plus the derived-state computer.
+- `plugins/saga/commands/outcome.md` + `plugins/saga/skills/outcome/SKILL.md` — the thin operator
+  surface (KTD11 coordinator verbs; leaf work stays the native verbs).
+- `tests/test_outcome_command.py` — 15 tests across the U3 scenarios + the two invariants.
+
+**Two invariants enforced structurally:**
+- **The coordinator routes, never executes (R2/R3).** `advance` only calls the injected `dispatcher`
+  (record-only by default; real backends are U4/U9) and reads completion events — it never runs a
+  leaf's work in-process. The test proves design dispatches to `dispatched` (not `done`) with no
+  completion event fabricated.
+- **Status is derived on read (R17).** A node's live state is computed every call from spec +
+  completion events + dispatch records; there is no stored status field (the spec has none). A
+  completion event written directly to the store flips the derived state with no `advance` and no
+  status write.
+
+**Key decisions:**
+- **Node operational state is derived, not committed per tick.** The committed spec carries
+  structure (not churning per-tick state), so branch history stays clean (the R21-grows-lazily vs
+  R26-committed cadence tension); live state = completion events (store) + dispatch records (ledger),
+  recomputed each tick (R29 level-triggered). This is the cleanest reading of R17/R29 and avoids
+  per-dispatch commits.
+- **Dispatch dedup = per-subplot lock (concurrent-tick guard) + durable ledger record (idempotent
+  skip).** Repeated `advance --once` never double-dispatches; a second concurrent `advance` no-ops on
+  the held coordinator lease (released in a `finally`, so a raising dispatcher can't brick the loop).
+- **The command surface lands in U3 (per the plan file list) with full model + manual + guard-count
+  integration**, but the generated command-matrix visual stays at the released 18 (the renderer uses a
+  hardcoded command list, so adding `/outcome` to the model changes no SVG) and the marketplace version
+  flip + advertisement stay deferred to U11. `/outcome` is in the source + dogfoodable now; it is not
+  *released* until U11.
+
+**Requirements (honest facet scope):** U3 owns **R16** (thin surface) and **R29** (level-triggered
+reconcile), and ships the **dispatch-seam** facet of R1/R2/R3 (the coordinator-never-executes contract;
+the degrade-only-leaves half of R3 lands in U9) and the cockpit facet of R17 (full report + attention
+consolidator are U8). R1's literal "reuse `execution_spec`/`recommend_execution_backend`/`save`" — U3
+reuses the U1 frontier engine (itself a deliberate Kahn reimplementation) and the U2 store, not
+`saga.py`'s tick model; the recommender wires in at U9.
+
+**Checks run:** `ruff check .` ✓, `ruff format` ✓, `mypy plugins/ scripts/ tests/` ✓ (73 files),
+`pytest tests/test_outcome_command.py` ✓ 15 passed (`outcome.py` 93%), saga guards
+(`test_saga_plugin` + `test_saga_docs_coverage`) ✓ 40 passed; full suite ✓ 1068 passed; plugin
+validators ✓.
+
+**Adversarial verification:** ultracode workflow `verify-outcome-u3` (3 lenses: coordinator-invariant,
+derived-state-fidelity, requirements+surface-honesty), each proving claims by running the engine
+standalone with re-entrancy, crash injection, and multi-graph state probes. The R3 invariant, lease
+`finally`, loop bounding, derive precedence, derived-each-call status, and cross-repo bundle fidelity
+all held; the surface wiring is CI-green. Folded in:
+- **P2 (concurrency)** — the default `holder="coordinator"` constant gave zero mutual exclusion (the
+  same-holder lease just *refreshes*), so a re-entrant/concurrent `advance` double-dispatched a leaf.
+  Now `holder` defaults to a per-invocation unique id (`coordinator-<pid>-<nonce>`) → a concurrent
+  advance is a different holder and genuinely no-ops on the held lease.
+- **P3 (durability)** — dispatch was recorded as a single `intent` (no `commit`), so a post-dispatch
+  `append_ledger` failure re-launched the leaf and `replay_pending` flagged every dispatch forever. Now
+  dispatch is **intent → effect → commit** (the store's replay protocol); dedup keys on `commit`, so a
+  failed dispatch is re-drivable and settled dispatches are skipped.
+- **P2 (cockpit)** — a negatively-terminated leaf (failed/rejected/stalled) rendered forever as
+  `dispatched` (a dead leaf looked in-flight). `derive_states` now surfaces the actual terminal state;
+  the dead `LIVE_PENDING` branch was removed (it was unreachable — frontier ≡ ready).
+- **P3** — re-import doubled the dispatch ledger → now deduped by `(phase, key)`.
+- **Honesty (P2/P3, no code)** — softened the `resume` docstring: in U3 completion is cache-resident and
+  a wipe *does* drop it (GitHub reconstruction is U5; `export` is the durable checkpoint until then).
+  R1's "reuse saga machinery" is honestly a reimplementation (already disclosed; `recommend_execution_backend`
+  reuse lands at U9); KTD11's `report`+`close` verbs are deferred (U8/later) and `status` is an extra
+  read-half-of-report verb — all disclosed in the surface and CHANGELOG.
+
+**Files modified:** `plugins/saga/scripts/outcome.py` | `plugins/saga/commands/outcome.md` |
+`plugins/saga/skills/outcome/SKILL.md` | `tests/test_outcome_command.py` |
+`plugins/saga/docs/model/saga-docs-model.yaml` | `plugins/saga/docs/commands.md` |
+`tests/test_saga_plugin.py` | `tests/test_saga_docs_coverage.py` | `plugins/saga/CHANGELOG.md` |
+`docs/engineering-journal/DECISIONS.md`
+
+**Next step:** U4 — team-execution backend + R8 cleanup (DESTRUCTIVE: delete `team-setup`, strip ~60
+tmux refs from team-execution; update the asset-reference guard test in the same PR).

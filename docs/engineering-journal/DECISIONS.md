@@ -22,6 +22,32 @@
 
 ---
 
+## 2026-06-25
+
+### Outcome-orchestration build plan — multi-engine trust-but-verify synthesis, store/ledger facet split, degrade-layer wiring (plan PR pending — SHA-fill on merge)  {#outcome-orchestration-plan}
+
+**Decision.** The `OutcomeOrchestrator` implementation plan (`docs/plans/2026-06-25-operator-outcome-orchestration-plan.md`, 11 units U1–U11, R1–R34 coverage matrix) locks these load-bearing HOW choices:
+- **Store split by facet.** Outcome structure = canonical JSON `outcome-spec.json` on the outcome's own branch; completion = GitHub; the `git rev-parse --git-common-dir` store is a pure cache (verified to resolve identically across worktrees and survive `git worktree remove`). Completion events = per-leaf immutable `O_EXCL` JSON files (multi-writer-safe), never a shared append log.
+- **Transition ledger is cache-resident, NOT committed.** Same-machine crash recovery replays the fine-grained ledger; a fresh-machine reconstruct recovers to GitHub+spec granularity via idempotent reconcile — coarser but correct, the boundary stated honestly (R34/F5).
+- **Guarantee/degrade logic lives in the degrade path, NOT `recompile_for_tier`.** `child_spec_ref` is a typed new node field, never an overload of saga's `orchestration_ref` (a single-saga backend pointer).
+- **Release-triad sync is a first-class unit (U11).** Auto-merge = serialized coordinator queue, rebase-then-reverify, capped at 3.
+
+**Rejected alternatives.**
+- *Commit the transition ledger per-transition* (one input plan's choice). Rejected: stronger cross-machine replay but pollutes branch history with bot commits mid-run (the R21-grows-lazily vs R26-committed cadence tension).
+- *Inject halt-not-degrade into `recompile_for_tier`* (one input plan's choice). Rejected: **verified** that `recompile_for_tier` (`execution_spec.py:708`) is a by-mode dispatcher, not the downgrade-enforcer — the policy lives in `recheck_orchestration_capability` (`lifecycle_state.py:223`). Wiring guarantee logic there attaches it to the wrong layer.
+- *Overload `orchestration_ref` with `child_spec:<path>`* (one input plan's choice). Rejected: type-unsafe, conflates the backend pointer with a parent→child link.
+- *Stage out nested recursion / economics / team-execution cleanup* (one input plan's choice). Rejected: violates the operator's all-co-equal/no-phasing release decision (R4); the spine is internal work order only.
+
+**Rationale.** The plan was synthesized from three independently-generated plans (Claude, Codex gpt-5.5 xhigh, Antigravity Gemini 3.1 Pro High) under a trust-but-verify discipline — no code claim adopted without checking the file. The two engines that actually verified (Claude, Codex) independently caught the same two requirements-doc errors (`recompile_for_tier` is a dispatcher not a downgrade-enforcer; tmux count is 60 not 59); Antigravity parroted both, which is why its plan's degrade wiring was wrong. Codex supplied the strongest backbone (node schema, store layout, release-gate unit); the honest cache-ledger boundary and the corrections came from Claude; the rebase-attempt cap and Mermaid cockpit from Antigravity.
+
+**Revisit when.** Cross-host realtime completion is actually needed (then add the networked completion stream that is currently out-of-core-scope), or a fresh-machine mid-transition crash recovery proves too coarse in practice (then reconsider committing a compacted ledger snapshot per spec-revision rather than per-transition).
+
+**Refs.**
+- Plan: `docs/plans/2026-06-25-operator-outcome-orchestration-plan.md`; requirements: `docs/brainstorms/2026-06-25-operator-outcome-orchestration-requirements.md`.
+- Builds on DECISIONS [parallel-layer emitter + /work halt-not-degrade + provenance guard](#parallel-refuteN-emitter-plan-work-wiring) (KTD6/KTD7) and [saga tiering + execution-mechanism campaign](#saga-tiering-execution-campaign-shipped) (one spec → two emitters, `orchestration_ref` pointer model).
+
+---
+
 ## 2026-06-21
 
 ### Parallel-layer emitter, refute-N judge-panels, /plan author-validate-approve-persist-emit, /work halt-not-degrade, and provenance guard at save() (#250, 88b61be)  {#parallel-refuteN-emitter-plan-work-wiring}

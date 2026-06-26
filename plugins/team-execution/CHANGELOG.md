@@ -4,6 +4,28 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.2.0] - 2026-06-26
+
+### Changed
+- **R8 reshape to a native-agent-teams wrapper.** Removed every tmux reference **in this plugin** (the
+  validators run as native agent-team subagents, not tmux panes): deleted `commands/team-setup.md` (the
+  entire `/team-setup` command), `docs/example_tmux.conf`, `docs/agent-overflow.sh`, and
+  `skills/.../references/validator-pane-behavior.md`. No tmux reference remains in this plugin outside
+  this CHANGELOG's history notes. (Pre-existing repo-root tmux dev-tooling under `docs/` is unrelated
+  to team-execution and out of R8's plugin-scoped charter.)
+- **Re-homed the `.claude/`-git-ignored validator-state safety check** into the execution skill's
+  pre-execution phase (new Step B0a preflight) so it survives the `/team-setup` deletion — it now runs
+  in BOTH Phase A planning (Step A5) and Phase B preflight. `validator-evidence-state.md` remains the
+  state-location contract.
+- **First real backend behind the OutcomeOrchestrator dispatcher seam** (R5/R6): team-execution is
+  dispatchable as a leaf backend with a return channel; an unavailable backend emits a visible
+  HALT-not-degrade receipt rather than silently substituting (R23). (Coordinator wiring lives in the
+  saga plugin's `outcome_dispatcher.py`.)
+- Replaced the `test_team_setup_references_existing_assets` guard with
+  `test_team_setup_and_tmux_assets_are_removed` (KTD13 — the deletion's own guard).
+
+---
+
 ## [2.1.0] - 2026-06-20
 
 ### Changed

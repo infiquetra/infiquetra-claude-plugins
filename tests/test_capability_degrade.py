@@ -230,6 +230,17 @@ def test_recompile_to_workflow_tier_emits_the_dynamic_script(es: ModuleType) -> 
     assert '"opus"' in out and '"haiku"' in out and '"sonnet"' in out
 
 
+def test_recompile_to_team_tier_emits_team_structure(es: ModuleType) -> None:
+    """R5 — team-execution recompiles to the team_emitter ## Team Structure markdown (the third
+    leg of the by-mode dispatcher seam), NOT the inline baseline."""
+    spec = es.ExecutionSpec.from_dict(_spec_dict())
+    out = es.recompile_for_tier(spec, "team-execution")
+    assert "Team Structure" in out  # the team_emitter protocol, wired in (R5)
+    assert "await agent(" not in out  # not the workflow harness
+    for unit in spec.units:
+        assert unit.label in out  # units preserved (by label) regardless of tier
+
+
 def test_recompile_unknown_tier_floors_to_runnable_baseline(es: ModuleType) -> None:
     """AE3 — an unknown target tier still yields a runnable (non-empty) baseline, never an
     empty or un-runnable artifact."""

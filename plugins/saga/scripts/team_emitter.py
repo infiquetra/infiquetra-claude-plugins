@@ -55,7 +55,6 @@ _REFERENCE_FILES: list[str] = [
     "team-execution/skills/team-execution/references/validator-execution-order.md",
     "team-execution/skills/team-execution/references/validator-evidence-state.md",
     "team-execution/skills/team-execution/references/validator-spawn-quirks.md",
-    "team-execution/skills/team-execution/references/validator-pane-behavior.md",
 ]
 
 # The standard execution-gate protocol (verbatim from SKILL.md).

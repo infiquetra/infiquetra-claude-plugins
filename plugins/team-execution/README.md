@@ -28,12 +28,6 @@ Or provide an existing plan:
 /team-execute [paste plan here or provide file path]
 ```
 
-Run setup checks:
-
-```
-/team-setup
-```
-
 ---
 
 ## What You Get
@@ -140,18 +134,6 @@ remediation loops, and final gate status.
 
 ---
 
-## Setup Assets
-
-`/team-setup` validates the handoff rule, tmux display configuration, and bundled assets:
-
-- `docs/example_tmux.conf`
-- `docs/agent-overflow.sh`
-
-The setup command copies these assets only after user confirmation and reports manual setup
-instructions if it cannot find them.
-
----
-
 ## Reference Files
 
 - `team-execution/skills/team-execution/references/reviewer-registry.md`
@@ -162,7 +144,6 @@ instructions if it cannot find them.
 - `team-execution/skills/team-execution/references/validator-execution-order.md`
 - `team-execution/skills/team-execution/references/validator-evidence-state.md`
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
-- `team-execution/skills/team-execution/references/validator-pane-behavior.md`
 
 ---
 
@@ -171,9 +152,6 @@ instructions if it cannot find them.
 ```
 team-execution/
 ├── .claude-plugin/plugin.json
-├── docs/
-│   ├── agent-overflow.sh
-│   └── example_tmux.conf
 ├── skills/
 │   ├── appsec-audit/
 │   │   └── SKILL.md
@@ -186,7 +164,6 @@ team-execution/
 │           ├── validator-criteria.md
 │           ├── validator-evidence-state.md
 │           ├── validator-execution-order.md
-│           ├── validator-pane-behavior.md
 │           ├── validator-registry.md
 │           └── validator-spawn-quirks.md
 ├── agents/
@@ -198,8 +175,7 @@ team-execution/
 │   ├── github-actions-monitor.md
 │   └── ... validator and optional reviewer agents
 ├── commands/
-│   ├── team-execute.md
-│   └── team-setup.md
+│   └── team-execute.md
 ├── README.md
 └── CHANGELOG.md
 ```

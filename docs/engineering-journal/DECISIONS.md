@@ -24,6 +24,27 @@
 
 ## 2026-06-26
 
+### Outcome reporting + consolidator + projection (U8): everything is derived-on-read, the report can't drift (no wall-clock), the consolidator is type-tier-then-leverage, U8 never depends on U10 (U8 PR pending — SHA-fill on merge)  {#outcome-report-projection-stance}
+
+**Decision.** U8 adds three operator surfaces — the attention consolidator (R18), the report (R19), the mission-control projection (R25) — in two modules (`outcome_report` + `outcome_projection`). Conventions:
+- **Everything is derived-on-read (R17), with NO operator-writable status field.** Every number/state in the report + projection is *computed* from the committed spec + the store (`derive_states`, `blocked_subtree`, `ready_frontier`), never read from a stored scalar an operator could set to lie. A test pins `projection["states"] == derive_states(...)` and the absence of a `status` key.
+- **The report is deterministic so it cannot drift.** No wall-clock in the body → re-rendering on unchanged state is **byte-identical**. Combined with **overwrite-from-state** (never hand-edited), the artifact physically cannot diverge from the truth (R19/F6). The cost rollup renders **"no data yet"** when absent rather than a fabricated zero.
+- **U8 depends only on U5/U6, never U10 — the acyclicity rule.** The realized cost (R24) is a *render slot* in U8 that shows "no data yet" until U10 populates it; making U8 read U10 would create a U8↔U10 cycle (U10's optimize/retro consume the report). So cost is rendered-when-present, and the dependency edge points U10→U8, not back.
+- **The consolidator is type-tier-then-leverage (AE5), one kind per node.** Sort key = (tier, -leverage, sid): tier orders gate(1) → ambiguity(2) → failure(3); leverage = `len(blocked_subtree({sid}))` (downstream work gated). Classification precedence is failure (terminal-negative) → ambiguity (HALT receipt) → gate (gated/risky/destructive + dispatched), so a node is exactly one kind and a terminal node is never miscounted as a still-live gate.
+- **The projection is a SECONDARY view; it never auto-closes the parent.** `parent_close = "operator-keystroke-only"` is encoded in the projection so a downstream mission-control consumer cannot mistake "complete" for "close the parent" — closing a parent stays the operator's deliberate keystroke (R25). U8 produces the projection *artifact*; the actual GitHub write is a separate operator-initiated consumer (no auto-push, no dead-wiring).
+
+**Rejected alternatives.**
+- *A timestamp / "generated at" line in the report body.* Rejected — it breaks determinism (every regen differs), defeating the "cannot drift" guarantee; provenance belongs in git history, not the artifact body.
+- *Read realized cost from U10 in the report.* Rejected — a U8↔U10 cycle; render "no data yet" and let the edge point U10→U8.
+- *Per-leaf pages for the operator.* Rejected per R18 — N pages is exactly the cognitive-overload failure mode; one ranked prompt, type-tier then leverage.
+- *Auto-close the parent issue when the projection reads complete.* Rejected per R25 — closing a parent is a deliberate operator keystroke; the projection only reports.
+
+**Rationale.** "Derived-on-read, no stored status" + "deterministic overwrite" together make a cockpit that *cannot lie*: there is no field to set wrong and no stale copy to diverge. Generalizable rule: **a status surface that is recomputed from canonical state every read and written deterministically has no failure mode where it disagrees with reality — prefer it over any cached/settable status, and keep the consuming layer (U10) depending on the producer (U8), never the reverse.**
+
+**Revisit when.** U10 populates the realized-cost rollup → the report's "no data yet" slot fills in (no U8 change needed). U9's degrade receipts may add a fourth consolidator signal (a degraded leaf the operator should know about). When mission-control grows a real projection consumer, wire the operator-initiated push there (U8 already emits the artifact).
+
+**Refs.** `plugins/saga/scripts/outcome_report.py`, `plugins/saga/scripts/outcome_projection.py`, `tests/test_outcome_report.py`, `tests/test_outcome_projection.py`, `docs/outcomes/_example-ship-auth/`; wiring in `outcome.py` (`report` / `project` verbs + consolidated `attend`). Implements U8 of the [outcome-orchestration build plan](#outcome-orchestration-plan); builds on the U5 [completion barrier stance](#outcome-completion-barrier-stance) + the U6 [auto-merge queue stance](#outcome-merge-queue-stance) (evidence + merge state) + the U7 [decompose/worktree stance](#outcome-decompose-worktree-stance) (the `blocked_subtree` leverage signal).
+
 ### Outcome decomposition + worktree lifecycle (U7): worktrees are per-sub-outcome (not per-leaf), git is the liveness oracle, edits are atomic + state-aware, approval is per-revision (U7 PR pending — SHA-fill on merge)  {#outcome-decompose-worktree-stance}
 
 **Decision.** U7 splits into two modules — `outcome_decompose` (graph editing) + `outcome_worktrees` (the durable worktree lifecycle) — that later units (U8 reporting, U9 degrade, U10 economics) build on. The load-bearing conventions:

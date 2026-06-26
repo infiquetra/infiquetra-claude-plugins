@@ -27,6 +27,20 @@
 
 ## 2026-06-26
 
+### A status flag derived from an append-only event log must be latest-record-wins, not ever-occurred — an "ever halted" check made a recovered subplot stick as needs-attention forever  {#ledger-derived-flag-latest-not-ever}
+
+**Context.** U8's attention consolidator is derived-on-read from the store. Its HALT signal (`_halted_subplots`) classified a subplot as an "ambiguity needing a decision" if the append-only dispatch ledger contained *any* `phase=='halt'` record. The append-only ledger never deletes, so a node that halted and then **recovered** (a later `commit` re-dispatch, or a `done` completion) still matched — and was flagged needs-attention forever, breaking the "healthy → empty operator surface" guarantee (R17) and masking the node's real ship-gate.
+
+**Evidence.** `plugins/saga/scripts/outcome_report.py` `_halted_subplots` (the pre-fix version returned every sid with a `phase=='halt'` ledger record). The U8 adversarial-verify (`verify-outcome-u8`) reproduced it: `halt(x)` then `done(x)` → `derive_states={x:done}` but `consolidate → [ambiguity:x]`. Fixed in the U8 PR: walk the ledger keeping each subplot's **latest** dispatch phase, include it only if that latest phase is `halt` (a `commit` supersedes), **and** guard the ambiguity branch on `state not in TERMINAL_STATES`. See DECISIONS [#outcome-report-projection-stance](DECISIONS.md#outcome-report-projection-stance).
+
+**Mechanism.** An append-only log records *events*, not *current state*. "Did event E ever happen?" (`any(rec.phase==halt)`) is the wrong question for a *current-status* flag; the right one is "what is the latest event for this entity, and does it still mean E?" `derive_states` already does latest-attempt-wins for completion, but the consolidator's halt read regressed to ever-occurred.
+
+**Fix (committed).** Latest-dispatch-phase-wins in `_halted_subplots` + a non-terminal guard in `consolidate` (the U8 PR — SHA-fill on merge), with halt→done and halt→commit regression tests.
+
+**Generalizable rule.** When you derive a *current-status* boolean from an append-only event log, compute it as **latest-relevant-record-wins**, never **ever-occurred** — fold the log to each entity's most recent state and read that. Cross-check the derived flag against the entity's authoritative terminal/live state so a superseded event cannot resurrect a stale status (an "ever halted" node that is now `done` is not halted).
+
+**Refs.** DECISIONS [#outcome-report-projection-stance](DECISIONS.md#outcome-report-projection-stance); same family as the U6 latest-attempt-wins terminal handling. Sibling to [[fake-adapter-hides-real-path-mismatch]].
+
 ### An all-fake adapter test suite cannot catch a real-adapter path-canonicalization mismatch — the worktree liveness oracle read every live worktree as ABSENT under the production CLI  {#fake-adapter-hides-real-path-mismatch}
 
 **Context.** U7's worktree lifecycle injects a `WorktreeOps` adapter so the whole module is unit-testable offline; `git_worktree_ops` is the real one wiring `git worktree`. The unit tests (`FakeWT`) key liveness on an in-memory `set[str]` of the *exact* path strings passed in, and the real-adapter tests fed `git worktree list --porcelain` a *hand-crafted* listing that already matched the queried string. Every test passed; the adversarial-verify workflow (`verify-outcome-u7`) then drove the REAL adapter against a REAL git repo and found a P0.

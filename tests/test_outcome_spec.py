@@ -202,6 +202,24 @@ def test_self_dependency_fails() -> None:
         _spec(data).validate()
 
 
+@pytest.mark.parametrize("bad", ["a b", "a|b", "a`b", "a/b", "a\nb", "a:b", "a#b"])
+def test_non_slug_subplot_id_is_rejected(bad: str) -> None:
+    # subplot_id is an identifier (interpolated raw into markdown tables / Mermaid / paths) — a non-slug
+    # id must fail validate BEFORE any dispatch (R31), not silently corrupt a downstream render (U8).
+    data = _valid_spec_dict()
+    data["nodes"][0]["subplot_id"] = bad
+    with pytest.raises(M.OutcomeSpecError, match="slug"):
+        _spec(data).validate()
+
+
+def test_slug_subplot_ids_validate() -> None:
+    data = _valid_spec_dict()
+    for sid in ("magic-link", "a.b", "A_B", "step-3"):
+        data["nodes"][0]["subplot_id"] = sid
+        data["nodes"][1]["depends_on"] = [sid]
+        _spec(data).validate()  # all valid slugs
+
+
 def test_cycle_fails() -> None:
     data = _valid_spec_dict()
     # design -> build -> docs already; add design depends_on docs to close the loop.

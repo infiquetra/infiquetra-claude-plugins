@@ -291,7 +291,10 @@ def status(
         "nodes": len(spec.nodes),
         "states": states,
         "counts": counts,
-        "frontier": outcome_spec.ready_frontier(spec, done),
+        # Derive the frontier from the SAME states map, not a separate success-only ready_frontier:
+        # otherwise a negative-terminal (failed/rejected/stalled) node whose deps are satisfied would be
+        # re-listed as dispatchable, contradicting its own `states` entry (the U8 cross-surface fix).
+        "frontier": sorted(sid for sid, st in states.items() if st == LIVE_READY),
         "complete": len(done) == len(spec.nodes),
     }
 
@@ -736,9 +739,23 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(verb, help=f"{verb} an outcome")
         p.add_argument("outcome_id")
 
-    p_attend = sub.add_parser("attend", help="print the native /resume handoff for a leaf")
+    p_attend = sub.add_parser(
+        "attend",
+        help="the consolidated attention prompt (R18); with a subplot, the /resume handoff",
+    )
     p_attend.add_argument("outcome_id")
-    p_attend.add_argument("subplot_id")
+    p_attend.add_argument("subplot_id", nargs="?", default=None)
+
+    p_report = sub.add_parser(
+        "report", help="regenerate docs/outcomes/<id>/report.md from state (R19)"
+    )
+    p_report.add_argument("outcome_id")
+
+    p_project = sub.add_parser(
+        "project", help="the generated mission-control secondary projection (R25)"
+    )
+    p_project.add_argument("outcome_id")
+    p_project.add_argument("--markdown", action="store_true")
 
     p_export = sub.add_parser("export", help="print a portable bundle (spec + completion)")
     p_export.add_argument("outcome_id")
@@ -802,8 +819,10 @@ def main(argv: list[str] | None = None) -> int:
 
             spec = load_spec(root, args.outcome_id)
             store = _store(root, args.outcome_id)
-            # The worktree reap is wired to the real git adapter; the sub-issue close adapter lands
-            # with U8 (which generates the projected sub-issues), so issue_close stays None until then.
+            # The worktree reap is wired to the real git adapter. U8's projection is artifact-only (it
+            # generates the secondary view, it does NOT create GitHub sub-issues), so there is no
+            # generated sub-issue to close yet; the sub-issue close adapter is deferred to a later
+            # operator-initiated mission-control consumer, so issue_close stays None until then.
             summary = outcome_decompose.prune(
                 spec,
                 store,
@@ -826,7 +845,29 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "graph":
             print(graph_mermaid(root, args.outcome_id))
         elif args.command == "attend":
-            print(attend(root, args.outcome_id, args.subplot_id))
+            if args.subplot_id:
+                print(attend(root, args.outcome_id, args.subplot_id))
+            else:
+                # No subplot -> the single consolidated attention prompt (R18), one ranked page.
+                import outcome_report
+
+                spec = load_spec(root, args.outcome_id)
+                store = _store(root, args.outcome_id)
+                print(outcome_report.consolidated_prompt(outcome_report.consolidate(spec, store)))
+        elif args.command == "report":
+            import outcome_report
+
+            path = outcome_report.write_report(root, args.outcome_id)
+            print(json.dumps({"report": str(path)}))
+        elif args.command == "project":
+            import outcome_projection
+
+            spec = load_spec(root, args.outcome_id)
+            store = _store(root, args.outcome_id)
+            if args.markdown:
+                print(outcome_projection.projection_markdown(spec, store), end="")
+            else:
+                print(json.dumps(outcome_projection.project(spec, store)))
         elif args.command == "export":
             print(json.dumps(export_bundle(root, args.outcome_id)))
         elif args.command == "import":

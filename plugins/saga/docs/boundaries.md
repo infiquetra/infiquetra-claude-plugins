@@ -31,7 +31,7 @@ Claude Saga is the source surface for this repository. The Codex port is an adap
 
 | Dimension | Claude Saga in this repo | Codex Saga adapter |
 |-----------|--------------------------|--------------------|
-| Command surface | 18 command files, 17 routable commands, `/ceo-review` alias | ported command family may omit or adapt host-only surfaces |
+| Command surface | 20 command files, 19 routable commands, `/ceo-review` alias | ported command family may omit or adapt host-only surfaces |
 | State root | `.claude/saga/` | host-specific local state root |
 | Backend availability | `inline`, `team-execution`, source workflow backend where available | `inline` and `team-execution` in Codex; source workflow backend omitted |
 | Durable docs | repo `docs/*` artifacts plus plugin manual | same lifecycle artifact idea, host-adapted paths |

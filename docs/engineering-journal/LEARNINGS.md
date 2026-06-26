@@ -27,6 +27,20 @@
 
 ## 2026-06-26
 
+### A composition/integration test only proves composition if EVERY claimed stage is load-bearing — and a "save"/"persist" function is a stub until you verify the durable write, not its docstring  {#integration-gate-must-be-load-bearing}
+
+**Context.** U11's release feature-flip added an "all-34 integration gate" and asserted the OutcomeOrchestrator ships whole. The `verify-outcome-u11` ship gate returned `ship_ready: False` on two structurally-linked findings: the integration test's claimed `dispatch` stage was never exercised, and R26/R27 spec persistence (a named requirement) was a no-op despite a docstring that said "persist to the branch."
+
+**Evidence.** (1) `tests/test_outcome_integration.py` advertised "start → approve → **dispatch** → harvest → auto-merge"; but `advance` runs `merge_processor` then `harvester` BEFORE `_reconcile_once` dispatch, so on tick 0 the fake `gh` let the merge queue squash the build PR and harvest mark both leaves done — the frontier emptied before dispatch ran. A verify probe replaced the dispatcher with one that raises and the test still passed: the dispatch leg was dead. (2) `plugins/saga/scripts/outcome.py` `save_spec` docstring said "persist ... to the branch path" but did `path.write_text()` only — `grep -niE 'commit|push'` over `outcome*.py` found no git write for the spec, so R26 ("committed + pushed to the outcome's own branch") / R27/F5 (different-machine pull-reconstruct) could not hold. Both fixed in the U11 PR: the fake `gh` now resolves a leaf's issue/PR only after a settled dispatch record (so dispatch is load-bearing + asserted), and `commit_spec` implements the commit+push-to-branch (refuses on main) with a `git show`-the-committed-blob reconstruction test. See DECISIONS [#outcome-release-flip-stance](DECISIONS.md#outcome-release-flip-stance).
+
+**Mechanism.** Two failure shapes a green suite hides: (a) an **integration test is a tautology** when an upstream stage produces the end state by a shortcut (here merge+harvest completing leaves before dispatch), so a downstream stage the test *names* never runs — the test passes if you delete that stage. (b) a **persistence claim lives in a docstring, not the code** — "save"/"persist"/"sync" naming and a confident docstring are not evidence of a durable write; the actual `git commit`/network/`fsync` call is.
+
+**Fix (committed).** Make each stage load-bearing (sequence the fixtures so completion *requires* the stage; assert the stage fired) + implement + test the real durable write (the U11 PR — SHA-fill on merge).
+
+**Generalizable rule.** (1) For a test that claims to exercise a pipeline of stages, prove each stage is load-bearing — the test must FAIL if that stage is stubbed/removed (sequence inputs so the end state is *unreachable* without it, and assert the stage's own effect, not just the final state). (2) Treat any `save`/`persist`/`sync`/`commit`-named function as a STUB until you've seen the durable side effect (the git object, the pushed ref, the row, the flushed file) — verify the mechanism, never the docstring. A ship gate that re-checks each named requirement against the real artifact catches a feature that asserts a capability it never built.
+
+**Refs.** DECISIONS [#outcome-release-flip-stance](DECISIONS.md#outcome-release-flip-stance); same "all-fake-tests-miss-the-real-thing" family as [[fake-adapter-hides-real-path-mismatch]] (a fake that keys on the happy value can't reveal the real gap).
+
 ### Append-only ledger discipline, part 2: "latest" means max-by-own-timestamp (not write order), and a re-derived non-terminal record must be append-once or it grows unbounded  {#append-only-ledger-discipline}
 
 **Context.** U9 reads two things from the append-only ledger: leaf liveness (dispatch time + heartbeats) and the HALT/degrade receipts. The U9 adversarial-verify found both had append-only-log bugs — distinct from but in the same family as the U8 sticky-HALT ([[ledger-derived-flag-latest-not-ever]]).

@@ -1,8 +1,30 @@
 # Changelog
 
-## [Unreleased]
+## 0.38.0 - 2026-06-26
 
-### OutcomeOrchestrator (outcome-orchestration feature — built across U1–U11, co-equal at release; the feature ships at the U11 feature-flip)
+### OutcomeOrchestrator (outcome-orchestration feature — built across U1–U11, co-equal at release; the U11 feature-flip ships it)
+
+- **U11** — **Feature flip + integration gate.** Advertise the complete `/outcome` surface and ship all
+  34 requirements: saga metadata (`plugin.json` description + `marketplace.json`) advertises the outcome
+  coordinator; the README + `docs/commands.md` + `docs/README.md` + `docs/boundaries.md` command counts
+  move to **20 files / 19 routable** (the `/outcome` 19th routable); the Command Matrix visual gains the
+  `/outcome` coordinator card; `tests/test_outcome_integration.py` drives a full outcome end-to-end
+  through the **production** `advance` wiring (start → approve → **dispatch** → GitHub-canonical harvest →
+  auto-merge → liveness → cost rollup → report → projection) on a DAG, proving the U1–U10 units compose
+  (the dispatch seam is load-bearing — completion only flows after a leaf is dispatched). team-execution
+  metadata already carries no tmux/setup (U4's R8 reshape). Released at saga 0.38.0 (the version-triad:
+  `plugin.json` == `marketplace.json` == this heading).
+- **U11 (R26/R27 persistence — closed the ship-gate P0).** `outcome.commit_spec` **commits + pushes the
+  canonical spec to the outcome's own branch** (`outcome/<slug>`, **refuses on `main`/`master`** — R26
+  "not main mid-run"), so a **different machine reconstructs the whole outcome by pulling the repo** then
+  re-harvesting completion from GitHub, with no dependence on the local cache (R27/F5). Exposed as
+  `/outcome commit [--push]` and `/outcome advance --persist` (commit each tick on an unattended run); the
+  *cadence* is operator/`/loop`-driven, the *mechanism* now ships. `save_spec` no longer falsely claims to
+  persist (it writes the working tree; `commit_spec` does the git write).
+- **U11 (auto-merge dependency gate).** `process_merge_queue` now merges a code leaf only once **all of
+  its `depends_on` are success-complete** — GitHub's mergeability does not model the outcome DAG, so a
+  coincidentally-clean PR for a leaf with an incomplete (especially non-code) upstream is no longer
+  squashed out of dependency order (R12 + the DAG).
 
 - **U1** — Add the canonical outcome spec + DAG validator (`scripts/outcome_spec.py`,
   `references/outcome-spec.md`, `tests/test_outcome_spec.py`): a JSON outcome document

@@ -83,8 +83,8 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.37.0",
-      "description": "Infiquetra engineering lifecycle plugin spanning five phases: Think, Plan & execute, Hand off to mission-control, Review, and Improve & route (covers office-hours through resume, plus /loop routing).",
+      "version": "0.38.0",
+      "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -101,7 +101,7 @@
         "doc-review",
         "code-review",
         "optimize",
-        "sdlc"
+        "outcome-orchestration"
       ],
       "category": "saga"
     },

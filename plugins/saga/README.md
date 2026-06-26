@@ -25,7 +25,9 @@ Use the situation, not the command list, as the entry point.
 | The thread is cold or confusing | `/resume` | re-entry route |
 | Finished work should teach the lifecycle | `/retro` | journal or retro artifact |
 
-The repository contains 18 command files and 17 routable commands. `/ceo-review` is an alias for `/founder-review`, not a separate lifecycle node.
+The repository contains 20 command files and 19 routable commands. `/ceo-review` is an alias for `/founder-review`, not a separate lifecycle node.
+
+**Above a single work-thread:** `/outcome` is the **OutcomeOrchestrator** — a coordinator that drives a whole *outcome* as a durable DAG of leaf sagas. It runs a level-triggered reconcile loop that dispatches the ready frontier across the full backend menu (inline / fork / subagent / team-execution / cc-workflows-ultracode / `/goal` / manual), auto-merges clean leaves, and pages the operator only at gates, ambiguities, and failures — status is derived on read, completion is canonical on GitHub, and the realized cost rollup proves whether the DAG beat one long thread. The native leaf verbs (`/work`, `/code-review`, `/qa`, `/resume`) are reused on a leaf, never shadowed.
 
 ## Manual
 

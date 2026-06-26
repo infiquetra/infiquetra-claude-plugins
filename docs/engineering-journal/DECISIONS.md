@@ -24,6 +24,27 @@
 
 ## 2026-06-26
 
+### Outcome economics (U10): cost is a leaf-produced ledger fact materialized into spec.cost_rollup (producer→spec→U8, no U8↔U10 cycle), "did the DAG beat one thread" = critical-path vs serial, missing telemetry is no-data-yet, pruned cost is sunk (U10 PR pending — SHA-fill on merge)  {#outcome-economics-stance}
+
+**Decision.** U10 records the realized R24 telemetry and exposes the per-outcome rollup (the falsifiable cost-vs-operator-time proof) + the optimize/retro consumers. Conventions:
+- **Cost is a LEAF-produced ledger fact, not a coordinator-computed one.** The coordinator never runs a leaf (R3), so it cannot know a leaf's tokens/wall — the leaf reports them via `record_cost` into the shared store as it finishes. The coordinator only *aggregates* (`rollup`) + *materializes*. This keeps R3 intact and makes cost telemetry a genuine producer/consumer pair (every field has both).
+- **The producer→consumer edge is U10 → `spec.cost_rollup` → U8 (the report), NEVER U8 → U10.** The U8 stance forbids the report depending on U10 (it would cycle — `/optimize` and `/retro` consume the report). So U10's `cost_processor` (in `advance`) materializes the rollup into the canonical `spec.cost_rollup` field (R26), which the U8 report already renders — the report gains realized cost with **zero U8 code change** and no import edge to U10. Materialize is guarded on change (no per-tick spec churn).
+- **"Did the DAG beat one long thread?" = critical-path vs serial.** `wall_seconds_parallel` is the DAG's critical path (the parallel lower bound, derived from `depends_on` + per-leaf wall); `wall_seconds_serial` is the sum (one inline thread). `beat_one_thread = parallel < serial`. A pure chain reports `False` honestly (no parallelism, no win) — the metric is falsifiable, not a foregone slogan.
+- **Honesty (the U8 stance, kept).** No telemetry → an **empty** rollup → the report renders "no data yet" (never a fabricated zero). A leaf with no record is **counted as missing** (`leaves_with_cost`/`leaves_total`), never summed as 0. Cost against a **pruned** subplot (no longer in the spec) is reconciled into a **`sunk`** bucket — the pruned-node cost reconcile U7 deferred (R33), accounted not dropped.
+- **`/optimize` + `/retro` are READ-ONLY consumers.** They cite the rollup (+ the existing `override_rate_reader` for the R12 operator-override signal) as a portfolio-shaped baseline/evidence; they never write cost telemetry (the leaves do). `/optimize` adds an Outcome-economics baseline section; `/retro` adds a §1.7 evidence pass with the same zero-data contract as its §1.6 R12 pass.
+
+**Rejected alternatives.**
+- *The report calls `outcome_costs.rollup` directly.* Rejected — that is the forbidden U8→U10 edge (a cycle); materialize into `spec.cost_rollup` instead so the data flows U10→spec→U8.
+- *The coordinator computes cost.* Rejected — it never runs the leaf (R3); the leaf is the only party that knows its realized cost.
+- *Wall-clock parallel = wall-clock of the longest single leaf.* Rejected — the critical path (longest dependency *chain* of walls) is the right parallel lower bound; a single long leaf understates a deep chain.
+- *Sum missing leaves as 0 / fabricate a 0 rollup.* Rejected per the U8 honesty stance — "no data yet" + an explicit missing-count.
+
+**Rationale.** The acyclicity discipline from U8 pays off: by making cost a *data* field on the canonical spec (not a code call), the producer (U10) and consumer (U8 report, /optimize, /retro) stay decoupled — the dependency edge is one-way through the artifact. Generalizable rule: **when a later layer must feed an earlier layer's render, push the value into the shared canonical artifact the earlier layer already reads — never add a back-edge import.**
+
+**Revisit when.** U11 (the feature-flip) advertises `/outcome` + the realized-cost rollup in the released docs. If per-leaf cost needs sub-records (incremental token accrual mid-run rather than a final snapshot), extend `record_cost` to accumulate rather than latest-wins. If the critical-path proxy proves too theoretical, capture the DAG's actual wall-clock (first-dispatch → last-completion) as a measured `wall_seconds_parallel`.
+
+**Refs.** `plugins/saga/scripts/outcome_costs.py`, the `cost_processor` + `production_cost_processor` wiring in `outcome.py`, `plugins/saga/skills/optimize/SKILL.md` + `skills/retro/SKILL.md` (§1.7), `tests/test_outcome_economics.py`; reuses `scripts/override_rate_reader.py` (R12 override signal). Implements U10 of the [outcome-orchestration build plan](#outcome-orchestration-plan); fills the U8 [report stance](#outcome-report-projection-stance) "no data yet" cost slot + the U7 [decompose stance](#outcome-decompose-worktree-stance) pruned-node cost reconcile; consumes the U9 [degrade stance](#outcome-backend-degrade-stance) executor-used telemetry.
+
 ### Outcome backend menu + degrade + liveness (U9): the menu is host-conditional + off-by-default, the degrade decision lives in the reconcile loop (not the dispatcher), HALT/degrade is presence×guarantee×side-effect, liveness is timestamp-derived (U9 PR pending — SHA-fill on merge)  {#outcome-backend-degrade-stance}
 
 **Decision.** U9 completes the executor menu (R6), adds the presence-conditional degrade policy (R23), and enforces leaf liveness (R31). The load-bearing conventions:

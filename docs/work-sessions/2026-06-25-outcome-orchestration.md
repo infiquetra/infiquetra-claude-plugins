@@ -681,3 +681,64 @@ slice off-by-one), the menu construction + recommender + fork-cheap gating, R3 +
 dispatcher + per-store report determinism, and (wontfix/by-design) `had_side_effect = destructive` errs
 toward HALT (never a silent substitution) + `recommend_outcome_backend` is advisory only (the real
 guarantees are enforced in `degrade_decision`/`_reconcile_once`, not the recommendation).
+
+## U10 — Economics + optimize/retro consumers
+
+**Built:** `plugins/saga/scripts/outcome_costs.py` (the producer + rollup) + the `cost_processor` wiring
+in `outcome.py` + `skills/optimize/SKILL.md` (Outcome-economics baseline §) + `skills/retro/SKILL.md`
+(§1.7 evidence pass) + `tests/test_outcome_economics.py` (11). Reuses `scripts/override_rate_reader.py`.
+
+**What it ships:**
+- **Producer** `record_cost(store, sid, executor/tokens/wall_seconds/operator_touches/retries/evidence)`
+  — a leaf reports its own realized cost (R3: the coordinator never runs the leaf).
+- **Consumer** `rollup(spec, store)` — per-outcome sums + `by_executor` + the **DAG-vs-one-thread**
+  verdict (`wall_seconds_parallel` = critical path vs `wall_seconds_serial` = sum, `beat_one_thread`);
+  empty → "no data yet"; missing leaves counted not zeroed; pruned-node cost → `sunk` (R33, the U7 defer).
+- **Wiring**: a `cost_processor` in `advance` **materializes** the rollup into `spec.cost_rollup` (the
+  producer → spec → U8-report edge — no U8→U10 dependency); `AdvanceResult.costs`.
+- **Consumers**: `/optimize` cites the rollup as a portfolio baseline; `/retro` §1.7 reads it as evidence
+  (both read-only, both with the "no data yet" contract).
+
+**Key decisions:** (full rationale → DECISIONS `#outcome-economics-stance`)
+- Cost is a **leaf-produced ledger fact**, the coordinator only aggregates+materializes (R3 intact).
+- The edge is **U10 → `spec.cost_rollup` → U8**, never U8→U10 (the acyclicity rule; push the value into
+  the shared canonical artifact the consumer already reads, no back-edge import).
+- The thesis answer is **critical-path vs serial** — falsifiable (a pure chain honestly reports `False`).
+- Honest "no data yet" + missing-count + sunk-cost (the U8 stance, kept).
+
+**Requirements (honest facet scope):** U10 owns **R7** + **R24** (the rollup + the optimize/retro
+portfolio consumer); it fills the U8 report's "no data yet" cost slot and the U7 pruned-node cost
+reconcile. `override_rate_reader.py` (the R12 override signal) is reused, not modified.
+
+**Checks run:** `ruff check .` ✓, `ruff format --check` ✓, `mypy plugins/ scripts/ tests/` ✓ (83 files),
+`pytest tests/test_outcome_economics.py` ✓ 11 passed; full suite ✓ 1233 passed (1 local-only `.claude/`-dir
+guard deselected, green in CI); validators ✓.
+
+**Adversarial verification:** committed first (per the U4 lesson; verify prompts forbade destructive git
++ edits), then ultracode workflow `verify-outcome-u10` — 4 refutation lenses (rollup/critical-path,
+honesty/sunk, latest-cost-ledger, acyclicity/wiring/R3) + a synthesis judge, each running the modules
+standalone (+ a real repo for the report). **HELD under re-executed attack:** the acyclicity (the report
+does NOT import `outcome_costs`; `outcome_costs` imports only `outcome_store` + lazy `outcome_spec`), the
+`cost_processor` wiring + materialize-only-when-changed, R3 (the coordinator only aggregates, never runs a
+leaf), determinism, and the no-data-yet / missing-counted / pruned→sunk honesty paths. One P1 + two P2 +
+two P3 folded:
+- **P1 (fabricated DAG win)** — a pure serial chain declared in **reverse-topo order** with fractional
+  walls summed `serial` (declaration order) 1 ULP above `parallel` (topo order), so a bare `parallel <
+  serial` flipped the headline R24 verdict to a fake win. **Fix:** `math.fsum` (order-independent) + a
+  tolerance compare (`serial - parallel > 1e-9·max(|serial|,1)`). Regression: reverse-topo chain, fractional
+  walls → `beat_one_thread False`.
+- **P2 (per-field fabricated zeros)** — a leaf recording only its executor surfaced `tokens:0.0` /
+  `retries:0.0` as hard facts (the `{}` guard was whole-rollup only). **Fix:** a numeric field is **emitted
+  only when ≥1 leaf reported it** (omitted otherwise — no fabricated 0); the wall/serial/parallel/beat
+  trio only when wall was reported. Regression: executor-only record omits the numeric fields.
+- **P2 (mixed-timestamp lockout)** — once a sid had a timestamped record, a physically-later
+  *untimestamped* report was silently dropped (stale cost). **Fix:** `_latest_costs` is write-order-last
+  when EITHER record is untimestamped, max-by-`at` only when both are timestamped. Regression: later
+  untimestamped supersedes earlier timestamped.
+- **P3** — `record_cost` `float()`'d a bool/str `at` (True→1.0 epoch / `ValueError`); now validated
+  (rejects a non-timestamp `at`). **P3** — the `/optimize` SKILL overclaimed `by_executor` as per-leaf
+  cost; reworded to "backend mix / counts" + points per-leaf cost at `subplot_cost`.
+
+**Refuted (no change):** acyclicity + wiring + R3 + determinism + the honesty paths (all re-checked
+holding); the latest-cost SNAPSHOT-replace (not a field-merge — by design, matches the docstring); the
+per-subplot report Cost column rendering `node.cost` (an authoring facet, not the realized telemetry).

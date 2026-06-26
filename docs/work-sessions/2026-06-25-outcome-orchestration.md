@@ -615,3 +615,69 @@ yet" slot, the edge pointing U10→U8).** One P1 + four P2 + two P3 folded:
 **Refuted (no change):** report determinism + overwrite-from-state (byte-identical across re-render AND
 across separate processes), the projection no-operator-writable-status + keystroke-only parent-close, the
 U8↔U10 acyclicity, and (per the design carve-out) a merely-ready gated node is NOT a consolidator gate.
+
+## U9 — Full backend menu, degradation policy, heartbeats
+
+**Built:** `plugins/saga/scripts/outcome_dispatcher.py` (extended: full menu + degrade decision +
+recommender) + `plugins/saga/scripts/outcome_liveness.py` (new: heartbeats + the `stalled` terminal) +
+`plugins/saga/references/operator-choice.md` §8 + `tests/test_outcome_backends.py` (15) +
+`tests/test_outcome_liveness.py` (8). Wiring in `outcome.py`: the degrade decision in `_reconcile_once`
+(`available` / `attending`), a `liveness_processor`, `--autonomous` / `--host-capable` /
+`--workflow-available` flags, `AdvanceResult.liveness` / `.degraded`, and the degrade receipt surfaced in
+the report's Degradations section.
+
+**What it ships:**
+- **Full menu** (R6): `resolve_available()` — host-conditional, off-by-default for the host-dependent
+  backends (fork/subagent/goal/cc-workflows-ultracode); always-available floor inline/team-execution/manual.
+- **Presence-conditional degrade** (R23/AE1): `degrade_decision` — attending → HALT; guarantee-bearing →
+  HALT; side-effected (destructive) → HALT; else autonomous+away → degrade one rung down the
+  cc-workflows→team-execution→inline ladder + a visible `DegradeReceipt`; off-ladder → HALT.
+- **Liveness** (R31): `harvest_liveness` reclaims a dispatched leaf breaching heartbeat/timeout as
+  `stalled` (idempotent → pages once, cascades R22); `record_heartbeat` resets the deadline.
+- **Recommender levers** (R7): `recommend_outcome_backend` (wide frontier → downgrade off cc-workflows) +
+  `fork_is_cheap` (fork claimed cheap only when model+system+tools match within the cache TTL).
+
+**Key decisions:** (full rationale → DECISIONS `#outcome-backend-degrade-stance`)
+- The menu is host-conditional + OFF by default (the coordinator never claims a backend it can't verify).
+- The degrade DECISION lives in the reconcile loop (it has the store + node + presence), not the
+  dispatcher seam (a pure minter) — the str-returning `Dispatcher` contract U4–U8 rely on is unchanged.
+- HALT vs degrade = presence × guarantee × side-effect, in that precedence; `destructive` is the
+  side-effect proxy; presence is a per-advance signal (`--autonomous`).
+- Liveness is timestamp-derived (dispatch `at` + heartbeat `at`), opt-in via the node budgets.
+
+**Requirements (honest facet scope):** U9 owns **R3** (dispatch-not-execute, preserved) + **R5** (the
+seam) + **R6** (full menu) + **R7** (recommender levers) + **R23** (degrade) + **R24-telemetry-CAPTURE**
+(the executor-used + degrade/halt receipts; the rollup is U10) + **R31** (liveness). Plan deviation noted:
+the frontier-budget lever lives in `outcome_dispatcher` (an outcome concern) not `lifecycle_state` (kept
+saga-generic), and liveness is `outcome_liveness.py` not `lifecycle_state.py`.
+
+**Checks run:** `ruff check .` ✓, `ruff format --check` ✓, `mypy plugins/ scripts/ tests/` ✓ (82 files),
+`pytest` two U9 files ✓ 23 passed; full suite ✓ 1218 passed (1 local-only `.claude/`-dir guard deselected,
+green in CI); validators ✓. One existing U4 test updated (`manual` is now an always-available backend, so
+it dispatches rather than HALTs).
+
+**Adversarial verification:** committed first (per the U4 lesson; verify prompts forbade destructive git
++ edits), then ultracode workflow `verify-outcome-u9` — 5 refutation lenses (degrade-decision, liveness,
+loop-wiring/R3, recommender/menu, compat) + a synthesis judge, each running the modules standalone (+ a
+real repo for advance). **The core HELD under re-executed attack: the degrade precedence + ladder (14
+cases), `resolve_available` menu construction, the frontier-budget downgrade + fork-when-cheap recommender,
+`is_guarantee_bearing`, R3 (the coordinator never executes), the never-HALT production dispatcher, and
+per-store report determinism.** Two real P2 defects (both append-only-ledger discipline) folded:
+- **P2 (liveness false-stall)** — `_is_stalled` used the heartbeat `at` directly (not floored at
+  dispatch) and `_last_heartbeat` kept the write-order-last `at` (not the max). A **pre-dispatch
+  heartbeat** (clock skew) or an **out-of-order heartbeat append** false-stalled a *live* leaf (a sticky
+  terminal that cascades + pages). **Fix:** `last_activity = max(dispatched_at, last_beat)` + take the
+  **max `at`** per sid (latest by timestamp, not by write order). Regressions: CASE A (heartbeat < dispatch)
+  + CASE B (out-of-order appends).
+- **P2 (non-idempotent halt/degrade records)** — a HALTed/degrade-then-crashed leaf never writes a commit
+  (the dedup marker), so an attended leaf polling `advance` against an unavailable backend re-appended a
+  `halt` record **every tick** (5 advances → 5 records, unbounded under normal operation), and a crash in
+  the degrade→commit window double-listed the degradation. **Fix:** `_append_ledger_once` dedups on
+  `(phase, key)` (the `import_bundle` pattern) for the halt + degrade records. Regressions: 5-advance →
+  1 halt record; crash-window → 1 degrade record (still 1 dispatch — the commit dedup held throughout).
+
+**Refuted (no change):** the degrade precedence/ladder (no degrade-up, no off-ladder target, no
+slice off-by-one), the menu construction + recommender + fork-cheap gating, R3 + the never-HALT production
+dispatcher + per-store report determinism, and (wontfix/by-design) `had_side_effect = destructive` errs
+toward HALT (never a silent substitution) + `recommend_outcome_backend` is advisory only (the real
+guarantees are enforced in `degrade_decision`/`_reconcile_once`, not the recommendation).

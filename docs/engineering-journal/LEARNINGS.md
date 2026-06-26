@@ -27,6 +27,20 @@
 
 ## 2026-06-26
 
+### Append-only ledger discipline, part 2: "latest" means max-by-own-timestamp (not write order), and a re-derived non-terminal record must be append-once or it grows unbounded  {#append-only-ledger-discipline}
+
+**Context.** U9 reads two things from the append-only ledger: leaf liveness (dispatch time + heartbeats) and the HALT/degrade receipts. The U9 adversarial-verify found both had append-only-log bugs — distinct from but in the same family as the U8 sticky-HALT ([[ledger-derived-flag-latest-not-ever]]).
+
+**Evidence.** (1) `outcome_liveness.py` `_last_heartbeat` kept the **write-order-last** `at` and `_is_stalled` used the heartbeat directly (not floored at dispatch). Heartbeats are written by leaf processes **not under the coordinator lease**, so a clock-skewed (at < dispatch) or out-of-order (buffered/replayed) heartbeat **false-stalled a live leaf** (executed CASE A + CASE B both stalled a healthy leaf). (2) `outcome.py` `_reconcile_once` appended a `halt` record with no dedup; a HALTed leaf never writes the `commit` dedup marker, so an attended leaf polling `advance` against an unavailable backend re-appended a halt record **every tick** (5 advances → 5 records, unbounded under *normal* operation), and a crash in the degrade→commit window double-listed the degradation. Fixed in the U9 PR: `last_activity = max(dispatched_at, max-by-timestamp heartbeat)` + `_append_ledger_once` deduping halt/degrade on `(phase, key)`.
+
+**Mechanism.** An append-only log is a stream of events written by possibly-many uncoordinated writers. Two traps follow: (a) **"latest" is ambiguous** — write order ≠ timestamp order when writers have skewed clocks or buffer/replay, so a current-value derived from the log must reduce by `max(own_timestamp)` and floor against a known-good baseline (here, the dispatch time), not trust the tail; (b) **a record re-derived every tick grows without bound** unless it has a dedup marker — `commit` dedups successful dispatch, but the *non-terminal* paths (halt, degrade-before-commit) have none, so they need append-once on their `(phase, key)`.
+
+**Fix (committed).** `max`-floored liveness + `_append_ledger_once` (the U9 PR — SHA-fill on merge), with CASE-A/B + 5-advance-one-record + crash-window-one-degrade regressions.
+
+**Generalizable rule.** When deriving from an append-only log written by uncoordinated parties: (1) compute "latest" as **`max` over the records' own timestamps** and **floor** it against an authoritative baseline — never trust write order; (2) any record you'd re-derive on a repeated pass must carry a **dedup key** (append-once on `(phase, key)`) or it grows unbounded — only the *terminal/success* record is naturally write-once.
+
+**Refs.** Direct sibling of [[ledger-derived-flag-latest-not-ever]] (the U8 latest-wins-for-status form); both are the append-only-ledger family. DECISIONS [#outcome-backend-degrade-stance](DECISIONS.md#outcome-backend-degrade-stance).
+
 ### A status flag derived from an append-only event log must be latest-record-wins, not ever-occurred — an "ever halted" check made a recovered subplot stick as needs-attention forever  {#ledger-derived-flag-latest-not-ever}
 
 **Context.** U8's attention consolidator is derived-on-read from the store. Its HALT signal (`_halted_subplots`) classified a subplot as an "ambiguity needing a decision" if the append-only dispatch ledger contained *any* `phase=='halt'` record. The append-only ledger never deletes, so a node that halted and then **recovered** (a later `commit` re-dispatch, or a `done` completion) still matched — and was flagged needs-attention forever, breaking the "healthy → empty operator surface" guarantee (R17) and masking the node's real ship-gate.

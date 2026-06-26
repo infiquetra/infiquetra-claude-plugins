@@ -180,6 +180,15 @@ def consolidated_prompt(items: list[AttentionItem]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _degrade_receipts(store: Any) -> list[dict[str, Any]]:
+    """Every recorded backend-degrade receipt (R23), in ledger order (deterministic)."""
+    return [
+        rec
+        for rec in outcome_store.read_ledger(store)
+        if rec.get("phase") == "degrade" and rec.get("kind") == "degrade"
+    ]
+
+
 def _evidence_cell(node: Any) -> str:
     """A one-line evidence summary for a subplot (PR / issue / recorded evidence) — '—' when none."""
     bits: list[str] = []
@@ -269,6 +278,16 @@ def report_markdown(repo_root: Path, outcome_id: str, *, store: Any | None = Non
         lines.append(
             f"| `{sid}` | {states.get(sid, '?')} | {_evidence_cell(node)} | {_cost_cell(node)} |"
         )
+
+    degrades = _degrade_receipts(store)
+    if degrades:
+        # R23: a visible downgrade receipt for every autonomous+away leaf that degraded one rung.
+        lines += ["", "## Degradations", ""]
+        for d in degrades:
+            lines.append(
+                f"- `{d.get('subplot_id', '?')}`: {d.get('from_backend', '?')} → "
+                f"{d.get('to_backend', '?')} — {d.get('reason', '')}"
+            )
 
     lines += ["", "## Cost rollup", ""]
     if spec.cost_rollup:

@@ -63,7 +63,10 @@ def test_dispatch_inline_is_available() -> None:
 
 
 @pytest.mark.parametrize(
-    "backend", ["fork", "subagent", "cc-workflows-ultracode", "goal", "manual"]
+    # The host-dependent backends are unavailable under the conservative DEFAULT_AVAILABLE floor
+    # (inline / team-execution / manual). `manual` is now always-available (U9), so it dispatches.
+    "backend",
+    ["fork", "subagent", "cc-workflows-ultracode", "goal"],
 )
 def test_dispatch_unavailable_backend_halts_not_substitutes(backend: str) -> None:
     # R5/R23: a chosen-but-unavailable backend HALTS with a visible receipt — never a silent inline.

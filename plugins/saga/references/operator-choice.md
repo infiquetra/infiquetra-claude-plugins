@@ -246,12 +246,61 @@ Each command cites this file at its own rebuild. The CLI-backed execution-backen
 
 ---
 
-## 8. References
+## 8. OutcomeOrchestrator: the full backend menu + the presence-conditional degrade policy (R6/R23)
+
+The three backends above are the leaf-saga choice. The **OutcomeOrchestrator** (the coordinator over a
+DAG of leaf sagas) routes EACH leaf through the same seam but over a **wider menu** and adds an automatic,
+presence-conditional **degrade** decision the single-saga layer does not have. This is encoded in
+[`scripts/outcome_dispatcher.py`](../scripts/outcome_dispatcher.py) (`resolve_available`,
+`degrade_decision`, `recommend_outcome_backend`, `fork_is_cheap`) + [`scripts/outcome_liveness.py`](../scripts/outcome_liveness.py).
+
+**The full menu (R6), host-conditional.** `resolve_available()` returns:
+
+- **always-available floor** — `inline` / `team-execution` / `manual` (the operator does it by hand);
+- **host-dependent** (only when the host advertises them) — `fork` / `subagent` / `goal` (need a Claude
+  Code host) and `cc-workflows-ultracode` (needs the Workflow tool). The coordinator is a Python script
+  that cannot probe the host, so these stay OFF by default; the host enables them explicitly
+  (`--host-capable` / `--workflow-available`).
+
+**The degrade ladder (R23):** `cc-workflows-ultracode → team-execution → inline` — the same capability
+ladder as `lifecycle_state.ORCHESTRATION_TIERS`. A backend NOT on the ladder (`fork` / `subagent` / `goal`
+/ `manual`) has no defined lower rung.
+
+**The presence-conditional degrade decision (R23/AE1).** When a leaf's chosen backend is unavailable,
+`degrade_decision` returns one of `dispatch` / `degrade` / `halt`:
+
+| Condition | Decision |
+|---|---|
+| backend available | **dispatch** on it |
+| operator **attending** the leaf | **HALT** + page (the operator decides; never auto-degrade under their nose) |
+| **guarantee-bearing** (`guarantee_tags` set or `degrade_policy="halt"`) | **HALT** even when away |
+| already **side-effected** (a `destructive` leaf: deploy/migration/write/repo-mutation) | **HALT** — never re-run on a lesser backend (no duplicate side effect) |
+| autonomous + away + no guarantee + no side effect | **degrade** to the first available lower rung + record a visible `DegradeReceipt` (surfaced in `/outcome report`) |
+| backend not on the ladder, or no lower rung available | **HALT** (no silent substitution, R5) |
+
+The host signals presence to the coordinator via `/outcome advance --autonomous` (away → degrade) vs the
+default interactive advance (attending → HALT).
+
+**Liveness (R31).** A dispatched leaf carries optional `heartbeat_seconds` / `timeout_seconds` budgets; a
+breach reclaims it as the `stalled` terminal (pages once, cascades to its downstream subtree) so a hung
+`cc-workflows` / `/goal` leaf is never waited on forever.
+
+**Frontier-budget + fork-cost levers (R7).** `recommend_outcome_backend` wraps the leaf recommender:
+a wide ready frontier downgrades a per-leaf `cc-workflows-ultracode` recommendation to `team-execution`
+(a dynamic workflow per leaf is expensive); the `fork` cost lever is claimed only when `fork_is_cheap`
+holds (model + system prompt + tools match the parent within the cache TTL — else a fork pays a full
+cache miss and is not cheap).
+
+---
+
+## 9. References
 
 - Storage contract (where the choice lives): [`references/saga-spec.md`](./saga-spec.md)
   (`orchestration_mode` / `orchestration_ref`, enum domain §4).
 - Canonical team-execution trigger constants: [`scripts/lifecycle_state.py`](../scripts/lifecycle_state.py)
   (`should_offer_team_execution`).
+- OutcomeOrchestrator backend menu + degrade policy: [`scripts/outcome_dispatcher.py`](../scripts/outcome_dispatcher.py)
+  + liveness [`scripts/outcome_liveness.py`](../scripts/outcome_liveness.py) (§8 above).
 - Channel-inline offer convention (do not duplicate): [`skills/brainstorm/SKILL.md`](../skills/brainstorm/SKILL.md).
 - Decision record: [`docs/engineering-journal/DECISIONS.md`](../../../docs/engineering-journal/DECISIONS.md)
   `#operator-choice-framework`.

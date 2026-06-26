@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### OutcomeOrchestrator (outcome-orchestration feature — built across U1–U11, co-equal at release; the feature ships at the U11 feature-flip)
+
+- **U1** — Add the canonical outcome spec + DAG validator (`scripts/outcome_spec.py`,
+  `references/outcome-spec.md`, `tests/test_outcome_spec.py`): a JSON outcome document
+  (superset-in-pattern of `ExecutionSpec`) modelling a concurrent DAG of subplots with a per-node
+  operational state machine in data (KTD2 — `state`/liveness/negative-state hooks/`child_spec_ref`),
+  the Kahn `dependency_layers` + `ready_frontier` frontier engine, and a `validate` that rejects
+  duplicate id / self-dep / cycle / missing dep / invalid `child_spec_ref` (incl. collision with a
+  sibling `subplot_id`) **before any dispatch** (R20, R31 validation). Disconnection is a non-fatal
+  advisory (`structural_warnings`), not a hard failure — independent workstreams under one objective
+  are legal; the "forgot to wire it in" smell (R33) is surfaced consistently for a lone isolate and a
+  multi-node island. Fail-loud `from_dict` coercion (a string `depends_on` is rejected, not
+  char-iterated; `bool`/float liveness budgets and non-positive `spec_revision` are rejected);
+  `redirect_dependency` is atomic (a rejected redirect never advances the revision or decision-trail,
+  R26 fidelity). Pure functions, deterministic JSON round-trip, no I/O at import. (U1 covers the
+  structure facet of R26 and the spec-container slice of R1/R2/R21/R33; the cross-facet machinery —
+  GitHub completion, sub-issue projection, the coordinator runtime, decompose/promote — lands in
+  later units.) Survived a 3-lens adversarial-verify pass (validator-bypass / round-trip / requirements
+  honesty); the P1 redirect-atomicity + P2 string-edge/orphan-rule defects it surfaced are folded in.
+
 ## 0.37.0 - 2026-06-21
 
 - Document the parallel-layer + refute-N emitter constructs in `references/execution-spec.md`:

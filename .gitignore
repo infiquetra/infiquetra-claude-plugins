@@ -56,3 +56,6 @@ Thumbs.db
 
 # Antigravity CLI (per-user settings and session state)
 .antigravitycli/
+
+# OutcomeOrchestrator managed sub-outcome worktrees (durable but never committed; R15)
+.saga-worktrees/

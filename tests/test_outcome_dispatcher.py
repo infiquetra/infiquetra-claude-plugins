@@ -213,6 +213,10 @@ def test_cli_advance_uses_the_real_backend_seam(
         "Ship X",
         nodes=[{"subplot_id": "build", "title": "Build", "backend": "fork"}],
     )
+    # R20 approval gate is upstream of the backend HALT — approve the frontier first so the leaf
+    # actually reaches the dispatcher seam (an unapproved leaf is gated, never HALTed).
+    assert OUTCOME.main(["--repo-root", str(repo), "approve", "ship-x"]) == 0
+    capsys.readouterr()
     rc = OUTCOME.main(["--repo-root", str(repo), "advance", "ship-x"])
     assert rc == 0
     out = json.loads(capsys.readouterr().out)

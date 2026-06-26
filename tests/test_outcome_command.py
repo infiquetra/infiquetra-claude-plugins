@@ -304,6 +304,13 @@ def test_graph_mermaid_renders_nodes_edges_states(repo: Path) -> None:
 def test_cli_start_advance_status(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert M.main(["--repo-root", str(repo), "start", "ship-x", "Ship feature X"]) == 0
     capsys.readouterr()
+    # R20: nothing dispatches before the operator approves the current frontier.
+    assert M.main(["--repo-root", str(repo), "advance", "ship-x"]) == 0
+    gated = json.loads(capsys.readouterr().out)
+    assert gated["dispatched"] == [] and gated["gated"] == ["design"]
+    # approve, then advance -> the frontier dispatches.
+    assert M.main(["--repo-root", str(repo), "approve", "ship-x"]) == 0
+    capsys.readouterr()
     assert M.main(["--repo-root", str(repo), "advance", "ship-x"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["dispatched"] == ["design"]

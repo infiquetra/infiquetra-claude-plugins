@@ -27,6 +27,22 @@
 
 ## 2026-06-26
 
+### An all-fake adapter test suite cannot catch a real-adapter path-canonicalization mismatch — the worktree liveness oracle read every live worktree as ABSENT under the production CLI  {#fake-adapter-hides-real-path-mismatch}
+
+**Context.** U7's worktree lifecycle injects a `WorktreeOps` adapter so the whole module is unit-testable offline; `git_worktree_ops` is the real one wiring `git worktree`. The unit tests (`FakeWT`) key liveness on an in-memory `set[str]` of the *exact* path strings passed in, and the real-adapter tests fed `git worktree list --porcelain` a *hand-crafted* listing that already matched the queried string. Every test passed; the adversarial-verify workflow (`verify-outcome-u7`) then drove the REAL adapter against a REAL git repo and found a P0.
+
+**Evidence.** `plugins/saga/scripts/outcome_worktrees.py` `git_worktree_ops._exists`/`_list` did `path in listed` where `listed` are git's **absolute, realpath-canonical** porcelain paths, but the registry stores `str(worktree_path(repo_root, …))` verbatim and `/outcome` defaults `--repo-root .` (`outcome.py` `root = Path(args.repo_root)`, no `.resolve()`). Reproduced against a real repo: a freshly `git worktree add`-ed, on-disk-present worktree returned `ops.exists()==False`. Fixed in the U7 PR (canonicalize both sides: `git_worktree_ops` resolves `repo_root` + `realpath(join(root, path))`; CLI `.resolve()`s `--repo-root`) + a real-git regression test under a **symlinked root**. See DECISIONS [#outcome-decompose-worktree-stance](DECISIONS.md#outcome-decompose-worktree-stance).
+
+**Mechanism.** A false `exists()==ABSENT` for a live worktree broke two guarantees at once: R15 (`live_worktrees` returns empty → the cap check `len(live) >= cap` never trips → unbounded worktree fan-out) and R34 (`harvest_worktrees` sees a live non-terminal node as "definitely absent" → records the sticky `rejected` worktree-removed terminal that cascades via `blocked_subtree` → silently kills live sub-outcomes + their dependents on the *second advance tick of every real default run*). The fakes hid it because they compared a string against the **same** string; the only inputs that diverge — git's realpath canonicalization vs a relative/symlinked `repo_root` — never appear in an all-fake test.
+
+**Fix (committed).** Canonicalize at both edges + a real-git regression test under a symlinked root (the U7 PR — SHA-fill on merge).
+
+**What surprised.** 100% green unit + injected-adapter tests gave *false confidence* about the one thing the injection seam abstracts away: the real adapter's contract with the external system (here, that git emits realpath-absolute paths). The seam that makes the module testable is exactly the seam where the real-world mismatch hides.
+
+**Generalizable rule.** For any module built on an **injected adapter over an external system**, at least one test MUST exercise the **real** adapter against the **real** system under a **non-canonical input** (a relative path, a symlinked root, a different cwd) — the fake keys on identical values and structurally cannot reproduce a canonicalization/normalization mismatch. When the external system normalizes (realpath, lowercasing, trailing-slash, URL-encoding), normalize **both sides** to that system's form, and pick the test input to *force* the divergence the fake can't show.
+
+**Refs.** DECISIONS [#outcome-decompose-worktree-stance](DECISIONS.md#outcome-decompose-worktree-stance); the same "the system that owns the resource is the guard, degrade-safe" lesson as [#outcome-merge-queue-stance](DECISIONS.md#outcome-merge-queue-stance) (U6). Sibling to the commit-before-verify discipline in [[verify-agent-git-checkout-clobber]].
+
 ### An adversarial-verify agent ran destructive git on the uncommitted working tree and clobbered live work  {#verify-agent-git-checkout-clobber}
 
 **Context.** During the OutcomeOrchestrator U4 verify ([[outcome-dispatcher-seam-stance]]), the build vehicle was build-inline → adversarial-verify Workflow → fold findings → commit. The U4 changeset was still **uncommitted** when the verify ran.

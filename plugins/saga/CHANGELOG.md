@@ -21,6 +21,21 @@
   GitHub completion, sub-issue projection, the coordinator runtime, decompose/promote — lands in
   later units.) Survived a 3-lens adversarial-verify pass (validator-bypass / round-trip / requirements
   honesty); the P1 redirect-atomicity + P2 string-edge/orphan-rule defects it surfaced are folded in.
+- **U2** — Add the outcome **store** (`scripts/outcome_store.py`, `tests/test_outcome_store.py`,
+  `tests/test_outcome_replay.py`): the git-common-dir cache + coordination substrate beside the
+  canonical spec + GitHub (KTD15). Resolves its root from `git rev-parse --git-common-dir` so the cache
+  is shared across every worktree but never committed and **deleting it loses no canonical state**
+  (R27). Primitives: immutable write-once **completion events** (one file per leaf per attempt via
+  `os.link`; idempotency-key dedup with a genuine new-attempt retry proceeding, R9/R10/R28); atomic
+  `os.replace` writes + malformed-file **quarantine** (no torn read, R30); an append-only **replay
+  ledger** (`O_APPEND`) tolerating a torn trailing line, with `replay_pending` pairing intents to
+  commits so a crash after a side effect but before its commit re-drives idempotently (R30); lease-based
+  **coordinator + per-subplot dispatch locks** (a second `advance` no-ops on a held lease, reclaims a
+  stale one; no duplicate dispatch, R13); and an **offline queue** with the R34 policy made concrete
+  (GitHub wins for completion → a server-superseded queued write is dropped; retry exhaustion pages the
+  operator). Dependency-injected `runner`/`now` → unit-testable offline with no real git repo or wall
+  clock; no I/O at import. (U2 ships the cache/durability facets of R9/R10/R13/R14/R27/R28/R30/R34; the
+  parent-owned barrier predicate lands in U5, real GitHub/export wiring in U5/U6/U7.)
 
 ## 0.37.0 - 2026-06-21
 

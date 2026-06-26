@@ -22,6 +22,32 @@
 
 ---
 
+## 2026-06-26
+
+### Outcome store (U2): write-once-vs-atomic split, self-healing ledger, sticky success, best-effort lease with defense-in-depth (U2 PR pending — SHA-fill on merge)  {#outcome-store-durability-stance}
+
+**Decision.** `outcome_store.py` is the git-common-dir **cache** (R27) beside the canonical spec + GitHub — never committed, deleting it loses nothing. KTD15's durability primitives lock these conventions every later unit (U5 barrier, U6 auto-merge/negative-states, U7 graph editing) must honor:
+- **Two distinct write primitives.** Mutable files use temp + `os.replace` (`_atomic_write`); write-once files (completion events, lease creation) use temp + `os.link` (`_write_once`, refuses to clobber). Both build the temp via `_unique_tmp` = pid + thread id + monotonic nonce (pid alone collides across same-process threads).
+- **The ledger self-heals on append, not just tolerates on read.** `append_ledger` truncates an unterminated trailing fragment *before* writing (and loops on short writes); `read_ledger` tolerates a torn/non-object **trailing** line but raises on any non-trailing corruption. Tolerance is a precise allowance, never a blanket "skip bad lines".
+- **Completion success is sticky.** `completed_subplots` counts a leaf as done if **any** attempt reached a SUCCESS state — a later `failed` attempt never un-completes a merged leaf. Post-merge negatives (a merged PR later closed → `rejected`) are a distinct GitHub transition (U6), not completion-attempt recency.
+- **Idempotency converges under races.** The write-once link-loser compares keys and returns `"skipped"` for a duplicate, raising only on a genuine divergent-completion conflict.
+- **Leases are best-effort by design, safe by defense-in-depth.** Free-slot create + held-fresh reject are race-safe; the stale **reclaim** is a documented TOCTOU. A brief double-coordinator window cannot cause a duplicate *effect* because the per-subplot dispatch lock + completion idempotency are the real anti-duplication guarantees and the cache is non-authoritative.
+- **Offline degraded mode = supersede-drop + exponential backoff + page-on-exhaustion.** GitHub wins for completion (a server-superseded queued write is dropped, not replayed); failures schedule `next_retry_at = now + base·2^(n-1)`, consumed by `drain_offline`.
+
+**Rejected alternatives.**
+- *A shared append log for completions.* Rejected: per-leaf write-once files mean two leaves finishing at once never contend (R10) and each completion is immutable + auditable.
+- *Latest-attempt-wins for completion state.* Rejected under adversarial review: it let a later `failed` attempt erase a recorded success and re-lock the frontier.
+- *A fencing token on the lease now.* Deferred to U6: the consumer (the coordinator runtime that would present the token) doesn't exist yet, so adding the field now is dead-wiring (a recurring campaign anti-pattern).
+- *Read-only torn-tail tolerance (no self-heal).* Rejected: the very crash the ledger exists to survive — a torn append followed by recovery appends — silently lost the first record and bricked `read_ledger` on the second.
+
+**Rationale.** Surfaced by a 3-lens adversarial-verify workflow (concurrency/atomicity, durability/replay, requirements-honesty), each lens running the store standalone with real threads, clock injection, and crash sequences. It found two genuine P1s (the idempotency-race raise and the non-self-healing ledger) that the 34-test green suite missed because no test appended *after* a torn line or raced an identical key. Generalizable rule: **a "tolerate on read" durability guarantee is incomplete without a matching "repair on write" — and concurrency invariants need a test that actually races, not just a serial happy path.**
+
+**Revisit when.** U6 builds the coordinator runtime → add the lease fencing token (consumer now exists) for strict single-writer exclusivity; if cross-host realtime coordination ever enters core scope, the best-effort reclaim and the cache-only model both need revisiting (networked completion stream). If a single outcome's ledger ever grows large enough that `_heal_torn_tail`'s full-read-on-torn-tail matters, switch to a bounded tail read.
+
+**Refs.** `plugins/saga/scripts/outcome_store.py`, `tests/test_outcome_store.py`, `tests/test_outcome_replay.py`; work log `docs/work-sessions/2026-06-25-outcome-orchestration.md`. Implements U2 of the [outcome-orchestration build plan](#outcome-orchestration-plan); builds on the U1 [validator stance](#outcome-spec-validator-stance).
+
+---
+
 ## 2026-06-25
 
 ### Outcome-spec validator (U1): hard invariants vs advisory smells, atomic structural mutation, Kahn is a deliberate reimplementation (U1 PR pending — SHA-fill on merge)  {#outcome-spec-validator-stance}

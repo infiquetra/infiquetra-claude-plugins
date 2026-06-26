@@ -311,6 +311,12 @@ class AdvanceResult:
         default_factory=list
     )  # HALT receipts (R5/R23 — backend down)
     merges: list[Any] = field(default_factory=list)  # per-tick auto-merge queue results (U6/R12)
+    worktrees: list[Any] = field(
+        default_factory=list
+    )  # per-tick worktree reap/removed/provision (U7/R15/R32)
+    gated: list[str] = field(
+        default_factory=list
+    )  # ready leaves held back by the approval gate (U7/R20)
     skipped_busy: bool = False  # coordinator lease held by another tick -> no-op (R13)
     ticks: int = 1
     status: dict[str, Any] = field(default_factory=dict)
@@ -321,6 +327,8 @@ class AdvanceResult:
             "harvested": self.harvested,
             "halted": self.halted,
             "merges": self.merges,
+            "worktrees": self.worktrees,
+            "gated": self.gated,
             "skipped_busy": self.skipped_busy,
             "ticks": self.ticks,
             "status": self.status,
@@ -336,6 +344,8 @@ def advance(
     dispatcher: Dispatcher | None = None,
     harvester: Callable[[Any, Any], list[str]] | None = None,
     merge_processor: Callable[[Any, Any], Any] | None = None,
+    worktree_processor: Callable[[Any, Any], Any] | None = None,
+    gate_factory: Callable[[Any, Any], Callable[[str], bool]] | None = None,
     holder: str | None = None,
     lease_ttl: float = DEFAULT_LEASE_TTL,
     now: Callable[[], float] = time.time,
@@ -357,6 +367,9 @@ def advance(
     dispatch = dispatcher if dispatcher is not None else _default_dispatcher
     spec = load_spec(repo_root, outcome_id)
     store = _store(repo_root, outcome_id, runner=runner)
+    # The R20 approval gate is built from the loaded spec/store so it sees the CURRENT spec_revision —
+    # a graph edit (which bumps the revision + re-closes the gate) is reflected on the next advance.
+    dispatch_gate = gate_factory(spec, store) if gate_factory is not None else None
 
     if not outcome_store.acquire_coordinator(store, holder, lease_ttl, now=now):
         return AdvanceResult(
@@ -366,7 +379,9 @@ def advance(
     all_dispatched: list[str] = []
     all_halted: list[dict[str, Any]] = []
     all_harvested: list[str] = []
+    all_gated: list[str] = []
     merge_runs: list[Any] = []
+    worktree_runs: list[Any] = []
     ticks = 0
     try:
         while True:
@@ -379,15 +394,27 @@ def advance(
                 # Materialize GitHub-canonical completions BEFORE the frontier read so a leaf whose
                 # PR just merged unlocks its dependents this same tick (R10/R11).
                 all_harvested.extend(harvester(spec, store))
-            tick_dispatched, tick_halted = _reconcile_once(
-                repo_root, spec, store, dispatch, holder, lease_ttl, now
+            if worktree_processor is not None:
+                # Reap terminal sub-outcomes' worktrees + record the worktree-removed terminal (R32)
+                # BEFORE the frontier read so a vanished worktree cascades this tick (R22/R15).
+                worktree_runs.append(worktree_processor(spec, store))
+            tick_dispatched, tick_halted, tick_gated = _reconcile_once(
+                repo_root,
+                spec,
+                store,
+                dispatch,
+                holder,
+                lease_ttl,
+                now,
+                dispatch_gate=dispatch_gate,
             )
             all_dispatched.extend(tick_dispatched)
             all_halted.extend(tick_halted)
+            all_gated.extend(tick_gated)
             if not loop:
                 break
             if not tick_dispatched:
-                break  # quiescent: nothing new to dispatch this tick (HALTed leaves wait on backend)
+                break  # quiescent: nothing new to dispatch this tick (HALTed/gated leaves wait)
             if ticks >= max_ticks:
                 break
     finally:
@@ -398,6 +425,8 @@ def advance(
         harvested=all_harvested,
         halted=all_halted,
         merges=merge_runs,
+        worktrees=worktree_runs,
+        gated=sorted(set(all_gated)),
         ticks=ticks,
         status=status(repo_root, outcome_id, spec=spec, store=store),
     )
@@ -411,14 +440,21 @@ def _reconcile_once(
     holder: str,
     lease_ttl: float,
     now: Callable[[], float],
-) -> tuple[list[str], list[dict[str, Any]]]:
+    *,
+    dispatch_gate: Callable[[str], bool] | None = None,
+) -> tuple[list[str], list[dict[str, Any]], list[str]]:
     """One level-triggered pass: dispatch every ready, not-yet-settled leaf exactly once.
 
-    Returns ``(dispatched, halted)``. Each dispatch is recorded **intent -> effect -> commit** (the
-    store's replay protocol): the intent is written BEFORE the backend is invoked, so a
+    Returns ``(dispatched, halted, gated)``. Each dispatch is recorded **intent -> effect -> commit**
+    (the store's replay protocol): the intent is written BEFORE the backend is invoked, so a
     crash/append-failure after the effect leaves a durable dangling intent that ``replay_pending``
     surfaces and the next reconcile re-drives (the dispatcher must be idempotent on its leaf id). The
     ``commit`` is the durable dedup marker — a settled dispatch is skipped on every later tick.
+
+    The optional ``dispatch_gate`` is the R20 approval gate: a ready leaf the gate rejects is **held
+    back** (added to ``gated``, NOT dispatched) until the operator approves the current frontier — so a
+    mis-drafted graph can never auto-dispatch before review. A gated leaf takes no dispatch lock and
+    writes no ledger intent, so it is cleanly re-evaluated next tick once approved.
 
     A backend HALT (``BackendHaltError``, R5/R23) is caught **per leaf**: the leaf's dispatch lock is
     released (so the next tick re-attempts and re-surfaces the HALT immediately rather than the leaked
@@ -430,9 +466,13 @@ def _reconcile_once(
     settled = set(_dispatch_records(store))  # subplots with a COMMIT dispatch record
     dispatched: list[str] = []
     halted: list[dict[str, Any]] = []
+    gated: list[str] = []
     for sid in outcome_spec.ready_frontier(spec, success):
         if sid in settled:
             continue  # settled dispatch record exists -> idempotent skip (no double-dispatch)
+        if dispatch_gate is not None and not dispatch_gate(sid):
+            gated.append(sid)  # R20: frontier not approved at the current revision -> hold back
+            continue
         node = spec.node_by_id(sid)
         if node is None:
             continue
@@ -479,7 +519,7 @@ def _reconcile_once(
             },
         )
         dispatched.append(sid)
-    return dispatched, halted
+    return dispatched, halted, gated
 
 
 # ---------------------------------------------------------------------------
@@ -646,6 +686,32 @@ def production_merge_processor(
     return processor
 
 
+def production_worktree_processor(
+    repo_root: Path,
+    *,
+    runner: Callable[..., Any] | None = None,
+    owner: str = "",
+    cap: int | None = None,
+) -> Callable[[Any, Any], Any]:
+    """Build the worktree processor ``advance`` runs each tick under the held coordinator lease (U7):
+    it reaps terminal sub-outcomes' worktrees, records the worktree-removed terminal (R32) + cascade,
+    and provisions a durable worktree for each dispatched sub-outcome (cap-bounded, R15)."""
+    import outcome_worktrees
+
+    ops = outcome_worktrees.git_worktree_ops(repo_root, runner=runner)
+    owner = owner or _default_holder()
+    wt_cap = cap if cap is not None else outcome_worktrees.WORKTREE_CAP
+
+    def processor(spec: Any, store: Any) -> Any:
+        harvested = outcome_worktrees.harvest_worktrees(spec, store, ops)
+        provisioned = outcome_worktrees.provision_pending(
+            repo_root, spec, store, ops, owner=owner, cap=wt_cap
+        )
+        return {**harvested, **provisioned}
+
+    return processor
+
+
 # ---------------------------------------------------------------------------
 # CLI — the thin /outcome verbs (KTD11). No I/O at import.
 # ---------------------------------------------------------------------------
@@ -680,17 +746,38 @@ def main(argv: list[str] | None = None) -> int:
     p_import = sub.add_parser("import", help="reconstruct an outcome from a bundle file")
     p_import.add_argument("path")
 
+    p_approve = sub.add_parser(
+        "approve", help="approve the current frontier so it may dispatch (R20)"
+    )
+    p_approve.add_argument("outcome_id")
+
+    p_prune = sub.add_parser("prune", help="prune a node + reconcile its orphans (R33)")
+    p_prune.add_argument("outcome_id")
+    p_prune.add_argument("subplot_id")
+
+    p_promote = sub.add_parser("promote", help="promote a subplot to its own child saga (R21)")
+    p_promote.add_argument("outcome_id")
+    p_promote.add_argument("subplot_id")
+    p_promote.add_argument("child_spec_ref")
+
     args = parser.parse_args(argv)
-    root = Path(args.repo_root)
+    # Resolve the repo root to an absolute, symlink-collapsed path. The default is ``.`` (relative),
+    # and a relative/symlinked root would make the worktree registry paths diverge from git's absolute
+    # realpath porcelain — reading every live worktree as ABSENT (R15 cap unenforced + R34 false
+    # worktree-removed terminals). Canonicalizing here keeps the registry paths == git's view.
+    root = Path(args.repo_root).resolve()
     try:
         if args.command == "start":
             spec = start(root, args.outcome_id, args.objective)
             print(json.dumps({"started": spec.outcome_id, "nodes": len(spec.nodes)}))
         elif args.command == "advance":
             # The production /outcome advance routes through the REAL backend seam (R5/R6, the
-            # record-only default dispatcher is the test/skeleton fallback only) AND the REAL
-            # completion barrier (U5): the harvester materializes GitHub-canonical completions each
-            # tick so a merged PR / closed issue unlocks the next Kahn layer (R10/R11).
+            # record-only default dispatcher is the test/skeleton fallback only), the REAL completion
+            # barrier (U5, harvester), the REAL auto-merge queue (U6, merge_processor), the REAL
+            # worktree lifecycle (U7, worktree_processor: reap + worktree-removed terminal + provision),
+            # and the REAL approval gate (U7, gate_factory: no dispatch before the frontier is approved).
+            import outcome_decompose
+
             result = advance(
                 root,
                 args.outcome_id,
@@ -698,8 +785,40 @@ def main(argv: list[str] | None = None) -> int:
                 dispatcher=outcome_dispatcher.make_dispatcher(),
                 harvester=production_harvester(root),
                 merge_processor=production_merge_processor(),
+                worktree_processor=production_worktree_processor(root),
+                gate_factory=lambda spec, store: outcome_decompose.make_dispatch_gate(store, spec),
             )
             print(json.dumps(result.to_dict()))
+        elif args.command == "approve":
+            import outcome_decompose
+
+            spec = load_spec(root, args.outcome_id)
+            store = _store(root, args.outcome_id)
+            rev = outcome_decompose.approve_frontier(store, spec)
+            print(json.dumps({"approved_revision": rev, "outcome_id": spec.outcome_id}))
+        elif args.command == "prune":
+            import outcome_decompose
+            import outcome_worktrees
+
+            spec = load_spec(root, args.outcome_id)
+            store = _store(root, args.outcome_id)
+            # The worktree reap is wired to the real git adapter; the sub-issue close adapter lands
+            # with U8 (which generates the projected sub-issues), so issue_close stays None until then.
+            summary = outcome_decompose.prune(
+                spec,
+                store,
+                args.subplot_id,
+                worktree_ops=outcome_worktrees.git_worktree_ops(root),
+            )
+            save_spec(root, spec)
+            print(json.dumps(summary))
+        elif args.command == "promote":
+            import outcome_decompose
+
+            spec = load_spec(root, args.outcome_id)
+            rev = outcome_decompose.promote(spec, args.subplot_id, args.child_spec_ref)
+            save_spec(root, spec)
+            print(json.dumps({"promoted": args.subplot_id, "spec_revision": rev}))
         elif args.command == "resume":
             print(json.dumps(resume(root, args.outcome_id)))
         elif args.command == "status":
@@ -715,6 +834,10 @@ def main(argv: list[str] | None = None) -> int:
             spec = import_bundle(root, bundle)
             print(json.dumps({"imported": spec.outcome_id, "nodes": len(spec.nodes)}))
     except (OutcomeError, outcome_spec.OutcomeSpecError, outcome_store.OutcomeStoreError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        # DecomposeError / WorktreeError (both ValueError subclasses) — a rejected edit / worktree op.
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         return 1
     return 0

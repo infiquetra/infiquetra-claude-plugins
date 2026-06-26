@@ -110,6 +110,33 @@
   coordinator lease, so it is single-writer **cross-process** too (R13). GitHub ops are an injected
   `MergeOps` adapter → fully unit-testable offline. (U6 ships R12 + R32-PR/branch + R22 negative cascade +
   R30 merge atomicity; the worktree-removed terminal is U7, the degrade decision U9.)
+- **U7** — Add **decomposition + in-flight graph editing + the durable per-sub-outcome worktree
+  lifecycle** (`scripts/outcome_decompose.py`, `scripts/outcome_worktrees.py`,
+  `tests/test_outcome_graph_edit.py`, `tests/test_outcome_worktrees.py`). **Graph editing** (R21/R33): the
+  four growth mechanisms — `add_node`/`prune`, `lazy_grow`, `elaborate` (splice a node into sub-nodes,
+  inheriting its upstream + rewiring its dependents onto the sinks), `promote` (set `child_spec_ref`,
+  rejecting a point-back at this/any **ancestor** outcome — the cross-spec cycle guard U1 deferred) — each
+  **atomic** (snapshot → validate → bump revision + decision-trail; a rejected edit leaves the spec
+  untouched, R26) and **state-aware**: a **dispatched** node may not be pruned or elaborated (would
+  silently discard in-flight work) — a terminal transition must come first (R33). **Orphan
+  reconciliation** (R33): a prune drops every edge to the node, **closes its generated sub-issue**
+  (injected adapter; U8 produces the ref), and **reaps its worktree** — no zombies. **Draft-then-review
+  approval gate** (R20): approval is recorded **per `spec_revision`**, so any structural edit (which bumps
+  the revision) **re-closes** the gate — no layer dispatches before the operator approves the current
+  frontier's edges. **Worktree lifecycle** (R15): one durable, named, owner-tagged worktree **per
+  sub-outcome** (`child_spec_ref` node), **reused across its leaves** (not one-per-leaf); a hard **cap**
+  defers past N (never an (N+1)th worktree); heavy installs **shared** across siblings via one
+  `shared_install_ref`; reaped on terminal. **git is the liveness oracle** (the U6 lesson): a worktree
+  removed **out-of-band** is detected from `git worktree list` and reaches the **defined `rejected`
+  terminal** (R32 — the one U6 deferred) that **cascades** like a block (R22); a transient git failure
+  degrades to **present** (never falsely terminates a live sub-outcome, R34). Paths are **canonicalized to
+  git's absolute realpath form** on both sides (and `--repo-root` is resolved), so a relative or symlinked
+  root can never read a live worktree as absent (which would silently break both the cap and R34). **Wired into the production
+  `/outcome advance`**: a `worktree_processor` (reap + worktree-removed terminal + provision, under the
+  held coordinator lease) and a `gate_factory` (the approval gate), plus new `/outcome approve` / `prune` /
+  `promote` verbs (`AdvanceResult.worktrees` / `.gated`). Both `WorktreeOps` (git) and `issue_close` are
+  injected → fully unit-testable offline. (U7 ships R13-namespacing + R14-graph-portability + R15 + R20 +
+  R21 + R32-worktree + R33.)
 
 ## 0.37.0 - 2026-06-21
 

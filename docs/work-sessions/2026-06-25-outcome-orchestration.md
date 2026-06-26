@@ -463,3 +463,85 @@ same root (the fake-CAS guard + a non-representative test) — folded in:
 **Refuted (no change):** base-churn cap exactness, `blocked_subtree` cascade exactness, out-of-band /
 closed-unmerged classification, rejected-terminal idempotency, and that U6 does NOT overreach into the
 worktree terminal (U7) or degrade decision (U9).
+
+## U7 — Decomposition, graph editing, worktree lifecycle
+
+**Built:** `plugins/saga/scripts/outcome_decompose.py` (graph editing + approval gate + orphan
+reconcile) + `plugins/saga/scripts/outcome_worktrees.py` (the durable per-sub-outcome worktree
+lifecycle + the worktree-removed terminal) + `tests/test_outcome_graph_edit.py` (23 tests) +
+`tests/test_outcome_worktrees.py` (19 tests). Wiring in `outcome.py` (`worktree_processor`,
+`gate_factory`, the `approve`/`prune`/`promote` verbs, `AdvanceResult.worktrees`/`.gated`).
+
+**What it ships:**
+- **Graph editing** (R21/R33): `add_node`/`add_dependency`/`remove_dependency`, `lazy_grow` (append a
+  later layer as evidence arrives), `elaborate` (splice a node into sub-nodes — entries inherit its
+  upstream, dependents rewire onto the sinks), `promote` (set `child_spec_ref`, rejecting a point-back at
+  this/any ancestor outcome — the cross-spec cycle guard U1 deferred), `prune`. Each is **atomic**
+  (snapshot → validate → bump revision + decision-trail; a rejected edit leaves the spec untouched) and
+  **state-aware** (a `dispatched` node can't be pruned/elaborated — terminal transition first, R33).
+- **Orphan reconciliation** (R33): a prune drops every edge to the node, **closes its generated
+  sub-issue** (injected `issue_close`; U8 makes the ref), **reaps its worktree** — runs *after* the
+  canonical prune commits, so a rejected prune never closes a live issue.
+- **Approval gate** (R20): `approve_frontier` / `frontier_approved` / `make_dispatch_gate`, keyed by
+  `spec_revision` — a structural edit re-closes the gate; the gate sits upstream of the backend HALT.
+- **Worktree lifecycle** (R15): `ensure_worktree` (one per sub-outcome, reused across leaves, cap-defer,
+  owner-tagged, shared `shared_install_ref`), `reap_worktree`, `provision_pending`, and
+  `harvest_worktrees` (reap terminals + the R32 **worktree-removed → `rejected` + R22 cascade**). git is
+  the liveness oracle via the injected `WorktreeOps` (`git_worktree_ops` wires real `git worktree`,
+  degrade-safe `exists` → present on a flake).
+
+**Key decisions:** (full rationale → DECISIONS `#outcome-decompose-worktree-stance`)
+- **Worktrees are per-SUB-OUTCOME, not per-leaf** — only `is_outcome` nodes are managed; the worktree is
+  the per-node unit the R32 removed-terminal attaches to.
+- **git is the liveness oracle** (the U6 lesson) — existence read from `git worktree list`, registry holds
+  only owner/branch/shared-install; a transient git failure degrades to present (R34).
+- **The cap defers, never overshoots** — past N, provisioning returns `capped` (page-and-wait).
+- **Every edit atomic + state-aware**; **approval per-revision** ties R20 to R33's versioning.
+
+**Requirements (honest facet scope):** U7 owns **R13** (subplot-id/worktree namespacing) + **R14** (the
+graph edits keep the spec round-trippable/portable — export/import is U3) + **R15** + **R20** + **R21** +
+**R32-worktree** (the terminal U6 deferred) + **R33**. The sub-issue *generation* is U8; the pruned-node
+**cost** reconcile is U10.
+
+**Checks run:** `ruff check .` ✓, `ruff format --check` ✓, `mypy plugins/ scripts/ tests/` ✓ (78 files),
+`pytest` two U7 files ✓ 42 passed; full suite ✓ (1 local-only `.claude/`-dir guard deselected, green in
+CI); validators ✓.
+
+**Adversarial verification:** committed first (per the U4 lesson; every verify prompt forbade
+destructive git + editing `plugins/`/`tests/`), then ultracode workflow `verify-outcome-u7` — 6
+refutation lenses (cap/liveness, R34 degrade, state-aware edits, atomicity/rollback,
+elaborate-splice/promote-cycle, gate/dead-wiring) + a synthesis judge, each running the modules
+standalone against a real temp store (and a real `git` repo for the adapter). **Atomicity/rollback across
+all six edit ops, the approval gate + dead-wiring (all three hooks reached by the production wiring), and
+strict R33 ('dispatched' rejection) were heavily attacked and HELD.** One **P0** (independently
+constructed by three lenses) + two P2 + four P3 folded:
+- **P0 (R15 + R34, the real-adapter path mismatch)** — `git_worktree_ops` compared the registry path
+  **verbatim** against `git worktree list --porcelain`'s **absolute, realpath-canonical** paths, while
+  the registry stored the path built from an **un-resolved** `repo_root` — and the `/outcome` CLI
+  defaults `--repo-root .`. Reproduced against a real git repo: a freshly-created, on-disk-present
+  worktree read `ops.exists()==False`. From that single false-ABSENT, **both** guarantees broke
+  deterministically: R15 (`live_worktrees` empty → the cap never trips → unbounded fan-out) and R34
+  (`harvest_worktrees` saw a live non-terminal node as "definitely absent" → drove it to the sticky
+  `rejected` terminal that cascades — silently killing live sub-outcomes on the *second advance tick of
+  every real default run*). The all-fake unit tests structurally could not catch it (the fake keys on the
+  identical string; the real-adapter tests hand-fed matching porcelain listings). **Fix:** canonicalize
+  both sides — `git_worktree_ops` resolves `repo_root` once and reduces every path to
+  `realpath(join(resolved_root, path))`; the CLI resolves `--repo-root` to absolute. New **real-git
+  regression test** provisions a worktree under a **symlinked root** and asserts the live worktree reads
+  PRESENT, harvest does not terminate it, and the cap is enforced.
+- **P2** — `reap_worktree` swallowed a failed `ops.remove()` and deregistered anyway → a stuck worktree
+  silently leaked from the cap accounting. **Fix:** honor the bool — a failed removal keeps the entry
+  (retried next pass); a `reap_failed` list surfaces it.
+- **P2** — `harvest_worktrees` skipped a registry entry whose node had left the spec (`node is None`) →
+  the orphan held a cap slot forever. **Fix:** reap node-gone orphans (an `orphaned` list).
+- **P3** — `elaborate` doubled an inherited upstream edge (dedup); the elaborate-on-terminal rejection
+  message said "transition it to terminal first" on an already-terminal node (split the message); the
+  prune docstring's "never silently discard" framing collided with `failed`=returns-to-work (clarified:
+  pruning a terminal `failed` leaf is explicit operator abandonment, not silent); the `promote`
+  ancestor-cycle guard is unreachable from the CLI (no nested-outcome context yet — documented the
+  deliberate deferral + the runtime `seen`-guard that prevents actual infinite recursion).
+
+**Refuted (no change):** atomicity/rollback of all six ops, the approval-gate re-close + advance
+integration (gate, worktree_processor, dispatch_gate all reached by production wiring — no dead-wiring),
+strict R33 'dispatched' rejection, the provisioning-lags-dispatch-by-one-tick (by design, level-triggered),
+and a non-`OutcomeSpecError` escaping the rollback (not constructible — `from_dict` coerces pre-mutation).

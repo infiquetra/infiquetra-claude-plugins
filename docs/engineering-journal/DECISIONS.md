@@ -24,6 +24,25 @@
 
 ## 2026-06-25
 
+### Outcome-spec validator (U1): hard invariants vs advisory smells, atomic structural mutation, Kahn is a deliberate reimplementation (U1 PR pending — SHA-fill on merge)  {#outcome-spec-validator-stance}
+
+**Decision.** `outcome_spec.OutcomeSpec.validate` enforces only **hard, dispatch-blocking** invariants (closed vocab, unique ids, self-dep, missing dep, cycle, local `child_spec_ref` constraints incl. sibling-collision). Three conventions every later unit (esp. U7 graph editing) must follow:
+- **Disconnection is advisory, not a hard failure.** Independent workstreams under one objective are first-class, so a multi-component graph is *legal*; `structural_warnings(spec)` returns a non-fatal advisory for >1 weakly-connected component (consistent for a lone isolate **and** a multi-node island). The state-aware half of R33 (legal-edits-after-dispatch + dynamic orphan reconciliation) is deferred to U7 — `validate` is intentionally dispatch-state-blind in U1.
+- **Structural mutations are atomic.** `redirect_dependency` applies to a snapshot and `validate`s **before** bumping `spec_revision`/appending `decision_trail`; a rejected mutation rolls back and advances neither. The canonical artifact must never carry a bumped revision with a trail entry that lies about a rejected change.
+- **`from_dict` fails loud, never coerces.** A string `depends_on`/`guarantee_tags` is rejected (not character-iterated into corrupted edges); `bool`/float liveness budgets and non-positive `spec_revision` are rejected.
+
+**Rejected alternatives.**
+- *Hard-fail a degree-0 "orphan" node when the graph has any edge* (the first U1 cut). Rejected under adversarial review: it was both **too strict** (rejected a legitimate pipeline + one independent task) and **too loose** (silently passed a disconnected multi-node island — the exact forgot-to-wire error it claimed to catch). The advisory replaces it.
+- *Reuse `execution_spec.dependency_layers`* (R1 "reuse saga machinery" literal reading). Rejected: `execution_spec` adds an implicit `pilot` barrier edge the outcome layer has no concept of, so the two **deliberately diverge**. `outcome_spec.dependency_layers` is a parallel Kahn reimplementation keyed on `Node`; the docstring says so and the two must not be assumed to agree (no forced parity test that would only hold on pilot-free fixtures).
+
+**Rationale.** Surfaced by a 3-lens adversarial-verify workflow (validator-bypass / round-trip / requirements-honesty), each lens required to PROVE claims by running the module standalone. 13 findings, all real except one correctly-refuted (`sort_keys=False` determinism held across 5 `PYTHONHASHSEED=random` subprocesses). The non-atomic-mutation defect (P1) is the load-bearing generalizable rule: **a mutate-then-validate sequence that also bumps a version/audit counter must be transactional, or a rejected mutation corrupts the canonical artifact.**
+
+**Revisit when.** U7 adds add/prune/promote — they bump through `bump_revision` and must adopt the same snapshot-validate-then-commit shape; if a future unit needs to *block* on disconnection (e.g. a "strict" outcome mode), promote `structural_warnings` to an opt-in hard gate rather than reinstating the degree-0 heuristic.
+
+**Refs.** `plugins/saga/scripts/outcome_spec.py`, `tests/test_outcome_spec.py`, `plugins/saga/references/outcome-spec.md`; work log `docs/work-sessions/2026-06-25-outcome-orchestration.md`. Implements U1 of the [outcome-orchestration build plan](#outcome-orchestration-plan).
+
+---
+
 ### Outcome-orchestration build plan — multi-engine trust-but-verify synthesis, store/ledger facet split, degrade-layer wiring (plan PR pending — SHA-fill on merge)  {#outcome-orchestration-plan}
 
 **Decision.** The `OutcomeOrchestrator` implementation plan (`docs/plans/2026-06-25-operator-outcome-orchestration-plan.md`, 11 units U1–U11, R1–R34 coverage matrix) locks these load-bearing HOW choices:

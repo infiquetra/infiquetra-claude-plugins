@@ -17,6 +17,7 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -39,7 +40,7 @@ def _load() -> ModuleType:
 M = _load()
 
 
-def _valid_spec_dict() -> dict[str, object]:
+def _valid_spec_dict() -> dict[str, Any]:
     """A minimal valid 3-node DAG: a root, a dependent code leaf, and a non-code leaf."""
     return {
         "schema_version": 1,
@@ -67,7 +68,7 @@ def _valid_spec_dict() -> dict[str, object]:
     }
 
 
-def _spec(data: dict[str, object]):
+def _spec(data: dict[str, Any]):
     return M.OutcomeSpec.from_dict(data)
 
 
@@ -421,7 +422,7 @@ def test_to_dict_is_a_detached_snapshot() -> None:
     d["nodes"][1]["github"]["nested"]["pr"] = 999
     assert spec.node_by_id("build").github["nested"]["pr"] == 1
     # ...and from_dict is likewise detached from its source data.
-    src = {"subplot_id": "n", "title": "n", "github": {"nested": {"x": 1}}}
+    src: dict[str, Any] = {"subplot_id": "n", "title": "n", "github": {"nested": {"x": 1}}}
     node = M.Node.from_dict(src)
     src["github"]["nested"]["x"] = 7
     assert node.github["nested"]["x"] == 1

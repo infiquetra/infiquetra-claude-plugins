@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +42,10 @@ from typing import Any
 # Current on-disk schema version. Bumped only on a breaking spec-shape change so an old
 # committed spec can be migrated rather than silently mis-read (R26 store-by-facet).
 SCHEMA_VERSION = 1
+
+# A subplot_id is an identifier (interpolated raw into markdown tables, Mermaid node ids, and paths),
+# so it must be a slug — letters, digits, dot, underscore, hyphen — never prose with spaces/pipes.
+_SLUG = re.compile(r"[A-Za-z0-9._-]+")
 
 # Closed node vocabularies. The validator does not invent values; it only checks that an
 # authored node draws from these sets so a typo ("done!", "subagnt") fails validate rather
@@ -151,6 +156,15 @@ class Node:
         if not self.subplot_id:
             raise OutcomeSpecError(f"{where}: a node needs a non-empty subplot_id")
         sid = self.subplot_id
+        # A subplot_id is an IDENTIFIER, not prose: it must be a slug (``[A-Za-z0-9._-]+``). It is
+        # interpolated raw into a markdown table cell and a Mermaid node id (U8 report/topology), where
+        # a ``|`` / space / backtick / newline would corrupt the render — and into store/worktree paths.
+        # Constrain it at the source so a mis-drafted (e.g. LLM-authored) id fails ``validate`` BEFORE any
+        # dispatch (R31), rather than silently breaking a downstream surface.
+        if not _SLUG.fullmatch(sid):
+            raise OutcomeSpecError(
+                f"node {sid!r}: subplot_id must be a slug (letters, digits, '.', '_', '-')"
+            )
         if self.kind not in NODE_KINDS:
             raise OutcomeSpecError(f"node {sid}: kind {self.kind!r} not in {NODE_KINDS}")
         if self.state not in NODE_STATES:

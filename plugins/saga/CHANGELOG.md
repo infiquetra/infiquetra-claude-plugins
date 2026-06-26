@@ -137,6 +137,24 @@
   `promote` verbs (`AdvanceResult.worktrees` / `.gated`). Both `WorktreeOps` (git) and `issue_close` are
   injected → fully unit-testable offline. (U7 ships R13-namespacing + R14-graph-portability + R15 + R20 +
   R21 + R32-worktree + R33.)
+- **U8** — Add the **derived-on-read report + attention consolidator + mission-control projection**
+  (`scripts/outcome_report.py`, `scripts/outcome_projection.py`, `docs/outcomes/_example-ship-auth/`,
+  `tests/test_outcome_report.py`, `tests/test_outcome_projection.py`). **Attention consolidator**
+  (R18/AE5/F3): when several leaves need the operator at once, `consolidate()` bubbles them into **one**
+  ranked prompt — **type-tier first** (a *gate* = ready-to-ship → an *ambiguity* = needs-a-decision → a
+  *failure* = needs-a-fix), then **unblock-leverage** within a tier (the item gating the most downstream
+  work first, `len(blocked_subtree)`); each node classified into **one** kind (terminal-negative →
+  failure, HALT receipt → ambiguity, gated/risky/destructive + dispatched → gate); a healthy steady state
+  consolidates to an empty surface. **Report** (R19/F6): `/outcome report` regenerates
+  `docs/outcomes/<id>/report.md` from state — the Mermaid topology, the consolidated prompt, a per-subplot
+  state + evidence + cost table, the cost rollup (**rendered when present, "no data yet" when absent** —
+  so U8 depends only on U5/U6, **never on U10**, avoiding a U8↔U10 cycle), and the decision trail (the
+  "why" for cold re-entry, F5). **Deterministic** (no wall-clock in the body) + **overwritten from
+  state**, so it physically cannot drift. **Projection** (R25): `/outcome project` emits the
+  mission-control **secondary** portfolio view, **generated** from the spec + store (no operator-writable
+  status, R17) and **never auto-closes the parent** (`parent_close = operator-keystroke-only`). New
+  `/outcome report` / `project` verbs + a consolidated `/outcome attend` (no subplot → the ranked prompt).
+  (U8 ships R17 + R18 + R19 + R25 + AE5 + F3/F5/F6.)
 
 ## 0.37.0 - 2026-06-21
 

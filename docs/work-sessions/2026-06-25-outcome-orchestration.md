@@ -545,3 +545,73 @@ constructed by three lenses) + two P2 + four P3 folded:
 integration (gate, worktree_processor, dispatch_gate all reached by production wiring — no dead-wiring),
 strict R33 'dispatched' rejection, the provisioning-lags-dispatch-by-one-tick (by design, level-triggered),
 and a non-`OutcomeSpecError` escaping the rollback (not constructible — `from_dict` coerces pre-mutation).
+
+## U8 — Reporting, attention consolidator, mission-control projection
+
+**Built:** `plugins/saga/scripts/outcome_report.py` (the consolidator + the derived-on-read report) +
+`plugins/saga/scripts/outcome_projection.py` (the mission-control secondary projection) +
+`tests/test_outcome_report.py` (10) + `tests/test_outcome_projection.py` (6) + a committed generated
+example under `docs/outcomes/_example-ship-auth/`. Wiring in `outcome.py`: `report` / `project` verbs + a
+consolidated `attend` (no subplot → the ranked prompt).
+
+**What it ships:**
+- **Attention consolidator** (R18/AE5/F3): `consolidate(spec, store)` → ONE ranked prompt, **type-tier
+  first** (gate → ambiguity → failure) then **unblock-leverage** (`len(blocked_subtree({sid}))`) within a
+  tier. Each node is classified into exactly one kind (failure = terminal-negative, ambiguity = HALT
+  receipt, gate = gated/risky/destructive + dispatched); a healthy steady state → empty surface.
+- **Report** (R19/F6): `report_markdown` / `write_report` overwrite `docs/outcomes/<id>/report.md` from
+  state — Mermaid topology, the consolidated prompt, a per-subplot state+evidence+cost table, the cost
+  rollup ("no data yet" when absent), the decision trail. **Deterministic** (no wall-clock) so it cannot
+  drift.
+- **Projection** (R25): `project(spec, store)` → the mission-control secondary view, generated from state
+  (no operator-writable status), `parent_close = operator-keystroke-only` (never auto-closes the parent).
+
+**Key decisions:** (full rationale → DECISIONS `#outcome-report-projection-stance`)
+- Everything **derived-on-read** (R17), no operator-writable status — the cockpit can't lie.
+- The report is **deterministic + overwrite-from-state** so it physically cannot drift.
+- **U8 depends only on U5/U6, never U10** — cost is a "no data yet" render slot (the edge points U10→U8,
+  avoiding a U8↔U10 cycle).
+- Consolidator = **type-tier-then-leverage**, one kind per node (terminal wins over gate).
+
+**Requirements (honest facet scope):** U8 owns **R17** (derived-on-read cockpit) + **R18** (consolidator)
++ **R19** (report) + **R25** (projection) + **AE5** + **F3/F5/F6**. The realized-cost *population* is U10;
+U8 only renders the slot.
+
+**Checks run:** `ruff check .` ✓, `ruff format --check` ✓, `mypy plugins/ scripts/ tests/` ✓ (80 files),
+`pytest` two U8 files ✓ 16 passed; full suite ✓ 1183 passed (1 local-only `.claude/`-dir guard deselected,
+green in CI); validators ✓.
+
+**Adversarial verification:** committed first (per the U4 lesson; every verify prompt forbade destructive
+git + editing plugins/tests/docs), then ultracode workflow `verify-outcome-u8` — 5 refutation lenses
+(consolidator, report-determinism, projection, acyclicity/dead-wiring, robustness) + a synthesis judge,
+each running the modules standalone (+ a real git repo for the report). **The core guarantees HELD under
+executed attack: R19 report determinism + overwrite-from-state, R25/R17 generated projection with no
+operator-settable status + keystroke-only parent-close, and the U8↔U10 acyclicity (cost as a "no data
+yet" slot, the edge pointing U10→U8).** One P1 + four P2 + two P3 folded:
+- **P1 (sticky HALT broke healthy→empty)** — `_halted_subplots` returned any sid that EVER had a
+  `phase=halt` dispatch record, so a halted-then-recovered (`done`) or halted-then-re-dispatched
+  (`commit`) node was flagged `ambiguity` forever (and masked the real ship-gate). **Fix:** make it
+  latest-record-wins (a later `commit` supersedes the `halt`) **and** guard the ambiguity branch on
+  `state not in TERMINAL_STATES`. Regression: halt→done → empty; halt→commit(gated) → gate.
+- **P2** — the report claimed "every non-gated leaf is auto-advancing" while the **whole frontier was
+  frozen awaiting `/outcome approve`** (R20). **Fix:** the consolidator now emits a tier-1 **approval**
+  attention item when the current revision is unapproved with a non-empty ready frontier — so a
+  started-but-unapproved outcome is correctly NOT a healthy empty surface (and `/outcome attend` + the
+  report + the projection all show it).
+- **P2** — `progress.percent` read **100% while `complete==False`** (banker's rounding: 199/200→100).
+  **Fix:** `display_percent` caps at 99 below completion, floors a non-zero at 1, 100 only when
+  `done==total`; applied to report + projection.
+- **P2** — the projection `frontier` re-listed **negative-terminal/HALTed nodes as ready** (a
+  success-only `ready_frontier` let a dead leaf re-enter). **Fix:** derive the frontier from the same
+  `states` map (`st=='ready'`) in the projection **and** `outcome.status()` (cross-surface).
+- **P2** — a non-slug `subplot_id` (a `|`/space/backtick/newline) **corrupted the markdown table +
+  Mermaid fence**. **Fix:** enforce a slug charset (`[A-Za-z0-9._-]+`) on `subplot_id` in
+  `Node.validate` — fail-loud at source before any dispatch (R31), covering every downstream render +
+  paths; plus strip newlines from the objective in the report H1.
+- **P3** — `_cost_cell` showed "no data yet" for a non-empty cost dict lacking `tokens`/`wall_seconds`
+  (and dropped a real `0`); now renders every present key sorted. **P3** — corrected a stale prune
+  comment (U8's projection is artifact-only; the sub-issue close adapter is deferred).
+
+**Refuted (no change):** report determinism + overwrite-from-state (byte-identical across re-render AND
+across separate processes), the projection no-operator-writable-status + keystroke-only parent-close, the
+U8↔U10 acyclicity, and (per the design carve-out) a merely-ready gated node is NOT a consolidator gate.

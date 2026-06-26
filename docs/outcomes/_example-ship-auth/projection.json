@@ -1,0 +1,41 @@
+{
+  "schema": "outcome-projection/1",
+  "outcome_id": "ship-auth",
+  "objective": "Ship passwordless auth (magic-link + passkeys)",
+  "spec_revision": 1,
+  "progress": {
+    "done": 1,
+    "total": 5,
+    "percent": 20
+  },
+  "states": {
+    "design": "done",
+    "magic-link": "dispatched",
+    "passkeys": "dispatched",
+    "ui": "blocked",
+    "rollout": "blocked"
+  },
+  "state_counts": {
+    "done": 1,
+    "dispatched": 2,
+    "blocked": 2
+  },
+  "frontier": [],
+  "blocked": [
+    "rollout",
+    "ui"
+  ],
+  "attention": {
+    "count": 1,
+    "top": {
+      "subplot_id": "passkeys",
+      "kind": "gate",
+      "tier": 1,
+      "leverage": 2,
+      "reason": "ready to ship (gated) \u2014 operator merges"
+    }
+  },
+  "complete": false,
+  "parent_close": "operator-keystroke-only",
+  "generated": "derived-on-read from spec + store (no operator-writable status, R17/R25)"
+}

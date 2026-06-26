@@ -51,7 +51,19 @@ Coordinator-only verbs — run via `python3 plugins/saga/scripts/outcome.py <ver
 | `attend <id> <subplot>` | print the native `/resume <leaf-saga-id>` handoff for a leaf you want hands-on |
 | `resume <id>` | reconstruct live status from spec + store (works even if the cache was wiped) |
 | `status <id>` | the derived-on-read cockpit snapshot (states, counts, frontier) |
+| `commit <id> [--push]` | **commit (+ push) the spec to the outcome's own branch** — the R26/R27 cross-machine durability step (refuses on `main`/`master`) |
+| `report <id>` / `project <id>` | regenerate the derived-on-read report (R19) / the mission-control projection (R25) |
+| `approve <id>` / `prune <id> <subplot>` / `promote <id> <subplot> <child>` | the R20 frontier approval + the R33 graph edits |
 | `export <id>` / `import <bundle>` | a portable spec + completion bundle to move an outcome across machines |
+
+**Persist the spec to the branch (R26/R27).** The committed `docs/outcomes/<id>/outcome-spec.json` on the
+outcome's own branch (`outcome/<slug>`, never `main` mid-run) is what lets a **different machine
+reconstruct the whole outcome by pulling the repo** — load the committed spec, then re-harvest completion
+from GitHub (canonical), with no dependence on the local cache. `start` and the graph edits write the
+working-tree file; **commit + push is explicit**: run `/outcome commit <id> --push` after structural
+changes, or `/outcome advance <id> --persist` to commit the (cost-rollup-updated) spec each tick on an
+unattended `/loop` run. The *cadence* is yours; the *mechanism* is `commit`/`--persist`. (`export`/`import`
+remain the cache-derived bundle for an ad-hoc move; the committed-branch path is the canonical durability.)
 
 Leaf work is **always** the native verbs on the leaf's own saga: `/resume <leaf-saga-id>`, `/work`,
 `/code-review`, `/qa`. Never shadow them.

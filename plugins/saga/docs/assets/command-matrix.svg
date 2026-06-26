@@ -14,7 +14,7 @@
     <tspan x="70" dy="0">Command Matrix</tspan>
   </text>
   <text x="70" y="118" class="subtitle" fill="#52616f">
-    <tspan x="70" dy="0">18 routable commands plus /ceo-review as the /founder-review alias.</tspan>
+    <tspan x="70" dy="0">19 routable commands plus /ceo-review as the /founder-review alias.</tspan>
   </text>
   <rect x="70" y="175" width="350" height="565" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
   <rect x="94" y="205" width="96" height="34" rx="17" fill="#0f7c80"/>
@@ -162,6 +162,17 @@
   <rect x="1015" y="535" width="96" height="34" rx="17" fill="#6b5fb5"/>
   <text x="1029" y="558" class="small" fill="#fbfcfd">
     <tspan x="1029" dy="0">router</tspan>
+  </text>
+  <text x="838" y="651" class="label" fill="#2f6fbd">
+    <tspan x="838" dy="0">/outcome</tspan>
+  </text>
+  <text x="838" y="679" class="body" fill="#52616f">
+    <tspan x="838" dy="0">outcome coordinator over a</tspan>
+    <tspan x="838" dy="18">DAG of leaf sagas</tspan>
+  </text>
+  <rect x="1015" y="629" width="154" height="34" rx="17" fill="#6b5fb5"/>
+  <text x="1029" y="652" class="small" fill="#fbfcfd">
+    <tspan x="1029" dy="0">coordinator</tspan>
   </text>
   <rect x="1180" y="175" width="350" height="565" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
   <rect x="1204" y="205" width="202" height="34" rx="17" fill="#b7791f"/>

@@ -742,3 +742,79 @@ two P3 folded:
 **Refuted (no change):** acyclicity + wiring + R3 + determinism + the honesty paths (all re-checked
 holding); the latest-cost SNAPSHOT-replace (not a field-merge — by design, matches the docstring); the
 per-subplot report Cost column rendering `node.cost` (an authoring facet, not the realized telemetry).
+
+## U11 — Release, docs, integration gate (THE FEATURE-FLIP — the OutcomeOrchestrator ships)
+
+**Built:** the saga-feature-level flip + the all-34 composition gate. CHANGELOG `[Unreleased]` → `## 0.38.0`;
+`plugins/saga/.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` → **0.38.0** (the release
+triad now matches); the saga descriptions advertise the OutcomeOrchestrator (the `outcome-orchestration`
+keyword replaces the redundant `sdlc`, within the 200-char `maxLength`); README + `docs/commands.md` →
+**20 files / 19 routable**; the Command Matrix visual (`render_docs_visuals.py` +
+`docs/assets/command-matrix.svg`) gains the `/outcome` coordinator card + the "19 routable" subtitle
+(regenerated, golden test green); `tests/test_outcome_integration.py` (new); `tests/test_saga_plugin.py`
+version pin → 0.38.0.
+
+**What it ships:**
+- **The feature flip** (R4 + all release surfaces): saga **0.38.0** advertises `/outcome` across
+  plugin.json, marketplace.json, README, commands.md, and the command-matrix visual.
+- **The integration gate**: `test_outcome_integration.py` drives the whole vertical slice through the
+  **production** `advance` wiring on a real DAG + a stateful fake `gh` + a real git repo — start →
+  approve (R20) → dispatch (R5) → GitHub-canonical harvest (a non-code leaf on a closed issue + a code
+  leaf on a merged PR, R11) → auto-merge (R12) → cost rollup materialized (R24) → report (R19) +
+  projection (R25) → `complete`. A second test affirms the thesis (a parallel fan-out `beat_one_thread`).
+
+**Key decisions:** (full rationale → DECISIONS `#outcome-release-flip-stance`)
+- The flip is a **version-triad bump + advertise-the-complete-surface + a compose-it-all gate**, NOT a
+  retroactive drift sync (KTD14 kept each surface synced per-unit).
+- The integration gate proves **composition** (the units run together), distinct from the per-unit
+  requirement pins. It caught a fake-`gh` argv-mismatch during authoring — exactly the compose-bug class a
+  unit test misses.
+- Minor bump (0.37 → 0.38): additive, backward-compatible; bandit is `-ll || true` (informational) and the
+  new scripts are clean at `-ll`.
+
+**Requirements:** U11 closes **R4 + all release-facing surfaces** and asserts **all 34 (R1–R34) compose**.
+The OutcomeOrchestrator is now **complete**: 11/11 units merged (U1 #261-era … U10 #273), saga 0.38.0.
+
+**Checks run (the full U11 bar):** `pytest` ✓ **1239 passed** (incl. the 2 integration tests + the
+release-triad + saga-plugin + docs-coverage golden); `ruff check` ✓, `ruff format --check` ✓, `mypy` ✓
+(84 files), `validate_plugins` ✓, `marketplace/validator` ✓, `bandit -ll` on `outcome_*` ✓ (0 Medium/High).
+(The one local-only `.claude/`-dir guard is deselected, green in CI.)
+
+**Adversarial verification:** committed first (per the U4 lesson), then ultracode workflow
+`verify-outcome-u11` — 3 lenses (integration-rigor, release-consistency, all-34-coverage) + a synthesis
+judge — which returned **`ship_ready: False` and was RIGHT**. The version triad, validators, visuals, the
+description/keywords within limits, and 1239 tests all HELD; one **P0** + a P1 + two P2 folded (all
+re-verified by the judge):
+- **P0 (R26/R27 persistence was a no-op → "all 34 ship" was false)** — `save_spec` wrote the working tree
+  but nothing committed/pushed the spec to a branch, so cross-machine cold re-entry (F5) could not hold.
+  **Fixed by IMPLEMENTING it** (not downgrading the claim): `outcome.commit_spec` commits + pushes the
+  spec to the outcome's own branch (refuses on `main`/`master`, R26), via `/outcome commit [--push]` +
+  `/outcome advance --persist`; a real-git test reads the committed blob back to prove a different-machine
+  pull reconstructs the outcome.
+- **P1 (the gate never exercised dispatch)** — `merge_processor`-then-`harvester` completed both leaves on
+  tick 0 before dispatch ran, so the test passed even with a raising dispatcher. **Fixed:** the fake `gh`
+  now resolves a leaf's issue/PR only after a settled dispatch record, and the test asserts
+  `all_dispatched == {design, build}` — dispatch is load-bearing.
+- **P2 (auto-merge ignored the DAG frontier)** — a clean PR for a leaf with an incomplete (especially
+  non-code) upstream could squash out of order. **Fixed:** `process_merge_queue` gates on
+  `all(dep in success)` + a regression.
+- **P2 (stale doc counts)** — `docs/README.md` + `docs/boundaries.md` still said 18/17 → moved to 20/19.
+
+**Refuted (no change):** the release version triad (0.38.0 across plugin.json / marketplace.json /
+CHANGELOG / the test pin), the description length + keyword cap, the command-matrix golden (render-to-temp
+byte-identical with the `/outcome` card), the validators, and R8/R30/R13/R22/R34 genuinely covered. After
+the fold the gate's blocking finding is resolved — **all 34 genuinely ship**.
+
+---
+
+## OUTCOME: the OutcomeOrchestrator shipped (11/11 units, R1–R34)
+
+Built across 11 per-unit PRs, each landed independently-releasable with its release surfaces synced
+(KTD14) and gated by an ultracode adversarial-verify pass (commit-before-verify per the U4 clobber
+lesson). Every verify found real defects and folded them with regressions — the recurring families:
+**"the system that owns the resource is the guard, degrade-safe"** (U6 GitHub `--match-head-commit`, U7
+git-is-the-liveness-oracle), **the append-only-ledger discipline** (U8 latest-not-ever, U9 max-by-timestamp
++ append-once, U10 latest-cost), **acyclicity through the shared artifact** (U8 no-U10-dep, U10
+producer→spec→U8), and **all-fake-tests-miss-the-real-adapter** (U7 path canonicalization, U11 fake-`gh`
+argv). saga **0.38.0** ships `/outcome` — the coordinator that drives a whole outcome as a durable DAG of
+leaf sagas.

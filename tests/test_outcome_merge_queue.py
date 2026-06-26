@@ -282,6 +282,38 @@ def test_process_queue_records_conflict_as_failed(tmp_path: Path) -> None:
     assert STORE.completed_subplots(store, successful_only=True) == set()  # not a success
 
 
+def test_a_code_leaf_with_an_incomplete_upstream_is_not_merged(tmp_path: Path) -> None:
+    # U11 regression: a coincidentally-clean PR must NOT squash while its declared upstream is incomplete
+    # (GitHub does not model the DAG — especially a non-code upstream produces no base-blocking merge).
+    store = _store(tmp_path)
+    spec = _spec(
+        [
+            {
+                "subplot_id": "design",
+                "title": "design",
+                "kind": "non-code",
+                "github": {"issue": "9"},
+            },
+            {
+                "subplot_id": "build",
+                "title": "build",
+                "kind": "code",
+                "github": {"pr": "1"},
+                "depends_on": ["design"],
+            },
+        ]
+    )
+    # build's PR is perfectly clean, but design (its upstream) is not done -> build must NOT merge.
+    result = M.process_merge_queue(spec, store, _ops(merge_state="clean", squash="merged"))
+    assert all(o["state"] != "merged" for o in result["outcomes"])  # nothing merged out of order
+    # once design completes, build is eligible and merges.
+    STORE.write_completion_event(
+        store, STORE.CompletionEvent(subplot_id="design", state="done", idempotency_key="k:design")
+    )
+    result2 = M.process_merge_queue(spec, store, _ops(merge_state="clean", squash="merged"))
+    assert any(o["subplot_id"] == "build" and o["state"] == "merged" for o in result2["outcomes"])
+
+
 def test_cli_describes_policy(capsys: Any) -> None:
     assert M.main(["--cap", "5"]) == 0
     out = json.loads(capsys.readouterr().out)

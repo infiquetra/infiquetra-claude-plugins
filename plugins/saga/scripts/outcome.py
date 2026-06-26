@@ -147,14 +147,86 @@ def load_spec(repo_root: Path, outcome_id: str) -> outcome_spec.OutcomeSpec:
 def save_spec(repo_root: Path, spec: outcome_spec.OutcomeSpec) -> Path:
     """Persist the canonical spec (structure + decision-trail + cost) to the branch path.
 
-    Note: this writes **structure**, not per-tick operational state — node live-state is derived on
-    read (R17), never re-committed each tick, so the branch history is not polluted with state churn.
+    Writes the working-tree file only; the **git commit + push** to the outcome's own branch (the R26/R27
+    cross-machine-durability step) is :func:`commit_spec`, run explicitly via ``/outcome commit`` or
+    ``/outcome advance --persist`` — never silently per tick. node live-state stays derived-on-read (R17),
+    so the branch history is not polluted with state churn.
     """
     spec.validate()
     path = spec_path(repo_root, spec.outcome_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(spec.to_json(), encoding="utf-8")
     return path
+
+
+# The branches the spec must NEVER be committed to mid-run (R26: "the outcome's own branch, not main").
+_PROTECTED_BRANCHES = frozenset({"main", "master"})
+
+
+def _git(
+    args: list[str], repo_root: Path, runner: Callable[..., Any] | None = None
+) -> tuple[int, str, str]:
+    """Run a ``git`` subcommand in ``repo_root``; ``(rc, stdout, stderr)``. ``runner`` injectable (tests)."""
+    import subprocess  # nosec B404 — git CLI only, fixed argv, no shell
+
+    run = runner if runner is not None else subprocess.run
+    try:
+        result = run(  # nosec B603 — fixed argv, no shell
+            ["git", *args], cwd=str(repo_root), capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, "", str(exc)
+    return (
+        getattr(result, "returncode", 1),
+        (getattr(result, "stdout", "") or "").strip(),
+        (getattr(result, "stderr", "") or "").strip(),
+    )
+
+
+def commit_spec(
+    repo_root: Path,
+    outcome_id: str,
+    *,
+    message: str = "",
+    push: bool = False,
+    runner: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Commit the canonical outcome spec to the **outcome's own branch** (R26/R27 cross-machine durability).
+
+    The spec artifact is canonical for structure + decision-trail + cost (R26); committing + pushing it to
+    the outcome's branch is what lets a **different machine reconstruct the whole outcome by pulling the
+    repo** (R27/F5) — load the committed spec, then re-harvest completion from GitHub (canonical), no
+    dependence on the local cache. This is the **mechanism**; the *cadence* (how often it runs) is the
+    operator's / `/loop`'s call (the deferred half of R26).
+
+    **Refuses to commit to ``main``/``master``** (R26: "not main mid-run") so an outcome's structural churn
+    never pollutes the default branch. A path-limited commit (only the spec file) leaves the operator's
+    other working-tree changes untouched. Idempotent: a no-op when the spec is already committed.
+    """
+    branch = ""
+    rc, out, _ = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root, runner)
+    if rc == 0:
+        branch = out
+    if branch in _PROTECTED_BRANCHES:
+        raise OutcomeError(
+            f"refusing to commit the {outcome_id!r} spec to {branch!r} — R26: the outcome spec lives on "
+            f"its own branch (outcome/<slug>), never main mid-run. Switch to the outcome branch first."
+        )
+    path = spec_path(repo_root, outcome_id)
+    rel = str(path)
+    _git(["add", "--", rel], repo_root, runner)
+    staged_rc, _o, _e = _git(["diff", "--cached", "--quiet", "--", rel], repo_root, runner)
+    if staged_rc == 0:  # nothing staged -> the spec is already committed (idempotent no-op)
+        return {"committed": False, "branch": branch, "pushed": False, "reason": "spec unchanged"}
+    msg = message or f"chore(outcome): persist {outcome_id} spec"
+    crc, _o, cerr = _git(["commit", "-m", msg, "--", rel], repo_root, runner)
+    if crc != 0:
+        raise OutcomeError(f"could not commit the {outcome_id!r} spec: {cerr}")
+    pushed = False
+    if push:
+        prc, _po, _pe = _git(["push"], repo_root, runner)
+        pushed = prc == 0
+    return {"committed": True, "branch": branch, "pushed": pushed}
 
 
 def _store(repo_root: Path, outcome_id: str, *, runner: Callable[..., Any] | None = None) -> Any:
@@ -874,6 +946,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="this host can run cc-workflows-ultracode (the Workflow tool is present)",
     )
+    p_advance.add_argument(
+        "--persist",
+        action="store_true",
+        help="commit + push the spec to the outcome branch after advancing (R26/R27 durability)",
+    )
 
     for verb in ("resume", "status", "graph"):
         p = sub.add_parser(verb, help=f"{verb} an outcome")
@@ -896,6 +973,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_project.add_argument("outcome_id")
     p_project.add_argument("--markdown", action="store_true")
+
+    p_commit = sub.add_parser(
+        "commit", help="commit (+ --push) the spec to the outcome's branch (R26/R27 durability)"
+    )
+    p_commit.add_argument("outcome_id")
+    p_commit.add_argument("--push", action="store_true")
 
     p_export = sub.add_parser("export", help="print a portable bundle (spec + completion)")
     p_export.add_argument("outcome_id")
@@ -955,7 +1038,14 @@ def main(argv: list[str] | None = None) -> int:
                 available=avail,
                 attending=not args.autonomous,
             )
-            print(json.dumps(result.to_dict()))
+            out = result.to_dict()
+            if args.persist:
+                # R26/R27: commit + push the (possibly cost-rollup-mutated) spec to the outcome branch so
+                # a different machine can pull-and-reconstruct (refuses on main; no-op if unchanged).
+                out["persisted"] = commit_spec(root, args.outcome_id, push=True)
+            print(json.dumps(out))
+        elif args.command == "commit":
+            print(json.dumps(commit_spec(root, args.outcome_id, push=args.push)))
         elif args.command == "approve":
             import outcome_decompose
 

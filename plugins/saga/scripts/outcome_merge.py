@@ -200,13 +200,22 @@ def process_merge_queue(
     skip-set is **success OR truly-terminal-negative (rejected/stalled)** — a ``conflict`` records a
     ``failed`` terminal which is RETRYABLE (so a conflicted-then-fixed leaf re-enters the queue; not a
     permanent skip), while ``rejected`` (R32) is terminal and cascades (R22).
+
+    **Dependency-gated (R12 + the DAG).** A code leaf is merged only once **all of its ``depends_on`` are
+    success-complete** — GitHub's mergeability does NOT model the outcome DAG, so a coincidentally-clean
+    PR for a leaf whose upstream is incomplete (especially a *non-code* upstream that produces no
+    base-blocking merge) would otherwise squash prematurely, out of dependency order. The frontier gate is
+    the orchestrator's, not GitHub's.
     """
     skip = _skip_set(store)
+    success = outcome_store.completed_subplots(store)  # success-only -> the dependency gate
     outcomes: list[dict[str, Any]] = []
     rejected: list[str] = []
     for node in spec.nodes:
         if node.subplot_id in skip or not _is_mergeable_kind(node):
             continue
+        if not all(dep in success for dep in node.depends_on):
+            continue  # upstream not all done -> never merge out of dependency order (R12 + the DAG)
         outcome = auto_merge_one(node, ops, max_cycles=max_cycles)
         outcomes.append(outcome.to_dict())
         if outcome.state == "rejected":

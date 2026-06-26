@@ -17,7 +17,7 @@ The source model for command coverage and visuals is [model/saga-docs-model.yaml
 
 ## Operating Model
 
-Saga has 18 command files and 17 routable commands. `/ceo-review` is a compatibility alias for `/founder-review`.
+Saga has 20 command files and 19 routable commands. `/ceo-review` is a compatibility alias for `/founder-review`.
 
 The main chain is a reviewed-work spine:
 

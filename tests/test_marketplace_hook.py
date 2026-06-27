@@ -80,7 +80,7 @@ def test_hooks_json_is_valid() -> None:
     """hooks.json must itself be parseable JSON."""
     hooks_json = ROOT / "plugins" / "saga" / "hooks" / "hooks.json"
     data = json.loads(hooks_json.read_text())
-    assert "hooks" in data
+    assert set(data) == {"hooks"}
 
 
 def test_hooks_json_wires_pretooluse() -> None:

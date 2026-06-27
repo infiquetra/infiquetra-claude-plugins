@@ -246,6 +246,20 @@ independent read-only review, exploration, or implementation-plan critique.
   surface.
 - Do not start with write-capable coder agents. Coder delegation should wait for worktree or strict
   file-ownership mechanics plus explicit consent.
+- **Proven prompt assets to fold in (2026-06-27).** The worker-cache `/doc-review` ran codex
+  (`gpt-5.5` xhigh) + agy (Gemini 3.1 Pro High) as adversarial plan-critique generators — they caught a
+  real P0 + 4 P1. The reusable bit is the prompt *structure*: adversarial staff-engineer role → forced
+  first-line disagreement → `[P0|P1|P2|P3] | claim/gap | evidence(file:line) | fix` enumeration →
+  explicit CHECK list → read-only / cite-everything. When this is built, genericize that into the
+  delegate surface (and the saga `doc-review` skill) rather than re-deriving per run. Durable know-how
+  already lives in memory `reference_gemini_prompting_best_practices.md` (Gemini-specific: structural
+  adversarial role, disagreement-first, `thinking_level=high`, why "be brutally honest" fails) +
+  `reference_codex_second_opinion.md` (the `codex exec -m gpt-5.5 … -s read-only` STDIN pattern); the
+  method is narrated in `docs/reviews/2026-06-27-worker-model-cache-scheduling-review.md`. The concrete
+  `agy_prompt.txt` / `codex_prompt.txt` were session-scratch and are ephemeral — the structure above is
+  the keeper, not the throwaway copies. Pairs with the gated-generator posture in the vecu-port-seeds
+  ideation (survivor #4, "Heterogeneous Engines as Gated Generators + Fault-Exclusion") — generators
+  only, never verifiers-of-record, Claude verifies every finding against source.
 
 ### Phase 5 spawn primitive: tmux-wrapped foreground sessions (replaces `--bg` from current plan)  {#phase5-spawn-via-tmux}
 

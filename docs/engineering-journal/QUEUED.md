@@ -150,6 +150,29 @@
 
 ## P1 — urgent
 
+### `/ideate` + `/brainstorm` over-fire scope-shrink / measure-before-build on already-converged solo handoffs  {#ideate-brainstorm-do-less-bias}
+
+**Priority.** P1.
+
+**Effort.** Half-day. SKILL.md edits to `brainstorm` (Phase 0/1/2) + `ideate` convergence; no code.
+
+> **Worth it when.** Now — it misfired live this session (S-1 cache-scheduling brainstorm) and the operator flagged it as a recurring cross-session pattern. Fix before the next `/ideate` or `/brainstorm` run.
+
+**Context.** The two engines lean systematically toward "get the operator to do less," which backfires for a solo operator who has *already* converged. Concretely:
+
+- **brainstorm's attachment-gap probe** ("smallest version that proves the bet, what's excluded?") + Phase 2 "prefer simpler solutions" + the *optional* higher-upside challenger (simpler is the default, bigger is the opt-in) all push toward **smaller scope by default**.
+- When the topic arrives as a **build-first `/ideate` survivor the operator already promoted** (and already killed the defer/measure framing upstream), re-firing those probes **re-litigates a settled decision**. This session: I reopened S-1's settled scope and recommended the smallest slice with "let usage tell you if you need more" — which the operator rejected hard.
+- That "smallest-slice-then-expand / let usage tell you" framing is **structurally identical to measurement-first-ROI** for a solo tool where the operator IS the measurement loop — the exact ceremony killed as ideation S-6 and recorded in the `no-roi-ceremony-solo-tools` memory. The skills don't encode that exception.
+- `/ideate`'s second-opinion + convergence stages also lean cut/rework/defer, compounding the shrink in the handoff.
+
+**Fix direction:**
+1. **Respect upstream convergence.** In brainstorm Phase 0/1, when the handoff is a build-first survivor with operator scope already set, **suppress the attachment/smallest-version + simpler-bias probes** and default to HOW-capture, not WHAT-re-litigation. Reopen scope only if the operator invites it or grounding reveals genuine infeasibility (e.g. this session's R15a context-GC = unbuildable).
+2. **Encode the solo-operator exception** in both skills: never propose measure-before-build / smallest-slice-then-expand / ROI-threshold framing for single-operator tooling; the operator + `/retro` is the measurement loop. Cross-ref the `no-roi-ceremony-solo-tools` memory.
+3. **Make the challenger symmetric.** The "higher-upside challenger" should surface a *do-the-whole-valuable-thing* option as readily as a *simpler* one — the bias is currently one-directional.
+- Cross-ref: [LEARNINGS.md](LEARNINGS.md) no-ROI-ceremony pattern; [#ideate-brainstorm-handoff-symmetry](#ideate-brainstorm-handoff-symmetry) (related handoff-contract item); ideation S-1 build-first in `docs/ideation/2026-06-26-vecu-port-seeds-ideation.md`.
+
+---
+
 ### CI guard: assert plugin directories match marketplace.json entries  {#marketplace-ci-guard}
 
 **Priority.** P1.

@@ -1277,3 +1277,31 @@ separate audited release plugin.
 - ARCHIVE [superseded no-uv-lock decision](ARCHIVE.md#superseded-no-uv-lock-decision) — pre-correction record.
 
 ---
+
+## Worker×Model cache scheduling — derive saga-side, reside team-side  {#worker-cache-scheduling}
+
+**Date.** 2026-06-27. **Plan.** `docs/plans/2026-06-27-worker-model-cache-scheduling-plan.md` (from
+`docs/brainstorms/2026-06-27-worker-model-cache-scheduling-requirements.md`, ideation S-1 build-first).
+
+Port VECU's worker residency split along infiquetra's existing seam: **saga derives** (segment +
+agent-id + tier), **team-execution resides** (named teammate + `SendMessage` reuse).
+
+- **KTD1 — derivation saga-side, residency runtime team-side.** `Unit.depends_on`/`tier` already live
+  in saga's `ExecutionSpec` (`execution_spec.py:176,:182`); `team_emitter.py:107` discards them.
+  Derivation goes where the data is; team-execution consumes the emitted ids. *Rejected:* VECU's
+  team-execution-side `worker_derivation.py` — right for VECU's primitive saga, wrong here.
+- **KTD2 — segment boundary = plugin directory.** Single monorepo; VECU's repo-change proxy never fires.
+- **KTD3 — stable agent id = segment/unit id**, replacing positional `worker-{i}` (residency needs a
+  durable `SendMessage` handle).
+- **KTD4 — behavioral residency is markdown protocol; the testable surface is the saga-side plumbing.**
+  Reuse/wave/review-loop live in skills prose validated by `/doc-review` + operator runs + headroom
+  telemetry; un-flatten + segmentation carry pytest. Consistent with the solo-operator measurement loop.
+- **KTD5 — R15a context-GC excluded** — no harness lever (Messages-API-only).
+
+**Revisit when.** Named-teammate residency proves insufficient (revisit warm-pool / crew-pairing); or a
+single team-execution run shows enough internal idle-poll to justify a formal within-run wave queue.
+
+**Refs.** Brainstorm requirements (origin); QUEUED [#ideate-brainstorm-do-less-bias](QUEUED.md#ideate-brainstorm-do-less-bias)
+(skill-bias catch from the same session); ideation S-1.
+
+---

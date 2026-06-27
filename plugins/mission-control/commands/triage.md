@@ -66,12 +66,12 @@ When the user invokes `/triage repo#number`:
 5. Manually apply recommended labels when the template did not apply them:
    - `gh issue edit <N> --repo infiquetra/<repo> --add-label "capability,hermes-task,needs-plan"`
 6. Add to the named active board (`--project` is required; ask which board if unstated):
-   - `python3 $SCRIPT board add --project <jeff-intent|asgard|campps> --repo <repo> --number <N>`
+   - `python3 $SCRIPT board add --project <operations|asgard|campps> --repo <repo> --number <N>`
 7. Set initiative/objective fields when applicable:
    - `python3 $SCRIPT flow set-field --project <board> --repo <repo> --number <N> --field Initiative --option <name>`
    - `python3 $SCRIPT flow set-field --project <board> --repo <repo> --number <N> --field Objective --option <name>`
 8. Recommend status:
-   - Defect (critical/high): move to Active on Jeff Intent or Asgard (or In Progress on CAMPPS)
+   - Defect (critical/high): move to Active on Operations or Asgard (or In Progress on CAMPPS)
    - Has complete context: Ready
    - Needs more context: keep `needs-plan` on actionable cards, optionally add `needs-context`,
      and leave in Backlog or Shaping

@@ -9,14 +9,14 @@ and blockers.
 ## Usage
 
 ```
-/board --project <jeff-intent|asgard|campps>
+/board --project <operations|asgard|campps>
 ```
 
 ## Arguments
 
 - `--project` (required) - Active board to show. No default; the command errors with the
-  active-board list (Jeff Intent / Asgard / CAMPPS) if omitted.
-- `jeff-intent` - Jeff's intent and shaping board.
+  active-board list (Operations / Asgard / CAMPPS) if omitted.
+- `operations` - Jeff's intent and shaping board.
 - `asgard` - Asgard rapid-action/incubation board.
 - `campps` - CAMPPS initiative execution board (initiative-scoped; archived on completion).
 
@@ -31,7 +31,7 @@ and blockers.
 ## Examples
 
 ```
-/board --project jeff-intent
+/board --project operations
 /board --project asgard
 /board --project campps
 ```
@@ -41,18 +41,18 @@ and blockers.
 ```bash
 SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py
 
-python3 $SCRIPT board view --project jeff-intent
-python3 $SCRIPT board wip --project jeff-intent
+python3 $SCRIPT board view --project operations
+python3 $SCRIPT board wip --project operations
 ```
 
-Replace `jeff-intent` with `asgard` or `campps` for those boards.
+Replace `operations` with `asgard` or `campps` for those boards.
 
 ## Instructions
 
 When the user invokes `/board --project <project>`:
 
 1. Require an explicit `--project`. If omitted, error and list the active boards
-   (Jeff Intent / Asgard / CAMPPS); never default to a board.
+   (Operations / Asgard / CAMPPS); never default to a board.
 2. Run `board view --project <project>`.
 3. Run `board wip --project <project>`.
 4. Summarize items by status, WIP violations, blockers, and aging work.

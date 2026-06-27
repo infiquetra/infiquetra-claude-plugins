@@ -1,5 +1,21 @@
 # Changelog — mission-control
 
+## [2.3.0] — 2026-06-27
+
+### Migration notes
+- GitHub Project #3 was renamed from **Jeff Intent** to **Operations**. The `--project` value is now
+  `operations` (was `jeff-intent`) across all board / metrics / flow / triage commands, and the
+  internal board key is `operations` (was `jeff_intent`). Update any saved invocations or scripts
+  that passed `--project jeff-intent`. Project number (#3), node id, and the shared `intent_flow`
+  workflow are unchanged, so existing cards stay on the board.
+
+### Changed
+- Renamed the project surface `jeff-intent` / `jeff_intent` / "Jeff Intent" → `operations` /
+  "Operations" across `project-mappings.json`, `sdlc-schema.json`, `sdlc_manager.py`
+  (`PROJECT_CHOICES`), command and skill guidance, and the `sdlc-operator` agent prompt. Mirrors the
+  canonical rename in `infiquetra-sdlc`. Dated provenance and migration notes preserve the former
+  name as historical record.
+
 ## [2.2.0] — 2026-06-21
 
 ### Changed

@@ -13,7 +13,7 @@ Quick reference for Infiquetra board-flow metrics. Source of truth:
 
 | Board | Start | Terminal |
 |-------|-------|----------|
-| Jeff Intent | Active | Done |
+| Operations | Active | Done |
 | Asgard | Active | Done |
 | CAMPPS | In Progress | Done |
 
@@ -45,7 +45,7 @@ with those names.
 
 | Board | Counted terminal statuses |
 |-------|---------------------------|
-| Jeff Intent | Done |
+| Operations | Done |
 | Asgard | Done |
 | CAMPPS | Done |
 
@@ -59,7 +59,7 @@ with those names.
 
 | Board | Status | Threshold |
 |-------|--------|-----------|
-| Jeff Intent | Active, Verify | > 3 days |
+| Operations | Active, Verify | > 3 days |
 | Asgard | Active, Verify | > 3 days |
 | CAMPPS | In Progress | > 5 days |
 
@@ -110,5 +110,5 @@ Target: greater than 50%.
 | Cycle time all types | `metrics cycle-time --project campps` | `--days N` |
 | Cycle time by type | `metrics cycle-time --project campps --type capability` | `--type` |
 | Throughput | `metrics throughput --project asgard` | `--weeks N` |
-| WIP age | `metrics wip-age --project jeff-intent` | -- |
+| WIP age | `metrics wip-age --project operations` | -- |
 | Status breakdown | `metrics column-time --project campps --number 42` | `--number` |

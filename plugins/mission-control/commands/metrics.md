@@ -9,13 +9,13 @@ throughput, WIP age, and bottleneck hints.
 ## Usage
 
 ```
-/metrics --project <jeff-intent|asgard|campps> [--type metric-type]
+/metrics --project <operations|asgard|campps> [--type metric-type]
 ```
 
 ## Arguments
 
-- `--project` (required) - Active board: `jeff-intent`, `asgard`, or `campps`. No default;
-  the command errors with the active-board list (Jeff Intent / Asgard / CAMPPS) if omitted.
+- `--project` (required) - Active board: `operations`, `asgard`, or `campps`. No default;
+  the command errors with the active-board list (Operations / Asgard / CAMPPS) if omitted.
 - `--type` - Optional metric type: `cycle-time`, `throughput`, `wip-age`, or `all` (default)
 
 ## What This Does
@@ -29,7 +29,7 @@ throughput, WIP age, and bottleneck hints.
 ## Examples
 
 ```
-/metrics --project jeff-intent
+/metrics --project operations
 /metrics --project asgard --type throughput
 /metrics --project campps --type wip-age
 ```
@@ -39,7 +39,7 @@ throughput, WIP age, and bottleneck hints.
 ```bash
 SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py
 
-python3 $SCRIPT metrics cycle-time --project jeff-intent --days 30
+python3 $SCRIPT metrics cycle-time --project operations --days 30
 python3 $SCRIPT metrics throughput --project asgard --weeks 4
 python3 $SCRIPT metrics wip-age --project campps
 ```
@@ -49,7 +49,7 @@ python3 $SCRIPT metrics wip-age --project campps
 When the user invokes `/metrics --project <project> [--type metric-type]`:
 
 1. Require an explicit `--project`. If omitted, error and list the active boards
-   (Jeff Intent / Asgard / CAMPPS); never default to a board.
+   (Operations / Asgard / CAMPPS); never default to a board.
 2. Determine which metrics to show, defaulting to all.
 3. Run the matching metric commands.
 4. Summarize pass/fail signals, bottlenecks, and concrete next actions.

@@ -12,7 +12,7 @@
       "kind": "human_operator",
       "status": "active",
       "role": "Sole human operator, intent source, approval gate, escalation arbitrator, and occasional direct implementer with local AI tools",
-      "board": "jeff_intent",
+      "board": "operations",
       "review_model": "operator_judgment"
     },
     "asgard": {
@@ -48,8 +48,8 @@
     }
   },
   "boards": {
-    "jeff_intent": {
-      "name": "Jeff Intent",
+    "operations": {
+      "name": "Operations",
       "status": "active",
       "purpose": "Raw operator intent, approvals, questions, personal/operator work, and shaping before team execution",
       "owner": "jeff",
@@ -80,7 +80,7 @@
     "intent_flow": {
       "statuses": ["Idea", "Shaping", "Ready", "Active", "Verify", "Done"],
       "terminal_statuses": ["Done"],
-      "canonical_for": ["jeff_intent", "asgard"]
+      "canonical_for": ["operations", "asgard"]
     },
     "campps_initiative": {
       "statuses": ["Idea", "Committed", "In Progress", "Done", "Parked"],
@@ -91,7 +91,7 @@
   },
   "fields": {
     "common": ["Status", "Owner", "Priority", "Risk", "Initiative", "Objective"],
-    "jeff_intent": ["Status", "Target Team", "Jeff Needed", "Context Pack", "Decision Needed", "Objective"],
+    "operations": ["Status", "Target Team", "Jeff Needed", "Context Pack", "Decision Needed", "Objective"],
     "asgard": ["Status", "Mode", "Jeff Needed", "Target Repository", "Risk", "Transfer Target", "Objective"],
     "campps": ["Status", "Objective", "Milestone", "Start", "Target", "Initiative", "Test Strategy"]
   },
@@ -162,7 +162,7 @@
     "Cancelled": "Work intentionally stopped before completion."
   },
   "wip_limits": {
-    "jeff_intent": {
+    "operations": {
       "Idea": null,
       "Shaping": 10,
       "Ready": 10,
@@ -187,8 +187,8 @@
     }
   },
   "dispatch_gates": {
-    "jeff_intent": {
-      "Ready": ["Target Team must be set before promotion out of Jeff Intent"]
+    "operations": {
+      "Ready": ["Target Team must be set before promotion out of Operations"]
     },
     "asgard": {
       "Active": ["Mode must be set", "Jeff Needed must be set when work crosses an approval boundary"]
@@ -200,8 +200,8 @@
   },
   "team_routing": {
     "target_team_values": ["Asgard", "CAMPPS", "Jeff", "External/Deferred"],
-    "jeff_intent_ready_rule": "A Ready Jeff Intent card must name one target team before moving to another board or workflow.",
-    "asgard_issue_feed_rule": "Asgard-bound work enters through Jeff Intent Target Team=Asgard, a direct issue added to Asgard, or a context/issue pack. Before Active, set Mode, target repository or surface, risk, approval state, proof path, and transfer target when a cross-team handoff is expected.",
+    "operations_ready_rule": "A Ready Operations card must name one target team before moving to another board or workflow.",
+    "asgard_issue_feed_rule": "Asgard-bound work enters through Operations Target Team=Asgard, a direct issue added to Asgard, or a context/issue pack. Before Active, set Mode, target repository or surface, risk, approval state, proof path, and transfer target when a cross-team handoff is expected.",
     "cross_team_transfer_rule": "Asgard and CAMPPS are sibling active target surfaces. Cross-team movement happens only when an operator explicitly routes, transfers, clones, or links work to another board; readiness checks may warn about target fit but must not infer movement. Mount Olympus is retired historical context and is not an active target.",
     "default_pressure_valve": "Prefer project views over new boards unless scale, automation, or reporting needs justify a separate board."
   },
@@ -552,7 +552,7 @@
     },
     "phase_board_map": {
       "ideation": {
-        "jeff_intent": [
+        "operations": [
           "Idea"
         ],
         "asgard": [
@@ -563,7 +563,7 @@
         ]
       },
       "brainstorm": {
-        "jeff_intent": [
+        "operations": [
           "Shaping"
         ],
         "asgard": [
@@ -574,7 +574,7 @@
         ]
       },
       "plan": {
-        "jeff_intent": [
+        "operations": [
           "Ready"
         ],
         "asgard": [
@@ -585,7 +585,7 @@
         ]
       },
       "review": {
-        "jeff_intent": [
+        "operations": [
           "Ready"
         ],
         "asgard": [
@@ -594,10 +594,10 @@
         "campps": [
           "Committed"
         ],
-        "note": "The doc-review gate is the Ready->Active gate on Jeff Intent / Asgard (plan approved before work goes Active); on CAMPPS the work is Committed (admitted to the portfolio) before execution starts."
+        "note": "The doc-review gate is the Ready->Active gate on Operations / Asgard (plan approved before work goes Active); on CAMPPS the work is Committed (admitted to the portfolio) before execution starts."
       },
       "work": {
-        "jeff_intent": [
+        "operations": [
           "Active"
         ],
         "asgard": [
@@ -606,10 +606,10 @@
         "campps": [
           "In Progress"
         ],
-        "note": "Work (with code-review at the PR boundary) runs in Active on Jeff Intent / Asgard and In Progress on CAMPPS."
+        "note": "Work (with code-review at the PR boundary) runs in Active on Operations / Asgard and In Progress on CAMPPS."
       },
       "qa": {
-        "jeff_intent": [
+        "operations": [
           "Verify"
         ],
         "asgard": [
@@ -618,10 +618,10 @@
         "campps": [
           "In Progress"
         ],
-        "note": "The qa verdict gates Verify -> Done on Jeff Intent / Asgard; CAMPPS has no separate verify column, so qa stays In Progress on the initiative rollup until the work is Done."
+        "note": "The qa verdict gates Verify -> Done on Operations / Asgard; CAMPPS has no separate verify column, so qa stays In Progress on the initiative rollup until the work is Done."
       },
       "retro": {
-        "jeff_intent": [
+        "operations": [
           "Done"
         ],
         "asgard": [

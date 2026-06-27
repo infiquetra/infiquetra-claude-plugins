@@ -110,7 +110,7 @@ def test_returns_empty_dict_when_all_three_fail(tmp_path, fake_vendored_path) ->
 
 def test_vendored_project_mappings_has_expected_canonical_state() -> None:
     """The vendored project-mappings.json must declare the canonical
-    org-wide state: the ACTIVE boards are Jeff Intent (#3), Asgard (#2),
+    org-wide state: the ACTIVE boards are Operations (#3), Asgard (#2),
     and CAMPPS (#4). Mount Olympus (former project #1) was retired
     2026-06-17 and removed from active routing, so it must NOT appear as a
     project. No board carries a repo-based default routing list (KTD17 —
@@ -127,10 +127,10 @@ def test_vendored_project_mappings_has_expected_canonical_state() -> None:
     assert data["organization"] == "infiquetra"
     # Olympus is retired and must not be an active routing target.
     assert "mount-olympus" not in data["projects"]
-    assert "jeff-intent" in data["projects"]
+    assert "operations" in data["projects"]
     assert "asgard" in data["projects"]
     assert "campps" in data["projects"]
-    assert data["projects"]["jeff-intent"]["number"] == 3
+    assert data["projects"]["operations"]["number"] == 3
     assert data["projects"]["asgard"]["number"] == 2
     assert data["projects"]["campps"]["number"] == 4
 
@@ -204,8 +204,8 @@ def test_vendored_sdlc_schema_declares_current_live_boards() -> None:
     assert vendored.exists(), f"Vendored schema missing at {vendored}"
     data = json.loads(vendored.read_text())
 
-    assert data["boards"]["jeff_intent"]["status"] == "active"
-    assert data["boards"]["jeff_intent"]["live_creation"] == "created_2026-05-29_project_3"
+    assert data["boards"]["operations"]["status"] == "active"
+    assert data["boards"]["operations"]["live_creation"] == "created_2026-05-29_project_3"
     assert data["boards"]["asgard"]["status"] == "active"
     assert data["boards"]["asgard"]["live_creation"] == "created_2026-05-29_project_2"
     assert data["workflows"]["intent_flow"]["statuses"] == [

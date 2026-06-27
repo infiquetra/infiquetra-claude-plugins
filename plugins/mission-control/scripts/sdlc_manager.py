@@ -7,17 +7,17 @@ Reads configuration dynamically from the infiquetra-sdlc repository checkout
 
 All GitHub operations use the `gh` CLI for zero-token-management auth.
 
-Active boards: Jeff Intent, Asgard, CAMPPS. Board/metrics commands require an
+Active boards: Operations, Asgard, CAMPPS. Board/metrics commands require an
 explicit --project (KTD17); there is no default board.
 
 Usage:
-    sdlc_manager.py board view --project jeff-intent
+    sdlc_manager.py board view --project operations
     sdlc_manager.py board add --project asgard --repo athena-service --number 42
     sdlc_manager.py board move --project asgard --repo athena-service --number 42 --status "Active"
     sdlc_manager.py board archive --project asgard [--dry-run]
     sdlc_manager.py board wip --project asgard
-    sdlc_manager.py board standup --project jeff-intent
-    sdlc_manager.py board discover-fields --project jeff-intent
+    sdlc_manager.py board standup --project operations
+    sdlc_manager.py board discover-fields --project operations
 
     sdlc_manager.py issue create --repo athena-service --type capability
     sdlc_manager.py issue prepare --repo athena-service --type capability --team asgard \
@@ -103,7 +103,7 @@ _USER_DEFAULTS_PATH = Path.home() / ".claude" / "sdlc-defaults.json"
 # Listed here so callers and the wizard agree on the set:
 _USER_DEFAULTS_KEYS = (
     "assignee",  # gh login (NOT OS $USER) — fetched via `gh api user --jq .login`
-    "default_project",  # e.g., "jeff-intent"
+    "default_project",  # e.g., "operations"
     "default_status",  # e.g., "Backlog"
     "default_priority",  # e.g., "medium-priority"
     "default_initiative",  # option name on Olympus board (None until field is created)
@@ -239,11 +239,11 @@ _VENDORED_PROJECT_MAPPINGS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "project-mappings.json"
 )
 _VENDORED_SDLC_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "config" / "sdlc-schema.json"
-# Active boards only (KTD17): Jeff Intent, Asgard, CAMPPS. Mount Olympus
+# Active boards only (KTD17): Operations, Asgard, CAMPPS. Mount Olympus
 # (former project #1) is retired historical context and is NOT an active board
 # choice; legacy Olympus card reads are still handled by the status/WIP helpers
 # below for any external override that points at the old project.
-PROJECT_CHOICES = ("jeff-intent", "asgard", "campps")
+PROJECT_CHOICES = ("operations", "asgard", "campps")
 LIVE_LEGACY_STATUS_ALIASES = {
     "In Progress": "Assigned",
     "In Development": "Assigned",
@@ -4652,7 +4652,7 @@ def main() -> None:
             "Target a specific project instead of repo-based default routing. "
             "Repeatable: pass --project more than once to place the item on "
             "multiple boards as independent memberships "
-            "(e.g. --project jeff-intent --project asgard)."
+            "(e.g. --project operations --project asgard)."
         ),
     )
     board_add_p.add_argument("--repo", required=True, help="Repository name (without org)")
@@ -4925,9 +4925,7 @@ def main() -> None:
         "set-field",
         help="Set a single-select project field on a card",
     )
-    flow_setfield_p.add_argument(
-        "--project", required=True, help="Project name (e.g., jeff-intent)"
-    )
+    flow_setfield_p.add_argument("--project", required=True, help="Project name (e.g., operations)")
     flow_setfield_p.add_argument("--repo", required=True)
     flow_setfield_p.add_argument("--number", required=True, type=int)
     flow_setfield_p.add_argument(

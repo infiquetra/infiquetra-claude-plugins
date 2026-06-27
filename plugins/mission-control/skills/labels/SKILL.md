@@ -16,7 +16,7 @@ when_to_use: |
 
   Setting project fields:
   - Set Initiative, Objective, or other project fields directly after label or card changes
-  - Discover available fields and options on Jeff Intent, Asgard, or CAMPPS
+  - Discover available fields and options on Operations, Asgard, or CAMPPS
 
   Assigning initiatives and objectives:
   - "this belongs to platform-v1", "assign to the platform-launch objective",

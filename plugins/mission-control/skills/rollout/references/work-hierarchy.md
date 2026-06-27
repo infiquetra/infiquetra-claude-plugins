@@ -58,7 +58,7 @@ They flow through the target board:
 
 | Board | Flow |
 |-------|------|
-| Jeff Intent / Asgard | Idea -> Shaping -> Ready -> Active -> Verify -> Done |
+| Operations / Asgard | Idea -> Shaping -> Ready -> Active -> Verify -> Done |
 | Olympus | Backlog -> Ready -> Planning -> Assigned -> In Review -> Done / Closed |
 
 Use native GitHub sub-issues for parent/child structure. Do not rely on removed Beads/Dolt

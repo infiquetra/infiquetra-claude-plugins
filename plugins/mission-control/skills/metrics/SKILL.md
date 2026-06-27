@@ -3,7 +3,7 @@ name: metrics
 description: |
   Flow metrics and analysis for Infiquetra project boards using GitHub timeline events.
   Provides cycle time, throughput, WIP age, per-status time breakdowns, and interpretation
-  guidance across Jeff Intent, Asgard, and CAMPPS.
+  guidance across Operations, Asgard, and CAMPPS.
 when_to_use: |
   Use this skill when the user wants to:
 
@@ -42,7 +42,7 @@ Always run the script with `python3`.
 
 | Board | Active start | Terminal statuses |
 |-------|--------------|-------------------|
-| Jeff Intent | Active | Done |
+| Operations | Active | Done |
 | Asgard | Active | Done |
 | CAMPPS | In Progress | Done |
 
@@ -76,7 +76,7 @@ Throughput counts items that reached a terminal workflow status during the repor
 
 ```bash
 python3 sdlc_manager.py metrics wip-age --project campps
-python3 sdlc_manager.py metrics wip-age --project jeff-intent
+python3 sdlc_manager.py metrics wip-age --project operations
 ```
 
 WIP age shows current items in active statuses and flags entries over the configured thresholds.
@@ -105,8 +105,8 @@ Use this to diagnose where one card spent time.
 
 | Board | Status | Flag if age > |
 |-------|--------|---------------|
-| Jeff Intent / Asgard | Active | 3 days |
-| Jeff Intent / Asgard | Verify | 3 days |
+| Operations / Asgard | Active | 3 days |
+| Operations / Asgard | Verify | 3 days |
 | CAMPPS | In Progress | 5 days |
 
 ## Natural Language Examples

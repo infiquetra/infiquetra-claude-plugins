@@ -1,12 +1,12 @@
 # mission-control
 
-SDLC management for Infiquetra's active boards — Jeff Intent, Asgard, and CAMPPS. This plugin provides a complete interface for managing the development lifecycle — from issue creation to flow metrics — reading board and workflow configuration from `infiquetra-sdlc` and vendored fallbacks. (Mount Olympus, the former project #1, is retired historical context and is not an active routing target.)
+SDLC management for Infiquetra's active boards — Operations, Asgard, and CAMPPS. This plugin provides a complete interface for managing the development lifecycle — from issue creation to flow metrics — reading board and workflow configuration from `infiquetra-sdlc` and vendored fallbacks. (Mount Olympus, the former project #1, is retired historical context and is not an active routing target.)
 
 ## Overview
 
 All operations run locally via the `gh` CLI, providing:
 
-- **Project board operations** — view, move, add, archive, WIP analysis, standup prep across the active boards (Jeff Intent, Asgard, CAMPPS). No board is a default: board commands require an explicit `--project`.
+- **Project board operations** — view, move, add, archive, WIP analysis, standup prep across the active boards (Operations, Asgard, CAMPPS). No board is a default: board commands require an explicit `--project`.
 - **Issue creation** — primary `/issue` command plus prepared Asgard / CAMPPS handoff drafts with readiness checks, source artifact resolution, and confirmed creation
 - **Label management** — deploy, audit, sync initiative/objective fields, auto-label rules
 - **Flow metrics** — cycle time, throughput, WIP age using GitHub timeline events
@@ -68,7 +68,7 @@ when the repo is not mapped to the requested project, and starts issues in safe 
 
 | Command | Description |
 |---------|-------------|
-| `/board --project <jeff-intent\|asgard\|campps>` | Quick board status with WIP check (explicit `--project` required) |
+| `/board --project <operations\|asgard\|campps>` | Quick board status with WIP check (explicit `--project` required) |
 | `/issue [type] [--repo repo] [--prepare|--draft] [--from artifact]` | Primary issue creation and prepared handoff |
 | `/triage repo#number` | Triage existing issue |
 | `/metrics --project <board> [--type metric]` | Flow metrics dashboard (explicit `--project` required) |
@@ -106,7 +106,7 @@ mission-control uses a single shared CLI (`scripts/sdlc_manager.py`) at the plug
 
 ```bash
 # View board by column (--project is required; no default)
-python3 $SCRIPT board view --project jeff-intent
+python3 $SCRIPT board view --project operations
 
 # Add or move issue on a specific board
 python3 $SCRIPT board add --project asgard --repo infiquetra-sdlc --number 42
@@ -122,10 +122,10 @@ python3 $SCRIPT board wip --project asgard
 
 # Standup prep (right-to-left board review)
 python3 $SCRIPT board standup --project asgard
-python3 $SCRIPT board standup --project jeff-intent
+python3 $SCRIPT board standup --project operations
 
 # Discover all project fields and options
-python3 $SCRIPT board discover-fields --project jeff-intent
+python3 $SCRIPT board discover-fields --project operations
 ```
 
 ### Label Operations
@@ -282,7 +282,7 @@ python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md --overri
 
 | Project | Team | Purpose |
 |---------|------|---------|
-| Jeff Intent | Jeff | Raw intent, approvals, personal/operator work, and shaping before team execution |
+| Operations | Jeff | Raw intent, approvals, personal/operator work, and shaping before team execution |
 | Asgard | Asgard | Rapid action, incubation, and mission-mode work close to Jeff |
 | CAMPPS | Asgard | Portfolio-level execution board for the CAMPPS initiative (initiative-scoped; archived on completion) |
 
@@ -290,8 +290,8 @@ python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md --overri
 
 | Board / Column | Limit |
 |--------|-------|
-| Jeff Intent / Shaping | 10 |
-| Jeff Intent / Active | 5 |
+| Operations / Shaping | 10 |
+| Operations / Active | 5 |
 | Asgard / Shaping | 8 |
 | Asgard / Active | 5 |
 

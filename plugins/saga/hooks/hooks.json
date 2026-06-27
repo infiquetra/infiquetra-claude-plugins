@@ -1,5 +1,4 @@
 {
-  "description": "Saga plugin hooks: (1) validates marketplace.json and plugin.json for valid JSON and balanced brackets on every edit, blocking (exit 2) with the offending line on failure; (2) nudges (non-blocking, exit 0) when a feat/fix commit touches code but stages no docs/engineering-journal/ entry; (3) runs the pre-push gate from tools/gate-manifest.json on git push, reporting by exception and blocking (exit 2) on any failure; (4) on SessionStart (startup|resume), runs in ANY git repo with an origin remote, detects the default branch, auto-fast-forwards it only when you're cleanly on it (else warns that it is behind origin), and injects the result as session context — non-blocking (exit 0).",
   "hooks": {
     "SessionStart": [
       {

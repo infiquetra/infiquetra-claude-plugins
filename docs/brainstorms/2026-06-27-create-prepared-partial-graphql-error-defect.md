@@ -7,7 +7,7 @@ source: field-observed defect — 4/4 across issue creations #275, #277, #278, #
 title: "create-prepared dies on a partial GraphQL NOT_FOUND — board-add + Status silently skipped"
 ---
 
-# create-prepared Partial-GraphQL-Error Defect — One Fix for the Whole Dual-Branch Class
+# create-prepared Partial-GraphQL-Error Defect — Resolve the Node Without a Speculative 404
 
 ## Summary
 
@@ -23,10 +23,23 @@ GitHub's `gh api graphql` **exits non-zero (1)** on that partial error, so `_gh`
 typed `GhApiError` and the usable `data` is discarded. The call site in `board_add` (`:1032`) is
 outside its try/except, so the whole `create-prepared` flow aborts after the issue already exists.
 
-The fix is a single, general correction at the `_graphql` seam: **a GraphQL response that carries a
-non-null `data` payload is a partial success, not a failure** — return the data and let the existing
-`issue or pullRequest` fallback (`:1034`) work. This protects the entire class of dual-branch queries
-(there is a second one, `QUERY_GET_ITEM_LABELS`, `:816-823`) at once.
+**The fix is to stop generating the speculative 404 at all**: replace the dual-branch `issue{} +
+pullRequest{}` lookup with GitHub's union field `issueOrPullRequest(number:)`, which resolves
+whichever exists with **no error and a zero exit** (verified live this session). This is surgical, per
+the two affected queries, and — critically — needs **no change to the shared `_graphql` error
+strictness**, so it introduces no risk of masking real failures on the ~7 mutation call sites that
+share that helper.
+
+> **Doc-review note (codex + agy, gated under Claude-side verification).** The first draft recommended
+> relaxing `_graphql` to "return any non-null `data`" as the primary fix. Both engines independently
+> flagged that as a **P0**: the shared `_graphql` also runs **mutations** (`addProjectV2ItemById`,
+> `updateProjectV2ItemFieldValue`, `archiveProjectV2Item` — `:1043, :1128, :1170, :1340, :2199`), and a
+> partially-failed mutation returns non-null `data` with the intended payload `null` plus an error;
+> a blanket "return non-null data" would **silently swallow a failed board-add or Status-set**. agy
+> added the field-level case (`{"data":{"repository":null},"errors":[FORBIDDEN]}` → a `TypeError`
+> downstream). Claude independently quantified the radius (3 mutation constants, ~7 call sites) and
+> verified `issueOrPullRequest` resolves cleanly (exit 0). The recommendation **flipped to the union
+> query as primary**; the `_graphql` relaxation is demoted to an optional, strictly-scoped defense.
 
 ## Observed behavior (reproduction)
 
@@ -39,15 +52,16 @@ ERROR: gh command failed: gh: Could not resolve to a PullRequest with the number
 After which:
 - **Issue IS created** (with title + labels) — created at `_create_github_issue` (`:3984`), labels
   applied at `gh issue create --label` (`:3815-3816`), both *before* the failing call.
-- **Board-add skipped**, **Status not set**, **Objective not set** — all are *after* the failing
-  `board_add` (`:3985`) in the create flow (`flow_set_field` Status at `:3986`).
+- **Board-add skipped**, **Status not set** — both are *after* the failing `board_add` (`:3985`) in
+  the create flow (`flow_set_field` Status at `:3986`). (`flow_set_field` itself does **not**
+  dual-branch — it resolves via `get_project_items` matching `content.number == number`, verified —
+  so once `board_add` is fixed, Status-setting works with no further change.)
 - Operator recovers manually: `gh project item-add 3 --owner infiquetra --url <issue-url>` +
-  `flow set-field --field Status --option Todo` (+ `--field Objective --option improve-claude-plugins`,
-  which is a *separate* gap — see Scope Boundaries).
+  `flow set-field --field Status --option Todo` (+ `--field Objective …`, a *separate* gap — see Scope).
 
-### Empirical proof (captured this session — read-only probe against issue #279)
+### Empirical proof (captured this session — read-only probes against issue #279)
 
-`gh api graphql` querying #279 as **both** issue and pullRequest:
+Dual-branch query (the current code path) — **exit 1**, data present, spurious error:
 
 ```
 EXIT_CODE=1
@@ -55,178 +69,218 @@ STDOUT: {"data":{"repository":{"issue":{"id":"I_kwDOQdql-c8AAAABG68biw","number"
          "pullRequest":null}},
          "errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"],
          "message":"Could not resolve to a PullRequest with the number of 279."}]}
-STDERR: gh: Could not resolve to a PullRequest with the number of 279.
 ```
 
-The `data.repository.issue` node is fully resolved (`id` present); `pullRequest` is `null`; the only
-error is a `NOT_FOUND` on the `pullRequest` path. `gh` still exits **1**.
+Union query (the proposed fix, Option B) — **exit 0, no error**:
+
+```
+EXIT_CODE=0
+STDOUT: {"data":{"repository":{"issueOrPullRequest":{"__typename":"Issue",
+         "id":"I_kwDOQdql-c8AAAABG68biw","number":279}}}}
+```
 
 ## Root cause (two layers, both real)
 
 1. **`_gh` raises on the non-zero exit (`:632-640`).** `gh api graphql` exits 1 on a partial error.
    `_gh` calls `_classify_gh_error(...)` → no `HTTP NNN` line in stderr, so it falls through to
    `GhApiError(full, status_code=None, ...)` (`:606`). The exception *carries* the usable stdout
-   (`stdout=result.stdout`, `:639`) but the caller never reads it.
+   (`stdout=result.stdout`, `:639`) but the caller never reads it. *(codex CHECK-1 VERIFIED.)*
 2. **`_graphql`'s own fatal-on-`errors` check (`:659-660`)** is the same mistake one layer up:
    `if "errors" in data: raise`. It is currently *dead code for this path* (because `_gh` raises
-   first), but it would re-trigger the identical bug the moment `_gh` is taught to return stdout — so
-   the fix must address the seam, not just one line.
+   first). This matters for testing (below): a regression test that feeds JSON straight to `_graphql`
+   would exercise this dead path, **not** the real `_gh`-raises path.
 3. **`board_add` resolves the node id unguarded.** `_graphql(QUERY_GET_ITEM_NODE_ID, …)` at `:1032`
    is *before* the `for proj in projects:` loop; the try/except (`:1042-1057`) only wraps the
    per-project add. So the resolution exception propagates and aborts `create-prepared`.
+   *(codex CHECK-7 VERIFIED.)*
 
 The dual-branch query is *intentional* (`:1034` does `repo_data.get("issue") or
-repo_data.get("pullRequest")` so one helper resolves either kind). The design is fine; the error
-handling underneath it is wrong — it treats GraphQL's normal partial-success contract as fatal.
+repo_data.get("pullRequest")` so one helper resolves either kind). The design intent is fine; the
+implementation generates a guaranteed-spurious 404 that the error layer then treats as fatal.
 
 ## Blast radius
 
-Every `_graphql` call whose query selects a speculative branch that may not resolve:
+**The bug** — every `_graphql` call whose query selects a speculative branch that may not resolve:
 - **`QUERY_GET_ITEM_NODE_ID`** (`:707-714`) — the hot path; hit by `board_add` on **every** issue.
 - **`QUERY_GET_ITEM_LABELS`** (`:816-823`) — same `issue {…} pullRequest {…}` dual-branch shape;
-  hit by the label-field sync path (`_get_item_labels` → `_sync_label_fields_for_item`, `:1311`).
+  hit by the label-field sync path (`_get_item_labels` → `_sync_label_fields_for_item`, `:1303`).
 
-A fix at the `_graphql` layer covers both (and any future dual-branch query) in one place. A
-per-query fix would have to be repeated and would silently regress the next time someone adds a
-dual-branch query.
+This list is **complete** for dual-branch issue/PR-by-number queries (codex CHECK-4 VERIFIED;
+`QUERY_GET_ISSUE_TIMELINE` at `:825` is single-branch — `issue(number:)` only — verified, so it does
+not emit the spurious 404 in its issue-only usage).
+
+**The rejected fix's blast radius** — why a blanket-tolerant `_graphql` is unsafe: the shared helper
+also executes **mutations** that must stay strict. Mutation constants `QUERY_ADD_ITEM_TO_PROJECT`,
+`QUERY_SET_FIELD_VALUE`, `QUERY_ARCHIVE_ITEM` flow through `_graphql` at `:1043, :1128, :1170, :1340,
+:2199`. A partially-failed mutation returns non-null `data` with the intended field `null` plus an
+error; "return any non-null `data`" would report success on a failed write.
 
 ## Key decisions
 
-- **KD1 — Fix at the `_graphql` seam, not per-query.** The defect is a general mishandling of
-  GraphQL partial success; the correct layer is the one shared helper. Per-query rewrites leave the
-  class open.
-- **KD2 — "Non-null `data` ⇒ partial success" is the principled predicate.** Per the GraphQL spec,
-  `data` is present (and may contain `null` sub-fields) when execution *partially* succeeded; `data`
-  is `null`/absent for request-level failures (auth, bad syntax, rate limit). So: **if the response
-  parses and `data` is non-null, return it; only raise when `data` is null/absent.** This keeps every
-  genuinely-fatal error fatal.
-- **KD3 — Keep `_gh` strict; do the partial-tolerance in `_graphql`.** `_gh` is the shared shim for
-  *all* gh calls (REST included); loosening its non-zero-exit handling has a wide blast radius and
-  could mask real failures. The exception already carries `stdout` (`:639`), so `_graphql` can catch
-  the typed error, parse `e.stdout`, and apply KD2 — a change contained to one function.
-- **KD4 — The recommended fix is verifiable by a golden fixture.** The exact partial-error JSON above
-  is the regression fixture: feed it to `_graphql`, assert it returns `data` (issue node) instead of
-  raising. This is the anti-recurrence guarantee, and the defect has earned one (4 silent recurrences).
-- **KD5 — Scope to the partial-error bug only.** Objective-not-set and any title concerns are *not*
-  this defect (see Scope Boundaries) — folding them in would turn a contained fix into a feature.
+- **KD1 — Eliminate the spurious 404 at the query, don't soften the error handler.** Switching the
+  two dual-branch resolvers to `issueOrPullRequest(number:)` makes `gh` exit 0 (verified), so nothing
+  in the error path needs to change. *(codex + agy + Claude convergence; flips the original draft.)*
+- **KD2 — Keep `_graphql` strict; it guards ~7 mutation call sites.** Relaxing it globally trades a
+  read bug for a silent-write bug. *(codex P0, agy P0, Claude-quantified.)*
+- **KD3 — Union selection requires inline fragments.** `issueOrPullRequest` returns a union, so `id`
+  must be selected via `... on Issue { id } ... on PullRequest { id }`; a bare `issueOrPullRequest {
+  id }` is invalid. The fix also updates the response-access line (`:1034`) from `issue or
+  pullRequest` to the single `issueOrPullRequest` node. *(codex P2.)*
+- **KD4 — Tests must drive the real exception path.** The regression test must simulate `_gh` raising
+  `GhApiError(stdout=<envelope>)` (and, post-fix, assert the union resolver returns the node with
+  `gh` exit 0), **not** feed an envelope straight to `_graphql` (which hits the dead `:659` path).
+  *(codex P1.)*
+- **KD5 — A genuine resolution failure must fail loud and stay resumable.** Independent of the partial
+  -error bug, `board_add`'s unguarded resolve means a real failure (network, true not-found) aborts
+  *after* the issue exists, leaving an untracked issue. The fix must fail loud with the issue URL +
+  remaining steps and record enough sidecar state that re-running `create-prepared` **resumes**
+  board-add rather than re-creating the issue. **No auto-delete** (destructive). *(agy P0; couples to
+  S-2 #279 R18.)*
+- **KD6 — Scope to the resolver bug + the fail-loud guard.** Objective-auto-set and title-recovery are
+  separate concerns (see Scope Boundaries). *(codex CHECK-6 + agy P3 + Claude agree.)*
 
 ## Fix options
 
-**Option A — Partial-tolerant `_graphql` (recommended, primary).**
-`_graphql` wraps the `_gh` call; on a typed `GhApiError`, it parses `e.stdout` and, if the JSON has a
-non-null `data`, returns `data` (partial tolerated per KD2); otherwise re-raises. Also relax the
-existing `:659` check the same way (return data when `data` present, raise only when absent), so the
-two layers agree.
-- *Pros*: one-function change; fixes the whole dual-branch class (both known queries + future ones);
-  preserves `_gh` strictness for every other caller; directly testable with the captured fixture.
-- *Cons*: needs the fatal-vs-partial predicate to be exactly right (KD2 gives it); relies on the
-  exception carrying stdout (it does, `:639`).
+**Option B — `issueOrPullRequest` single-branch query (recommended, PRIMARY).**
+Replace the `issue {…} pullRequest {…}` dual-branch in `QUERY_GET_ITEM_NODE_ID` (and
+`QUERY_GET_ITEM_LABELS`) with `issueOrPullRequest(number:$number){ __typename ... on Issue { id … }
+... on PullRequest { id … } }`, and update the response-access at `:1034` to read the single node.
+- *Pros*: removes the spurious 404 at the source (verified exit 0); **no `_graphql` change** → zero
+  risk to the mutation call sites; the most correct GitHub-GraphQL idiom for "resolve issue-or-PR".
+- *Cons*: per-query (apply to both `:707` and `:816`); does not by itself prevent a *future* dev from
+  writing a new dual-branch query — mitigated by KD2's note + an optional scoped guard (Option A').
 
-**Option B — `issueOrPullRequest` single-branch query (recommended, complementary hardening).**
-Replace the `issue {…} pullRequest {…}` dual-branch in `QUERY_GET_ITEM_NODE_ID` (and optionally
-`QUERY_GET_ITEM_LABELS`) with GitHub's union field `issueOrPullRequest(number:$number){ … on Issue
-{id} … on PullRequest {id} }`, which resolves whichever exists **without** emitting a partial error.
-- *Pros*: removes the spurious error at the source for the hot path → cleaner logs, no reliance on
-  partial-tolerance for the most common op; more correct.
-- *Cons*: per-query (must be applied to each dual-branch query); does **not** by itself fix the class
-  (a future dual-branch query still breaks) — so it complements A, it does not replace it. Needs the
-  `id` to be selectable on the union (it is — both `Issue` and `PullRequest` expose `id`).
+**Option A' — Strictly-scoped, opt-in partial tolerance in `_graphql` (optional defense-in-depth).**
+NOT the blanket form. If adopted for future-proofing, `_graphql` gains an explicit `allow_partial`
+parameter passed *only* by read-resolvers, and even then tolerates a partial error only when **(a)**
+the `_gh` exception's `stdout` is non-empty and parses as JSON (else re-raise the original —
+`json.loads(e.stdout)` must be guarded), **(b)** every error is `type: NOT_FOUND` on an un-requested
+nullable path, and **(c)** the requested target node actually resolved. Mutations never pass
+`allow_partial`.
+- *Pros*: closes the class for future dual-branch read queries without endangering writes.
+- *Cons*: more surface; only worth it if /plan judges the future-query risk real. Option B fixes the
+  actual defect without it.
 
-**Option C — `_gh` graphql-aware non-zero handling (rejected).**
-Teach `_gh` that for `api graphql` a non-zero exit with parseable `data` is non-fatal and return
-stdout. Rejected: `_gh` is the shared shim; widening its success criteria risks masking real
-failures across REST and every other call site. KD3 keeps it strict.
+**Option A (blanket "return any non-null `data`") — REJECTED.**
+Masks failed mutations (`:1043, :2199`, …) and field-level errors (`{"data":{"repository":null},
+"errors":[FORBIDDEN]}` → downstream `TypeError`). Documented here so the rejection is durable.
+
+**Option C — `_gh` graphql-aware non-zero handling — REJECTED.**
+`_gh` is the shared shim for every gh call (REST included); widening its success criteria has the
+widest blast radius. KD2 keeps it strict.
 
 ## Recommended fix
 
-**A (primary) + B for the hot path (hardening).** A is the load-bearing, class-closing fix and the
-one the regression fixture guards. B additionally makes `board_add`'s common path stop generating the
-spurious error at all. The exact fatal-vs-partial predicate (KD2) is the one decision to confirm in
-`/plan`.
+**Option B (primary)** for both dual-branch resolvers + the `:1034` access update, **plus KD5's
+fail-loud/resumable guard** around the post-create steps. Option A' is an optional `/plan` call for
+future-proofing, not required to fix the defect.
 
 ## Requirements
 
 **Correctness (the fix):**
-- **R1** — `_graphql` returns the response's `data` when `data` is non-null, even if the response
-  also carries an `errors[]` array (partial success), instead of raising. *(Option A)*
-- **R2** — `_graphql` still raises (typed, unchanged) when the response has no usable `data` —
-  request-level failures: auth (401/403), rate limit (429), bad syntax, or `data: null`. *(KD2)*
-- **R3** — the fix lives in the shared `_graphql` helper (and its agreement with `_gh`'s exception
-  stdout), not in individual queries, so it covers `QUERY_GET_ITEM_NODE_ID` **and**
-  `QUERY_GET_ITEM_LABELS` and any future dual-branch query. *(KD1)*
-- **R4** — `_gh` remains strict for all non-graphql callers; no REST call site changes behavior. *(KD3)*
+- **R1** — `board_add` resolves an issue/PR node id via `issueOrPullRequest(number:)` (inline
+  fragments) and `gh` exits 0 with no spurious `NOT_FOUND`. *(Option B; `:707`/`:1032`/`:1034`)*
+- **R2** — `QUERY_GET_ITEM_LABELS` (`:816`) is converted the same way; the label-field sync path stops
+  emitting the spurious 404. *(Option B; `:1303`)*
+- **R3** — the shared `_graphql` error strictness is **unchanged** by the primary fix; no mutation
+  call site changes behavior. *(KD2)*
+- **R4** — `_gh` remains strict for all callers. *(KD2)*
 
 **End-to-end (the user-visible outcome):**
-- **R5** — `create-prepared` on a fresh issue adds it to the target project board **and** sets Status
-  with **zero** manual recovery steps. *(the actual bug)*
-- **R6** — `board_add` and the label-field sync resolve an issue node id without raising on the
-  absent-PR branch. *(hot path + `:816` path)*
+- **R5** — `create-prepared` on a fresh issue adds it to the target board **and** sets Status with
+  **zero manual recovery for those two steps**. (Objective remains a separate, out-of-scope
+  enhancement — this requirement does not claim Objective is auto-set.) *(the actual bug)*
 
-**Anti-recurrence:**
-- **R7** — a regression fixture reproduces the captured partial-error response shape
-  (`{"data":{… "issue":{…}, "pullRequest":null}}, "errors":[{"type":"NOT_FOUND",…}]}`) and asserts
-  `_graphql` returns the issue node rather than raising. *(KD4)*
-- **R8** — a test asserts a genuinely fatal response (`data: null` + errors) **still** raises, so the
-  fix doesn't swallow real failures. *(R2 guard)*
-- **R9** — an end-to-end test (mocked `_gh`) asserts `board_add` succeeds against a partial-error
-  resolution response. *(R5/R6 guard)*
+**Robustness (KD5):**
+- **R6** — a genuine post-create failure (network, real not-found) fails **loud** with the created
+  issue URL and the remaining steps, never a bare traceback. *(agy P0)*
+- **R7** — `create-prepared` is **resumable**: re-running it on a draft whose sidecar already records
+  `created_issue_number` completes the board-add/Status steps instead of creating a duplicate issue.
+  No issue is auto-deleted. *(agy P0; mechanism to /plan)*
+
+**Anti-recurrence (KD4 — tests drive the real path):**
+- **R8** — a test simulates `_gh` raising `GhApiError(stdout=<partial-error envelope>)` and asserts
+  the **fixed** resolver returns the issue node (post-Option-B: asserts the union query yields a
+  single resolved node with `gh` exit 0). *(codex P1)*
+- **R9** — negative tests assert the system **still fails loud**: (a) fatal `data: null` + error
+  raises; (b) `data` present but the *requested* node is `null` due to a field-level error (e.g.
+  FORBIDDEN) raises; (c) an exception whose `stdout` is empty/non-JSON re-raises the original error
+  (no `JSONDecodeError` mask); (d) a partially-failed **mutation** (intended payload `null` + error)
+  raises. *(codex P1 + agy P1/P2 + Claude)*
+- **R10** — PR-direction symmetry: a number that **is** a PR resolves via the union to the PR node.
+- **R11** — an end-to-end test (mocked `_gh`) asserts `board_add` + Status complete against the fixed
+  resolver. Tests live under repo-root `tests/` (CI-collected — `pyproject.toml:83-84`,
+  `.github/workflows/ci.yml:42-43`; codex CHECK-8). *(R5 guard)*
 
 ## Acceptance examples
 
-- **AE1** — Given the captured `#279` partial-error JSON, `_graphql(QUERY_GET_ITEM_NODE_ID, …)`
-  returns `{"repository":{"issue":{"id":"…","number":279},"pullRequest":null}}` (no raise). *(R1)*
+- **AE1** — Given issue #279, `issueOrPullRequest(number:279)` returns
+  `{"__typename":"Issue","id":"…","number":279}` with `gh` exit 0 and no error. *(R1)*
 - **AE2** — Given a fresh prepared draft, `create-prepared --yes` creates the issue, adds it to the
-  board, and sets Status=Todo with no manual `gh project item-add` / `flow set-field` needed. *(R5)*
-- **AE3** — Given a response with `data: null` and an auth error, `_graphql` raises the typed
-  `ApiAuthError` exactly as today. *(R2/R8)*
-- **AE4** — Given a number that **is** a PR, the same resolver returns the `pullRequest` node and the
-  `issue` branch's `NOT_FOUND` is tolerated (symmetry). *(R1, dual-branch both directions)*
+  board, and sets Status=Todo with no manual `gh project item-add` / `flow set-field` for those steps.
+  *(R5)*
+- **AE3** — Given a response with `data: null` + an auth error, the resolver raises the typed
+  `ApiAuthError` exactly as today. *(R9a)*
+- **AE4** — Given a partially-failed `updateProjectV2ItemFieldValue` (payload `null` + error),
+  `flow_set_field` raises rather than reporting success. *(R9d — the rejected-Option-A guard)*
+- **AE5** — Given a simulated network failure during node resolution after the issue is created,
+  `create-prepared` prints the issue URL + remaining steps and exits non-zero; a re-run completes the
+  board-add without creating a second issue. *(R6/R7)*
 
 ## Scope boundaries
 
-- **IN**: the partial-GraphQL-error mishandling at the `_graphql`/`_gh` seam; the dual-branch node-id
-  and label queries; the regression + e2e fixtures.
-- **OUT — Objective not auto-set.** `create-prepared` never set the Objective field (it sets only
-  Status, `:3986`); the manual `--field Objective` step is a *missing feature*, not a regression. A
-  separate enhancement (auto-set a configured Objective from the draft sidecar) — do not fold in.
-- **OUT — title recovery.** Title is set at create (`--title`, `:3810-3811`); any title re-edit in the
-  manual recovery was operator discretion, not a code defect.
+- **IN**: the dual-branch resolver bug (both queries + the `:1034` access); the fail-loud/resumable
+  guard on the post-create steps; the regression + e2e tests.
+- **OUT — Objective not auto-set.** `create-prepared` never set Objective (it sets only Status,
+  `:3986`); the manual `--field Objective` step is a *missing feature*, not a regression. A separate
+  enhancement (auto-set a configured Objective from the draft sidecar). *(codex CHECK-6 + agy P3.)*
+- **OUT — title recovery.** Title is set at create (`--title`, `:3810-3811`, verified); any title
+  re-edit in the manual recovery was operator discretion, not a code defect.
 - **OUT — `deploy-templates` 404s.** Separate, non-fatal, independent of this seam.
+- **OUT — broad `_graphql` partial-tolerance (Option A').** Optional future-proofing, not required to
+  fix the defect; a `/plan` call.
 
 ## Dependencies / assumptions
 
-- Assumes `GhApiError` carries `stdout` (verified, `:639`) so Option A can read the response off the
-  exception without changing `_gh`.
-- Assumes GitHub GraphQL's documented partial-success contract (non-null `data` alongside
-  `errors[]`) — verified empirically this session against a live response.
-- Test harness: repo-root `tests/` (collected by CI); proposed `tests/test_graphql_partial_error.py`.
+- `issueOrPullRequest(number:)` is a real `Repository` field returning the `IssueOrPullRequest` union;
+  `id` is selectable only via inline fragments — **verified live this session** (exit 0) and against
+  GitHub's GraphQL schema (codex web-verified).
+- `GhApiError` carries `stdout` (`:501`, verified) — needed only if Option A' is pursued.
+- Test harness: repo-root `tests/` (CI-collected); proposed `tests/test_graphql_issue_resolution.py`.
 
 ## Outstanding questions (deferred to /plan)
 
-1. Exact KD2 predicate boundary: "any non-null `data`" vs the stricter "non-null `data` **and** every
-   error is `type: NOT_FOUND`". The former is simpler and spec-aligned; the latter is more
-   conservative but risks over-tightening if GitHub varies the error `type`.
-2. Whether to refactor `_graphql` in place vs add a `_graphql` that returns `(data, errors)` and a
-   thin partial-tolerant wrapper — an internal-shape decision.
-3. Whether to adopt `issueOrPullRequest` (Option B) for **both** dual-branch queries or only the hot
-   path in v1.
+1. Whether to pursue Option A' (scoped, opt-in `_graphql` partial tolerance) for future-proofing, or
+   rely solely on Option B for the two known queries.
+2. KD5 resumability mechanism: detect `created_issue_number` in the sidecar and skip `_create_github_
+   issue` on re-run, vs a dedicated `create-prepared --resume`. Idempotency key = (repo, issue number,
+   target board).
+3. Whether to also adopt `issueOrPullRequest` for any *other* by-number resolution that could be
+   called with the non-matching kind (none in the dual-branch list today; `:825` is issue-only).
 
 ## Coupling note (why this matters now)
 
 This defect lives on the **saga ↔ mission-control write boundary** — exactly the boundary that S-2
 (reversibility/idempotency certificate, issue #279) proposes to make *autonomous*. S-2's R18 already
-names "bounded-retry + fail-loud on the create-prepared boundary." You cannot ship reliable
-autonomous board-sync over a resolver that misfires on every issue. Fixing this is effectively a
-near-dependency of S-2, not just hygiene.
+names "bounded-retry + fail-loud on the create-prepared boundary," and this defect's R6/R7 are the
+concrete instance of it. You cannot ship reliable autonomous board-sync over a resolver that misfires
+on every issue and abandons state on failure. Fixing this is effectively a near-dependency of S-2.
 
 ## Sources
 
-- `plugins/mission-control/scripts/sdlc_manager.py:649-661` — `_graphql`, fatal-on-`errors`.
-- `:617-646` — `_gh`, raises typed error on non-zero exit; carries stdout at `:639`.
+- `plugins/mission-control/scripts/sdlc_manager.py:649-661` — `_graphql`, fatal-on-`errors` (strict;
+  kept strict by the primary fix).
+- `:617-646` — `_gh`, raises typed error on non-zero exit; carries stdout at `:639`. *(CHECK-1)*
+- `:480-501` — `GhApiError`, carries `stdout`. *(CHECK-2)*
 - `:559-606` — `_classify_gh_error`; no HTTP status ⇒ `GhApiError(status_code=None)` at `:606`.
 - `:707-714` — `QUERY_GET_ITEM_NODE_ID` dual-branch; `:1032`/`:1034` — `board_add` resolution +
-  `issue or pullRequest` fallback; `:1042-1057` — try/except wraps only the per-project loop.
-- `:816-823` — `QUERY_GET_ITEM_LABELS`, the second dual-branch query.
-- `:3984-3986` — `create-prepared` order: create issue → `board_add` → `flow_set_field` Status.
-- Empirical probe (this session): `gh api graphql` on #279 → exit 1, `data.issue` populated,
-  `pullRequest: null`, `errors:[NOT_FOUND]`.
+  `issue or pullRequest` fallback; `:1042-1057` — try/except wraps only the per-project loop. *(CHECK-7)*
+- `:816-823` — `QUERY_GET_ITEM_LABELS`, the second (and last) dual-branch query. *(CHECK-4)*
+- `:825-849` — `QUERY_GET_ISSUE_TIMELINE`, single-branch (issue-only), verified not in the bug class.
+- Mutation call sites that a blanket-tolerant `_graphql` would endanger: `:1043, :1128, :1170, :1340,
+  :2199` (`QUERY_ADD_ITEM_TO_PROJECT` / `QUERY_SET_FIELD_VALUE` / `QUERY_ARCHIVE_ITEM`). *(P0)*
+- `:3984-3986` — `create-prepared` order: create issue → `board_add` → `flow_set_field` Status;
+  `:3810-3816` title + labels at create. *(CHECK-6)*
+- CI test collection: `pyproject.toml:83-84`, `.github/workflows/ci.yml:42-43`. *(CHECK-8)*
+- Empirical probes (this session): dual-branch on #279 → exit 1 + spurious NOT_FOUND with data
+  present; `issueOrPullRequest` on #279 → exit 0, single resolved node.

@@ -50,8 +50,10 @@ These framing choices were made during the brainstorm and constrain the requirem
 - **On-demand self-test, not standing calibration.** Proving the gate works is a `--self-test` you run
   on demand — the "test" button on a smoke detector — not a scheduled harness that tracks catch-rate
   over time. A standing measurement loop is the S-6 ceremony shape already rejected for a solo tool.
-- **Dominant failure class wired now, enum extensible.** Only `budget-exhaustion` is implemented
-  end-to-end in v1; the typed-failure enum is built so the other classes slot in later without rework.
+- **Silent omission detected now, typed-failure enum extensible.** v1 detects the omission and emits
+  the observable class `missing-output` (its dominant recorded cause is budget exhaustion, but the gate
+  does not assert cause from absence); `malformed-output` and `verifier-disagreement` are the other two
+  v1 classes. The enum is built so future classes slot in later without rework.
 
 ## Actors
 
@@ -67,50 +69,69 @@ What must be true about the gate, grouped by concern. IDs are stable and continu
 
 **Mechanical detection (always-on, every leaf)**
 
-R1. After every leaf agent returns, the gate inspects the result before any dependent consumes it; a
-`null`/absent result, or one where the agent never emitted its structured output, is a trip — never
-treated as an empty-but-valid output.
+These checks trip on *absence where output was expected* — a schema-bearing agent, a fan-out unit's
+enumerated targets, or a non-empty `returns` contract. A leaf that legitimately returns no structured
+output is not tripped on absence. A detected absence carries the base class `missing-output` (the cause
+is not inferable from absence alone — see R8).
 
-R2. A structurally truncated output (cut off mid-structure, incomplete envelope) is a trip rather than
-being parsed as complete.
+R1. After every leaf agent returns, the gate inspects the result before any dependent consumes it; for
+an agent expected to emit structured output, a `null`/absent result or a missing emit is a trip
+(`missing-output`), never treated as an empty-but-valid output.
 
-R3. When a leaf declares a count of expected items (e.g. "N targets", "N files") and produces fewer,
-the shortfall is a trip — the count-level completeness check.
+R2. A structurally truncated output (cut off mid-structure, incomplete envelope) is a trip
+(`malformed-output`) rather than being parsed as complete.
 
-R4. On any trip the gate fails loud with a typed, named failure and never releases the null/partial
-result downstream. Silent degrade is prohibited (halt-not-degrade).
+R3. When a leaf declares a count of expected items — for v1, a fan-out unit's enumerated target list
+(`Unit.targets`) — and produces fewer, the shortfall is a trip (`missing-output`). A generic count
+source beyond fan-out targets is deferred.
+
+R4. On any trip the gate fails loud with a typed, named failure and never releases the partial *return
+envelope* downstream — the dependent is not launched with it. Containing on-disk side-effects an agent
+already wrote is out of v1 scope (the deferred R14 workspace-isolation work). Silent degrade is
+prohibited (halt-not-degrade).
 
 **Manifest completeness (opportunistic)**
 
-R5. A leaf may declare a machine-diffable contract of its required named outputs, lifted from today's
-prose-only form into a form the gate can compare against.
+R5. A leaf's required named outputs already exist as a structured contract today — `Unit.returns`, a
+list of required structured-output keys mirroring the unit schema's `required`. The gap is enforcement:
+`returns` is rendered into the agent prompt but never diffed against what the agent emits. v1 enforces
+it (it does not invent the schema).
 
-R6. Where a contract is present, the gate diffs declared-vs-produced named outputs and trips on any
-declared output that is missing, naming the omission.
+R6. Where a `returns` contract is non-empty, the gate diffs the declared required keys against the keys
+the agent actually emitted in its structured output, and trips (`missing-output`) on any declared key
+that is absent, naming the omission.
 
 R7. The manifest check is opportunistic: a leaf with no contract receives the mechanical detector
 only. v1 does not require a contract on every leaf.
 
 **Typed failures and bounded iteration**
 
-R8. Failures carry a typed class. v1 wires the dominant class (`budget-exhaustion`) end-to-end and
-ships the enum extensible so additional classes (malformed-output, tool-denial, stale-context,
-merge-conflict, verifier-disagreement) slot in later without rework.
+R8. Every trip carries a typed class. v1 wires the classes its own trips produce: `missing-output`
+(absence / short count / missing key — the dominant case, whose recorded cause is budget exhaustion but
+which the gate cannot attribute from absence alone), `malformed-output` (truncation, R2), and
+`verifier-disagreement` (cap, R9). The enum is extensible so genuinely-future classes (`tool-denial`,
+`stale-context`, `merge-conflict`) slot in later without rework.
 
 R9. The emitted-workflow path gains the iteration/ping-pong cap it currently lacks; reaching the cap
 emits a typed `verifier-disagreement` failure that names the upstream cause instead of silently
 exiting the loop.
 
 R10. The cap is overridable when iterate-to-consensus is the intended behavior — e.g. differential
-spec-validation, where divergence signals an ambiguous spec rather than a defect.
+spec-validation, where divergence signals an ambiguous spec rather than a defect. An override still
+terminates: it raises the bound or hands to a manual continuation, never removes it — an uncapped loop
+is prohibited.
 
 **Coverage**
 
 R11. The primary v1 seam is the emitted `.workflow.js` path: every emitted agent result is
-gate-checked before a dependent reads it (this path has no null-check today).
+gate-checked before a dependent reads it (this path has no null-check today). This is the synchronous
+model — the gate inspects a returned value. The R9 cap addition applies here; v1 does not change
+team-execution's existing proceed-best-available cap.
 
-R12. The team-execution path gains an evidence-absence check: an expected validator or leaf evidence
-record that was never written is a trip (fail), not a skip or silent `warn`.
+R12. The team-execution path gains an evidence-absence check evaluated at validator/leaf process exit
+(there is no return value to inspect): a *required, non-skipped* validator or leaf whose evidence record
+was never written is a trip (`missing-output` / fail). A validator legitimately `skipped-by-config` or
+optional is not tripped.
 
 **Self-test**
 
@@ -126,13 +147,15 @@ F1. Normal completion.
 **Trigger:** a leaf agent returns a result. The gate runs the mechanical detector (always) and the
 manifest diff (if a contract exists). Both clean → the result is released to dependents and the leaf
 is ticked complete.
-**Covers R1, R2, R3, R5, R6, R7.**
+**Covers R1, R5, R6, R7** (the clean pass; the R2–R4 trip conditions are exercised in F2).
 
 F2. Omission caught.
-**Trigger:** a leaf returns null, a truncated output, fewer items than declared, or a result missing a
-declared output. The gate trips, classifies the failure as a typed class, withholds the result from
-every dependent, and routes by class — retry (e.g. `budget-exhaustion` → retry with reduced scope) or
-halt with the typed cause. No dependent ever observes the partial result.
+**Trigger:** an inspected leaf result is null / truncated / short / missing a declared key (synchronous
+model), OR a required evidence record is absent at process exit (team-execution model). The gate trips,
+classifies the failure, and withholds the partial return envelope from every dependent. It then routes
+by class within a bounded retry budget — a retry re-runs the unit *unchanged* (it never shrinks the
+unit's declared required outputs) or halts with the typed cause. No dependent is launched on the partial
+envelope.
 **Covers R1, R2, R3, R4, R8, R9, R11, R12.**
 
 F3. Self-test.
@@ -145,8 +168,9 @@ workspace.
 
 The conditional cases where prose alone leaves edge-case ambiguity.
 
-AE1. **Covers R1.** A cheap-tier leaf exhausts its budget and returns without emitting its structured
-output → the gate marks it `budget-exhaustion`, blocks the dependent, and surfaces the failure; the
+AE1. **Covers R1, R8.** A cheap-tier leaf exhausts its budget and returns without emitting its
+structured output → the gate trips `missing-output` (the dominant recorded cause is budget exhaustion,
+but the gate does not assert cause from absence), blocks the dependent, and surfaces the failure; the
 empty result is not treated as a valid empty output.
 
 AE2. **Covers R2.** An agent's structured output is cut off mid-object → the gate trips rather than
@@ -155,18 +179,28 @@ parsing the partial envelope as complete.
 AE3. **Covers R3.** A fan-out leaf declares 12 targets and reconciles only 9 → the 3-target shortfall
 is reported as an omission, not a success.
 
-AE4. **Covers R6.** A leaf's contract names `migration.sql`, `rollback.sql`, `test_migration.py` and
-the produced set omits `rollback.sql` → the gate names the missing output and fails.
+AE4. **Covers R6.** A leaf's `returns` contract requires the keys `migration_sql`, `rollback_sql`,
+`test_file` and the agent emits a structured result omitting `rollback_sql` → the gate names the missing
+key and fails (`missing-output`).
 
 AE5. **Covers R7.** A leaf has no contract → a complete-but-unverifiable output passes the manifest
 layer and remains subject only to the mechanical detector.
 
-AE6. **Covers R9, R10.** Reviewer↔implementer iteration reaches the cap without consensus → the engine
-emits `verifier-disagreement` naming the unresolved point; unless the unit is flagged
-iterate-to-consensus, in which case the cap is lifted and the loop continues.
+AE6. **Covers R9, R10.** An emitted-workflow verify/iteration loop reaches the cap without consensus →
+the engine emits `verifier-disagreement` naming the unresolved point and halts; unless the unit is
+flagged iterate-to-consensus, in which case the bound is raised (never removed) and the loop continues
+to a higher bound.
 
 AE7. **Covers R13.** `--self-test` runs against a healthy gate → the planted omission is caught and the
 command reports pass; if the gate fails to catch it, the command reports fail.
+
+AE8. **Covers R12.** A required team-execution validator never writes its evidence record (its agent
+died) → at process exit the gate finds the expected record absent and trips (fail), instead of treating
+the silent gap as `skipped`/`warn`. A validator `skipped-by-config` is not tripped.
+
+AE9. **Covers R1, R7.** A prose-return or side-effect-only leaf that declares no structured-output
+contract returns no keys → the gate does not trip on the absence (output was not expected),
+distinguishing a legitimate empty from an omission.
 
 ## Scope Boundaries
 
@@ -177,17 +211,21 @@ What v1 deliberately excludes, and why.
 - A standing/scheduled spike-calibration harness that tracks catch-rate over time — killed; the S-6
   measurement-ceremony shape already rejected for a solo tool. The on-demand `--self-test` replaces it.
 - Backfilling output contracts onto existing leaves — the manifest layer stays opportunistic.
-- Full implementations of the five non-dominant failure classes — the enum is extensible, but only
-  `budget-exhaustion` is wired end-to-end in v1.
+- Full implementations of the non-triggered failure classes (`tool-denial`, `stale-context`,
+  `merge-conflict`) — the enum is extensible, but v1 wires only the classes its own trips produce
+  (`missing-output`, `malformed-output`, `verifier-disagreement`).
+- Changing team-execution's existing proceed-best-available cap — R9 adds the typed cap to the
+  emitted-workflow path; the team-execution cap stays as-is in v1.
 - The inline backend — it has no fan-out seam where an agent result crosses into a dependent.
 
 ## Dependencies / Assumptions
 
 Upstream dependencies and load-bearing assumptions, including absences verified during grounding.
 
-- The manifest half depends on lifting the output contract from its current prose-in-prompt form
-  (`plugins/saga/scripts/execution_spec.py`, the agent-prompt builder) into a machine-diffable
-  declaration. Verified: the contract exists today only as prose injected into the agent prompt.
+- The manifest half enforces an output contract that already exists in structured form — `Unit.returns`
+  (`plugins/saga/scripts/execution_spec.py:180`), a list of required structured-output keys mirroring
+  the unit schema's `required`. Verified: `returns` is structured today but is only rendered into the
+  agent prompt, never diffed against what the agent emits. v1 adds the enforcement, not the schema.
 - Verified absent today and load-bearing: the emitted `.workflow.js` path performs no null-check after
   agent calls; the team-execution path has no detection when an evidence record is never written; no
   typed failure classes exist anywhere; the iteration caps exist only in team-execution prose
@@ -220,8 +258,8 @@ Breadcrumbs for the planner reading cold.
   emitting StructuredOutput — budget exhaustion, not rate limits); `:423` (fan-out agents hedge on
   output conventions unless given the exact form).
 - Emitted-workflow seam: `plugins/saga/scripts/execution_spec.py` — the workflow emitter (no null-check
-  after emitted agent calls), the verify-panel emitter, `BUDGET_RIDER`, and the agent-prompt builder
-  where the output contract lives as prose.
+  after emitted agent calls), the verify-panel emitter, `BUDGET_RIDER`, and `Unit.returns` (`:180`), the
+  structured return contract that is rendered into the prompt but enforced nowhere.
 - Parse-seam already hardened: `plugins/saga/scripts/outcome_spec.py` — strict input helpers reject
   silent coercions; `ExecutionSpec.validate` / `OutcomeSpec.validate` fail loud at spec construction.
 - team-execution seams: `validator-registry.md` (validator-family dispatch — the completeness check's

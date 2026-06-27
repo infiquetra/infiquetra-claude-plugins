@@ -1304,4 +1304,11 @@ single team-execution run shows enough internal idle-poll to justify a formal wi
 **Refs.** Brainstorm requirements (origin); QUEUED [#ideate-brainstorm-do-less-bias](QUEUED.md#ideate-brainstorm-do-less-bias)
 (skill-bias catch from the same session); ideation S-1.
 
+**Doc-review addendum (2026-06-27).** A codex + agy adversarial pass + readiness review found 1 P0 + 4
+P1, all fixed in the plan: `Unit` carried no file-path data for segmentation (added `Unit.files`); emit
+cardinality was undefined (now **one row per segment**, KTD3); segment-level dependency derivation was
+missing (KTD4 — collapse the unit dep graph to segments); and segmentation must not mutate the shared
+`ExecutionSpec` (KTD5 — side mapping / copy). The "additive emitter" claim was corrected to
+schema-breaking. Review record: `docs/reviews/2026-06-27-worker-model-cache-scheduling-review.md`.
+
 ---

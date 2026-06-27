@@ -60,8 +60,8 @@ Thumbs.db
 # OutcomeOrchestrator managed sub-outcome worktrees (durable but never committed; R15)
 .saga-worktrees/
 
-# Local tool state & generated artifacts (neuralmind / graphify / serena) — never committed
+# Local tool state & generated artifacts — regenerated from source each run, never committed
 .neuralmind/
 graphify-out/
-.serena/
 .mcp.json
+# Serena: .serena/.gitignore (tracked) keeps project.yml and ignores .serena/cache + project.local.yml

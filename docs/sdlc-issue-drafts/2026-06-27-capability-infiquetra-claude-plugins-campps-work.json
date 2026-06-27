@@ -1,0 +1,47 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "plan-ready",
+    "Objective": "docs/plans/2026-06-27-worker-model-cache-scheduling-plan.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for capability/medium: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ntitle: Worker\u00d7Model Cache Scheduling \u2014 Implementation Plan\ntype: feat\nstatus: active\ndate: 2026-06-27\nrevised: 2026-06-27\norigin: docs/brainstorms/2026-06-27-worker-model-cache-scheduling-requirements.md\n---\n\n# Worker\u00d7Model Cache Scheduling \u2014 Implementation Plan\n\n## Summary\n\nPort VECU's cost-first worker derivation + named-teammate residency into infiquetra by splitting it\nalong the seam infiquetra already has: **saga derives** (segments units, assigns one stable resident\nagent-id per segment, groups tiers, derives segment-level deps) and **team-execution resides** (spawns\none named teammate per segment, reuses it via `SendMessage`, sheds at boundaries). The unit scheduled\nis the (worker\u00d7model) context cache, so the engine pays context-creation once per reuse-relevant\nboundary instead of re-spawning fresh per phase and per review round.\n\n## Problem Frame\n\ninfiquetra re-pays context creation on two hot paths VECU has already closed. `team_emitter.py:107`\nflattens every unit to a positional `worker-{i}`, discarding the `depends_on` and `{model,effort}`\ntier that already live on `Unit` (`execution_spec.py:176,:182`) \u2014 so team-execution can't see a reuse\nboundary even though saga c",
+    "inferred_maturity": "plan-ready",
+    "kind": "plan",
+    "path": "docs/plans/2026-06-27-worker-model-cache-scheduling-plan.md",
+    "ref": "docs/plans/2026-06-27-worker-model-cache-scheduling-plan.md",
+    "title": "Worker\u00d7Model Cache Scheduling \u2014 Implementation Plan",
+    "url": null
+  },
+  "state": "blocked",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: infiquetra-claude-plugins campps work",
+  "updated_at": "2026-06-27T11:59:59.107292+00:00"
+}

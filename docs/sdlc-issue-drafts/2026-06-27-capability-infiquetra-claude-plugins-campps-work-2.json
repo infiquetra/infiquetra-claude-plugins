@@ -1,0 +1,58 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-27-silent-omission-completeness-gate-requirements.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-27\ntopic: silent-omission-completeness-gate\nmaturity: requirements-ready\nsource: docs/ideation/2026-06-26-vecu-port-seeds-ideation.md \u2014 survivor S-7 \"Silent-Omission + Seam-Validation Gate, Spike-Calibrated\"\n---\n\n# Silent-Omission Completeness Gate\n\n## Summary\n\nA required completeness gate for the saga execution engine that turns the engine's single most\nrecorded failure \u2014 a leaf agent that silently produces nothing \u2014 into a loud, typed, retryable\nfailure. It compares expected-vs-produced output at two granularities (a universal mechanical\ndetector on every leaf, plus an itemized manifest diff wherever a unit declares a contract) and ships\nwith an on-demand self-test that proves the gate still fires.\n\n## Problem Frame\n\nThe engine's dominant recorded failure mode is silent omission, not incorrectness. In one real run\n(`wf_4a5f04b6`), 16 of 19 fan-out agents finished without ever emitting their structured output \u2014\nbudget exhaustion, the agents over-read and ran out of tokens before producing a result\n(`docs/engineering-journal/LEARNINGS.md:603`/`:607`).\n\nToday nothing detects this. The only defense is a prophylactic prompt instruction (`BUDGET_RIDER` in\n`plugins/sag",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-27-silent-omission-completeness-gate-requirements.md",
+    "ref": "docs/brainstorms/2026-06-27-silent-omission-completeness-gate-requirements.md",
+    "title": "Silent-Omission Completeness Gate",
+    "url": null
+  },
+  "state": "blocked",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: infiquetra-claude-plugins campps work",
+  "updated_at": "2026-06-27T16:35:14.504665+00:00"
+}

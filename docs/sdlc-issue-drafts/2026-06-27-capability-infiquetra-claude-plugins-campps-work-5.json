@@ -1,0 +1,47 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work-5.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-27-precompact-spore-rehydration-requirements.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for capability/medium: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work-5.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-27\nkind: brainstorm\nmaturity: requirements-ready\ntype: capability\nsource: docs/ideation/2026-06-26-vecu-port-seeds-ideation.md \u2014 survivor S-3 (PreCompact spore rehydration)\ntitle: \"PreCompact Spore \u2014 Re-ground the Continuing Session on Structured Saga Facts, Not Prose\"\n---\n\n# PreCompact Spore \u2014 Re-ground the Continuing Session on Structured Facts, Not Prose\n\n## Summary\n\nWhen a long continuous session (a `/work`, `/loop`, or especially an `/outcome` campaign) fills the\ncontext window, the harness **auto-compacts**: it replaces the conversation with a prose summary and\nthe **same session keeps running**. Structured saga facts the run depends on \u2014 open leaf ids, the\nready frontier, per-leaf gate state, `saga_id`, `next_step` \u2014 get blurred into that prose or dropped.\nThe session continues, but fuzzy about *where it is*.\n\nThe fix is a **\"spore\"**: at the compaction boundary, saga writes a thin **structured** snapshot of\nthose facts to a worktree-stable, session-keyed cache, and immediately after compaction re-injects\nthem into the continuing session so it re-grounds on facts, not prose. This is the survivor's\nload-bearing critique made literal \u2014 *rehydrate from structu",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-27-precompact-spore-rehydration-requirements.md",
+    "ref": "docs/brainstorms/2026-06-27-precompact-spore-rehydration-requirements.md",
+    "title": "PreCompact Spore \u2014 Re-ground the Continuing Session on Structured Facts, Not Prose",
+    "url": null
+  },
+  "state": "blocked",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: infiquetra-claude-plugins campps work",
+  "updated_at": "2026-06-27T20:15:27.358887+00:00"
+}

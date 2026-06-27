@@ -1,0 +1,47 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-27-defect-infiquetra-claude-plugins-campps-work.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-27-create-prepared-partial-graphql-error-defect.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for defect/medium: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-27-defect-infiquetra-claude-plugins-campps-work.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-27\nkind: brainstorm\nmaturity: requirements-ready\ntype: defect\nsource: field-observed defect \u2014 4/4 across issue creations #275, #277, #278, #279 (VECU port-seeds campaign)\ntitle: \"create-prepared dies on a partial GraphQL NOT_FOUND \u2014 board-add + Status silently skipped\"\n---\n\n# create-prepared Partial-GraphQL-Error Defect \u2014 Resolve the Node Without a Speculative 404\n\n## Summary\n\n`mission-control issue create-prepared` creates the GitHub issue successfully, then **dies before\nadding it to the board or setting Status**, every single time (4/4: #275, #277, #278, #279 \u2014 100%\nreproducible). The operator recovers by hand each time (`gh project item-add` + `flow set-field`).\n\nRoot cause, verified empirically this session: `board_add` resolves the new issue's node id with a\nGraphQL query (`QUERY_GET_ITEM_NODE_ID`, `sdlc_manager.py:707-714`) that **deliberately queries both\n`issue(number:N)` and `pullRequest(number:N)`** so it can resolve either kind. For an issue, the\n`pullRequest` branch returns a partial `NOT_FOUND` error \u2014 *while `data.issue` is fully populated*.\nGitHub's `gh api graphql` **exits non-zero (1)** on that partial error, so `_gh` (`:632-640`) raises a\ntyped ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-27-create-prepared-partial-graphql-error-defect.md",
+    "ref": "docs/brainstorms/2026-06-27-create-prepared-partial-graphql-error-defect.md",
+    "title": "create-prepared Partial-GraphQL-Error Defect \u2014 Resolve the Node Without a Speculative 404",
+    "url": null
+  },
+  "state": "blocked",
+  "status": "Idea",
+  "team": "campps",
+  "title": "defect: infiquetra-claude-plugins campps work",
+  "updated_at": "2026-06-27T18:46:34.196223+00:00"
+}

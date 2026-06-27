@@ -1,0 +1,47 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work-4.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-27-reversibility-idempotency-certificate-requirements.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for capability/medium: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work-4.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-27\ntopic: reversibility-idempotency-certificate\nmaturity: requirements-ready\nsource: docs/ideation/2026-06-26-vecu-port-seeds-ideation.md \u2014 survivor S-2 (Replace \"Risk\" Routing With a Computed Reversibility/Idempotency Certificate)\n---\n\n# Reversibility/Idempotency Certificate \u2014 One Authority for Reversibility-Gated Autonomy\n\n## Summary\n\nGive saga **one source of truth for the reversibility facts that gate autonomous action**, exposing a\nsingle write-authorization verdict so \"may saga perform this write without a human?\" is answered in\nexactly one place \u2014 conservative, enumerated, default-gate. Its first consumer is autonomous `/outcome`\nboard-sync: the engine's first autonomous writes across the saga\u2194mission-control boundary, shipped\ninside a certified envelope rather than left to manual operator keystrokes.\n\n## Problem Frame\n\nSaga's reversibility-based autonomy is decided in **scattered, hardcoded places**, each encoding a\nseparate ad-hoc judgment with no shared definition of what makes an action safe to take without a human:\n\n- `operator-keystroke-only` \u2014 the parent issue never auto-closes (`outcome_projection.py:81`).\n- `had_side_effect \u2192 HALT` \u2014 a side-effecte",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-27-reversibility-idempotency-certificate-requirements.md",
+    "ref": "docs/brainstorms/2026-06-27-reversibility-idempotency-certificate-requirements.md",
+    "title": "Reversibility/Idempotency Certificate \u2014 One Authority for Reversibility-Gated Autonomy",
+    "url": null
+  },
+  "state": "blocked",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: infiquetra-claude-plugins campps work",
+  "updated_at": "2026-06-27T18:14:13.770992+00:00"
+}

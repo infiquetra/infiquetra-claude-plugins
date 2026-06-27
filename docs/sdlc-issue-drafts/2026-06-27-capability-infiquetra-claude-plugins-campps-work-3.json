@@ -1,0 +1,47 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work-3.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-27-operator-gate-status-card-requirements.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for capability/medium: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-27-capability-infiquetra-claude-plugins-campps-work-3.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-27\ntopic: operator-gate-status-card\nmaturity: requirements-ready\nsource: docs/ideation/2026-06-26-vecu-port-seeds-ideation.md \u2014 survivor S-5 (Operator Surface as an O(1) Projection \u2014 Glyph Card + Controlled Vocabulary)\n---\n\n# Operator Gate-Status Card \u2014 Requirements\n\n## Summary\n\nRender every saga status-bearing surface (`/work`, `/code-review`, `/qa`, `/outcome`, `/resume`)\nthrough one shared, fixed-position **glyph card** that projects each surface's status rows \u2014 an ordered\ngate sequence for the gate-bearing surfaces, a fixed summary for the dynamic ones \u2014 derived-on-read from\ndurable engine state, constant in size, every cell traceable to its evidence, with a controlled\nvocabulary enforced by there being a single render site.\n\n## Problem Frame\n\nThe operator is the one resource in the engine that does not parallelize. Every other improvement in the\ncampaign \u2014 more engines, wider fan-out, deeper review panels \u2014 adds parallel machine work, and each one\nquietly raises the cost of staying in control: more state to track, more prose to read, more places\nstatus can be phrased differently. Operator attention is a fixed budget being spent against a growing\nsurface.\n\nTod",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-27-operator-gate-status-card-requirements.md",
+    "ref": "docs/brainstorms/2026-06-27-operator-gate-status-card-requirements.md",
+    "title": "Operator Gate-Status Card \u2014 Requirements",
+    "url": null
+  },
+  "state": "blocked",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: infiquetra-claude-plugins campps work",
+  "updated_at": "2026-06-27T17:19:05.953371+00:00"
+}

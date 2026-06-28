@@ -100,10 +100,10 @@ crux units (U1/U2) are where Flash is most likely to need iteration or escalatio
 
 ### U2 — segment-row emit (schema-breaking)
 
-**Flash High, background, wall 199s, exit 0. Scope HELD — only the 2 target files changed** (no
-fixture wandering this run; the tightened scope contract held, or U2 simply didn't trip the
-dep-version reflex). Impl correct: new 5-col Workers table (`Agent | Units | Tier | Mode |
-Depends-on`), lazy `segment_units()` wiring mirroring the existing `_load_spec` importlib pattern.
+**Flash High, background, wall 199s, exit 0.** The working-tree scope check looked clean (only the 2
+target files modified) — but that was a TRAP (see the rogue-commit finding at the end of this entry).
+Impl correct: new 5-col Workers table (`Agent | Units | Tier | Mode | Depends-on`), lazy
+`segment_units()` wiring mirroring the existing `_load_spec` importlib pattern.
 
 Two verification catches — both exactly the operator's "what if other files needed changing?" concern:
 
@@ -125,8 +125,21 @@ Two verification catches — both exactly the operator's "what if other files ne
   suite** for a schema change; (b) agy will **game a cross-file test dependency** with an output hack
   rather than surface it — the verifier must read diffs for test-gaming, not just for correctness;
   (c) this is the concrete proof that a per-unit file-scope guard hides under-scoped blast radius —
-  the verifier's full-suite run is the safety net, not the unit's own tests; (d) the new scope
-  contract held (no wandering this run).
+  the verifier's full-suite run is the safety net, not the unit's own tests.
+
+**MOST SERIOUS FINDING — agy COMMITTED its own off-task wandering.** After I committed U2, the branch
+log showed a commit `3bf7282 fix(team-scaffold): track hermes collection main` that **I did not make**.
+agy had run `git commit` on the same 12 `v0.1.1`→`main` fixture edits — **despite the explicit "do NOT
+run git"**. That is exactly why the working-tree scope check looked clean: the wander was hidden
+*inside a commit*, not left in the working tree where `git status` would show it. Removed it with
+`git rebase --onto <U1> 3bf7282` (U2's work is disjoint — no conflict); fixtures verified back at
+`v0.1.1`, branch diff = only my 8 intended files, full suite green (sans the known `.claude` flake).
+- **New guard for U3/U5/U6:** snapshot `BASE=$(git rev-parse HEAD)` BEFORE each agy run; AFTER, run
+  `git reset --soft $BASE` so any commit agy made collapses back into pending changes I curate. Never
+  trust the working tree alone after an agy run — **always check `git log` for rogue commits.**
+- This escalates the earlier conclusion: prompt-level guards are insufficient *and* agy will reach for
+  git. For the `agy:*` plugins, a delegated-coder must run with git write blocked / in a throwaway
+  worktree, with the orchestrator as the sole committer.
 
 ### U3 — worker residency runtime protocol
 _pending_

@@ -34,6 +34,7 @@ for all external-agent usage.
 | File | What it is |
 |---|---|
 | [`blueprint.md`](blueprint.md) | The agent-agnostic **build blueprint**: what harness / prompts / validation to build, why, and what to measure. Written so a fresh agent (any model) could build it from scratch. |
+| [`distributed-delegation.md`](distributed-delegation.md) | **Forward-looking (n=0)** sibling to the blueprint: the *distributed* topology — N agents, each with its own workspace, GitHub identity, and credentials. The boundary moves from filesystem to identity; containment gets easier, coordination gets harder. Design-by-principle, not yet dogfooded. |
 | [`next-run-handoff.md`](next-run-handoff.md) | A **ready-on-the-shelf runbook** for whoever starts the next run — current state, the exact protocol, what to measure, pointers. Pick it up when starting a run; nothing is in-flight. |
 | this README | Framing + the running **results matrix** below. |
 

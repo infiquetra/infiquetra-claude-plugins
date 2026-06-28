@@ -1045,7 +1045,7 @@ def board_add(
 
     # Get item node ID
     data = _graphql(QUERY_GET_ITEM_NODE_ID, {"org": ORG, "repo": repo, "number": number})
-    repo_data = data.get("repository", {})
+    repo_data = data.get("repository") or {}
     item_data = _issue_or_pull_request_node(repo_data)
     if not item_data:
         _error(f"Could not find issue/PR #{number} in {ORG}/{repo}")
@@ -1318,7 +1318,7 @@ def board_discover_fields(project_name: str, fmt: str) -> None:
 def _get_item_labels(repo: str, number: int) -> list[str]:
     """Get label names for an issue."""
     data = _graphql(QUERY_GET_ITEM_LABELS, {"org": ORG, "repo": repo, "number": number})
-    repo_data = data.get("repository", {})
+    repo_data = data.get("repository") or {}
     item_data = _issue_or_pull_request_node(repo_data)
     if not item_data:
         return []

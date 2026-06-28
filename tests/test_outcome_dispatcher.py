@@ -129,7 +129,7 @@ def test_team_execution_artifact_wires_team_emitter() -> None:
     spec = ES.ExecutionSpec.from_dict(_execution_spec_dict())
     art = D.team_execution_artifact(spec)
     assert "Team Structure" in art  # produced through recompile_for_tier's team_emitter leg (R5)
-    assert "preflight" in art and "build" in art  # units preserved
+    assert "U1" in art and "U2" in art  # units preserved (by unit id)
 
 
 # --------------------------------------------------------------------------- integration with advance

@@ -85,8 +85,12 @@ KTD1 — **Enforcement lives in emitted JS; semantics live in a Python oracle.**
 runs in the Workflow JS runtime and cannot call Python at execution time, so the runtime guards must be
 *emitted JS* injected after each `agent()` call. `completeness_gate.py` is the Python oracle (enum + pure
 check predicates + `--self-test`) that unit-tests pin; the emitter ports the same semantics into one
-`__gate` JS helper. *Rejected:* calling Python at runtime (impossible — JS runtime); duplicating inline
-checks at every call site (drift-prone, unreadable).
+`__gate` JS helper — which `completeness_gate.py` **owns as a string constant the emitter imports**, so the JS
+guard is authored in exactly one place (shrinking the oracle↔guard drift surface to a single faithful port).
+*Residual (accepted):* executable parity between the Python `classify()` and the emitted JS `__gate` cannot be
+asserted without a Node runtime — deferred (see U2 test scenarios); the single-sourced helper is the v1
+mitigation. *Rejected:* calling Python at runtime (impossible — JS runtime); duplicating inline checks at every
+call site (drift-prone, unreadable).
 
 KTD2 — **One vocabulary across three enforcement sites.** The mechanical + manifest checks (R1–R7) are
 emitted-JS guards; R12 is a pure-prose team-execution protocol (that plugin has zero Python). All three
@@ -179,23 +183,29 @@ via subprocess exits 0 and prints `caught` (R13/AE7).
 ### U2. Emitted-workflow guards (the null/truncation/count/manifest enforcement)
 
 **Goal:** Make the emitted `.workflow.js` halt on an omission instead of passing `null` downstream. Emit one
-`__gate(result, opts)` helper into the workflow preamble (a faithful JS port of U1's semantics) and a guard
-call after **every** emitted `agent()` site — singleton, parallel thunk, and fan-out — that throws a typed
-error rather than letting a dependent consume a partial/empty envelope.
+`__gate(result, opts)` helper (imported from `completeness_gate.py` per KTD1) into the workflow preamble and a
+guard call after **every emitted UNIT-result `agent()` site** — the singleton, each var of a `parallel([...])`
+layer, and fan-out — that throws a typed error rather than letting a dependent consume a partial/empty envelope.
+The verify-panel's verifier `agent()` calls (`_emit_verify_panel`) are **out of U2's scope**: their null is
+already tolerated by the `v && v.refuted` reconciliation, and panel-level disagreement is U3's domain.
 
 **Write-set:** `plugins/saga/scripts/execution_spec.py` · `tests/test_workflow_emitter.py`.
 
 **Approach:** Extend `emit_workflow_script` (and `_emit_thunk`) to inject `__gate` once in the preamble and a
-`__gate(<var>, {returns, targets, expectsOutput})` call after each result var is bound, before any dependent
-reads it. The fan-out reconcile guard (R3) and the manifest-key guard (R6) emit only where `targets`/`returns`
-are present. The acceptance criterion names `tests/test_execution_spec.py -k emitted_null_check`; this plan
+`__gate(<var>, {returns, targets, expectsOutput})` call after each unit-result var is bound — for the singleton
+layer right after `const <var> = await agent(...)`, and for a `parallel([...])` layer after the
+`const [<v1>, <v2>, …] = await parallel([...])` destructure, one guard per var — before any dependent reads it.
+The fan-out reconcile guard (R3) and the manifest-key guard (R6) emit only where `targets`/`returns` are present. The acceptance criterion names `tests/test_execution_spec.py -k emitted_null_check`; this plan
 places it in the existing `tests/test_workflow_emitter.py` (convention) — the `-k emitted_null_check`
 selector still resolves.
 
 **Test scenarios** (`tests/test_workflow_emitter.py`): emitted JS contains the `__gate` helper; a guard call
-is emitted after every `agent()` call (`emitted_null_check`); the guard *halts* (the emitted code throws,
-not pass-through) on null; fan-out units emit the count-reconcile guard; only `returns`-bearing units emit the
-manifest guard; a no-contract unit emits the presence guard only.
+is emitted after every **unit-result** `agent()` site (`emitted_null_check`), and **not** after the verify-panel's
+verifier agents; the guard *halts* (the emitted code throws, not pass-through) on null; fan-out units emit the
+count-reconcile guard; only `returns`-bearing units emit the manifest guard; a no-contract unit emits the
+presence guard only. *(Parity residual: a Node-executed test that runs the emitted `__gate` against U1's
+canonical fixtures and asserts class-match with `classify()` would close the oracle↔JS gap — deferred from v1
+as it reintroduces a Node dependency; KTD1's single-sourced helper is the v1 mitigation.)*
 
 **Depends on:** U1.
 
@@ -264,16 +274,22 @@ The operational layer `/work` runs. Source of truth: `docs/external-agent-delega
 result in that folder's README matrix.
 
 - **Containment (KTD6):** per unit, clone the repo to a temp jail, `checkout --detach <BASE>`,
-  `remote remove origin`; run agy inside under a `git` PATH-shim. Probe `agy --sandbox` once before relying on
-  it. Accept-and-audit ambient FS: snapshot, then check sibling repos + `~/.claude` for stray writes after.
-- **Per-unit packet:** the unit's write-set as a CLOSED allow-set + pre-resolved read-context (no searching) +
-  the exact VERIFY commands + the `PLAN_GAP` / `TEST-CONFLICT` / `PATH-MISSING` escalation channels. Background
-  the launch (runs exceed the ~2-min foreground limit).
-- **Validation floor (non-negotiable, every unit):** re-derive `git diff <BASE>` + untracked check; scope-diff
-  changed-paths vs the allow-set and **quarantine** strays (do not auto-revert); assert no rogue commit
-  (`git log <BASE>..HEAD`) and no remote drift (`git ls-remote`); run the **FULL** suite + `ruff format --check`
-  + `ruff check` + `mypy` (never a file-local subset); **mutation-proof** agy's tests (break the behavior in the
-  jail, the new test must go red); Claude imports only allow-set paths and is **sole committer**.
+  `remote remove origin`; run agy inside under a `git` PATH-shim. **The boundary is the clone-without-origin plus
+  the orchestrator's own re-derived diff + full gate; the `git` shim and `agy --sandbox` are defense/probe only,
+  never load-bearing** (the blueprint calls both bypassable/unverified). Probe `agy --sandbox` once before relying
+  on it. Accept-and-audit ambient FS: snapshot, then check sibling repos + `~/.claude` for stray writes after.
+- **Per-unit packet:** the unit's write-set as a CLOSED allow-set + pre-resolved read-context (the target paths
+  are handed over so agy need not *search to find them*; it MAY still read/search the repo broadly for correctness
+  — read broad, write narrow — but writes only the allow-set and escalates `PLAN_GAP` for any path it believes
+  must change outside it) + the exact VERIFY commands + the `PLAN_GAP` / `TEST-CONFLICT` / `PATH-MISSING`
+  escalation channels. Background the launch (runs exceed the ~2-min foreground limit).
+- **Validation floor (non-negotiable, every unit):** re-derive `git -C <jail> diff <BASE>` + untracked check;
+  scope-diff changed-paths vs the allow-set and **quarantine** strays (do not auto-revert); assert no rogue commit
+  in the jail (`git -C <jail> log <BASE>..HEAD`); **run the remote-drift check in the REAL repo, orchestrator-side**
+  — snapshot `git ls-remote origin` before launch and re-compare after agy exits (the jail has no `origin`, so a
+  remote check inside it is meaningless); run the **FULL** suite + `ruff format --check` + `ruff check` + `mypy`
+  (never a file-local subset); **mutation-proof** agy's tests (break the behavior in the jail, the new test must go
+  red); Claude imports only allow-set paths and is **sole committer**.
 - **Model ladder (KTD7):** Flash High per unit; escalate that unit to Pro High on failure.
 
 ## Scope Boundaries

@@ -4111,8 +4111,7 @@ def issue_create_prepared(
         )
         remaining = ", ".join(remaining_steps) or "none"
         raise RuntimeError(
-            f"Created issue {url}, but post-create steps failed: {e}. "
-            f"Remaining steps: {remaining}."
+            f"Created issue {url}, but post-create steps failed: {e}. Remaining steps: {remaining}."
         ) from e
 
     _update_sidecar_state(

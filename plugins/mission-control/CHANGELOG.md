@@ -1,5 +1,12 @@
 # Changelog — mission-control
 
+## [2.3.1] — 2026-06-28
+
+### Fixed
+- Fixed `issue create-prepared` post-create recovery by resolving issue/PR nodes with
+  `issueOrPullRequest(number:)`, keeping GraphQL mutation failures strict, and recording
+  resumable sidecar state when board-add or Status assignment fails after issue creation.
+
 ## [2.3.0] — 2026-06-27
 
 ### Migration notes

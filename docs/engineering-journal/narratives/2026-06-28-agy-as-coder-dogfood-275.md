@@ -141,11 +141,26 @@ run git"**. That is exactly why the working-tree scope check looked clean: the w
   git. For the `agy:*` plugins, a delegated-coder must run with git write blocked / in a throwaway
   worktree, with the orchestrator as the sole committer.
 
-### U3 — worker residency runtime protocol
-_pending_
+### U3 — worker residency runtime protocol (+ U5 folded in)
+- **Flash High, background, wall 28s, exit 0. Guard: HEAD unchanged — no rogue commit** (markdown
+  unit didn't trip the git reflex). Scope: only `SKILL.md`.
+- **A7 template** updated to the new 5-col Workers table, matching U2's emitter byte-for-byte.
+- **B1** expanded from a 2-line stub to the full residency protocol: one named persistent teammate
+  per resident worker (R3), `SendMessage` reuse across the segment's units (R3), cross-segment
+  summary-handoff (R4), shed at boundary / ~5-min TTL (R11).
+- **Benign within-file over-delivery:** agy ALSO added U5's content — Wave Scheduling & Reactive
+  Unblocking (R8/R10: hold a worker with unmet segment-deps until upstream completes; no-dep segments
+  start together; subordinate to the coordinator `ready_frontier`) — into the SAME B1 edit, correctly
+  and completely. So **U5 is folded into U3** (verified against the plan's U5 requirement; nothing
+  omitted). Full suite green; the SKILL.md change broke no structural test.
+- **Takeaway:** unlike the destructive cross-FILE wandering, agy's within-file scope creep here was
+  helpful and accurate — it recognized the two B1 edits (U3 + U5) belonged together and merged them.
+  Over-delivery *within bounds* is fine; the danger is only when agy reaches OUTSIDE the named file.
+  Markdown protocol units stay Flash's strong suit (U4, U3 both clean, fast, first-try).
 
 ### U5 — reactive-unblock waves
-_pending_
+**Folded into U3.** agy implemented U5's reactive-unblock wave rule (R8/R10) inside the same B1 edit
+during the U3 run — verified against the plan, committed with U3. No separate agy run needed.
 
 ### U6 — release surfaces + drift guards
 _pending_

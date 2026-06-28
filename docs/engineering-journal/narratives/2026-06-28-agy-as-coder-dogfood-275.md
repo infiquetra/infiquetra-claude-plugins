@@ -178,6 +178,13 @@ during the U3 run — verified against the plan, committed with U3. No separate 
   before→after strings), Flash is reliable and bounded. → Strongest "where agy IS good" data point:
   tightly-specified mechanical edits. The lever is **specificity** — a precise task starves the
   wandering; a vague one feeds it.
+- **CI caught a U6 scope gap + a verification lapse of mine (post-PR).** The version bump also needed
+  the hardcoded version pins in `test_saga_plugin.py:48` and `test_team_execution_plugin.py:60`
+  updated — files the plan's U6 never listed (same under-scoping pattern as U2's cross-file tests).
+  I had run only `test_release_triad` after U6, NOT the full suite (which I *did* run after U1–U3), so
+  I missed it locally and CI's Tests job was the backstop. Fix: bump the two pins to `0.39.0`/`2.3.0`.
+  **Lesson reinforced: run the FULL suite after EVERY change, including release bumps — the lockstep
+  triad guard is necessary but not sufficient, because separate metadata tests pin the version too.**
 
 ## Cross-cutting observations (distilled at the end → LEARNINGS.md)
 _pending_

@@ -45,4 +45,4 @@ Implemented U1-U4 from the issue #280 plan.
 
 ## Next Step
 
-Run the code-review gate against `134aaf7`, then open a PR after explicit confirmation if no P0/P1 findings remain.
+Run the code-review gate against the branch tip, then open a PR after explicit confirmation if no P0/P1 findings remain.

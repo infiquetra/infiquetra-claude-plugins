@@ -1,0 +1,88 @@
+{
+  "approval_state": null,
+  "created_at": "2026-06-28T15:06:58.706233+00:00",
+  "created_issue_number": 289,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/289",
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-28-capability-infiquetra-claude-plugins-campps-work-4.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: capability.yml, enhancement.yml, defect.yml, exploration.yml, context-update.yml, objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-28-team-spawn-residency-guard-requirements.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [
+    "status"
+  ],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-28-capability-infiquetra-claude-plugins-campps-work-4.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-28\ntopic: team-spawn-residency-guard\nmaturity: requirements-ready\nsource: docs/ideation/2026-06-26-vecu-port-seeds-ideation.md (survivor R6 \u2014 team-spawn guard hook, warn-first PreToolUse; VECU te v3.13.0 B3a)\n---\n\n# Team-Spawn Residency Guard\n\n## Summary\n\nA warn-first `PreToolUse` hook that fires when the orchestrator spawns a team-execution agent in a\nrole that cycles through the review/remediation loop (a reviewer or tester) **without the\nnamed-persistent-teammate shape** \u2014 and nudges that the teammate will re-pay its full context on every\ncycle instead of keeping its prompt cache warm via `SendMessage`. It is advisory: it emits guidance\nthrough `additionalContext` and **never blocks** the spawn. It is the runtime **observability** layer\nfor the named-teammate residency protocol defined in the S-1 worker-cache-scheduling plan (U3 workers,\nU4 reviewers) \u2014 a protocol KTD4 deliberately keeps as silently-violable markdown prose. The hook\nobserves that protocol; it does not enforce it.\n\n## Problem Frame\n\nThe team-execution protocol runs reviewers through up to three consensus cycles\n(`plugins/team-execution/skills/team-execution/references/consensus-protocol.md:54`) ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-28-team-spawn-residency-guard-requirements.md",
+    "ref": "docs/brainstorms/2026-06-28-team-spawn-residency-guard-requirements.md",
+    "title": "Team-Spawn Residency Guard",
+    "url": null
+  },
+  "state": "post_create_pending",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: infiquetra-claude-plugins campps work",
+  "updated_at": "2026-06-28T15:07:01.505661+00:00"
+}

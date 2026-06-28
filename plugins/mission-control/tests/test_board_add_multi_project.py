@@ -40,8 +40,12 @@ _ASGARD_PROJECT_ID = "PVT_asgard"
 
 _NODE_ID_RESPONSE = {
     "repository": {
-        "issue": {"id": _ITEM_NODE_ID, "number": 42, "title": "demo issue"},
-        "pullRequest": None,
+        "issueOrPullRequest": {
+            "__typename": "Issue",
+            "id": _ITEM_NODE_ID,
+            "number": 42,
+            "title": "demo issue",
+        },
     }
 }
 

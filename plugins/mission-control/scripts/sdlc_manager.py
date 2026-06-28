@@ -661,6 +661,14 @@ def _graphql(query: str, variables: dict | None = None) -> dict:
     return cast(dict, data.get("data", {}))
 
 
+def _issue_or_pull_request_node(repo_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the resolved Issue/PullRequest union node, if present."""
+    node = repo_data.get("issueOrPullRequest")
+    if isinstance(node, dict):
+        return cast(dict[str, Any], node)
+    return None
+
+
 def _rest_get(path: str) -> Any:
     """Execute a REST GET via gh CLI."""
     result = _gh(["api", path])
@@ -707,8 +715,11 @@ def _warn(msg: str) -> None:
 QUERY_GET_ITEM_NODE_ID = """
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
-    issue(number: $number) { id number title }
-    pullRequest(number: $number) { id number title }
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue { id number title }
+      ... on PullRequest { id number title }
+    }
   }
 }
 """
@@ -816,8 +827,11 @@ query($org: String!, $number: Int!) {
 QUERY_GET_ITEM_LABELS = """
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
-    issue(number: $number) { labels(first: 30) { nodes { name } } }
-    pullRequest(number: $number) { labels(first: 30) { nodes { name } } }
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue { labels(first: 30) { nodes { name } } }
+      ... on PullRequest { labels(first: 30) { nodes { name } } }
+    }
   }
 }
 """
@@ -983,6 +997,7 @@ def board_add(
     config: dict | None = None,
     project_name: str | None = None,
     project_names: list[str] | None = None,
+    strict: bool = False,
 ) -> None:
     """Add issue/PR to correct project(s).
 
@@ -1030,8 +1045,8 @@ def board_add(
 
     # Get item node ID
     data = _graphql(QUERY_GET_ITEM_NODE_ID, {"org": ORG, "repo": repo, "number": number})
-    repo_data = data.get("repository", {})
-    item_data = repo_data.get("issue") or repo_data.get("pullRequest")
+    repo_data = data.get("repository") or {}
+    item_data = _issue_or_pull_request_node(repo_data)
     if not item_data:
         _error(f"Could not find issue/PR #{number} in {ORG}/{repo}")
         sys.exit(1)
@@ -1054,6 +1069,8 @@ def board_add(
                 sync_results = _sync_label_fields_for_item(repo, number, proj, item_id)
                 results.extend(sync_results)
         except Exception as e:
+            if strict:
+                raise RuntimeError(f"Failed to add to '{proj['name']}': {e}") from e
             results.append(f"Failed to add to '{proj['name']}': {e}")
 
     _out("\n".join(results), fmt)
@@ -1301,8 +1318,8 @@ def board_discover_fields(project_name: str, fmt: str) -> None:
 def _get_item_labels(repo: str, number: int) -> list[str]:
     """Get label names for an issue."""
     data = _graphql(QUERY_GET_ITEM_LABELS, {"org": ORG, "repo": repo, "number": number})
-    repo_data = data.get("repository", {})
-    item_data = repo_data.get("issue") or repo_data.get("pullRequest")
+    repo_data = data.get("repository") or {}
+    item_data = _issue_or_pull_request_node(repo_data)
     if not item_data:
         return []
     return [n["name"] for n in item_data.get("labels", {}).get("nodes", [])]
@@ -3839,6 +3856,48 @@ def _update_sidecar_state(draft_path: Path, updates: dict[str, Any]) -> None:
     sidecar_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _read_sidecar_payload(draft_path: Path) -> dict[str, Any]:
+    sidecar_path = draft_path.with_suffix(".json")
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Prepared issue sidecar {sidecar_path} not JSON object")
+    return cast(dict[str, Any], payload)
+
+
+def _prepared_project_item_exists(
+    project_name: str, repo: str, number: int, config: dict[str, Any]
+) -> bool:
+    project_number = get_project_config(config, project_name)["number"]
+    _, items = get_project_items(project_number)
+    return any(
+        item.get("content", {}).get("number") == number
+        and item.get("content", {}).get("repository", {}).get("name") == repo
+        for item in items
+    )
+
+
+def _post_create_pending_state(draft_path: Path) -> dict[str, Any] | None:
+    payload = _read_sidecar_payload(draft_path)
+    if payload.get("state") != "post_create_pending":
+        return None
+    url = str(payload.get("created_issue_url") or "")
+    number = payload.get("created_issue_number")
+    if not url or not isinstance(number, int):
+        raise RuntimeError("Prepared issue post-create state is missing created issue URL/number")
+    remaining = payload.get("remaining_steps")
+    if not isinstance(remaining, list) or not all(isinstance(step, str) for step in remaining):
+        remaining = ["board-add", "status"]
+    return {
+        "created_issue_url": url,
+        "created_issue_number": number,
+        "remaining_steps": remaining,
+        "mapping_pr_url": payload.get("mapping_pr_url"),
+        "pending_mapping": payload.get("pending_mapping", False),
+        "mutation_summary": payload.get("mutation_summary", []),
+        "created_at": payload.get("created_at") or datetime.now(UTC).isoformat(),
+    }
+
+
 def _read_sidecar_approval_state(draft_path: Path) -> str | None:
     """Read just the U11 `approval_state` from a draft's sidecar.
 
@@ -3955,46 +4014,117 @@ def issue_create_prepared(
                 print("No mutations applied.")
             return result
 
-    labels_missing = any(step.action == "deploy-labels" for step in plan.steps)
-    templates_missing = any(step.action == "deploy-templates" for step in plan.steps)
-    if labels_missing:
-        labels_deploy(issue.repo, fmt="text")
-    if templates_missing:
-        rollout_deploy_templates(issue.repo, fmt="text")
-
+    resume_state = _post_create_pending_state(draft_path)
     mapping_pr_url: str | None = None
-    if plan.mapping_missing:
-        mapping_pr_url = _open_mapping_pr(issue.repo, issue.project)
-        if not override_mapping:
-            _update_sidecar_state(
-                draft_path,
-                {
-                    "state": "mapping_pending",
-                    "mapping_pr_url": mapping_pr_url,
-                    "pending_mapping": {"repo": issue.repo, "project": issue.project},
-                },
-            )
-            if fmt != "json":
-                print(f"Mapping PR opened; issue creation stopped: {mapping_pr_url}")
-            result = {"created": False, "mapping_pr_url": mapping_pr_url}
-            if fmt == "json":
-                _out({**result, "mutation_plan": plan_payload}, fmt)
-            return result
 
-    url, number = _create_github_issue(issue)
-    board_add(issue.repo, number, fmt="text", config=config, project_name=issue.project)
-    flow_set_field(issue.project, issue.repo, number, "Status", issue.status, fmt="text")
-    _append_created_issue_to_draft(draft_path, url, number)
+    if resume_state:
+        url = str(resume_state["created_issue_url"])
+        number = int(resume_state["created_issue_number"])
+        remaining_steps = list(resume_state["remaining_steps"])
+        mapping_pr_url = (
+            str(resume_state["mapping_pr_url"]) if resume_state.get("mapping_pr_url") else None
+        )
+        pending_mapping = bool(resume_state.get("pending_mapping"))
+        created_at = str(resume_state["created_at"])
+        mutation_summary = resume_state.get("mutation_summary") or [
+            asdict(step) for step in plan.steps
+        ]
+    else:
+        labels_missing = any(step.action == "deploy-labels" for step in plan.steps)
+        templates_missing = any(step.action == "deploy-templates" for step in plan.steps)
+        if labels_missing:
+            labels_deploy(issue.repo, fmt="text")
+        if templates_missing:
+            rollout_deploy_templates(issue.repo, fmt="text")
+
+        if plan.mapping_missing:
+            mapping_pr_url = _open_mapping_pr(issue.repo, issue.project)
+            if not override_mapping:
+                _update_sidecar_state(
+                    draft_path,
+                    {
+                        "state": "mapping_pending",
+                        "mapping_pr_url": mapping_pr_url,
+                        "pending_mapping": {"repo": issue.repo, "project": issue.project},
+                    },
+                )
+                if fmt != "json":
+                    print(f"Mapping PR opened; issue creation stopped: {mapping_pr_url}")
+                result = {"created": False, "mapping_pr_url": mapping_pr_url}
+                if fmt == "json":
+                    _out({**result, "mutation_plan": plan_payload}, fmt)
+                return result
+
+        url, number = _create_github_issue(issue)
+        created_at = datetime.now(UTC).isoformat()
+        mutation_summary = [asdict(step) for step in plan.steps]
+        pending_mapping = bool(mapping_pr_url and override_mapping)
+        remaining_steps = ["board-add", "status"]
+        _append_created_issue_to_draft(draft_path, url, number)
+        _update_sidecar_state(
+            draft_path,
+            {
+                "state": "post_create_pending",
+                "created_issue_url": url,
+                "created_issue_number": number,
+                "created_at": created_at,
+                "remaining_steps": remaining_steps,
+                "mutation_summary": mutation_summary,
+                "mapping_pr_url": mapping_pr_url,
+                "pending_mapping": pending_mapping,
+            },
+        )
+
+    try:
+        if "board-add" in remaining_steps:
+            if _prepared_project_item_exists(issue.project, issue.repo, number, config):
+                remaining_steps = [step for step in remaining_steps if step != "board-add"]
+            else:
+                board_add(
+                    issue.repo,
+                    number,
+                    fmt="text",
+                    config=config,
+                    project_name=issue.project,
+                    strict=True,
+                )
+                remaining_steps = [step for step in remaining_steps if step != "board-add"]
+            _update_sidecar_state(draft_path, {"remaining_steps": remaining_steps})
+
+        if "status" in remaining_steps:
+            flow_set_field(issue.project, issue.repo, number, "Status", issue.status, fmt="text")
+            remaining_steps = [step for step in remaining_steps if step != "status"]
+            _update_sidecar_state(draft_path, {"remaining_steps": remaining_steps})
+    except Exception as e:
+        _update_sidecar_state(
+            draft_path,
+            {
+                "state": "post_create_pending",
+                "created_issue_url": url,
+                "created_issue_number": number,
+                "created_at": created_at,
+                "remaining_steps": remaining_steps,
+                "mutation_summary": mutation_summary,
+                "mapping_pr_url": mapping_pr_url,
+                "pending_mapping": pending_mapping,
+            },
+        )
+        remaining = ", ".join(remaining_steps) or "none"
+        raise RuntimeError(
+            f"Created issue {url}, but post-create steps failed: {e}. Remaining steps: {remaining}."
+        ) from e
+
     _update_sidecar_state(
         draft_path,
         {
             "state": "created",
             "created_issue_url": url,
             "created_issue_number": number,
-            "created_at": datetime.now(UTC).isoformat(),
-            "mutation_summary": [asdict(step) for step in plan.steps],
+            "created_at": created_at,
+            "remaining_steps": [],
+            "mutation_summary": mutation_summary,
             "mapping_pr_url": mapping_pr_url,
-            "pending_mapping": bool(mapping_pr_url and override_mapping),
+            "pending_mapping": pending_mapping,
         },
     )
     result = {"created": True, "url": url, "number": number, "mapping_pr_url": mapping_pr_url}

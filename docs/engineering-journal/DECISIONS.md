@@ -22,6 +22,22 @@
 
 ---
 
+## 2026-06-28
+
+### Create-prepared GraphQL resolver stance (planned) {#create-prepared-graphql-resolver-stance}
+
+**Decision.** Fix issue #280 by replacing mission-control's dual `issue(number:)` plus `pullRequest(number:)` GraphQL resolvers with `issueOrPullRequest(number:)` union queries, while keeping `_gh` and `_graphql` strict. The post-create part of `issue create-prepared` should become a resumable sidecar state transition: record the created issue URL/number before board-add and Status, then finalize only after both steps complete.
+
+**Rejected alternatives.** Rejected blanket "return non-null data despite errors" handling because `_graphql` is shared by mutations and would hide failed board-add or Status writes. Rejected `_gh`-wide GraphQL partial-success handling because it would widen the success criteria for every CLI caller. Rejected auto-deleting a created issue on post-create failure because that is destructive and loses the issue URL operators need for recovery.
+
+**Rationale.** The live probe in the requirements source showed the union query exits 0 for an issue while the current dual-branch query exits 1 with usable issue data plus a speculative PR `NOT_FOUND`. Keeping strict error handling preserves the safety boundary around mutation call sites, and the resumable sidecar guard addresses the real operational failure mode: a created issue abandoned before board membership and Status assignment.
+
+**Revisit when.** Add a strictly scoped read-resolver partial-tolerance path only if a future GitHub GraphQL read genuinely cannot be expressed without nullable speculative branches. Revisit the sidecar state names if a broader prepared-draft state machine lands.
+
+**Refs.** Plan: `docs/plans/2026-06-28-create-prepared-partial-graphql-error-plan.md`; requirements: `docs/brainstorms/2026-06-27-create-prepared-partial-graphql-error-defect.md`; readiness review: `docs/reviews/2026-06-27-create-prepared-partial-graphql-error-readiness.md`; issue: `https://github.com/infiquetra/infiquetra-claude-plugins/issues/280`.
+
+---
+
 ## 2026-06-26
 
 ### OutcomeOrchestrator ships (U11): the feature-flip is a version-triad bump + advertise-the-complete-surface + a compose-it-all integration gate, NOT a retroactive drift sync; saga 0.38.0  {#outcome-release-flip-stance}

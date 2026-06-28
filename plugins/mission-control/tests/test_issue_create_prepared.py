@@ -111,6 +111,28 @@ def _unmapped_config() -> dict:
     }
 
 
+def _write_post_create_pending(
+    draft: Path, remaining_steps: list[str] | None = None, issue_number: int = 42
+) -> None:
+    sidecar_path = draft.with_suffix(".json")
+    sidecar = json.loads(sidecar_path.read_text())
+    sidecar.update(
+        {
+            "state": "post_create_pending",
+            "created_issue_url": (
+                f"https://github.com/infiquetra/hermes-claude-code-router/issues/{issue_number}"
+            ),
+            "created_issue_number": issue_number,
+            "created_at": "2026-06-28T00:00:00+00:00",
+            "remaining_steps": remaining_steps or ["board-add", "status"],
+            "mutation_summary": [{"action": "issue", "detail": "created"}],
+            "mapping_pr_url": None,
+            "pending_mapping": False,
+        }
+    )
+    sidecar_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True) + "\n")
+
+
 def test_blocked_draft_refuses_to_mutate(tmp_path) -> None:
     draft = _blocked_draft(tmp_path)
 
@@ -155,6 +177,7 @@ def test_create_prepared_refuses_unapproved_then_succeeds_after_approval(tmp_pat
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/7", 7),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):
@@ -178,6 +201,7 @@ def test_create_prepared_skip_approval_bypasses_gate(tmp_path) -> None:
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/9", 9),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):
@@ -225,6 +249,7 @@ def test_create_prepared_creates_issue_and_marks_draft(tmp_path) -> None:
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/42", 42),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add") as mock_board,
         patch.object(sdlc_manager, "flow_set_field") as mock_status,
     ):
@@ -237,6 +262,7 @@ def test_create_prepared_creates_issue_and_marks_draft(tmp_path) -> None:
         fmt="text",
         config=_mapped_config(),
         project_name="campps",
+        strict=True,
     )
     mock_status.assert_called_once_with(
         "campps",
@@ -251,6 +277,100 @@ def test_create_prepared_creates_issue_and_marks_draft(tmp_path) -> None:
     assert sidecar["state"] == "created"
     assert sidecar["created_issue_number"] == 42
     assert "## Created Issue" in draft.read_text()
+
+
+def test_create_prepared_records_pending_state_when_board_add_fails(tmp_path) -> None:
+    draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(
+            sdlc_manager,
+            "_create_github_issue",
+            return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/42", 42),
+        ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        patch.object(sdlc_manager, "board_add", side_effect=RuntimeError("board add failed")),
+        patch.object(sdlc_manager, "flow_set_field") as mock_status,
+        pytest.raises(RuntimeError, match="Remaining steps: board-add, status"),
+    ):
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    mock_status.assert_not_called()
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["state"] == "post_create_pending"
+    assert sidecar["created_issue_number"] == 42
+    assert sidecar["remaining_steps"] == ["board-add", "status"]
+    assert "## Created Issue" in draft.read_text()
+
+
+def test_create_prepared_resumes_post_create_without_duplicate_issue(tmp_path) -> None:
+    draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    _write_post_create_pending(draft)
+
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(sdlc_manager, "_create_github_issue") as mock_create,
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        patch.object(sdlc_manager, "board_add") as mock_board,
+        patch.object(sdlc_manager, "flow_set_field") as mock_status,
+    ):
+        result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    assert result["created"] is True
+    assert result["number"] == 42
+    mock_create.assert_not_called()
+    mock_board.assert_called_once_with(
+        "hermes-claude-code-router",
+        42,
+        fmt="text",
+        config=_mapped_config(),
+        project_name="campps",
+        strict=True,
+    )
+    mock_status.assert_called_once_with(
+        "campps",
+        "hermes-claude-code-router",
+        42,
+        "Status",
+        "Idea",
+        fmt="text",
+    )
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["state"] == "created"
+    assert sidecar["remaining_steps"] == []
+
+
+def test_create_prepared_resume_skips_existing_board_membership(tmp_path) -> None:
+    draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    _write_post_create_pending(draft, remaining_steps=["board-add", "status"])
+
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(sdlc_manager, "_create_github_issue") as mock_create,
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=True),
+        patch.object(sdlc_manager, "board_add") as mock_board,
+        patch.object(sdlc_manager, "flow_set_field") as mock_status,
+    ):
+        result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    assert result["created"] is True
+    assert result["number"] == 42
+    mock_create.assert_not_called()
+    mock_board.assert_not_called()
+    mock_status.assert_called_once()
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["state"] == "created"
+    assert sidecar["remaining_steps"] == []
 
 
 def test_missing_mapping_opens_pr_and_stops_without_override(tmp_path) -> None:
@@ -291,6 +411,7 @@ def test_override_mapping_creates_issue_and_records_pending_mapping(tmp_path) ->
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/42", 42),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):
@@ -324,6 +445,7 @@ def test_missing_labels_and_templates_are_deployed_after_confirmation(tmp_path) 
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/42", 42),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):

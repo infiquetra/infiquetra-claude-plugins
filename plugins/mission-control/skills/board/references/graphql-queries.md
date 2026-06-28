@@ -15,16 +15,20 @@ adding to a project).
 ```graphql
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
-    issue(number: $number) { id number title }
-    pullRequest(number: $number) { id number title }
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue { id number title }
+      ... on PullRequest { id number title }
+    }
   }
 }
 ```
 
 **Variables**: `org`, `repo`, `number`
 
-**Usage**: Called first in `board_add()`. The script checks both `issue` and `pullRequest`
-fields — whichever is non-null is the target. The `id` field is the node ID used in mutations.
+**Usage**: Called first in `board_add()`. The script reads the single
+`issueOrPullRequest` union node. Its `id` field is the content node ID used in
+project mutations.
 
 ---
 
@@ -203,8 +207,11 @@ both `id` and `name`. Use the `id` values in `QUERY_SET_FIELD_VALUE`.
 ```graphql
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
-    issue(number: $number) { labels(first: 30) { nodes { name } } }
-    pullRequest(number: $number) { labels(first: 30) { nodes { name } } }
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue { labels(first: 30) { nodes { name } } }
+      ... on PullRequest { labels(first: 30) { nodes { name } } }
+    }
   }
 }
 ```

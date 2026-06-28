@@ -9,6 +9,12 @@ why, and what to measure** — not just a list of rules.
 This blueprint is engine-agnostic on purpose. The specifics of agy/codex live in the
 [Per-engine adapter](#per-engine-adapter) section; everything above it holds for any delegate.
 
+It is also **topology-specific**: it assumes *co-located* delegation — orchestrator and delegate share
+one machine, one workspace, and one GitHub credential, which is why it must *build* a filesystem boundary
+(the clone-jail). For the opposite assumption — N agents, each with its own workspace, identity, and
+credentials — the boundary moves from filesystem to identity and most of the local jail machinery is
+obviated; see [`distributed-delegation.md`](distributed-delegation.md) (forward-looking, n=0).
+
 ---
 
 ## 0. The one thing to internalize first

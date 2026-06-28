@@ -1,0 +1,88 @@
+{
+  "approval_state": null,
+  "created_at": "2026-06-28T18:56:50.086745+00:00",
+  "created_issue_number": 295,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/295",
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-28-capability-board-saga-reconciliation-on-resume.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: capability.yml, enhancement.yml, defect.yml, exploration.yml, context-update.yml, objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-28-board-saga-reconciliation-requirements.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [
+    "status"
+  ],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-28-capability-board-saga-reconciliation-on-resume.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-28\ntopic: board-saga-reconciliation\nmaturity: requirements-ready\nsource: ideation R1/A3 (docs/ideation/2026-06-26-vecu-port-seeds-ideation.md) \u2014 revived survivor, re-bounded\ndepends_on: \"#279 (S-2 reversibility/idempotency certificate \u2014 the autonomous board-sync writer)\"\nrepo: infiquetra-claude-plugins\n---\n\n# Board\u2194Saga Reconciliation on Resume (R1)\n\n## Summary\n\nR1 is the **resume-time reconciliation companion** to S-2 (#279). #279 builds the autonomous\nboard-sync *writer* \u2014 at a board-relevant leaf transition it drives the enumerated reversible/additive\nwrites (Status, labels, sub-issue close, coalesced progress comments), each under an idempotency key\nwith a bounded-retry/fail-loud path, and records every write as a saga tick (#279 R9, R15\u2013R19). What\n#279 does **not** do is notice when an *outside* writer \u2014 the operator, a GitHub auto-review, a future\nreview agent \u2014 changed the board while saga was at rest. That blind spot is R1.\n\nR1 runs at the next resume / session start: it re-fetches the live board for the fields saga owns,\ndiffs them against #279's recorded writes (and its in-flight idempotency keys), and on any divergence\nsurfaces the conflict and asks the",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-28-board-saga-reconciliation-requirements.md",
+    "ref": "docs/brainstorms/2026-06-28-board-saga-reconciliation-requirements.md",
+    "title": "Board\u2194Saga Reconciliation on Resume (R1)",
+    "url": null
+  },
+  "state": "post_create_pending",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability \u2014 board-saga reconciliation on resume",
+  "updated_at": "2026-06-28T18:56:52.715948+00:00"
+}

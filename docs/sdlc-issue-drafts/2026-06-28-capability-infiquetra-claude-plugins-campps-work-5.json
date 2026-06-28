@@ -1,0 +1,77 @@
+{
+  "approval_state": null,
+  "created_at": "2026-06-28T16:25:06.451183+00:00",
+  "created_issue_number": 291,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/291",
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-28-capability-infiquetra-claude-plugins-campps-work-5.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: capability.yml, enhancement.yml, defect.yml, exploration.yml, context-update.yml, objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-28-typed-artifact-pointer-passing-requirements.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for capability/medium: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [
+    "status"
+  ],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-28-capability-infiquetra-claude-plugins-campps-work-5.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-28\ntopic: typed-artifact-pointer-passing\nmaturity: requirements-ready\nsource: docs/ideation/2026-06-26-vecu-port-seeds-ideation.md (survivor R15b \u2014 typed artifact-pointer passing, the live half of the R15 SPLIT)\n---\n\n# Typed Artifact-Pointer Passing (team-execution)\n\n## Summary\n\nWhen the team-execution orchestrator hands a large artifact (a diff, a changed file, a generated\noutput) to a spawned agent, pass a **typed pointer** \u2014 a git object reference, a path + content hash,\nor a path + symbol reference \u2014 instead of inlining the raw text. The orchestrator stops constructing N\nredundant inlined copies and keeps its long-running context window lean; the already-capable agent\ndereferences the artifact itself.\n\nDelivered as a dependency-ordered stack, lowest-risk-first: **Layer 1** git-object diff pointers (no\nnew storage) \u2192 **Layer 2** a content-addressed store for non-git artifacts \u2192 **Layer 3** AST/symbol\npointers (feasibility-gated). In v1 a receiving agent dereferences the **full** artifact; per-lens\nscoping (reading only part of it) is a deferred, guarded refinement, because reading less than the\ninlined version would have shown can change a review verdict.\n\n## P",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-28-typed-artifact-pointer-passing-requirements.md",
+    "ref": "docs/brainstorms/2026-06-28-typed-artifact-pointer-passing-requirements.md",
+    "title": "Typed Artifact-Pointer Passing (team-execution)",
+    "url": null
+  },
+  "state": "post_create_pending",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: infiquetra-claude-plugins campps work",
+  "updated_at": "2026-06-28T16:25:09.226051+00:00"
+}

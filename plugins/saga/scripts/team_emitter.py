@@ -99,15 +99,25 @@ def emit_team_structure(spec: Any) -> str:
     )
     lines.append("")
 
-    # ---- Workers ---- one row per spec unit
+    # ---- Workers ---- one row per resident-worker segment (U2/KTD3)
     lines.append("### Workers")
-    lines.append("| Agent | Role | Mode | Responsibilities |")
-    lines.append("|-------|------|------|------------------|")
-    for i, unit in enumerate(spec.units, start=1):
-        agent = f"worker-{i}"
-        role = unit.label
-        responsibilities = unit.prompt.split("\n")[0][:120] if unit.prompt else unit.label
-        lines.append(f"| `{agent}` | {role} | bypassPermissions | {responsibilities} |")
+    lines.append("| Agent | Units | Tier | Mode | Depends-on |")
+    lines.append("|-------|-------|------|------|------------|")
+    spec_module_path = Path(__file__).parent / "execution_spec.py"
+    import importlib.util
+
+    _spec = importlib.util.spec_from_file_location("execution_spec", spec_module_path)
+    assert _spec is not None and _spec.loader is not None
+    mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(mod)
+    segments = mod.segment_units(spec)
+
+    for seg in segments:
+        agent = f"`{seg.resident_id}`"
+        units = ", ".join(seg.unit_ids)
+        tier = f"{seg.tier.model}/{seg.tier.effort}"
+        deps = ", ".join(seg.depends_on) if seg.depends_on else "—"
+        lines.append(f"| {agent} | {units} | {tier} | bypassPermissions | {deps} |")
     lines.append("")
 
     # ---- Reviewers ---- always the base set

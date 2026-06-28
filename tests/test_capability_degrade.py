@@ -238,7 +238,7 @@ def test_recompile_to_team_tier_emits_team_structure(es: ModuleType) -> None:
     assert "Team Structure" in out  # the team_emitter protocol, wired in (R5)
     assert "await agent(" not in out  # not the workflow harness
     for unit in spec.units:
-        assert unit.label in out  # units preserved (by label) regardless of tier
+        assert unit.unit_id in out  # units preserved (by unit id) regardless of tier
 
 
 def test_recompile_unknown_tier_floors_to_runnable_baseline(es: ModuleType) -> None:

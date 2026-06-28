@@ -223,9 +223,9 @@ Append a plan section like this:
 ## Team Structure
 
 ### Workers
-| Agent | Role | Mode | Responsibilities |
-|-------|------|------|------------------|
-| `worker-1` | [Phase name] | bypassPermissions | [Tasks from plan] |
+| Agent | Units | Tier | Mode | Depends-on |
+|-------|-------|------|------|------------|
+| `worker-<plugin>` | U1, U2 | opus/high | bypassPermissions | — |
 
 ### Reviewers
 | Agent | Role | Required | Selection Reason |
@@ -293,8 +293,15 @@ here in Phase B preflight.
 
 ## Step B1: Workers Complete Changes
 
-Workers execute approved tasks. Coordinate dependencies and keep work scoped to the plan.
-When all worker tasks are complete, capture changed files and git diff summary for reviewers.
+Workers execute approved tasks. Coordinate dependencies, keep work scoped to the plan, and run execution waves using the resident-worker residency protocol:
+
+- **Wave Scheduling & Reactive Unblocking (R8, R10):** A resident worker with unmet segment-level `Depends-on` must not be spawned (avoiding premature creation costs) until its upstream segments complete. Segments with no dependencies can start in parallel. This within-run segment frontier is strictly subordinate to saga's coordinator-level `ready_frontier`.
+- **Persistent Resident Workers (R3):** Spawn exactly one named, persistent teammate per resident worker (segment) using an Agent with a specific `name` (the resident id) and `run_in_background` enabled, rather than spawning anonymous workers per unit.
+- **Worker Reuse (R3):** Reuse the resident worker across all units in its segment via `SendMessage`. Never re-spawn the worker per unit; reusing the persistent teammate preserves its warm context/cache across all units it owns.
+- **Cross-Segment Summary-Handoff (R4):** When a dependent segment requires the result of a prior segment, seed the dependent segment's fresh worker with a short summary of the upstream segment's output via `SendMessage` instead of forwarding the upstream worker's entire context.
+- **Context Shedding (R11):** Shed a resident worker at its segment boundary, or when a block of time is expected to exceed the prompt cache TTL horizon (~5 minutes). Teammate reuse is for temporally-tight loops, not indefinite warmth.
+
+When all worker tasks are complete, capture changed files and a git diff summary for reviewers.
 
 ---
 

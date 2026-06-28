@@ -909,3 +909,296 @@ def test_parallel_and_verify_agents_each_carry_their_own_tier() -> None:
     assert script.count('effort: "high"') == 1
     # model/effort are emitted in pairs on every agent -> the two counts track together.
     assert script.count("model: ") == script.count("effort: ")
+
+
+# ---------------------------------------------------------------------------
+# U1 tests: files round-trip, back-compat, segmentation, dependencies collapse, no-mutation
+# ---------------------------------------------------------------------------
+
+
+def test_unit_files_round_trip() -> None:
+    mod = _load()
+    data = {
+        "unit_id": "U1",
+        "label": "grounding",
+        "tier": {"model": "haiku", "effort": "low"},
+        "prompt": "run preflight",
+        "files": ["plugins/saga/scripts/execution_spec.py", "tests/test_workflow_emitter.py"],
+    }
+    unit = mod.Unit.from_dict(data)
+    assert unit.files == [
+        "plugins/saga/scripts/execution_spec.py",
+        "tests/test_workflow_emitter.py",
+    ]
+
+    # Round-trip
+    dumped = unit.to_dict()
+    assert dumped["files"] == [
+        "plugins/saga/scripts/execution_spec.py",
+        "tests/test_workflow_emitter.py",
+    ]
+    rebuilt = mod.Unit.from_dict(dumped)
+    assert rebuilt.files == unit.files
+
+
+def test_unit_no_files_back_compat() -> None:
+    mod = _load()
+    data = {
+        "unit_id": "U1",
+        "label": "grounding",
+        "tier": {"model": "haiku", "effort": "low"},
+        "prompt": "run preflight",
+        # "files" is missing
+    }
+    unit = mod.Unit.from_dict(data)
+    assert unit.files == []
+
+    # Round-trip
+    dumped = unit.to_dict()
+    assert dumped["files"] == []
+    rebuilt = mod.Unit.from_dict(dumped)
+    assert rebuilt.files == []
+
+
+def test_segment_units_grouping_and_boundaries() -> None:
+    mod = _load()
+    data = {
+        "name": "segment-test",
+        "description": "testing segmentation rules",
+        "units": [
+            # Two contiguous same plugin directory -> one segment ("worker-saga")
+            {
+                "unit_id": "U1",
+                "label": "saga unit 1",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "saga-1",
+                "files": ["plugins/saga/scripts/execution_spec.py"],
+            },
+            {
+                "unit_id": "U2",
+                "label": "saga unit 2",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "saga-2",
+                "files": ["plugins/saga/scripts/team_emitter.py"],
+            },
+            # Change key to a different plugin directory -> opens a new segment ("worker-tests")
+            {
+                "unit_id": "U3",
+                "label": "tests unit",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "test-1",
+                "files": ["tests/test_workflow_emitter.py"],
+            },
+            # Non-contiguous return to saga key -> opens a new segment ("worker-saga-2")
+            {
+                "unit_id": "U4",
+                "label": "saga unit 3",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "saga-3",
+                "files": ["plugins/saga/scripts/some_other.py"],
+            },
+            # Empty files unit -> key "" -> base_id "worker"
+            {
+                "unit_id": "U5",
+                "label": "empty files unit",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "empty",
+                "files": [],
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    segments = mod.segment_units(spec)
+
+    # We expect 4 segments:
+    # 1. worker-saga with U1, U2
+    # 2. worker-tests with U3
+    # 3. worker-saga-2 with U4
+    # 4. worker with U5
+    assert len(segments) == 4
+
+    assert segments[0].resident_id == "worker-saga"
+    assert segments[0].unit_ids == ["U1", "U2"]
+
+    assert segments[1].resident_id == "worker-tests"
+    assert segments[1].unit_ids == ["U3"]
+
+    assert segments[2].resident_id == "worker-saga-2"
+    assert segments[2].unit_ids == ["U4"]
+
+    assert segments[3].resident_id == "worker"
+    assert segments[3].unit_ids == ["U5"]
+
+
+def test_segment_units_tier_upgrade_only_max() -> None:
+    mod = _load()
+
+    # Test model axis: haiku + opus -> opus (at low effort)
+    data_model = {
+        "name": "tier-model",
+        "description": "test model axis max",
+        "units": [
+            {
+                "unit_id": "U1",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "u1",
+                "files": ["plugins/saga/a.py"],
+            },
+            {
+                "unit_id": "U2",
+                "tier": {"model": "opus", "effort": "low"},
+                "prompt": "u2",
+                "files": ["plugins/saga/b.py"],
+            },
+        ],
+    }
+    spec_model = mod.ExecutionSpec.from_dict(data_model)
+    segs_model = mod.segment_units(spec_model)
+    assert len(segs_model) == 1
+    assert segs_model[0].tier.model == "opus"
+    assert segs_model[0].tier.effort == "low"
+
+    # Test effort axis: low + high -> high (at haiku model)
+    data_effort = {
+        "name": "tier-effort",
+        "description": "test effort axis max",
+        "units": [
+            {
+                "unit_id": "U1",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "u1",
+                "files": ["plugins/saga/a.py"],
+            },
+            {
+                "unit_id": "U2",
+                "tier": {"model": "haiku", "effort": "high"},
+                "prompt": "u2",
+                "files": ["plugins/saga/b.py"],
+            },
+        ],
+    }
+    spec_effort = mod.ExecutionSpec.from_dict(data_effort)
+    segs_effort = mod.segment_units(spec_effort)
+    assert len(segs_effort) == 1
+    assert segs_effort[0].tier.model == "haiku"
+    assert segs_effort[0].tier.effort == "high"
+
+    # Test both axes together: {haiku, low} + {opus, high} -> {opus, high}
+    data_both = {
+        "name": "tier-both",
+        "description": "test both axes max",
+        "units": [
+            {
+                "unit_id": "U1",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "u1",
+                "files": ["plugins/saga/a.py"],
+            },
+            {
+                "unit_id": "U2",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "u2",
+                "files": ["plugins/saga/b.py"],
+            },
+        ],
+    }
+    spec_both = mod.ExecutionSpec.from_dict(data_both)
+    segs_both = mod.segment_units(spec_both)
+    assert len(segs_both) == 1
+    assert segs_both[0].tier.model == "opus"
+    assert segs_both[0].tier.effort == "high"
+
+
+def test_segment_units_dependencies_collapse() -> None:
+    mod = _load()
+    data = {
+        "name": "dependencies-collapse",
+        "description": "testing collapse of unit dependencies into segment dependencies",
+        "units": [
+            # Segment 1: worker-saga (U1, U2)
+            {
+                "unit_id": "U1",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "u1",
+                "files": ["plugins/saga/a.py"],
+            },
+            {
+                "unit_id": "U2",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "u2",
+                "files": ["plugins/saga/b.py"],
+                "depends_on": ["U1"],  # intra-segment dependency -> should be dropped
+            },
+            # Segment 2: worker-tests (U3)
+            {
+                "unit_id": "U3",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "u3",
+                "files": ["tests/test_a.py"],
+                "depends_on": [
+                    "U1",
+                    "U2",
+                ],  # cross-segment dependencies from worker-saga -> collapse to worker-saga
+            },
+            # Segment 3: worker-other (U4)
+            {
+                "unit_id": "U4",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "u4",
+                "files": ["plugins/other/a.py"],
+                "depends_on": ["U3", "U2"],  # cross-segment: worker-tests, worker-saga
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    segments = mod.segment_units(spec)
+
+    assert len(segments) == 3
+
+    # Segment 1: worker-saga has no dependencies
+    assert segments[0].resident_id == "worker-saga"
+    assert segments[0].depends_on == []
+
+    # Segment 2: worker-tests depends on worker-saga (deduplicated)
+    assert segments[1].resident_id == "worker-tests"
+    assert segments[1].depends_on == ["worker-saga"]
+
+    # Segment 3: worker-other depends on worker-tests and worker-saga (in order of first encounter)
+    assert segments[2].resident_id == "worker-other"
+    assert segments[2].depends_on == ["worker-tests", "worker-saga"]
+
+
+def test_segment_units_does_not_mutate_input_spec() -> None:
+    mod = _load()
+    data = {
+        "name": "no-mutation",
+        "description": "testing no mutation of spec",
+        "units": [
+            {
+                "unit_id": "U1",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "u1",
+                "files": ["plugins/saga/a.py"],
+            },
+            {
+                "unit_id": "U2",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "u2",
+                "files": ["plugins/saga/b.py"],
+                "depends_on": ["U1"],
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+
+    # Save representation before calling segment_units
+    before_dict = spec.to_dict()
+
+    # Call segment_units
+    _ = mod.segment_units(spec)
+
+    # Save representation after calling segment_units
+    after_dict = spec.to_dict()
+
+    # Assert they are equal
+    assert before_dict == after_dict

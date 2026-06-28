@@ -180,6 +180,7 @@ class Unit:
     returns: list[str] = field(default_factory=list)
     # Dependency barriers: unit_ids that must complete before this unit runs.
     depends_on: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
     # Escalation: a human/operator note surfaced if the unit HALTs (resumable).
     escalation: str = ""
     # Fan-out: same op over many enumerated targets (R10).
@@ -222,6 +223,7 @@ class Unit:
             prompt=str(data.get("prompt", "")),
             returns=[str(r) for r in data.get("returns", [])],
             depends_on=[str(d) for d in data.get("depends_on", [])],
+            files=[str(f) for f in data.get("files", [])],
             escalation=str(data.get("escalation", "")),
             fanout=bool(data.get("fanout", False)),
             targets=[str(t) for t in data.get("targets", [])],
@@ -237,6 +239,7 @@ class Unit:
             "prompt": self.prompt,
             "returns": list(self.returns),
             "depends_on": list(self.depends_on),
+            "files": list(self.files),
             "escalation": self.escalation,
             "fanout": self.fanout,
             "targets": list(self.targets),
@@ -743,6 +746,127 @@ def recompile_for_tier(spec: ExecutionSpec, orchestration_mode: str) -> str:
     # The inline floor and any other/unknown tier emit the host-independent serial baseline --
     # never an empty or un-runnable artifact.
     return emit_inline_baseline(spec)
+
+
+# ---------------------------------------------------------------------------
+# Worker segment derivation (U1)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Segment:
+    """One resident worker segment (U1).
+
+    Carries the stable resident agent-id, the covered unit ids, the segment-level
+    tier (upgrade-only max), and the collapsed segment-level dependencies.
+    """
+
+    resident_id: str
+    unit_ids: list[str]
+    tier: Tier
+    depends_on: list[str]
+
+
+def segment_units(spec: ExecutionSpec) -> list[Segment]:
+    """Derive the worker segmentation from the execution spec without mutating it.
+
+    Groups contiguous units sharing a plugin-directory boundary (KTD2), assigns
+    a stable resident agent-id + monolithic upgrade-only tier per segment (R6),
+    and collapses the unit-level dependencies into segment-level deps (KTD4).
+    """
+    if not spec.units:
+        return []
+
+    # 1. Group contiguous units by boundary key
+    segments_data: list[tuple[str, list[Unit]]] = []
+    current_key: str | None = None
+    current_units: list[Unit] = []
+
+    for unit in spec.units:
+        if not unit.files:
+            key = ""
+        else:
+            first_file = unit.files[0]
+            parts = [p for p in first_file.split("/") if p]
+            if len(parts) >= 2 and parts[0] == "plugins":
+                key = f"plugins/{parts[1]}"
+            elif len(parts) >= 1:
+                key = parts[0]
+            else:
+                key = ""
+
+        if current_key is None:
+            current_key = key
+            current_units = [unit]
+        elif key == current_key:
+            current_units.append(unit)
+        else:
+            segments_data.append((current_key, current_units))
+            current_key = key
+            current_units = [unit]
+
+    if current_units:
+        assert current_key is not None
+        segments_data.append((current_key, current_units))
+
+    # 2. Assign resident_ids and map unit_id -> resident_id
+    counts: dict[str, int] = {}
+    unit_to_resident_id: dict[str, str] = {}
+    temp_segments: list[dict[str, Any]] = []
+
+    for key, units in segments_data:
+        base_dir = key[len("plugins/") :] if key.startswith("plugins/") else key
+        base_id = f"worker-{base_dir}" if base_dir else "worker"
+
+        count = counts.get(base_id, 0) + 1
+        counts[base_id] = count
+
+        resident_id = base_id if count == 1 else f"{base_id}-{count}"
+
+        for u in units:
+            unit_to_resident_id[u.unit_id] = resident_id
+
+        temp_segments.append(
+            {
+                "resident_id": resident_id,
+                "units": units,
+            }
+        )
+
+    # 3. Build Segment objects
+    result: list[Segment] = []
+    for seg in temp_segments:
+        resident_id = seg["resident_id"]
+        units = seg["units"]
+        unit_ids = [u.unit_id for u in units]
+
+        # Calculate max tier: upgrade-only max of its members' tiers
+        best_model_idx = min(MODELS.index(u.tier.model) for u in units)
+        best_effort_idx = max(EFFORTS.index(u.tier.effort) for u in units)
+        seg_tier = Tier(model=MODELS[best_model_idx], effort=EFFORTS[best_effort_idx])
+
+        # Collapse depends_on graph
+        seg_deps: list[str] = []
+        for u in units:
+            for dep_unit in u.depends_on:
+                dep_resident_id = unit_to_resident_id.get(dep_unit)
+                if (
+                    dep_resident_id
+                    and dep_resident_id != resident_id
+                    and dep_resident_id not in seg_deps
+                ):
+                    seg_deps.append(dep_resident_id)
+
+        result.append(
+            Segment(
+                resident_id=resident_id,
+                unit_ids=unit_ids,
+                tier=seg_tier,
+                depends_on=seg_deps,
+            )
+        )
+
+    return result
 
 
 # ---------------------------------------------------------------------------

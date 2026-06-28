@@ -137,29 +137,59 @@ def test_reference_files_section_present() -> None:
     assert "consensus-protocol.md" in result
 
 
-def test_one_worker_row_per_unit() -> None:
-    """Each spec unit maps to one worker row in the Workers table."""
+def test_one_resident_row_per_segment() -> None:
+    """The units collapse into one segment with resident_id 'worker'."""
     es_mod = _load_execution_spec()
     te_mod = _load_team_emitter()
     spec = es_mod.ExecutionSpec.from_dict(_valid_spec_dict())
     result = te_mod.emit_team_structure(spec)
-    # 3 units -> worker-1, worker-2, worker-3
-    assert "`worker-1`" in result
-    assert "`worker-2`" in result
-    assert "`worker-3`" in result
-    # worker-4 must NOT be present (no 4th unit)
-    assert "`worker-4`" not in result
+    assert "`worker`" in result
+    assert "U1, U2, U3" in result
+    assert "`worker-1`" not in result
+    assert "`worker-2`" not in result
+    assert "`worker-3`" not in result
 
 
-def test_worker_rows_carry_unit_labels() -> None:
-    """Worker rows include the unit label as the Role column."""
+def test_two_plugin_spec_emits_two_resident_rows() -> None:
+    """A spec with units under different plugin directories emits separate resident rows."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = {
+        "name": "two-plugins",
+        "description": "spec targeting two plugins",
+        "units": [
+            {
+                "unit_id": "U1",
+                "label": "saga-unit",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "do saga stuff",
+                "files": ["plugins/saga/scripts/team_emitter.py"],
+            },
+            {
+                "unit_id": "U2",
+                "label": "te-unit",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "do team-execution stuff",
+                "depends_on": ["U1"],
+                "files": ["plugins/team-execution/skills/team-execution/SKILL.md"],
+            },
+        ],
+    }
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    result = te_mod.emit_team_structure(spec)
+    assert "`worker-saga`" in result
+    assert "`worker-team-execution`" in result
+
+
+def test_worker_rows_carry_unit_ids() -> None:
+    """Worker rows carry the covered unit IDs."""
     es_mod = _load_execution_spec()
     te_mod = _load_team_emitter()
     spec = es_mod.ExecutionSpec.from_dict(_valid_spec_dict())
     result = te_mod.emit_team_structure(spec)
-    assert "preflight" in result
-    assert "build" in result
-    assert "judge" in result
+    assert "U1" in result
+    assert "U2" in result
+    assert "U3" in result
 
 
 def test_base_reviewers_always_present() -> None:
@@ -271,9 +301,42 @@ def test_single_unit_spec_emits_one_worker_row() -> None:
     }
     spec = es_mod.ExecutionSpec.from_dict(data)
     result = te_mod.emit_team_structure(spec)
-    assert "`worker-1`" in result
+    assert "`worker`" in result
     assert "`worker-2`" not in result
-    assert "do it all" in result
+    assert "U1" in result
+    assert "sonnet/high" in result
+
+
+def test_resident_rows_carry_tier_and_deps() -> None:
+    """Resident worker rows carry their derived tiers and segment-level dependencies."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = {
+        "name": "two-plugins-deps",
+        "description": "spec targeting two plugins with deps",
+        "units": [
+            {
+                "unit_id": "U1",
+                "label": "saga-unit",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "do saga stuff",
+                "files": ["plugins/saga/scripts/team_emitter.py"],
+            },
+            {
+                "unit_id": "U2",
+                "label": "te-unit",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "do team-execution stuff",
+                "depends_on": ["U1"],
+                "files": ["plugins/team-execution/skills/team-execution/SKILL.md"],
+            },
+        ],
+    }
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    result = te_mod.emit_team_structure(spec)
+    assert "haiku/low" in result
+    assert "opus/high" in result
+    assert "worker-saga" in result
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +366,7 @@ def test_cli_emit_writes_file(tmp_path: Path) -> None:
     assert out_path.exists()
     content = out_path.read_text()
     assert "## Team Structure" in content
-    assert "`worker-1`" in content
+    assert "`worker`" in content
 
 
 def test_cli_bad_spec_returns_2(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

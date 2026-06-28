@@ -247,6 +247,7 @@ def test_create_prepared_creates_issue_and_marks_draft(tmp_path) -> None:
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/42", 42),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add") as mock_board,
         patch.object(sdlc_manager, "flow_set_field") as mock_status,
     ):
@@ -408,6 +409,7 @@ def test_override_mapping_creates_issue_and_records_pending_mapping(tmp_path) ->
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/42", 42),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):

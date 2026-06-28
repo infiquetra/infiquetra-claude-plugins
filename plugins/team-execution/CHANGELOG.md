@@ -4,6 +4,18 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.3.0] - 2026-06-28
+
+### Worker×model cache scheduling (#275)
+- Reviewer residency: named reviewers re-engaged via `SendMessage` with delta-only context
+  across review iterations (consensus-protocol).
+- Resident-worker residency runtime (SKILL.md Step B1): one named persistent teammate per
+  resident worker reused via `SendMessage`, cross-segment summary-handoff, TTL-aware shedding,
+  and reactive-unblock wave scheduling subordinate to the coordinator `ready_frontier`.
+- Step A7 worker-table template updated to the segment-row schema.
+
+---
+
 ## [2.2.0] - 2026-06-26
 
 ### Changed

@@ -163,7 +163,21 @@ run git"**. That is exactly why the working-tree scope check looked clean: the w
 during the U3 run — verified against the plan, committed with U3. No separate agy run needed.
 
 ### U6 — release surfaces + drift guards
-_pending_
+- **Flash High, background, wall 34s, exit 0. Guard: HEAD unchanged — no rogue commit. Scope: exactly
+  the 5 release files.** Clean.
+- Correct + lockstep: saga `0.38.0→0.39.0`, team-execution `2.2.0→2.3.0` across all three surfaces
+  (plugin.json, marketplace.json, CHANGELOG); `test_release_triad` green (30 passed); marketplace.json
+  stayed valid JSON; matched EACH CHANGELOG's distinct heading style (saga `## X - DATE`,
+  team-execution `## [X] - DATE` with `---` separators).
+- **The version-reflex did NOT fire** — despite this being a version-bump task, the exact hot zone for
+  agy's earlier `v0.1.1→main` reflex, it touched ONLY the 2 intended plugins and left the other 5
+  plugin versions + all ansible pins untouched.
+- **Key nuance (reframes the whole run):** agy's destructive reflex correlates with **under-specified /
+  idle** runs (U1/U2, where it was searching for a file it couldn't find and filled idle time by
+  "fixing" unrelated pins), NOT with version tasks per se. Given an exact, low-latitude spec (precise
+  before→after strings), Flash is reliable and bounded. → Strongest "where agy IS good" data point:
+  tightly-specified mechanical edits. The lever is **specificity** — a precise task starves the
+  wandering; a vague one feeds it.
 
 ## Cross-cutting observations (distilled at the end → LEARNINGS.md)
 _pending_

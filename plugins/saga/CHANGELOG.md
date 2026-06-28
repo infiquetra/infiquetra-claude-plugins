@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.39.0 - 2026-06-28
+
+### Worker×model cache scheduling (#275)
+- Add a `files` field to `Unit` and a pure `segment_units()` that derives resident-worker
+  segments — contiguous plugin-directory grouping, upgrade-only segment tier, and collapsed
+  segment-level dependencies — without mutating the shared `ExecutionSpec`.
+- `team_emitter` now emits one worker row per resident-worker segment
+  (`Agent | Units | Tier | Mode | Depends-on`) instead of one row per unit.
+
 ## 0.38.0 - 2026-06-26
 
 ### OutcomeOrchestrator (outcome-orchestration feature — built across U1–U11, co-equal at release; the U11 feature-flip ships it)

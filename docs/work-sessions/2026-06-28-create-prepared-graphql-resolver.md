@@ -14,6 +14,7 @@ Implemented U1-U4 from the issue #280 plan.
 - U3: Added post-create pending/resume handling for `issue create-prepared` so a failure after GitHub issue creation can retry board-add and Status without creating a duplicate issue.
 - U3: Added strict board-add mode for the create-prepared post-create path while preserving normal text-returning CLI behavior.
 - U4: Bumped mission-control release surfaces to `2.3.1` across plugin metadata, marketplace metadata, changelog, and drift guard tests.
+- Review-found fix: normalized `repository: null` GraphQL read payloads to the existing missing-node path and added the remaining R9 negative tests for null data, empty stdout, and malformed stdout.
 - Journal: Added a durable decision noting that GraphQL partial-error tolerance belongs at query-shape boundaries, not in shared `_graphql` strictness.
 
 ## Commits
@@ -22,11 +23,13 @@ Implemented U1-U4 from the issue #280 plan.
 - `386f323` `fix(mission-control): resume prepared issue post-create`
 - `12a976f` `chore(mission-control): release 2.3.1`
 - `022677a` `style(mission-control): format prepared issue flow`
+- `5a7bc7e` `docs: record create-prepared work session`
+- `134aaf7` `fix(mission-control): handle null GraphQL repository nodes`
 
 ## Checks Run
 
-- `uv run pytest plugins/mission-control/tests/test_graphql_issue_resolution.py plugins/mission-control/tests/test_issue_create_prepared.py plugins/mission-control/tests/test_board_add_multi_project.py plugins/mission-control/tests/test_typed_exceptions.py plugins/mission-control/tests/test_prompt_alignment.py tests/test_release_triad.py -q` - passed, 83 tests.
-- `uv run pytest` - passed, 1255 tests, after temporarily moving local `.claude/saga/sagas` state out of the repo and restoring it afterward so the suite guard ran against a clean saga path.
+- `uv run pytest plugins/mission-control/tests/test_graphql_issue_resolution.py plugins/mission-control/tests/test_issue_create_prepared.py plugins/mission-control/tests/test_board_add_multi_project.py plugins/mission-control/tests/test_typed_exceptions.py plugins/mission-control/tests/test_prompt_alignment.py tests/test_release_triad.py -q` - passed, 88 tests.
+- `uv run pytest` - passed, 1260 tests, after temporarily moving local `.claude/saga/sagas` state out of the repo and restoring it afterward so the suite guard ran against a clean saga path.
 - `uv run ruff format --check .` - passed.
 - `uv run ruff check .` - passed.
 - `uv run mypy plugins/` - passed.
@@ -42,4 +45,4 @@ Implemented U1-U4 from the issue #280 plan.
 
 ## Next Step
 
-Run the code-review gate against `022677a`, then open a PR after explicit confirmation if no P0/P1 findings remain.
+Run the code-review gate against `134aaf7`, then open a PR after explicit confirmation if no P0/P1 findings remain.

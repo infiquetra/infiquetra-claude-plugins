@@ -177,6 +177,7 @@ def test_create_prepared_refuses_unapproved_then_succeeds_after_approval(tmp_pat
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/7", 7),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):
@@ -200,6 +201,7 @@ def test_create_prepared_skip_approval_bypasses_gate(tmp_path) -> None:
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/9", 9),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):
@@ -443,6 +445,7 @@ def test_missing_labels_and_templates_are_deployed_after_confirmation(tmp_path) 
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/42", 42),
         ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add"),
         patch.object(sdlc_manager, "flow_set_field"),
     ):

@@ -1,0 +1,77 @@
+{
+  "approval_state": null,
+  "created_at": "2026-06-28T17:39:53.341468+00:00",
+  "created_issue_number": 293,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/293",
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-28-capability-verify-panel-robustness-for-failed-an.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: capability.yml, enhancement.yml, defect.yml, exploration.yml, context-update.yml, objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-28-verify-panel-robustness-requirements.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for capability/unknown-risk: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing author-visible risk metadata"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [
+    "status"
+  ],
+  "repo": "infiquetra-claude-plugins",
+  "risk": null,
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-28-capability-verify-panel-robustness-for-failed-an.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-28\ntopic: verify-panel-robustness\nmaturity: requirements-ready\nsource: docs/ideation/2026-06-26-vecu-port-seeds-ideation.md (survivor R7/A7 \u2014 cc-workflows fan-out cost+robustness rubric; scope constrained in brainstorm per the ideation's own flag)\n---\n\n# Verify-Panel Robustness \u2014 Non-Applicable vs Failed Panel Members\n\n## Summary\n\nA verify/review panel must distinguish two reasons a member produces no verdict, and handle them on\ntwo different paths. A member can be **statically non-applicable** \u2014 its precondition is absent and\nknown *before* dispatch (an architecture/ADR lens with no architecture docs) \u2014 or it can **fail at\nruntime** \u2014 it errors, hangs, or times out *during* dispatch. They share one discipline (the absence\nis recorded with its cause, never silently dropped) but must diverge at the quorum floor: a static\nnon-applicability is **excluded from the panel denominator at composition time** (so it never triggers\nthe floor or any escalation), while a runtime failure makes the pass-rule **recompute its threshold\nover the members that reported**, down to a minimum-quorum floor below which the advisory result is\nmarked under-strength.\n\nThis is the genuine res",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-28-verify-panel-robustness-requirements.md",
+    "ref": "docs/brainstorms/2026-06-28-verify-panel-robustness-requirements.md",
+    "title": "Verify-Panel Robustness \u2014 Non-Applicable vs Failed Panel Members",
+    "url": null
+  },
+  "state": "post_create_pending",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability \u2014 verify-panel robustness for failed and non-applicable panel members",
+  "updated_at": "2026-06-28T17:39:55.962626+00:00"
+}

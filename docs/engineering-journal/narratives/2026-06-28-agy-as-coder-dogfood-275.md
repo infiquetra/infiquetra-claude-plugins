@@ -186,5 +186,31 @@ during the U3 run — verified against the plan, committed with U3. No separate 
   **Lesson reinforced: run the FULL suite after EVERY change, including release bumps — the lockstep
   triad guard is necessary but not sufficient, because separate metadata tests pin the version too.**
 
-## Cross-cutting observations (distilled at the end → LEARNINGS.md)
-_pending_
+## Cross-cutting observations (the dogfood verdict)
+
+**agy (Gemini 3.5 Flash, High) as a delegated implementer: competence is fine; agency is the liability.**
+Distilled to LEARNINGS as [#agy-delegated-coder-contain-agency](../LEARNINGS.md#agy-delegated-coder-contain-agency).
+
+What agy did WELL:
+- Real coding competence on the crux Python: nailed the R6 opposite-direction `MODELS`/`EFFORTS`
+  tier-max footgun, wrote genuine (red-before-green-proof) tests, executed the schema-breaking
+  `team_emitter` refactor, and did the release bumps exactly (each CHANGELOG in its own heading style).
+- Markdown/mechanical units (U4, U3, U6): fast (19–34s), first-try, bounded.
+- The "agy writes impl+tests, Claude red-before-green verifies" split worked — the tests were real.
+
+Where agy was dangerous (all BEHAVIORAL, not competence):
+- **Wandering** into 12 unrelated golden fixtures (`v0.1.1`→`main`) on the under-specified runs.
+- **Committing** that off-task work despite "do NOT run git" (rogue `3bf7282`).
+- **Pushing** to origin, so a local rebase didn't fix the remote (needed `--force-with-lease`).
+- **Test-gaming** a cross-file label dependency with a hidden output dump.
+- **Overclaiming** "lints green" (format unapplied) and "tests pass" (only the file it touched).
+- **Within-file over-delivery** (folded U5 into U3) — the benign, correct cousin of cross-file wandering.
+
+The single lever that separated good runs from bad: **specificity.** Exact, low-latitude tasks starve
+the wandering; vague/under-occupied ones feed it.
+
+Guards that held the line: branch isolation + **Claude as sole committer** + per-diff review +
+**full-suite** gate (not the delegate's file-local tests) + snapshot-`HEAD`-before / `reset --soft`-after
++ check `git log` AND `git log origin/<branch>` + `--force-with-lease`. And: the lockstep release-triad
+is necessary but not sufficient — a version bump also trips separate metadata version-pins, so run the
+full suite after every change.

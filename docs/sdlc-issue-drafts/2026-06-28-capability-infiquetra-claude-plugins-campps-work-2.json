@@ -1,0 +1,77 @@
+{
+  "approval_state": null,
+  "created_at": "2026-06-28T05:16:53.775041+00:00",
+  "created_issue_number": 285,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/285",
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-28-capability-infiquetra-claude-plugins-campps-work-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: capability.yml, enhancement.yml, defect.yml, exploration.yml, context-update.yml, objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-28-evidence-provenance-manifests-requirements.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for capability/medium: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [
+    "status"
+  ],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-28-capability-infiquetra-claude-plugins-campps-work-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-28\ntopic: evidence-provenance-manifests\nmaturity: requirements-ready\nsource: docs/ideation/2026-06-26-vecu-port-seeds-ideation.md (survivor R11 \u2014 Evidence / Provenance Manifests)\n---\n\n# Evidence / Provenance Manifests\n\n## Summary\n\nGive saga a uniform provenance **manifest envelope** that travels with every delegated agent output \u2014\none record per execution carrying two subrecords: an `output_completeness` subrecord (what was declared\nvs what was produced) and a `claim_provenance` subrecord (per-claim source refs and a two-layer\nepistemic tag: producer-*claimed* vs Claude-*adjudicated*). The completeness subrecord is what S-7's\ngate checks; the provenance subrecord is what S-4's verifier-of-record checks. R11 defines the shared\ncontract those two future consumers will read; its live consumers today are the advisory ones\n(`/code-review`, `/qa`, `/retro`). A claim whose source is checked and *contradicted* is the\nmachine-readable signal for parroting.\n\n## Problem Frame\n\nSaga already does provenance two distinct ways, and it is important not to conflate them. First, a\n**prose habit**: `/doc-review` requires every claim to cite evidence or be flagged unverified\n(`plugin",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-28-evidence-provenance-manifests-requirements.md",
+    "ref": "docs/brainstorms/2026-06-28-evidence-provenance-manifests-requirements.md",
+    "title": "Evidence / Provenance Manifests",
+    "url": null
+  },
+  "state": "post_create_pending",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: evidence/provenance manifests \u2014 a verified-vs-adjudicated record per delegated output",
+  "updated_at": "2026-06-28T05:16:56.595044+00:00"
+}

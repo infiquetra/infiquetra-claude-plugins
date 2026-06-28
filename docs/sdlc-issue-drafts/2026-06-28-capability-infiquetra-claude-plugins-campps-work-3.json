@@ -1,0 +1,77 @@
+{
+  "approval_state": null,
+  "created_at": "2026-06-28T05:50:24.765746+00:00",
+  "created_issue_number": 287,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/287",
+  "draft_path": "docs/sdlc-issue-drafts/2026-06-28-capability-infiquetra-claude-plugins-campps-work-3.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: capability.yml, enhancement.yml, defect.yml, exploration.yml, context-update.yml, objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-06-28-capability-scoped-sandbox-requirements.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for capability/medium: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [
+    "status"
+  ],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-06-28-capability-infiquetra-claude-plugins-campps-work-3.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-06-28\ntopic: capability-scoped-sandbox\nmaturity: requirements-ready\nsource: docs/ideation/2026-06-26-vecu-port-seeds-ideation.md (survivor R14 \u2014 capability-scoped agent sandboxing)\n---\n\n# Capability-Scoped Agent Sandbox\n\n## Summary\n\nGive a delegated leaf a declared **capability** along two orthogonal axes \u2014 a `mutation_policy`\n(read-only | read-write) and a `workspace_isolation` (ambient | disposable-worktree | owned-worktree).\nTwo named profiles are compositions of those axes: `read-only-verify` (read-only \u00d7 disposable-worktree,\nclosing the verify-agent clobber) and `sandboxed-mutate` (read-write \u00d7 owned-worktree, lifting the\nevidence-only ceiling S-4 R23 and R11 R21 wait on). Worktree isolation is the universal enforcement\nfloor \u2014 a saga-side wrapper that contains accidental destructive git on every backend \u2014 with tool-set\nomission layered on where a backend supports it. The threat model is accidental clobber and\nleast-privilege hygiene, not adversarial escape.\n\n## Problem Frame\n\nThe motivating failure is recorded. During the OutcomeOrchestrator U4 build a verify-lens agent ran\n`git checkout <path>` against the uncommitted working tree and **permanently destroyed**",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-06-28-capability-scoped-sandbox-requirements.md",
+    "ref": "docs/brainstorms/2026-06-28-capability-scoped-sandbox-requirements.md",
+    "title": "Capability-Scoped Agent Sandbox",
+    "url": null
+  },
+  "state": "post_create_pending",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: capability-scoped agent sandbox \u2014 read-only-verify + sandboxed-mutate via worktree isolation",
+  "updated_at": "2026-06-28T05:50:27.274963+00:00"
+}

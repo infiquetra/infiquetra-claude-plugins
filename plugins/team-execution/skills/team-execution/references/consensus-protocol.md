@@ -23,7 +23,7 @@ Maximum iterations: **3**. After 3 cycles, proceed with the best available versi
 ```
 For iteration 1..3:
 
-  B3a. Spawn all reviewers IN PARALLEL with:
+  B3a. Spawn all reviewers IN PARALLEL as NAMED, persistent teammates (using Agent `name` + `run_in_background`). The Team Lead MUST record each reviewer's handle/name for later re-engagement (no anonymous one-shot spawns). Provide each with:
         - Full plan context (what was being built)
         - git diff of all changes made
         - Intended outcome (what success looks like)
@@ -48,8 +48,10 @@ For iteration 1..3:
         - Deduplicate overlapping fixes
         - Route consolidated list to the worker(s) responsible for the affected code
         - Workers implement fixes
-        - Re-run B3a..B3d for ONLY the reviewers that scored < 9.0
-          (reviewers who already ACCEPTED do not re-review)
+        - Re-run B3a..B3d for ONLY the reviewers that scored < 9.0:
+          - RE-ENGAGE the same named reviewer via SendMessage (reusing the existing teammate)
+          - Do NOT spawn a fresh reviewer. A reviewer who already reviewed once is never re-spawned from cold — they must be messaged to preserve context and residency.
+          - (Reviewers who already ACCEPTED do not re-review)
 
 After 3 iterations: proceed with best version, document final scores in completion report
 ```
@@ -135,7 +137,7 @@ If consensus is not reached after 3 iterations:
 
 ## Reviewer Context Template
 
-When spawning reviewers in Step B3a, provide this context:
+When spawning reviewers in Step B3a (Initial Pass, Iteration 1), provide this context:
 
 ```
 You are reviewing the implementation of the following plan:
@@ -154,6 +156,21 @@ Score the implementation against your 5 dimensions from:
 team-execution/skills/team-execution/references/review-criteria.md
 
 Produce your score table, verdict, and fix requests (if NEEDS REVISION).
+```
+
+When re-engaging reviewers in Step B3e (Re-engagement, Iteration N >= 2), send a message carrying only the delta context to preserve conversation history and residency:
+
+```
+The requested fixes have been implemented. Review the specific delta/changes made since your last review pass:
+
+## Implemented Fixes
+[Description of specific fixes made in response to your prior fix requests]
+
+## Changes Made (Delta Only)
+[git diff showing only the changes made since your last pass, NOT the full diff]
+
+## Review Instructions
+Re-evaluate the implementation, focusing on whether your previous fix requests have been satisfied. Update your scores, verdict, and remaining issues.
 ```
 
 ---

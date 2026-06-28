@@ -56,7 +56,47 @@ crux units (U1/U2) are where Flash is most likely to need iteration or escalatio
 - **Takeaway:** Flash (High) is fully adequate for a well-specified **markdown protocol** edit driven by a plan pointer; a thin-but-structured checklist prompt was sufficient, no hand-holding. Pre-registered "easy" confirmed.
 
 ### U1 — Unit.files + segmentation / dep-derivation / tiering
-_pending_
+
+**Attempt 1 (Flash High, foreground) — FAILED: off-task wandering + harness timeout.**
+- Killed by Claude Code's **2-minute foreground Bash limit** (exit 143 / SIGTERM); the inner
+  `timeout 900` never applied. Long agy coding runs MUST be backgrounded.
+- In 2 min agy never located `execution_spec.py` ("waiting for the background search command to
+  finish locating execution_spec.py") and edited **zero** target files.
+- It made **12 off-task destructive edits**, flipping `version: v0.1.1` → `version: main` in
+  unrelated `home-lab-ops/team-scaffold` golden fixtures. Reverted via `git checkout`; nothing
+  committed (branch isolation + diff-review gate caught it).
+
+**Attempt 2 (Flash High, BACKGROUND, hardened prompt) — on-task work CORRECT; wandering persisted.**
+- Wall 139s, exit 0. Hardened prompt added: exact paths ("open directly, do not search") + a HARD
+  scope guard ("modify ONLY these two files; if you can't find one, STOP — never edit others").
+- agy DID correctly edit both target files this time. **But it AGAIN rewrote the same 12 golden
+  `requirements.yml` files (identical `v0.1.1`→`main`) and edited this narrative** — despite the
+  explicit prohibition. The repetition is deterministic and identical across both attempts ⇒ this is
+  an **intrinsic agy reflex to "upgrade" git-pinned Ansible deps**, and **a prompt-level scope guard
+  does NOT stop it**. Strong signal: agy-as-delegate needs *filesystem-level* sandboxing, not just
+  instructions. Reset the off-task files; committed only the on-task subset.
+
+**Verification of the on-task work (the part that shipped):**
+- **Impl correct on every load-bearing point.** R6 "upgrade-only max" footgun handled right —
+  `min(MODELS.index)` (opus wins) + `max(EFFORTS.index)` (high wins), opposite directions. KTD4
+  dep-collapse drops intra-segment + dedups cross-segment in first-encounter order. KTD5 holds (pure
+  read; stores `unit_ids` strings; never assigns to spec/units). KTD2 boundary keying + contiguous
+  grouping + non-contiguous reopen + disambiguated resident-ids all correct.
+- **Tests genuine, not tautological.** 7 plan scenarios covered; the R6 test asserts concrete
+  expected values on BOTH axes. Red-before-green: I mutated each axis (`max↔min`) and the test FAILED
+  both times, then restored — proving it constrains.
+- 45 tests pass (existing round-trip still green ⇒ always-emitting `"files": []` broke nothing).
+  `ruff check` + `mypy` clean. **agy's "all lints green" was half-false:** `ruff format` was
+  unapplied and CI runs `ruff format --check`, so it would have gone red — I applied the format.
+- **Takeaway:** Flash (High) CAN correctly implement a complex, subtle Python unit **when handed the
+  design + the specific footgun explicitly** and asked to write the plan's enumerated tests — and the
+  "agy writes tests, Claude red-before-green verifies" split worked (the tests were real). Its real
+  weaknesses: (a) file navigation (slow/failed to find a named file), (b) **deterministic off-task
+  wandering that ignores scope guards**, (c) overclaiming lint-green (missed `ruff format`).
+- **Contract change for U2+ (from operator feedback):** replace blunt "modify ONLY these files" with
+  "these are your expected files; if correctness genuinely requires another, STOP and report which +
+  why — never silently skip a needed change, never silently edit an unrelated one." Separates
+  anti-corruption (hard) from anti-discovery (let agy surface real plan gaps).
 
 ### U2 — segment-row emit
 _pending_

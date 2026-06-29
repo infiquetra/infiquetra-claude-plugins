@@ -336,9 +336,9 @@ def _self_check() -> None:  # pragma: no cover
         f = _REGISTRY[ok]
         print(f"{ok.value:35s}  tier={f.tier.value:14s}  verdict={v.value}")
     print()
-    k1 = idempotency_key("set-field-status", 279, "In-Progress")
-    k2 = idempotency_key("set-field-status", 279, "Done")
-    k3 = idempotency_key("set-field-status", 280, "In-Progress")
+    k1 = idempotency_key("set-field-status", "infiquetra/saga", 279, "In-Progress")
+    k2 = idempotency_key("set-field-status", "infiquetra/saga", 279, "Done")
+    k3 = idempotency_key("set-field-status", "infiquetra/saga", 280, "In-Progress")
     print(f"key 279/In-Progress : {k1}")
     print(f"key 279/Done        : {k2}")
     print(f"key 280/In-Progress : {k3}")

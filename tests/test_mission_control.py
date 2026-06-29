@@ -420,13 +420,21 @@ class TestIssueClose:
         """Re-closing an already-closed issue succeeds (PATCH is naturally idempotent)."""
         import json
 
+        captured = {}
+
         def mock_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["input"] = kwargs.get("input", "")
             # GitHub returns the issue in its current state regardless
             return make_subprocess_result(stdout=json.dumps({"number": 42, "state": "closed"}))
 
         monkeypatch.setattr("subprocess.run", mock_run)
-        # Should not raise
-        sdlc_manager.issue_close("infiquetra-claude-plugins", 42)
+        sdlc_manager.issue_close("infiquetra-claude-plugins", 42)  # must not raise
+
+        # Idempotency is structural: the verb unconditionally PATCHes state=closed (no read-modify-write),
+        # so a re-close is the same safe call. Assert that's what it actually issued.
+        assert "PATCH" in captured["cmd"]
+        assert json.loads(captured["input"])["state"] == "closed"
 
 
 class TestIssueReopen:

@@ -465,6 +465,10 @@ def _default_board_writer(
     def _writer(*, op_kind: str, repo: str, number: int, payload: dict[str, Any]) -> None:
         base = ["python3", sdlc]
         n = str(number)
+        # The mission-control verbs prepend ORG to build ``repos/{ORG}/{repo}/...``, so they need the
+        # BARE repo name. The caller passes an owner-qualified repo ("infiquetra/saga") for the
+        # idempotency-key namespace; strip the owner here so the REST path is not doubled.
+        repo = repo.rsplit("/", 1)[-1]
         if op_kind == "set-field-status":
             cmd = base + [
                 "flow",
@@ -1142,6 +1146,7 @@ def main(argv: list[str] | None = None) -> int:
                 gate_factory=lambda spec, store: outcome_decompose.make_dispatch_gate(store, spec),
                 available=avail,
                 attending=not args.autonomous,
+                autonomous=args.autonomous,
             )
             out = result.to_dict()
             if args.persist:

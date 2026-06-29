@@ -34,8 +34,11 @@ def _no_live_gh(request, monkeypatch):
     """
     if request.module.__name__.rsplit(".", 1)[-1] not in _GH_WRITE_TEST_MODULES:
         return
+    # Strip env creds AND point gh's file-based auth at a nonexistent config dir — gh authenticates
+    # from ~/.config/gh/hosts.yml too, so env-strip alone is not a real backstop on a logged-in box.
     for var in ("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN"):
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("GH_CONFIG_DIR", "/nonexistent-no-live-gh-guard-279")
 
     import subprocess as _sp
 
@@ -43,12 +46,17 @@ def _no_live_gh(request, monkeypatch):
 
     def _guard(cmd, *args, **kwargs):
         argv = cmd if isinstance(cmd, (list, tuple)) else str(cmd).split()
-        first = str(argv[0]) if argv else ""
-        if first == "gh" or first.endswith("/gh"):
+        parts = [str(a) for a in argv]
+        first = parts[0] if parts else ""
+        # Block a direct `gh` call AND the nested production path (`python3 …/sdlc_manager.py …`),
+        # whose gh runs one process deeper where this in-process wrapper cannot see it.
+        is_gh = first == "gh" or first.endswith("/gh")
+        invokes_sdlc = any("sdlc_manager.py" in p for p in parts)
+        if is_gh or invokes_sdlc:
             raise RuntimeError(
-                "no-live-gh guard (#279): an unmocked `gh` call escaped a GitHub-write test "
-                f"module; inject a fake subprocess runner instead of touching the live board. "
-                f"cmd={list(argv)!r}"
+                "no-live-gh guard (#279): an unmocked GitHub-mutating call escaped a GitHub-write "
+                "test module (direct `gh` or a nested sdlc_manager.py subprocess); inject a fake "
+                f"runner instead of touching the live board. cmd={parts!r}"
             )
         return real_run(cmd, *args, **kwargs)
 

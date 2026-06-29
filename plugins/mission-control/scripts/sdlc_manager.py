@@ -2287,9 +2287,18 @@ def issue_label_add(repo: str, number: int, label: str, fmt: str = "text") -> No
 
 def issue_label_remove(repo: str, number: int, label: str, fmt: str = "text") -> None:
     """Remove a label from a GitHub issue. Idempotent: treats 404 (label already
-    absent) as success; lets other errors propagate for the U4 retry path."""
+    absent) as success; lets other errors propagate for the U4 retry path.
+
+    The label is URL-encoded into the path — label names routinely contain spaces (``good first
+    issue``) or ``/``, which would otherwise yield a malformed/mis-targeted path. Note the 404 catch
+    is deliberately broad (a 404 from a wrong issue/repo is also treated as no-op) — a documented
+    idempotency tradeoff; distinguishing the causes would need an extra existence probe.
+    """
+    from urllib.parse import quote
+
+    label_seg = quote(label, safe="")
     try:
-        _rest_delete(f"repos/{ORG}/{repo}/issues/{number}/labels/{label}")
+        _rest_delete(f"repos/{ORG}/{repo}/issues/{number}/labels/{label_seg}")
     except ApiNotFoundError:
         # Label was already absent — idempotent success.
         _out({"action": "label_remove_noop", "repo": repo, "number": number, "label": label}, fmt)

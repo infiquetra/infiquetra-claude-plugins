@@ -452,13 +452,25 @@ def test_default_board_writer_builds_correct_commands(tmp_path: Path) -> None:
         return _Ok()
 
     writer = ENG_MOD._default_board_writer(tmp_path, project="operations", runner=fake_run)
-    writer(op_kind="set-field-status", repo="x", number=42, payload={"target_state": "In Progress"})
-    writer(op_kind="sub-issue-close", repo="x", number=42, payload={})
-    writer(op_kind="issue-progress-comment", repo="x", number=42, payload={"body": "hi"})
-    writer(op_kind="issue-label-add", repo="x", number=42, payload={"label": "blocked"})
-    writer(op_kind="issue-label-remove", repo="x", number=42, payload={"label": "blocked"})
+    # Pass the OWNER-QUALIFIED repo (as the consumer does) — the writer must strip the owner so the
+    # mc verbs (which prepend ORG) build a valid path, not repos/infiquetra/infiquetra/x/...
+    writer(
+        op_kind="set-field-status",
+        repo="infiquetra/x",
+        number=42,
+        payload={"target_state": "In Progress"},
+    )
+    writer(op_kind="sub-issue-close", repo="infiquetra/x", number=42, payload={})
+    writer(op_kind="issue-progress-comment", repo="infiquetra/x", number=42, payload={"body": "hi"})
+    writer(op_kind="issue-label-add", repo="infiquetra/x", number=42, payload={"label": "blocked"})
+    writer(
+        op_kind="issue-label-remove", repo="infiquetra/x", number=42, payload={"label": "blocked"}
+    )
 
     assert all("sdlc_manager.py" in c[1] for c in calls)
+    # Owner stripped to the bare repo name on every command (no owner-qualified repo leaks through).
+    for c in calls:
+        assert "x" in c and "infiquetra/x" not in c
     assert calls[0][2:6] == ["flow", "set-field", "--project", "operations"]
     assert "Status" in calls[0] and "In Progress" in calls[0]
     assert calls[1][2:4] == ["issue", "close"] and "42" in calls[1]
@@ -542,3 +554,62 @@ def test_ledger_write_fault_surfaces_not_wedges(tmp_path: Path, monkeypatch: Any
     errors = [r for r in result if r["status"] == "error"]
     assert errors, "a ledger fault after a successful board write must surface an error record"
     assert all(r.get("may_reapply") for r in errors)
+
+
+# ---------------------------------------------------------------------------
+# Code-review regressions (negative-terminal boundary + parse/skip edges)
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_ops_negative_terminals_and_blocked_emit_no_op() -> None:
+    """P2 regression: a dead/blocked leaf must NOT get an autonomous board op (Scope Boundary).
+
+    Mutation-proof at the boundary itself: a mutant emitting any op for failed/rejected/stalled/blocked
+    autonomously advances/closes a dead leaf and this goes red."""
+    for dead in ("failed", "rejected", "stalled", "blocked"):
+        assert SYNC_MOD._candidate_ops(dead) == [], f"{dead} must yield no board op"
+    # positive control — live states DO emit ops (so the test isn't vacuously asserting [])
+    assert SYNC_MOD._candidate_ops("ready")
+    assert SYNC_MOD._candidate_ops("done")
+
+
+def test_failed_leaf_drives_no_board_write(tmp_path: Path) -> None:
+    """P2 regression (integration): a leaf derived 'failed' → reconcile_board does nothing for it."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    _done(store, "leaf1", "failed")  # negative terminal
+    writer = RecordingWriter()
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)
+    assert writer.calls == [], "no board write may fire for a failed leaf"
+    assert all(r.get("status") not in ("written", "skipped") for r in result)
+
+
+def test_leaf_without_github_ref_is_skipped(tmp_path: Path) -> None:
+    """P3 regression: a ready leaf with no github issue ref is skipped — no record, no write."""
+    store = _store(tmp_path)
+    spec = _spec([{"subplot_id": "a", "title": "a", "kind": "code", "github": {}}])
+    writer = RecordingWriter()
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)
+    assert writer.calls == []
+    assert result == [], "a leaf with no issue ref produces no board-sync record"
+
+
+def test_unparseable_issue_ref_surfaces_note_not_crash(tmp_path: Path) -> None:
+    """P3 regression: an unparseable issue ref yields a 'note' record and does NOT crash the tick."""
+    store = _store(tmp_path)
+    spec = _spec(
+        [{"subplot_id": "a", "title": "a", "kind": "code", "github": {"issue": "!!garbage"}}]
+    )
+    writer = RecordingWriter()
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)  # must NOT raise
+    assert writer.calls == []
+    assert any(r.get("status") == "note" for r in result), "an unparseable ref must surface a note"
+
+
+def test_parse_issue_ref_accepts_three_forms_and_rejects_garbage() -> None:
+    """P3 regression: cover all _parse_issue_ref branches (bare / no-owner / owner-qualified / bad)."""
+    assert SYNC_MOD._parse_issue_ref("5") == ("", 5)
+    assert SYNC_MOD._parse_issue_ref("repo#5") == ("repo", 5)
+    assert SYNC_MOD._parse_issue_ref("infiquetra/saga#5") == ("infiquetra/saga", 5)
+    assert SYNC_MOD._parse_issue_ref("!!garbage") is None
+    assert SYNC_MOD._parse_issue_ref("") is None

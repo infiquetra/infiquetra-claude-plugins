@@ -1398,3 +1398,134 @@ def test_orchestration_mode_labels_covers_all_modes(saga: ModuleType) -> None:
             "ORCHESTRATION_MODE_LABELS — add a display label or the offer will "
             "fall back to the raw enum string silently."
         )
+
+
+# ===========================================================================
+# U2: gate_verdicts — capture in saga envelope (KTD4 / R1)
+# ===========================================================================
+
+
+def test_gate_verdicts_round_trips_through_render_parse(saga: ModuleType) -> None:
+    """gate_verdicts survives render -> parse and appears in frontmatter."""
+    verdicts = ["tests:done:https://github.com/o/r/pull/9", "lint:failed:path/to/file:42"]
+    s = _make_saga(saga, gate_verdicts=verdicts)
+    rendered = saga.render_envelope(s)
+    # Field is present in frontmatter.
+    assert "gate_verdicts:" in rendered
+    restored = saga.parse_envelope(rendered)
+    assert restored.gate_verdicts == verdicts
+
+
+def test_gate_verdicts_save_restore_round_trip(
+    saga: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """gate_verdicts written through save() are readable via restore()."""
+    _stub_no_git(saga, monkeypatch)
+    verdicts = ["tests:done:https://github.com/o/r/pull/9"]
+    saga.save(tmp_path, _make_saga(saga, gate_verdicts=verdicts), now=FIXED_NOW)
+    restored = saga.restore(tmp_path, "issue-42")
+    assert restored is not None
+    assert restored.gate_verdicts == verdicts
+
+
+def test_gate_verdicts_merge_full_snapshot_replace(
+    saga: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An incoming populated gate_verdicts list REPLACES the prior tick's list."""
+    _stub_no_git(saga, monkeypatch)
+    saga.save(
+        tmp_path,
+        _make_saga(saga, gate_verdicts=["tests:done:ref-a", "lint:done:ref-b"]),
+        now=FIXED_NOW,
+    )
+    later = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    saga.save(tmp_path, _make_saga(saga, gate_verdicts=["tests:failed:ref-c"]), now=later)
+    restored = saga.restore(tmp_path, "issue-42")
+    assert restored.gate_verdicts == ["tests:failed:ref-c"]  # replaced, not unioned
+
+
+def test_gate_verdicts_merge_absent_carries_forward(
+    saga: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ABSENT (omitted) gate_verdicts carries the prior tick's list forward."""
+    _stub_no_git(saga, monkeypatch)
+    verdicts = ["tests:done:ref-a"]
+    saga.save(tmp_path, _make_saga(saga, gate_verdicts=verdicts), now=FIXED_NOW)
+    later = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    # ABSENT default for gate_verdicts -> carry forward; bump only phase.
+    saga.save(tmp_path, _make_saga(saga, phase=5), now=later)
+    restored = saga.restore(tmp_path, "issue-42")
+    assert restored.gate_verdicts == verdicts
+    assert restored.phase == 5
+
+
+def test_gate_verdicts_merge_empty_list_clears(
+    saga: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit [] gate_verdicts clears the prior tick's list."""
+    _stub_no_git(saga, monkeypatch)
+    saga.save(tmp_path, _make_saga(saga, gate_verdicts=["tests:done:ref"]), now=FIXED_NOW)
+    later = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    saga.save(tmp_path, _make_saga(saga, gate_verdicts=[]), now=later)
+    assert saga.restore(tmp_path, "issue-42").gate_verdicts == []
+
+
+def test_parse_gate_verdict_splits_on_first_two_colons(saga: ModuleType) -> None:
+    """parse_gate_verdict preserves a colon-bearing ref intact."""
+    gate, state, ref = saga.parse_gate_verdict("tests:done:https://github.com/o/r/pull/9")
+    assert gate == "tests"
+    assert state == "done"
+    assert ref == "https://github.com/o/r/pull/9"
+
+
+def test_parse_gate_verdict_all_valid_states(saga: ModuleType) -> None:
+    """All six R1 states are accepted without raising."""
+    for state in ("done", "in-progress", "blocked", "failed", "halted", "not-reached"):
+        g, s, r = saga.parse_gate_verdict(f"gate:{state}:some-ref")
+        assert s == state
+
+
+def test_parse_gate_verdict_rejects_unknown_state(saga: ModuleType) -> None:
+    """An unknown state raises ValueError."""
+    with pytest.raises(ValueError, match="unknown gate state"):
+        saga.parse_gate_verdict("tests:bogus:x")
+
+
+def test_gate_verdict_cli_flag_is_repeatable(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--gate-verdict is repeatable and entries with colon-bearing refs survive."""
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+
+    rc, payload = _run_main(
+        saga,
+        [
+            "save",
+            "--kind",
+            "issue",
+            "--id",
+            "42",
+            "--gate-verdict",
+            "tests:done:https://github.com/o/r/pull/9",
+            "--gate-verdict",
+            "lint:failed:src/foo.py:12",
+        ],
+        capsys,
+        monkeypatch,
+    )
+
+    assert rc == 0
+    restored = saga.restore(tmp_path, "issue-42")
+    assert restored is not None
+    assert "tests:done:https://github.com/o/r/pull/9" in restored.gate_verdicts
+    assert "lint:failed:src/foo.py:12" in restored.gate_verdicts
+
+
+def test_gate_verdicts_absent_by_default_on_new_saga(saga: ModuleType) -> None:
+    """A freshly-built Saga has gate_verdicts == ABSENT (sentinel, not [])."""
+    s = _make_saga(saga)
+    assert s.gate_verdicts is saga.ABSENT

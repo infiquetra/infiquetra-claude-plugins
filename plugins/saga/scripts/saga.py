@@ -213,6 +213,7 @@ class Saga:
     blockers: str = ""
     open_questions: ListOrAbsent = ABSENT
     checks_run: ListOrAbsent = ABSENT
+    gate_verdicts: ListOrAbsent = ABSENT
     source: str = ""
 
     # Body sections (free-form prose).
@@ -264,6 +265,7 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "blockers",
     "open_questions",
     "checks_run",
+    "gate_verdicts",
     "source",
 )
 
@@ -279,6 +281,7 @@ _LIST_FIELDS = {
     "journal_refs",
     "open_questions",
     "checks_run",
+    "gate_verdicts",
 }
 
 
@@ -1118,6 +1121,43 @@ def aggregate_context(
 
 
 # ---------------------------------------------------------------------------
+# Gate verdict helpers (R1 / KTD4 / U2)
+# ---------------------------------------------------------------------------
+
+# The six canonical R1 gate states (wire values — never change these).
+_GATE_STATES: frozenset[str] = frozenset(
+    {"done", "in-progress", "blocked", "failed", "halted", "not-reached"}
+)
+
+
+def parse_gate_verdict(entry: str) -> tuple[str, str, str]:
+    """Parse a ``gate:state:ref`` entry into ``(gate, state, ref)``.
+
+    Splits on the FIRST TWO colons only so a ref that contains colons
+    (e.g. a GitHub URL ``https://github.com/o/r/pull/9`` or a ``path:line``
+    citation) survives intact.  Raises ``ValueError`` when the state is not one
+    of the six R1 canonical values.
+    """
+    first_colon = entry.find(":")
+    if first_colon == -1:
+        raise ValueError(f"gate_verdict entry has no colon separator: {entry!r}")
+    second_colon = entry.find(":", first_colon + 1)
+    if second_colon == -1:
+        raise ValueError(
+            f"gate_verdict entry has only one colon — expected gate:state:ref: {entry!r}"
+        )
+    gate = entry[:first_colon]
+    state = entry[first_colon + 1 : second_colon]
+    ref = entry[second_colon + 1 :]
+    if state not in _GATE_STATES:
+        raise ValueError(
+            f"unknown gate state {state!r} in {entry!r}; "
+            f"must be one of: {', '.join(sorted(_GATE_STATES))}"
+        )
+    return gate, state, ref
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1186,6 +1226,7 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         blockers=args.blockers,
         open_questions=_split_list(args.open_questions),
         checks_run=_split_list(args.checks_run),
+        gate_verdicts=ABSENT if args.gate_verdict is None else list(args.gate_verdict),
         source=args.source,
         summary=args.summary,
         decisions=args.decisions,
@@ -1245,6 +1286,13 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--journal-refs", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--open-questions", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--checks-run", default=None, help="pipe-separated; omit = carry forward")
+    p.add_argument(
+        "--gate-verdict",
+        action="append",
+        default=None,
+        metavar="GATE:STATE:REF",
+        help="repeatable; each value is 'gate:state:ref' (omit = carry forward)",
+    )
     p.add_argument("--blockers", default="")
     p.add_argument("--source", default="")
     p.add_argument("--summary", default="")

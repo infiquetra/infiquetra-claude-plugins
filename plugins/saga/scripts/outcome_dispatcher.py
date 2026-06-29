@@ -268,7 +268,10 @@ def degrade_decision(
             backend,
             f"{backend} unavailable but the leaf is guarantee-bearing -> HALT even when away (R23)",
         )
-    if had_side_effect:
+    import reversibility_certificate  # lazy, mirrors lifecycle_state idiom; certificate is the authority (R10, R11)
+
+    side_effected = reversibility_certificate.side_effected(had_side_effect)
+    if side_effected:
         return (
             "halt",
             backend,

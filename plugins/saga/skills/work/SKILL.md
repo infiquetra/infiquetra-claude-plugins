@@ -331,8 +331,15 @@ python3 plugins/saga/scripts/saga.py save \
   --work-session-paths "docs/work-sessions/YYYY-MM-DD-<topic>.md" \
   --files-modified "path/a.py|path/b.py" \
   --rounds-seen "1" \
+  --gate-verdict "tests:<done|failed|in-progress|not-reached>:<short-ref>" \
   --next-step "<the one imperative resume anchor>"
 ```
+
+The `--gate-verdict` state MUST be one of the six canonical gate states (`done` / `in-progress` /
+`blocked` / `failed` / `halted` / `not-reached`) — the same wire vocabulary `status_card.py` renders.
+A passing test gate is `tests:done:<ref>`, a failure is `tests:failed:<ref>`, still-running is
+`tests:in-progress:<ref>`; a non-canonical value (e.g. `pass`/`skip`) parses to *unknown* and the card
+renders the Tests cell as not-reached, silently dropping the verdict.
 
 List fields are full-snapshot (saga-spec §6) — pass the complete current set each tick, not a delta.
 
@@ -403,12 +410,19 @@ via `--doc-review-override` / the work-session). Never a silent skip.
 
 On a clean gate (or recorded override):
 
-1. **Offer to open the PR + request review** (`gh pr create` + reviewer request) — outward-facing,
+1. **Render the operator status header** via the shared card renderer
+   (`plugins/saga/scripts/status_card.py`, `project_work`) — the single emitter of operator-facing
+   status for `/work`. Pass the restored saga object; the card derives its cells on-read from durable
+   state (`gate_verdicts`, `review_paths`, `pr_refs`, `phase_status`, `destination`) and renders as a
+   fixed-position glyph card with an indexed footer pointing to the underlying evidence. The detailed
+   work-session notes, code-review findings body, and test outputs remain as drill-down detail below
+   the card — they are the evidence the card cells reference, not replaced by the card.
+2. **Offer to open the PR + request review** (`gh pr create` + reviewer request) — outward-facing,
    **offered/confirmed, never auto-fired**. If the operator declines auto-open, hand them the prepared
    PR body (links the plan, work-sessions, and the code-review artifact) + branch.
-2. **Record `pr_refs`** in the saga and set `next_step="await review on PR #N"`; comment the PR status to
+3. **Record `pr_refs`** in the saga and set `next_step="await review on PR #N"`; comment the PR status to
    the issue via the extended `issue_progress.py` CLI (`--pr-url`, `--review-status`).
-3. **Present continuation routing** and pause. On re-entry, Phase 0.4 reads the live PR state and runs the
+4. **Present continuation routing** and pause. On re-entry, Phase 0.4 reads the live PR state and runs the
    transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
    approved + clean + fresh, **offer `gh pr merge`** (explicitly confirmed) — merge is a git op `/work`
    owns under confirmation. On merge, set `phase_status=complete` and route to `/qa` **advisorily**.

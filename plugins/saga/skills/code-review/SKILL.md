@@ -242,11 +242,17 @@ with the operator if ambiguous). Capture its **exact** `kind` and `id` — you w
 
 ### 5.2 Present findings
 
-Lead with P-level findings (P0 first), grouped by severity, using the CE output shape: a
-pipe-delimited table per severity (`# | File | Issue | Reviewer | Confidence | Route`), then a
-blockquote verdict. Include the built-vs-planned summary, the scope-check result, suppressed-count, and
-coverage (residual risks, testing gaps). See `references/findings-schema.md` for the full output and
-artifact contract.
+Render the operator status header via the shared card renderer (`plugins/saga/scripts/status_card.py`,
+`project_code_review`) — the single emitter of the blocked/clean verdict and scope-check state for
+`/code-review`. Pass the artifact text and the reviewed-SHA ref; the card derives its cells on-read
+(scope check result, blocked status, finding counts, verdict) and renders as a fixed-position glyph
+card. The card is the status header only — the full evidence detail that follows is the drill-down body
+the card cells reference.
+
+Below the card, lead with P-level findings (P0 first), grouped by severity, using the CE output shape: a
+pipe-delimited table per severity (`# | File | Issue | Reviewer | Confidence | Route`). Include the
+built-vs-planned summary, the scope-check result, suppressed-count, and coverage (residual risks,
+testing gaps). See `references/findings-schema.md` for the full output and artifact contract.
 
 ### 5.3 Write the durable artifact
 

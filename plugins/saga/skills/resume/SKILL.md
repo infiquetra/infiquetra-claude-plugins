@@ -179,6 +179,14 @@ the committed docs, then produce the reconstructed state:
 - **checks** — what tests / gates ran (latest snapshot).
 - **next-step** — the one imperative resume anchor.
 
+After assembling the reconstructed state, render the operator status header via the shared card renderer
+(`plugins/saga/scripts/status_card.py`, `project_resume`) — the single emitter of the operator-facing
+resume summary. Pass the restored saga object; the card derives its cells on-read from the reconciled
+durable state (phase, destination, blockers, checks, next-step) and renders as a fixed-position glyph
+card. The detailed trajectory notes and conflict resolutions remain as drill-down body below the card —
+they are the evidence the card cells reference, not replaced by the card. Then route according to the
+Interaction method.
+
 **Conflicts resolve toward the durable side.** If the cached `lifecycle_phase` says `work` but a PR for
 this round is merged, the committed + GitHub state wins; the cache was stale. Surface every conflict
 explicitly and confirm the reconciled state with the operator (Interaction method) before routing.

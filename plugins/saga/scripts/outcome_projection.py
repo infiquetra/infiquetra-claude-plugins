@@ -43,6 +43,7 @@ def project(spec: Any, store: Any) -> dict[str, Any]:
     treats the projection as an auto-close.
     """
     import outcome as outcome_engine
+    import reversibility_certificate as _rc  # lazy, certificate is the single authority (R12, AE3)
 
     states = outcome_engine.derive_states(spec, store)
     counts: dict[str, int] = {}
@@ -77,8 +78,13 @@ def project(spec: Any, store: Any) -> dict[str, Any]:
             "top": items[0].to_dict() if items else None,
         },
         "complete": done == total,
-        # R25: the projection is a SECONDARY view — it never auto-closes the parent.
-        "parent_close": "operator-keystroke-only",
+        # R25/R12: the projection is a SECONDARY view — parent-issue-close is ALWAYS_OPERATOR (GATE)
+        # per the certificate, so closing the parent always stays an operator keystroke (AE3).
+        "parent_close": (
+            "operator-keystroke-only"
+            if _rc.authorize_write(_rc.OpKind.PARENT_ISSUE_CLOSE) is _rc.GATE
+            else "autonomous"
+        ),
         "generated": "derived-on-read from spec + store (no operator-writable status, R17/R25)",
     }
 

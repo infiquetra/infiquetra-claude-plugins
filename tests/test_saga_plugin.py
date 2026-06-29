@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.41.0"  # operator gate-status card (#278)
+    assert plugin_json["version"] == "0.42.0"  # reversibility certificate + board-sync (#279)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -163,6 +163,42 @@ def test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior() -> N
     assert "`idea-ready` or `requirements-ready`" in plan_doc
     assert "`plan-ready` or `resume-ready`" in work_doc
     assert "/plan <issue>" in work_doc
+
+
+def test_outcome_skill_documents_autonomous_board_sync() -> None:
+    """#279 U5 doc-contract: the /outcome SKILL documents the autonomous board-sync envelope.
+
+    Mutation-proof — each assertion pins a distinct, load-bearing claim of the reversibility-gated
+    autonomy contract, so deleting or weakening the prose makes the test go red. No vacuous absence
+    assertions (a token that never existed): every check requires substantive prose to be present.
+    """
+    raw = _read(PLUGIN_ROOT / "skills" / "outcome" / "SKILL.md")
+    # Normalize whitespace: markdown wraps prose across lines, so multi-word phrases must be matched
+    # against a collapsed-whitespace view (a literal "defaults to GATE" can straddle a line break).
+    doc = " ".join(raw.split())
+    low = doc.lower()
+
+    # It is opt-in and default-deny (the certificate defaults to GATE).
+    assert "--autonomous" in doc
+    assert "defaults to GATE" in doc or "default-deny" in low
+    assert "authorize_write" in doc
+
+    # The enumerated autonomous ops are documented (semantic content, not one keyword).
+    assert "In Progress" in doc  # set-field status target
+    assert "sub-issue" in doc and "reopen" in doc  # close + its inverse
+    assert "coalesc" in doc  # one coalesced progress comment, no duplicate spam
+
+    # The never-autonomous guarantees are each named.
+    assert "Merging a PR" in doc or "Merging" in doc
+    assert "deploy" in low
+    assert "parent-issue-close" in doc or "parent issue" in low
+    assert "ALWAYS_OPERATOR" in doc
+
+    # Fail-loud + idempotent + recorded.
+    assert "no silent write" in doc
+    assert "idempotency key" in doc
+    assert "bounded" in doc  # bounded retry
+    assert "board_synced" in doc  # auditable record of each autonomous write
 
 
 def test_office_hours_two_mode_and_hard_gate_contract() -> None:

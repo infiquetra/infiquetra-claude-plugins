@@ -367,3 +367,239 @@ class TestWipLimitsConfigurable:
         output = capsys.readouterr().out
         # Default In Development limit is 10
         assert "10" in output
+
+
+# ===========================
+# #279 no-live-gh guard self-test (Claude-owned; proves the autouse tripwire fires)
+# ===========================
+
+
+def test_no_live_gh_guard_blocks_unmocked_gh_calls():
+    """The autouse `_no_live_gh` guard (conftest.py) must RAISE on an unmocked `gh` call.
+
+    Deny-by-default: this module exercises GitHub-mutating verbs, so any subprocess `gh`
+    invocation that a test forgot to mock must fail loudly rather than touch the live board.
+    """
+    import subprocess
+
+    with pytest.raises(RuntimeError, match="no-live-gh guard"):
+        subprocess.run(["gh", "issue", "view", "1"])
+
+
+# ===========================
+# #279 U3 issue-write verbs (close / reopen / comment / label add/remove) — agy appends BELOW
+# ===========================
+
+
+class TestIssueClose:
+    """Tests for issue_close — idempotent PATCH state=closed."""
+
+    def test_close_issues_correct_patch(self, monkeypatch):
+        """issue_close sends PATCH to the issues endpoint with state=closed."""
+        import json
+
+        captured = {}
+
+        def mock_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["input"] = kwargs.get("input", "")
+            return make_subprocess_result(stdout=json.dumps({"number": 42, "state": "closed"}))
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        sdlc_manager.issue_close("infiquetra-claude-plugins", 42)
+
+        cmd = captured["cmd"]
+        assert "api" in cmd
+        assert "--method" in cmd
+        assert "PATCH" in cmd
+        assert any("issues/42" in part for part in cmd)
+        body = json.loads(captured["input"])
+        assert body["state"] == "closed"
+
+    def test_close_already_closed_is_success(self, monkeypatch):
+        """Re-closing an already-closed issue succeeds (PATCH is naturally idempotent)."""
+        import json
+
+        captured = {}
+
+        def mock_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["input"] = kwargs.get("input", "")
+            # GitHub returns the issue in its current state regardless
+            return make_subprocess_result(stdout=json.dumps({"number": 42, "state": "closed"}))
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        sdlc_manager.issue_close("infiquetra-claude-plugins", 42)  # must not raise
+
+        # Idempotency is structural: the verb unconditionally PATCHes state=closed (no read-modify-write),
+        # so a re-close is the same safe call. Assert that's what it actually issued.
+        assert "PATCH" in captured["cmd"]
+        assert json.loads(captured["input"])["state"] == "closed"
+
+
+class TestIssueReopen:
+    """Tests for issue_reopen — inverse of issue_close."""
+
+    def test_reopen_sends_state_open(self, monkeypatch):
+        """issue_reopen sends PATCH with state=open."""
+        import json
+
+        captured = {}
+
+        def mock_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["input"] = kwargs.get("input", "")
+            return make_subprocess_result(stdout=json.dumps({"number": 5, "state": "open"}))
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        sdlc_manager.issue_reopen("infiquetra-claude-plugins", 5)
+
+        body = json.loads(captured["input"])
+        assert body["state"] == "open"
+
+    def test_close_then_reopen_round_trip(self, monkeypatch):
+        """close -> reopen round-trip: each call uses the correct state value."""
+        import json
+
+        states_sent = []
+
+        def mock_run(cmd, **kwargs):
+            body = json.loads(kwargs.get("input", "{}"))
+            if "state" in body:
+                states_sent.append(body["state"])
+            return make_subprocess_result(
+                stdout=json.dumps({"number": 10, "state": body.get("state", "open")})
+            )
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        sdlc_manager.issue_close("infiquetra-claude-plugins", 10)
+        sdlc_manager.issue_reopen("infiquetra-claude-plugins", 10)
+
+        assert states_sent == ["closed", "open"]
+
+
+class TestIssueComment:
+    """Tests for issue_comment — POST to the comments endpoint."""
+
+    def test_comment_posts_to_comments_endpoint(self, monkeypatch):
+        """issue_comment POSTs to /issues/{number}/comments with the body."""
+        import json
+
+        captured = {}
+
+        def mock_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["input"] = kwargs.get("input", "")
+            return make_subprocess_result(stdout=json.dumps({"id": 99, "body": "hello"}))
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        sdlc_manager.issue_comment("infiquetra-claude-plugins", 7, "hello")
+
+        cmd = captured["cmd"]
+        assert "POST" in cmd
+        assert any("comments" in part for part in cmd)
+        body = json.loads(captured["input"])
+        assert body["body"] == "hello"
+
+
+class TestIssueLabelAddRemove:
+    """Tests for issue_label_add / issue_label_remove — round-trip and idempotency."""
+
+    def test_label_add_posts_to_labels_endpoint(self, monkeypatch):
+        """issue_label_add POSTs the label name to the labels endpoint."""
+        import json
+
+        captured = {}
+
+        def mock_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["input"] = kwargs.get("input", "")
+            return make_subprocess_result(stdout=json.dumps([{"name": "blocked"}]))
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        sdlc_manager.issue_label_add("infiquetra-claude-plugins", 3, "blocked")
+
+        cmd = captured["cmd"]
+        assert "POST" in cmd
+        assert any("labels" in part for part in cmd)
+        body = json.loads(captured["input"])
+        assert "blocked" in body["labels"]
+
+    def test_label_remove_sends_delete(self, monkeypatch):
+        """issue_label_remove sends DELETE to the labels/{label} endpoint."""
+        captured = {}
+
+        def mock_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            # GitHub returns 204 with empty body for DELETE
+            return make_subprocess_result(stdout="")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        sdlc_manager.issue_label_remove("infiquetra-claude-plugins", 3, "blocked")
+
+        cmd = captured["cmd"]
+        assert "DELETE" in cmd
+        assert any("blocked" in part for part in cmd)
+
+    def test_label_add_then_remove_round_trip(self, monkeypatch):
+        """Adding then removing a label calls the correct endpoints in order."""
+        import json
+
+        methods_called = []
+
+        def mock_run(cmd, **kwargs):
+            if "--method" in cmd:
+                idx = cmd.index("--method")
+                methods_called.append(cmd[idx + 1])
+            # Return appropriate response per method
+            if "DELETE" in cmd:
+                return make_subprocess_result(stdout="")
+            return make_subprocess_result(stdout=json.dumps([{"name": "blocked"}]))
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        sdlc_manager.issue_label_add("infiquetra-claude-plugins", 3, "blocked")
+        sdlc_manager.issue_label_remove("infiquetra-claude-plugins", 3, "blocked")
+
+        assert methods_called == ["POST", "DELETE"]
+
+    def test_re_adding_existing_label_is_success(self, monkeypatch):
+        """Re-adding an already-present label returns success (GitHub returns 200, no error)."""
+        import json
+
+        def mock_run(cmd, **kwargs):
+            # GitHub returns 200 with the label list even if already present
+            return make_subprocess_result(stdout=json.dumps([{"name": "blocked"}]))
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        # Should not raise
+        sdlc_manager.issue_label_add("infiquetra-claude-plugins", 3, "blocked")
+
+    def test_removing_absent_label_is_success(self, monkeypatch):
+        """Removing an absent label (404) is treated as success — idempotent."""
+        import json
+
+        def mock_run(cmd, **kwargs):
+            # Simulate GitHub returning 404 for DELETE of absent label
+            return make_subprocess_result(
+                stdout=json.dumps({"message": "Label does not exist"}),
+                stderr="gh: Label does not exist (HTTP 404)",
+                returncode=1,
+            )
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        # Should not raise — ApiNotFoundError is swallowed
+        sdlc_manager.issue_label_remove("infiquetra-claude-plugins", 3, "nonexistent")
+
+    def test_transient_error_propagates(self, monkeypatch):
+        """A non-404/non-422 gh error (e.g. network/500) surfaces as an exception."""
+
+        def mock_run(cmd, **kwargs):
+            return make_subprocess_result(
+                stdout="",
+                stderr="gh: internal server error (HTTP 500)",
+                returncode=1,
+            )
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        with pytest.raises((sdlc_manager.GhApiError, RuntimeError)):
+            sdlc_manager.issue_label_remove("infiquetra-claude-plugins", 3, "blocked")

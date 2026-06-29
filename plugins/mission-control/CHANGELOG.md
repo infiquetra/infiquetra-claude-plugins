@@ -1,5 +1,16 @@
 # Changelog — mission-control
 
+## [2.4.0] — 2026-06-29
+
+### Issue-write verbs for autonomous `/outcome` board-sync (#279)
+- New idempotent `issue` subcommands: `close` / `reopen` (PATCH `state`, naturally idempotent),
+  `comment` (plain POST; coalescing is the consumer's ledger job), and standalone `label-add` /
+  `label-remove` (DELETE; swallows `ApiNotFoundError` 404 = label already absent, propagates other
+  errors for the consumer's retry path). Added a `_rest_delete` REST helper.
+- These are the reversible board ops that saga's reversibility certificate authorizes and the
+  `/outcome` board-sync consumer drives across the saga↔mission-control boundary. Pairs with saga
+  0.42.0.
+
 ## [2.3.1] — 2026-06-28
 
 ### Fixed

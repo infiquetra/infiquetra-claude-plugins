@@ -38,6 +38,7 @@ _load("outcome_decompose")
 ENG = _load("outcome")
 _load("outcome_report")
 PROJ = _load("outcome_projection")
+CERT = _load("reversibility_certificate")
 
 
 def _store(tmp_path: Path) -> Any:
@@ -111,6 +112,24 @@ def test_projection_never_auto_closes_the_parent(tmp_path: Path) -> None:
     p = PROJ.project(spec, store)
     assert p["complete"] is True
     assert p["parent_close"] == "operator-keystroke-only"  # complete != auto-closed
+
+
+def test_projection_parent_close_is_load_bearing_on_certificate(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    # U2/R12/AE3: parent_close is DERIVED from the certificate's ALWAYS_OPERATOR verdict, not hardcoded.
+    # Mutation-proof: if the certificate ever AUTHORIZED parent-issue-close, the projection would flip
+    # to "autonomous" — proving the wiring is load-bearing, not a cosmetic constant.
+    spec = _spec([{"subplot_id": "a", "title": "a", "kind": "code"}])
+    store = _store(tmp_path)
+    _done(store, "a", "done")
+    assert PROJ.project(spec, store)["parent_close"] == "operator-keystroke-only"
+    # Patch the EXACT module object project() resolves via sys.modules — under this suite's _load()
+    # pattern, several test files register their own module under the same name, so the file-local
+    # CERT can differ from what project()'s lazy import sees at call time.
+    rc = sys.modules["reversibility_certificate"]
+    monkeypatch.setattr(rc, "authorize_write", lambda op: rc.AUTHORIZED)
+    assert PROJ.project(spec, store)["parent_close"] == "autonomous"
 
 
 def test_projection_is_deterministic(tmp_path: Path) -> None:

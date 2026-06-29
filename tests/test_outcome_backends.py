@@ -43,6 +43,7 @@ DEC = _load("outcome_decompose")
 ENG = _load("outcome")
 REP = _load("outcome_report")
 _load("outcome_liveness")
+CERT = _load("reversibility_certificate")
 
 
 def _node(sid: str, **kw: Any) -> Any:
@@ -378,3 +379,139 @@ def test_cli_dispatch_dry_run_still_works(capsys: Any) -> None:
     # the U4 dry-run CLI is unchanged by the U9 menu expansion
     assert D.main(["o", "build", "team-execution"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "dispatched"
+
+
+# --------------------------------------------------------------------------- U2 subsumption equivalence (R10, R11, R12, R14, R21)
+
+
+def test_u2_available_backend_dispatches_via_certificate() -> None:
+    # golden tuple: certificate-routed path returns identical result (R10, R11)
+    assert D.degrade_decision(
+        "team-execution",
+        available=_FLOOR,
+        attending=True,
+        guarantee_bearing=False,
+        had_side_effect=False,
+    ) == ("dispatch", "team-execution", "")
+
+
+def test_u2_attending_halts_not_degrades_via_certificate() -> None:
+    # attending branch fires BEFORE certificate — halt, not degrade (R11, R13)
+    action, backend, _ = D.degrade_decision(
+        "cc-workflows-ultracode",
+        available=_FLOOR,
+        attending=True,
+        guarantee_bearing=False,
+        had_side_effect=False,
+    )
+    assert action == "halt" and backend == "cc-workflows-ultracode"
+
+
+def test_u2_autonomous_away_degrades_one_rung_via_certificate() -> None:
+    # degrade path: certificate side_effected(False) -> False, does not block degrade (R10, R11)
+    action, backend, reason = D.degrade_decision(
+        "cc-workflows-ultracode",
+        available=_FLOOR,
+        attending=False,
+        guarantee_bearing=False,
+        had_side_effect=False,
+    )
+    assert action == "degrade" and backend == "team-execution" and "R23" in reason
+
+
+def test_u2_guarantee_bearing_halts_even_when_away_via_certificate() -> None:
+    # guarantee branch fires BEFORE certificate — halt (R11, R13)
+    action, _, reason = D.degrade_decision(
+        "cc-workflows-ultracode",
+        available=_FLOOR,
+        attending=False,
+        guarantee_bearing=True,
+        had_side_effect=False,
+    )
+    assert action == "halt" and "guarantee" in reason
+
+
+def test_u2_side_effected_leaf_never_degrades_via_certificate() -> None:
+    # certificate-routed: side_effected(True) -> True -> halt (R10, R11)
+    action, _, reason = D.degrade_decision(
+        "cc-workflows-ultracode",
+        available=_FLOOR,
+        attending=False,
+        guarantee_bearing=False,
+        had_side_effect=True,
+    )
+    assert action == "halt" and "side effect" in reason
+
+
+def test_u2_backend_not_on_the_ladder_halts_via_certificate() -> None:
+    # certificate routes side_effected(False) -> False; no-lower-rung branch fires -> halt (R11)
+    action, _, _ = D.degrade_decision(
+        "fork", available=_FLOOR, attending=False, guarantee_bearing=False, had_side_effect=False
+    )
+    assert action == "halt"
+
+
+def test_u2_degrade_skips_an_unavailable_intermediate_rung_via_certificate() -> None:
+    # certificate routes side_effected(False) -> False; degrades to inline floor (R10, R11)
+    action, backend, _ = D.degrade_decision(
+        "cc-workflows-ultracode",
+        available=("inline",),
+        attending=False,
+        guarantee_bearing=False,
+        had_side_effect=False,
+    )
+    assert action == "degrade" and backend == "inline"
+
+
+def test_u2_certificate_side_effected_is_identity_passthrough() -> None:
+    # pin the pass-through: certificate does not re-derive the fact, just routes it (KTD5, R10, R14)
+    assert CERT.side_effected(True) is True
+    assert CERT.side_effected(False) is False
+
+
+def test_u2_side_effected_routes_through_certificate_not_raw_bool(monkeypatch: Any) -> None:
+    """Load-bearing substitution test: monkeypatch side_effected to return the negation.
+
+    A scenario that HALTs today purely because had_side_effect=True (backend unavailable, not attending,
+    not guarantee_bearing) must now return 'degrade' instead of 'halt' — proving degrade_decision routes
+    through the certificate's side_effected fact, not the raw bool (KTD5, R10, R14).
+    """
+    import reversibility_certificate as _cert_module  # the live module in sys.modules
+
+    monkeypatch.setattr(_cert_module, "side_effected", lambda v: not v)
+    action, backend, _ = D.degrade_decision(
+        "cc-workflows-ultracode",
+        available=_FLOOR,
+        attending=False,
+        guarantee_bearing=False,
+        had_side_effect=True,  # raw True, but certificate now returns False -> should degrade
+    )
+    assert action == "degrade" and backend == "team-execution"
+
+
+def test_u2_parent_close_is_always_operator_via_certificate() -> None:
+    # R12/AE3: PARENT_ISSUE_CLOSE is ALWAYS_OPERATOR -> GATE -> parent_close stays operator-only
+    assert CERT.authorize_write(CERT.OpKind.PARENT_ISSUE_CLOSE) is CERT.GATE
+
+
+def test_u2_recommend_outcome_backend_output_unaffected_by_certificate(monkeypatch: Any) -> None:
+    # R21/AE9: backend recommender is NOT modified by U2; certificate is NOT consulted by the recommender.
+    # Confirm that recommend_outcome_backend returns byte-identical results regardless of certificate state.
+    import reversibility_certificate as _cert_module
+
+    # Record the result before any monkeypatching
+    before = D.recommend_outcome_backend(frontier_width=1, broad_independent_fanout=True)
+
+    # Monkeypatch certificate's authorize_write to return the opposite verdict — recommender must not change
+    original_authorize = _cert_module.authorize_write
+    monkeypatch.setattr(
+        _cert_module,
+        "authorize_write",
+        lambda op: (
+            _cert_module.AUTHORIZED
+            if original_authorize(op) is _cert_module.GATE
+            else _cert_module.GATE
+        ),
+    )
+    after = D.recommend_outcome_backend(frontier_width=1, broad_independent_fanout=True)
+    assert before == after  # byte-identical: certificate not consulted by recommender (R21)

@@ -14,6 +14,7 @@ import sys
 import types
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "plugins" / "saga" / "scripts" / "status_card.py"
@@ -50,7 +51,7 @@ def _row(
     return SC.CardRow(key=key, label=label, state=state, ref=ref)
 
 
-def _gate_spec(rows: list[object]) -> object:
+def _gate_spec(rows: list[object]) -> Any:
     return SC.CardSpec(
         archetype="gate-sequence",
         header=_header(),
@@ -58,7 +59,7 @@ def _gate_spec(rows: list[object]) -> object:
     )
 
 
-def _summary_spec(rows: list[object]) -> object:
+def _summary_spec(rows: list[object]) -> Any:
     return SC.CardSpec(
         archetype="summary-projection",
         header=_header(surface="/outcome", id="o-1"),

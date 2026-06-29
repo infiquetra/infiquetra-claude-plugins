@@ -734,6 +734,354 @@ def test_project_qa_ae7_missing_frontmatter_is_not_reached() -> None:
 # ── AE5: shared-concept label+glyph consistency across surfaces ───────────────────────────────────
 
 
+# ── U4: project_outcome tests ─────────────────────────────────────────────────────────────────────
+
+
+def _make_projection(
+    *,
+    done: int = 3,
+    total: int = 10,
+    percent: int = 30,
+    complete: bool = False,
+    frontier: list | None = None,
+    blocked: list | None = None,
+    attention_count: int = 0,
+    state_counts: dict | None = None,
+    outcome_id: str = "outcome-test-1",
+) -> dict:
+    """Build a minimal outcome projection dict mirroring outcome_projection.project() output."""
+    return {
+        "outcome_id": outcome_id,
+        "progress": {"done": done, "total": total, "percent": percent},
+        "complete": complete,
+        "frontier": frontier if frontier is not None else ["node-A", "node-B"],
+        "blocked": blocked if blocked is not None else [],
+        "attention": {"count": attention_count, "top": None},
+        "state_counts": state_counts if state_counts is not None else {"done": done, "ready": 2},
+    }
+
+
+def test_project_outcome_rows_complete() -> None:
+    """project_outcome produces exactly 5 fixed rows in the correct order."""
+    proj = _make_projection()
+    spec = SC.project_outcome(proj)
+    assert spec.archetype == "summary-projection"
+    labels = [r.label for r in spec.rows]
+    assert labels == [
+        "Progress",
+        "Ready frontier",
+        "Blocked",
+        "Attention",
+        "Negative terminals",
+    ], f"unexpected row labels: {labels}"
+
+
+def test_project_outcome_ae3_values_equal_dict_exactly() -> None:
+    """AE3: project_outcome card values equal the fixture projection dict EXACTLY — no recomputation."""
+    proj = _make_projection(done=7, total=20, percent=35, frontier=["n1", "n2", "n3"])
+    spec = SC.project_outcome(proj)
+
+    # Progress ref encodes done/total/percent from the dict directly.
+    progress_row = next(r for r in spec.rows if r.key == "progress")
+    assert "7" in (progress_row.ref or ""), f"done count missing from ref: {progress_row.ref!r}"
+    assert "20" in (progress_row.ref or ""), f"total count missing from ref: {progress_row.ref!r}"
+    assert "35" in (progress_row.ref or ""), f"percent missing from ref: {progress_row.ref!r}"
+
+    # Frontier ref encodes the frontier count from the dict directly.
+    frontier_row = next(r for r in spec.rows if r.key == "frontier")
+    assert "3" in (frontier_row.ref or ""), f"frontier count missing from ref: {frontier_row.ref!r}"
+
+
+def test_project_outcome_ae3_3_and_30_node_same_card_height() -> None:
+    """AE3: a 3-node and a 30-node projection dict render the SAME card height (constant-size)."""
+    proj_3 = _make_projection(
+        done=1, total=3, frontier=["n1"], state_counts={"done": 1, "ready": 1, "blocked": 1}
+    )
+    proj_30 = _make_projection(
+        done=10,
+        total=30,
+        frontier=[f"n{i}" for i in range(10)],
+        state_counts={"done": 10, "ready": 10, "blocked": 5, "dispatched": 5},
+    )
+    spec_3 = SC.project_outcome(proj_3)
+    spec_30 = SC.project_outcome(proj_30)
+
+    # Both produce exactly 5 fixed rows — constant-size regardless of node count.
+    assert len(spec_3.rows) == 5
+    assert len(spec_30.rows) == 5
+
+    card_3 = SC.render(spec_3)
+    card_30 = SC.render(spec_30)
+    assert _body_line_count(card_3, SC._CARD_WIDTH) == _body_line_count(card_30, SC._CARD_WIDTH)
+
+
+def test_project_outcome_complete_is_done() -> None:
+    """complete=True in the projection → Progress row is DONE."""
+    proj = _make_projection(done=10, total=10, percent=100, complete=True, frontier=[])
+    spec = SC.project_outcome(proj)
+    progress_row = next(r for r in spec.rows if r.key == "progress")
+    assert progress_row.state == SC.CardState.DONE
+
+
+def test_project_outcome_in_progress_when_not_complete() -> None:
+    """complete=False → Progress row is IN_PROGRESS."""
+    proj = _make_projection(done=5, total=10, percent=50, complete=False)
+    spec = SC.project_outcome(proj)
+    progress_row = next(r for r in spec.rows if r.key == "progress")
+    assert progress_row.state == SC.CardState.IN_PROGRESS
+
+
+def test_project_outcome_blocked_nodes_render_blocked() -> None:
+    """Blocked list non-empty → Blocked row is BLOCKED."""
+    proj = _make_projection(blocked=["node-B", "node-C"])
+    spec = SC.project_outcome(proj)
+    blocked_row = next(r for r in spec.rows if r.key == "blocked")
+    assert blocked_row.state == SC.CardState.BLOCKED
+    assert blocked_row.ref is not None
+
+
+def test_project_outcome_ae9_failed_nodes_render_failed_not_blocked() -> None:
+    """AE9: state_counts with failed nodes → Negative-terminals row is FAILED, NOT blocked/not-reached."""
+    proj = _make_projection(
+        state_counts={"done": 5, "failed": 2, "ready": 1},
+    )
+    spec = SC.project_outcome(proj)
+    neg_row = next(r for r in spec.rows if r.key == "neg_terminals")
+    assert neg_row.state == SC.CardState.FAILED, (
+        f"expected FAILED for failed nodes, got {neg_row.state!r}"
+    )
+    assert neg_row.state != SC.CardState.BLOCKED
+    assert neg_row.state != SC.CardState.NOT_REACHED
+    assert neg_row.ref is not None, "AE9: FAILED neg-terminals row must carry ref"
+
+
+def test_project_outcome_ae9_halted_nodes_render_halted() -> None:
+    """AE9: state_counts with halted nodes (no failed) → Negative-terminals row is HALTED."""
+    proj = _make_projection(
+        state_counts={"done": 5, "halted": 1, "ready": 2},
+    )
+    spec = SC.project_outcome(proj)
+    neg_row = next(r for r in spec.rows if r.key == "neg_terminals")
+    assert neg_row.state == SC.CardState.HALTED, (
+        f"expected HALTED for halted nodes, got {neg_row.state!r}"
+    )
+    assert neg_row.ref is not None, "AE9: HALTED neg-terminals row must carry ref"
+
+
+def test_project_outcome_ae9_no_neg_terminals_is_done() -> None:
+    """No failed/rejected/stalled/halted → Negative-terminals row is DONE."""
+    proj = _make_projection(state_counts={"done": 5, "ready": 3})
+    spec = SC.project_outcome(proj)
+    neg_row = next(r for r in spec.rows if r.key == "neg_terminals")
+    assert neg_row.state == SC.CardState.DONE
+
+
+def test_project_outcome_consumes_dict_not_recomputes() -> None:
+    """AE3: project_outcome does not recompute — it renders state_counts from the passed dict.
+
+    A dict with a 'stalled' count in state_counts renders FAILED; if the function recomputed from
+    a node list it would miss it.  Only the dict values are authoritative.
+    """
+    proj = _make_projection(
+        state_counts={"done": 3, "stalled": 1},
+        frontier=[],
+    )
+    spec = SC.project_outcome(proj)
+    neg_row = next(r for r in spec.rows if r.key == "neg_terminals")
+    assert neg_row.state == SC.CardState.FAILED, (
+        "stalled in state_counts must yield FAILED — proves dict consumed, not recomputed"
+    )
+
+
+# ── U4: project_resume tests ──────────────────────────────────────────────────────────────────────
+
+
+def _mock_resume_saga(
+    saga_id: str = "saga-resume-1",
+    phase_status: str = "in_progress",
+    destination: str = "pr",
+    blockers: str = "",
+    open_questions: object = None,  # None → treated as ABSENT (not a list)
+    gate_verdicts: object = None,  # None → treated as ABSENT (not a list)
+    next_step: str = "",
+) -> object:
+    """Build a lightweight mock saga object for project_resume tests."""
+    return types.SimpleNamespace(
+        saga_id=saga_id,
+        phase_status=phase_status,
+        destination=destination,
+        blockers=blockers,
+        open_questions=open_questions,
+        gate_verdicts=gate_verdicts,
+        next_step=next_step,
+    )
+
+
+def test_project_resume_rows_complete() -> None:
+    """project_resume produces exactly 5 fixed rows in the correct order."""
+    saga = _mock_resume_saga()
+    spec = SC.project_resume(saga)
+    assert spec.archetype == "summary-projection"
+    labels = [r.label for r in spec.rows]
+    assert labels == [
+        "Phase/destination",
+        "Blockers",
+        "Open questions",
+        "Last gate verdicts",
+        "Route (next-step)",
+    ], f"unexpected row labels: {labels}"
+
+
+def test_project_resume_all_5_rows_map_to_real_fields() -> None:
+    """Every rendered row maps to a real saga Phase-3a field — no perpetually-unknown row."""
+    saga = _mock_resume_saga(
+        phase_status="in_progress",
+        destination="pr",
+        blockers="waiting on reviewer",
+        open_questions=["Is the plan ready?"],
+        gate_verdicts=["tests:done:saga-resume-1/gate_verdicts"],
+        next_step="Open PR and request review",
+    )
+    spec = SC.project_resume(saga)
+
+    # Each row key corresponds to a real saga field (no "frontier"/"open_leaves" — outcome-DAG only).
+    row_keys = {r.key for r in spec.rows}
+    outcome_dag_keys = {"frontier", "open_leaves"}
+    assert not (row_keys & outcome_dag_keys), (
+        f"project_resume must not contain outcome-DAG rows: found {row_keys & outcome_dag_keys}"
+    )
+    # All 5 expected keys present.
+    expected_keys = {"phase", "blockers", "open_questions", "gate_verdicts", "route"}
+    assert expected_keys == row_keys, f"unexpected row keys: {row_keys}"
+
+
+def test_project_resume_blockers_open_is_blocked() -> None:
+    """Non-empty blockers string → Blockers row is BLOCKED [open]."""
+    saga = _mock_resume_saga(blockers="Waiting on external approval")
+    spec = SC.project_resume(saga)
+    blockers_row = next(r for r in spec.rows if r.key == "blockers")
+    assert blockers_row.state == SC.CardState.BLOCKED
+    assert blockers_row.ref is not None
+
+
+def test_project_resume_blockers_empty_is_done() -> None:
+    """Empty blockers string → Blockers row is DONE [cleared]."""
+    saga = _mock_resume_saga(blockers="")
+    spec = SC.project_resume(saga)
+    blockers_row = next(r for r in spec.rows if r.key == "blockers")
+    assert blockers_row.state == SC.CardState.DONE
+    assert blockers_row.ref is not None
+
+
+def test_project_resume_open_questions_present_is_in_progress() -> None:
+    """Non-empty open_questions list → Open questions row is IN_PROGRESS."""
+    saga = _mock_resume_saga(open_questions=["Q1: Is the API stable?", "Q2: Do we need migration?"])
+    spec = SC.project_resume(saga)
+    oq_row = next(r for r in spec.rows if r.key == "open_questions")
+    assert oq_row.state == SC.CardState.IN_PROGRESS
+
+
+def test_project_resume_open_questions_empty_is_done() -> None:
+    """Empty open_questions list → Open questions row is DONE."""
+    saga = _mock_resume_saga(open_questions=[])
+    spec = SC.project_resume(saga)
+    oq_row = next(r for r in spec.rows if r.key == "open_questions")
+    assert oq_row.state == SC.CardState.DONE
+
+
+def test_project_resume_gate_verdicts_failed_via_parse() -> None:
+    """Last gate verdicts routes through parse_gate_verdict — a tests:failed entry → FAILED."""
+    saga = _mock_resume_saga(gate_verdicts=["tests:failed:saga-resume-1/gate_verdicts"])
+    spec = SC.project_resume(saga)
+    gv_row = next(r for r in spec.rows if r.key == "gate_verdicts")
+    assert gv_row.state == SC.CardState.FAILED, (
+        f"tests:failed entry must yield FAILED gate_verdicts row, got {gv_row.state!r}"
+    )
+    assert gv_row.ref is not None
+
+
+def test_project_resume_gate_verdicts_all_done() -> None:
+    """All gate verdicts done → Last gate verdicts row is DONE."""
+    saga = _mock_resume_saga(
+        gate_verdicts=["tests:done:ref1", "ruff:done:ref2"],
+    )
+    spec = SC.project_resume(saga)
+    gv_row = next(r for r in spec.rows if r.key == "gate_verdicts")
+    assert gv_row.state == SC.CardState.DONE
+
+
+def test_project_resume_gate_verdicts_none_is_not_reached() -> None:
+    """No gate_verdicts → Last gate verdicts row is NOT_REACHED with no ref."""
+    saga = _mock_resume_saga(gate_verdicts=None)
+    spec = SC.project_resume(saga)
+    gv_row = next(r for r in spec.rows if r.key == "gate_verdicts")
+    assert gv_row.state == SC.CardState.NOT_REACHED
+    assert gv_row.ref is None
+
+
+def test_project_resume_route_present_is_done() -> None:
+    """Non-empty next_step → Route row is DONE with next_step text as ref."""
+    next_step_text = "Open PR and request review from the team"
+    saga = _mock_resume_saga(next_step=next_step_text)
+    spec = SC.project_resume(saga)
+    route_row = next(r for r in spec.rows if r.key == "route")
+    assert route_row.state == SC.CardState.DONE
+    assert route_row.ref == next_step_text
+
+
+def test_project_resume_route_absent_is_not_reached() -> None:
+    """Empty next_step → Route row is NOT_REACHED with no ref."""
+    saga = _mock_resume_saga(next_step="")
+    spec = SC.project_resume(saga)
+    route_row = next(r for r in spec.rows if r.key == "route")
+    assert route_row.state == SC.CardState.NOT_REACHED
+    assert route_row.ref is None
+
+
+def test_project_resume_safe_degradation_all_absent() -> None:
+    """Safe degradation: empty/absent blockers/open_questions/gate_verdicts/next_step → no crash.
+
+    Verified states: cleared/done for blockers, done for empty oq, not-reached for gv/route.
+    No guessed glyphs on any row.
+    """
+    saga = _mock_resume_saga(
+        blockers="",
+        open_questions=[],
+        gate_verdicts=None,
+        next_step="",
+    )
+    spec = SC.project_resume(saga)
+    # Must not crash; verify each row is a legal CardState value.
+    for row in spec.rows:
+        assert isinstance(row.state, SC.CardState), (
+            f"row {row.key!r} has illegal state {row.state!r}"
+        )
+
+    # Safe-degrade specific expectations.
+    assert next(r for r in spec.rows if r.key == "blockers").state == SC.CardState.DONE
+    assert next(r for r in spec.rows if r.key == "open_questions").state == SC.CardState.DONE
+    assert next(r for r in spec.rows if r.key == "gate_verdicts").state == SC.CardState.NOT_REACHED
+    assert next(r for r in spec.rows if r.key == "route").state == SC.CardState.NOT_REACHED
+
+
+def test_project_resume_no_outcome_dag_rows() -> None:
+    """project_resume must not contain 'Open leaves' / 'Ready frontier' outcome-DAG rows (P1 fix).
+
+    These are outcome-DAG concepts with no producer in /resume's single-thread reconstruction.
+    Including them would render perpetually NOT_REACHED, violating R12/R13.
+    """
+    saga = _mock_resume_saga()
+    spec = SC.project_resume(saga)
+    labels_lower = {r.label.lower() for r in spec.rows}
+    dag_labels = {"open leaves", "ready frontier", "frontier"}
+    assert not (labels_lower & dag_labels), (
+        f"project_resume must not contain outcome-DAG rows: found {labels_lower & dag_labels}"
+    )
+
+
+# ── AE5: shared-concept label+glyph consistency across surfaces ───────────────────────────────────
+
+
 def test_ae5_done_glyph_consistent_across_work_and_qa() -> None:
     """AE5: the DONE glyph from project_work Tests row matches the DONE glyph from project_qa rows.
 

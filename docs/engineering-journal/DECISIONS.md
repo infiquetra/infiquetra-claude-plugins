@@ -22,6 +22,22 @@
 
 ---
 
+## 2026-06-29
+
+### Pull the clone-jail from the #277 delegated-build protocol — contain by post-hoc verification, not isolation  {#agy-delegated-build-no-jail}
+
+**Decision.** Build #277 by handing each unit to plain `/agy:delegate --model flash <task>` against the REAL working tree (the unit's write-set doubling as a tight in-prompt allow-set), then treating agy as a junior engineer: Claude reviews, FIXES, and is sole committer. Containment is **post-hoc verification** — `git status` changed-paths ⊆ allow-set, the FULL gate (`pytest` + `ruff format --check` + `ruff check` + `mypy`), mutation-proofing any tests agy wrote, and reading the diff — NOT workspace isolation. A failed draft is recovered by Claude fixing it (default) or one Pro retry; scrap threshold: never polish a fundamentally wrong draft.
+
+**Rejected alternatives.** Rejected the originally-planned **clone-jail harness** (disposable clone, `remote remove origin`, `git` PATH-shim, `agy --sandbox` probe, sibling-repo/`~/.claude` FS audit, remote-drift check): too many moving parts, and every part requires the hand-authored `agy`/git shell scripting the operator has banned in this harness. Rejected building the units myself (loses the delegation-dogfood signal that is half the point of #277-as-n=2).
+
+**Rationale.** n=2/U1 proved plain delegate + post-hoc verify contains cleanly with zero isolation: agy wrote only its two allow-set files (`git status` confirmed), 8/8 tests + `--self-test` rc=0, no fork, no jail. The harness already provides the load-bearing guarantees — sole-committer ⇒ a broken *uncommitted* tree never reaches `origin`; full gate ⇒ correctness; `git status` ⇒ containment. Isolation is the right tool for *independent agents with their own workspace* (the distributed-delegation topology), not an in-session junior-draft loop.
+
+**Revisit when.** agy actually wanders outside its allow-set on a write job (then add a throwaway `git worktree`, or the clone-jail as an optimization), OR per-unit review-and-fix churn exceeds the cost of writing the unit directly (then stop delegating that unit class).
+
+**Refs.** Plan: `docs/plans/2026-06-28-silent-omission-completeness-gate-plan.md` (KTD6/KTD7 + Delegated Build Protocol); LEARNINGS [#agy-delegate-plain-is-the-path](LEARNINGS.md#agy-delegate-plain-is-the-path) + n=1 [#agy-delegated-coder-contain-agency](LEARNINGS.md#agy-delegated-coder-contain-agency); blueprint `docs/external-agent-delegation/blueprint.md` (clone-jail retained there as a deferred optimization).
+
+---
+
 ## 2026-06-28
 
 ### Create-prepared GraphQL resolver stance (planned) {#create-prepared-graphql-resolver-stance}

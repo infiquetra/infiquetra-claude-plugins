@@ -14,6 +14,47 @@ if str(_REDIS_BRIDGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_REDIS_BRIDGE_ROOT))
 
 
+# --- #279 hard floor: GitHub-write test modules can never touch the live operations board ---
+_GH_WRITE_TEST_MODULES = {"test_mission_control", "test_outcome_board_sync"}
+
+
+@pytest.fixture(autouse=True)
+def _no_live_gh(request, monkeypatch):
+    """Deny-by-default guard for the GitHub-mutating test modules (#279 doc-review hard floor).
+
+    Mission-control's issue verbs and the ``/outcome`` board-sync consumer mutate GitHub through
+    ``gh`` (``sdlc_manager._gh`` builds ``["gh", *args]``). For the modules that exercise those
+    verbs this autouse fixture (a) strips every GitHub credential from the env and (b) replaces
+    ``subprocess.run`` with a wrapper that RAISES on any unmocked ``gh`` invocation. A test that
+    legitimately drives a verb injects its own fake runner
+    (``monkeypatch.setattr("subprocess.run", ...)``), which overrides this guard for that test — so a
+    *forgotten* mock fails loudly instead of hitting the real board. Unlike the opt-in
+    ``mock_subprocess_run`` fixture this denies by default; it is the concrete tripwire behind the
+    external-agent "escalate off agy on a real-gh call" rule.
+    """
+    if request.module.__name__.rsplit(".", 1)[-1] not in _GH_WRITE_TEST_MODULES:
+        return
+    for var in ("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+
+    import subprocess as _sp
+
+    real_run = _sp.run
+
+    def _guard(cmd, *args, **kwargs):
+        argv = cmd if isinstance(cmd, (list, tuple)) else str(cmd).split()
+        first = str(argv[0]) if argv else ""
+        if first == "gh" or first.endswith("/gh"):
+            raise RuntimeError(
+                "no-live-gh guard (#279): an unmocked `gh` call escaped a GitHub-write test "
+                f"module; inject a fake subprocess runner instead of touching the live board. "
+                f"cmd={list(argv)!r}"
+            )
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(_sp, "run", _guard)
+
+
 @pytest.fixture
 def mock_aws_client():
     """Mock boto3 AWS client."""

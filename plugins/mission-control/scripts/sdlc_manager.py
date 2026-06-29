@@ -687,6 +687,12 @@ def _rest_patch(path: str, body: dict) -> Any:
     return json.loads(result)
 
 
+def _rest_delete(path: str) -> Any:
+    """Execute a REST DELETE via gh CLI. May return empty body (e.g. 204 No Content)."""
+    result = _gh(["api", "--method", "DELETE", path])
+    return json.loads(result) if result else ""
+
+
 # ===========================
 # OUTPUT HELPERS
 # ===========================
@@ -2244,6 +2250,51 @@ def flow_discover_project(repo: str, fmt: str) -> None:
         print(f"\n{repo} maps to:")
         for p in projects:
             print(f"  - {p['name']} (#{p['number']})")
+
+
+# ===========================
+# ISSUE WRITE VERBS (U3 — #279)
+# ===========================
+
+
+def issue_close(repo: str, number: int, fmt: str = "text") -> None:
+    """Close a GitHub issue. Idempotent: re-closing an already-closed issue succeeds."""
+    _rest_patch(f"repos/{ORG}/{repo}/issues/{number}", {"state": "closed"})
+    _out({"action": "closed", "repo": repo, "number": number}, fmt)
+
+
+def issue_reopen(repo: str, number: int, fmt: str = "text") -> None:
+    """Reopen a closed GitHub issue. Idempotent: re-opening an open issue succeeds."""
+    _rest_patch(f"repos/{ORG}/{repo}/issues/{number}", {"state": "open"})
+    _out({"action": "reopened", "repo": repo, "number": number}, fmt)
+
+
+def issue_comment(repo: str, number: int, body: str, fmt: str = "text") -> None:
+    """Post a comment on a GitHub issue. Plain POST — consumer's idempotency ledger
+    (KTD4) ensures one comment per meaningful transition; this verb just posts."""
+    result = _rest_post(f"repos/{ORG}/{repo}/issues/{number}/comments", {"body": body})
+    _out(
+        {"action": "commented", "repo": repo, "number": number, "comment_id": result.get("id")}, fmt
+    )
+
+
+def issue_label_add(repo: str, number: int, label: str, fmt: str = "text") -> None:
+    """Add a label to a GitHub issue. Idempotent: GitHub no-ops if the label is
+    already present (returns 200)."""
+    _rest_post(f"repos/{ORG}/{repo}/issues/{number}/labels", {"labels": [label]})
+    _out({"action": "label_added", "repo": repo, "number": number, "label": label}, fmt)
+
+
+def issue_label_remove(repo: str, number: int, label: str, fmt: str = "text") -> None:
+    """Remove a label from a GitHub issue. Idempotent: treats 404 (label already
+    absent) as success; lets other errors propagate for the U4 retry path."""
+    try:
+        _rest_delete(f"repos/{ORG}/{repo}/issues/{number}/labels/{label}")
+    except ApiNotFoundError:
+        # Label was already absent — idempotent success.
+        _out({"action": "label_remove_noop", "repo": repo, "number": number, "label": label}, fmt)
+        return
+    _out({"action": "label_removed", "repo": repo, "number": number, "label": label}, fmt)
 
 
 def flow_link_sub_issue(
@@ -4922,6 +4973,34 @@ def main() -> None:
         help="One or more prepared draft markdown paths to approve",
     )
 
+    # U3 (#279): issue write verbs — close / reopen / comment / label-add / label-remove
+    issue_close_p = issue_sp.add_parser("close", help="Close a GitHub issue (idempotent)")
+    issue_close_p.add_argument("--repo", required=True)
+    issue_close_p.add_argument("--number", required=True, type=int)
+
+    issue_reopen_p = issue_sp.add_parser("reopen", help="Reopen a closed GitHub issue (idempotent)")
+    issue_reopen_p.add_argument("--repo", required=True)
+    issue_reopen_p.add_argument("--number", required=True, type=int)
+
+    issue_comment_p = issue_sp.add_parser("comment", help="Post a comment on a GitHub issue")
+    issue_comment_p.add_argument("--repo", required=True)
+    issue_comment_p.add_argument("--number", required=True, type=int)
+    issue_comment_p.add_argument("--body", required=True)
+
+    issue_label_add_p = issue_sp.add_parser(
+        "label-add", help="Add a label to a GitHub issue (idempotent)"
+    )
+    issue_label_add_p.add_argument("--repo", required=True)
+    issue_label_add_p.add_argument("--number", required=True, type=int)
+    issue_label_add_p.add_argument("--label", required=True)
+
+    issue_label_remove_p = issue_sp.add_parser(
+        "label-remove", help="Remove a label from a GitHub issue (idempotent — 404 = success)"
+    )
+    issue_label_remove_p.add_argument("--repo", required=True)
+    issue_label_remove_p.add_argument("--number", required=True, type=int)
+    issue_label_remove_p.add_argument("--label", required=True)
+
     # ===========================
     # LABELS
     # ===========================
@@ -5184,6 +5263,17 @@ def main() -> None:
                 )
             elif args.action == "approve":
                 prepared_approve_batch([Path(d) for d in args.drafts], fmt=fmt)
+            # U3 (#279): issue write verbs
+            elif args.action == "close":
+                issue_close(args.repo, args.number, fmt)
+            elif args.action == "reopen":
+                issue_reopen(args.repo, args.number, fmt)
+            elif args.action == "comment":
+                issue_comment(args.repo, args.number, args.body, fmt)
+            elif args.action == "label-add":
+                issue_label_add(args.repo, args.number, args.label, fmt)
+            elif args.action == "label-remove":
+                issue_label_remove(args.repo, args.number, args.label, fmt)
 
         elif args.resource == "labels":
             if args.action == "sync-fields":

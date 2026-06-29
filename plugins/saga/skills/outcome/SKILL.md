@@ -84,6 +84,41 @@ The execution backends a leaf can be dispatched to — inline / fork / subagent 
 cc-workflows-ultracode / `/goal` / manual — are wired in later units; the dispatch *seam* and the
 reconcile loop are the contract.
 
+## Autonomous board-sync (`advance --autonomous`)
+
+By default `advance` performs **no** GitHub writes — it dispatches and derives status, nothing more. The
+opt-in `--autonomous` flag lets a tick *also* move the operations board to match each leaf's derived state,
+but only inside a strictly **enumerated, reversibility-gated envelope**. Every candidate write is checked
+against the reversibility certificate (`reversibility_certificate.authorize_write`), which **defaults to
+GATE**: a write happens only when the op is one of the enumerated, reversible-or-additive kinds.
+
+**Performed autonomously when authorized:**
+
+- **Set the leaf's Status field** to `In Progress` when the leaf enters its ready/dispatched frontier
+  (reversible: the inverse is setting the prior value).
+- **Close the leaf's sub-issue** when the leaf reaches its done state (reversible: the inverse is reopen).
+- **Add or remove an issue label** (each is the other's inverse).
+- **Post one coalesced progress comment** per meaningful leaf transition — additive, append-only, and
+  bounded by a coalescing idempotency key so rapid repeat ticks never spam duplicate comments.
+
+**Never autonomous — always the operator's keystroke (never allowlisted):**
+
+- **Merging a PR** and **deploying** — irreversible side effects, permanently human-in-the-loop.
+- **Closing the parent issue** — `parent-issue-close` is classified `ALWAYS_OPERATOR`, so it GATEs even
+  though a close is mechanically reversible: declaring the whole outcome done stays a deliberate decision.
+
+**Everything else GATEs to the operator.** Any op not in the enumerated allowlist (an unrecognized verb, a
+repo mutation, anything the certificate does not recognize) is **denied by default** and surfaced — there
+is no silent write and no silent skip. A GATE produces a visible `gated` record, not a no-op.
+
+**Idempotent, fail-loud, and recorded.** Each authorized write carries a deterministic idempotency key
+recorded in a **separate board-sync ledger** (never the completion event log), so a crash or a repeated
+tick re-runs as a no-op rather than a duplicate. A write that fails is **retried under the same key** a
+bounded number of times and then **surfaced as a failed record** — the campaign is never silently wedged
+and never silently skips the write. **Every autonomous write is recorded** (in the tick's
+`board_synced` results) so there is an auditable trail of what the coordinator changed, when, and why it
+was authorized.
+
 ## Interaction method
 
 Drive `/outcome` for coordination; drop to native leaf verbs for hands-on work. When several leaves block

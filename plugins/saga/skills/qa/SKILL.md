@@ -232,15 +232,24 @@ above rides alongside it as the continuous health signal.
 
 ## Phase 5 — Report + emit evidence
 
+Render the operator status header via the shared card renderer (`plugins/saga/scripts/status_card.py`,
+`project_qa`) — the single emitter of the operator-facing ship-verdict summary for `/qa`. Pass the
+artifact text and the reviewed ref; the card derives its cells on-read from the artifact's frontmatter
+(`verdict:`, `health_score:`) and the per-class pass/fail table. The card is the status header only —
+the full evidence detail that follows (per-finding list, per-class table, verdict derivation) is the
+drill-down body the card cells reference, not replaced by the card.
+
+The ship verdict values (`ship`, `ship-with-deferred`, `no-ship`) derived in §4.2 are the card's data
+source; they remain authoritative in the artifact.
+
 ### 5.1 Write the durable artifact
 
 Write `docs/qa/qa-<saga-id-or-issue>-<date>.md` using the shape in `references/qa-report.md` (adapted
-from gstack's template, browser-decoupled): header (target / tier / scope / reviewed revision), the
-**health-score block** (overall 0-100 + per-class table + baseline delta from Phase 4), top findings,
-summary-by-severity, per-finding (severity / class / evidence / repro / falsifiable-prediction),
-**recommended** regression tests (recommend — do **not** generate them), the ship verdict with its
-derivation, and deferred-with-repro. Use `docs/qa/` — its own directory, with no handoff/sdlc
-classifier collision.
+from gstack's template, browser-decoupled): header (target / tier / scope / reviewed revision), overall
+health score + per-class table + baseline delta from Phase 4, top findings, summary-by-severity,
+per-finding (severity / class / evidence / repro / falsifiable-prediction), **recommended** regression
+tests (recommend — do **not** generate them), the ship verdict with its derivation, and
+deferred-with-repro. Use `docs/qa/` — its own directory, with no handoff/sdlc classifier collision.
 
 ### 5.2 Emit issue progress with evidence
 

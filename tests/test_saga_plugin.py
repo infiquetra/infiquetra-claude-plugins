@@ -3002,3 +3002,78 @@ def test_scan_exposes_picker_fields(tmp_path, monkeypatch: pytest.MonkeyPatch) -
     assert candidate["branch"] == "feat/loop-probe"
     assert candidate["orchestration_mode"] == "cc-workflows-ultracode"
     assert candidate["orchestration_ref"] == "wf_probe123"
+
+
+def test_ae10_status_card_single_emitter_routing() -> None:
+    """AE10: each of the five saga surfaces routes its operator-facing status-summary
+    through the shared status_card renderer (R14 — retire per-surface prose emissions).
+
+    Tokens chosen from the actual authored SKILL.md prose — these are load-bearing
+    contract assertions, not fragile grep guards. KTD5 evidence detail is kept as
+    drill-down body below the card; per-finding tables and verdict values remain.
+    """
+    work_doc = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    cr_doc = _read(PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md")
+    qa_doc = _read(PLUGIN_ROOT / "skills" / "qa" / "SKILL.md")
+    outcome_doc = _read(PLUGIN_ROOT / "skills" / "outcome" / "SKILL.md")
+    resume_doc = _read(PLUGIN_ROOT / "skills" / "resume" / "SKILL.md")
+
+    # --- /work ---
+    # PRESENT: card renderer and per-surface function name.
+    assert "status_card" in work_doc
+    assert "project_work" in work_doc
+    # PRESENT: U2 producer flag — gate_verdicts written by /work Phase-3 tick.
+    assert "--gate-verdict" in work_doc
+    # PRESENT: the producer example uses a CANONICAL gate state — a passing gate is `tests:done:<ref>`.
+    assert "tests:done:<ref>" in work_doc
+    # ABSENT: the non-canonical `pass|fail|skip` vocab would parse to *unknown* and silently drop the
+    # verdict (the Tests card cell would render not-reached) — guard against that regression.
+    assert "tests:<pass|fail|skip>" not in work_doc
+    # PRESENT (substantive): the card render is the LEAD status step (step 1) of §5.4 — proving the
+    # card is the operator status HEADER, not an afterthought — and the continuation-routing step that
+    # was step 3 is pushed to step 4 by the insertion (proves a real reorder, not a keyword sprinkle).
+    assert "1. **Render the operator status header**" in work_doc
+    assert "4. **Present continuation routing**" in work_doc
+    # STILL PRESENT (KTD5): detailed work-session evidence reference.
+    assert "work-session" in work_doc
+
+    # --- /code-review ---
+    # PRESENT: card renderer and per-surface function name.
+    assert "status_card" in cr_doc
+    assert "project_code_review" in cr_doc
+    # ABSENT: old standalone "blockquote verdict" status-summary phrasing (retired by card).
+    assert "blockquote verdict" not in cr_doc
+    # STILL PRESENT (KTD5): per-finding evidence table header (drill-down body kept).
+    assert "# | File | Issue | Reviewer | Confidence | Route" in cr_doc
+
+    # --- /qa ---
+    # PRESENT: card renderer and per-surface function name.
+    assert "status_card" in qa_doc
+    assert "project_qa" in qa_doc
+    # ABSENT: old bold "**health-score block**" as standalone operator-facing presentation element.
+    assert "**health-score block**" not in qa_doc
+    # STILL PRESENT (KTD5): verdict values are the card's data source; remain in artifact spec.
+    assert "ship-with-deferred" in qa_doc
+    assert "no-ship" in qa_doc
+
+    # --- /outcome ---
+    # PRESENT: card renderer and per-surface function name.
+    assert "status_card" in outcome_doc
+    assert "project_outcome" in outcome_doc
+    # ABSENT: old terse status-verb description without card routing
+    # ("cockpit snapshot (states, counts, frontier)" was the entire verb description pre-migration).
+    assert "cockpit snapshot (states, counts, frontier)" not in outcome_doc
+    # STILL PRESENT (KTD5): derived-on-read principle (R17) and spec/completion-event sources.
+    assert "derived on read" in outcome_doc
+
+    # --- /resume ---
+    # PRESENT: card renderer and per-surface function name.
+    assert "status_card" in resume_doc
+    assert "project_resume" in resume_doc
+    # PRESENT (substantive, not keyword): the card-render DIRECTIVE is wired into the Phase 3a
+    # reconstruction flow. /resume's migration is ADDITIVE (it previously emitted no status card), so
+    # the contract is proven by the directive's presence — a no-op draft would lack this exact prose.
+    assert "render the operator status header via the shared card renderer" in resume_doc
+    # STILL PRESENT (KTD5): durable state fields that the card derives its cells from.
+    assert "next-step" in resume_doc
+    assert "blockers" in resume_doc

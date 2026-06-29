@@ -54,6 +54,7 @@ for all external-agent usage.
 | [`blueprint.md`](blueprint.md) | The agent-agnostic **build blueprint**: what harness / prompts / validation to build, why, and what to measure. Written so a fresh agent (any model) could build it from scratch. |
 | [`distributed-delegation.md`](distributed-delegation.md) | **Forward-looking (n=0)** sibling to the blueprint: the *distributed* topology — N agents, each with its own workspace, GitHub identity, and credentials. The boundary moves from filesystem to identity; containment gets easier, coordination gets harder. Design-by-principle, not yet dogfooded. |
 | [`next-run-handoff.md`](next-run-handoff.md) | A **ready-on-the-shelf runbook** for whoever starts the next run — current state, the exact protocol, what to measure, pointers. Pick it up when starting a run; nothing is in-flight. |
+| [`agy-plugin-fork-decision.md`](agy-plugin-fork-decision.md) | **Deferred-decision dossier (Track 1):** how `/agy:delegate` actually works (validated from the installed code), the hard-won mechanics (`--background` trap, named-runner recovery), open puzzles + the A/B experiment to settle them, and the leave/fork/copy decision to make **before** delegation goes into regular use. |
 | this README | Framing + the running **results matrix** below. |
 
 ## Results matrix (append one row per run)

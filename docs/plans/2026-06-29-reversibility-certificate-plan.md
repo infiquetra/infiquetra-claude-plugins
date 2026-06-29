@@ -494,3 +494,15 @@ fixes applied in place (all evidence-backed):
 
 Doc-review is **complete (READY)** — `/work` is unblocked. Next: `/work` (inline backend, agy-Pro
 delegation of U1–U5, Claude-written U6, destination = **merge**).
+
+## Execution reality (2026-06-29 — post-build correction)
+
+**KTD7's agy-Pro delegation did NOT happen.** Built 2026-06-29 on `feat/279-reversibility-certificate`
+(U1–U6 + a fix commit; saga 0.42.0 + mc 2.4.0; full suite green). Mid-build the operator flagged — and the
+agent transcripts confirmed — that the named `agy:runner` spawns were **Claude clones** (Read/Write/Edit
+tools + Claude output style, **zero `agy` invocations**), not the agy wrapper. **All units are therefore
+Claude-authored**, the commit messages say so, and the "n=4 agy Pro run" experiment data is invalid (no agy
+signal). The plan above is preserved as written; this note records what actually executed. The
+operator-requested adversarial-verify on U2 (672-sweep, 0 diffs) and U4 (found + fixed two real P2 holes —
+repo-blind idempotency key, ledger-fault wedge) still ran and added real value. See work-session
+`docs/work-sessions/2026-06-29-reversibility-certificate.md`.

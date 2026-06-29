@@ -34,6 +34,8 @@
 
 **Revisit when.** agy actually wanders outside its allow-set on a write job (then add a throwaway `git worktree`, or the clone-jail as an optimization), OR per-unit review-and-fix churn exceeds the cost of writing the unit directly (then stop delegating that unit class).
 
+**Outcome (2026-06-29, full run — VALIDATED).** Shipped #277 via PR #303 (`b09ad50`, saga 0.40.0 / team-execution 2.4.0). The no-jail posture held across all three delegated units (U1/U2/U3): `git status` showed only allow-set paths every time, no wander, no rogue commit/push (the plain-delegate path never gives agy a jailed git to abuse, and sole-committer makes a broken uncommitted tree unable to reach `origin`). Review-fix churn was **cosmetic** — U1 clean; U2 a stray comment + an unapplied `ruff format`; U3 a clean draft with one accepted DRY residual — well under the "cheaper to write it myself" threshold. The one place the threshold *tripped* was a NEW failure mode, **F6 silent no-op**: U4 (prose) finished writing nothing, so it was hand-written. Net: the revisit conditions did not fire for code; they fired once for a prose unit. Regime question got a first positive data point (U3, a non-mechanical typed-halt + bounded loop, implemented correctly in-bounds).
+
 **Refs.** Plan: `docs/plans/2026-06-28-silent-omission-completeness-gate-plan.md` (KTD6/KTD7 + Delegated Build Protocol); LEARNINGS [#agy-delegate-plain-is-the-path](LEARNINGS.md#agy-delegate-plain-is-the-path) + n=1 [#agy-delegated-coder-contain-agency](LEARNINGS.md#agy-delegated-coder-contain-agency); blueprint `docs/external-agent-delegation/blueprint.md` (clone-jail retained there as a deferred optimization).
 
 ---

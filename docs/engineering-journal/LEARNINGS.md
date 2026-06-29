@@ -43,6 +43,30 @@
 
 **Refs.** DECISIONS [#agy-delegated-build-no-jail](DECISIONS.md#agy-delegated-build-no-jail) · prior n=1 [#agy-delegated-coder-contain-agency](#agy-delegated-coder-contain-agency) · plan `docs/plans/2026-06-28-silent-omission-completeness-gate-plan.md`.
 
+### agy Flash as a delegated coder, n=2: the code is cheap to fix; the expensive failure is the silent no-op  {#agy-flash-coder-review-fix-n2}
+
+**Context.** Full #277 build (n=2 of the agy-as-coder experiment), no-jail review-and-fix posture. First run where we tracked the **review-fix delta** per unit — what the delegate got wrong that the orchestrator had to fix.
+
+**Evidence (per-unit, from the fix-time commits — PR #303).** U1 (new oracle module + tests): clean, 8/8 + `--self-test` rc=0, nothing fixed. U2 (live edit to a JS-emitting Python emitter): correct logic; fixes were a **stray gratuitous comment** (reverted) + an **unapplied `ruff format`** (CI runs the check). U3 (non-mechanical typed-halt control-flow + bounded loop): correct in the draft (the R4 halt was agy's), one accepted DRY residual left as a follow-up. U4 (prose protocol + doc test): **silent no-op** — finished, wrote nothing, no error/escalation, then thrashed → hand-written. U5 (release triad): not delegated.
+
+**Mechanism.** Flash's *code quality*, when it produced any, needed only style-grade fixes — the dangerous n=1 behaviors (rogue commit/push) never recurred because the plain-delegate path gives it no jailed git to abuse and Claude is sole committer. The real tax was **F6 silent no-op** on the prose-only unit: the verifier catch is trivial (`git status` empty) but the cost is the whole unit, written by hand. Note this *inverts* n=1, where markdown/prose was Flash's strongest, fastest suit — so "Flash is good at prose" is not yet reliable.
+
+**Generalizable rule.** Budget delegated-coder cost as *no-op risk*, not *bad-code risk*: for competent engines under post-hoc verification the fixes are cosmetic, but a silent null delivery means you write the unit anyway — so keep the scrap threshold and a real fallback. And run the **full** gate (the unapplied-formatter overclaim recurred from n=1). **Process gap to close at n=3:** raw drafts were not archived, so this delta is reconstructed from commit messages, not measured — `git stash`/copy each draft before fixing it.
+
+**Refs.** narrative `docs/engineering-journal/narratives/2026-06-29-agy-as-coder-dogfood-277.md` · README review-fix log `docs/external-agent-delegation/README.md` · DECISIONS [#agy-delegated-build-no-jail](DECISIONS.md#agy-delegated-build-no-jail) · blueprint failure taxonomy F6.
+
+### A thrashing delegate runner can spawn an orphan agent that writes LATE — commit each unit as it lands  {#delegate-orphan-late-write}
+
+**Context.** During #277/U4, the `agy:runner` thrashed on a status query and forwarded it into a stray subagent.
+
+**Evidence.** That orphan ran **~72 minutes** and, *after PR #303 was already open*, completed and appended 5 unreviewed test assertions to `tests/test_team_execution_plugin.py`. Caught by a routine `git status`; discarded with `git restore`. It had nothing of mine to clobber because every unit was committed immediately as it landed.
+
+**Mechanism.** A delegate launched as a session teammate can spawn descendants whose lifetime is decoupled from the orchestrator's turn; a thrashing one can keep running and write to the shared tree long after you think the work is done. Uncommitted orchestrator work in that tree is exposed to a late writer (cf. the commit-before-verify clobber class).
+
+**Generalizable rule.** With teammate-delegated work, **commit each unit the moment it passes its gate**, and `git status` before trusting any "done" state — a clean tree at commit-time is the cheap defense against a late-writing orphan. Pairs with sole-committer.
+
+**Refs.** narrative `docs/engineering-journal/narratives/2026-06-29-agy-as-coder-dogfood-277.md` · related memory `commit-before-verify-workflows`.
+
 ---
 
 ## 2026-06-28

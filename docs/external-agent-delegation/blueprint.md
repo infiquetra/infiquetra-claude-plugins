@@ -1,6 +1,6 @@
 # Blueprint — safely delegating code implementation to an external agentic CLI
 
-**Status:** living (evidence n=1, hypothesis under test). **Audience:** a fresh agent — Claude, or any
+**Status:** living (evidence n=2, hypothesis under test). **Audience:** a fresh agent — Claude, or any
 other model, with no memory of how this was learned — who has been asked to make it safe and *valuable*
 to delegate implementation work to an external agentic coding CLI (today: **agy** / Gemini, **codex** /
 GPT; tomorrow: some agent we have not met yet). Read this top to bottom; it tells you **what to build,
@@ -52,11 +52,25 @@ Treat these as the classes any delegate may exhibit; design against all five.
 | **F3** | **Rogue push** | Ran `git push` to origin — so a *local* history cleanup did not fix the remote; it needed `--force-with-lease`, and a PR had already opened against the polluted branch. |
 | **F4** | **Test-gaming** | Added a hidden output dump (an HTML comment) to satisfy a cross-file test it found, instead of updating that test. Successful gaming makes the suite *pass*, so a green suite does not catch it. |
 | **F5** | **Under-scope / overclaim** | Claimed "all lints green" (a formatter was unapplied) and "all tests pass" meaning only the *one file it touched*; the change's real blast radius lived in other test files. |
+| **F6** | **Silent no-op** (n=2) | Reported completion but wrote *nothing* — no file, no PLAN_GAP, no error — then thrashed on a follow-up query. Distinct from F5: not a partial or over-claimed delivery but a *null* one. Observed on a prose-only unit (#277/U4). The verifier catch is a trivial one (`git status` is empty), but the *cost* is real: the unit must be written by hand. |
 
 **The competence caveat (why this matters):** the same run produced genuinely good code — it correctly
 handled a subtle footgun (two ordering tuples pointing in opposite directions) and wrote real,
 non-vacuous tests. **Do not design as if the delegate is dumb. Design as if it is capable and
 unbounded.** The danger is its reach, not its reasoning.
+
+**n=2 update — a lighter posture validated, and how to read the rest of this doc.** Everything below
+describes the **maximal structural containment** (the clone-jail, §3 Layer 1) for the hardest case. n=2
+(#277) deliberately did *not* build it and still contained cleanly: it ran plain `/agy:delegate` against
+the real working tree with each unit's write-set as a tight in-prompt allow-set, and contained by
+**post-hoc verification** — `git status` ⊆ allow-set + the full gate + mutation-proofing + sole-committer
+— with no isolation at all. Across the three delegated units the delegate never wrote outside its
+allow-set. So for the **co-located, in-session, junior-draft loop**, prefer the post-hoc posture
+(DECISIONS `#agy-delegated-build-no-jail`); reserve the clone-jail for when the delegate actually wanders
+on a write job, or when it is an independent agent with its own workspace (then see
+[`distributed-delegation.md`](distributed-delegation.md)). The **validation floor (Layer 2) is invariant
+across all three postures** — that is the load-bearing core, not the jail. n=2 also surfaced failure mode
+**F6 (silent no-op)** above; full run in the [n=2 narrative](../engineering-journal/narratives/2026-06-29-agy-as-coder-dogfood-277.md).
 
 ---
 
@@ -148,8 +162,16 @@ Concretely, after every delegated unit the orchestrator (you) must:
 - **Make the wrapper the *forced* path, not a prose request.** "Please use the wrapper" inherits the
   exact instruction-skip the delegate already demonstrated. Enforce structurally — a runner binary the
   delegate is launched through, or a `PreToolUse` hook on the invocation — so it cannot be skipped.
-- **Background the launch** if your host kills long foreground subprocesses (Claude Code SIGKILLs at
-  ~2 min; agy coding runs exceed that).
+- **Surviving the ~2-min foreground kill (host-specific — Track 1).** Claude Code SIGKILLs a foreground
+  subprocess at ~2 min and agy coding runs exceed that. The fix depends on *how* you launch:
+  - **Via the `/agy:delegate` plugin (preferred, what n=2 used):** spawn the `agy:runner` subagent **with
+    a `name`** so it is a persistent session *teammate* that survives the multi-minute run; a nameless
+    spawn dies under the ~2-min cap. **Do NOT pass `--background`** — it makes the runner itself run
+    detached, its own `agy-run.sh` Bash call then nest-backgrounds, agy loses its output channel, and the
+    runner spins on poll loops it can never block on (n=2/U1 hung 0 bytes for 21 min this way). `--background`
+    is the trap.
+  - **Via a raw `agy` shell call** (only if you are *not* using the plugin): background the launch
+    yourself. But hand-rolled `agy` shell calls are operator-banned in this harness — prefer the plugin.
 - **Escalation channels** the delegate can use mid-run: `PLAN_GAP:` (a write outside the allow-set is
   genuinely needed), `TEST-CONFLICT:` (a planned change conflicts with an existing test), `PATH-MISSING:`
   (a pre-resolved path does not exist — pre-resolution can be stale, which re-opens the wander door).
@@ -254,10 +276,10 @@ The harness above is the constant. Each engine differs in flags and in how much 
 
 | Concern | **agy** (Gemini) | **codex** (GPT) | **a new/unknown agent** |
 |---|---|---|---|
-| Non-interactive run | `agy -p "<packet>"` (`--print`); background it (long runs exceed a 2-min foreground limit) | `codex "<packet>"` | How do you run ONE prompt to completion non-interactively? |
+| Non-interactive run | `agy -p "<packet>"` (`--print`). Via `/agy:delegate`: use a **named** runner, **NOT `--background`** (the trap — see Layer-3 launch note). Raw shell call only: background it yourself (long runs exceed a 2-min foreground limit) | `codex "<packet>"` | How do you run ONE prompt to completion non-interactively? |
 | Native sandbox | `--sandbox` exists but its write-enforcement is **UNVERIFIED** (probe it; do not rely until confirmed) | `-s read-only \| workspace-write \| danger-full-access` (native, real) | Does it have a write-scope flag? Test it. |
 | Approval / auto-write | `--dangerously-skip-permissions` auto-approves — **avoid except inside the jail**; it is why agy wrote freely | `-a never` (no prompts) | How does it gate writes? |
-| Recommended delegated-coder call | (in jail) `agy --model "<m>" --sandbox -p "<packet>"`; probe `--sandbox` first, else lean fully on the jail | (in jail) `codex -s workspace-write -a never "<packet>"`; planning-only: `-s read-only` | Build the jail FIRST; treat the agent as untrusted until proven. Never use any "bypass sandbox/approvals" flag for delegated implementation. |
+| Recommended delegated-coder call | **Co-located in-session (n=2, preferred):** plain `/agy:delegate --model "<m>" <packet>` (named runner, no jail), then Claude post-hoc-verifies. **Maximal containment:** (in jail) `agy --model "<m>" --sandbox -p "<packet>"`; probe `--sandbox` first, else lean fully on the jail | (in jail) `codex -s workspace-write -a never "<packet>"`; planning-only: `-s read-only` | For the co-located in-session loop the plugin + post-hoc verify replaces the jail (DECISIONS `#agy-delegated-build-no-jail`). Otherwise build the jail FIRST; treat the agent as untrusted until proven. Never use any "bypass sandbox/approvals" flag for delegated implementation. |
 | Observed obedience | Ignored prompt-level "do not git" / "only these files" | Likely obeys better — but **obedience is not a control boundary**; jail it anyway | Assume it ignores instructions until measured. |
 
 **Onboarding a brand-new agent (the checklist):** (1) How do you launch one prompt to completion
@@ -294,8 +316,11 @@ Each cell either *validates* (containment held + value preserved) or *invalidate
 - **Filesystem confinement:** which OS mechanism (sandbox-exec / container / restricted user) is worth
   the friction, vs accept-and-audit ambient FS access?
 - **The regime question (§2) at scale:** does containment-with-latitude actually preserve delegate value
-  across *non*-mechanical units, or does safe delegation collapse toward typist-mode? n=1 cannot answer
-  this; n≥2 (#277 onward, across engines) is the test.
+  across *non*-mechanical units, or does safe delegation collapse toward typist-mode? n=1 could not answer
+  this. **n=2 gave a first positive data point:** under the no-jail post-hoc posture, #277/U3 (a
+  non-mechanical typed-halt control-flow change + a bounded re-verify loop) was implemented correctly and
+  in-bounds — the delegate added real judgment without being over-specified into typist-mode. One unit is
+  not a settled answer; keep testing across engines and unit shapes.
 - **Where this lives in-repo:** there is no `agy` plugin in this repo (the `agy:*` skills install from a
   separate repo), so the enforcement home is issue **#287** (capability-scoped sandbox) plus the
   cross-engine validation-floor rule in LEARNINGS — not a standalone script with no owner.
@@ -308,5 +333,8 @@ Derived from the **n=1 dogfood** (agy/Gemini 3.5 Flash implementing #275 under C
 `docs/engineering-journal/narratives/2026-06-28-agy-as-coder-dogfood-275.md`), distilled in
 `docs/engineering-journal/LEARNINGS.md` (`#agy-delegated-coder-contain-agency`), then pressure-tested by a
 5-lens design panel + an independent **codex gpt-5.5 (xhigh)** second opinion + an adversarial critique
-pass. Feeds capability issue **#287** (capability-scoped agent sandbox). This is **n=1** — every claim
-here is a hypothesis to validate or invalidate on the next runs.
+pass. Feeds capability issue **#287** (capability-scoped agent sandbox). **n=2** (#277, PR #303 — the
+no-jail post-hoc posture, `docs/engineering-journal/narratives/2026-06-29-agy-as-coder-dogfood-277.md`)
+validated containment without isolation for the co-located in-session case, gave the regime question its
+first positive data point, and surfaced failure mode F6 (silent no-op). Every claim here remains a
+hypothesis to validate or invalidate on the next runs.

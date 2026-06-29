@@ -62,43 +62,47 @@ Source read: `~/.claude/plugins/cache/antigravity-cc/agy/0.4.1/` (upstream `anti
   one path that exists.* The break is the harness detaching the runner, not the script.
 - ✅ **The runner sets no Bash timeout** — code-level (`runner.md`, one `Bash` call, no `timeout`). So the
   default cap applies to the agy call. *Confirmed.*
+- ✅ **The NAMED spawn is the ONLY working invocation — SETTLED (operator-confirmed).** Spawning
+  `agy:runner` **with a `name`** (a persistent teammate) is the only way a real multi-minute delegation
+  completes; the nameless plain subagent dies under the ~2-min cap, and **a long Bash `timeout` instead of
+  a name is NOT a substitute** (only the name works). This is no longer an open "which mechanism" question.
+  The named spawn's *first action* fails (`Teammates cannot spawn other teammates`) and then **recovers** —
+  that failure-then-recovery is expected; do not strip the name over it.
 - ⚠️ **Latent: the `settings.json` model-lock serializes concurrent `--model` calls** (up to 600s wait,
   `agy-run.sh:198`). Harmless for serial delegation; a real hang/contention surface for **parallel or
   distributed** delegation — book it for the distributed topology.
 
-## Open puzzles (NOT resolvable from code; need an experiment)
+## Settled vs open
 
-1. **Why does the named runner survive when the nameless one dies — and can we skip the failed attempt?**
-   Two candidate mechanisms are conflated in our evidence and we have not disambiguated them:
-   - (a) **Teammate persistence** — a named teammate is a durable session that outlives the main loop's
-     per-turn Bash cap, so its long blocking call isn't killed.
-   - (b) **Bash timeout** — the separate ["agy stall" memory](../../) finding says the real culprit is the
-     Bash tool's **default ~120s timeout** SIGTERM-ing agy at 2m0s, fixed by passing `timeout: 900000` +
-     reading agy's redirected output **file** (the hook compresses stdout). If *that* is the true fix, the
-     teammate name may be incidental.
-   - **These can't both be the whole story.** Your instinct — "if it always recovers via the same path,
-     create the teammate and go straight to the recovery" — is exactly right *if* (a) is the mechanism; if
-     (b) is, the cleaner fix is a long-timeout Bash call and no teammate at all. **Experiment to settle it
-     (below) before any fork.**
-2. **What is the "teammate can't spawn a teammate" error actually rejecting, and what recovers it?** The
-   runner is Bash-only and can't spawn agents, so the error is about *our* spawn of a named subagent from a
-   context the harness treats as already-a-teammate. The recovery path (prompt→file→shell) is undocumented
-   and unowned. We can't invoke "just the recovery" until we characterize it.
+**SETTLED (operator-confirmed, do not re-litigate): the named spawn is the only solution.** Always spawn
+`agy:runner` with a `name`. The nameless variant and the "long Bash timeout instead of a name" variant do
+**not** work. This governs the rest of dogfooding — every delegation uses the named spawn and tolerates its
+first-action failure.
+
+**OPEN (deferred — not resolvable from code; need an experiment):**
+
+1. **How to go straight to the recovery (skip the failed first action).** The named spawn's first action
+   always fails with `Teammates cannot spawn other teammates — omit the name parameter`, then the runner
+   recovers (prompt→file → shell fallback → success). We want to invoke the recovery path *directly* and
+   skip the guaranteed-failing first attempt. The recovery is undocumented and unowned; characterize it
+   first.
+2. **Why does only the named spawn work?** Mechanism unknown (teammate persistence past the ~2-min cap is
+   the leading guess, but unconfirmed). Lower priority than #1 — we can keep shipping with the named spawn
+   regardless; this is a "understand it before we fork" item.
 
 ### The experiment to run (when we pick this up)
 
-A/B matrix, one trivial agy task (~3-min run), each cell repeated 2-3×, **reading agy's output from a
-file**, recording wall-time + bytes-captured + rc:
+Goal is no longer "which spawn works" (settled = named). It is to **characterize the first-action failure +
+recovery** so we can skip straight to it, and secondarily to explain *why* named works. One trivial agy
+task (~3-min run), **reading agy's output from a file**, recording wall-time + bytes + rc + the exact
+failure/recovery trace:
 
-| Cell | Spawn | `--background` | Bash `timeout` | Hypothesis it tests |
-|---|---|---|---|---|
-| 1 | nameless subagent | no | default (~120s) | the plugin's happy path — expected to die at ~2min |
-| 2 | nameless subagent | no | `900000` | is a long timeout alone sufficient? (mechanism b) |
-| 3 | **named** teammate | no | default | does the name alone rescue it? (mechanism a) |
-| 4 | named teammate | **yes** | any | reproduce the B1 hang — confirm `--background` is the trap |
-
-Outcome decides the fork: if cell 2 works, the fix is a one-line timeout patch; if only cell 3 works, the
-fix is spawn-as-named; cell 4 should fail and justify removing/repairing `--background`.
+| Probe | What to capture | Question it answers |
+|---|---|---|
+| Named spawn, instrument the first action | the exact tool call + error + what the runner does next to recover | What IS the recovery path, and can we issue it directly? |
+| Named spawn, vary how the runner is addressed on the first message | does a different first action avoid the error entirely? | Can the failed first attempt be designed out? |
+| (control) nameless + `timeout: 900000` | wall-time + rc | re-confirm it still fails (named is required), for the record |
+| (control) named + `--background` | wall-time + bytes | re-confirm the B1 hang — `--background` is the trap |
 
 ## The decision: leave / fork+patch / copy
 
@@ -112,8 +116,8 @@ fix is spawn-as-named; cell 4 should fail and justify removing/repairing `--back
 - Set a long **Bash `timeout`** (≈900s) on the runner's wrapper call so long agy runs don't hit the ~2-min cap.
 - **Repair or remove `--background`:** either make a backgrounded run actually stream/capture output, or
   delete the flag and document that delegation is foreground-only.
-- If the experiment shows the named-teammate is load-bearing, **spawn the runner as a named teammate by
-  default** for long runs (and skip the failed nameless attempt).
+- **Spawn the runner as a named teammate by default** (this is settled — the only working invocation), and
+  **design out / skip the guaranteed-failing first action** so we go straight to the recovery path.
 - **Capture agy output to a file** and read it back (robust to the stdout-compression hook), rather than
   relying on stdout.
 - Optionally raise/parameterize `AGY_LOCK_WAIT_SECONDS` behavior for parallel use.

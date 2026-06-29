@@ -27,6 +27,22 @@
 
 ## 2026-06-29
 
+### `/agy:delegate` has a SILENT Claude-fallback failure mode — a "delegated to agy" run may be Claude doing the work, with zero agy invocations  {#agy-delegate-silent-claude-fallback}
+
+**Context.** #279 was built as the "n=4, 2nd agy Pro run." Mid-build the operator noticed the "agy" teammates behaved exactly like Claude. A full audit of every `subagents/agent-aagy-*.jsonl` transcript in the session settled it — and corrected an over-correction along the way.
+
+**Evidence.** Per-transcript classification (tools used, `agy --model` Bash calls, `★ Insight` presence): **#279** (4 units) and **#278** (5 units) made **zero `agy` calls** — they used Read/**Write/Edit** and emitted Claude's `★ Insight` output style (Claude authored the code). **#277** (PR #303) by contrast showed nested `Agent`→`agy --model "Gemini 3.5 Flash (High)"` Bash calls with Claude writing only `prompt.txt` — **genuine agy Flash** for U1–U3 (U4 prose agy-no-op'd in read-only `ask` mode → Claude finished). #275 (n=1) was built in an earlier session and is un-audited here. Reproduction: `python3` over the jsonl extracting `tool_use` names + grepping Bash commands for `agy --model`.
+
+**Mechanism.** Spawning the delegate via the `agy:runner` path does not guarantee the `agy` CLI runs. In the failure mode the spawned teammate is effectively a **Claude clone** (inherits the parent's full toolset + output style) that reads the task prompt ("implement U1…") and just does it — never shelling out to `agy`. The real-agy path instead spawns a nested `Agent` (the "Teammates cannot spawn other teammates" → recovery) that runs `agy` via Bash. Both were launched the same way, so the *name* of the spawn is NOT a reliable discriminator (the earlier belief that "named spawn = the working path" was disproven — #278/#279 named spawns fell to Claude). The only trustworthy signal is the transcript itself.
+
+**Fix.** (1) Commit provenance corrected — #279 commits say Claude-authored (the "n=4 Pro" data is invalid). (2) Memory + `docs/external-agent-delegation/` (README + next-run-handoff) corrected with the per-run truth and a mandatory **verify-agy-ran** step. (3) The discriminator is now documented: real agy → transcript has `agy --model` Bash call + Claude touches only `prompt.txt`; Claude-clone → Write/Edit on repo files + `★ Insight` + 0 `agy` calls.
+
+**What surprised.** My *first* correction over-generalized #279's finding to "agy never ran, n=1/2/3 all suspect." The audit refuted that: #277 was genuinely agy Flash. The validation discipline caught my own over-correction — extrapolating one verified case to all cases is the same error as the original false provenance.
+
+**Generalizable rule.** "Delegated to an external CLI" is a claim to **verify per run from the transcript**, never an assumption from the invocation. After any agy/codex run, grep the transcript for the actual `agy`/`codex` process call and confirm the *external* agent — not a local clone — did the Write/Edit, before attributing authorship or logging an experiment datapoint. And when you correct a provenance error, scope the correction to what you actually verified — don't extrapolate.
+
+**Refs.** Supersedes the blanket "agy never ran" framing; refines [#agy-delegate-plain-is-the-path](#agy-delegate-plain-is-the-path) and [#agy-delegated-coder-contain-agency](#agy-delegated-coder-contain-agency). README `docs/external-agent-delegation/README.md` provenance-audit callout · memory `[[project-external-agent-delegation]]`.
+
 ### `/agy:delegate` runs the delegate as a session teammate — plain delegate writes to the repo with zero extra flags; `--background` is the trap  {#agy-delegate-plain-is-the-path}
 
 **Context.** Building #277/U1 (the completeness-gate oracle) as n=2 of the agy-delegated-coder experiment. The first attempt micromanaged the invocation — prescriptive `--add-dir` + `--dangerously-skip-permissions` + `--print-timeout 15m` + a `timeout: 900000` Bash override, launched via `/agy:delegate --background` — and hung: agy produced **0 bytes for 21 minutes**.

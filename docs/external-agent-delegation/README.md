@@ -5,9 +5,27 @@ implementation to **external agentic CLIs** — today **agy** (Gemini) and **cod
 agent we adopt. The findings are meant to serve **both** the plugins that wrap these engines (`agy:*`,
 `codex:*`) **and** our use of external agents anywhere else.
 
-> **Status:** n=2 complete (both shipped — #275 via PR #297, #277 via PR #303). **No run is currently
-> active.** Future runs are operator-initiated — this folder is the material to work *from* when we choose
-> to start the next one.
+> **Status:** n=2 of *genuine agy* runs complete (#275 via PR #297, #277 via PR #303 — both agy 3.5 Flash).
+> **No run is currently active.** Future runs are operator-initiated — this folder is the material to work
+> *from* when we choose to start the next one.
+
+> **⚠️ Provenance audit (2026-06-29) — read before adding any row.** A full audit of this session's
+> `agy:runner` transcripts found that **"delegated to agy" is not self-evident — verify it per run.** Two
+> distinct spawn outcomes exist:
+> - **Real agy** — the transcript shows a nested `Agent` tool-use (the "Teammates cannot spawn" → recovery)
+>   then an `agy --model …` **Bash** call; Claude writes only `prompt.txt`, agy edits the tree, no `★ Insight`.
+> - **Claude-clone (silent fallback, NO agy)** — the agent has Read/**Write/Edit**, emits Claude's `★ Insight`
+>   output style, and makes **zero `agy`** calls. It does the work itself; nothing reaches agy.
+>
+> **Audited results:** **#277 = confirmed genuine agy Flash** (U1–U3 agy-authored; U4 prose agy no-op'd in
+> read-only `ask` mode → Claude finished it — the n=2 row below is accurate). **#278 and #279 were attempted
+> via `/agy:delegate --model pro` but the runner silently fell to the Claude-clone path on every unit (0 `agy`
+> calls)** — so they are **NOT** agy data points and deliberately get **no matrix row**; they are a **Track-1
+> harness failure** (the named / Pro spawn never reached agy). **#275 (n=1) is un-audited** here — it was built
+> in an earlier session; confirm from its own transcript before over-trusting the n=1 row. **Net: there is
+> still NO verified agy-_Pro_ datapoint** (every real agy run to date hit Flash). The lesson: after any "agy"
+> run, grep the transcript for `agy --model` and confirm whether agy — not Claude — did the Write/Edit, before
+> logging it.
 
 ## The hypothesis under test
 

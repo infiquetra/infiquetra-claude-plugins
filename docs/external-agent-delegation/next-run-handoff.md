@@ -14,7 +14,17 @@ CLI** (agy / codex). **Two runs done (n=2):**
   committer + post-hoc git/remote checks).
 - **n=2: #277 / agy 3.5 Flash** — shipped (PR #303), **no clone-jail**: plain `/agy:delegate` against the
   real tree + post-hoc verification + a review-and-fix loop. Containment held across all 3 delegated units;
-  fixes were cosmetic; one unit (prose) was a **silent no-op** and got hand-written.
+  fixes were cosmetic; one unit (prose) was a **silent no-op** and got hand-written. **(Both n=1 and n=2 are
+  transcript-confirmed REAL agy Flash runs.)**
+
+> **⚠️ 2026-06-29 audit — the `/agy:delegate` spawn has a SILENT Claude-fallback failure mode.** #278 and
+> #279 were each driven through `/agy:delegate --model pro`, but a transcript audit found the runner **never
+> invoked agy on any unit** — it silently fell to a **Claude clone** (Read/Write/Edit + `★ Insight`, **0
+> `agy` calls**) that did the work itself. They are therefore NOT agy runs and get no matrix row (the "Pro
+> run" framing was false; there is still **no verified agy-Pro datapoint** — every real agy run hit Flash).
+> **Before trusting any future run as "agy", VERIFY it** (see the launch + verify steps below). The
+> discriminator: a real agy run's transcript has a nested `Agent` tool-use → `agy --model …` **Bash** call
+> with Claude writing only `prompt.txt`; a Claude-clone has Write/Edit + `★ Insight` and zero `agy` calls.
 
 Thesis of the practice: **contain the agent's authority, don't try to out-prompt it.** Before doing
 anything, read, in order:
@@ -43,11 +53,13 @@ anything, read, in order:
 
 ## Protocol for a run (when one starts)
 
-1. **Pick a matrix cell:** issue × engine. Remaining unbuilt VECU survivors: **#278, #279, #281, #283,
-   #285, #287, #289, #291, #293, #295** (#275 + #277 are done). Engines: agy 3.5 Flash (compare to n=1/n=2),
-   agy Pro, or codex gpt-5.5. Dependency order matters for some: **#279 (board authority+writer) →
-   #295 (reconcile companion, hard-dep on #279)**; **#275 → #289 (residency guard, after S-1/U4)**;
-   **#277 → #285**. The operator picks; goal across runs is to fill the README matrix.
+1. **Pick a matrix cell:** issue × engine. Remaining unbuilt VECU survivors: **#281, #283, #285, #287,
+   #289, #291, #293, #295** (#275 + #277 done as agy; **#278 + #279 BUILT but as Claude-fallback, not agy —
+   so they still owe a genuine agy datapoint if you want one**). Engines: agy 3.5 Flash (compare to n=1/n=2),
+   agy Pro (**no verified Pro run exists yet** — every real agy run hit Flash), or codex gpt-5.5. Dependency
+   order matters for some: **#295 (reconcile companion) hard-deps on #279 (now shipped)**; **#275 → #289
+   (residency guard, after S-1/U4)**; **#277 → #285**. The operator picks; goal across runs is to fill the
+   README matrix.
 2. **Plan if needed.** A requirements-ready issue needs `/plan #<n>` first — the plan must list each
    unit's **exact write-set files** (n=1 proved plans under-list real blast radius; an accurate write-set
    feeds the in-prompt allow-set and starves wander).
@@ -67,13 +79,22 @@ anything, read, in order:
    - Assemble the **task-packet** prompt (blueprint §4): read-broad/write-narrow, the resolved write-set as
      the allow-set, and explicit `PLAN_GAP` / `TEST-CONFLICT` / `PATH-MISSING` escalation channels.
    - **Launch via `/agy:delegate` (the front door) — never hand-spawn `agy:runner`, never hand-roll an
-     `agy` shell call (operator-banned).** Spawn the runner **with a `name`** so it survives the
-     multi-minute run as a session teammate. **Do NOT pass `--background` — it is the trap** (nests
+     `agy` shell call (operator-banned).** **Do NOT pass `--background` — it is the trap** (nests
      backgrounding, detaches agy into a 0-output context, the runner spins). A transient "Teammates cannot
-     spawn other teammates" hiccup is recoverable; the *nameless* spawn is what actually fails.
+     spawn other teammates" hiccup is recoverable.
+   - **⚠️ A spawn — even a named one — does NOT guarantee agy ran.** The 2026-06-29 audit found #278/#279
+     spawns silently fell to a **Claude clone** (0 `agy` calls). Do not assume; **verify agy actually ran**
+     (next bullet). (Earlier guidance claimed the *named* spawn is the reliable one and the *nameless* spawn
+     fails — the audit does not support that: both real-agy (#277) and Claude-fallback (#278/#279) runs were
+     spawned the same way, so the only trustworthy signal is the transcript itself.)
    - **(n=3+) Archive the raw draft** before touching it (Track 3 measurement).
-   - **Verify:** re-derive, run the **full** suite (never the delegate's file-local subset — n=1/n=2 both
-     proved blast radius hides outside the touched file, including version-pin tests on release bumps),
+   - **VERIFY AGY ACTUALLY RAN (do this FIRST, before any quality review):** grep the run's
+     `subagents/agent-aagy-*.jsonl` transcript for an `agy --model` Bash call. **Real agy** = that call is
+     present + Claude wrote only `prompt.txt`. **Claude-clone (no agy)** = Write/Edit on repo files + `★
+     Insight` + zero `agy` calls → this is a **harness failure**, NOT an agy datapoint: fix the spawn (or
+     surface it) and do not log the run as an agy result.
+   - **Verify (quality):** re-derive, run the **full** suite (never the delegate's file-local subset — n=1/n=2
+     both proved blast radius hides outside the touched file, including version-pin tests on release bumps),
      **mutation-proof** the delegate's tests, and check the changed-path set ⊆ the allow-set lines.
    - **Scrap threshold:** if the draft needs more fixing than writing — or is a silent no-op (F6) — write
      the unit yourself. Record it in the review-fix log.

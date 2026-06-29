@@ -4,6 +4,17 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.4.0] - 2026-06-29
+
+### Required-evidence-absence completeness gate (#277)
+- Document the exit-time completeness check (Site 2 of the silent-omission gate): at completion, a
+  required, non-skipped validator/leaf whose evidence record was never written is a `missing-output`
+  omission (a completion block); a `skipped-by-config` validator is not a trip. Added to
+  `validator-execution-order.md` (new Required-Evidence Absence section), SKILL.md Step B7, and
+  `validator-evidence-state.md`. Mirrors the saga `completeness_gate` FailureClass names (R12).
+
+---
+
 ## [2.3.0] - 2026-06-28
 
 ### Worker×model cache scheduling (#275)

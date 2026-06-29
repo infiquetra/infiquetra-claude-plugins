@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.42.0 - 2026-06-29
+
+### Reversibility/idempotency certificate + autonomous `/outcome` board-sync (#279)
+- New `reversibility_certificate.py` — one pure-data authority that declares each board op's
+  reversibility facts and answers a single `authorize_write` verdict (AUTHORIZED / GATE, **default
+  GATE**) over a closed, enumerated `OpKind` allowlist with declared inverses. Merge, deploy, and
+  parent-issue-close (`ALWAYS_OPERATOR`) are never authorized.
+- Subsumption: `degrade_decision`'s `had_side_effect → HALT` and `outcome_projection`'s parent-close
+  are now derived from the certificate — behavior byte-identical (proven by a 672-combination
+  equivalence sweep), with the certificate as the single source of both reversibility facts.
+- New `outcome_board_sync.py` — the first autonomous consumer. `outcome advance --autonomous`
+  reconciles each leaf's derived state to reversibility-authorized board writes (set-field "In
+  Progress", sub-issue close, label add/remove, one coalesced progress comment), idempotent on a
+  **separate** write-once board-sync ledger, with bounded retry + fail-loud surfacing. The default
+  `advance` performs no board writes; GATE'd ops surface to the operator, never silently skip.
+- Pairs with mission-control 2.4.0 (the new issue-write verbs the consumer drives).
+
 ## 0.41.0 - 2026-06-29
 
 ### Operator gate-status card (#278)

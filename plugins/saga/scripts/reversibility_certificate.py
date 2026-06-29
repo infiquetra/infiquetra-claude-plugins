@@ -155,7 +155,7 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         ),
         abort_cost=None,
         always_operator=False,
-        key_recipe="{op_kind}:#{issue_number}:{target_state}",
+        key_recipe="{op_kind}:{repo}#{issue_number}:{target_state}",
     ),
     OpKind.ISSUE_LABEL_ADD: OpFacts(
         op_kind=OpKind.ISSUE_LABEL_ADD,
@@ -166,7 +166,7 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         ),
         abort_cost=None,
         always_operator=False,
-        key_recipe="{op_kind}:#{issue_number}:{label}",
+        key_recipe="{op_kind}:{repo}#{issue_number}:{label}",
     ),
     OpKind.ISSUE_LABEL_REMOVE: OpFacts(
         op_kind=OpKind.ISSUE_LABEL_REMOVE,
@@ -177,7 +177,7 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         ),
         abort_cost=None,
         always_operator=False,
-        key_recipe="{op_kind}:#{issue_number}:{label}",
+        key_recipe="{op_kind}:{repo}#{issue_number}:{label}",
     ),
     OpKind.SUB_ISSUE_CLOSE: OpFacts(
         op_kind=OpKind.SUB_ISSUE_CLOSE,
@@ -188,7 +188,7 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         ),
         abort_cost=None,
         always_operator=False,
-        key_recipe="{op_kind}:#{issue_number}:",
+        key_recipe="{op_kind}:{repo}#{issue_number}:",
     ),
     OpKind.SUB_ISSUE_REOPEN: OpFacts(
         op_kind=OpKind.SUB_ISSUE_REOPEN,
@@ -199,7 +199,7 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         ),
         abort_cost=None,
         always_operator=False,
-        key_recipe="{op_kind}:#{issue_number}:",
+        key_recipe="{op_kind}:{repo}#{issue_number}:",
     ),
     # --- Additive tier (R6) ---
     OpKind.ISSUE_PROGRESS_COMMENT: OpFacts(
@@ -208,7 +208,7 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         inverse=None,  # append-only; no inverse
         abort_cost="one comment posted per coalescing key; cost is bounded and visible",
         always_operator=False,
-        key_recipe="issue-progress-comment:#{issue_number}:{leaf_transition_id}",
+        key_recipe="issue-progress-comment:{repo}#{issue_number}:{leaf_transition_id}",
     ),
     # --- ALWAYS_OPERATOR tier (R7) ---
     OpKind.PARENT_ISSUE_CLOSE: OpFacts(
@@ -278,9 +278,7 @@ def side_effected(had_side_effect: bool) -> bool:
     return had_side_effect
 
 
-def idempotency_key(
-    op_kind: str | OpKind, repo: str, issue_number: int, target_state: str
-) -> str:
+def idempotency_key(op_kind: str | OpKind, repo: str, issue_number: int, target_state: str) -> str:
     """Return a deterministic idempotency key for an autonomous board write (KTD4 / R9).
 
     Key form:

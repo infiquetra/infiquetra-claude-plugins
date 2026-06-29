@@ -417,6 +417,9 @@ class AdvanceResult:
     degraded: list[dict[str, Any]] = field(
         default_factory=list
     )  # leaves degraded one rung autonomous+away (U9/R23)
+    board_synced: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # per-tick autonomous board-sync records (U4/#279 — only when autonomous=True)
     skipped_busy: bool = False  # coordinator lease held by another tick -> no-op (R13)
     ticks: int = 1
     status: dict[str, Any] = field(default_factory=dict)
@@ -432,10 +435,97 @@ class AdvanceResult:
             "costs": self.costs,
             "gated": self.gated,
             "degraded": self.degraded,
+            "board_synced": self.board_synced,
             "skipped_busy": self.skipped_busy,
             "ticks": self.ticks,
             "status": self.status,
         }
+
+
+def _default_board_writer(
+    repo_root: Path,
+    *,
+    project: str = "operations",
+    runner: Callable[..., Any] | None = None,
+) -> Callable[..., None]:
+    """The production board_writer (U4/#279): drive a reversibility-authorized op via mission-control.
+
+    Maps each enumerated ``OpKind`` to its ``sdlc_manager.py`` subcommand. ``advance(autonomous=True)``
+    uses this when no explicit ``board_writer`` is injected; tests inject a recording fake instead.
+    The nested ``gh`` call lives in the spawned child process, so this writer is exercised ONLY under
+    a real operator ``--autonomous`` campaign — never in the test suite (which is also why the
+    no-live-gh conftest guard, which patches *this* process's ``subprocess.run``, cannot see it).
+    A non-zero exit raises so the consumer's bounded-retry / fail-loud path engages.
+    """
+    import subprocess
+
+    sdlc = str(repo_root / "plugins" / "mission-control" / "scripts" / "sdlc_manager.py")
+    run = runner if runner is not None else subprocess.run
+
+    def _writer(*, op_kind: str, repo: str, number: int, payload: dict[str, Any]) -> None:
+        base = ["python3", sdlc]
+        n = str(number)
+        if op_kind == "set-field-status":
+            cmd = base + [
+                "flow",
+                "set-field",
+                "--project",
+                project,
+                "--repo",
+                repo,
+                "--number",
+                n,
+                "--field",
+                "Status",
+                "--option",
+                str(payload.get("target_state", "")),
+            ]
+        elif op_kind == "sub-issue-close":
+            cmd = base + ["issue", "close", "--repo", repo, "--number", n]
+        elif op_kind == "sub-issue-reopen":
+            cmd = base + ["issue", "reopen", "--repo", repo, "--number", n]
+        elif op_kind == "issue-progress-comment":
+            cmd = base + [
+                "issue",
+                "comment",
+                "--repo",
+                repo,
+                "--number",
+                n,
+                "--body",
+                str(payload.get("body", "")),
+            ]
+        elif op_kind == "issue-label-add":
+            cmd = base + [
+                "issue",
+                "label-add",
+                "--repo",
+                repo,
+                "--number",
+                n,
+                "--label",
+                str(payload.get("label", "")),
+            ]
+        elif op_kind == "issue-label-remove":
+            cmd = base + [
+                "issue",
+                "label-remove",
+                "--repo",
+                repo,
+                "--number",
+                n,
+                "--label",
+                str(payload.get("label", "")),
+            ]
+        else:
+            raise ValueError(f"no mission-control verb mapping for op_kind {op_kind!r}")
+        result = run(cmd, capture_output=True, text=True, timeout=60)
+        if getattr(result, "returncode", 0) != 0:
+            raise RuntimeError(
+                f"board write {op_kind} on {repo}#{number} failed: {getattr(result, 'stderr', '')!r}"
+            )
+
+    return _writer
 
 
 def advance(
@@ -457,6 +547,8 @@ def advance(
     lease_ttl: float = DEFAULT_LEASE_TTL,
     now: Callable[[], float] = time.time,
     runner: Callable[..., Any] | None = None,
+    autonomous: bool = False,
+    board_writer: Callable[..., None] | None = None,
 ) -> AdvanceResult:
     """Run one (``loop=False``) or repeated (``loop=True``) reconcile ticks.
 
@@ -488,6 +580,7 @@ def advance(
     all_harvested: list[str] = []
     all_gated: list[str] = []
     all_degraded: list[dict[str, Any]] = []
+    all_board_synced: list[dict[str, Any]] = []
     merge_runs: list[Any] = []
     worktree_runs: list[Any] = []
     liveness_runs: list[Any] = []
@@ -532,6 +625,17 @@ def advance(
                 # Materialize the realized-cost rollup into spec.cost_rollup AFTER dispatch/harvest so it
                 # reflects this tick's completions (U10/R24). The U8 report renders spec.cost_rollup.
                 cost_runs.append(cost_processor(spec, store))
+            if autonomous:
+                # Autonomous board-sync (U4/#279): reconcile each leaf's derived state to the
+                # reversibility-authorized board ops. The default-GATE certificate + the separate
+                # idempotency ledger bound it; it only fires on the explicit autonomous path, and runs
+                # under the coordinator lease so board-sync is serialized per outcome.
+                import outcome_board_sync
+
+                _bw = board_writer if board_writer is not None else _default_board_writer(repo_root)
+                all_board_synced.extend(
+                    outcome_board_sync.reconcile_board(spec, store, board_writer=_bw, now=now)
+                )
             if not loop:
                 break
             if not tick_dispatched:
@@ -551,6 +655,7 @@ def advance(
         costs=cost_runs,
         gated=sorted(set(all_gated)),
         degraded=all_degraded,
+        board_synced=all_board_synced,
         ticks=ticks,
         status=status(repo_root, outcome_id, spec=spec, store=store),
     )

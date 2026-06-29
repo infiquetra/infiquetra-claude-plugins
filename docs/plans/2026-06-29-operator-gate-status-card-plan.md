@@ -191,6 +191,8 @@ indexed-footer drill-down, `--self-test`. No surface logic yet.
   footer ref (AE9).
 - Unknown/not-reached carries no footer ref (AE7/R13).
 - Renaming an operator label changes only the display-label map, not the wire state value (AE8/R9).
+- `--self-test` runs clean: subprocess-invoke `status_card.py --self-test` with `check=True` and
+  assert on expected stdout tokens (mirror `tests/test_completeness_gate.py::test_self_test_cli`).
 
 ### U2. `gate_verdicts` capture in the saga envelope
 
@@ -206,6 +208,8 @@ project. Producer = the `/work` test gate (wired in U5); consumer = U3's `/work`
   stays frozen (additive change).
 - Add the `save` CLI write path (e.g. `--gate-verdict gate:state:ref`, repeatable) so a producer
   can record verdicts; the value is supplied by the gate machinery, not hand-typed by the operator.
+  **Parse the ref by splitting on the first two colons only** — refs are GitHub URLs (`https://…`)
+  and `path:line` artifacts that contain colons, so a naive `split(':')` mangles them.
 
 **Depends on:** none (independent schema change; logically feeds U3).
 
@@ -214,6 +218,9 @@ project. Producer = the `/work` test gate (wired in U5); consumer = U3's `/work`
 - Full-snapshot semantics: an incoming list replaces the prior tick's; `ABSENT` carries forward;
   `[]` clears.
 - A persisted verdict reads back as `{gate, state, ref}` with `state` ∈ the R1 state set.
+- The `--gate-verdict` CLI parses a **colon-bearing ref** (a PR URL like
+  `https://github.com/o/r/pull/9`) without mangling it — `{gate, state, ref}` round-trips with the
+  ref intact (split on the first two colons, not a naive `split(':')`).
 
 ### U3. Per-surface projections — `/work`, `/code-review`, `/qa` (gate-sequence)
 
@@ -246,6 +253,11 @@ per-surface status-row contract.
 - AE6: `/work` Reviewer-panel cell carries a resolvable ref to the code-review artifact.
 - AE7: a panel mid-run renders *in-progress* with a traceable pending count; an undeterminable cell
   renders *unknown* with no ref.
+- AE9 (`/qa`): `project_qa` with a **FAIL** verdict in the qa artifact renders the Ship-verdict row
+  with the failure glyph and a footer ref to the failing artifact — never *blocked*/*not-reached*
+  (the most operator-safety-critical derivation; R1 "failure unmistakable").
+- R12 external-read: a determinable `/work` CI/merge cell carries a resolvable **external** (GitHub
+  PR/CI/HITL) reference, from a fixture with `pr_refs`/`head_sha`/`destination` set.
 
 ### U4. Summary-projection surfaces — `/outcome` (reuse) + `/resume` (spine)
 
@@ -256,18 +268,27 @@ per-surface status-row contract.
 **Build:**
 - `project_outcome(...)`: adapt the **existing** `outcome_projection.project()` output (progress,
   ready frontier, blocked, attention, negative terminals) into a summary card-spec — no second
-  projection (R6), no row-per-node. Negative-terminal nodes render the failure glyph (AE9).
-- `project_resume(...)`: define the spine summary-projection — Open leaves · Ready frontier · Last
-  gate verdicts · Route — over the reconstructed thread spine (`/resume` Phase 2-3), reusing
-  `gate_verdicts` (U2) for the verdicts row. Mirrors the S-3 "spore" spine.
+  projection (R6), no row-per-node. Negative-terminal nodes render the failure glyph (AE9);
+  non-terminal summary rows (ready frontier, blocked) use the shared R1/R8 glyphs at the summary
+  level — there is no per-node state collapse (a per-node state→glyph table would contradict
+  R6/AE3, which pin the card values to equal `project()` exactly).
+- `project_resume(...)`: define the spine summary-projection over what `/resume` Phase 3a actually
+  reconstructs for a **single work thread** — **Phase/destination · Blockers (open vs cleared) ·
+  Open questions · Last gate verdicts · Route (next-step)** — each row sourced from a real Phase-3a
+  output (`resume/SKILL.md:171-184`): `phase`/`phase_status`+`destination`, reconciled `blockers`,
+  `open_questions`, `checks_run`+`gate_verdicts` (U2), and `next_step`. **NOT "Open leaves / Ready
+  frontier"** — those are outcome-DAG concepts with no producer in `/resume`'s single-thread
+  reconstruction; the requirements' per-surface-contract "(confirm at /plan)" flag is resolved here
+  (P1 fix — they'd have rendered perpetually-unknown, violating R12/R13).
 
 **Depends on:** U1, U2.
 
 **Test scenarios** (`tests/test_status_card.py`):
 - AE3: `/outcome` card values equal `outcome_projection.project()` exactly; a 3-node and a 30-node
   DAG render the same height.
-- `/resume` spine projects open leaves / frontier / last-verdicts / route from a reconstructed
-  fixture.
+- `/resume` spine projects Phase/destination · Blockers · Open questions · Last gate verdicts ·
+  Route from a reconstructed single-thread fixture; every rendered row maps to a real Phase-3a
+  output (no perpetually-unknown row).
 - AE9: an `/outcome` `failed`/`rejected`/`stalled`/`halted` node renders the failure/halt glyph,
   not *blocked*/*not-reached*.
 
@@ -290,9 +311,11 @@ per-surface status-row contract.
 
 **Test scenarios** (`tests/test_saga_plugin.py`, doc-contract — mirror
 `test_office_hours_two_mode_and_hard_gate_contract`):
-- AE10: each converted section references the `status_card` renderer; the retired hand-written
-  status-summary markers are absent (guard tokens, like the office-hours folded-away guard).
-- The findings/evidence detail tokens remain present (KTD5 — evidence is not deleted).
+- AE10: each converted section references the `status_card` renderer; the retired status-summary
+  emitters are absent — assert the **specific** status tokens gone (the `/code-review` §5.2 verdict
+  blockquote, the `/qa` §5.1 ship-verdict block) while the **per-finding evidence tokens REMAIN**
+  (the code-review findings table, the qa per-finding list) per KTD5. A generic guard token would
+  not prove single-emitter; name the literal tokens.
 
 **Risk:** prose-heavy unit; this is exactly where agy's n=2 **F6 silent no-op** appeared. Archive
 the agy draft before fixing, and budget a Claude hand-finish if the delegate no-ops.
@@ -302,7 +325,9 @@ the agy draft before fixing, and budget a Claude hand-finish if the delegate no-
 **Goal:** keep installed-plugin metadata telling the same story as the diff (repo CLAUDE.md §6).
 
 **Files:** `plugins/saga/.claude-plugin/plugin.json` (version bump),
-`.claude-plugin/marketplace.json` (saga entry version), `plugins/saga/CHANGELOG.md` (entry).
+`.claude-plugin/marketplace.json` (saga entry version), `plugins/saga/CHANGELOG.md` (entry),
+`tests/test_saga_plugin.py` (update the literal version pin — it currently hard-asserts
+`plugin_json["version"] == "0.40.0"`, which fails the moment U6 bumps the minor).
 
 **Build:** bump saga version (minor — additive capability), add the CHANGELOG entry, sync the
 marketplace registry. Mechanical and metadata-exact → Claude writes it (per the delegation
@@ -310,8 +335,9 @@ practice, mechanical units are not delegated).
 
 **Depends on:** U5.
 
-**Test scenarios:** existing metadata/version-pin drift tests in `tests/test_saga_plugin.py` stay
-green (`uv run pytest tests/test_saga_plugin.py`); full gate green.
+**Test scenarios:** update the literal version pin in `tests/test_saga_plugin.py` to the new minor
+version **in this same unit**, then the metadata/version-pin drift tests pass (`uv run pytest
+tests/test_saga_plugin.py`); full gate green.
 
 ## Dependency graph
 
@@ -341,8 +367,10 @@ and the first Pro run.
   need another file, STOP and report — never silently edit elsewhere"). Read broad, write narrow.
 - **Post-hoc verification before integrating** any unit: `git status` ⊆ the unit's allow-set; the
   **full** gate (`uv run pytest && uv run ruff format --check . && uv run ruff check . && uv run
-  mypy plugins/`); read the diff for test-gaming; confirm no rogue commit/push (`git log` +
-  `git log origin/<branch>`).
+  mypy plugins/`); read the diff for test-gaming **AND mutation-proof any tests agy wrote** (break
+  the intended behavior, confirm the new test goes red — reading the diff alone does not catch F4
+  test-gaming; the canonical floor pairs both, `blueprint.md:152-154`); confirm no rogue commit/push
+  (`git log` + `git log origin/<branch>`).
 - **Track-3 provenance fix (close the n=2 gap):** archive each agy draft (`git stash` or a copy)
   **before** fixing it, so the review-fix delta is measured, not reconstructed. Log per-unit churn
   to `docs/external-agent-delegation/README.md` (Review-fix cycle log). Compare Pro-vs-Flash.
@@ -376,7 +404,7 @@ per-cell drill-down refs; retiring/routing the existing per-surface prose **stat
 | Dead-wiring `gate_verdicts` (field with no producer/consumer) | Low | U2 (field+write path) + U3 (consumer) + U5 (producer SKILL) all in-plan; gate is failing the no-dead-wiring check at review |
 | Constant-size (R3) violated by a surface adding dynamic rows | Low | Gate-sequence = static superset; summary-projection = fixed rows; explicit same-height tests (AE1) |
 | Drill-down ref to external state (CI/HITL) when offline → false ref | Low | R13: undeterminable → *unknown*, no ref; tested (AE7) |
-| agy agency leak (unrelated edits / rogue commit), per n=1 | Med | Documented containment: named spawn, no `--background`, sole-committer, `git status` ⊆ allow-set, immediate per-unit commit |
+| agy agency leak (unrelated edits / rogue commit), per n=1 | Med | Documented containment: named spawn, no `--background`, sole-committer, `git status` ⊆ allow-set, immediate per-unit commit. **First Pro run — agency unobserved (n=1/n=2 were Flash); if Pro writes outside its allow-set on any unit, escalate that unit class to a throwaway git worktree / clone-jail (`blueprint.md` §3) per the DECISIONS `#agy-delegated-build-no-jail` revisit trigger — don't keep delegating it un-jailed.** |
 
 ## Alternatives Considered
 

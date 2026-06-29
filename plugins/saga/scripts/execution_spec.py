@@ -79,6 +79,129 @@ BUDGET_RIDER = (
 )
 
 
+_JS_GATE_HELPER = r"""function __gate(result, opts) {
+  const unitId = opts.unitId || "unknown";
+
+  function isEmptyOrAbsent(val) {
+    if (val === null || val === undefined) return true;
+    if (typeof val === 'string') return val.trim() === '';
+    if (Array.isArray(val)) return val.length === 0;
+    if (val instanceof Map || val instanceof Set) return val.size === 0;
+    if (typeof val === 'object') return Object.keys(val).length === 0;
+    return false;
+  }
+
+  function parseResult(val) {
+    if (typeof val === 'string') {
+      let s = val.trim();
+      if (s.startsWith('```')) {
+        const lines = s.split('\n');
+        if (lines.length >= 2) {
+          if (lines[0].startsWith('```')) {
+            lines.shift();
+          }
+          if (lines.length && lines[lines.length - 1].trim() === '```') {
+            lines.pop();
+          }
+          s = lines.join('\n').trim();
+        }
+      }
+      if (s.startsWith('{') || s.startsWith('[')) {
+        try {
+          return JSON.parse(s);
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+    return val;
+  }
+
+  if (opts.expectsOutput && isEmptyOrAbsent(result)) {
+    throw new Error(
+      `missing-output: Unit ${unitId} expected structured output but received none or empty.`
+    );
+  }
+
+  if (typeof result === 'string') {
+    let s = result.trim();
+    if (s.startsWith('```')) {
+      const lines = s.split('\n');
+      if (lines.length >= 2) {
+        if (lines[0].startsWith('```')) {
+          lines.shift();
+        }
+        if (lines.length && lines[lines.length - 1].trim() === '```') {
+          lines.pop();
+        }
+        s = lines.join('\n').trim();
+      }
+    }
+    if (s.startsWith('{') || s.startsWith('[')) {
+      try {
+        JSON.parse(s);
+      } catch (e) {
+        throw new Error(
+          `malformed-output: Unit ${unitId} output is a structurally truncated JSON: ${e.message}`
+        );
+      }
+    }
+  }
+
+  let targetCount = null;
+  if (opts.targets !== undefined && opts.targets !== null) {
+    if (typeof opts.targets === 'number') {
+      targetCount = opts.targets;
+    } else if (Array.isArray(opts.targets)) {
+      targetCount = opts.targets.length;
+    }
+  }
+
+  if (targetCount !== null) {
+    const parsed = parseResult(result);
+    let producedCount = 0;
+    if (parsed !== null && parsed !== undefined) {
+      if (Array.isArray(parsed)) {
+        producedCount = parsed.length;
+      } else if (parsed instanceof Map || parsed instanceof Set) {
+        producedCount = parsed.size;
+      } else if (typeof parsed === 'object') {
+        producedCount = Object.keys(parsed).length;
+      } else {
+        producedCount = isEmptyOrAbsent(parsed) ? 0 : 1;
+      }
+    }
+    if (producedCount < targetCount) {
+      const shortfall = targetCount - producedCount;
+      throw new Error(
+        `missing-output: Unit ${unitId} produced fewer items than expected. ` +
+        `Expected ${targetCount}, produced ${producedCount}. Shortfall: ${shortfall}.`
+      );
+    }
+  }
+
+  if (opts.returns && opts.returns.length > 0) {
+    const parsed = parseResult(result);
+    if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(
+        `missing-output: Unit ${unitId} result is not a structured dictionary. ` +
+        `Missing required keys: ${opts.returns.join(', ')}.`
+      );
+    }
+    const missing = opts.returns.filter(
+      k => !(k in parsed) || parsed[k] === null || parsed[k] === undefined
+    );
+    if (missing.length > 0) {
+      throw new Error(
+        `missing-output: Unit ${unitId} output is missing required keys: ${missing.join(', ')}.`
+      );
+    }
+  }
+
+  return result;
+}"""
+
+
 class SpecError(ValueError):
     """A spec that violates an authoring-time invariant (R3 / R10) or is malformed.
 
@@ -127,6 +250,8 @@ class Verify:
 
     n: int
     pass_rule: str
+    iterate_to_consensus: bool = False
+    max_iterations: int = 3
 
     def validate(self, where: str) -> None:
         if self.n < 1:
@@ -145,6 +270,8 @@ class Verify:
             )
         if self.pass_rule not in PASS_RULES:
             raise SpecError(f"{where}: verify pass_rule {self.pass_rule!r} not in {PASS_RULES}")
+        if self.max_iterations < 1:
+            raise SpecError(f"{where}: verify max_iterations={self.max_iterations} must be >= 1")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], where: str) -> Verify:
@@ -154,10 +281,30 @@ class Verify:
             n = int(data["n"])
         except (TypeError, ValueError) as exc:
             raise SpecError(f"{where}: verify n {data['n']!r} is not an integer") from exc
-        return cls(n=n, pass_rule=str(data["pass_rule"]))
+
+        iterate_to_consensus = bool(data.get("iterate_to_consensus", False))
+        max_iterations_raw = data.get("max_iterations", 3)
+        try:
+            max_iterations = int(max_iterations_raw)
+        except (TypeError, ValueError) as exc:
+            raise SpecError(
+                f"{where}: verify max_iterations {max_iterations_raw!r} is not an integer"
+            ) from exc
+
+        return cls(
+            n=n,
+            pass_rule=str(data["pass_rule"]),
+            iterate_to_consensus=iterate_to_consensus,
+            max_iterations=max_iterations,
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"n": self.n, "pass_rule": self.pass_rule}
+        return {
+            "n": self.n,
+            "pass_rule": self.pass_rule,
+            "iterate_to_consensus": self.iterate_to_consensus,
+            "max_iterations": self.max_iterations,
+        }
 
 
 @dataclass
@@ -433,6 +580,20 @@ def _js_var(unit_id: str) -> str:
     return unit_id.replace("-", "_").replace(".", "_")
 
 
+def _emit_gate_call(unit: Unit, var: str) -> str:
+    """Emit the __gate call for a unit."""
+    opts: list[str] = [f"unitId: {_js_string(unit.unit_id)}"]
+    expects_output = bool(unit.returns) or (unit.fanout and bool(unit.targets))
+    opts.append(f"expectsOutput: {'true' if expects_output else 'false'}")
+    if unit.targets:
+        opts.append(f"targets: {len(unit.targets)}")
+    if unit.returns:
+        ret_strs = ", ".join(_js_string(r) for r in unit.returns)
+        opts.append(f"returns: [{ret_strs}]")
+    opts_str = ", ".join(opts)
+    return f"__gate({var}, {{ {opts_str} }})"
+
+
 def _verifier_prompt(unit: Unit) -> str:
     """Assemble the prompt text a verifier agent in ``unit``'s refute-N panel reads.
 
@@ -452,22 +613,129 @@ def _verifier_prompt(unit: Unit) -> str:
 
 
 def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
-    """Append one ``() => agent(...),`` thunk entry for ``unit`` inside a ``parallel([...])``.
+    """Append one thunk entry for ``unit`` inside a ``parallel([...])``.
 
     Every thunk carries the unit's per-unit ``{model, effort}`` tier (R2(b)) and the same
     budget-rider / R10 reconciliation prompt as a singleton agent() call.
     """
+    if unit.verify is not None and unit.verify.iterate_to_consensus:
+        panel = unit.verify
+        n = panel.n
+        threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
+        verifier_prompt = _verifier_prompt(unit)
+        prompt = _agent_prompt(spec, unit)
+        opts = [
+            f"label: {_js_string(unit.label)}",
+            f"model: {_js_string(unit.tier.model)}",
+            f"effort: {_js_string(unit.tier.effort)}",
+        ]
+        verifier_opts = [
+            f"label: {_js_string(unit.label + ' verifier')}",
+            f"model: {_js_string(unit.tier.model)}",
+            f"effort: {_js_string(unit.tier.effort)}",
+        ]
+
+        lines.append("  async () => {")
+        lines.append("    let result;")
+        lines.append(f"    for (let iter = 1; iter <= {panel.max_iterations}; iter++) {{")
+        lines.append("      result = await agent(")
+        lines.append(f"        {_js_string(prompt)},")
+        lines.append("        { " + ", ".join(opts) + " },")
+        lines.append("      )")
+        lines.append(f"      {_emit_gate_call(unit, 'result')}")
+        lines.append("      const verdicts = await parallel([")
+        for _ in range(n):
+            lines.append("        () => agent(")
+            lines.append(f"          {_js_string(verifier_prompt)},")
+            lines.append("          { " + ", ".join(verifier_opts) + ", input: result },")
+            lines.append("        ),")
+        lines.append("      ])")
+        lines.append(
+            "      const refute_count = verdicts.filter((v) => v && v.refuted "
+            "&& v.refuted.length > 0).length"
+        )
+        lines.append(f"      const refuted = refute_count >= {threshold}  // {panel.pass_rule}")
+        lines.append("      if (!refuted) {")
+        lines.append("        break")
+        lines.append("      }")
+        lines.append(f"      if (iter === {panel.max_iterations}) {{")
+        lines.append(
+            f"        throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+            f"${{refute_count}} verifiers`)"
+        )
+        lines.append("      }")
+        lines.append("    }")
+        lines.append("    return result")
+        lines.append("  },")
+    else:
+        prompt = _agent_prompt(spec, unit)
+        opts = [
+            f"label: {_js_string(unit.label)}",
+            f"model: {_js_string(unit.tier.model)}",
+            f"effort: {_js_string(unit.tier.effort)}",
+        ]
+        lines.append("  () =>")
+        lines.append("    agent(")
+        lines.append(f"      {_js_string(prompt)},")
+        lines.append("      { " + ", ".join(opts) + " },")
+        lines.append("    ),")
+
+
+def _emit_verify_loop_singleton(
+    lines: list[str], spec: ExecutionSpec, unit: Unit, var: str
+) -> None:
+    """Emit the iterate-to-consensus loop for a singleton unit."""
+    panel = unit.verify
+    assert panel is not None
+    n = panel.n
+    threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
+    verifier_prompt = _verifier_prompt(unit)
     prompt = _agent_prompt(spec, unit)
     opts = [
         f"label: {_js_string(unit.label)}",
         f"model: {_js_string(unit.tier.model)}",
         f"effort: {_js_string(unit.tier.effort)}",
     ]
-    lines.append("  () =>")
-    lines.append("    agent(")
-    lines.append(f"      {_js_string(prompt)},")
-    lines.append("      { " + ", ".join(opts) + " },")
-    lines.append("    ),")
+    verifier_opts = [
+        f"label: {_js_string(unit.label + ' verifier')}",
+        f"model: {_js_string(unit.tier.model)}",
+        f"effort: {_js_string(unit.tier.effort)}",
+    ]
+
+    lines.append(f"let {var};")
+    lines.append(
+        f"// verify: refute-{n} iterate-to-consensus loop over {unit.unit_id} "
+        f"(pass_rule: {panel.pass_rule}, max_iterations: {panel.max_iterations})"
+    )
+    lines.append(f"for (let iter = 1; iter <= {panel.max_iterations}; iter++) {{")
+    lines.append(f"  {var} = await agent(")
+    lines.append(f"    {_js_string(prompt)},")
+    lines.append("    { " + ", ".join(opts) + " },")
+    lines.append("  )")
+    lines.append(f"  {_emit_gate_call(unit, var)}")
+    lines.append("  const verdicts = await parallel([")
+    for _ in range(n):
+        lines.append("    () => agent(")
+        lines.append(f"      {_js_string(verifier_prompt)},")
+        lines.append("      { " + ", ".join(verifier_opts) + f", input: {var} }},")
+        lines.append("    ),")
+    lines.append("  ])")
+    lines.append(
+        "  const refute_count = verdicts.filter((v) => v && v.refuted "
+        "&& v.refuted.length > 0).length"
+    )
+    lines.append(f"  const refuted = refute_count >= {threshold}  // {panel.pass_rule}")
+    lines.append("  if (!refuted) {")
+    lines.append("    break")
+    lines.append("  }")
+    lines.append(f"  if (iter === {panel.max_iterations}) {{")
+    lines.append(
+        f"    throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+        f"${{refute_count}} verifiers`)"
+    )
+    lines.append("  }")
+    lines.append("}")
+    lines.append("")
 
 
 def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
@@ -512,10 +780,12 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
     )
     lines.append(f"const {var}_refuted = {var}_refute_count >= {threshold}  // {panel.pass_rule}")
     # Consume the verdict: surface a refuted unit result instead of relying on it silently.
+    lines.append(f"if ({var}_refuted) {{")
     lines.append(
-        f"if ({var}_refuted) log(`refute-{n} ({panel.pass_rule}): {unit.unit_id} result refuted by "
-        f"${{{var}_refute_count}}/{n} verifiers -- review before relying on it`)"
+        f"  throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+        f"${{{var}_refute_count}} verifiers`)"
     )
+    lines.append("}")
     lines.append("")
 
 
@@ -572,6 +842,9 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
         lines.append(f"const REPO = {_js_string(spec.repo)}")
         lines.append("")
 
+    lines.append(_JS_GATE_HELPER)
+    lines.append("")
+
     # Topological waves (KTD4): each layer's units are mutually independent and run in a
     # single parallel() wave; layers are sequenced by await (the dependency barrier). A
     # singleton layer renders as a plain `const x = await agent(...)`. _js_var (module-level)
@@ -595,19 +868,23 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
             assert unit is not None
             _emit_unit_header(unit)
             var = _var(unit.unit_id)
-            lines.append(f"const {var} = await agent(")
-            prompt = _agent_prompt(spec, unit)
-            opts = [
-                f"label: {_js_string(unit.label)}",
-                f"model: {_js_string(unit.tier.model)}",
-                f"effort: {_js_string(unit.tier.effort)}",
-            ]
-            lines.append(f"  {_js_string(prompt)},")
-            lines.append("  { " + ", ".join(opts) + " },")
-            lines.append(")")
-            lines.append("")
-            if unit.verify is not None:
-                _emit_verify_panel(lines, unit, var)
+            if unit.verify is not None and unit.verify.iterate_to_consensus:
+                _emit_verify_loop_singleton(lines, spec, unit, var)
+            else:
+                lines.append(f"const {var} = await agent(")
+                prompt = _agent_prompt(spec, unit)
+                opts = [
+                    f"label: {_js_string(unit.label)}",
+                    f"model: {_js_string(unit.tier.model)}",
+                    f"effort: {_js_string(unit.tier.effort)}",
+                ]
+                lines.append(f"  {_js_string(prompt)},")
+                lines.append("  { " + ", ".join(opts) + " },")
+                lines.append(")")
+                lines.append(_emit_gate_call(unit, var))
+                lines.append("")
+                if unit.verify is not None:
+                    _emit_verify_panel(lines, unit, var)
             continue
 
         # A layer of >1 ready unit -> one parallel() wave of thunks. The wave's results
@@ -621,10 +898,13 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
             assert unit is not None
             _emit_thunk(lines, spec, unit)
         lines.append("])")
+        for unit in layer_units:
+            assert unit is not None
+            lines.append(_emit_gate_call(unit, _var(unit.unit_id)))
         lines.append("")
         for unit in layer_units:
             assert unit is not None
-            if unit.verify is not None:
+            if unit.verify is not None and not unit.verify.iterate_to_consensus:
                 _emit_verify_panel(lines, unit, _var(unit.unit_id))
 
     return "\n".join(lines)

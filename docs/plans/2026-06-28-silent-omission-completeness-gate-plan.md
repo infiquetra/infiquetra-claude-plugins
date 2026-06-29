@@ -116,14 +116,23 @@ existing prose cap at `consensus-protocol.md:17`). Default: a refuted panel → 
 `validate()` rejects `max_iterations < 1` (uncapped prohibited, R10). An absent `verify` round-trips
 unchanged (existing specs untouched).
 
-KTD6 — **Delegated build: clone-jail + audit containment.** agy runs in a disposable clone with `origin`
-removed (push impossible) + a git PATH-shim (defense-in-depth) + the full validation floor; Claude is sole
-committer. agy's ambient filesystem access is *accepted and audited* (snapshot + check sibling repos /
-`~/.claude` after each run), not OS-sandboxed. `agy --sandbox` is probed as a free bonus layer, never relied
-on until it demonstrably blocks a write. (Operator decision this session.)
+KTD6 — **Delegated build: plain `/agy:delegate` + post-hoc verify + review-and-fix loop.** (Operator decision
+2026-06-29, superseding the clone-jail design — too many moving parts for this harness; deferred as a possible
+later optimization, and properly the job of independent agents with their own workspace.) Treat agy as a
+*junior engineer*: it drafts, Claude reviews and FIXES, Claude is sole committer. Per unit: hand the unit's
+write-set as a tight in-prompt allow-set to plain `/agy:delegate --model flash <task>` (NO `--background` — it
+detaches agy to a 0-output context; NO hand-rolled `agy` shell call); then Claude verifies post-hoc against the
+REAL tree — `git status` changed-paths ⊆ allow-set (quarantine strays), the FULL gate (`pytest` + `ruff
+format --check` + `ruff check` + `mypy`), and for any unit where agy wrote its own tests **mutation-proof**
+them (break the behavior, the test must go red — guards F4 test-gaming). Claude then fixes whatever is wrong
+and commits. **Scrap threshold:** if a draft needs more fixing than writing, stop fixing — re-delegate once at
+Pro (KTD7) or write it directly; never polish a fundamentally wrong draft. A broken *uncommitted* tree is safe
+(Claude is sole committer); nothing reaches `origin` until the gate is green.
 
-KTD7 — **Model ladder: Flash High → Pro on fail.** Start each unit on Gemini 3.5 Flash (High); escalate that
-unit to 3.1 Pro (High) only on failure — the same ladder as #275, keeping n=2 comparable to n=1.
+KTD7 — **Model ladder: Flash High → (Claude fix | Pro retry) on fail.** Start each unit on Gemini 3.5 Flash
+(High). On a failed/insufficient draft, default recovery is **Claude fixes it** (the review-and-fix loop, KTD6);
+re-delegating the unit once at 3.1 Pro (High) is the alternative when the draft is wrong enough to scrap but
+still worth a second agy attempt (keeps n=2 comparable to n=1). Either way Claude owns the final diff.
 
 ## High-Level Technical Design
 
@@ -269,27 +278,28 @@ existing `test_release_triad.py` (plugin.json ↔ marketplace ↔ CHANGELOG lock
 
 ## Delegated Build Protocol (the agy harness for `/work`)
 
-The operational layer `/work` runs. Source of truth: `docs/external-agent-delegation/blueprint.md`
-(co-located topology) + `next-run-handoff.md`. This is **n=2** of the delegation experiment — record the
-result in that folder's README matrix.
+The operational layer `/work` runs. This is **n=2** of the delegation experiment — record the result in
+`docs/external-agent-delegation/`'s README matrix. **Method (2026-06-29): plain `/agy:delegate` + Claude
+review-and-fix, NOT the blueprint's clone-jail** (pulled — see KTD6); the blueprint's clone-jail topology is
+retained there as a deferred optimization for the independent-agent / own-workspace case. After each unit, fold
+what agy got wrong into the NEXT unit's prompt + the blueprint — refining the instructions IS this experiment's
+output.
 
-- **Containment (KTD6):** per unit, clone the repo to a temp jail, `checkout --detach <BASE>`,
-  `remote remove origin`; run agy inside under a `git` PATH-shim. **The boundary is the clone-without-origin plus
-  the orchestrator's own re-derived diff + full gate; the `git` shim and `agy --sandbox` are defense/probe only,
-  never load-bearing** (the blueprint calls both bypassable/unverified). Probe `agy --sandbox` once before relying
-  on it. Accept-and-audit ambient FS: snapshot, then check sibling repos + `~/.claude` for stray writes after.
+- **Containment (KTD6):** none beyond the harness. Run plain `/agy:delegate --model flash <task>` against the
+  REAL working tree; the boundary is the in-prompt allow-set + Claude's post-hoc verification + sole-committer
+  (an uncommitted tree is safe). NO clone-jail, NO `git` shim, NO `agy --sandbox`, NO hand-rolled `agy` shell
+  call (operator-banned), NO `--background` (it detaches agy to a 0-output context and the runner spins).
 - **Per-unit packet:** the unit's write-set as a CLOSED allow-set + pre-resolved read-context (the target paths
   are handed over so agy need not *search to find them*; it MAY still read/search the repo broadly for correctness
   — read broad, write narrow — but writes only the allow-set and escalates `PLAN_GAP` for any path it believes
   must change outside it) + the exact VERIFY commands + the `PLAN_GAP` / `TEST-CONFLICT` / `PATH-MISSING`
-  escalation channels. Background the launch (runs exceed the ~2-min foreground limit).
-- **Validation floor (non-negotiable, every unit):** re-derive `git -C <jail> diff <BASE>` + untracked check;
-  scope-diff changed-paths vs the allow-set and **quarantine** strays (do not auto-revert); assert no rogue commit
-  in the jail (`git -C <jail> log <BASE>..HEAD`); **run the remote-drift check in the REAL repo, orchestrator-side**
-  — snapshot `git ls-remote origin` before launch and re-compare after agy exits (the jail has no `origin`, so a
-  remote check inside it is meaningless); run the **FULL** suite + `ruff format --check` + `ruff check` + `mypy`
-  (never a file-local subset); **mutation-proof** agy's tests (break the behavior in the jail, the new test must go
-  red); Claude imports only allow-set paths and is **sole committer**.
+  escalation channels. Launch FOREGROUND via `/agy:delegate` (it runs `agy:runner` as a session teammate that
+  blocks to completion and idle-notifies; do NOT `--background`).
+- **Validation floor (non-negotiable, every unit):** `git status --short` — changed/untracked paths ⊆ the
+  allow-set; **quarantine** strays (surface, do not auto-revert); run the **FULL** suite + `ruff format --check`
+  + `ruff check` + `mypy` (never a file-local subset); **mutation-proof** any tests agy wrote (break the
+  behavior, the test must go red — F4 guard); READ the diff (green ≠ correct). Claude fixes what's wrong and is
+  **sole committer** — nothing reaches `origin` until the gate is green.
 - **Model ladder (KTD7):** Flash High per unit; escalate that unit to Pro High on failure.
 
 ## Scope Boundaries
@@ -314,8 +324,10 @@ fan-out seam); on-disk side-effect containment (deferred R14 workspace isolation
   start; revisit if it fails in practice. Tracked as the known soft spot.
 - **agy gaming the emitter tests (F4).** U2/U3 are exactly where a delegate could add a marker to make a
   cross-file assertion pass. *Mitigation:* mutation-proof every agy test; read the test diff.
-- **agy wandering into the live engine (F1).** #277 edits `execution_spec.py`, the engine this session runs on.
-  *Mitigation:* the clone-jail (KTD6) — agy never touches the real tree.
+- **agy wandering into the live engine (F1).** U2/U3 edit `execution_spec.py`, the engine this session runs on.
+  *Mitigation:* post-hoc `git status` changed-paths ⊆ allow-set + FULL gate before commit; a broken *uncommitted*
+  tree is harmless (Claude is sole committer, nothing reaches `origin` un-gated). If agy ever actually wanders
+  here, *that's* the trigger to add isolation — not preemptively (clone-jail pulled, KTD6).
 
 ## Success Criteria
 
@@ -324,5 +336,6 @@ fan-out seam); on-disk side-effect containment (deferred R14 workspace isolation
 - `python3 plugins/saga/scripts/completeness_gate.py --self-test` exits 0 and reports the planted omission
   caught.
 - Full gate green: `uv run pytest && uv run ruff format --check . && uv run ruff check . && uv run mypy plugins/`.
-- The delegated build completes with the validation floor intact (sole committer, no rogue commit/push, FS
-  audit clean) and the n=2 result recorded in the delegation README matrix.
+- The delegated build completes with the validation floor intact (containment verified: changed paths ⊆ the
+  per-unit allow-set; Claude sole committer; full gate green) and the n=2 result recorded in the delegation
+  README matrix.

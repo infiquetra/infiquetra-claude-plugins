@@ -70,3 +70,7 @@ Final reports include:
 - State directory.
 - Evidence paths.
 - Remaining warnings or blocked signals.
+
+A **required, non-skipped** validator whose evidence record is absent at completion is a
+`missing-output` omission, not a silent pass — see `validator-execution-order.md`
+(Required-Evidence Absence). A `skipped-by-config` validator's absent evidence is expected.

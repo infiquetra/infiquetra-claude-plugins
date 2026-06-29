@@ -25,6 +25,26 @@
 
 ---
 
+## 2026-06-29
+
+### `/agy:delegate` runs the delegate as a session teammate — plain delegate writes to the repo with zero extra flags; `--background` is the trap  {#agy-delegate-plain-is-the-path}
+
+**Context.** Building #277/U1 (the completeness-gate oracle) as n=2 of the agy-delegated-coder experiment. The first attempt micromanaged the invocation — prescriptive `--add-dir` + `--dangerously-skip-permissions` + `--print-timeout 15m` + a `timeout: 900000` Bash override, launched via `/agy:delegate --background` — and hung: agy produced **0 bytes for 21 minutes**.
+
+**Evidence.** The stuck runner's own log: with `--background`, the runner subagent's single `agy-run.sh` Bash call was itself auto-backgrounded by the harness (job `bgb6iecum`), agy detached into a context where it streamed nothing, and the runner spun firing nested auto-backgrounded poll loops (`bdd6a1bir`, `bodsnw6sy`) it could never block on. Re-run with plain `/agy:delegate --model flash <task>` (foreground, no extra flags): agy wrote both files into the repo cwd, **8/8 pytest + `--self-test` rc=0**, `git status` showed only the two allow-set files. `agy-run.sh` `cmd_ask` is a plain blocking `agy -p "$prompt" "$@"` — the script itself never backgrounds anything.
+
+**Mechanism.** `/agy:delegate` (no `--background`) spawns `agy:runner` as a **foreground session teammate** (mailbox-addressable, idle-notifies on completion) that makes ONE blocking wrapper call and returns agy's stdout. `--background` makes the runner subagent itself run detached, and a detached subagent's own Bash calls nest-background — so the blocking `agy-run.sh` call detaches, agy loses its output channel, and the runner can never await it. The `--add-dir` / `--skip-permissions` / `--print-timeout` / manual-`timeout` flags were all cargo: agy writes to the cwd (the repo) and finishes a small build well inside the foreground window.
+
+**Fix.** Method: plain `/agy:delegate --model flash <task>` + tight in-prompt allow-set + Claude post-hoc verify + sole-committer (DECISIONS [#agy-delegated-build-no-jail](DECISIONS.md#agy-delegated-build-no-jail)). Never pass `--background` for a write job; never hand-roll an `agy` shell call (operator-banned).
+
+**What surprised.** The "needs `--add-dir` / `--dangerously-skip-permissions` / a long timeout" assumptions carried over from the direct-CLI recipe were all wrong for the delegate path — the plugin abstracts them, and adding them (especially `--background`) actively broke the run.
+
+**Generalizable rule.** To delegate a real coding write-job to agy, use the `/agy:delegate` plugin plainly — task + `--model`, nothing else — then Claude verifies+fixes after. The delegate's teammate/mailbox model is also the coordination substrate to build the later distributed-delegation issues on, rather than reinventing it.
+
+**Refs.** DECISIONS [#agy-delegated-build-no-jail](DECISIONS.md#agy-delegated-build-no-jail) · prior n=1 [#agy-delegated-coder-contain-agency](#agy-delegated-coder-contain-agency) · plan `docs/plans/2026-06-28-silent-omission-completeness-gate-plan.md`.
+
+---
+
 ## 2026-06-28
 
 ### Delegating implementation to an external agentic CLI (agy/codex): contain the agency, not the code  {#agy-delegated-coder-contain-agency}

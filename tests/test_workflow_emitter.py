@@ -1202,3 +1202,268 @@ def test_segment_units_does_not_mutate_input_spec() -> None:
 
     # Assert they are equal
     assert before_dict == after_dict
+
+
+# ---------------------------------------------------------------------------
+# U2: completeness-gate guard emission tests.
+# ---------------------------------------------------------------------------
+
+
+def test_emitted_null_check() -> None:
+    """Verify that:
+    - emitted JS contains the __gate helper (exactly once).
+    - a guard call is emitted after EVERY unit-result agent() site.
+    - NO guard after the verify-panel's verifier agents.
+    - the guard HALTS on null (the emitted code throws, not pass-through).
+    - a fan-out unit emits the count-reconcile guard arg.
+    - only `returns`-bearing units emit the manifest guard arg.
+    - a no-contract (prose/side-effect) unit emits the presence guard with expectsOutput false.
+    """
+    mod = _load()
+
+    # We construct a spec dictionary containing:
+    # U1: returns-bearing (schema) unit -> should emit returns guard arg
+    # U2: no-contract unit (prose/side-effect) -> should emit expectsOutput false
+    # U3: fan-out unit with targets -> should emit count-reconcile guard arg
+    # U4: unit with verify panel -> should NOT emit guard after verify verifier agents
+    # U5, U6: independent units in a parallel layer to test multi-unit parallel guards
+    data = {
+        "name": "completeness-gate-test",
+        "description": "test completeness gates",
+        "repo": "/tmp/repo",
+        "units": [
+            {
+                "unit_id": "U1",
+                "label": "schema-unit",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 1",
+                "returns": ["key_a", "key_b"],
+            },
+            {
+                "unit_id": "U2",
+                "label": "prose-unit",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 2",
+                "depends_on": ["U1"],
+            },
+            {
+                "unit_id": "U3",
+                "label": "fan-out-unit",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 3",
+                "depends_on": ["U2"],
+                "fanout": True,
+                "targets": ["tgt1", "tgt2"],
+            },
+            {
+                "unit_id": "U4",
+                "label": "verify-unit",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 4",
+                "depends_on": ["U3"],
+                "verify": {"n": 3, "pass_rule": "majority"},
+            },
+            {
+                "unit_id": "U5",
+                "label": "parallel-1",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 5",
+                "depends_on": ["U4"],
+            },
+            {
+                "unit_id": "U6",
+                "label": "parallel-2",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 6",
+                "depends_on": ["U4"],
+                "returns": ["par_ret"],
+            },
+        ],
+    }
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # 1. Helper __gate is defined exactly once in the preamble
+    assert script.count("function __gate(result, opts)") == 1
+
+    # 2. A guard call is emitted after EVERY unit-result agent() site:
+    assert "__gate(U1, {" in script
+    assert "__gate(U2, {" in script
+    assert "__gate(U3, {" in script
+    assert "__gate(U4, {" in script
+    assert "__gate(U5, {" in script
+    assert "__gate(U6, {" in script
+
+    # 3. NO guard after the verify-panel's verifier agents.
+    assert "__gate(U4_verdicts" not in script
+
+    # 4. The guard HALTS on null (emitted code throws).
+    assert "throw new Error" in script
+
+    # 5. A fan-out unit (U3) emits the count-reconcile guard arg (targets count is 2).
+    assert "targets: 2" in script
+
+    # 6. Only returns-bearing units emit the manifest guard arg.
+    assert 'returns: ["key_a", "key_b"]' in script
+    u2_line = [line for line in script.splitlines() if "__gate(U2" in line][0]
+    assert "returns:" not in u2_line
+
+    # 7. A no-contract (prose/side-effect) unit (U2, U5) emits the presence guard with expectsOutput false.
+    assert "expectsOutput: false" in u2_line
+
+    u5_line = [line for line in script.splitlines() if "__gate(U5" in line][0]
+    assert "expectsOutput: false" in u5_line
+
+    # Check that schema-bearing U1 has expectsOutput: true
+    u1_line = [line for line in script.splitlines() if "__gate(U1" in line][0]
+    assert "expectsOutput: true" in u1_line
+
+
+# ---------------------------------------------------------------------------
+# U3: Verify panel iteration cap + typed verifier-disagreement tests.
+# ---------------------------------------------------------------------------
+
+
+def test_refuted_panel_emits_verifier_disagreement_halt() -> None:
+    """A refuted panel emits a verifier-disagreement throw/halt, NOT a log-and-continue."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": "majority"}
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    assert "throw new Error" in script
+    assert "verifier-disagreement" in script
+    assert "U2_refute_count" in script
+    # It must throw verifier-disagreement and NOT just log and continue
+    assert "log(" not in script or "log(" in script and "verifier-disagreement" in script
+    assert "review before relying on it" not in script
+
+
+def test_iterate_to_consensus_emits_loop() -> None:
+    """iterate_to_consensus=True emits a re-run loop bounded by max_iterations."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {
+        "n": 3,
+        "pass_rule": "majority",
+        "iterate_to_consensus": True,
+        "max_iterations": 4,
+    }
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # Check that a loop is emitted
+    assert "for (let iter = 1; iter <= 4; iter++)" in script
+    assert "iter === 4" in script
+    assert "verifier-disagreement" in script
+    # Inside the loop, it should call agent and the gate
+    assert "U2 = await agent(" in script
+    assert "__gate(U2, {" in script
+    # The verdicts parallel wave should be inside the loop
+    assert "const verdicts = await parallel([" in script
+
+
+def test_parallel_iterate_to_consensus_emits_loop_in_thunk() -> None:
+    """iterate_to_consensus=True in a parallel layer emits a loop inside the thunk."""
+    mod = _load()
+    data = _layered_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    # A and B are independent. Give B verify iterate_to_consensus = True.
+    first = units[1]  # B
+    assert isinstance(first, dict)
+    first["verify"] = {
+        "n": 3,
+        "pass_rule": "unanimous",
+        "iterate_to_consensus": True,
+        "max_iterations": 2,
+    }
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # Check that the loop is emitted inside the parallel wave's thunk
+    assert "async () => {" in script
+    assert "for (let iter = 1; iter <= 2; iter++)" in script
+    assert "iter === 2" in script
+    assert "result = await agent(" in script
+    assert "__gate(result, {" in script
+    # The verifier panel should run within the thunk too
+    assert "const verdicts = await parallel([" in script
+    # It should return result from the thunk
+    assert "return result" in script
+
+
+def test_max_iterations_invalid_raises_spec_error() -> None:
+    """max_iterations < 1 raises SpecError at ExecutionSpec.from_dict / validate()."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+
+    # Test < 1 raises SpecError during validate
+    second["verify"] = {"n": 3, "pass_rule": "majority", "max_iterations": 0}
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError) as exc:
+        spec.validate()
+    assert "max_iterations" in str(exc.value)
+
+    # Test negative raises SpecError during validate
+    second["verify"] = {"n": 3, "pass_rule": "majority", "max_iterations": -5}
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError):
+        spec.validate()
+
+    # Test non-integer raises SpecError during from_dict
+    second["verify"] = {"n": 3, "pass_rule": "majority", "max_iterations": "invalid"}
+    with pytest.raises(mod.SpecError) as exc:
+        mod.ExecutionSpec.from_dict(data)
+    assert "integer" in str(exc.value)
+
+
+def test_no_verify_round_trips_unchanged() -> None:
+    """A unit with NO verify round-trips unchanged (no verifier-disagreement code)."""
+    mod = _load()
+    spec = mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    script = mod.emit_workflow_script(spec)
+
+    assert "verifier-disagreement" not in script
+    assert "U1_refuted" not in script
+    assert "U2_refuted" not in script
+    assert "U3_refuted" not in script
+
+
+def test_verify_fields_round_trip() -> None:
+    """Verify.from_dict / to_dict round-trip the two new fields."""
+    mod = _load()
+    data = {
+        "n": 5,
+        "pass_rule": "majority",
+        "iterate_to_consensus": True,
+        "max_iterations": 10,
+    }
+    verify = mod.Verify.from_dict(data, "test")
+    assert verify.n == 5
+    assert verify.pass_rule == "majority"
+    assert verify.iterate_to_consensus is True
+    assert verify.max_iterations == 10
+
+    serialized = verify.to_dict()
+    assert serialized["n"] == 5
+    assert serialized["pass_rule"] == "majority"
+    assert serialized["iterate_to_consensus"] is True
+    assert serialized["max_iterations"] == 10

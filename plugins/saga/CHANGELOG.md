@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.40.0 - 2026-06-29
+
+### Silent-omission completeness gate (#277)
+- New `completeness_gate.py` oracle — the single source of omission semantics: a `FailureClass`
+  enum (`missing-output` / `malformed-output` / `verifier-disagreement`, extensible), pure check
+  predicates (presence, truncation, fan-out count, manifest-key), `classify()`, and a `--self-test`
+  CLI that plants the four canonical omission fixtures (U1).
+- `emit_workflow_script` now injects a single `__gate(result, opts)` helper (porting the oracle
+  semantics to JS) and a guard call after every unit-result `agent()` site — the singleton and each
+  `parallel` var — so an omission HALTS the workflow instead of passing `null`/partial downstream;
+  the verify-panel verifier agents are excluded (U2).
+- A refuted verify panel now HALTS with a typed `verifier-disagreement` throw instead of
+  `log()`-and-proceed (R4), plus an opt-in bounded iterate-to-consensus override on `Verify`
+  (`iterate_to_consensus` + `max_iterations`, `< 1` rejected at validate) (U3).
+
 ## 0.39.0 - 2026-06-28
 
 ### Worker×model cache scheduling (#275)

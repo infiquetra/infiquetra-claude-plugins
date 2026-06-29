@@ -51,17 +51,23 @@ Every cited anchor was read and confirmed. Two HOW-shaping facts the brainstorm 
    this — its "Files expected to change" lists `sdlc_manager.py` for "close, comment" — so building those
    verbs is genuine v1 work, and **mission-control gets a release bump (2.3.1 → 2.4.0)** alongside saga.
 
-2. **Idempotency should reuse the existing ledger, not invent one.** The outcome store already has a
-   durable, replayable, write-once-link-loser completion ledger with sticky success
-   (`write_completion_event` → `"written"` / `"skipped"`, proven by `test_outcome_replay.py:116-150`;
-   DECISIONS `#outcome-store-durability-stance`). The certificate's idempotency key rides that same
-   pattern (a duplicate write returns `"skipped"`, never an error), rather than a parallel cache.
+2. **Reuse the existing ledger's write-once *mechanism* — in a SEPARATE board-sync ledger, not the
+   completion ledger.** The outcome store has a durable, replayable, write-once-link-loser ledger with
+   sticky success (`write_completion_event` → `"written"` / `"skipped"`, proven by
+   `test_outcome_replay.py:116-150`; DECISIONS `#outcome-store-durability-stance`). **Doc-review caught
+   that the completion ledger must NOT be reused directly:** `write_completion_event` validates `state`
+   against terminal `COMPLETION_STATES` (`outcome_store.py:264`) and its events feed
+   `completed_subplots`/`derive_states` (`outcome_store.py:350-366`, `outcome.py:342-358`), so a board-op
+   key like `set-field-status:#279:In-Progress` would crash `validate` (non-terminal state) or pollute the
+   leaf frontier. The board-sync idempotency ledger therefore reuses only the **write-once `os.link`
+   mechanism + the `"written"`/`"skipped"` contract** in its own namespaced dir (KTD4), never the
+   completion `events_dir`.
 
 ## Requirements (traceability — full text in the brainstorm)
 
 | ID | Requirement (abbrev) | Unit | Acceptance |
 |----|----------------------|------|------------|
-| R1–R4 | One authority; declared enumerated facts; default GATE; facts from durable state only | U1 | AE5 |
+| R1–R4 | One authority (U4 invokes it, never re-derives); declared enumerated facts; default GATE; facts from durable state only | U1, U4 | AE5 |
 | R5 | Reversible tier (registered inverse): set-field Status, issue-label add/remove, sub-issue close | U1 | AE1, AE2 |
 | R6 | Additive tier (append-only, abort-cost bounded by coalescing): progress comment | U1, U4 | AE4 |
 | R7 | `ALWAYS_OPERATOR` override (parent-close) gates even when reversible | U1, U2 | AE3 |
@@ -112,9 +118,12 @@ ledger (resolves brainstorm Q3).** Deterministic from durable saga state (R4): e
 `set-field-status:#279:In-Progress`, `issue-label-add:#279:blocked`, `sub-issue-close:#279:`. The
 additive comment uses a **coalescing** key `issue-progress-comment:#279:<leaf-transition-id>` so one
 comment is posted per meaningful leaf transition, not per tick (R6/AE4). The consumer records executed
-keys via the outcome store's write-once event ledger (`write_completion_event` semantics —
-`"written"` first, `"skipped"` on replay), so a crash/duplicate-trigger retry is a no-op (R9/AE8). This
-is **not** the `promote_scan.py:47` `repo:hash` scanner key (scanner-specific, not reusable, confirmed).
+keys in a **separate, namespaced board-sync ledger** that reuses only the write-once `os.link` mechanism
++ the `"written"`/`"skipped"` return contract — it must **not** call `write_completion_event` or write
+into the completion `events_dir` (that ledger requires terminal `COMPLETION_STATES` and feeds
+`derive_states`; a board-op key would crash `validate` or pollute the leaf frontier — doc-review P2). A
+crash/duplicate-trigger retry is then a no-op (R9/AE8). This is **not** the `promote_scan.py:47`
+`repo:hash` scanner key (scanner-specific, not reusable, confirmed).
 
 **KTD5 — Subsumption equivalence is proven by mirroring the existing enumerated degrade tests (resolves
 brainstorm Q4).** `degrade_decision` (`outcome_dispatcher.py:242-290`) is a pure
@@ -124,7 +133,12 @@ brainstorm Q4).** `degrade_decision` (`outcome_dispatcher.py:242-290`) is a pure
 branch through the certificate's `side_effected` fact and asserts each of those cases returns the
 **identical** `(action, backend, reason)`. The order, and the `attending` / `guarantee_bearing` /
 no-lower-rung branches, never move (R11/R13/AE6). The test mirrors the existing per-case style (not a new
-parametrize framework) so the diff is reviewable.
+parametrize framework) so the diff is reviewable. **Doc-review hardening:** the proof must also pin the
+*pass-through* — assert the certificate's `side_effected` fact equals the value wired at the real call
+site today (`had_side_effect=node.destructive`, `outcome.py:623`), not a re-derivation that could
+diverge; otherwise a `True→HALT` could silently become `False→degrade` (a duplicate side effect — the
+exact R14 corruption). The 7 golden tuples **plus** this pass-through identity are the whole proof; an
+exhaustive cartesian sweep is unnecessary (the function is an unchanged pure boolean if-chain).
 
 **KTD6 — Leaf-state → board-transition mapping is grounded in `derive_states` (resolves brainstorm
 Q5).** The consumer maps the `/outcome` live states (from `outcome_engine.derive_states`, the same
@@ -132,7 +146,11 @@ source `outcome_projection.project` uses — `outcome_projection.py:47`) to boar
 `ready`/in-progress → `set-field-status` "In Progress"; a leaf reaching tester-ACCEPT after
 nonprod-deploy → `sub-issue-close`; a leaf advancing a phase → one coalesced `issue-progress-comment`.
 The mapping reads derived state only — never an operator-set field — so it inherits the projection's
-derived-on-read invariant.
+derived-on-read invariant. **The firing point is the `advance` reconcile tick** (`AdvanceResult`,
+`outcome.py:398-544`), where `derive_states` values change (it emits
+`ready`/`dispatched`/`done`/`blocked`/`failed`/`rejected`/`stalled`; "In Progress" is the board
+write-*target* label, not a source state). **Negative terminals** (`failed`/`rejected`/`stalled`) have
+**no** board-revert in v1 — an explicit deferred non-goal (Scope Boundaries), not an omission.
 
 **KTD7 — Execution method: each feature unit (U1–U5) is delegated to agy Gemini Pro 3.1 High** (the
 contract is its own section below). **U6 (release surfaces) is Claude-written.** Saga orchestration
@@ -228,6 +246,9 @@ Route the `had_side_effect` branch (`outcome_dispatcher.py:271`) through the cer
 - For each of the 7 enumerated `degrade_decision` cases (available / attending / guarantee-bearing /
   side-effected / not-on-ladder / skip-rung), the certificate-routed path returns the **identical**
   `(action, backend, reason)` tuple. **(R10, R11, AE6)**
+- **Pass-through identity (doc-review fix):** the certificate's `side_effected` fact equals
+  `node.destructive` at the real call site (`outcome.py:623`) — mutate the wiring to return the negation
+  and a `True→HALT` case must flip to `degrade`, proving the assertion is load-bearing. **(R10, R14)**
 - `parent-close` remains GATE in every case it is gated today (drive `outcome_projection.project` and
   assert `parent_close` still resolves to the operator-only outcome via the `ALWAYS_OPERATOR` entry).
   **(R12, AE3)**
@@ -243,7 +264,8 @@ semantics; see `flow_link_sub_issue:2249-2281`, `flow_set_field:2172-2225`) and,
 **resumable** per `#create-prepared-graphql-resolver-stance` (record-before / finalize-after). No
 certificate import — these are plain mission-control verbs the U4 adapter calls.
 
-**Write-set:** `plugins/mission-control/scripts/sdlc_manager.py`, `tests/test_mission_control.py`.
+**Write-set:** `plugins/mission-control/scripts/sdlc_manager.py`, `tests/test_mission_control.py`,
+`tests/conftest.py` (the autouse no-live-`gh` guard fixture — see Execution Method).
 
 **depends_on:** none (independent of U1/U2). **Highest blast radius — see Risk Analysis; recommend an
 adversarial-verify pass at `/work`.**
@@ -261,9 +283,12 @@ adversarial-verify pass at `/work`.**
 
 The first autonomous consumer (R16–R19). New `outcome_board_sync.py`: the leaf-state→board-transition
 map (KTD6), the `authorize_write` gate, the adapter that drives the U3 verbs, bounded idempotent retry
-(KTD4 ledger) with fail-loud surfacing on exhaustion, and a saga tick per autonomous write. Minimal
-wiring in `outcome.py` replaces the `issue_close = None` deferral note (`:1062-1065`). This unit makes
-U1 a live producer+consumer (KTD8) — its tests drive the real entrypoint.
+(KTD4 ledger) with fail-loud surfacing on exhaustion, and a saga tick per autonomous write. **Wiring
+entrypoint (doc-review fix):** board-sync fires from the `advance` reconcile tick — where leaf states
+actually change (`AdvanceResult`, `outcome.py:398-544`), gated to the autonomous path
+(`advance --autonomous`); the `prune`-command deferral note (`outcome.py:1062-1065`) is replaced only for
+the `sub-issue-close` op, **not** treated as the sole wiring site. This unit makes U1 a live
+producer+consumer (KTD8) — its tests drive the real `advance` entrypoint.
 
 **Write-set:** `plugins/saga/scripts/outcome_board_sync.py`, `plugins/saga/scripts/outcome.py`,
 `tests/test_outcome_board_sync.py`.
@@ -283,6 +308,12 @@ board-sync entrypoint, not fabricated shape):
   **(R17)**
 - AE8: an AUTHORIZED `set-field` write fails on the boundary → bounded idempotent retry (no duplicate
   under its key) → surfaced to the operator on exhaustion; the campaign is not wedged. **(R9, R18)**
+- **R1 single-authority (doc-review fix):** spy/mock `reversibility_certificate.authorize_write` and
+  assert the board-sync entrypoint *invokes* it for the verdict — a consumer that re-derives its own
+  verdict goes red. This is the only falsifiable test of "no consumer re-derives". **(R1)**
+- **Ledger isolation (doc-review fix):** board-op idempotency keys never appear in `completed_subplots` /
+  `derive_states` (the board-sync ledger is namespaced separately from the completion `events_dir` —
+  KTD4); a board-op key fed to the completion ledger would fail fast. **(R9)**
 
 ### U5. `/outcome` SKILL.md prose + doc-contract test
 
@@ -346,9 +377,15 @@ Flash, n=3 #278 Pro).
   mutation-proof any tests agy wrote**; confirm no rogue commit/push (`git log` + `git log origin/<branch>`).
 - **Track-3 provenance:** archive each agy draft (`git stash` or a copy) **before** fixing it, so the
   review-fix delta is measured, not reconstructed. Log per-unit churn to
-  `docs/external-agent-delegation/README.md` (Review-fix cycle log) — and this run finally writes the
-  **owed n=2 #277 and n=3 #278 matrix rows** plus refreshes the stale "n=2 done" line in
-  `next-run-handoff.md` (bookkeeping debt called out in `[[project-external-agent-delegation]]`).
+  `docs/external-agent-delegation/README.md` (Review-fix cycle log) — and this run writes the **owed n=3
+  #278 matrix + review-fix-log rows** (doc-review confirmed the n=2 #277 rows already exist, README
+  `:65` / `:80-84` — do not duplicate them), adds the **n=4 #279** rows, and refreshes the stale
+  "n=2 done" line + unbuilt-list in `next-run-handoff.md`.
+- **Hard floor for the GitHub-write units (doc-review fix):** before U3, add an **autouse** `conftest`
+  fixture (scoped to the new test modules) that fails any **unmocked** `gh`/`subprocess` call (and unsets
+  `GH_TOKEN`) so the build provably **cannot** mutate the live operations board — the existing
+  `mock_subprocess_run` is opt-in, not autouse (`conftest.py:66`). This is the concrete tripwire that
+  makes the escalate-off-agy trigger ("a real-`gh` call in a test") enforceable rather than convention.
 - **U3 and U4 are the high-stakes units** (mission-control GitHub-mutating verbs; the autonomous-write
   consumer). The build itself touches no live GitHub (tests inject fake gh runners; Claude is sole
   committer; the autonomous writes only fire when a future `/outcome` campaign runs the consumer). Still:
@@ -377,6 +414,10 @@ both plugins' release surfaces.
 - Repo label-definition create/delete — only issue-field labels are in the reversible tier.
 - Mid-flight interrupt / agent hot-swap and capability-scoped agent sandboxing (separate ideation items;
   enforcement home #287).
+- **Negative-terminal board-revert** (doc-review): a leaf that regresses (`failed` / `rejected` /
+  `stalled`) does **not** auto-revert its prior autonomous board write in v1. This is recoverable drift —
+  the derived-on-read projection stays the source of truth — and a deliberate deferred non-goal,
+  promotable later; it is not an omission.
 
 ## Risk Analysis & Mitigation
 
@@ -426,8 +467,30 @@ subsumption is proven-equivalent on the degrade path, and `/outcome` autonomousl
 the enumerated envelope with a fail-loud failure path. Merging arms the capability for future `/outcome`
 campaigns; it does not itself perform any board write.
 
+## Doc-Review (2026-06-29) — verdict READY, blocked=false
+
+Reviewed at working-tree revision (commit `1cdc294`) via a 4-lens adversarial workflow (agy-contract,
+requirement/AE mapping, technical soundness, adversarial/security-autonomy) + a refute-pass verifier.
+**18 findings → 10 confirmed, 8 refuted. 0 P0, 0 P1.** Artifact:
+`docs/reviews/2026-06-29-reversibility-certificate-readiness.md`.
+
+The agy-contract lens found KTD7 **fully compliant** with the documented `/agy:delegate` findings — its
+only hit was a P3 bookkeeping nit (the n=2 #277 README rows already exist). Technical soundness
+**confirmed** the two-plugin scope, the KTD5 method, every cited anchor, and both version bumps. Safe
+fixes applied in place (all evidence-backed):
+
+- **P2** KTD4 — board-sync uses a **separate namespaced** idempotency ledger (write-once mechanism only),
+  never the completion `events_dir` (which requires terminal states + feeds `derive_states`).
+- **P2** KTD5 — added the `side_effected == node.destructive` **pass-through identity** test
+  (`outcome.py:623`); the 7 golden tuples alone didn't exercise the substitution seam.
+- **P2** R1 — added a U4 spy test asserting the consumer **invokes** `authorize_write` (no re-derivation).
+- **P2** KTD7/U3 — added an **autouse no-live-`gh` conftest guard** so the build provably can't mutate the
+  real board (the existing mock is opt-in).
+- **P2** U4 — fixed the wiring entrypoint to the **`advance` reconcile tick** (not the `prune` note).
+- **P3** KTD6 / Scope — declared **negative-terminal board-revert** an explicit deferred non-goal; fixed
+  the Track-3 bookkeeping wording.
+
 ## Routing
 
-`/doc-review` next (the work-to-PR gate blocks on unresolved P0/P1 — and should scrutinize the KTD7 agy
-delegation contract against `docs/external-agent-delegation/` exactly as #278's review did), then `/work`
-(inline backend, agy-Pro delegation of U1–U5, Claude-written U6, destination = **merge**).
+Doc-review is **complete (READY)** — `/work` is unblocked. Next: `/work` (inline backend, agy-Pro
+delegation of U1–U5, Claude-written U6, destination = **merge**).

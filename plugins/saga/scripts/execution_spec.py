@@ -250,6 +250,8 @@ class Verify:
 
     n: int
     pass_rule: str
+    iterate_to_consensus: bool = False
+    max_iterations: int = 3
 
     def validate(self, where: str) -> None:
         if self.n < 1:
@@ -268,6 +270,8 @@ class Verify:
             )
         if self.pass_rule not in PASS_RULES:
             raise SpecError(f"{where}: verify pass_rule {self.pass_rule!r} not in {PASS_RULES}")
+        if self.max_iterations < 1:
+            raise SpecError(f"{where}: verify max_iterations={self.max_iterations} must be >= 1")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], where: str) -> Verify:
@@ -277,10 +281,30 @@ class Verify:
             n = int(data["n"])
         except (TypeError, ValueError) as exc:
             raise SpecError(f"{where}: verify n {data['n']!r} is not an integer") from exc
-        return cls(n=n, pass_rule=str(data["pass_rule"]))
+
+        iterate_to_consensus = bool(data.get("iterate_to_consensus", False))
+        max_iterations_raw = data.get("max_iterations", 3)
+        try:
+            max_iterations = int(max_iterations_raw)
+        except (TypeError, ValueError) as exc:
+            raise SpecError(
+                f"{where}: verify max_iterations {max_iterations_raw!r} is not an integer"
+            ) from exc
+
+        return cls(
+            n=n,
+            pass_rule=str(data["pass_rule"]),
+            iterate_to_consensus=iterate_to_consensus,
+            max_iterations=max_iterations,
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"n": self.n, "pass_rule": self.pass_rule}
+        return {
+            "n": self.n,
+            "pass_rule": self.pass_rule,
+            "iterate_to_consensus": self.iterate_to_consensus,
+            "max_iterations": self.max_iterations,
+        }
 
 
 @dataclass
@@ -589,22 +613,129 @@ def _verifier_prompt(unit: Unit) -> str:
 
 
 def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
-    """Append one ``() => agent(...),`` thunk entry for ``unit`` inside a ``parallel([...])``.
+    """Append one thunk entry for ``unit`` inside a ``parallel([...])``.
 
     Every thunk carries the unit's per-unit ``{model, effort}`` tier (R2(b)) and the same
     budget-rider / R10 reconciliation prompt as a singleton agent() call.
     """
+    if unit.verify is not None and unit.verify.iterate_to_consensus:
+        panel = unit.verify
+        n = panel.n
+        threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
+        verifier_prompt = _verifier_prompt(unit)
+        prompt = _agent_prompt(spec, unit)
+        opts = [
+            f"label: {_js_string(unit.label)}",
+            f"model: {_js_string(unit.tier.model)}",
+            f"effort: {_js_string(unit.tier.effort)}",
+        ]
+        verifier_opts = [
+            f"label: {_js_string(unit.label + ' verifier')}",
+            f"model: {_js_string(unit.tier.model)}",
+            f"effort: {_js_string(unit.tier.effort)}",
+        ]
+
+        lines.append("  async () => {")
+        lines.append("    let result;")
+        lines.append(f"    for (let iter = 1; iter <= {panel.max_iterations}; iter++) {{")
+        lines.append("      result = await agent(")
+        lines.append(f"        {_js_string(prompt)},")
+        lines.append("        { " + ", ".join(opts) + " },")
+        lines.append("      )")
+        lines.append(f"      {_emit_gate_call(unit, 'result')}")
+        lines.append("      const verdicts = await parallel([")
+        for _ in range(n):
+            lines.append("        () => agent(")
+            lines.append(f"          {_js_string(verifier_prompt)},")
+            lines.append("          { " + ", ".join(verifier_opts) + ", input: result },")
+            lines.append("        ),")
+        lines.append("      ])")
+        lines.append(
+            "      const refute_count = verdicts.filter((v) => v && v.refuted "
+            "&& v.refuted.length > 0).length"
+        )
+        lines.append(f"      const refuted = refute_count >= {threshold}  // {panel.pass_rule}")
+        lines.append("      if (!refuted) {")
+        lines.append("        break")
+        lines.append("      }")
+        lines.append(f"      if (iter === {panel.max_iterations}) {{")
+        lines.append(
+            f"        throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+            f"${{refute_count}} verifiers`)"
+        )
+        lines.append("      }")
+        lines.append("    }")
+        lines.append("    return result")
+        lines.append("  },")
+    else:
+        prompt = _agent_prompt(spec, unit)
+        opts = [
+            f"label: {_js_string(unit.label)}",
+            f"model: {_js_string(unit.tier.model)}",
+            f"effort: {_js_string(unit.tier.effort)}",
+        ]
+        lines.append("  () =>")
+        lines.append("    agent(")
+        lines.append(f"      {_js_string(prompt)},")
+        lines.append("      { " + ", ".join(opts) + " },")
+        lines.append("    ),")
+
+
+def _emit_verify_loop_singleton(
+    lines: list[str], spec: ExecutionSpec, unit: Unit, var: str
+) -> None:
+    """Emit the iterate-to-consensus loop for a singleton unit."""
+    panel = unit.verify
+    assert panel is not None
+    n = panel.n
+    threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
+    verifier_prompt = _verifier_prompt(unit)
     prompt = _agent_prompt(spec, unit)
     opts = [
         f"label: {_js_string(unit.label)}",
         f"model: {_js_string(unit.tier.model)}",
         f"effort: {_js_string(unit.tier.effort)}",
     ]
-    lines.append("  () =>")
-    lines.append("    agent(")
-    lines.append(f"      {_js_string(prompt)},")
-    lines.append("      { " + ", ".join(opts) + " },")
-    lines.append("    ),")
+    verifier_opts = [
+        f"label: {_js_string(unit.label + ' verifier')}",
+        f"model: {_js_string(unit.tier.model)}",
+        f"effort: {_js_string(unit.tier.effort)}",
+    ]
+
+    lines.append(f"let {var};")
+    lines.append(
+        f"// verify: refute-{n} iterate-to-consensus loop over {unit.unit_id} "
+        f"(pass_rule: {panel.pass_rule}, max_iterations: {panel.max_iterations})"
+    )
+    lines.append(f"for (let iter = 1; iter <= {panel.max_iterations}; iter++) {{")
+    lines.append(f"  {var} = await agent(")
+    lines.append(f"    {_js_string(prompt)},")
+    lines.append("    { " + ", ".join(opts) + " },")
+    lines.append("  )")
+    lines.append(f"  {_emit_gate_call(unit, var)}")
+    lines.append("  const verdicts = await parallel([")
+    for _ in range(n):
+        lines.append("    () => agent(")
+        lines.append(f"      {_js_string(verifier_prompt)},")
+        lines.append("      { " + ", ".join(verifier_opts) + f", input: {var} }},")
+        lines.append("    ),")
+    lines.append("  ])")
+    lines.append(
+        "  const refute_count = verdicts.filter((v) => v && v.refuted "
+        "&& v.refuted.length > 0).length"
+    )
+    lines.append(f"  const refuted = refute_count >= {threshold}  // {panel.pass_rule}")
+    lines.append("  if (!refuted) {")
+    lines.append("    break")
+    lines.append("  }")
+    lines.append(f"  if (iter === {panel.max_iterations}) {{")
+    lines.append(
+        f"    throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+        f"${{refute_count}} verifiers`)"
+    )
+    lines.append("  }")
+    lines.append("}")
+    lines.append("")
 
 
 def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
@@ -649,10 +780,12 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
     )
     lines.append(f"const {var}_refuted = {var}_refute_count >= {threshold}  // {panel.pass_rule}")
     # Consume the verdict: surface a refuted unit result instead of relying on it silently.
+    lines.append(f"if ({var}_refuted) {{")
     lines.append(
-        f"if ({var}_refuted) log(`refute-{n} ({panel.pass_rule}): {unit.unit_id} result refuted by "
-        f"${{{var}_refute_count}}/{n} verifiers -- review before relying on it`)"
+        f"  throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+        f"${{{var}_refute_count}} verifiers`)"
     )
+    lines.append("}")
     lines.append("")
 
 
@@ -735,20 +868,23 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
             assert unit is not None
             _emit_unit_header(unit)
             var = _var(unit.unit_id)
-            lines.append(f"const {var} = await agent(")
-            prompt = _agent_prompt(spec, unit)
-            opts = [
-                f"label: {_js_string(unit.label)}",
-                f"model: {_js_string(unit.tier.model)}",
-                f"effort: {_js_string(unit.tier.effort)}",
-            ]
-            lines.append(f"  {_js_string(prompt)},")
-            lines.append("  { " + ", ".join(opts) + " },")
-            lines.append(")")
-            lines.append(_emit_gate_call(unit, var))
-            lines.append("")
-            if unit.verify is not None:
-                _emit_verify_panel(lines, unit, var)
+            if unit.verify is not None and unit.verify.iterate_to_consensus:
+                _emit_verify_loop_singleton(lines, spec, unit, var)
+            else:
+                lines.append(f"const {var} = await agent(")
+                prompt = _agent_prompt(spec, unit)
+                opts = [
+                    f"label: {_js_string(unit.label)}",
+                    f"model: {_js_string(unit.tier.model)}",
+                    f"effort: {_js_string(unit.tier.effort)}",
+                ]
+                lines.append(f"  {_js_string(prompt)},")
+                lines.append("  { " + ", ".join(opts) + " },")
+                lines.append(")")
+                lines.append(_emit_gate_call(unit, var))
+                lines.append("")
+                if unit.verify is not None:
+                    _emit_verify_panel(lines, unit, var)
             continue
 
         # A layer of >1 ready unit -> one parallel() wave of thunks. The wave's results
@@ -768,7 +904,7 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
         lines.append("")
         for unit in layer_units:
             assert unit is not None
-            if unit.verify is not None:
+            if unit.verify is not None and not unit.verify.iterate_to_consensus:
                 _emit_verify_panel(lines, unit, _var(unit.unit_id))
 
     return "\n".join(lines)

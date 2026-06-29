@@ -1318,3 +1318,152 @@ def test_emitted_null_check() -> None:
     # Check that schema-bearing U1 has expectsOutput: true
     u1_line = [line for line in script.splitlines() if "__gate(U1" in line][0]
     assert "expectsOutput: true" in u1_line
+
+
+# ---------------------------------------------------------------------------
+# U3: Verify panel iteration cap + typed verifier-disagreement tests.
+# ---------------------------------------------------------------------------
+
+
+def test_refuted_panel_emits_verifier_disagreement_halt() -> None:
+    """A refuted panel emits a verifier-disagreement throw/halt, NOT a log-and-continue."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": "majority"}
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    assert "throw new Error" in script
+    assert "verifier-disagreement" in script
+    assert "U2_refute_count" in script
+    # It must throw verifier-disagreement and NOT just log and continue
+    assert "log(" not in script or "log(" in script and "verifier-disagreement" in script
+    assert "review before relying on it" not in script
+
+
+def test_iterate_to_consensus_emits_loop() -> None:
+    """iterate_to_consensus=True emits a re-run loop bounded by max_iterations."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {
+        "n": 3,
+        "pass_rule": "majority",
+        "iterate_to_consensus": True,
+        "max_iterations": 4,
+    }
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # Check that a loop is emitted
+    assert "for (let iter = 1; iter <= 4; iter++)" in script
+    assert "iter === 4" in script
+    assert "verifier-disagreement" in script
+    # Inside the loop, it should call agent and the gate
+    assert "U2 = await agent(" in script
+    assert "__gate(U2, {" in script
+    # The verdicts parallel wave should be inside the loop
+    assert "const verdicts = await parallel([" in script
+
+
+def test_parallel_iterate_to_consensus_emits_loop_in_thunk() -> None:
+    """iterate_to_consensus=True in a parallel layer emits a loop inside the thunk."""
+    mod = _load()
+    data = _layered_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    # A and B are independent. Give B verify iterate_to_consensus = True.
+    first = units[1]  # B
+    assert isinstance(first, dict)
+    first["verify"] = {
+        "n": 3,
+        "pass_rule": "unanimous",
+        "iterate_to_consensus": True,
+        "max_iterations": 2,
+    }
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # Check that the loop is emitted inside the parallel wave's thunk
+    assert "async () => {" in script
+    assert "for (let iter = 1; iter <= 2; iter++)" in script
+    assert "iter === 2" in script
+    assert "result = await agent(" in script
+    assert "__gate(result, {" in script
+    # The verifier panel should run within the thunk too
+    assert "const verdicts = await parallel([" in script
+    # It should return result from the thunk
+    assert "return result" in script
+
+
+def test_max_iterations_invalid_raises_spec_error() -> None:
+    """max_iterations < 1 raises SpecError at ExecutionSpec.from_dict / validate()."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+
+    # Test < 1 raises SpecError during validate
+    second["verify"] = {"n": 3, "pass_rule": "majority", "max_iterations": 0}
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError) as exc:
+        spec.validate()
+    assert "max_iterations" in str(exc.value)
+
+    # Test negative raises SpecError during validate
+    second["verify"] = {"n": 3, "pass_rule": "majority", "max_iterations": -5}
+    spec = mod.ExecutionSpec.from_dict(data)
+    with pytest.raises(mod.SpecError):
+        spec.validate()
+
+    # Test non-integer raises SpecError during from_dict
+    second["verify"] = {"n": 3, "pass_rule": "majority", "max_iterations": "invalid"}
+    with pytest.raises(mod.SpecError) as exc:
+        mod.ExecutionSpec.from_dict(data)
+    assert "integer" in str(exc.value)
+
+
+def test_no_verify_round_trips_unchanged() -> None:
+    """A unit with NO verify round-trips unchanged (no verifier-disagreement code)."""
+    mod = _load()
+    spec = mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    script = mod.emit_workflow_script(spec)
+
+    assert "verifier-disagreement" not in script
+    assert "U1_refuted" not in script
+    assert "U2_refuted" not in script
+    assert "U3_refuted" not in script
+
+
+def test_verify_fields_round_trip() -> None:
+    """Verify.from_dict / to_dict round-trip the two new fields."""
+    mod = _load()
+    data = {
+        "n": 5,
+        "pass_rule": "majority",
+        "iterate_to_consensus": True,
+        "max_iterations": 10,
+    }
+    verify = mod.Verify.from_dict(data, "test")
+    assert verify.n == 5
+    assert verify.pass_rule == "majority"
+    assert verify.iterate_to_consensus is True
+    assert verify.max_iterations == 10
+
+    serialized = verify.to_dict()
+    assert serialized["n"] == 5
+    assert serialized["pass_rule"] == "majority"
+    assert serialized["iterate_to_consensus"] is True
+    assert serialized["max_iterations"] == 10

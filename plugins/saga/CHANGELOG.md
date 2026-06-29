@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.41.0 - 2026-06-29
+
+### Operator gate-status card (#278)
+- New `status_card.py` — one shared, derived-on-read glyph-card renderer that is the single emitter of
+  operator-facing status across all five saga surfaces. Constant-size, position-stable; every
+  determinable cell is traceable to evidence via an indexed footer, and no operator-writable status
+  field exists. Two archetypes (one renderer): gate-sequence and summary-projection (U1).
+- A frozen six-value wire-state enum (`done` / `in-progress` / `blocked` / `failed` / `halted` /
+  `not-reached`) with an additive operator-label + glyph display map and a raw-string fallback; an
+  undeterminable cell renders *unknown* with no ref — never a guessed glyph (U1).
+- `gate_verdicts` capture in the saga work-state envelope: a full-snapshot `list[str]` of
+  `"gate:state:ref"` entries plus a repeatable `--gate-verdict` CLI flag and a `parse_gate_verdict`
+  helper (splits on the first two colons so colon-bearing refs survive; validates the six gate
+  states) (U2).
+- Per-surface projections: `project_work` / `project_code_review` / `project_qa` (gate-sequence) and
+  `project_outcome` / `project_resume` (summary-projection). `/work`'s Tests cell derives from
+  `gate_verdicts`; `/outcome` re-renders `outcome_projection.project()` exactly (no second
+  projection); `/qa` renders a failing verdict unmistakably (U3/U4).
+- Routed all five surfaces' status-summary emissions through the card while keeping per-finding
+  evidence as drill-down detail; `/work` now writes `gate_verdicts` on its test gate (U5).
+
 ## 0.40.0 - 2026-06-29
 
 ### Silent-omission completeness gate (#277)

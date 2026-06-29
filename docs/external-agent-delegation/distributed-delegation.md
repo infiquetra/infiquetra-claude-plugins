@@ -117,6 +117,27 @@ integrate.*
 
 ---
 
+## 4a. The coordination substrate already exists (n=2 observation — co-located, not yet distributed)
+
+The one piece of this topology that is **no longer purely n=0** is the *coordination primitive*. n=2
+(#277, co-located) ran the delegate through the **`/agy:delegate` plugin, which spawns `agy:runner` as a
+session teammate** — mailbox-addressable, idle-notifies on completion, reachable via `SendMessage`. That
+is exactly the shape Layer 3 needs to scale to N agents: a *dispatch + await-idle + message-back*
+primitive, rather than a stdout pipe.
+
+So the layers thread together cleanly: **identity isolation is the containment layer; the
+teammate/mailbox model is the coordination layer.** The distributed scheduler (merge-queue + DAG frontier,
+§4 Layer 3) should be built **on** the teammate/mailbox/await-idle primitive — many delegate-teammates,
+each identity-isolated, coordinated over one mailbox + a ready-frontier — rather than reinventing
+coordination from scratch. This also lines up with the OutcomeOrchestrator's existing `ready_frontier`
+DAG work in saga (`execution_spec.py`).
+
+**Honesty marker:** the *primitive* has co-located evidence (n=2); the *distributed topology* that would
+use it across independent identities is still **n=0**. This narrows what is unproven (cross-identity
+coordination at scale) without overclaiming the topology itself.
+
+---
+
 ## 5. What is the SAME (do not re-litigate)
 
 - **Self-report is never evidence.** Re-derive every contribution; trust the diff and your own CI, not
@@ -179,3 +200,7 @@ workspace and a shared GitHub credential; this document takes the independent-id
 instead (N agents, own workspace, own creds, own auth). **Forward-looking, n=0** — it accumulates the
 practice's thinking ahead of evidence, and must be validated (or invalidated) by a real distributed run
 before any claim here is treated as settled.
+
+**n=2 update (2026-06-29):** the *coordination primitive* (§4a) is no longer purely speculative — the
+`/agy:delegate` teammate/mailbox/await-idle model has co-located evidence from #277. The *distributed
+topology* remains n=0; what is now n=2 is only the in-session primitive it would be built on.

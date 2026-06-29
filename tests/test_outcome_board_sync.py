@@ -484,3 +484,61 @@ def test_default_board_writer_rejects_unknown_op_kind(tmp_path: Path) -> None:
     writer = ENG_MOD._default_board_writer(tmp_path, runner=lambda *a, **k: None)
     with pytest.raises(ValueError, match="no mission-control verb mapping"):
         writer(op_kind="merge", repo="x", number=1, payload={})
+
+
+# ---------------------------------------------------------------------------
+# Adversarial-verify regressions (two P2 holes found by the U4 refute panel)
+# ---------------------------------------------------------------------------
+
+
+def test_cross_repo_same_issue_number_does_not_collide(tmp_path: Path) -> None:
+    """P2 regression: two ready leaves with the SAME issue number in DIFFERENT repos must EACH get
+    their board write — the repo-qualified idempotency key prevents one silently skipping the other."""
+    store = _store(tmp_path)
+    spec = _spec(
+        [
+            {
+                "subplot_id": "a",
+                "title": "a",
+                "kind": "code",
+                "github": {"issue": "infiquetra/saga#5"},
+            },
+            {
+                "subplot_id": "b",
+                "title": "b",
+                "kind": "code",
+                "github": {"issue": "infiquetra/mission-control#5"},
+            },
+        ]
+    )
+    writer = RecordingWriter()
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)
+
+    repos = {c["repo"] for c in writer.calls_for("set-field-status")}
+    assert repos == {"infiquetra/saga", "infiquetra/mission-control"}, (
+        f"both repos' #5 must be written, not collide on one ledger key; got {repos}"
+    )
+    written = [r for r in result if r["op_kind"] == "set-field-status" and r["status"] == "written"]
+    assert len(written) == 2, "neither same-number cross-repo write may be silently skipped"
+
+
+def test_ledger_write_fault_surfaces_not_wedges(tmp_path: Path, monkeypatch: Any) -> None:
+    """P2 regression: a ledger-write fault AFTER a successful board write must surface an 'error'
+    record (may_reapply) and NOT escape/wedge the tick (which would discard records + orphan the
+    side effect)."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    _done(store, "leaf1", "done")  # -> sub-issue-close (+ coalesced comment)
+
+    def _boom(*a: Any, **k: Any) -> bool:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(sys.modules["outcome_store"], "_write_once", _boom)
+
+    writer = RecordingWriter()
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)  # must NOT raise
+
+    assert writer.calls_for("sub-issue-close"), "the board write should have been attempted"
+    errors = [r for r in result if r["status"] == "error"]
+    assert errors, "a ledger fault after a successful board write must surface an error record"
+    assert all(r.get("may_reapply") for r in errors)

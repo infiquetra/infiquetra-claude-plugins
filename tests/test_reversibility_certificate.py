@@ -183,43 +183,54 @@ def test_pr_merge_is_gated() -> None:
 
 def test_idempotency_key_is_deterministic() -> None:
     """Same inputs produce the same key every time (R9)."""
-    k1 = RC.idempotency_key("set-field-status", 279, "In-Progress")
-    k2 = RC.idempotency_key("set-field-status", 279, "In-Progress")
+    k1 = RC.idempotency_key("set-field-status", "infiquetra/x", 279, "In-Progress")
+    k2 = RC.idempotency_key("set-field-status", "infiquetra/x", 279, "In-Progress")
     assert k1 == k2
 
 
 def test_idempotency_key_distinct_target_state() -> None:
     """Different target_state → distinct key (R9)."""
-    k1 = RC.idempotency_key("set-field-status", 279, "In-Progress")
-    k2 = RC.idempotency_key("set-field-status", 279, "Done")
+    k1 = RC.idempotency_key("set-field-status", "infiquetra/x", 279, "In-Progress")
+    k2 = RC.idempotency_key("set-field-status", "infiquetra/x", 279, "Done")
     assert k1 != k2
 
 
 def test_idempotency_key_distinct_issue_number() -> None:
     """Different issue_number → distinct key (R9)."""
-    k1 = RC.idempotency_key("set-field-status", 279, "In-Progress")
-    k2 = RC.idempotency_key("set-field-status", 280, "In-Progress")
+    k1 = RC.idempotency_key("set-field-status", "infiquetra/x", 279, "In-Progress")
+    k2 = RC.idempotency_key("set-field-status", "infiquetra/x", 280, "In-Progress")
+    assert k1 != k2
+
+
+def test_idempotency_key_distinct_repo_same_number() -> None:
+    """Different repo, SAME issue number → distinct key (R9).
+
+    Regression guard for the cross-repo collision the U4 adversarial-verify found: saga#5 and
+    mission-control#5 must not share a ledger entry, or one silently skips the other's board write.
+    """
+    k1 = RC.idempotency_key("sub-issue-close", "infiquetra/saga", 5, "")
+    k2 = RC.idempotency_key("sub-issue-close", "infiquetra/mission-control", 5, "")
     assert k1 != k2
 
 
 def test_idempotency_key_distinct_op_kind() -> None:
     """Different op_kind → distinct key (R9)."""
-    k1 = RC.idempotency_key("set-field-status", 279, "In-Progress")
-    k2 = RC.idempotency_key("issue-label-add", 279, "In-Progress")
+    k1 = RC.idempotency_key("set-field-status", "infiquetra/x", 279, "In-Progress")
+    k2 = RC.idempotency_key("issue-label-add", "infiquetra/x", 279, "In-Progress")
     assert k1 != k2
 
 
 def test_idempotency_key_opkind_enum_and_string_equivalent() -> None:
     """OpKind enum and its string value produce the same key (R9)."""
-    k_enum = RC.idempotency_key(RC.OpKind.SET_FIELD_STATUS, 279, "In-Progress")
-    k_str = RC.idempotency_key("set-field-status", 279, "In-Progress")
+    k_enum = RC.idempotency_key(RC.OpKind.SET_FIELD_STATUS, "infiquetra/x", 279, "In-Progress")
+    k_str = RC.idempotency_key("set-field-status", "infiquetra/x", 279, "In-Progress")
     assert k_enum == k_str
 
 
 def test_idempotency_key_format() -> None:
-    """Key follows the '{op_kind}:#{issue_number}:{target_state}' recipe (KTD4)."""
-    k = RC.idempotency_key("set-field-status", 279, "In-Progress")
-    assert k == "set-field-status:#279:In-Progress"
+    """Key follows the '{op_kind}:{repo}#{issue_number}:{target_state}' recipe (KTD4)."""
+    k = RC.idempotency_key("set-field-status", "infiquetra/x", 279, "In-Progress")
+    assert k == "set-field-status:infiquetra/x#279:In-Progress"
 
 
 # ---------------------------------------------------------------------------

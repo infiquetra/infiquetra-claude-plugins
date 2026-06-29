@@ -232,7 +232,10 @@ def reconcile_board(
                 )
                 continue
 
-            key = cert.idempotency_key(op_kind_str, number, target_state)
+            # repo is part of the key: two leaves with the same issue NUMBER in different repos
+            # (saga#5 vs mission-control#5 — the v1 two-plugin case) must not collide on one ledger
+            # entry, or one would silently skip the other's board write.
+            key = cert.idempotency_key(op_kind_str, repo, number, target_state)
             ledger_file = ledger_dir / _safe_ledger_name(key)
 
             # (i) Check key present → idempotent no-op (AE8 crash/retry safety, AE4 coalescing)
@@ -278,30 +281,50 @@ def reconcile_board(
                     last_exc = exc
 
             if last_exc is None:
-                # (iii) SUCCESS → write ledger key now (sticky, write-once, KTD4).
-                record_json = json.dumps(
-                    {
-                        "key": key,
-                        "op_kind": op_kind_str,
-                        "repo": repo,
-                        "number": number,
-                        "target_state": target_state,
-                        "ts": now(),
-                    }
-                )
-                store_module._write_once(ledger_file, record_json)  # noqa: SLF001
-                records.append(
-                    {
-                        "status": "written",
-                        "subplot_id": node.subplot_id,
-                        "op_kind": op_kind_str,
-                        "repo": repo,
-                        "number": number,
-                        "target_state": target_state,
-                        "key": key,
-                        "attempts": attempts_made,
-                    }
-                )
+                # (iii) SUCCESS → write ledger key now (sticky, write-once, KTD4). A fault HERE
+                #       (ledger I/O / clock) must NOT escape: the board write already committed, so
+                #       letting it propagate would wedge the whole tick, discard every record gathered
+                #       so far, AND leave a side effect with no recorded key (recovery would re-apply
+                #       it). Surface it loudly and keep going; the next tick re-attempts (idempotent
+                #       ops no-op; the additive comment is at-least-once).
+                try:
+                    record_json = json.dumps(
+                        {
+                            "key": key,
+                            "op_kind": op_kind_str,
+                            "repo": repo,
+                            "number": number,
+                            "target_state": target_state,
+                            "ts": now(),
+                        }
+                    )
+                    store_module._write_once(ledger_file, record_json)  # noqa: SLF001
+                    records.append(
+                        {
+                            "status": "written",
+                            "subplot_id": node.subplot_id,
+                            "op_kind": op_kind_str,
+                            "repo": repo,
+                            "number": number,
+                            "target_state": target_state,
+                            "key": key,
+                            "attempts": attempts_made,
+                        }
+                    )
+                except Exception as ledger_exc:  # noqa: BLE001
+                    records.append(
+                        {
+                            "status": "error",
+                            "subplot_id": node.subplot_id,
+                            "op_kind": op_kind_str,
+                            "repo": repo,
+                            "number": number,
+                            "target_state": target_state,
+                            "key": key,
+                            "error": f"board write committed but ledger record failed: {ledger_exc}",
+                            "may_reapply": True,
+                        }
+                    )
             else:
                 # All attempts exhausted — surface, do NOT write ledger so next tick retries (R18).
                 records.append(

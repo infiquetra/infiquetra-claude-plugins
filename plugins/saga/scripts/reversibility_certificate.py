@@ -278,20 +278,26 @@ def side_effected(had_side_effect: bool) -> bool:
     return had_side_effect
 
 
-def idempotency_key(op_kind: str | OpKind, issue_number: int, target_state: str) -> str:
+def idempotency_key(
+    op_kind: str | OpKind, repo: str, issue_number: int, target_state: str
+) -> str:
     """Return a deterministic idempotency key for an autonomous board write (KTD4 / R9).
 
     Key form:
-      reversible/always-op: ``"{op_kind}:#{issue_number}:{target_state}"``
-      additive comment:     ``"issue-progress-comment:#{issue_number}:{target_state}"``
+      reversible/always-op: ``"{op_kind}:{repo}#{issue_number}:{target_state}"``
+      additive comment:     ``"issue-progress-comment:{repo}#{issue_number}:{target_state}"``
                             where ``target_state`` carries the leaf_transition_id as the coalescing
                             discriminator (so one comment is posted per meaningful leaf transition).
+
+    The ``repo`` qualifier is load-bearing: two leaves whose issues share a number in **different**
+    repos (e.g. ``saga#5`` and ``mission-control#5`` — the common case in v1's two-plugin scope) must
+    get distinct keys, or one silently skips the other's board write off a colliding ledger entry.
 
     This function is a pure string recipe — it does **not** write any ledger.  Recording executed
     keys in the board-sync idempotency ledger is U4's responsibility (KTD4).
     """
     op_str = op_kind.value if isinstance(op_kind, OpKind) else str(op_kind)
-    return f"{op_str}:#{issue_number}:{target_state}"
+    return f"{op_str}:{repo}#{issue_number}:{target_state}"
 
 
 def reversible_op_kinds() -> list[OpKind]:

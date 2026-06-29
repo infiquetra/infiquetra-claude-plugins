@@ -1202,3 +1202,119 @@ def test_segment_units_does_not_mutate_input_spec() -> None:
 
     # Assert they are equal
     assert before_dict == after_dict
+
+
+# ---------------------------------------------------------------------------
+# U2: completeness-gate guard emission tests.
+# ---------------------------------------------------------------------------
+
+
+def test_emitted_null_check() -> None:
+    """Verify that:
+    - emitted JS contains the __gate helper (exactly once).
+    - a guard call is emitted after EVERY unit-result agent() site.
+    - NO guard after the verify-panel's verifier agents.
+    - the guard HALTS on null (the emitted code throws, not pass-through).
+    - a fan-out unit emits the count-reconcile guard arg.
+    - only `returns`-bearing units emit the manifest guard arg.
+    - a no-contract (prose/side-effect) unit emits the presence guard with expectsOutput false.
+    """
+    mod = _load()
+
+    # We construct a spec dictionary containing:
+    # U1: returns-bearing (schema) unit -> should emit returns guard arg
+    # U2: no-contract unit (prose/side-effect) -> should emit expectsOutput false
+    # U3: fan-out unit with targets -> should emit count-reconcile guard arg
+    # U4: unit with verify panel -> should NOT emit guard after verify verifier agents
+    # U5, U6: independent units in a parallel layer to test multi-unit parallel guards
+    data = {
+        "name": "completeness-gate-test",
+        "description": "test completeness gates",
+        "repo": "/tmp/repo",
+        "units": [
+            {
+                "unit_id": "U1",
+                "label": "schema-unit",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 1",
+                "returns": ["key_a", "key_b"],
+            },
+            {
+                "unit_id": "U2",
+                "label": "prose-unit",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 2",
+                "depends_on": ["U1"],
+            },
+            {
+                "unit_id": "U3",
+                "label": "fan-out-unit",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 3",
+                "depends_on": ["U2"],
+                "fanout": True,
+                "targets": ["tgt1", "tgt2"],
+            },
+            {
+                "unit_id": "U4",
+                "label": "verify-unit",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 4",
+                "depends_on": ["U3"],
+                "verify": {"n": 3, "pass_rule": "majority"},
+            },
+            {
+                "unit_id": "U5",
+                "label": "parallel-1",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 5",
+                "depends_on": ["U4"],
+            },
+            {
+                "unit_id": "U6",
+                "label": "parallel-2",
+                "tier": {"model": "sonnet", "effort": "high"},
+                "prompt": "prompt 6",
+                "depends_on": ["U4"],
+                "returns": ["par_ret"],
+            },
+        ],
+    }
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # 1. Helper __gate is defined exactly once in the preamble
+    assert script.count("function __gate(result, opts)") == 1
+
+    # 2. A guard call is emitted after EVERY unit-result agent() site:
+    assert "__gate(U1, {" in script
+    assert "__gate(U2, {" in script
+    assert "__gate(U3, {" in script
+    assert "__gate(U4, {" in script
+    assert "__gate(U5, {" in script
+    assert "__gate(U6, {" in script
+
+    # 3. NO guard after the verify-panel's verifier agents.
+    assert "__gate(U4_verdicts" not in script
+
+    # 4. The guard HALTS on null (emitted code throws).
+    assert "throw new Error" in script
+
+    # 5. A fan-out unit (U3) emits the count-reconcile guard arg (targets count is 2).
+    assert "targets: 2" in script
+
+    # 6. Only returns-bearing units emit the manifest guard arg.
+    assert 'returns: ["key_a", "key_b"]' in script
+    u2_line = [line for line in script.splitlines() if "__gate(U2" in line][0]
+    assert "returns:" not in u2_line
+
+    # 7. A no-contract (prose/side-effect) unit (U2, U5) emits the presence guard with expectsOutput false.
+    assert "expectsOutput: false" in u2_line
+
+    u5_line = [line for line in script.splitlines() if "__gate(U5" in line][0]
+    assert "expectsOutput: false" in u5_line
+
+    # Check that schema-bearing U1 has expectsOutput: true
+    u1_line = [line for line in script.splitlines() if "__gate(U1" in line][0]
+    assert "expectsOutput: true" in u1_line

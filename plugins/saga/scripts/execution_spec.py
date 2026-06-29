@@ -79,6 +79,129 @@ BUDGET_RIDER = (
 )
 
 
+_JS_GATE_HELPER = r"""function __gate(result, opts) {
+  const unitId = opts.unitId || "unknown";
+
+  function isEmptyOrAbsent(val) {
+    if (val === null || val === undefined) return true;
+    if (typeof val === 'string') return val.trim() === '';
+    if (Array.isArray(val)) return val.length === 0;
+    if (val instanceof Map || val instanceof Set) return val.size === 0;
+    if (typeof val === 'object') return Object.keys(val).length === 0;
+    return false;
+  }
+
+  function parseResult(val) {
+    if (typeof val === 'string') {
+      let s = val.trim();
+      if (s.startsWith('```')) {
+        const lines = s.split('\n');
+        if (lines.length >= 2) {
+          if (lines[0].startsWith('```')) {
+            lines.shift();
+          }
+          if (lines.length && lines[lines.length - 1].trim() === '```') {
+            lines.pop();
+          }
+          s = lines.join('\n').trim();
+        }
+      }
+      if (s.startsWith('{') || s.startsWith('[')) {
+        try {
+          return JSON.parse(s);
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+    return val;
+  }
+
+  if (opts.expectsOutput && isEmptyOrAbsent(result)) {
+    throw new Error(
+      `missing-output: Unit ${unitId} expected structured output but received none or empty.`
+    );
+  }
+
+  if (typeof result === 'string') {
+    let s = result.trim();
+    if (s.startsWith('```')) {
+      const lines = s.split('\n');
+      if (lines.length >= 2) {
+        if (lines[0].startsWith('```')) {
+          lines.shift();
+        }
+        if (lines.length && lines[lines.length - 1].trim() === '```') {
+          lines.pop();
+        }
+        s = lines.join('\n').trim();
+      }
+    }
+    if (s.startsWith('{') || s.startsWith('[')) {
+      try {
+        JSON.parse(s);
+      } catch (e) {
+        throw new Error(
+          `malformed-output: Unit ${unitId} output is a structurally truncated JSON: ${e.message}`
+        );
+      }
+    }
+  }
+
+  let targetCount = null;
+  if (opts.targets !== undefined && opts.targets !== null) {
+    if (typeof opts.targets === 'number') {
+      targetCount = opts.targets;
+    } else if (Array.isArray(opts.targets)) {
+      targetCount = opts.targets.length;
+    }
+  }
+
+  if (targetCount !== null) {
+    const parsed = parseResult(result);
+    let producedCount = 0;
+    if (parsed !== null && parsed !== undefined) {
+      if (Array.isArray(parsed)) {
+        producedCount = parsed.length;
+      } else if (parsed instanceof Map || parsed instanceof Set) {
+        producedCount = parsed.size;
+      } else if (typeof parsed === 'object') {
+        producedCount = Object.keys(parsed).length;
+      } else {
+        producedCount = isEmptyOrAbsent(parsed) ? 0 : 1;
+      }
+    }
+    if (producedCount < targetCount) {
+      const shortfall = targetCount - producedCount;
+      throw new Error(
+        `missing-output: Unit ${unitId} produced fewer items than expected. ` +
+        `Expected ${targetCount}, produced ${producedCount}. Shortfall: ${shortfall}.`
+      );
+    }
+  }
+
+  if (opts.returns && opts.returns.length > 0) {
+    const parsed = parseResult(result);
+    if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(
+        `missing-output: Unit ${unitId} result is not a structured dictionary. ` +
+        `Missing required keys: ${opts.returns.join(', ')}.`
+      );
+    }
+    const missing = opts.returns.filter(
+      k => !(k in parsed) || parsed[k] === null || parsed[k] === undefined
+    );
+    if (missing.length > 0) {
+      throw new Error(
+        `missing-output: Unit ${unitId} output is missing required keys: ${missing.join(', ')}.`
+      );
+    }
+  }
+
+  return result;
+}"""
+
+
 class SpecError(ValueError):
     """A spec that violates an authoring-time invariant (R3 / R10) or is malformed.
 
@@ -433,6 +556,20 @@ def _js_var(unit_id: str) -> str:
     return unit_id.replace("-", "_").replace(".", "_")
 
 
+def _emit_gate_call(unit: Unit, var: str) -> str:
+    """Emit the __gate call for a unit."""
+    opts: list[str] = [f"unitId: {_js_string(unit.unit_id)}"]
+    expects_output = bool(unit.returns) or (unit.fanout and bool(unit.targets))
+    opts.append(f"expectsOutput: {'true' if expects_output else 'false'}")
+    if unit.targets:
+        opts.append(f"targets: {len(unit.targets)}")
+    if unit.returns:
+        ret_strs = ", ".join(_js_string(r) for r in unit.returns)
+        opts.append(f"returns: [{ret_strs}]")
+    opts_str = ", ".join(opts)
+    return f"__gate({var}, {{ {opts_str} }})"
+
+
 def _verifier_prompt(unit: Unit) -> str:
     """Assemble the prompt text a verifier agent in ``unit``'s refute-N panel reads.
 
@@ -572,6 +709,9 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
         lines.append(f"const REPO = {_js_string(spec.repo)}")
         lines.append("")
 
+    lines.append(_JS_GATE_HELPER)
+    lines.append("")
+
     # Topological waves (KTD4): each layer's units are mutually independent and run in a
     # single parallel() wave; layers are sequenced by await (the dependency barrier). A
     # singleton layer renders as a plain `const x = await agent(...)`. _js_var (module-level)
@@ -605,6 +745,7 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
             lines.append(f"  {_js_string(prompt)},")
             lines.append("  { " + ", ".join(opts) + " },")
             lines.append(")")
+            lines.append(_emit_gate_call(unit, var))
             lines.append("")
             if unit.verify is not None:
                 _emit_verify_panel(lines, unit, var)
@@ -621,6 +762,9 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
             assert unit is not None
             _emit_thunk(lines, spec, unit)
         lines.append("])")
+        for unit in layer_units:
+            assert unit is not None
+            lines.append(_emit_gate_call(unit, _var(unit.unit_id)))
         lines.append("")
         for unit in layer_units:
             assert unit is not None

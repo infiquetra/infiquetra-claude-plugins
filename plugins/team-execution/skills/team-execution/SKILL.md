@@ -383,6 +383,11 @@ Report:
 Do not claim completion while required validators are hard-failing or blocked unless the user
 explicitly accepts the residual risk.
 
+A required, non-skipped validator whose evidence record was **never written** is a `missing-output`
+omission, not a silent pass — treat its absent evidence at process exit as a completion block,
+exactly like a hard-fail. A `skipped-by-config` validator (recorded with a `selection_reason`) is
+not a trip. See `references/validator-execution-order.md` (Required-Evidence Absence).
+
 ---
 
 # Quick Reference: File Paths

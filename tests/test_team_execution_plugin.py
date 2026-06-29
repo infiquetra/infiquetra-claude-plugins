@@ -138,3 +138,22 @@ def test_skill_documents_validator_state_and_automation_gates() -> None:
         "maximum 3 remediation loops",
     ):
         assert required in skill_doc
+
+
+def test_skill_documents_required_evidence_absence_gate() -> None:
+    """U4 (#277 R12/AE8): the evidence-absence completeness gate is documented in the completion
+    protocol, including the skipped-by-config exception, mirroring FailureClass 'missing-output'."""
+    skill_doc = _read(PLUGIN_ROOT / "skills" / "team-execution" / "SKILL.md")
+    order_doc = _read(
+        PLUGIN_ROOT / "skills" / "team-execution" / "references" / "validator-execution-order.md"
+    )
+
+    # The protocol doc carries the gate (not just a passing mention in SKILL.md).
+    assert "Required-Evidence Absence" in order_doc
+    assert "missing-output" in order_doc
+    assert "evidence record" in order_doc
+    assert "required" in order_doc
+    # The exception must be explicit and present in BOTH the protocol and the completion step.
+    assert "skipped-by-config" in order_doc
+    assert "missing-output" in skill_doc
+    assert "skipped-by-config" in skill_doc

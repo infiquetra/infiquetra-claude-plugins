@@ -42,3 +42,22 @@ Hard-fail scanner or tester findings block:
 
 Monitor blocked signals block completion only when the signal was required for the selected
 workflow. Otherwise, report a warning.
+
+---
+
+## Required-Evidence Absence (completeness gate)
+
+At completion (Step B7), every **required, non-skipped** validator and leaf must have written an
+evidence record (see `validator-evidence-state.md`). A required validator whose evidence record is
+**absent at process exit** — and that was never marked `skipped-by-config` — is a `missing-output`
+trip: a silent omission, where work that was supposed to produce evidence produced none. Treat it
+as a completion block, exactly like a hard-fail finding; do not report completion.
+
+A validator that is **`skipped-by-config`** (selected out — `required: false`, listed in
+`disabled_validators`, or otherwise legitimately not run with a recorded `selection_reason`) is
+**not** a trip. Its absent evidence is expected and is reported under "Skipped validators and why".
+
+The distinction is the whole point of the gate: absence of evidence for something that was
+*supposed to run* is the omission to catch (`missing-output`); absence for something deliberately
+*not run* is normal. Checking only the recorded gate results misses the validator that silently
+never ran at all.

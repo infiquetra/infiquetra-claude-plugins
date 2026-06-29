@@ -18,9 +18,16 @@ import, stdlib only.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
+
+# Cross-module import for saga engine helpers (pattern mirrors load_saga_context.py:23-30).
+# The sys.path bootstrap must precede the import so the scripts directory is on the path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import saga as _saga_engine  # noqa: E402
 
 # ── Wire-state enum (R1) ─────────────────────────────────────────────────────────────────────────
 # Frozen wire contract.  These string values are carried in CardRow.state and in every downstream
@@ -211,6 +218,333 @@ def render(spec: CardSpec) -> str:
         lines.append("")  # trailing blank separates the footer visually from subsequent output
 
     return "\n".join(lines) + "\n"
+
+
+# ── Per-surface gate-sequence projection builders (U3, #278) ─────────────────────────────────────
+# Each function returns a CardSpec with archetype "gate-sequence".  They read from durable saga
+# state or parsed artifact text — **never** from operator-set status fields (R2/AE2).
+#
+# SAFE DEGRADATION RULE (R1/R13/AE7): any row whose source signal is absent or unparseable
+# renders CardState.NOT_REACHED with ref=None.  A confident-but-wrong glyph is the worst failure.
+# Every determinable cell attaches its drill-down ref (R12).
+
+
+def _saga_list(field: object) -> list[str]:
+    """Return *field* as a list of strings if it is a real list, else [] (ABSENT-sentinel safe)."""
+    return field if isinstance(field, list) else []  # type: ignore[return-value]
+
+
+def _phase_status_to_state(phase_status: str) -> CardState:
+    """Map saga ``phase_status`` wire value to a CardState for the Implementation row."""
+    if phase_status == "complete":
+        return CardState.DONE
+    if phase_status == "in_progress":
+        return CardState.IN_PROGRESS
+    return CardState.NOT_REACHED
+
+
+def project_work(saga_obj: object) -> CardSpec:
+    """Build a gate-sequence CardSpec for the /work surface.
+
+    Row order (static superset — all rows always present, R3):
+      Implementation · Doc-review · Tests · Reviewer panel · Scanners ·
+      CI · Merge (HITL) · Deploy (HITL).
+
+    Tests cell derives exclusively from ``saga_obj.gate_verdicts`` via
+    ``_saga_engine.parse_gate_verdict`` (AE4 — never from ``checks_run``).
+    CI / Merge / Deploy refs are resolvable external (GitHub) references (R12).
+    """
+    # ── Implementation ───────────────────────────────────────────────────────────────────────────
+    phase_status = getattr(saga_obj, "phase_status", "pending") or "pending"
+    saga_id = getattr(saga_obj, "saga_id", "") or ""
+    impl_state = _phase_status_to_state(phase_status)
+    impl_ref: str | None = saga_id if (is_determinable(impl_state) and saga_id) else None
+
+    # ── Doc-review ───────────────────────────────────────────────────────────────────────────────
+    review_paths = _saga_list(getattr(saga_obj, "review_paths", None))
+    if review_paths:
+        docrev_state = CardState.DONE
+        docrev_ref: str | None = review_paths[0]
+    else:
+        docrev_state = CardState.NOT_REACHED
+        docrev_ref = None
+
+    # ── Tests (AE4: must route through parse_gate_verdict — never derive from checks_run) ────────
+    gate_verdicts = _saga_list(getattr(saga_obj, "gate_verdicts", None))
+    tests_state = CardState.NOT_REACHED
+    tests_ref: str | None = None
+    for entry in gate_verdicts:
+        try:
+            gate, state_str, gv_ref = _saga_engine.parse_gate_verdict(entry)
+        except ValueError:
+            continue
+        if gate == "tests":
+            try:
+                tests_state = CardState(state_str)
+            except ValueError:
+                tests_state = CardState.NOT_REACHED
+            tests_ref = gv_ref if gv_ref else None
+            break  # first "tests" entry is authoritative
+
+    # ── Reviewer panel (AE6: carries resolvable ref to code-review artifact) ─────────────────────
+    if review_paths:
+        panel_state = CardState.DONE
+        panel_ref: str | None = review_paths[0]
+    else:
+        panel_state = CardState.NOT_REACHED
+        panel_ref = None
+
+    # ── Scanners (also sourced from review_paths — same artifact carries scanner evidence) ────────
+    if review_paths:
+        scan_state = CardState.DONE
+        scan_ref: str | None = review_paths[0]
+    else:
+        scan_state = CardState.NOT_REACHED
+        scan_ref = None
+
+    # ── CI (R12 external-read: resolvable GitHub Actions / PR ref) ───────────────────────────────
+    pr_refs = _saga_list(getattr(saga_obj, "pr_refs", None))
+    head_sha = getattr(saga_obj, "head_sha", "") or ""
+    if pr_refs:
+        ci_state = CardState.IN_PROGRESS
+        ci_ref: str | None = pr_refs[0]
+    elif head_sha:
+        ci_state = CardState.IN_PROGRESS
+        ci_ref = head_sha
+    else:
+        ci_state = CardState.NOT_REACHED
+        ci_ref = None
+
+    # ── Merge (HITL) — blocked on human approval; ref is the PR ─────────────────────────────────
+    if pr_refs:
+        merge_state = CardState.BLOCKED
+        merge_ref: str | None = pr_refs[0]
+    else:
+        merge_state = CardState.NOT_REACHED
+        merge_ref = None
+
+    # ── Deploy (HITL) — blocked on human approval when destination targets deployment ─────────────
+    destination = getattr(saga_obj, "destination", "plan-only") or "plan-only"
+    if destination == "nonprod-deploy":
+        deploy_state = CardState.BLOCKED
+        deploy_ref: str | None = destination
+    else:
+        deploy_state = CardState.NOT_REACHED
+        deploy_ref = None
+
+    return CardSpec(
+        archetype="gate-sequence",
+        header=CardHeader(surface="/work", id=saga_id or "unknown"),
+        rows=(
+            CardRow("impl", "Implementation", impl_state, ref=impl_ref),
+            CardRow("docrev", "Doc-review", docrev_state, ref=docrev_ref),
+            CardRow("tests", "Tests", tests_state, ref=tests_ref),
+            CardRow("panel", "Reviewer panel", panel_state, ref=panel_ref),
+            CardRow("scanners", "Scanners", scan_state, ref=scan_ref),
+            CardRow("ci", "CI", ci_state, ref=ci_ref),
+            CardRow("merge", "Merge (HITL)", merge_state, ref=merge_ref),
+            CardRow("deploy", "Deploy (HITL)", deploy_state, ref=deploy_ref),
+        ),
+    )
+
+
+def _parse_verdict_state(text: str) -> CardState | None:
+    """Parse a verdict token from *text*; return the matching CardState or None if absent."""
+    m = re.search(r"\*\*Verdict[^*]*\*\*[:\s]*([^\n]+)", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"(?:^|\n)Verdict:\s*([^\n]+)", text, re.IGNORECASE)
+    if not m:
+        return None
+    fragment = m.group(1).upper()
+    if "BLOCK" in fragment:
+        return CardState.BLOCKED
+    if "FAIL" in fragment:
+        return CardState.FAILED
+    if "APPROVE" in fragment or "CLEAN" in fragment or "READY" in fragment:
+        return CardState.DONE
+    return None
+
+
+def project_code_review(artifact_text: str, *, ref: str) -> CardSpec:
+    """Build a gate-sequence CardSpec for the /code-review surface.
+
+    Parses *artifact_text* using real, anchored vocabulary only (no invented signals):
+    - ``Scope Check: CLEAN|DRIFT DETECTED|REQUIREMENTS MISSING`` → Scope row.
+    - Plan-completion audit tokens ``DONE|PARTIAL|NOT-DONE|CHANGED|UNVERIFIABLE`` → Intent row.
+    - ``**Verdict:** ...`` line → Verdict row (and Merge row by implication).
+
+    Rows: Scope · Intent · Lenses · Review fan-out · Merge · Validators · Verdict.
+    """
+    # ── Scope ────────────────────────────────────────────────────────────────────────────────────
+    scope_m = re.search(
+        r"Scope Check:\s*(CLEAN|DRIFT DETECTED|REQUIREMENTS MISSING)", artifact_text, re.IGNORECASE
+    )
+    if scope_m:
+        token = scope_m.group(1).upper()
+        scope_state = CardState.DONE if token == "CLEAN" else CardState.BLOCKED
+        scope_ref: str | None = ref
+    else:
+        scope_state = CardState.NOT_REACHED
+        scope_ref = None
+
+    # ── Intent (built-vs-planned: plan-completion audit statuses) ────────────────────────────────
+    audit_tokens = re.findall(r"\b(DONE|PARTIAL|NOT-DONE|CHANGED|UNVERIFIABLE)\b", artifact_text)
+    if audit_tokens:
+        token_set = set(audit_tokens)
+        if token_set & {"NOT-DONE", "UNVERIFIABLE"}:
+            intent_state = CardState.BLOCKED
+        elif token_set & {"PARTIAL", "CHANGED"}:
+            intent_state = CardState.IN_PROGRESS
+        else:
+            intent_state = CardState.DONE
+        intent_ref: str | None = ref
+    else:
+        intent_state = CardState.NOT_REACHED
+        intent_ref = None
+
+    # ── Lenses ───────────────────────────────────────────────────────────────────────────────────
+    has_lenses = bool(re.search(r"\blenses?\b", artifact_text, re.IGNORECASE))
+    lenses_state = CardState.DONE if has_lenses else CardState.NOT_REACHED
+    lenses_ref: str | None = ref if has_lenses else None
+
+    # ── Review fan-out ───────────────────────────────────────────────────────────────────────────
+    has_fanout = bool(
+        re.search(r"\bfan-out\b|\breview fan-out\b|\breviewers?\b", artifact_text, re.IGNORECASE)
+    )
+    fanout_state = CardState.DONE if has_fanout else CardState.NOT_REACHED
+    fanout_ref: str | None = ref if has_fanout else None
+
+    # ── Verdict (parsed first; Merge row derives from the same signal) ───────────────────────────
+    verdict_state = _parse_verdict_state(artifact_text) or CardState.NOT_REACHED
+    verdict_ref: str | None = ref if verdict_state != CardState.NOT_REACHED else None
+
+    # ── Merge (derives from verdict — approved verdict implies merge is clear) ────────────────────
+    if verdict_state == CardState.DONE:
+        merge_state = CardState.DONE
+        merge_ref: str | None = ref
+    elif verdict_state in (CardState.BLOCKED, CardState.FAILED):
+        merge_state = CardState.BLOCKED
+        merge_ref = ref
+    else:
+        merge_state = CardState.NOT_REACHED
+        merge_ref = None
+
+    # ── Validators ───────────────────────────────────────────────────────────────────────────────
+    has_validators = bool(re.search(r"\bvalidators?\b", artifact_text, re.IGNORECASE))
+    validators_state = CardState.DONE if has_validators else CardState.NOT_REACHED
+    validators_ref: str | None = ref if has_validators else None
+
+    return CardSpec(
+        archetype="gate-sequence",
+        header=CardHeader(surface="/code-review", id=ref),
+        rows=(
+            CardRow("scope", "Scope", scope_state, ref=scope_ref),
+            CardRow("intent", "Intent", intent_state, ref=intent_ref),
+            CardRow("lenses", "Lenses", lenses_state, ref=lenses_ref),
+            CardRow("fanout", "Review fan-out", fanout_state, ref=fanout_ref),
+            CardRow("merge", "Merge", merge_state, ref=merge_ref),
+            CardRow("validators", "Validators", validators_state, ref=validators_ref),
+            CardRow("verdict", "Verdict", verdict_state, ref=verdict_ref),
+        ),
+    )
+
+
+def _parse_frontmatter_value(text: str, key: str) -> str | None:
+    """Return the scalar value for *key* from YAML frontmatter (simple key: value form)."""
+    m = re.search(rf"^{re.escape(key)}:\s*(.+)$", text, re.MULTILINE)
+    return m.group(1).strip() if m else None
+
+
+def project_qa(artifact_text: str, *, ref: str) -> CardSpec:
+    """Build a gate-sequence CardSpec for the /qa surface.
+
+    Parses *artifact_text* for:
+    - YAML frontmatter: ``verdict:``, ``health_score:``, ``tier:``.
+    - ``| risk class | score | result |`` table rows.
+
+    Rows: Risk class · Checks · Findings · Health score · Ship verdict.
+
+    AE9 (operator-safety-critical): a ``verdict:`` that indicates failure (fail/no-ship/not-ship)
+    maps to CardState.FAILED with *ref* — NEVER blocked or not-reached.
+    """
+    # ── Frontmatter ──────────────────────────────────────────────────────────────────────────────
+    verdict_raw = _parse_frontmatter_value(artifact_text, "verdict")
+    health_score_raw = _parse_frontmatter_value(artifact_text, "health_score")
+    tier_raw = _parse_frontmatter_value(artifact_text, "tier")
+
+    # ── Risk class (from | risk class | score | result | table) ─────────────────────────────────
+    # Collect the result-column cells from data rows (skip the header row itself).
+    risk_result_cells = re.findall(
+        r"^\|\s*(?!risk class|[-\s|]+$)[^|]+\|\s*[\d.]+\s*\|\s*(\w+)\s*\|",
+        artifact_text,
+        re.MULTILINE | re.IGNORECASE,
+    )
+    risk_results = [c.lower() for c in risk_result_cells]
+    if risk_results:
+        if any(r in {"fail", "failed"} for r in risk_results):
+            risk_state = CardState.FAILED
+        else:
+            risk_state = CardState.DONE
+        risk_ref: str | None = ref
+    else:
+        risk_state = CardState.NOT_REACHED
+        risk_ref = None
+
+    # ── Checks (present when health_score or tier found — confirms the gate ran) ─────────────────
+    if health_score_raw or tier_raw:
+        checks_state = CardState.DONE
+        checks_ref: str | None = ref
+    else:
+        checks_state = CardState.NOT_REACHED
+        checks_ref = None
+
+    # ── Findings ─────────────────────────────────────────────────────────────────────────────────
+    has_findings = bool(
+        re.search(r"^#+\s*Findings?\b", artifact_text, re.MULTILINE | re.IGNORECASE)
+    )
+    if has_findings:
+        has_blocking = bool(re.search(r"\bP0\b|\bP1\b", artifact_text))
+        findings_state = CardState.BLOCKED if has_blocking else CardState.DONE
+        findings_ref: str | None = ref
+    else:
+        findings_state = CardState.NOT_REACHED
+        findings_ref = None
+
+    # ── Health score ─────────────────────────────────────────────────────────────────────────────
+    if health_score_raw:
+        health_state = CardState.DONE
+        health_ref: str | None = f"{ref}#health_score:{health_score_raw}"
+    else:
+        health_state = CardState.NOT_REACHED
+        health_ref = None
+
+    # ── Ship verdict (AE9: fail family → FAILED with ref; pass family → DONE) ────────────────────
+    if verdict_raw:
+        v = verdict_raw.lower().strip()
+        if v in {"fail", "no-ship", "not-ship", "failed"}:
+            ship_state = CardState.FAILED
+            ship_ref: str | None = ref  # AE9: failure is determinable and MUST carry ref
+        elif v in {"ship", "pass", "ship-with-deferred"}:
+            ship_state = CardState.DONE
+            ship_ref = ref
+        else:
+            ship_state = CardState.NOT_REACHED
+            ship_ref = None
+    else:
+        ship_state = CardState.NOT_REACHED
+        ship_ref = None
+
+    return CardSpec(
+        archetype="gate-sequence",
+        header=CardHeader(surface="/qa", id=ref),
+        rows=(
+            CardRow("risk", "Risk class", risk_state, ref=risk_ref),
+            CardRow("checks", "Checks", checks_state, ref=checks_ref),
+            CardRow("findings", "Findings", findings_state, ref=findings_ref),
+            CardRow("health", "Health score", health_state, ref=health_ref),
+            CardRow("ship", "Ship verdict", ship_state, ref=ship_ref),
+        ),
+    )
 
 
 # ── Self-test (CI-runnable; mirrors completeness_gate.py::self_test) ─────────────────────────────

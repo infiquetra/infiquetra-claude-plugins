@@ -1,4 +1,4 @@
-"""Unit tests for the shared glyph-card renderer (U1, #278).
+"""Unit tests for the shared glyph-card renderer and per-surface projections (U1/U3, #278).
 
 Tests are falsifiable and state-driven — they exercise real behaviour rather than keyword
 presence.  Conventions mirror tests/test_completeness_gate.py and tests/test_outcome_projection.py:
@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+import types
 from pathlib import Path
 from types import ModuleType
 
@@ -337,3 +338,431 @@ def test_self_test_cli() -> None:
     assert "not-reached-no-index" in result.stdout
     assert "determinism" in result.stdout
     assert "self-test: all checks passed" in result.stdout
+
+
+# ── U3: per-surface projection builders ──────────────────────────────────────────────────────────
+# Fixture helpers: use types.SimpleNamespace to mock Saga objects without importing the Saga
+# dataclass (which would create a hard import dependency between the test and saga.py internals).
+
+_ABSENT_SENTINEL = object()  # placeholder — the real ABSENT is not a list; isinstance check passes
+
+
+def _mock_saga(
+    saga_id: str = "saga-test-1",
+    phase_status: str = "pending",
+    review_paths: object = _ABSENT_SENTINEL,
+    qa_paths: object = _ABSENT_SENTINEL,
+    gate_verdicts: object = _ABSENT_SENTINEL,
+    pr_refs: object = _ABSENT_SENTINEL,
+    head_sha: str = "",
+    destination: str = "plan-only",
+) -> object:
+    """Build a lightweight mock saga object for projection tests."""
+    # Use a non-list sentinel for ABSENT fields (isinstance(obj, list) returns False for sentinel).
+    return types.SimpleNamespace(
+        saga_id=saga_id,
+        phase_status=phase_status,
+        review_paths=review_paths,
+        qa_paths=qa_paths,
+        gate_verdicts=gate_verdicts,
+        pr_refs=pr_refs,
+        head_sha=head_sha,
+        destination=destination,
+    )
+
+
+# ── Fixture text for /code-review tests (based on real artifact format) ───────────────────────────
+
+_CODE_REVIEW_CLEAN = """\
+# Code Review — feature-branch (#42)
+
+**Verdict:** **CLEAN** — approved for merge.
+
+Scope Check: CLEAN
+
+## Plan-completion audit
+
+| Unit | Status | Evidence |
+|------|--------|----------|
+| U1   | DONE   | tests pass |
+| U2   | DONE   | reviewer confirmed |
+
+## Lenses applied: security · architecture · testing
+
+Reviewers: Claude (primary) + agy (fan-out second opinion).
+
+## Validators
+
+All validators passed.
+"""
+
+_CODE_REVIEW_BLOCKED = """\
+# Code Review — hotfix-branch (#99)
+
+**Verdict:** **BLOCKED** — P0 unresolved.
+
+Scope Check: DRIFT DETECTED
+
+## Plan-completion audit
+
+| Unit | Status | Evidence |
+|------|--------|----------|
+| U1   | DONE   | ok |
+| U2   | NOT-DONE | missing tests |
+
+## Lenses: security
+
+Reviewers: Claude.
+"""
+
+# ── Fixture text for /qa tests (based on real qa-issue-201-2026-06-07.md format) ──────────────────
+
+_QA_SHIP = """\
+---
+date: 2026-06-29
+target: infiquetra/infiquetra-claude-plugins#278
+tier: Standard
+reviewed_revision: abc1234
+verdict: ship-with-deferred
+health_score: 95
+type: qa
+---
+
+# QA: Gate Status Card (#278)
+
+## Health Score
+
+Overall **95 / 100**.
+
+| risk class | score | result |
+|------------|:-----:|--------|
+| docs       | 90    | pass   |
+| config     | 100   | pass   |
+| behavior   | 95    | pass   |
+
+## Ship Verdict
+
+**`ship-with-deferred`** at Standard tier.
+
+## Findings
+
+No P0 or P1 findings.
+"""
+
+_QA_FAIL = """\
+---
+date: 2026-06-29
+target: infiquetra/infiquetra-claude-plugins#278
+tier: Standard
+reviewed_revision: abc1234
+verdict: fail
+health_score: 40
+type: qa
+---
+
+# QA: Gate Status Card (#278)
+
+## Health Score
+
+Overall **40 / 100**.
+
+| risk class | score | result |
+|------------|:-----:|--------|
+| docs       | 30    | fail   |
+| behavior   | 50    | pass   |
+
+## Ship Verdict
+
+**`fail`** — P1 unresolved.
+
+## Findings
+
+### F1 — P1 critical regression
+Evidence: tests broken.
+"""
+
+
+# ── project_work tests ────────────────────────────────────────────────────────────────────────────
+
+
+def test_project_work_rows_complete() -> None:
+    """project_work produces exactly 8 rows in the correct order."""
+    saga = _mock_saga(phase_status="in_progress")
+    spec = SC.project_work(saga)
+    assert spec.archetype == "gate-sequence"
+    labels = [r.label for r in spec.rows]
+    assert labels == [
+        "Implementation",
+        "Doc-review",
+        "Tests",
+        "Reviewer panel",
+        "Scanners",
+        "CI",
+        "Merge (HITL)",
+        "Deploy (HITL)",
+    ], f"unexpected row labels: {labels}"
+
+
+def test_project_work_impl_state_from_phase_status() -> None:
+    """project_work Implementation row derives from phase_status."""
+    for phase_status, expected in [
+        ("complete", "done"),
+        ("in_progress", "in-progress"),
+        ("pending", "not-reached"),
+    ]:
+        saga = _mock_saga(phase_status=phase_status)
+        spec = SC.project_work(saga)
+        impl_row = spec.rows[0]
+        assert impl_row.key == "impl"
+        assert str(impl_row.state) == expected, (
+            f"phase_status={phase_status!r} → expected {expected!r}, got {impl_row.state!r}"
+        )
+
+
+def test_project_work_ae4_tests_cell_in_progress_while_running() -> None:
+    """AE4: Tests cell is in-progress when gate_verdicts contains tests:in-progress."""
+    saga = _mock_saga(gate_verdicts=["tests:in-progress:saga-1/gate_verdicts"])
+    spec = SC.project_work(saga)
+    tests_row = next(r for r in spec.rows if r.key == "tests")
+    assert tests_row.state == SC.CardState.IN_PROGRESS, (
+        f"expected in-progress, got {tests_row.state}"
+    )
+    assert tests_row.ref == "saga-1/gate_verdicts"
+
+
+def test_project_work_ae4_tests_cell_done_only_on_gate_verdict_done() -> None:
+    """AE4: Tests cell is done only when gate_verdicts shows tests:done — not from checks_run."""
+    saga = _mock_saga(gate_verdicts=["tests:done:saga-1/gate_verdicts"])
+    spec = SC.project_work(saga)
+    tests_row = next(r for r in spec.rows if r.key == "tests")
+    assert tests_row.state == SC.CardState.DONE
+    assert tests_row.ref == "saga-1/gate_verdicts"
+
+
+def test_project_work_ae4_tests_cell_failed_on_gate_verdict_failed() -> None:
+    """AE4: Tests cell is failed when gate_verdicts shows tests:failed."""
+    saga = _mock_saga(gate_verdicts=["tests:failed:saga-1/gate_verdicts"])
+    spec = SC.project_work(saga)
+    tests_row = next(r for r in spec.rows if r.key == "tests")
+    assert tests_row.state == SC.CardState.FAILED
+    assert tests_row.ref is not None
+
+
+def test_project_work_ae4_tests_cell_not_reached_without_gate_verdicts() -> None:
+    """AE4: Tests cell is not-reached (no ref) when gate_verdicts is absent."""
+    saga = _mock_saga()  # gate_verdicts is _ABSENT_SENTINEL (not a list)
+    spec = SC.project_work(saga)
+    tests_row = next(r for r in spec.rows if r.key == "tests")
+    assert tests_row.state == SC.CardState.NOT_REACHED
+    assert tests_row.ref is None
+
+
+def test_project_work_ae6_reviewer_panel_ref_from_review_paths() -> None:
+    """AE6: Reviewer panel cell carries a resolvable ref to the code-review artifact."""
+    saga = _mock_saga(review_paths=["docs/reviews/2026-06-29-myfeature-review.md"])
+    spec = SC.project_work(saga)
+    panel_row = next(r for r in spec.rows if r.key == "panel")
+    assert panel_row.state == SC.CardState.DONE
+    assert panel_row.ref == "docs/reviews/2026-06-29-myfeature-review.md"
+
+
+def test_project_work_ae7_undeterminable_cell_not_reached_no_ref() -> None:
+    """AE7: a cell whose source signal is absent renders NOT_REACHED with ref=None."""
+    saga = _mock_saga()  # no review_paths, gate_verdicts, pr_refs
+    spec = SC.project_work(saga)
+    for row in spec.rows:
+        if row.state == SC.CardState.NOT_REACHED:
+            assert row.ref is None, (
+                f"row {row.key!r} is NOT_REACHED but has ref {row.ref!r} — violates AE7/R13"
+            )
+
+
+def test_project_work_r12_ci_merge_carry_external_ref() -> None:
+    """R12 external-read: determinable CI/Merge (HITL) cells carry a resolvable GitHub ref."""
+    pr_ref = "https://github.com/infiquetra/infiquetra-claude-plugins/pull/303"
+    saga = _mock_saga(pr_refs=[pr_ref], destination="pr")
+    spec = SC.project_work(saga)
+
+    ci_row = next(r for r in spec.rows if r.key == "ci")
+    assert ci_row.state == SC.CardState.IN_PROGRESS
+    assert ci_row.ref == pr_ref, f"CI ref should be external PR ref, got {ci_row.ref!r}"
+
+    merge_row = next(r for r in spec.rows if r.key == "merge")
+    assert merge_row.state == SC.CardState.BLOCKED
+    assert merge_row.ref == pr_ref
+
+
+# ── project_code_review tests ─────────────────────────────────────────────────────────────────────
+
+
+def test_project_code_review_rows_complete() -> None:
+    """project_code_review produces exactly 7 rows."""
+    spec = SC.project_code_review(_CODE_REVIEW_CLEAN, ref="docs/reviews/clean.md")
+    assert spec.archetype == "gate-sequence"
+    assert len(spec.rows) == 7
+    labels = [r.label for r in spec.rows]
+    assert labels == [
+        "Scope",
+        "Intent",
+        "Lenses",
+        "Review fan-out",
+        "Merge",
+        "Validators",
+        "Verdict",
+    ]
+
+
+def test_project_code_review_scope_clean() -> None:
+    """'Scope Check: CLEAN' → Scope row is done."""
+    spec = SC.project_code_review(_CODE_REVIEW_CLEAN, ref="r.md")
+    scope_row = next(r for r in spec.rows if r.key == "scope")
+    assert scope_row.state == SC.CardState.DONE
+    assert scope_row.ref == "r.md"
+
+
+def test_project_code_review_scope_drift() -> None:
+    """'Scope Check: DRIFT DETECTED' → Scope row is blocked."""
+    spec = SC.project_code_review(_CODE_REVIEW_BLOCKED, ref="r.md")
+    scope_row = next(r for r in spec.rows if r.key == "scope")
+    assert scope_row.state == SC.CardState.BLOCKED
+
+
+def test_project_code_review_intent_all_done() -> None:
+    """Intent row is done when all plan-completion audit tokens are DONE."""
+    spec = SC.project_code_review(_CODE_REVIEW_CLEAN, ref="r.md")
+    intent_row = next(r for r in spec.rows if r.key == "intent")
+    assert intent_row.state == SC.CardState.DONE
+
+
+def test_project_code_review_intent_not_done_blocked() -> None:
+    """Intent row is blocked when any plan-completion audit token is NOT-DONE."""
+    spec = SC.project_code_review(_CODE_REVIEW_BLOCKED, ref="r.md")
+    intent_row = next(r for r in spec.rows if r.key == "intent")
+    assert intent_row.state == SC.CardState.BLOCKED
+
+
+def test_project_code_review_verdict_clean_is_done() -> None:
+    """A 'CLEAN' verdict line → Verdict row is done."""
+    spec = SC.project_code_review(_CODE_REVIEW_CLEAN, ref="r.md")
+    verdict_row = next(r for r in spec.rows if r.key == "verdict")
+    assert verdict_row.state == SC.CardState.DONE
+    assert verdict_row.ref == "r.md"
+
+
+def test_project_code_review_verdict_blocked_is_blocked() -> None:
+    """A 'BLOCKED' verdict line → Verdict row is blocked."""
+    spec = SC.project_code_review(_CODE_REVIEW_BLOCKED, ref="r.md")
+    verdict_row = next(r for r in spec.rows if r.key == "verdict")
+    assert verdict_row.state == SC.CardState.BLOCKED
+
+
+def test_project_code_review_ae7_missing_scope_is_not_reached() -> None:
+    """AE7: artifact text without 'Scope Check:' → Scope row is not-reached with no ref."""
+    minimal = "# Review\n\n**Verdict:** CLEAN\n"
+    spec = SC.project_code_review(minimal, ref="r.md")
+    scope_row = next(r for r in spec.rows if r.key == "scope")
+    assert scope_row.state == SC.CardState.NOT_REACHED
+    assert scope_row.ref is None
+
+
+# ── project_qa tests ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_project_qa_rows_complete() -> None:
+    """project_qa produces exactly 5 rows."""
+    spec = SC.project_qa(_QA_SHIP, ref="docs/qa/qa-278.md")
+    assert spec.archetype == "gate-sequence"
+    assert len(spec.rows) == 5
+    labels = [r.label for r in spec.rows]
+    assert labels == ["Risk class", "Checks", "Findings", "Health score", "Ship verdict"]
+
+
+def test_project_qa_ship_verdict_done() -> None:
+    """'verdict: ship-with-deferred' → Ship verdict row is done with ref."""
+    spec = SC.project_qa(_QA_SHIP, ref="docs/qa/qa-278.md")
+    ship_row = next(r for r in spec.rows if r.key == "ship")
+    assert ship_row.state == SC.CardState.DONE
+    assert ship_row.ref == "docs/qa/qa-278.md"
+
+
+def test_project_qa_ae9_fail_verdict_is_failed_not_blocked() -> None:
+    """AE9: 'verdict: fail' → Ship verdict row is FAILED (not blocked, not not-reached) with ref."""
+    spec = SC.project_qa(_QA_FAIL, ref="docs/qa/qa-fail.md")
+    ship_row = next(r for r in spec.rows if r.key == "ship")
+    assert ship_row.state == SC.CardState.FAILED, (
+        f"expected FAILED for 'verdict: fail', got {ship_row.state!r}"
+    )
+    assert ship_row.state != SC.CardState.BLOCKED
+    assert ship_row.state != SC.CardState.NOT_REACHED
+    assert ship_row.ref == "docs/qa/qa-fail.md", "AE9: failure ship verdict must carry ref"
+
+
+def test_project_qa_risk_class_pass_is_done() -> None:
+    """Risk class row is done when all table rows have 'pass' result."""
+    spec = SC.project_qa(_QA_SHIP, ref="r.md")
+    risk_row = next(r for r in spec.rows if r.key == "risk")
+    assert risk_row.state == SC.CardState.DONE
+
+
+def test_project_qa_risk_class_fail_is_failed() -> None:
+    """Risk class row is failed when any table row has 'fail' result."""
+    spec = SC.project_qa(_QA_FAIL, ref="r.md")
+    risk_row = next(r for r in spec.rows if r.key == "risk")
+    assert risk_row.state == SC.CardState.FAILED
+
+
+def test_project_qa_health_score_from_frontmatter() -> None:
+    """Health score row is done and ref encodes the score value."""
+    spec = SC.project_qa(_QA_SHIP, ref="docs/qa/qa-278.md")
+    health_row = next(r for r in spec.rows if r.key == "health")
+    assert health_row.state == SC.CardState.DONE
+    assert "95" in (health_row.ref or ""), f"expected score in ref, got {health_row.ref!r}"
+
+
+def test_project_qa_ae7_missing_frontmatter_is_not_reached() -> None:
+    """AE7: qa artifact with no frontmatter → health_score/ship rows are not-reached with no ref."""
+    no_frontmatter = "# QA Report\n\n## Findings\n\nNo issues.\n"
+    spec = SC.project_qa(no_frontmatter, ref="r.md")
+    health_row = next(r for r in spec.rows if r.key == "health")
+    ship_row = next(r for r in spec.rows if r.key == "ship")
+    assert health_row.state == SC.CardState.NOT_REACHED
+    assert health_row.ref is None
+    assert ship_row.state == SC.CardState.NOT_REACHED
+    assert ship_row.ref is None
+
+
+# ── AE5: shared-concept label+glyph consistency across surfaces ───────────────────────────────────
+
+
+def test_ae5_done_glyph_consistent_across_work_and_qa() -> None:
+    """AE5: the DONE glyph from project_work Tests row matches the DONE glyph from project_qa rows.
+
+    Shared concepts use the SAME glyph via the single GLYPH_MAP — this is guaranteed by construction
+    (one render site, one map) but the test makes the invariant explicit and falsifiable.
+    """
+    # Render project_work with tests:done
+    saga = _mock_saga(gate_verdicts=["tests:done:gate_verdicts"])
+    work_spec = SC.project_work(saga)
+    tests_row = next(r for r in work_spec.rows if r.key == "tests")
+    work_tests_card = SC.render(
+        SC.CardSpec(
+            archetype="gate-sequence",
+            header=SC.CardHeader(surface="/work", id="s"),
+            rows=(tests_row,),
+        )
+    )
+
+    # Render project_qa with passing verdict (checks row will be DONE)
+    qa_spec = SC.project_qa(_QA_SHIP, ref="qa.md")
+    checks_row = next(r for r in qa_spec.rows if r.key == "checks")
+    qa_checks_card = SC.render(
+        SC.CardSpec(
+            archetype="gate-sequence",
+            header=SC.CardHeader(surface="/qa", id="s"),
+            rows=(checks_row,),
+        )
+    )
+
+    done_glyph = SC.GLYPH_MAP["done"]
+    assert done_glyph in work_tests_card, "DONE glyph missing from project_work Tests row"
+    assert done_glyph in qa_checks_card, "DONE glyph missing from project_qa Checks row"

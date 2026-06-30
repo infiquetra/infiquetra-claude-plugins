@@ -9,6 +9,26 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stale_main_session_hook.py\""
           }
         ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/compact_spore_session_hook.py\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "auto|manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/precompact_spore_hook.py\""
+          }
+        ]
       }
     ],
     "PreToolUse": [

@@ -141,7 +141,12 @@ def test_no_double_inject(repo_with_spore: tuple[Path, str, str]) -> None:
 
 
 def test_unlink_before_emit_crash(repo_with_spore: tuple[Path, str, str], tmp_path: Path) -> None:
-    """Verify that crash between unlink and print doesn't leave spore"""
+    """A print crash after unlink still consumes the spore (no stranded re-injectable file).
+
+    NOTE: this proves "unlink survives an emit failure", not the literal unlink-before-emit
+    ORDERING (the two suppress blocks are independent, so a reversed order would still pass here).
+    Consume-once ordering is proven by test_no_double_inject.
+    """
     repo, session_id, _ = repo_with_spore
 
     shim = tmp_path / "shim.py"

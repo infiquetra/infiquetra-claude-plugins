@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PreCompact hook: freeze the active saga box into a structured spore under a hard deadline."""
 
+import contextlib
 import json
 import os
 import signal
@@ -71,7 +72,9 @@ def main() -> None:
 
     signal.signal(signal.SIGALRM, _alarm_handler)
 
-    # R4. WALL-CLOCK DEADLINE
+    # R4. WALL-CLOCK DEADLINE. tmp_path is tracked outside the try so a deadline firing mid-write
+    # (between write_text and os.replace) can be reclaimed in the except rather than stranded.
+    tmp_path: Path | None = None
     try:
         signal.setitimer(signal.ITIMER_REAL, SPORE_DEADLINE_S)
 
@@ -92,10 +95,12 @@ def main() -> None:
         tmp_path.write_text(text, encoding="utf-8")
         os.replace(tmp_path, out_path)
 
-        # R6. Orphan sweep
+        # R6. Orphan sweep — reclaim stale spores AND any orphaned temp files older than the TTL
+        # (saga-spores/ holds only spores + their temps, so a broad iterdir is safe). This is the
+        # backstop for a hard kill that skips the except below.
         cutoff = time.time() - (SPORE_TTL_DAYS * 86400)
-        for p in out_path.parent.glob("*.json"):
-            if p == out_path:
+        for p in out_path.parent.iterdir():
+            if p == out_path or not p.is_file():
                 continue
             try:
                 if p.stat().st_mtime < cutoff:
@@ -104,8 +109,11 @@ def main() -> None:
                 pass
 
     except Exception:
-        # If build_spore raises for any reason, catch it, write nothing, exit 0
-        pass
+        # Any failure (build_spore raising, OR the deadline firing) -> write nothing, exit 0.
+        # Immediately reclaim a temp stranded between write_text and os.replace so it cannot leak.
+        if tmp_path is not None:
+            with contextlib.suppress(Exception):
+                tmp_path.unlink(missing_ok=True)
     finally:
         # Always cancel the timer
         signal.setitimer(signal.ITIMER_REAL, 0)

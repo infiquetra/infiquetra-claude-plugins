@@ -69,7 +69,7 @@ Every wrapper run writes a local bundle under:
 The projection returned to Claude Code must include the bundle path. If the wrapper cannot write
 the bundle, the run fails.
 
-The U2 validation-only wrapper writes this minimum bundle:
+Validation-only wrapper runs write this minimum bundle:
 
 ```text
 .claude/agy/runs/<run-id>/
@@ -81,8 +81,23 @@ The U2 validation-only wrapper writes this minimum bundle:
   projection.md
 ```
 
-`projection.md` is emitted to stdout. U2 does not launch `agy`; U3 adds supervised process
-execution.
+Launched wrapper runs execute `agy` inside a disposable clone and add write-policy evidence:
+
+```text
+.claude/agy/runs/<run-id>/
+  worktree/
+  stdout.log
+  stderr.log
+  agy.log
+  diff.patch
+  changed-paths.json
+  checks.json
+  git-proof.json
+```
+
+`projection.md` is emitted to stdout. `diff.patch`, `changed-paths.json`, and `git-proof.json`
+are derived from the disposable clone relative to the recorded base SHA. The clone remotes are
+removed before `agy` runs.
 
 ## Status Enum
 

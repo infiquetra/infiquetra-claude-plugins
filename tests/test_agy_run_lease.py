@@ -50,7 +50,43 @@ def _payload(task: str, **overrides: object) -> dict[str, object]:
     return payload
 
 
+def _init_repo(repo: Path) -> None:
+    if (repo / ".git").exists():
+        return
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "tests@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "README.md"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _run_wrapper(tmp_path: Path, payload: dict[str, object], run_id: str) -> subprocess.CompletedProcess[str]:
+    _init_repo(tmp_path)
     envelope_path = tmp_path / f"{run_id}.json"
     envelope_path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -159,6 +195,7 @@ def test_nonzero_exit_is_error_not_success(tmp_path: Path) -> None:
 
 
 def test_command_json_sanitizes_wrapper_and_agy_argv(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
     completed = subprocess.run(
         [
             sys.executable,

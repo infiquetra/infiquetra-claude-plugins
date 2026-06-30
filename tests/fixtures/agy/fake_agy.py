@@ -9,6 +9,21 @@ import time
 from pathlib import Path
 
 
+def _apply_prompt_writes(prompt: str) -> None:
+    for line in prompt.splitlines():
+        if not line.startswith("FAKE_AGY_WRITE "):
+            continue
+        raw_path, separator, content = line.removeprefix("FAKE_AGY_WRITE ").partition("::")
+        if not separator:
+            content = "fake agy content\n"
+        path = Path(raw_path.strip())
+        if path.is_absolute() or ".." in path.parts:
+            print(f"refusing unsafe fake write path: {path}", file=sys.stderr, flush=True)
+            raise SystemExit(8)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model")
@@ -36,6 +51,7 @@ def main() -> int:
             time.sleep(0.2)
         return 0
 
+    _apply_prompt_writes(args.prompt)
     print(f"fake agy success model={args.model}", flush=True)
     print("fake agy stderr note", file=sys.stderr, flush=True)
     return 0

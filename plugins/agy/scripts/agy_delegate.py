@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Antigravity delegation wrapper.
-
-U2 owns envelope validation and evidence bundle creation. U3 adds the
-supervised `agy` subprocess path and transcript provenance classifier. Later
-units add the repository clone boundary and patch import gate.
-"""
+"""Antigravity delegation wrapper."""
 
 from __future__ import annotations
 
@@ -191,6 +186,23 @@ class SupervisedRunResult:
 
 
 @dataclass(frozen=True)
+class CloneSetupResult:
+    success: bool
+    base_sha: str | None
+    clone_path: Path
+    removed_remotes: list[str]
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class DiffEvidence:
+    changed_paths: list[str]
+    diff_patch_path: Path
+    changed_paths_path: Path
+    git_proof_path: Path
+
+
+@dataclass(frozen=True)
 class TranscriptClassification:
     classification: str
     agy_command_seen: bool
@@ -348,6 +360,11 @@ def create_supervised_bundle(
         stderr_path = bundle_path / "stderr.log"
         stdout_path.touch()
         stderr_path.touch()
+        clone_path = bundle_path / "worktree"
+        checks_path = bundle_path / "checks.json"
+        git_proof_path = bundle_path / "git-proof.json"
+        diff_patch_path = bundle_path / "diff.patch"
+        live_preflight = _live_git_status(repo_root)
 
         command_payload: dict[str, Any] = {
             "validation_only": False,
@@ -355,24 +372,215 @@ def create_supervised_bundle(
             "wrapper_argv": _sanitize_argv(wrapper_argv or []),
             "source_envelope": str(source_envelope) if source_envelope else None,
             "repo_root": str(repo_root),
-            "working_directory": str(repo_root),
+            "working_directory": str(clone_path),
         }
         _write_json(bundle_path / "command.json", command_payload)
+
+        if envelope.mode == "auto-if-clean" and not live_preflight["clean"]:
+            run_result = _not_started_run_result(
+                status=parse_status("checks_failed"),
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                error="live repo is dirty before auto-if-clean launch",
+            )
+            _write_json(
+                checks_path,
+                {
+                    "required": envelope.verification.required,
+                    "commands": [],
+                    "passed": False,
+                    "skipped_reason": "live repo dirty before launch",
+                },
+            )
+            _write_git_proof(
+                git_proof_path,
+                repo_root=repo_root,
+                clone_result=None,
+                live_preflight=live_preflight,
+                changed_paths=[],
+                diff_patch_path=diff_patch_path,
+                checks_path=checks_path,
+                post_apply=None,
+            )
+            result_payload = _result_payload(
+                envelope=envelope,
+                run_id=resolved_run_id,
+                bundle_path=bundle_path,
+                run_result=run_result,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                summary="auto-if-clean refused to launch because the live repository was dirty.",
+                changed_paths=[],
+                diff_patch_path=diff_patch_path,
+                checks_path=checks_path,
+                clone_path=clone_path,
+            )
+            projection = render_projection(result_payload)
+            _write_json(
+                bundle_path / "run-lease.json",
+                _run_lease_payload(
+                    run_id=resolved_run_id,
+                    envelope=envelope,
+                    run_result=run_result,
+                    repo_root=clone_path,
+                ),
+            )
+            _write_json(bundle_path / "result.json", result_payload)
+            (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
+            return BundleResult(
+                status=parse_status("checks_failed"),
+                run_id=resolved_run_id,
+                bundle_path=bundle_path,
+                projection=projection,
+            )
+
+        clone_result = setup_disposable_clone(repo_root=repo_root, clone_path=clone_path)
+        if not clone_result.success:
+            run_result = _not_started_run_result(
+                status=parse_status("error"),
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                error=clone_result.error or "disposable clone setup failed",
+            )
+            _write_json(
+                checks_path,
+                {
+                    "required": envelope.verification.required,
+                    "commands": [],
+                    "passed": False,
+                    "skipped_reason": "clone setup failed",
+                },
+            )
+            _write_git_proof(
+                git_proof_path,
+                repo_root=repo_root,
+                clone_result=clone_result,
+                live_preflight=live_preflight,
+                changed_paths=[],
+                diff_patch_path=diff_patch_path,
+                checks_path=checks_path,
+                post_apply=None,
+            )
+            result_payload = _result_payload(
+                envelope=envelope,
+                run_id=resolved_run_id,
+                bundle_path=bundle_path,
+                run_result=run_result,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                summary=f"disposable clone setup failed: {run_result.error}",
+                changed_paths=[],
+                diff_patch_path=diff_patch_path,
+                checks_path=checks_path,
+                clone_path=clone_path,
+            )
+            projection = render_projection(result_payload)
+            _write_json(
+                bundle_path / "run-lease.json",
+                _run_lease_payload(
+                    run_id=resolved_run_id,
+                    envelope=envelope,
+                    run_result=run_result,
+                    repo_root=clone_path,
+                ),
+            )
+            _write_json(bundle_path / "result.json", result_payload)
+            (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
+            return BundleResult(
+                status=parse_status("error"),
+                run_id=resolved_run_id,
+                bundle_path=bundle_path,
+                projection=projection,
+            )
 
         run_result = run_agy_supervised(
             envelope,
             prompt=prompt,
-            repo_root=repo_root,
+            repo_root=clone_path,
             bundle_path=bundle_path,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             agy_bin=agy_bin,
         )
+        blocked_status = _blocked_status_from_logs(stdout_path, stderr_path)
+        if run_result.status == "success" and blocked_status is not None:
+            run_result = _override_run_status(run_result, status=blocked_status)
+
+        diff_evidence = derive_diff_evidence(
+            clone_path=clone_path,
+            base_sha=clone_result.base_sha or "HEAD",
+            bundle_path=bundle_path,
+        )
+        checks_payload = {"required": envelope.verification.required, "commands": [], "passed": None}
+        post_apply: dict[str, Any] | None = None
+        final_status = parse_status(run_result.status) if run_result.status != "success" else None
+
+        if final_status is None:
+            rogue_commits = _rogue_commits(
+                clone_path=clone_path,
+                base_sha=clone_result.base_sha or "HEAD",
+            )
+            out_of_scope = _policy_out_of_scope_paths(
+                envelope=envelope,
+                changed_paths=diff_evidence.changed_paths,
+            )
+            if rogue_commits:
+                final_status = parse_status("checks_failed")
+                checks_payload["skipped_reason"] = "delegate created commits"
+                checks_payload["rogue_commits"] = rogue_commits
+            elif out_of_scope:
+                final_status = parse_status("out_of_scope_mutation")
+                checks_payload["skipped_reason"] = "changed paths outside write_set"
+                checks_payload["out_of_scope_paths"] = out_of_scope
+            else:
+                final_status = decide_non_apply_status(
+                    envelope=envelope,
+                    run_result=run_result,
+                    changed_paths=diff_evidence.changed_paths,
+                )
+
+        if final_status is None:
+            if envelope.apply_policy != "apply-if-clean":
+                final_status = parse_status("patch_ready")
+                checks_payload["skipped_reason"] = "apply_policy is preserve-patch"
+            else:
+                checks_payload = run_verification_commands(envelope, clone_path=clone_path)
+                if not checks_payload["passed"]:
+                    final_status = parse_status("checks_failed")
+                else:
+                    apply_payload = apply_patch_to_live_repo(
+                        repo_root=repo_root,
+                        patch_path=diff_evidence.diff_patch_path,
+                        expected_write_set=envelope.write_set,
+                    )
+                    post_apply = apply_payload
+                    final_status = (
+                        parse_status("applied")
+                        if apply_payload["applied"] and apply_payload["only_expected_changes"]
+                        else parse_status("checks_failed")
+                    )
+
+        _write_json(checks_path, checks_payload)
+        _write_git_proof(
+            git_proof_path,
+            repo_root=repo_root,
+            clone_result=clone_result,
+            live_preflight=live_preflight,
+            changed_paths=diff_evidence.changed_paths,
+            diff_patch_path=diff_evidence.diff_patch_path,
+            checks_path=checks_path,
+            post_apply=post_apply,
+        )
+
+        if final_status != run_result.status:
+            run_result = _override_run_status(run_result, status=final_status)
 
         command_payload.update(
             {
                 "agy_argv": _sanitize_argv(run_result.argv, prompt_replacement="<prompt:prompt.txt>"),
                 "resolved_agy": run_result.resolved_agy,
+                "base_sha": clone_result.base_sha,
+                "clone_path": str(clone_path),
             }
         )
         _write_json(bundle_path / "command.json", command_payload)
@@ -381,27 +589,23 @@ def create_supervised_bundle(
             run_id=resolved_run_id,
             envelope=envelope,
             run_result=run_result,
-            repo_root=repo_root,
+            repo_root=clone_path,
         )
         _write_json(bundle_path / "run-lease.json", lease_payload)
 
-        result_payload = {
-            "schema": "agy.result.v1",
-            "status": parse_status(run_result.status),
-            "run_id": resolved_run_id,
-            "bundle_path": str(bundle_path),
-            "role": envelope.role,
-            "mode": envelope.mode,
-            "evidence": envelope.evidence,
-            "validation_only": False,
-            "agy_launched": run_result.agy_launched,
-            "resolved_agy": run_result.resolved_agy,
-            "stdout_path": str(stdout_path),
-            "stderr_path": str(stderr_path),
-            "summary": _supervised_summary(run_result),
-        }
-        if run_result.error is not None:
-            result_payload["error"] = run_result.error
+        result_payload = _result_payload(
+            envelope=envelope,
+            run_id=resolved_run_id,
+            bundle_path=bundle_path,
+            run_result=run_result,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            summary=_supervised_summary(run_result),
+            changed_paths=diff_evidence.changed_paths,
+            diff_patch_path=diff_evidence.diff_patch_path,
+            checks_path=checks_path,
+            clone_path=clone_path,
+        )
 
         projection = render_projection(result_payload)
         _write_json(bundle_path / "result.json", result_payload)
@@ -590,6 +794,187 @@ def run_agy_supervised(
     )
 
 
+def setup_disposable_clone(*, repo_root: Path, clone_path: Path) -> CloneSetupResult:
+    base_sha_result = _run_git(["rev-parse", "HEAD"], cwd=repo_root)
+    if base_sha_result.returncode != 0:
+        return CloneSetupResult(
+            success=False,
+            base_sha=None,
+            clone_path=clone_path,
+            removed_remotes=[],
+            error=base_sha_result.stderr.strip() or "could not resolve live repo HEAD",
+        )
+
+    base_sha = base_sha_result.stdout.strip()
+    clone_result = subprocess.run(
+        ["git", "clone", "--no-hardlinks", str(repo_root), str(clone_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if clone_result.returncode != 0:
+        return CloneSetupResult(
+            success=False,
+            base_sha=base_sha,
+            clone_path=clone_path,
+            removed_remotes=[],
+            error=clone_result.stderr.strip() or clone_result.stdout.strip() or "git clone failed",
+        )
+
+    remotes_result = _run_git(["remote"], cwd=clone_path)
+    removed_remotes = [line.strip() for line in remotes_result.stdout.splitlines() if line.strip()]
+    for remote in removed_remotes:
+        remove_result = _run_git(["remote", "remove", remote], cwd=clone_path)
+        if remove_result.returncode != 0:
+            return CloneSetupResult(
+                success=False,
+                base_sha=base_sha,
+                clone_path=clone_path,
+                removed_remotes=removed_remotes,
+                error=remove_result.stderr.strip() or f"could not remove remote {remote}",
+            )
+
+    return CloneSetupResult(
+        success=True,
+        base_sha=base_sha,
+        clone_path=clone_path,
+        removed_remotes=removed_remotes,
+    )
+
+
+def derive_diff_evidence(*, clone_path: Path, base_sha: str, bundle_path: Path) -> DiffEvidence:
+    untracked = _git_nul_lines(["ls-files", "--others", "--exclude-standard", "-z"], cwd=clone_path)
+    if untracked:
+        _run_git(["add", "--intent-to-add", "--", *untracked], cwd=clone_path)
+
+    diff_patch_path = bundle_path / "diff.patch"
+    diff_result = _run_git(["diff", "--binary", base_sha], cwd=clone_path)
+    diff_patch_path.write_text(diff_result.stdout, encoding="utf-8")
+
+    changed_paths = sorted(
+        set(_git_nul_lines(["diff", "--name-only", "-z", base_sha], cwd=clone_path))
+    )
+    changed_paths_path = bundle_path / "changed-paths.json"
+    _write_json(
+        changed_paths_path,
+        {
+            "base_sha": base_sha,
+            "changed_paths": changed_paths,
+        },
+    )
+    return DiffEvidence(
+        changed_paths=changed_paths,
+        diff_patch_path=diff_patch_path,
+        changed_paths_path=changed_paths_path,
+        git_proof_path=bundle_path / "git-proof.json",
+    )
+
+
+def decide_non_apply_status(
+    *,
+    envelope: Envelope,
+    run_result: SupervisedRunResult,
+    changed_paths: list[str],
+) -> str | None:
+    if run_result.status != "success":
+        return parse_status(run_result.status)
+    if envelope.mode == "no-write":
+        return parse_status("patch_ready") if changed_paths else parse_status("success")
+    if envelope.mode == "patch-only":
+        return parse_status("patch_ready") if changed_paths else parse_status("success")
+    if not changed_paths:
+        return parse_status("success")
+    return None
+
+
+def run_verification_commands(envelope: Envelope, *, clone_path: Path) -> dict[str, Any]:
+    if not envelope.verification.required or not envelope.verification.commands:
+        return {
+            "required": envelope.verification.required,
+            "commands": [],
+            "passed": False,
+            "skipped_reason": "auto-if-clean requires explicit required verification commands",
+        }
+    if envelope.verification.run_scope != "clone":
+        return {
+            "required": envelope.verification.required,
+            "run_scope": envelope.verification.run_scope,
+            "commands": [],
+            "passed": False,
+            "skipped_reason": "auto-if-clean verification must run in clone scope",
+        }
+
+    command_results: list[dict[str, Any]] = []
+    passed = True
+    for command in envelope.verification.commands:
+        started_at = datetime.now(UTC)
+        timed_out = False
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                cwd=clone_path,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=envelope.timeout_seconds,
+            )
+            return_code = completed.returncode
+            stdout = completed.stdout
+            stderr = completed.stderr
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            return_code = None
+            stdout = _decode_timeout_output(exc.stdout)
+            stderr = _decode_timeout_output(exc.stderr)
+        ended_at = datetime.now(UTC)
+        command_passed = return_code == 0 and not timed_out
+        passed = passed and command_passed
+        command_results.append(
+            {
+                "command": command,
+                "cwd": str(clone_path),
+                "shell": True,
+                "timeout_seconds": envelope.timeout_seconds,
+                "timed_out": timed_out,
+                "return_code": return_code,
+                "passed": command_passed,
+                "started_at": started_at.isoformat(),
+                "ended_at": ended_at.isoformat(),
+                "stdout": stdout,
+                "stderr": stderr,
+            }
+        )
+
+    return {
+        "required": envelope.verification.required,
+        "run_scope": envelope.verification.run_scope,
+        "passed": passed,
+        "commands": command_results,
+    }
+
+
+def apply_patch_to_live_repo(
+    *,
+    repo_root: Path,
+    patch_path: Path,
+    expected_write_set: list[str],
+) -> dict[str, Any]:
+    apply_result = _run_git(["apply", str(patch_path)], cwd=repo_root)
+    live_changed_paths = _live_changed_paths(repo_root)
+    out_of_scope = _paths_outside_write_set(live_changed_paths, expected_write_set)
+    return {
+        "applied": apply_result.returncode == 0,
+        "return_code": apply_result.returncode,
+        "stdout": apply_result.stdout,
+        "stderr": apply_result.stderr,
+        "live_changed_paths": live_changed_paths,
+        "out_of_scope_paths": out_of_scope,
+        "only_expected_changes": apply_result.returncode == 0 and not out_of_scope,
+    }
+
+
 def classify_transcript(path: Path) -> TranscriptClassification:
     evidence: list[str] = []
     agy_command_seen = False
@@ -748,7 +1133,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(result.projection, end="")
-    return 0 if result.status == "success" else 1
+    return 0 if result.status in {"success", "patch_ready", "applied"} else 1
 
 
 def _default_mode(role: str) -> str:
@@ -803,6 +1188,277 @@ def _enum_error(name: str, value: object, allowed: frozenset[str]) -> str:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _run_git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _git_nul_lines(args: list[str], *, cwd: Path) -> list[str]:
+    completed = _run_git(args, cwd=cwd)
+    if completed.returncode != 0 or not completed.stdout:
+        return []
+    return [item for item in completed.stdout.split("\0") if item]
+
+
+def _live_git_status(repo_root: Path) -> dict[str, Any]:
+    status = _run_git(
+        ["status", "--porcelain=v1", "-z", "--", ".", ":(exclude).claude"],
+        cwd=repo_root,
+    )
+    entries = _parse_status_z(status.stdout) if status.returncode == 0 else []
+    return {
+        "clean": status.returncode == 0 and not entries,
+        "return_code": status.returncode,
+        "stdout": status.stdout,
+        "stderr": status.stderr,
+        "changed_paths": sorted({path for entry in entries for path in entry["paths"]}),
+    }
+
+
+def _live_changed_paths(repo_root: Path) -> list[str]:
+    status = _run_git(
+        ["status", "--porcelain=v1", "-z", "--", ".", ":(exclude).claude"],
+        cwd=repo_root,
+    )
+    if status.returncode != 0:
+        return []
+    return sorted({path for entry in _parse_status_z(status.stdout) for path in entry["paths"]})
+
+
+def _rogue_commits(*, clone_path: Path, base_sha: str) -> list[str]:
+    completed = _run_git(["rev-list", f"{base_sha}..HEAD"], cwd=clone_path)
+    if completed.returncode != 0:
+        return []
+    return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+
+
+def _parse_status_z(output: str) -> list[dict[str, Any]]:
+    if not output:
+        return []
+
+    entries: list[dict[str, Any]] = []
+    parts = output.split("\0")
+    index = 0
+    while index < len(parts):
+        item = parts[index]
+        index += 1
+        if not item:
+            continue
+        status = item[:2]
+        path = item[3:]
+        paths = [path]
+        if status.startswith("R") or status.startswith("C"):
+            if index < len(parts) and parts[index]:
+                paths.append(parts[index])
+            index += 1
+        entries.append({"status": status, "paths": paths})
+    return entries
+
+
+def _paths_outside_write_set(changed_paths: list[str], write_set: list[str]) -> list[str]:
+    return [path for path in changed_paths if not _path_in_write_set(path, write_set)]
+
+
+def _policy_out_of_scope_paths(*, envelope: Envelope, changed_paths: list[str]) -> list[str]:
+    if not changed_paths:
+        return []
+    if envelope.mode == "no-write":
+        return changed_paths
+    if not envelope.write_set:
+        return []
+    return _paths_outside_write_set(changed_paths, envelope.write_set)
+
+
+def _path_in_write_set(path: str, write_set: list[str]) -> bool:
+    normalized_path = Path(path).as_posix()
+    for allowed in write_set:
+        normalized_allowed = Path(allowed).as_posix().rstrip("/")
+        if normalized_path == normalized_allowed:
+            return True
+        if normalized_path.startswith(f"{normalized_allowed}/"):
+            return True
+    return False
+
+
+def _not_started_run_result(
+    *,
+    status: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    error: str,
+) -> SupervisedRunResult:
+    timestamp = datetime.now(UTC)
+    return SupervisedRunResult(
+        status=parse_status(status),
+        agy_launched=False,
+        resolved_agy=None,
+        argv=[],
+        process_id=None,
+        return_code=None,
+        started_at=timestamp,
+        ended_at=timestamp,
+        shutdown="not_started",
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_class=None,
+        stdout_bytes=0,
+        stderr_bytes=0,
+        error=error,
+    )
+
+
+def _override_run_status(run_result: SupervisedRunResult, *, status: str) -> SupervisedRunResult:
+    return SupervisedRunResult(
+        status=parse_status(status),
+        agy_launched=run_result.agy_launched,
+        resolved_agy=run_result.resolved_agy,
+        argv=run_result.argv,
+        process_id=run_result.process_id,
+        return_code=run_result.return_code,
+        started_at=run_result.started_at,
+        ended_at=run_result.ended_at,
+        shutdown=run_result.shutdown,
+        stdout_path=run_result.stdout_path,
+        stderr_path=run_result.stderr_path,
+        timeout_class=run_result.timeout_class,
+        stdout_bytes=run_result.stdout_bytes,
+        stderr_bytes=run_result.stderr_bytes,
+        error=run_result.error,
+    )
+
+
+def _blocked_status_from_logs(stdout_path: Path, stderr_path: Path) -> str | None:
+    text = stdout_path.read_text(encoding="utf-8") + "\n" + stderr_path.read_text(encoding="utf-8")
+    markers = {
+        "PLAN_GAP:": "plan_gap",
+        "TEST_CONFLICT:": "test_conflict",
+        "PATH_MISSING:": "path_missing",
+        "FALLBACK_SUSPECTED:": "fallback_suspected",
+    }
+    for marker, status in markers.items():
+        if marker in text:
+            return parse_status(status)
+    return None
+
+
+def _decode_timeout_output(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value
+
+
+def _result_payload(
+    *,
+    envelope: Envelope,
+    run_id: str,
+    bundle_path: Path,
+    run_result: SupervisedRunResult,
+    stdout_path: Path,
+    stderr_path: Path,
+    summary: str,
+    changed_paths: list[str],
+    diff_patch_path: Path,
+    checks_path: Path,
+    clone_path: Path,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": "agy.result.v1",
+        "status": parse_status(run_result.status),
+        "run_id": run_id,
+        "bundle_path": str(bundle_path),
+        "role": envelope.role,
+        "mode": envelope.mode,
+        "evidence": envelope.evidence,
+        "validation_only": False,
+        "agy_launched": run_result.agy_launched,
+        "resolved_agy": run_result.resolved_agy,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "clone_path": str(clone_path),
+        "changed_paths": changed_paths,
+        "diff_patch": str(diff_patch_path),
+        "checks_path": str(checks_path),
+        "summary": summary,
+    }
+    if run_result.error is not None:
+        payload["error"] = run_result.error
+    return payload
+
+
+def _write_git_proof(
+    path: Path,
+    *,
+    repo_root: Path,
+    clone_result: CloneSetupResult | None,
+    live_preflight: dict[str, Any],
+    changed_paths: list[str],
+    diff_patch_path: Path,
+    checks_path: Path,
+    post_apply: dict[str, Any] | None,
+) -> None:
+    clone_state = _clone_git_state(clone_result)
+    _write_json(
+        path,
+        {
+            "schema": "agy.git-proof.v1",
+            "repo_root": str(repo_root),
+            "base_sha": clone_result.base_sha if clone_result else None,
+            "clone_path": str(clone_result.clone_path) if clone_result else None,
+            "clone_created": bool(clone_result and clone_result.success),
+            "removed_remotes": clone_result.removed_remotes if clone_result else [],
+            "clone_error": clone_result.error if clone_result else None,
+            "live_preflight": live_preflight,
+            "clone_head": clone_state["head"],
+            "clone_post_status": clone_state["status"],
+            "clone_remotes_after": clone_state["remotes_after"],
+            "rogue_commits": clone_state["rogue_commits"],
+            "changed_paths": changed_paths,
+            "diff_patch": str(diff_patch_path),
+            "checks_path": str(checks_path),
+            "post_apply": post_apply,
+        },
+    )
+
+
+def _clone_git_state(clone_result: CloneSetupResult | None) -> dict[str, Any]:
+    empty = {
+        "head": None,
+        "status": {"return_code": None, "entries": []},
+        "remotes_after": [],
+        "rogue_commits": [],
+    }
+    if clone_result is None or not clone_result.success:
+        return empty
+
+    head = _run_git(["rev-parse", "HEAD"], cwd=clone_result.clone_path)
+    status = _run_git(["status", "--porcelain=v1", "-z"], cwd=clone_result.clone_path)
+    remotes = _run_git(["remote", "-v"], cwd=clone_result.clone_path)
+    return {
+        "head": head.stdout.strip() if head.returncode == 0 else None,
+        "status": {
+            "return_code": status.returncode,
+            "entries": _parse_status_z(status.stdout) if status.returncode == 0 else [],
+            "stderr": status.stderr,
+        },
+        "remotes_after": [
+            line.strip() for line in remotes.stdout.splitlines() if line.strip()
+        ]
+        if remotes.returncode == 0
+        else [],
+        "rogue_commits": _rogue_commits(
+            clone_path=clone_result.clone_path,
+            base_sha=clone_result.base_sha or "HEAD",
+        ),
+    }
 
 
 def _sanitize_argv(argv: list[str], *, prompt_replacement: str | None = None) -> list[str]:
@@ -899,14 +1555,35 @@ def _run_lease_payload(
         "stderr_path": str(run_result.stderr_path),
         "stdout_bytes": run_result.stdout_bytes,
         "stderr_bytes": run_result.stderr_bytes,
-        "real_agy_verdict": "real" if run_result.agy_launched and run_result.status == "success" else "unproven",
+        "real_agy_verdict": _real_agy_verdict(run_result),
         "error": run_result.error,
     }
+
+
+def _real_agy_verdict(run_result: SupervisedRunResult) -> str:
+    if (
+        run_result.agy_launched
+        and run_result.return_code == 0
+        and run_result.timeout_class is None
+        and run_result.shutdown == "exited"
+    ):
+        return "real"
+    return "unproven"
 
 
 def _supervised_summary(run_result: SupervisedRunResult) -> str:
     if run_result.status == "success":
         return "agy completed successfully under supervised foreground execution."
+    if run_result.status == "patch_ready":
+        return "agy completed successfully and the patch was preserved without live-tree apply."
+    if run_result.status == "applied":
+        return "agy completed successfully and the verified patch was applied to the live tree."
+    if run_result.status == "out_of_scope_mutation":
+        return "agy completed, but changed paths outside the allowed write set."
+    if run_result.status == "checks_failed":
+        return "agy completed, but the apply-policy checks failed."
+    if run_result.status in {"plan_gap", "test_conflict", "path_missing", "fallback_suspected"}:
+        return f"agy reported {run_result.status}; no patch was applied."
     if run_result.status == "timeout":
         return "agy exceeded the total timeout and was shut down."
     if run_result.status == "no_output":

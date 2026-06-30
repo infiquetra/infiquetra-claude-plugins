@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 HOOKS_JSON = Path(__file__).resolve().parent.parent / "plugins" / "saga" / "hooks" / "hooks.json"
 
 
 def _events() -> dict[str, list[dict]]:
-    return json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
+    data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    return cast("dict[str, list[dict]]", data["hooks"])
 
 
 def _commands_for(entries: list[dict], matcher: str) -> list[str]:

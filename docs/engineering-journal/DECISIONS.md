@@ -22,6 +22,46 @@
 
 ---
 
+## 2026-06-30
+
+### Plan the Antigravity teammate plugin as an evidence-first `agy` plugin with clone-backed patch import  {#antigravity-teammate-plugin-plan-stance}
+
+**Decision.** Build the new Antigravity teammate integration as a first-party `agy` Claude Code
+plugin (`plugins/agy`) with `agy-coder`, `agy-reviewer`, and `/agy:delegate` all routed through one
+Python wrapper and one versioned delegation envelope. The implementation plan chooses Bash-only
+bridge agents, full local evidence bundles under ignored `.claude/agy/runs/<run-id>/`, fresh `agy`
+invocations by default, and disposable local clone plus patch-import semantics for all write modes.
+Marketplace registration is deliberately the final implementation unit, after direct wrapper tests
+and live Claude Code harness proof.
+
+**Rejected alternatives.** Rejected reusing the current upstream plugin as the product surface,
+because the failures are command-shape, liveness, and false-provenance failures. Rejected a normal
+raw `/agy:run` command for v1 because it invites bypassing the envelope. Rejected live-tree
+delegation as the reusable teammate substrate because it makes apply safety post-hoc instead of
+structural. Rejected early marketplace registration because this repo treats metadata as a shipping
+surface.
+
+**Rationale.** The requirements review left no P0/P1 product blockers, but it explicitly pushed the
+plugin namespace, agent tool constraints, live harness proof, and evidence schema into planning.
+Local evidence shows that a "delegated" run can be a Claude-clone fallback with zero `agy` calls,
+and that background paths can hang with zero output. The wrapper therefore needs to make real-`agy`
+proof, liveness, changed paths, and apply decisions machine-checkable before chat prose can claim
+success.
+
+**Revisit when.** Revisit the clone boundary if implementation proves local clones cannot preserve
+the context `agy` needs, if OS-level sandboxing becomes available and cheap enough for v1, or if the
+live harness proves Bash-only agents still cannot force the wrapper path. Revisit marketplace-last
+sequencing only if release tooling gains a dormant/unadvertised plugin state with explicit tests.
+
+**Refs.** Plan: `docs/plans/2026-06-30-antigravity-teammate-plugin-plan.md`; requirements:
+`docs/brainstorms/2026-06-30-antigravity-teammate-plugin-requirements.md`; readiness review:
+`docs/reviews/2026-06-30-antigravity-teammate-plugin-requirements-readiness.md`; LEARNINGS
+[#agy-delegate-silent-claude-fallback](LEARNINGS.md#agy-delegate-silent-claude-fallback) and
+[#agy-delegate-plain-is-the-path](LEARNINGS.md#agy-delegate-plain-is-the-path); blueprint:
+`docs/external-agent-delegation/blueprint.md`.
+
+---
+
 ## 2026-06-29
 
 ### Pull the clone-jail from the #277 delegated-build protocol — contain by post-hoc verification, not isolation  {#agy-delegated-build-no-jail}

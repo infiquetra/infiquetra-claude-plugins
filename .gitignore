@@ -64,4 +64,4 @@ Thumbs.db
 .neuralmind/
 graphify-out/
 .mcp.json
-# Serena: .serena/.gitignore (tracked) keeps project.yml and ignores .serena/cache + project.local.yml
+.serena

@@ -25,6 +25,50 @@
 
 ---
 
+## 2026-06-30
+
+### Antigravity print-mode writes need an explicit repo boundary; sandbox mode writes to Antigravity scratch, not the wrapper clone  {#agy-print-mode-repo-boundary}
+
+**Context.** While proving the new first-party `agy` teammate plugin with a live Claude Code
+harness, the reviewer flow completed but the coder flow initially either hung waiting on write
+permission or reported success after changing Antigravity's default scratch file instead of the
+wrapper's disposable clone.
+
+**Evidence.** Live harness scratch path:
+`.claude/agy/harness/claude-20260630T055233Z/`. Reviewer transcript audit passed with wrapper
+status `success`. The successful coder proof used the packaged `agy-coder` agent, transcript
+`.claude/agy/harness/claude-20260630T055233Z/coder.jsonl`, bundle
+`.claude/agy/harness/claude-20260630T055233Z/coder-repo/.claude/agy/runs/live-coder`, wrapper
+status `applied`, changed path `target.txt`, and post-apply proof `only_expected_changes=true`.
+Earlier direct smokes showed `agy --sandbox` completed but wrote
+`~/.gemini/antigravity-cli/scratch/target.txt`, leaving the wrapper clone unchanged.
+
+**Mechanism.** `agy --print` does not reliably treat the shell cwd as the editable repository when
+tool permissions or sandboxing are involved. `--sandbox` keeps no-write reviewer tasks quiet and
+bounded, but for write-mode tasks it redirects file writes into Antigravity's own scratch area. Write
+mode also needs noninteractive tool approval or it can sit silent until the wrapper's no-output
+watchdog kills it.
+
+**Fix.** The wrapper now resolves `--repo-root` before constructing bundles, passes the disposable
+clone through `--add-dir`, renders the absolute clone path into the prompt, uses `--sandbox` only
+for `no-write`, and uses noninteractive tool approval only for patch-producing modes inside the
+disposable clone. The live tree still changes only after changed-path, verification, and `git apply`
+gates pass.
+
+**Validation.** `python3 plugins/agy/scripts/audit_harness_transcript.py` passed for both live
+Claude Code transcripts; focused tests passed with `PYTHONPATH=. python3 -m pytest -q
+tests/test_agy_harness_audit.py tests/test_agy_run_lease.py tests/test_agy_apply_policy.py
+tests/test_agy_prompt_contracts.py tests/test_agy_delegate_contract.py tests/test_agy_plugin.py`.
+
+**Generalizable rule.** For external agentic CLIs, prove the actual writable root from filesystem
+evidence. A command can report success while changing a provider scratch directory; repository
+mutation must be derived from git diff inside the intended boundary and then imported deliberately.
+
+**Refs.** DECISIONS [#agy-wrapper-mode-specific-argv](DECISIONS.md#agy-wrapper-mode-specific-argv)
+and harness proof `plugins/agy/docs/harness-proof.md`.
+
+---
+
 ## 2026-06-29
 
 ### `/agy:delegate` has a SILENT Claude-fallback failure mode — a "delegated to agy" run may be Claude doing the work, with zero agy invocations  {#agy-delegate-silent-claude-fallback}

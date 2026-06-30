@@ -174,6 +174,26 @@
         "hands-free"
       ],
       "category": "development"
+    },
+    {
+      "name": "agy",
+      "source": "./plugins/agy",
+      "version": "0.1.0",
+      "description": "Antigravity-backed coder and reviewer bridge agents with guarded evidence bundles and patch import.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "antigravity",
+        "agy",
+        "delegation",
+        "teammate",
+        "evidence"
+      ],
+      "category": "development"
     }
   ],
   "version": "3.0.0"

@@ -1,0 +1,272 @@
+{
+  "schema_version": 1,
+  "outcome_id": "antigravity-teammate-plugin",
+  "spec_revision": 2,
+  "objective": "Ship the first-party agy Claude Code plugin with Antigravity-backed coder/reviewer teammates, shared evidence wrapper, write gates, live harness proof, and merged PR.",
+  "nodes": [
+    {
+      "subplot_id": "u1-scaffold",
+      "title": "U1. Dormant agy plugin scaffold",
+      "kind": "code",
+      "state": "pending",
+      "backend": "team-execution",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "plugin-packaging"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": 3600,
+      "heartbeat_seconds": 600,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {},
+      "worktree": {},
+      "evidence": {
+        "plan_unit": "U1",
+        "plan_path": "docs/plans/2026-06-30-antigravity-teammate-plugin-plan.md",
+        "expected_paths": [
+          "plugins/agy/.claude-plugin/plugin.json",
+          "plugins/agy/README.md",
+          "plugins/agy/CHANGELOG.md",
+          "plugins/agy/commands/delegate.md",
+          "plugins/agy/skills/agy-delegate/SKILL.md",
+          "plugins/agy/skills/agy-delegate/references/delegation-contract.md",
+          "plugins/agy/agents/agy-coder.md",
+          "plugins/agy/agents/agy-reviewer.md",
+          "tests/test_agy_plugin.py"
+        ],
+        "gate": "PYTHONPATH=. python3 -m pytest -q tests/test_agy_plugin.py"
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "u2-envelope",
+      "title": "U2. Delegation envelope and evidence contract",
+      "kind": "code",
+      "state": "pending",
+      "backend": "team-execution",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "delegation-envelope",
+        "evidence-contract"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": 3600,
+      "heartbeat_seconds": 600,
+      "depends_on": [
+        "u1-scaffold"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {},
+      "worktree": {},
+      "evidence": {
+        "plan_unit": "U2",
+        "expected_paths": [
+          "plugins/agy/scripts/agy_delegate.py",
+          "plugins/agy/skills/agy-delegate/references/delegation-contract.md",
+          "tests/test_agy_delegate_contract.py"
+        ],
+        "gate": "PYTHONPATH=. python3 -m pytest -q tests/test_agy_delegate_contract.py"
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "u3-runner",
+      "title": "U3. Supervised agy invocation and provenance classifier",
+      "kind": "code",
+      "state": "pending",
+      "backend": "team-execution",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "run-lease",
+        "provenance"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": 3600,
+      "heartbeat_seconds": 600,
+      "depends_on": [
+        "u2-envelope"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {},
+      "worktree": {},
+      "evidence": {
+        "plan_unit": "U3",
+        "expected_paths": [
+          "plugins/agy/scripts/agy_delegate.py",
+          "tests/test_agy_run_lease.py",
+          "tests/fixtures/agy/fake_agy.py",
+          "tests/fixtures/agy/transcripts/real-agy.jsonl",
+          "tests/fixtures/agy/transcripts/claude-clone.jsonl"
+        ],
+        "gate": "PYTHONPATH=. python3 -m pytest -q tests/test_agy_run_lease.py"
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "u4-apply-policy",
+      "title": "U4. Disposable clone, patch inbox, and apply policy",
+      "kind": "code",
+      "state": "pending",
+      "backend": "team-execution",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "write-boundary",
+        "patch-import"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": 3600,
+      "heartbeat_seconds": 600,
+      "depends_on": [
+        "u3-runner"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {},
+      "worktree": {},
+      "evidence": {
+        "plan_unit": "U4",
+        "expected_paths": [
+          "plugins/agy/scripts/agy_delegate.py",
+          "tests/test_agy_apply_policy.py"
+        ],
+        "gate": "PYTHONPATH=. python3 -m pytest -q tests/test_agy_apply_policy.py"
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "u5-prompts",
+      "title": "U5. Coder, reviewer, and slash command prompt contracts",
+      "kind": "code",
+      "state": "pending",
+      "backend": "team-execution",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "prompt-contracts"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": 3600,
+      "heartbeat_seconds": 600,
+      "depends_on": [
+        "u4-apply-policy"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {},
+      "worktree": {},
+      "evidence": {
+        "plan_unit": "U5",
+        "expected_paths": [
+          "plugins/agy/agents/agy-coder.md",
+          "plugins/agy/agents/agy-reviewer.md",
+          "plugins/agy/commands/delegate.md",
+          "plugins/agy/skills/agy-delegate/SKILL.md",
+          "plugins/agy/skills/agy-delegate/references/delegation-contract.md",
+          "tests/test_agy_prompt_contracts.py"
+        ],
+        "gate": "PYTHONPATH=. python3 -m pytest -q tests/test_agy_prompt_contracts.py"
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "u6-harness",
+      "title": "U6. Live harness proof and transcript audit",
+      "kind": "code",
+      "state": "pending",
+      "backend": "team-execution",
+      "gated": false,
+      "risky": true,
+      "destructive": false,
+      "guarantee_tags": [
+        "live-harness-proof",
+        "provenance-audit"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": 5400,
+      "heartbeat_seconds": 600,
+      "depends_on": [
+        "u5-prompts"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {},
+      "worktree": {},
+      "evidence": {
+        "plan_unit": "U6",
+        "expected_paths": [
+          "plugins/agy/docs/harness-proof.md",
+          "plugins/agy/scripts/audit_harness_transcript.py",
+          "tests/test_agy_harness_audit.py",
+          "tests/fixtures/agy/harness/real-reviewer.jsonl",
+          "tests/fixtures/agy/harness/real-coder.jsonl",
+          "tests/fixtures/agy/harness/claude-clone.jsonl"
+        ],
+        "gate": "PYTHONPATH=. python3 -m pytest -q tests/test_agy_harness_audit.py",
+        "manual_gate": "python3 plugins/agy/scripts/audit_harness_transcript.py <reviewer-transcript.jsonl> && python3 plugins/agy/scripts/audit_harness_transcript.py <coder-transcript.jsonl>"
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "u7-release-merge",
+      "title": "U7. Release surfaces, journal, full validation, PR, and merge",
+      "kind": "code",
+      "state": "pending",
+      "backend": "team-execution",
+      "gated": false,
+      "risky": true,
+      "destructive": true,
+      "guarantee_tags": [
+        "release-surface",
+        "merge-authorized"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": 7200,
+      "heartbeat_seconds": 600,
+      "depends_on": [
+        "u6-harness"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {},
+      "worktree": {},
+      "evidence": {
+        "plan_unit": "U7",
+        "expected_paths": [
+          ".claude-plugin/marketplace.json",
+          "plugins/agy/.claude-plugin/plugin.json",
+          "plugins/agy/CHANGELOG.md",
+          "plugins/agy/README.md",
+          "tests/test_agy_plugin.py",
+          "tests/test_release_triad.py",
+          "docs/engineering-journal/DECISIONS.md"
+        ],
+        "gate": "PYTHONPATH=. python3 -m pytest -q tests/test_agy_plugin.py tests/test_agy_delegate_contract.py tests/test_agy_run_lease.py tests/test_agy_apply_policy.py tests/test_agy_prompt_contracts.py tests/test_agy_harness_audit.py tests/test_release_triad.py && uv run ruff check plugins/agy tests/test_agy_*.py && PYTHONPATH=. python3 -m pytest -q",
+        "merge_authority": "operator authorized autonomous merge on 2026-06-30"
+      },
+      "cost": {}
+    }
+  ],
+  "decision_trail": [
+    {
+      "revision": 2,
+      "reason": "Replace starter design/build graph with reviewed plan U1-U7 implementation DAG.",
+      "at": "2026-06-30T04:45:15Z"
+    }
+  ],
+  "cost_rollup": {},
+  "created_at": "2026-06-30T04:45:15Z",
+  "updated_at": "2026-06-30T04:45:15Z"
+}

@@ -1,0 +1,17 @@
+{
+  "name": "agy",
+  "version": "0.1.0",
+  "description": "Antigravity-backed coder and reviewer bridge agents with guarded evidence bundles and patch import.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": [
+    "agy",
+    "antigravity",
+    "delegation",
+    "teammate",
+    "evidence"
+  ]
+}

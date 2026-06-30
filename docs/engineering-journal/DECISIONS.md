@@ -22,6 +22,72 @@
 
 ---
 
+## 2026-06-30
+
+### Use mode-specific `agy` argv for the first-party wrapper  {#agy-wrapper-mode-specific-argv}
+
+**Decision.** The `plugins/agy/scripts/agy_delegate.py` wrapper invokes `agy` in foreground print
+mode with mode-specific execution flags: `no-write` adds `--sandbox`; patch-producing modes add
+`--dangerously-skip-permissions`, `--add-dir <disposable-clone>`, and an absolute repository
+boundary in the prompt packet before any patch is imported into the live tree.
+
+**Rejected alternatives.** Rejected always using `--sandbox` because live proof showed write tasks
+completed while modifying Antigravity's default scratch directory instead of the wrapper clone.
+Rejected omitting noninteractive permission approval for write modes because live proof showed the
+write path could sit silent until the no-output watchdog killed it. Rejected trusting `agy` stdout
+claims because the plugin's contract is git-derived evidence and managed patch import.
+
+**Rationale.** The wrapper's safety boundary is the disposable clone plus changed-path,
+verification, and `git apply` gate. `no-write` benefits from sandboxed print mode because no patch
+should be produced. Write modes need permission to modify the clone so the wrapper can derive a real
+diff, but the live tree remains protected by the explicit write-set and apply policy.
+
+**Revisit when.** Revisit if `agy` gains a noninteractive flag that writes inside a named workspace
+without broad tool approval, if `--sandbox` gains a way to bind the repository root as the writable
+scratch, or if live evidence shows write-mode `--dangerously-skip-permissions` can mutate outside the
+disposable clone despite prompt and remote-removal controls.
+
+**Refs.** LEARNINGS [#agy-print-mode-repo-boundary](LEARNINGS.md#agy-print-mode-repo-boundary);
+harness proof `plugins/agy/docs/harness-proof.md`.
+
+### Plan the Antigravity teammate plugin as an evidence-first `agy` plugin with clone-backed patch import  {#antigravity-teammate-plugin-plan-stance}
+
+**Decision.** Build the new Antigravity teammate integration as a first-party `agy` Claude Code
+plugin (`plugins/agy`) with `agy-coder`, `agy-reviewer`, and `/agy:delegate` all routed through one
+Python wrapper and one versioned delegation envelope. The implementation plan chooses Bash-only
+bridge agents, full local evidence bundles under ignored `.claude/agy/runs/<run-id>/`, fresh `agy`
+invocations by default, and disposable local clone plus patch-import semantics for all write modes.
+Marketplace registration is deliberately the final implementation unit, after direct wrapper tests
+and live Claude Code harness proof.
+
+**Rejected alternatives.** Rejected reusing the current upstream plugin as the product surface,
+because the failures are command-shape, liveness, and false-provenance failures. Rejected a normal
+raw `/agy:run` command for v1 because it invites bypassing the envelope. Rejected live-tree
+delegation as the reusable teammate substrate because it makes apply safety post-hoc instead of
+structural. Rejected early marketplace registration because this repo treats metadata as a shipping
+surface.
+
+**Rationale.** The requirements review left no P0/P1 product blockers, but it explicitly pushed the
+plugin namespace, agent tool constraints, live harness proof, and evidence schema into planning.
+Local evidence shows that a "delegated" run can be a Claude-clone fallback with zero `agy` calls,
+and that background paths can hang with zero output. The wrapper therefore needs to make real-`agy`
+proof, liveness, changed paths, and apply decisions machine-checkable before chat prose can claim
+success.
+
+**Revisit when.** Revisit the clone boundary if implementation proves local clones cannot preserve
+the context `agy` needs, if OS-level sandboxing becomes available and cheap enough for v1, or if the
+live harness proves Bash-only agents still cannot force the wrapper path. Revisit marketplace-last
+sequencing only if release tooling gains a dormant/unadvertised plugin state with explicit tests.
+
+**Refs.** Plan: `docs/plans/2026-06-30-antigravity-teammate-plugin-plan.md`; requirements:
+`docs/brainstorms/2026-06-30-antigravity-teammate-plugin-requirements.md`; readiness review:
+`docs/reviews/2026-06-30-antigravity-teammate-plugin-requirements-readiness.md`; LEARNINGS
+[#agy-delegate-silent-claude-fallback](LEARNINGS.md#agy-delegate-silent-claude-fallback) and
+[#agy-delegate-plain-is-the-path](LEARNINGS.md#agy-delegate-plain-is-the-path); blueprint:
+`docs/external-agent-delegation/blueprint.md`.
+
+---
+
 ## 2026-06-29
 
 ### Pull the clone-jail from the #277 delegated-build protocol — contain by post-hoc verification, not isolation  {#agy-delegated-build-no-jail}

@@ -32,9 +32,7 @@ def _frontmatter(path: Path) -> dict[str, str]:
 def test_agy_metadata_is_marketplace_registered() -> None:
     plugin_json = json.loads(_read(PLUGIN_ROOT / ".claude-plugin" / "plugin.json"))
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
-    marketplace_entry = next(
-        plugin for plugin in marketplace["plugins"] if plugin["name"] == "agy"
-    )
+    marketplace_entry = next(plugin for plugin in marketplace["plugins"] if plugin["name"] == "agy")
 
     assert plugin_json["name"] == "agy"
     assert plugin_json["version"] == "0.1.0"
@@ -72,9 +70,9 @@ def test_agy_commands_skills_references_and_agents_are_packaged() -> None:
         assert (PLUGIN_ROOT / relative_path).exists(), f"missing agy file: {relative_path}"
 
     assert _frontmatter(PLUGIN_ROOT / "commands" / "delegate.md")["name"] == "delegate"
-    assert _frontmatter(PLUGIN_ROOT / "skills" / "agy-delegate" / "SKILL.md")[
-        "name"
-    ] == "agy-delegate"
+    assert (
+        _frontmatter(PLUGIN_ROOT / "skills" / "agy-delegate" / "SKILL.md")["name"] == "agy-delegate"
+    )
     assert _frontmatter(PLUGIN_ROOT / "agents" / "agy-coder.md")["name"] == "agy-coder"
     assert _frontmatter(PLUGIN_ROOT / "agents" / "agy-reviewer.md")["name"] == "agy-reviewer"
 

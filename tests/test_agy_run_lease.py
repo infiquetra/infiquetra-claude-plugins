@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any, cast
 
 ROOT = Path(__file__).parent.parent
 WRAPPER = ROOT / "plugins" / "agy" / "scripts" / "agy_delegate.py"
@@ -85,7 +86,9 @@ def _init_repo(repo: Path) -> None:
     )
 
 
-def _run_wrapper(tmp_path: Path, payload: dict[str, object], run_id: str) -> subprocess.CompletedProcess[str]:
+def _run_wrapper(
+    tmp_path: Path, payload: dict[str, object], run_id: str
+) -> subprocess.CompletedProcess[str]:
     _init_repo(tmp_path)
     envelope_path = tmp_path / f"{run_id}.json"
     envelope_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -114,8 +117,8 @@ def _bundle(tmp_path: Path, run_id: str) -> Path:
     return tmp_path / ".claude" / "agy" / "runs" / run_id
 
 
-def _json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
+def _json(path: Path) -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
 def test_fake_agy_success_writes_run_lease_and_logs(tmp_path: Path) -> None:
@@ -218,9 +221,7 @@ def test_command_json_sanitizes_wrapper_and_agy_argv(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
     )
-    command_text = (_bundle(tmp_path, "sanitize-run") / "command.json").read_text(
-        encoding="utf-8"
-    )
+    command_text = (_bundle(tmp_path, "sanitize-run") / "command.json").read_text(encoding="utf-8")
     command = json.loads(command_text)
 
     assert completed.returncode == 0

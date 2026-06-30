@@ -72,7 +72,9 @@ class VerificationPolicy:
         if not isinstance(required, bool):
             raise EnvelopeError("verification.required must be a boolean")
         if required and not commands:
-            raise EnvelopeError("verification.commands is required when verification.required is true")
+            raise EnvelopeError(
+                "verification.commands is required when verification.required is true"
+            )
 
         run_scope = value.get("run_scope", "clone")
         if run_scope not in RUN_SCOPES:
@@ -513,7 +515,11 @@ def create_supervised_bundle(
             base_sha=clone_result.base_sha or "HEAD",
             bundle_path=bundle_path,
         )
-        checks_payload = {"required": envelope.verification.required, "commands": [], "passed": None}
+        checks_payload = {
+            "required": envelope.verification.required,
+            "commands": [],
+            "passed": None,
+        }
         post_apply: dict[str, Any] | None = None
         final_status = parse_status(run_result.status) if run_result.status != "success" else None
 
@@ -579,7 +585,9 @@ def create_supervised_bundle(
 
         command_payload.update(
             {
-                "agy_argv": _sanitize_argv(run_result.argv, prompt_replacement="<prompt:prompt.txt>"),
+                "agy_argv": _sanitize_argv(
+                    run_result.argv, prompt_replacement="<prompt:prompt.txt>"
+                ),
                 "resolved_agy": run_result.resolved_agy,
                 "base_sha": clone_result.base_sha,
                 "clone_path": str(clone_path),
@@ -1003,7 +1011,9 @@ def classify_transcript(path: Path) -> TranscriptClassification:
             claude_file_tool_seen = True
             evidence.append(f"line {line_number}: Claude file tool {tool_name}")
 
-    classification = "real" if agy_command_seen and not claude_file_tool_seen else "fallback_suspected"
+    classification = (
+        "real" if agy_command_seen and not claude_file_tool_seen else "fallback_suspected"
+    )
     return TranscriptClassification(
         classification=classification,
         agy_command_seen=agy_command_seen,
@@ -1087,7 +1097,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--run-id", help="Run id to use for deterministic tests")
     parser.add_argument("--launch-agy", action="store_true", help="Run agy after validation")
-    parser.add_argument("--validation-only", action="store_true", help="Validate without running agy")
+    parser.add_argument(
+        "--validation-only", action="store_true", help="Validate without running agy"
+    )
     parser.add_argument("--dry-run", action="store_true", help="Alias for --validation-only")
     parser.add_argument("--agy-bin", help="agy executable path for tests or host-specific installs")
     parser.add_argument("--role", choices=sorted(ROLES), default="coder")
@@ -1100,11 +1112,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--apply-policy", choices=sorted(APPLY_POLICIES))
     parser.add_argument("--evidence", choices=sorted(EVIDENCE_LEVELS), default="summary")
     parser.add_argument("--verification-command", action="append", default=[])
-    parser.add_argument("--verification-required", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--verification-required", action=argparse.BooleanOptionalAction, default=False
+    )
     parser.add_argument("--verification-run-scope", choices=sorted(RUN_SCOPES), default="clone")
     parser.add_argument("--timeout-seconds", type=int, default=900)
     parser.add_argument("--no-output-seconds", type=int, default=180)
-    parser.add_argument("--provenance-required", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--provenance-required", action=argparse.BooleanOptionalAction, default=True
+    )
     return parser
 
 
@@ -1458,9 +1474,7 @@ def _clone_git_state(clone_result: CloneSetupResult | None) -> dict[str, Any]:
             "entries": _parse_status_z(status.stdout) if status.returncode == 0 else [],
             "stderr": status.stderr,
         },
-        "remotes_after": [
-            line.strip() for line in remotes.stdout.splitlines() if line.strip()
-        ]
+        "remotes_after": [line.strip() for line in remotes.stdout.splitlines() if line.strip()]
         if remotes.returncode == 0
         else [],
         "rogue_commits": _rogue_commits(

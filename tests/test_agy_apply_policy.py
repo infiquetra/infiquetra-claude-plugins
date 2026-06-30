@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 ROOT = Path(__file__).parent.parent
 WRAPPER = ROOT / "plugins" / "agy" / "scripts" / "agy_delegate.py"
@@ -94,8 +95,8 @@ def _bundle(repo: Path, run_id: str) -> Path:
     return repo / ".claude" / "agy" / "runs" / run_id
 
 
-def _json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
+def _json(path: Path) -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
 def test_patch_only_preserves_clone_patch_without_live_mutation(tmp_path: Path) -> None:
@@ -168,7 +169,7 @@ def test_auto_if_clean_applies_in_scope_patch_after_required_checks(tmp_path: Pa
             mode="auto-if-clean",
             apply_policy="apply-if-clean",
             verification={
-                "commands": ["test \"$(cat allowed.txt)\" = after"],
+                "commands": ['test "$(cat allowed.txt)" = after'],
                 "required": True,
                 "run_scope": "clone",
             },

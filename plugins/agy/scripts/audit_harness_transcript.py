@@ -36,7 +36,9 @@ def audit_transcript(path: Path) -> dict[str, Any]:
         str(payload.get("status")) for payload in result_payloads if payload.get("status")
     ]
     agy_results = [payload for payload in result_payloads if payload.get("agy_launched") is True]
-    passing_results = bool(result_statuses) and all(status in PASS_STATUSES for status in result_statuses)
+    passing_results = bool(result_statuses) and all(
+        status in PASS_STATUSES for status in result_statuses
+    )
 
     passed = (
         classification["classification"] == "real"

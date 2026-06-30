@@ -87,9 +87,7 @@ def test_valid_envelope_normalizes_defaults(agy_delegate: ModuleType) -> None:
         ("evidence", "verbose"),
     ],
 )
-def test_invalid_enum_rejection(
-    agy_delegate: ModuleType, field: str, value: object
-) -> None:
+def test_invalid_enum_rejection(agy_delegate: ModuleType, field: str, value: object) -> None:
     payload = _valid_payload(**{field: value})
 
     with pytest.raises(agy_delegate.EnvelopeError):
@@ -200,9 +198,9 @@ def test_cli_flags_normalize_to_envelope(tmp_path: Path) -> None:
     )
 
     envelope = json.loads(
-        (
-            tmp_path / ".claude" / "agy" / "runs" / "flags-run" / "envelope.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / ".claude" / "agy" / "runs" / "flags-run" / "envelope.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert completed.returncode == 0
     assert envelope["role"] == "reviewer"

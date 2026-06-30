@@ -27,6 +27,34 @@
 
 ## 2026-06-30
 
+### PreCompact is write-only; SessionStart(compact) injects and a >10k additionalContext spills to a file (not truncation)  {#precompact-spore-grounding-corrections}
+
+**Context.** Building the #281 spore, two assumptions the brainstorm carried turned out wrong against the actual Claude Code hook contract — each changed *how* a requirement is met, not the scope.
+
+**Evidence.** Claude Code hooks reference (verified this session): `PreCompact` carries `session_id`/`cwd`/`trigger`(auto|manual)/`transcript_path` and is **write-only** — its only output is `decision: block`; it cannot inject context. `SessionStart(source=compact)` injects `additionalContext`, and when the value exceeds 10,000 chars the harness writes the full text to the session dir and hands back a path + preview (spill-to-file), rather than hard-truncating. Multiple SessionStart hooks all inject. `hooks.json` had no `PreCompact` and a single `startup|resume` SessionStart entry (commit 844003e wired the two new entries).
+
+**Mechanism.** Because PreCompact can't inject, the two-hook split (write-to-disk, then re-inject from SessionStart) is *mandatory*, not a preference. Because >10k spills rather than truncates, the ≤9k budget's purpose shifts from "avoid harness data loss" to "keep the resumable core in the immediately-visible preview" — the frontier is never lost by the harness regardless, but inlining avoids a file read.
+
+**Fix.** Two-hook split with a separate `compact`-matched SessionStart hook (KTD1); ≤9k deterministic budget with the ready frontier never dropped + a counted-drop pointer. Commits 6e19dae→a809194.
+
+**Generalizable rule.** Verify hook I/O contracts (which events inject vs only block; cap-vs-spill semantics) against the reference BEFORE designing around them — a brainstorm's "matchers + injection" shorthand can hide a load-bearing constraint.
+
+**Refs.** DECISIONS `#precompact-spore-two-hook`; plan `docs/plans/2026-06-30-precompact-spore-rehydration-plan.md`.
+
+### agy v0.1.0 (Gemini 3.1 Pro High) delegated 3/3 bounded units correctly; fixes were cosmetic; the fixture-heavy unit was real, not hollow  {#agy-pro-high-coder-dogfood-281}
+
+**Context.** First production dogfood of the first-party `agy` plugin (v0.1.0) as a delegated coder on the #281 build: U2 (PreCompact hook), U3 (SessionStart hook), and U5 (the fixture-heavy seam test) were delegated via the `agy-coder` bridge agent with model `Gemini 3.1 Pro (High)`, mode `patch-only`, Claude as sole committer/verifier.
+
+**Evidence.** Three genuine runs (bundles `.claude/agy/runs/20260630T18{3118,4007,5204}Z…`), each with `agy_launched=true`, `removed_remotes=[origin]`, `rogue_commits=[]`, and changes confined to the declared write_set. All three patches were functionally correct on first apply (full test suites passed); the only Claude fixes were cosmetic — ruff (exception suffix, ternary, `contextlib.suppress`, trailing whitespace) and two wrong saga-enum values in a test fixture. U5 (which needed a real outcome on disk) came back genuinely real, asserting the frontier through the full subprocess seam.
+
+**Mechanism.** Containment is structural, not ritual: agy runs in a remotes-stripped disposable clone (can't push), out-of-write_set edits trip `out_of_scope_mutation`, and the Bash-only bridge agent can't fall back to Claude file tools (provenance is the run bundle, not a transcript grep). The U5 "real not hollow" result required handing agy the validated fixture recipe in the task packet — de-risking by specification, not by confiscating the unit.
+
+**What surprised.** The fixture-heavy test (the case I expected agy to fake, and wrongly tried to take back myself) came back genuinely real once the recipe was specified — the dominant failure mode was lint noise, not logic.
+
+**Generalizable rule.** For bounded, well-specified units, agy-Pro-High is a competent delegate whose cost is cosmetic review churn; de-risk the hard units by specifying fixtures, and never silently reassign an agreed-delegated unit to yourself — that defeats the dogfood (memory `feedback-dogfood-find-the-edges`).
+
+**Refs.** DECISIONS `#precompact-spore-two-hook`; commits 443739d (U2), 64eba16 (U3), a809194 (U5); memory `reference-agy-plugin-interface`.
+
 ### Antigravity print-mode writes need an explicit repo boundary; sandbox mode writes to Antigravity scratch, not the wrapper clone  {#agy-print-mode-repo-boundary}
 
 **Context.** While proving the new first-party `agy` teammate plugin with a live Claude Code

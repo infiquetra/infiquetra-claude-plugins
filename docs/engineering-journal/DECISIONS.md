@@ -24,6 +24,42 @@
 
 ## 2026-06-30
 
+### PreCompact spore = a two-hook structured re-grounding at the compaction boundary (#281)  {#precompact-spore-two-hook}
+
+**Decision.** Guard the mid-run auto-compaction boundary with a two-hook "spore": a `PreCompact` hook
+freezes the active saga box + the OutcomeOrchestrator DAG frontier to a session-keyed cache at
+`<git-common-dir>/saga-spores/<session_id>.json`, and a **separate** `SessionStart(source=compact)`
+hook reads it, unlinks before emitting (at-most-once), and re-injects it as a self-describing
+`additionalContext` block. The DAG is frozen via `outcome.status()` (the single derived-on-read
+source); outcome discovery is leaf-id-authoritative with a bounded best-effort store scan and a hard
+"≥2 non-complete stores + no leaf-id → omit the DAG" anti-guess; serialization is a deterministic ≤9k
+budget with the ready frontier never dropped + a counted-drop pointer; both hooks degrade silently AND
+on a 1.5s SIGALRM wall-clock deadline.
+
+**Rejected alternatives.** (1) A single SessionStart hook that branches — rejected: `PreCompact` cannot
+inject (only `decision: block`), so the write-then-reinject split is *mandatory*, not a preference.
+(2) Folding the compact path into `stale_main_session_hook.py` (KTD1) — rejected: a separate
+`compact`-matched hook keeps the proven `startup|resume` path at zero regression risk. (3) Adding a
+`Saga.outcome_id` field (KTD4) — rejected: the leaf saga id already encodes the outcome, so no schema
+change is needed; ambiguity is closed by the anti-guess instead. (4) Writing a saga tick at PreCompact
+(KTD8) — rejected: ticks land under the worktree-relative `.claude/saga` and would re-introduce the
+vanish-under-removed-worktree hazard the git-common-dir cache exists to fix.
+
+**Rationale.** The spore AUGMENTS the post-compaction window with authoritative structured facts beside
+the lossy prose summary; it is the anchor, never the authority (committed docs + GitHub win on durable
+conflict, R11). The git-common-dir home (mirroring `outcome_store`) is the only worktree-stable
+location. Never blocking/stalling compaction is non-negotiable — the user is waiting on it — hence the
+silent + bounded-deadline degrade (R12).
+
+**Revisit when.** A clean session→saga binding source appears (`session_id` reaching `saga.py save`),
+letting the same-cwd multi-session R9 limitation be closed with a real map; OR if the harness
+`additionalContext` cap/spill semantics change (the ≤9k budget assumes >10k spills to a file, not
+truncation).
+
+**Refs.** Plan `docs/plans/2026-06-30-precompact-spore-rehydration-plan.md`; LEARNINGS
+`#precompact-spore-grounding-corrections` + `#agy-pro-high-coder-dogfood-281`; commits 6e19dae (U1) →
+a809194 (U5).
+
 ### Use mode-specific `agy` argv for the first-party wrapper  {#agy-wrapper-mode-specific-argv}
 
 **Decision.** The `plugins/agy/scripts/agy_delegate.py` wrapper invokes `agy` in foreground print

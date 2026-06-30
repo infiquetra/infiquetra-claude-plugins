@@ -316,6 +316,16 @@ user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing.
 - **`checkpoints/` is legacy.** Pre-0.4.0 per-phase checkpoint files (`{kind}-{id}[-round-N]-phaseM[-status].md`).
   `scan` reads them as **flagged, low-priority fallback for one version** (§8), then they are dropped.
 
+**Additive caches outside the three tiers (git-common-dir, not `.claude/saga`).** Two performance caches
+live under the repo's **git common dir** — `saga-outcomes/<id>/` (the OutcomeOrchestrator store) and
+`saga-spores/<session_id>.json` (the compaction spore, #281: the active saga box + frozen DAG frontier
+that a `PreCompact` hook freezes and a `SessionStart(source=compact)` hook re-injects after an
+auto-compaction so the continuing session re-grounds on structured facts, not the lossy prose summary).
+They are deliberately NOT under the worktree-relative `.claude/saga` (§5.2) so they survive across
+worktrees, and both are **additive and non-canonical** — the anchor, never the authority; deleting either
+loses no canonical state (it is rebuilt from the spec/saga + GitHub). See DECISIONS
+`#precompact-spore-two-hook`.
+
 ### 5.2 Filename IS the order — never `mtime`
 
 Ticks are ordered **purely by filename string**, never by file modification time. The newest tick for a saga

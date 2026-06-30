@@ -1,6 +1,6 @@
 # Outcome: Ship the first-party agy Claude Code plugin with Antigravity-backed coder/reviewer teammates, shared evidence wrapper, write gates, live harness proof, and merged PR.
 
-**Outcome ID:** `antigravity-teammate-plugin` · **Revision:** 2 · **Progress:** 2/7 (29%)
+**Outcome ID:** `antigravity-teammate-plugin` · **Revision:** 2 · **Progress:** 3/7 (43%)
 
 ## Topology
 
@@ -8,8 +8,8 @@
 flowchart TD
     u1-scaffold["u1-scaffold: done"]
     u2-envelope["u2-envelope: done"]
-    u3-runner["u3-runner: dispatched"]
-    u4-apply-policy["u4-apply-policy: blocked"]
+    u3-runner["u3-runner: done"]
+    u4-apply-policy["u4-apply-policy: dispatched"]
     u5-prompts["u5-prompts: blocked"]
     u6-harness["u6-harness: blocked"]
     u7-release-merge["u7-release-merge: blocked"]
@@ -31,8 +31,8 @@ flowchart TD
 | --- | --- | --- | --- |
 | `u1-scaffold` | done | — | no data yet |
 | `u2-envelope` | done | — | no data yet |
-| `u3-runner` | dispatched | — | no data yet |
-| `u4-apply-policy` | blocked | — | no data yet |
+| `u3-runner` | done | — | no data yet |
+| `u4-apply-policy` | dispatched | — | no data yet |
 | `u5-prompts` | blocked | — | no data yet |
 | `u6-harness` | blocked | — | no data yet |
 | `u7-release-merge` | blocked | — | no data yet |

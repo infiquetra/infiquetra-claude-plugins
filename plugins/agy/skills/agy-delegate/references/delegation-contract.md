@@ -28,6 +28,23 @@ evidence, and decides whether a patch may be preserved or imported.
 }
 ```
 
+Field rules:
+
+- `schema` must be `agy.delegation.v1`.
+- `role` must be `coder` or `reviewer`.
+- `mode` must be `no-write`, `patch-only`, or `auto-if-clean`.
+- `task` and `model` must be non-empty strings.
+- `review_lens` may be `null`, `adversarial`, `quality`, `scope-gap`, or `security-ops`.
+- `write_set` must contain repo-relative paths only. Absolute paths and `..` are invalid.
+- `apply_policy` must be `preserve-patch` or `apply-if-clean`.
+- `evidence` must be `minimal`, `summary`, or `full`.
+- `verification.commands` must be a list of non-empty strings supplied by the orchestrator or
+  operator, not by the delegate. When `verification.required` is `true`, at least one command is
+  required. `verification.run_scope` must be `clone`, `live`, or `none`.
+- `timeout_seconds` and `no_output_seconds` must be positive integers, and `no_output_seconds`
+  must not exceed `timeout_seconds`.
+- `provenance_required` must be a boolean.
+
 ## Modes
 
 - `no-write`: review or analysis only. No live-tree mutation is allowed.
@@ -37,6 +54,9 @@ evidence, and decides whether a patch may be preserved or imported.
 
 Reviewer delegation defaults to `no-write`. Coder delegation defaults to `patch-only` unless the
 caller supplies an explicit write-set and requests `auto-if-clean`.
+
+`auto-if-clean` with an empty `write_set` is rejected before any subprocess launch or bundle
+creation.
 
 ## Evidence
 
@@ -48,6 +68,40 @@ Every wrapper run writes a local bundle under:
 
 The projection returned to Claude Code must include the bundle path. If the wrapper cannot write
 the bundle, the run fails.
+
+The U2 validation-only wrapper writes this minimum bundle:
+
+```text
+.claude/agy/runs/<run-id>/
+  envelope.json
+  prompt.txt
+  command.json
+  run-lease.json
+  result.json
+  projection.md
+```
+
+`projection.md` is emitted to stdout. U2 does not launch `agy`; U3 adds supervised process
+execution.
+
+## Status Enum
+
+Wrapper result statuses are snake_case:
+
+- `success`
+- `patch_ready`
+- `applied`
+- `plan_gap`
+- `test_conflict`
+- `path_missing`
+- `timeout`
+- `no_output`
+- `fallback_suspected`
+- `out_of_scope_mutation`
+- `checks_failed`
+- `shutdown_incomplete`
+- `bundle_failed`
+- `error`
 
 ## Prompt Surface Rule
 

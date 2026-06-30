@@ -47,16 +47,43 @@ Field rules:
 
 ## Modes
 
+The wrapper is the only supported execution path for every mode.
+
 - `no-write`: review or analysis only. No live-tree mutation is allowed.
 - `patch-only`: preserve a derived patch in the evidence bundle without applying it.
 - `auto-if-clean`: apply only when the wrapper proves a clean compatible tree, explicit write-set,
   in-scope changes, orchestrator-supplied verification success, and real Antigravity provenance.
 
-Reviewer delegation defaults to `no-write`. Coder delegation defaults to `patch-only` unless the
-caller supplies an explicit write-set and requests `auto-if-clean`.
+Reviewer delegation defaults to `no-write`. Coder delegation defaults to `mode=patch-only` and
+`apply_policy=preserve-patch` unless the caller supplies an explicit repo-relative write-set and
+requests `mode=auto-if-clean` with `apply_policy=apply-if-clean` and required verification commands.
 
 `auto-if-clean` with an empty `write_set` is rejected before any subprocess launch or bundle
 creation.
+
+## Bridge-Agent Contract
+
+Packaged bridge agents are Bash-only. `agy-coder` and `agy-reviewer` have `tools: Bash` and must
+invoke exactly one foreground wrapper run per delegated turn:
+
+```bash
+python3 plugins/agy/scripts/agy_delegate.py
+```
+
+They must not use direct Claude repo file tools such as Read, Edit, MultiEdit, Write, NotebookEdit,
+Glob, Grep, or LS to inspect, solve, patch, or review the repository.
+Direct Read/Edit/Write solving is a contract breach. They also must not call raw `agy`, use background or detached launch
+paths, commit, push, rewrite history, edit remotes, open PRs, change remote state, or perform
+deployment or production actions.
+
+The coder packet should frame the delegate as an expert software engineer, instruct it to
+read-broad/write-narrow, name the exact write-set, include orchestrator-supplied verification
+commands, require `PLAN_GAP:`, `TEST_CONFLICT:`, and `PATH_MISSING:` markers when blocked, and ask
+for a run report covering changed files, checks run, checks not run, evidence, and residual risk.
+
+The reviewer packet defaults to `role=reviewer`, `mode=no-write`, and `review_lens=adversarial`.
+The only supported review lenses are `adversarial`, `quality`, `scope-gap`, and `security-ops`;
+lens changes belong in the envelope, not in additional agents.
 
 ## Evidence
 
@@ -126,4 +153,5 @@ Packaged commands and bridge agents invoke:
 python3 plugins/agy/scripts/agy_delegate.py
 ```
 
-They do not expose raw `agy`, background execution, direct file editing, or a second execution path.
+They do not expose raw `agy`, background execution, direct file editing, local solving fallback, or
+a second execution path.

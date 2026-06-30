@@ -1,7 +1,7 @@
 ---
 name: delegate
 description: Submit an Antigravity teammate delegation envelope through the guarded agy wrapper
-argument-hint: "role=<coder|reviewer> mode=<no-write|patch-only|auto-if-clean> evidence=<minimal|summary|full>"
+argument-hint: "role=<coder|reviewer> mode=<no-write|patch-only|auto-if-clean> evidence=<minimal|summary|full> write-set=<path> verification=<command>"
 ---
 
 Delegate one bounded task to an Antigravity-backed teammate through the guarded wrapper.
@@ -12,7 +12,26 @@ Delegate one bounded task to an Antigravity-backed teammate through the guarded 
 2. Build an `agy.delegation.v1` envelope from the command arguments and task text.
 3. Invoke exactly one wrapper run with `python3 plugins/agy/scripts/agy_delegate.py`.
 4. Return the wrapper projection, including the evidence bundle path.
-5. Do not invoke raw `agy` directly and do not use a weaker runner path.
+5. Do not invoke raw `agy` directly, do not use background or detached execution, and do not use a
+   weaker runner path.
+6. Do not use direct Claude repo file tools to solve the delegated task locally.
+
+## Argument Syntax
+
+- `role=<coder|reviewer>` selects the envelope role. Reviewer defaults are `mode=no-write` and
+  `review_lens=adversarial`.
+- `mode=<no-write|patch-only|auto-if-clean>` selects the write gate. Coder defaults to
+  `patch-only`.
+- `evidence=<minimal|summary|full>` selects the evidence bundle detail level.
+- `review_lens=<adversarial|quality|scope-gap|security-ops>` selects one reviewer lens without
+  creating another agent.
+- `write-set=<repo-relative-path>` may be repeated. It is required when mutation may be imported,
+  and `auto-if-clean` requires at least one explicit write-set path.
+- `verification=<command>` may be repeated. Required verification commands must be supplied by the
+  operator or orchestrator, not invented by the delegate.
+- `verification-required=<true|false>` declares whether the wrapper must see successful checks.
+- `verification-run-scope=clone` is required for `auto-if-clean`; other scopes are accepted only for
+  non-applying evidence paths.
 
 ## Quick Reference
 
@@ -21,6 +40,9 @@ python3 plugins/agy/scripts/agy_delegate.py \
   --role coder \
   --mode patch-only \
   --evidence summary \
+  --write-set plugins/example/file.py \
+  --verification-command "PYTHONPATH=. python3 -m pytest -q tests/test_example.py" \
+  --verification-required \
   --task-file /path/to/task.md
 ```
 

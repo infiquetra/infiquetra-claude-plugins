@@ -18,7 +18,8 @@ python3 plugins/agy/scripts/agy_delegate.py
 ```
 
 The wrapper is the only supported execution path. Do not call raw `agy` directly, do not run a
-background path, and do not solve the delegated task locally as a fallback.
+background or detached path, and do not solve the delegated task locally as a fallback.
+Direct Read/Edit/Write solving is a contract breach.
 
 ## Required Inputs
 
@@ -28,6 +29,20 @@ background path, and do not solve the delegated task locally as a fallback.
 - `evidence`: `minimal`, `summary`, or `full`.
 - `write_set`: explicit paths when mutation may be imported.
 - `verification`: orchestrator-supplied commands when checks are required.
+
+## Shared Envelope Gate
+
+- Coder delegations default to `mode=patch-only` and `apply_policy=preserve-patch`.
+- Coder delegations may use `mode=auto-if-clean` only with an explicit repo-relative write-set,
+  `apply_policy=apply-if-clean`, and required verification commands.
+- Reviewer delegations default to `role=reviewer`, `mode=no-write`, and
+  `review_lens=adversarial`.
+- Supported reviewer lenses are `adversarial`, `quality`, `scope-gap`, and `security-ops`; route
+  lens variants through the envelope instead of creating more agents.
+- Verification commands are supplied by the orchestrator or operator. The delegated teammate must
+  not invent the gate it will be judged by.
+- The wrapper owns evidence capture, provenance classification, changed-path checks, and live-tree
+  apply decisions.
 
 ## Delegation Flow
 

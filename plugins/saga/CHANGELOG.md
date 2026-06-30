@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.43.0 - 2026-06-30
+
+### PreCompact spore — re-ground the continuing session on structured facts (#281)
+- New two-hook "spore" that guards the mid-run auto-compaction boundary: a `PreCompact` hook freezes the
+  active saga box + the OutcomeOrchestrator DAG frontier (derived-on-read via `outcome.status`) to a
+  session-keyed, worktree-stable cache `<git-common-dir>/saga-spores/<session_id>.json`; a separate
+  `SessionStart(source=compact)` hook reads it, unlinks before emitting (at-most-once), and re-injects it
+  as a self-describing `additionalContext` block so the continuing session re-grounds on structured
+  facts, not the lossy prose summary.
+- New `saga_spore.py` core (pure, offline-testable): active-saga resolution, leaf-id + bounded-scan
+  outcome discovery (never guesses on ambiguity), DAG freeze, deterministic ≤9k serialization with the
+  ready frontier **never dropped** plus a counted-drop pointer, and the dump/load seam with a
+  `saga_id` + repo-root mismatch guard.
+- Both hooks degrade silently **and** on a hard 1.5s wall-clock deadline (SIGALRM) — compaction is never
+  blocked or stalled. The existing `/resume` path, tick chain, and `state.json` model are untouched
+  (additive cache; the spore is the anchor, never the authority).
+- Hooks registered in `hooks.json`: `PreCompact` (matcher `auto|manual`) + a sibling `SessionStart`
+  (matcher `compact`, separate from the existing `startup|resume` entry).
+
 ## 0.42.0 - 2026-06-29
 
 ### Reversibility/idempotency certificate + autonomous `/outcome` board-sync (#279)

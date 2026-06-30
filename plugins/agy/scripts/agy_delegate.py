@@ -270,6 +270,7 @@ def create_validation_bundle(
     argv: list[str] | None = None,
     now: datetime | None = None,
 ) -> BundleResult:
+    repo_root = repo_root.resolve()
     timestamp = now or datetime.now(UTC)
     resolved_run_id = run_id or _new_run_id(timestamp)
     _validate_run_id(resolved_run_id)
@@ -278,7 +279,7 @@ def create_validation_bundle(
     try:
         bundle_path.mkdir(parents=True, exist_ok=False)
         envelope_payload = envelope.to_jsonable()
-        prompt = render_prompt(envelope)
+        prompt = render_prompt(envelope, repo_root=repo_root)
         command_payload = {
             "validation_only": True,
             "agy_launch_planned": False,
@@ -343,6 +344,7 @@ def create_supervised_bundle(
     agy_bin: str | None = None,
     now: datetime | None = None,
 ) -> BundleResult:
+    repo_root = repo_root.resolve()
     timestamp = now or datetime.now(UTC)
     resolved_run_id = run_id or _new_run_id(timestamp)
     _validate_run_id(resolved_run_id)
@@ -350,8 +352,9 @@ def create_supervised_bundle(
 
     try:
         bundle_path.mkdir(parents=True, exist_ok=False)
+        clone_path = bundle_path / "worktree"
         envelope_payload = envelope.to_jsonable()
-        prompt = render_prompt(envelope)
+        prompt = render_prompt(envelope, repo_root=clone_path)
         prompt_path = bundle_path / "prompt.txt"
         prompt_path.write_text(prompt, encoding="utf-8")
         _write_json(bundle_path / "envelope.json", envelope_payload)
@@ -360,7 +363,6 @@ def create_supervised_bundle(
         stderr_path = bundle_path / "stderr.log"
         stdout_path.touch()
         stderr_path.touch()
-        clone_path = bundle_path / "worktree"
         checks_path = bundle_path / "checks.json"
         git_proof_path = bundle_path / "git-proof.json"
         diff_patch_path = bundle_path / "diff.patch"
@@ -662,6 +664,7 @@ def run_agy_supervised(
     argv = _build_agy_argv(
         resolved_agy=resolved_agy,
         envelope=envelope,
+        workspace_dir=repo_root,
         prompt=prompt,
         log_path=bundle_path / "agy.log",
     )
@@ -1009,8 +1012,9 @@ def classify_transcript(path: Path) -> TranscriptClassification:
     )
 
 
-def render_prompt(envelope: Envelope) -> str:
+def render_prompt(envelope: Envelope, *, repo_root: Path | None = None) -> str:
     lens = envelope.review_lens or "none"
+    boundary = str(repo_root) if repo_root is not None else "the current repository root"
     write_set = "\n".join(f"- {path}" for path in envelope.write_set) or "- none"
     commands = "\n".join(f"- {command}" for command in envelope.verification.commands) or "- none"
     return "\n".join(
@@ -1025,6 +1029,11 @@ def render_prompt(envelope: Envelope) -> str:
             "",
             "## Task",
             envelope.task,
+            "",
+            "## Repository Boundary",
+            f"Repository root: {boundary}",
+            "Work in this repository root only. Do not use Antigravity's default scratch directory "
+            "for repository files.",
             "",
             "## Write Set",
             write_set,
@@ -1497,10 +1506,11 @@ def _build_agy_argv(
     *,
     resolved_agy: str,
     envelope: Envelope,
+    workspace_dir: Path,
     prompt: str,
     log_path: Path,
 ) -> list[str]:
-    return [
+    argv = [
         resolved_agy,
         "--model",
         envelope.model,
@@ -1508,9 +1518,14 @@ def _build_agy_argv(
         f"{envelope.timeout_seconds}s",
         "--log-file",
         str(log_path),
-        "--print",
-        prompt,
+        "--add-dir",
+        str(workspace_dir),
     ]
+    if envelope.mode == "no-write":
+        argv.append("--sandbox")
+    else:
+        argv.append("--dangerously-skip-permissions")
+    return [*argv, "--print", prompt]
 
 
 def _terminate_process(process: subprocess.Popen[bytes]) -> str:

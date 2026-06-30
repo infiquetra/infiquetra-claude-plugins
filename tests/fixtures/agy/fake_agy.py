@@ -29,6 +29,9 @@ def main() -> int:
     parser.add_argument("--model")
     parser.add_argument("--print-timeout")
     parser.add_argument("--log-file")
+    parser.add_argument("--add-dir", action="append", default=[])
+    parser.add_argument("--sandbox", action="store_true")
+    parser.add_argument("--dangerously-skip-permissions", action="store_true")
     parser.add_argument("--print", dest="prompt", required=True)
     args = parser.parse_args()
 

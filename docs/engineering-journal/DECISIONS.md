@@ -24,6 +24,32 @@
 
 ## 2026-06-30
 
+### Use mode-specific `agy` argv for the first-party wrapper  {#agy-wrapper-mode-specific-argv}
+
+**Decision.** The `plugins/agy/scripts/agy_delegate.py` wrapper invokes `agy` in foreground print
+mode with mode-specific execution flags: `no-write` adds `--sandbox`; patch-producing modes add
+`--dangerously-skip-permissions`, `--add-dir <disposable-clone>`, and an absolute repository
+boundary in the prompt packet before any patch is imported into the live tree.
+
+**Rejected alternatives.** Rejected always using `--sandbox` because live proof showed write tasks
+completed while modifying Antigravity's default scratch directory instead of the wrapper clone.
+Rejected omitting noninteractive permission approval for write modes because live proof showed the
+write path could sit silent until the no-output watchdog killed it. Rejected trusting `agy` stdout
+claims because the plugin's contract is git-derived evidence and managed patch import.
+
+**Rationale.** The wrapper's safety boundary is the disposable clone plus changed-path,
+verification, and `git apply` gate. `no-write` benefits from sandboxed print mode because no patch
+should be produced. Write modes need permission to modify the clone so the wrapper can derive a real
+diff, but the live tree remains protected by the explicit write-set and apply policy.
+
+**Revisit when.** Revisit if `agy` gains a noninteractive flag that writes inside a named workspace
+without broad tool approval, if `--sandbox` gains a way to bind the repository root as the writable
+scratch, or if live evidence shows write-mode `--dangerously-skip-permissions` can mutate outside the
+disposable clone despite prompt and remote-removal controls.
+
+**Refs.** LEARNINGS [#agy-print-mode-repo-boundary](LEARNINGS.md#agy-print-mode-repo-boundary);
+harness proof `plugins/agy/docs/harness-proof.md`.
+
 ### Plan the Antigravity teammate plugin as an evidence-first `agy` plugin with clone-backed patch import  {#antigravity-teammate-plugin-plan-stance}
 
 **Decision.** Build the new Antigravity teammate integration as a first-party `agy` Claude Code

@@ -125,6 +125,39 @@ def test_patch_only_preserves_clone_patch_without_live_mutation(tmp_path: Path) 
     assert _git(bundle / "worktree", "remote").stdout == ""
 
 
+def test_relative_repo_root_does_not_make_bundle_logs_clone_changes(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    envelope_path = tmp_path / "relative-envelope.json"
+    envelope_path.write_text(json.dumps(_payload("FAKE_AGY_MODE=success")), encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(WRAPPER),
+            "--repo-root",
+            repo.name,
+            "--run-id",
+            "relative-root-run",
+            "--envelope",
+            str(envelope_path),
+            "--launch-agy",
+            "--agy-bin",
+            str(FAKE_AGY),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    bundle = _bundle(repo, "relative-root-run")
+
+    assert completed.returncode == 0
+    assert _json(bundle / "result.json")["status"] == "success"
+    assert _json(bundle / "changed-paths.json")["changed_paths"] == []
+    assert (bundle / "agy.log").exists()
+    assert (bundle / "diff.patch").read_text(encoding="utf-8") == ""
+
+
 def test_auto_if_clean_applies_in_scope_patch_after_required_checks(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     completed = _run_wrapper(

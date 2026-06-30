@@ -136,6 +136,8 @@ def test_fake_agy_success_writes_run_lease_and_logs(tmp_path: Path) -> None:
     assert lease["shutdown"] == "exited"
     assert lease["real_agy_verdict"] == "real"
     assert command["resolved_agy"] == str(FAKE_AGY)
+    assert "--add-dir" in command["agy_argv"]
+    assert "--dangerously-skip-permissions" in command["agy_argv"]
     assert "<prompt:prompt.txt>" in command["agy_argv"]
     assert "fake agy success" in (bundle / "stdout.log").read_text(encoding="utf-8")
     assert "fake agy stderr note" in (bundle / "stderr.log").read_text(encoding="utf-8")
@@ -243,3 +245,22 @@ def test_classify_transcript_real_and_fallback_suspected() -> None:
 
 def test_fake_agy_fixture_is_executable() -> None:
     assert os.access(FAKE_AGY, os.X_OK)
+
+
+def test_reviewer_no_write_uses_agy_sandbox(tmp_path: Path) -> None:
+    completed = _run_wrapper(
+        tmp_path,
+        _payload(
+            "FAKE_AGY_MODE=success",
+            role="reviewer",
+            mode="no-write",
+            write_set=[],
+            apply_policy="preserve-patch",
+        ),
+        "reviewer-sandbox-run",
+    )
+    command = _json(_bundle(tmp_path, "reviewer-sandbox-run") / "command.json")
+
+    assert completed.returncode == 0
+    assert "--sandbox" in command["agy_argv"]
+    assert "--dangerously-skip-permissions" not in command["agy_argv"]

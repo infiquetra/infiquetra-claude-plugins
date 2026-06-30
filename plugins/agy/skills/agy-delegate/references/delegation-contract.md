@@ -72,9 +72,13 @@ python3 plugins/agy/scripts/agy_delegate.py
 
 They must not use direct Claude repo file tools such as Read, Edit, MultiEdit, Write, NotebookEdit,
 Glob, Grep, or LS to inspect, solve, patch, or review the repository.
-Direct Read/Edit/Write solving is a contract breach. They also must not call raw `agy`, use background or detached launch
-paths, commit, push, rewrite history, edit remotes, open PRs, change remote state, or perform
-deployment or production actions.
+Direct Read/Edit/Write solving is a contract breach. They also must not call raw `agy`, use
+background or detached launch paths, commit, push, rewrite history, edit remotes, open PRs, change
+remote state, or perform deployment or production actions. The wrapper invokes `agy` in foreground
+print mode. `no-write` runs with `--sandbox`; patch-producing modes run with
+`--dangerously-skip-permissions` inside the disposable clone so print mode cannot stall on tool
+permission prompts. V1's enforceable guarantee is repository patch import safety through the
+disposable clone and apply gate, not broad machine-level containment.
 
 The coder packet should frame the delegate as an expert software engineer, instruct it to
 read-broad/write-narrow, name the exact write-set, include orchestrator-supplied verification

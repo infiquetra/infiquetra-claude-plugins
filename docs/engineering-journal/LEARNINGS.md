@@ -27,6 +27,44 @@
 
 ## 2026-06-30
 
+### Gemini 3.1 Pro (High) first real run — the exact fix catalog: lint + wrong-domain-enum guesses + one atomic-write edge  {#gemini-31-pro-first-run-fix-catalog}
+
+**Context.** Granular companion to `#agy-pro-high-coder-dogfood-281` (the verdict/mechanism entry). On our
+**first** genuine plugin-mediated agy build (Gemini 3.1 Pro High, U2/U3/U5 of #281), every Claude fix is
+enumerated here so the next delegation pre-empts these classes in the task packet rather than rediscovering
+them.
+
+**Evidence.** Three classes, only one substantive:
+1. **Cosmetic lint (ruff), zero-logic:** `N818` exception needs an `Error` suffix
+   (`DeadlineExceeded` → `DeadlineExceededError`); `SIM105` (`try/except/pass` → `contextlib.suppress`);
+   `SIM108` (if/else → ternary); `F401` (unused import); `W293` (trailing whitespace on blank lines);
+   `E402` (sys.path-mediated sibling imports in the seam test → `# noqa: E402`).
+2. **Wrong-domain enum guesses (semantic; the build caught them):** plausible-but-invalid saga enum values —
+   `lifecycle_phase="planning"` (canonical `"plan"`), `phase_status="in-progress"` (canonical
+   `"in_progress"`), `status="ready"` (canonical `"active"`). agy can't know a project's enum members.
+3. **One real robustness edge MISSED (the only logic fix), commit `6f50d14`:** U2's orphan sweep globbed
+   `*.json` only and had no immediate temp cleanup, so a `.tmp` stranded between `write_text` and
+   `os.replace` (the 1.5s deadline firing mid-write) would leak. Fix: track `tmp_path` outside the `try`,
+   reclaim in `except`, broaden the TTL sweep to `iterdir()`. Surfaced by `/code-review` (P3) — not agy.
+
+**Mechanism.** A strong model writes correct logic but cannot infer (a) the repo's lint ruleset or (b) its
+domain vocabulary (enum members), and it under-weights crash-safety edges on atomic-write paths. (1) and
+(2) are cheap mechanical review; (3) is what an independent verify gate exists to catch.
+
+**Fix (or queued).** All applied pre-merge (lint/enum folded into the unit commits; the `.tmp` edge in
+`6f50d14`). Pre-emptions for next time queued into the agy memory (see `reference-gemini-prompting-best-practices`).
+
+**What surprised.** The fixture-heavy unit (U5) I expected agy to fake came back genuinely real once the
+fixture recipe was specified; the dominant cost was lint noise, not logic.
+
+**Generalizable rule.** When delegating to Gemini-3.1-Pro on a typed/lint-strict repo, put the **canonical
+enum members and the lint ruleset** in the task packet, and **always run an independent crash-safety/atomic-
+write verify pass** — those three are the model's blind spots, not its logic.
+
+**Refs.** LEARNINGS `#agy-pro-high-coder-dogfood-281`; DECISIONS `#precompact-spore-two-hook`; retro
+`docs/retros/issue-281-2026-06-30.md`; memory `reference-gemini-prompting-best-practices`,
+`reference-agy-plugin-interface`.
+
 ### PreCompact is write-only; SessionStart(compact) injects and a >10k additionalContext spills to a file (not truncation)  {#precompact-spore-grounding-corrections}
 
 **Context.** Building the #281 spore, two assumptions the brainstorm carried turned out wrong against the actual Claude Code hook contract — each changed *how* a requirement is met, not the scope.

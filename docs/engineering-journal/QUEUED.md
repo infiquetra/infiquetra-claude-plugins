@@ -347,6 +347,28 @@ independent read-only review, exploration, or implementation-plan critique.
 
 ## P3 — nice-to-have
 
+### Live-resolution spore regression test (real on-disk saga → both hooks)  {#spore-live-resolution-regression}
+
+**Priority.** P3.
+**Effort.** S (~1 hour — one integration test).
+**Worth it when.** Before the next change to `resolve_active_saga` / the spore hooks, or if a spore
+re-grounding ever silently no-ops in the field. `/qa` #281 ran this acceptance **by hand** (built a real
+`issue-281` saga, drove both hooks as subprocesses, asserted the active `saga_id` in `additionalContext`);
+`test_spore_seam_roundtrip.py` covers the *synthetic* seam but not the `state.json active_saga_id`
+resolution path against a real on-disk saga. Codify the manual check so CI guards it.
+**Context.** Surfaced in `docs/qa/qa-issue-281-2026-06-30.md` (Recommended regression tests) and
+`docs/retros/issue-281-2026-06-30.md` F3.
+
+### `override_rate_reader` counts an empty `orchestration_downgrade` as a downgrade  {#override-rate-reader-empty-downgrade}
+
+**Priority.** P3.
+**Effort.** XS (a truthiness check + a test).
+**Worth it when.** Before R12 downgrade telemetry is used to drive any default re-weighting — an
+empty-string false positive would inflate the "capability degradation" count. `/retro` #281 saw the reader
+report "Sagas with a recorded orchestration downgrade: 1" for issue-281 while its `orchestration_downgrade`
+note is `""`. Looks like a field-present vs field-non-empty check in `scripts/override_rate_reader.py`.
+**Context.** `docs/retros/issue-281-2026-06-30.md` F4. Read-only telemetry, so low blast radius today.
+
 ### Demonstrate or relax R5 (no-hard-wrap soft-wrap) for generated saga docs  {#saga-doc-soft-wrap-r5}
 
 **Priority.** P3.

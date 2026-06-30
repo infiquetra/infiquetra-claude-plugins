@@ -1,4 +1,4 @@
-"""Contract tests for the dormant agy plugin scaffold."""
+"""Contract tests for the agy plugin release surface."""
 
 from __future__ import annotations
 
@@ -29,9 +29,12 @@ def _frontmatter(path: Path) -> dict[str, str]:
     raise AssertionError(f"{path} has no closing frontmatter marker")
 
 
-def test_agy_metadata_is_dormant_and_not_marketplace_registered() -> None:
+def test_agy_metadata_is_marketplace_registered() -> None:
     plugin_json = json.loads(_read(PLUGIN_ROOT / ".claude-plugin" / "plugin.json"))
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
+    marketplace_entry = next(
+        plugin for plugin in marketplace["plugins"] if plugin["name"] == "agy"
+    )
 
     assert plugin_json["name"] == "agy"
     assert plugin_json["version"] == "0.1.0"
@@ -39,7 +42,15 @@ def test_agy_metadata_is_dormant_and_not_marketplace_registered() -> None:
     assert {"agy", "antigravity", "delegation", "teammate", "evidence"} <= set(
         plugin_json["keywords"]
     )
-    assert not any(plugin["name"] == "agy" for plugin in marketplace["plugins"])
+    assert marketplace_entry["source"] == "./plugins/agy"
+    assert marketplace_entry["version"] == plugin_json["version"]
+    assert marketplace_entry["keywords"] == [
+        "antigravity",
+        "agy",
+        "delegation",
+        "teammate",
+        "evidence",
+    ]
 
 
 def test_agy_commands_skills_references_and_agents_are_packaged() -> None:
@@ -48,6 +59,9 @@ def test_agy_commands_skills_references_and_agents_are_packaged() -> None:
         "README.md",
         "CHANGELOG.md",
         "commands/delegate.md",
+        "docs/harness-proof.md",
+        "scripts/agy_delegate.py",
+        "scripts/audit_harness_transcript.py",
         "skills/agy-delegate/SKILL.md",
         "skills/agy-delegate/references/delegation-contract.md",
         "agents/agy-coder.md",
@@ -96,9 +110,16 @@ def test_agy_command_and_skill_route_to_shared_wrapper() -> None:
     assert "The wrapper is the only supported execution path" in skill_doc
 
 
-def test_agy_changelog_is_unreleased_until_marketplace_registration() -> None:
+def test_agy_readme_changelog_and_harness_proof_are_release_ready() -> None:
     changelog = _read(PLUGIN_ROOT / "CHANGELOG.md")
+    readme = _read(PLUGIN_ROOT / "README.md")
+    harness = _read(PLUGIN_ROOT / "docs" / "harness-proof.md")
 
     assert "## [Unreleased]" in changelog
-    assert "Release `0.1.0`" in changelog
+    assert "## [0.1.0] - 2026-06-30" in changelog
+    assert "Claude Code harness proof" in changelog
+    assert "registered in `.claude-plugin/marketplace.json`" in readme
+    assert "auto-if-clean" in readme
+    assert "Status: passed live run on 2026-06-30" in harness
+    assert "Wrapper status: `applied`" in harness
     assert WRAPPER_PATH in changelog

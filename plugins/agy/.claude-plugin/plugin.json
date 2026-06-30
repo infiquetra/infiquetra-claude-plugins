@@ -1,7 +1,7 @@
 {
   "name": "agy",
   "version": "0.1.0",
-  "description": "Dormant Antigravity teammate delegation scaffold for Bash-only coder and reviewer bridge agents.",
+  "description": "Antigravity-backed coder and reviewer bridge agents with guarded evidence bundles and patch import.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

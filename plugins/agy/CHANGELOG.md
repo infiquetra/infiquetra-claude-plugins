@@ -2,14 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-30
+
 ### Added
 
-- Scaffold dormant `agy` plugin metadata, command, skill, delegation reference, and Bash-only
-  bridge-agent shells.
-- Point all packaged prompt surfaces at the future shared wrapper path
+- Register the `agy` plugin with `/agy:delegate`, `agy-coder`, and `agy-reviewer`.
+- Add the shared `agy.delegation.v1` wrapper with validation-only, supervised foreground `agy`
+  launch, run leases, evidence bundles, clone-backed diff derivation, write-set enforcement, and
+  guarded `patch-only` / `auto-if-clean` apply policies at
   `plugins/agy/scripts/agy_delegate.py`.
-
-### Planned
-
-- Release `0.1.0` after the wrapper, evidence contract, patch gates, prompt-contract tests, and
-  live harness proof are complete.
+- Add static prompt-contract tests, wrapper policy tests, harness transcript auditing, and live
+  Claude Code harness proof for reviewer and coder flows.

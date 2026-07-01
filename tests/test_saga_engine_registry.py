@@ -200,3 +200,20 @@ def test_role_member_referencing_non_existent_variant_errors(tmp_path: Path) -> 
 
     with pytest.raises(M.RegistryError, match="non-existent variant"):
         M.Registry.load(_write_registry(tmp_path, data))
+
+
+def test_shipped_seed_registry_loads_and_resolves() -> None:
+    """U7: the checked-in seed registry validates and routes sanely (R3/R21)."""
+    registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
+
+    assert len(registry.engines) >= 3
+    # KTD9: a 3-way STRONG tie on adversarial-review resolves to the cheapest cost_speed_rank.
+    assert registry.by_capability("adversarial-review").cost_speed_rank == 2
+    # every seeded row carries source attribution + an orderable cost_speed_rank (seed requirement).
+    for entry in registry.engines:
+        assert entry.sources
+        assert isinstance(entry.cost_speed_rank, int)
+    # the cross-family review panel (R16) is present and advisory (R13/R15).
+    panel = registry.by_role("cross-family-review-panel")
+    assert panel.verdict == "advisory"
+    assert panel.verifier == "claude"

@@ -106,6 +106,37 @@ def resolve(request: dict[str, Any], *, mode: str, registry: Registry) -> Resolu
     )
 
 
+def resolve_role(
+    role_name: str,
+    *,
+    registry: Registry,
+    task_context: dict[str, Any] | None = None,
+) -> list[Resolution]:
+    """Expand a composing role into one advisory Resolution per member (R16/F3).
+
+    Each member is resolved as an ``advisory-reviewer`` so an unavailable member
+    yields a Resolution with ``halt`` set rather than a Claude substitution (R17);
+    the caller halts the whole panel when ``panel_halt`` is non-None. The role's
+    verdict stays advisory and Claude remains verifier-of-record (R13/R15).
+    """
+    role = registry.by_role(role_name)
+    resolutions: list[Resolution] = []
+    for member in role.members:
+        request: dict[str, Any] = {"engine": member, "role_kind": "advisory-reviewer"}
+        if task_context is not None:
+            request["task_context"] = task_context
+        resolutions.append(resolve(request, mode="advisory", registry=registry))
+    return resolutions
+
+
+def panel_halt(resolutions: list[Resolution]) -> str | None:
+    """Return the first member halt in a resolved panel, or None if all are usable (R17)."""
+    for resolution in resolutions:
+        if resolution.halt is not None:
+            return resolution.halt
+    return None
+
+
 def _default_config_exists(engine_id: str) -> bool:
     paths = ENGINE_CONFIG_PATHS.get(engine_id, (Path.home() / f".{engine_id}" / "config",))
     return any(path.exists() for path in paths)

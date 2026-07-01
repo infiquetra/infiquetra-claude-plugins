@@ -340,3 +340,34 @@ def test_preflight_reports_not_installed_when_cli_absent() -> None:
 
     assert result["available"] is False
     assert "not installed" in str(result["reason"])
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_resolve_role_expands_to_per_member_advisory_resolutions(registry: Any) -> None:
+    resolutions = R.resolve_role("cross-family-review-panel", registry=registry)
+    members = registry.by_role("cross-family-review-panel").members
+
+    assert len(resolutions) == len(members)
+    assert [f"{r.engine_id}/{r.variant}" for r in resolutions] == members
+    # each member carries its OWN protocol (different engine families, R16/F3)
+    assert all(r.protocol for r in resolutions)
+    assert R.panel_halt(resolutions) is None
+
+
+def test_resolve_role_halts_panel_when_member_unavailable(
+    registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_preflight(engine_id: str) -> dict[str, bool | str]:
+        if engine_id == "agy":
+            return {"available": False, "reason": "agy is not installed"}
+        return {"available": True, "reason": f"{engine_id} available"}
+
+    monkeypatch.setattr(R, "preflight", fake_preflight)
+
+    resolutions = R.resolve_role("cross-family-review-panel", registry=registry)
+    halt = R.panel_halt(resolutions)
+
+    # R17: an unavailable panel member halts the panel; no Claude substitution.
+    assert halt is not None
+    assert "agy" in halt

@@ -102,6 +102,22 @@ Triggered lenses:
 - Use deployment readiness scrutiny when the document includes deploy, rollback, release,
   environment, or CI/CD behavior.
 
+## External-reviewer panel (opt-in)
+
+For a high-stakes artifact you may add cross-family adversarial depth by dispatching the
+`cross-family-review-panel` composing role from the external-engine registry (R16). This is
+**opt-in**, never automatic — invoke it only when the operator asks for a cross-engine pass or the
+artifact clearly warrants one.
+
+- Expand the role with `engine_resolver.resolve_role("cross-family-review-panel", registry=...)`;
+  each member (Codex, Gemini Pro/Flash via agy) is dispatched with its **own** prompting protocol.
+- If `engine_resolver.panel_halt(...)` returns a reason, a member is unavailable — **halt the panel
+  and surface it** rather than substituting Claude for the missing reviewer (R17): Claude reviewing
+  Claude defeats the purpose.
+- Every finding is **advisory** (R15). Claude verifies each one against the document or repo source
+  before adopting it; the gated readiness verdict stays Claude's alone (R13). Nothing an external
+  engine returns blocks or persists a gate on its own say-so.
+
 ## Safe In-Place Fixes
 
 Safe fixes are enabled by default and edit the reviewed document in place.

@@ -1448,3 +1448,39 @@ missing (KTD4 — collapse the unit dep graph to segments); and segmentation mus
 schema-breaking. Review record: `docs/reviews/2026-06-27-worker-model-cache-scheduling-review.md`.
 
 ---
+
+## External engines are never gatekeepers {#external-engines-never-gatekeepers}
+
+**Date.** 2026-07-01. **Plan.** `docs/plans/2026-07-01-external-engine-capability-routing-plan.md`
+(from `docs/brainstorms/2026-06-27-external-engine-capability-routing-requirements.md`, VECU seed S-4,
+#283). Saga gains a capability-aware registry + resolver + dispatch adapter for external LLM engines
+(Codex, Gemini via agy). This decision fixes the trust boundary the whole capability rides on.
+
+- **KTD — the binding rule.** Claude is verifier-of-record for every gated decision. An external
+  engine may occupy generator, advisory-reviewer, or non-gated-worker roles only; it never holds a
+  gated verdict that blocks a merge/deploy or persists as a gate. Enforced **structurally, not
+  asserted**: external output is an `AdvisoryEvidence` value with no verdict field, and
+  `engine_dispatch.satisfy_gate` raises unless a distinct Claude verification step has stamped it.
+- **Why this is a NEW decision, not a restatement.** The parroting note (`DECISIONS.md:276-290`) is
+  *evidence* (Antigravity parroted while Claude/Codex independently verified), not a standing rule;
+  the gated-vs-advisory consensus split (`operator-choice.md:82-95`) is the *mechanism* this rides on.
+  Neither previously bound external engines as non-gatekeepers — #283 establishes that rule.
+- **KTD — registry home = saga.** The registry (YAML data, R4) + resolver live in saga because every
+  seam they hook (the per-unit engine/capability field, `recommend_execution_backend`,
+  `saga.orchestration_downgrade`, the reviewer role) is already there. *Rejected:* a new
+  `external-engines` plugin (fragments the seams, adds an 8th marketplace plugin); folding into `agy`
+  (conflates one engine's containment wrapper with the router; agy is in-repo, codex external).
+- **KTD — `engine` is a parallel Unit field, not an extended tier.** `MODELS = (opus,sonnet,haiku)`
+  is load-bearing for Claude-agent dispatch; the resolver reads `Unit.engine`/`Unit.capability`
+  before `tier.model`. *Rejected:* widening the closed `MODELS` enum.
+- **KTD — capability tie-break = cost·speed (operator-confirmed).** When variants rate a capability
+  equally, the cheaper·faster variant wins (`cost_speed_rank`, registry order as final backstop).
+  *Rejected:* corroboration-strength (operator chose cost·speed); prompt-on-every-tie (breaks
+  autonomous dispatch, R20).
+- **Revisit when.** The ideation-R14 read-only-sandbox profile ships (external workers may then mutate
+  files, R23 second half); team-execution gains an external-engine worker context-package slot (then
+  R10/R12 team-execution dispatch, deferred here as U12); or the seed capability data drifts
+  materially (re-validated by use via `/retro`, R21, not a measurement loop). Readiness record:
+  `docs/reviews/2026-07-01-external-engine-capability-routing-plan-readiness.md`.
+
+---

@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.43.0",
+      "version": "0.44.0",
       "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas.",
       "author": {
         "name": "Infiquetra",

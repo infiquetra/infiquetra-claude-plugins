@@ -1,0 +1,144 @@
+# Saga external-engine capability registry (R1-R4).
+#
+# SEED DATA (2026-06-27), not a permanent ranking. This is current benchmark + practitioner
+# evidence, tagged per row by source + corroboration strength. The architecture does not depend on
+# any cell being eternally correct -- last_validated (R3) makes staleness visible, and the data is
+# re-validated by use through /retro (R21), NOT by an automated measurement loop.
+#
+# cost_speed_rank is the KTD9 tie-break key: lower = cheaper+faster. It only breaks ties between
+# variants that rate a requested capability EQUALLY (rating dominates first).
+
+capabilities:
+  - code-generation
+  - adversarial-review
+  - second-opinion
+  - debug
+  - refactor
+  - scaffold
+  - long-form-writing
+
+engines:
+  # ---- Codex / gpt-5.5 (external marketplace plugin; codex CLI) --------------------------------
+  - engine_id: codex
+    variant: gpt-5.5-high
+    substrate: external
+    default_for_engine: true          # engine-only "use codex" resolves here (R1/R6); xhigh reserved
+    invocation:
+      via: codex:codex-rescue
+      recipe: "codex -s read-only --effort high"
+      write_capable: false            # evidence-only default (R23)
+    context_window: 400000            # R25 -- Codex CLI ChatGPT-account limit
+    cost_speed_rank: 2
+    model_identity: gpt-5.5
+    last_validated: 2026-06-27
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "multi-file refactor, structured-output fidelity"}
+      adversarial-review: {rating: STRONG, note: "top composite reasoning; repo-access verification"}
+      second-opinion: {rating: MODERATE, note: "cross-family; refuter behavior still unmapped"}
+      debug: {rating: MODERATE, note: "tool-orchestrated; give it tools to iterate"}
+      refactor: {rating: MODERATE, note: "multi-file terminal-oriented"}
+      scaffold: {rating: WEAK, note: "greenfield architecture is a caution area"}
+      long-form-writing: {rating: WEAK, note: "route expert prose to Claude"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Give it tools to iterate when debugging (quality drops in pure-chat mode)."
+      - "Manage context actively; it does not self-manage."
+      - "Reserve xhigh for the hardest tasks (cost multiplier)."
+    sources:
+      - {claim: "top composite reasoning", url: "OpenAI GPT-5.5 model card", date: 2026-06-27, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "multi-file refactor / structured-output / DevOps", url: "Artificial Analysis; LM Council", date: 2026-06-27, tag: INDEPENDENT, corroboration: MODERATE}
+      - {claim: "route expert long-form writing to Claude", url: "MindStudio GPT-5.5 review; readiness review correction", date: 2026-06-27, tag: INDEPENDENT, corroboration: MODERATE}
+
+  - engine_id: codex
+    variant: gpt-5.5-xhigh
+    substrate: external
+    default_for_engine: false
+    invocation:
+      via: codex:codex-rescue
+      recipe: "codex -s read-only --effort xhigh"
+      write_capable: false
+    context_window: 400000
+    cost_speed_rank: 3                 # xhigh is the cost multiplier -- pricier than high
+    model_identity: gpt-5.5
+    last_validated: 2026-06-27
+    capability_profile:
+      code-generation: {rating: STRONG, note: "hardest bounded implementation; reserve for the tough unit"}
+      adversarial-review: {rating: STRONG, note: "deepest reasoning pass"}
+      debug: {rating: STRONG, note: "tool-orchestrated root-cause"}
+      refactor: {rating: MODERATE, note: "multi-file"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Give it tools to iterate when debugging (quality drops in pure-chat mode)."
+      - "Manage context actively; it does not self-manage."
+      - "Reserve xhigh for the hardest tasks (cost multiplier)."
+    sources:
+      - {claim: "xhigh materially improves the hardest reasoning", url: "OpenAI GPT-5.5 model card; LLM-Stats GPT-5.5", date: 2026-06-27, tag: OFFICIAL, corroboration: MODERATE}
+
+  # ---- Gemini 3.5 Flash (via the in-repo agy plugin) ------------------------------------------
+  - engine_id: agy
+    variant: gemini-3.5-flash-high
+    substrate: in-repo
+    default_for_engine: true          # engine-only "use agy" resolves here (cheapest/fastest default)
+    invocation:
+      via: agy:delegate
+      recipe: "agy delegate --mode no-write --model 'Gemini 3.5 Flash (High)'"
+      write_capable: false
+      model: "Gemini 3.5 Flash (High)"   # verbatim canonical --model string (agy forwards it byte-for-byte)
+    context_window: 1000000
+    cost_speed_rank: 1                 # cheapest + fastest (STRONG)
+    model_identity: gemini-3.5-flash
+    last_validated: 2026-06-27
+    capability_profile:
+      scaffold: {rating: STRONG, note: "greenfield scaffolding, one-shot coding"}
+      code-generation: {rating: MODERATE, note: "one-shot; structured output"}
+      second-opinion: {rating: MODERATE, note: "cheap cross-family sanity pass"}
+      debug: {rating: WEAK, note: "iterative repair adds rather than fixes; over-enriches"}
+      refactor: {rating: WEAK, note: "ignores completion criteria on long-horizon edits"}
+    prompting_protocol:
+      - "Assign an explicit adversarial/critic role; do not rely on goodwill."
+      - "Put behavioral constraints at the top; keep prompts terse and command-style."
+      - "Avoid vague blanket negatives ('don't infer' breaks reasoning)."
+      - "Give explicit stop conditions to counter over-eagerness; put the question last."
+      - "Set thinking level High on hard tasks; keep temperature default."
+    sources:
+      - {claim: "best absolute agentic/tool-use; fastest+cheapest", url: "Google DeepMind Gemini 3.5 Flash model card; PromptLayer latency/cost", date: 2026-06-27, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "over-eagerness / ignores completion criteria (recurring family failure)", url: "HN Gemini 3.5 Flash thread; Phil Schmid Gemini 3 prompting", date: 2026-06-27, tag: INDEPENDENT, corroboration: STRONG}
+
+  # ---- Gemini 3.1 Pro (via the in-repo agy plugin) --------------------------------------------
+  - engine_id: agy
+    variant: gemini-3.1-pro-high
+    substrate: in-repo
+    default_for_engine: false
+    invocation:
+      via: agy:delegate
+      recipe: "agy delegate --mode no-write --model 'Gemini 3.1 Pro (High)'"
+      write_capable: false
+      model: "Gemini 3.1 Pro (High)"     # verbatim canonical --model string
+    context_window: 1000000
+    cost_speed_rank: 4                 # largest / priciest / slowest of the seed set
+    model_identity: gemini-3.1-pro
+    last_validated: 2026-06-27
+    capability_profile:
+      adversarial-review: {rating: STRONG, note: "strong cross-family reviewer; converges with Codex on real findings"}
+      second-opinion: {rating: STRONG, note: "different model family = best sycophancy mitigation"}
+      code-generation: {rating: MODERATE, note: "capable; not the first pick over Codex"}
+      debug: {rating: MODERATE, note: "useful second opinion"}
+      long-form-writing: {rating: WEAK, note: "NOT the expert-writing engine -- route prose to Claude"}
+    prompting_protocol:
+      - "Assign an explicit adversarial/critic role; disagreement-first."
+      - "Put behavioral constraints at the top; keep prompts terse and command-style."
+      - "Avoid vague blanket negatives; use a structural adversarial frame, not 'be brutally honest'."
+      - "Give explicit stop conditions; set thinking level High; keep temperature default."
+    sources:
+      - {claim: "strong cross-family reviewer; different-family = best sycophancy mitigation", url: "Google DeepMind Gemini 3.1 Pro model card; SycEval; readiness review panel", date: 2026-06-27, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "not the expert long-form writing engine", url: "readiness review correction; contracollective/gitautoreview write-ups", date: 2026-06-27, tag: INDEPENDENT, corroboration: MODERATE}
+
+roles:
+  # The doc-review external-reviewer panel (R16) -- a first-class composing role, not a one-off.
+  cross-family-review-panel:
+    members:
+      - codex/gpt-5.5-xhigh
+      - agy/gemini-3.1-pro-high
+      - agy/gemini-3.5-flash-high
+    verdict: advisory                 # R15 -- never gated
+    verifier: claude                  # R13 -- Claude verifies each finding against source

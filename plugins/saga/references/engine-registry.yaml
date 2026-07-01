@@ -1,0 +1,52 @@
+# Schema skeleton for Saga external-engine capability routing.
+# U7 replaces the illustrative seed values with the full sourced registry.
+
+capabilities:
+  - code-generation
+  - adversarial-review
+  - second-opinion
+  - debug
+  - refactor
+  - scaffold
+  - long-form-writing
+
+engines:
+  - engine_id: codex
+    variant: gpt-5.5-xhigh
+    substrate: external
+    default_for_engine: true
+    invocation:
+      via: codex:codex-rescue
+      recipe: "codex -s read-only --effort xhigh"
+      write_capable: false
+    context_window: 400000
+    cost_speed_rank: 2
+    model_identity: gpt-5.5
+    last_validated: 2026-06-27
+    capability_profile:
+      code-generation:
+        rating: MODERATE
+        note: "illustrative schema row; U7 replaces seed data"
+      debug:
+        rating: MODERATE
+        note: "illustrative schema row; U7 replaces seed data"
+      long-form-writing:
+        rating: WEAK
+        note: "route prose-heavy work to Claude"
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Return implementation evidence as a unified diff plus assumptions."
+    sources:
+      - claim: "illustrative schema row; full source-backed seed data lands in U7"
+        url: "docs/plans/2026-07-01-external-engine-capability-routing-plan.md"
+        date: 2026-07-01
+        tag: PLAN
+        corroboration: MODERATE
+
+roles:
+  cross-family-review-panel:
+    # U7 expands this to the real cross-family membership once all engine rows exist.
+    members:
+      - codex/gpt-5.5-xhigh
+    verdict: advisory
+    verifier: claude

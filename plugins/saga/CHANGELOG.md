@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.44.0 - 2026-07-01
+
+### External-engine capability routing — right engine, effort, protocol per task (#283)
+- New saga-owned registry + resolver + dispatch adapter mapping a logical capability or an explicit
+  engine to `{engine, effort, protocol}` and dispatching external LLM engines (Codex via
+  `codex:codex-rescue`, Gemini via `agy:delegate`) as gated generators / advisory reviewers /
+  non-gated workers, with Claude as verifier-of-record on every gated decision (R13).
+- `engine-registry.yaml` (editable data, R4): per-variant capability profiles, prompting protocols,
+  invocation recipes, a `cost_speed_rank` tie-break key, context-window limits, and per-row source
+  attribution. Seeded 2026-06-27 for codex/gpt-5.5-{high,xhigh} and agy Gemini 3.5 Flash / 3.1 Pro.
+- `engine_resolver.py`: capability-XOR-engine resolution (advisory/dispatch modes), role_kind-gated
+  fallback (worker/generator) vs halt (reviewer/panel), byte-verbatim payload assembly (R9/R11),
+  context-window fitness halt (R25), preflight availability, and `resolve_role` panel expansion (R16).
+- `engine_dispatch.py`: an `AdvisoryEvidence` result type whose `satisfy_gate` structurally requires
+  Claude verification before any gated return; failure statuses -> halt + provenance note (R24).
+- execution_spec Units gain optional mutually-exclusive `engine`/`capability` selectors (backward
+  compatible); the emitter routes engine-bearing units through an external-engine dispatch marker.
+- `/doc-review` gains an opt-in cross-family external-reviewer panel. Records the binding
+  "external engines are never gatekeepers" decision (DECISIONS.md).
+
 ## 0.43.0 - 2026-06-30
 
 ### PreCompact spore — re-ground the continuing session on structured facts (#281)

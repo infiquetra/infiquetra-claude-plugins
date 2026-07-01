@@ -36,6 +36,7 @@ round-trips deterministically and offline.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from dataclasses import dataclass, field
@@ -210,6 +211,52 @@ class SpecError(ValueError):
     """
 
 
+def _engine_registry_module() -> Any:
+    module = sys.modules.get("engine_registry")
+    if module is not None:
+        return module
+
+    path = Path(__file__).resolve().with_name("engine_registry.py")
+    spec = importlib.util.spec_from_file_location("engine_registry", path)
+    if spec is None or spec.loader is None:
+        raise SpecError(f"engine registry module is unavailable: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["engine_registry"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _engine_registry_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "references" / "engine-registry.yaml"
+
+
+def _validate_external_engine_selector(
+    where: str, engine: str | None, capability: str | None
+) -> None:
+    if engine is not None and capability is not None:
+        raise SpecError(f"{where}: engine and capability are mutually exclusive")
+    if engine is None and capability is None:
+        return
+
+    registry_module = _engine_registry_module()
+    if capability is not None and capability not in registry_module.CAPABILITIES:
+        raise SpecError(f"{where}: unknown capability {capability!r}")
+
+    registry_path = _engine_registry_path()
+    if not registry_path.exists():
+        return
+
+    try:
+        registry = registry_module.Registry.load(registry_path)
+    except registry_module.RegistryError as exc:
+        raise SpecError(f"{where}: engine registry invalid: {exc}") from exc
+
+    if engine is not None:
+        engine_keys = {entry.key for entry in registry.engines}
+        if engine not in engine_keys:
+            raise SpecError(f"{where}: unknown engine variant {engine!r}")
+
+
 @dataclass(frozen=True)
 class Tier:
     """A per-unit ``{model, effort}`` tier (R2(b))."""
@@ -338,11 +385,15 @@ class Unit:
     # An optional refute-N judge-panel over this unit's output (KTD5). Absent => no panel;
     # an absent field round-trips unchanged so team_emitter / existing specs are untouched.
     verify: Verify | None = None
+    # External-engine routing selectors (U5). Absent => normal Claude unit.
+    engine: str | None = None
+    capability: str | None = None
 
     def validate(self, where: str) -> None:
         if not self.unit_id:
             raise SpecError(f"{where}: a unit needs a non-empty unit_id")
         self.tier.validate(f"unit {self.unit_id}")
+        _validate_external_engine_selector(f"unit {self.unit_id}", self.engine, self.capability)
         if self.verify is not None:
             self.verify.validate(f"unit {self.unit_id}")
         if self.fanout and not self.targets:
@@ -363,6 +414,11 @@ class Unit:
         where = f"unit {unit_id or '<missing id>'}"
         if "tier" not in data:
             raise SpecError(f"{where}: missing 'tier'")
+        engine_raw = data.get("engine")
+        capability_raw = data.get("capability")
+        engine = str(engine_raw) if engine_raw is not None else None
+        capability = str(capability_raw) if capability_raw is not None else None
+        _validate_external_engine_selector(where, engine, capability)
         return cls(
             unit_id=unit_id,
             label=str(data.get("label", unit_id)),
@@ -376,6 +432,8 @@ class Unit:
             targets=[str(t) for t in data.get("targets", [])],
             pilot=str(data.get("pilot", "")),
             verify=(Verify.from_dict(data["verify"], where) if data.get("verify") else None),
+            engine=engine,
+            capability=capability,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -396,6 +454,10 @@ class Unit:
         # team_emitter and existing specs never gain a new key (R5).
         if self.verify is not None:
             out["verify"] = self.verify.to_dict()
+        if self.engine is not None:
+            out["engine"] = self.engine
+        if self.capability is not None:
+            out["capability"] = self.capability
         return out
 
 
@@ -594,6 +656,35 @@ def _emit_gate_call(unit: Unit, var: str) -> str:
     return f"__gate({var}, {{ {opts_str} }})"
 
 
+def _external_engine_selector(unit: Unit) -> tuple[str, str] | None:
+    if unit.engine is not None:
+        return ("engine", unit.engine)
+    if unit.capability is not None:
+        return ("capability", unit.capability)
+    return None
+
+
+def _external_engine_marker(unit: Unit) -> str | None:
+    selector = _external_engine_selector(unit)
+    if selector is None:
+        return None
+    key, value = selector
+    return f"{key}={value}"
+
+
+def _agent_opts(unit: Unit) -> list[str]:
+    opts = [f"label: {_js_string(unit.label)}"]
+    selector = _external_engine_selector(unit)
+    if selector is not None:
+        key, value = selector
+        opts.append('dispatch: "external-engine"')
+        opts.append(f"{key}: {_js_string(value)}")
+        return opts
+    opts.append(f"model: {_js_string(unit.tier.model)}")
+    opts.append(f"effort: {_js_string(unit.tier.effort)}")
+    return opts
+
+
 def _verifier_prompt(unit: Unit) -> str:
     """Assemble the prompt text a verifier agent in ``unit``'s refute-N panel reads.
 
@@ -624,20 +715,19 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
         threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
         verifier_prompt = _verifier_prompt(unit)
         prompt = _agent_prompt(spec, unit)
-        opts = [
-            f"label: {_js_string(unit.label)}",
-            f"model: {_js_string(unit.tier.model)}",
-            f"effort: {_js_string(unit.tier.effort)}",
-        ]
+        opts = _agent_opts(unit)
         verifier_opts = [
             f"label: {_js_string(unit.label + ' verifier')}",
             f"model: {_js_string(unit.tier.model)}",
             f"effort: {_js_string(unit.tier.effort)}",
         ]
+        marker = _external_engine_marker(unit)
 
         lines.append("  async () => {")
         lines.append("    let result;")
         lines.append(f"    for (let iter = 1; iter <= {panel.max_iterations}; iter++) {{")
+        if marker is not None:
+            lines.append(f"      // external-engine dispatch: {marker}")
         lines.append("      result = await agent(")
         lines.append(f"        {_js_string(prompt)},")
         lines.append("        { " + ", ".join(opts) + " },")
@@ -669,16 +759,22 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
         lines.append("  },")
     else:
         prompt = _agent_prompt(spec, unit)
-        opts = [
-            f"label: {_js_string(unit.label)}",
-            f"model: {_js_string(unit.tier.model)}",
-            f"effort: {_js_string(unit.tier.effort)}",
-        ]
-        lines.append("  () =>")
-        lines.append("    agent(")
-        lines.append(f"      {_js_string(prompt)},")
-        lines.append("      { " + ", ".join(opts) + " },")
-        lines.append("    ),")
+        opts = _agent_opts(unit)
+        marker = _external_engine_marker(unit)
+        if marker is not None:
+            lines.append("  () => {")
+            lines.append(f"    // external-engine dispatch: {marker}")
+            lines.append("    return agent(")
+            lines.append(f"      {_js_string(prompt)},")
+            lines.append("      { " + ", ".join(opts) + " },")
+            lines.append("    )")
+            lines.append("  },")
+        else:
+            lines.append("  () =>")
+            lines.append("    agent(")
+            lines.append(f"      {_js_string(prompt)},")
+            lines.append("      { " + ", ".join(opts) + " },")
+            lines.append("    ),")
 
 
 def _emit_verify_loop_singleton(
@@ -691,16 +787,13 @@ def _emit_verify_loop_singleton(
     threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
     verifier_prompt = _verifier_prompt(unit)
     prompt = _agent_prompt(spec, unit)
-    opts = [
-        f"label: {_js_string(unit.label)}",
-        f"model: {_js_string(unit.tier.model)}",
-        f"effort: {_js_string(unit.tier.effort)}",
-    ]
+    opts = _agent_opts(unit)
     verifier_opts = [
         f"label: {_js_string(unit.label + ' verifier')}",
         f"model: {_js_string(unit.tier.model)}",
         f"effort: {_js_string(unit.tier.effort)}",
     ]
+    marker = _external_engine_marker(unit)
 
     lines.append(f"let {var};")
     lines.append(
@@ -708,6 +801,8 @@ def _emit_verify_loop_singleton(
         f"(pass_rule: {panel.pass_rule}, max_iterations: {panel.max_iterations})"
     )
     lines.append(f"for (let iter = 1; iter <= {panel.max_iterations}; iter++) {{")
+    if marker is not None:
+        lines.append(f"  // external-engine dispatch: {marker}")
     lines.append(f"  {var} = await agent(")
     lines.append(f"    {_js_string(prompt)},")
     lines.append("    { " + ", ".join(opts) + " },")
@@ -871,13 +966,12 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
             if unit.verify is not None and unit.verify.iterate_to_consensus:
                 _emit_verify_loop_singleton(lines, spec, unit, var)
             else:
-                lines.append(f"const {var} = await agent(")
                 prompt = _agent_prompt(spec, unit)
-                opts = [
-                    f"label: {_js_string(unit.label)}",
-                    f"model: {_js_string(unit.tier.model)}",
-                    f"effort: {_js_string(unit.tier.effort)}",
-                ]
+                opts = _agent_opts(unit)
+                marker = _external_engine_marker(unit)
+                if marker is not None:
+                    lines.append(f"// external-engine dispatch: {marker}")
+                lines.append(f"const {var} = await agent(")
                 lines.append(f"  {_js_string(prompt)},")
                 lines.append("  { " + ", ".join(opts) + " },")
                 lines.append(")")

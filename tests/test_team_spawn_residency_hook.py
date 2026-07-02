@@ -89,6 +89,13 @@ class TestLoadTriggerSet:
         trigger_set = hook.load_trigger_set(tmp_path)
         assert trigger_set == frozenset({"only-reviewer"})
 
+    def test_undecodable_registry_contributes_nothing(self, hook: Any, tmp_path: Path) -> None:
+        """Code-review F2: invalid UTF-8 raises UnicodeDecodeError, not OSError — must not raise."""
+        (tmp_path / "reviewer-registry.md").write_bytes(b"| `only-reviewer` | x |\xff|\n")
+        (tmp_path / "validator-registry.md").write_text("")
+        trigger_set = hook.load_trigger_set(tmp_path)
+        assert trigger_set == frozenset()
+
     def test_agent_file_column_does_not_leak_into_reviewer_set(
         self, hook: Any, tmp_path: Path
     ) -> None:
@@ -351,6 +358,18 @@ class TestMainEnvelopeShim:
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}})
         with patch.object(sys, "stdin") as mock_stdin:
             mock_stdin.read.return_value = payload
+            with pytest.raises(SystemExit) as exc_info:
+                hook.main()
+        assert exc_info.value.code == 0
+        assert capsys.readouterr().out == ""
+
+    @pytest.mark.parametrize("scalar_payload", ["123", "[1, 2, 3]", "null", '"hello"'])
+    def test_valid_json_non_object_envelope_exits_0_silently(
+        self, hook: Any, capsys: pytest.CaptureFixture, scalar_payload: str
+    ) -> None:
+        """Code-review F1: json.loads succeeds on a non-object scalar/array — still malformed (R9)."""
+        with patch.object(sys, "stdin") as mock_stdin:
+            mock_stdin.read.return_value = scalar_payload
             with pytest.raises(SystemExit) as exc_info:
                 hook.main()
         assert exc_info.value.code == 0

@@ -102,10 +102,10 @@ def load_trigger_set(references_dir: Path) -> frozenset[str]:
     """
     names: set[str] = set()
 
-    with contextlib.suppress(OSError):
+    with contextlib.suppress(OSError, UnicodeDecodeError):
         names |= _reviewer_names((references_dir / _REVIEWER_REGISTRY).read_text(encoding="utf-8"))
 
-    with contextlib.suppress(OSError):
+    with contextlib.suppress(OSError, UnicodeDecodeError):
         names |= _tester_names((references_dir / _VALIDATOR_REGISTRY).read_text(encoding="utf-8"))
 
     return frozenset(names)
@@ -264,6 +264,9 @@ def main() -> None:
     try:
         payload = json.loads(sys.stdin.read())
     except Exception:
+        sys.exit(0)
+
+    if not isinstance(payload, dict):
         sys.exit(0)
 
     if payload.get("tool_name") not in _TEAM_TOOL_NAMES:

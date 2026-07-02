@@ -50,6 +50,24 @@ per-cycle full re-sends.
 **Revisit when.** External-engine envelopes need pointerizing (requires a clone-visible locator,
 e.g. git bundle); or per-lens scoping gains a no-silent-drop guarantee; or live runs show the
 4 KB threshold mis-set.
+**Consensus-gate remediation (cycle 1).** A five-reviewer panel (all opus) surfaced two guarantee
+gaps, now closed: (a) `git gc` **does** pack custom-namespace refs into `packed-refs` and delete the
+loose file (verified empirically, git 2.54) — the KTD1 "survives `git gc`" claim held for the tree
+*object* (pinned by the ref) but the gc *reclamation* went blind once the loose ref was packed,
+leaking L1 refs and defeating R9. Fixed: snapshot refs are created with `--create-reflog`; gc dates
+them by the reflog mtime (which survives packing) and enumerates via `for-each-ref`. (b) The KTD5
+`artifact_pointers` field was producer-only — no skill read it back, and the e2e test's consumer leg
+reused the in-memory store output, masking the gap. Fixed: `/resume` now derefs a restored tick's
+pointers, and the e2e test crosses the persistence boundary (`saga.py restore` → `deref`). Also
+hardened: L1 deref no longer parses the free-form `deref` string (a tampered `--output=` was an
+arbitrary-file-write — security P1); argv is rebuilt from a validated `base` field; `symbol`-kind
+deref rejects cleanly; sparse-checkout snapshots fail loud (KTD7). **KTD6 (script placement):**
+`artifact_pointer.py` lives under `team-execution/skills/team-execution/scripts/` — team-execution is
+now a **hybrid** plugin (its first executable script beside its skills/agents), no longer purely
+skills-based.
+**Revisit when (added).** A packed-refs-heavy repo shows reflog-mtime gc mis-dating; or the advisory
+KTD4 threshold / KTD7 fallback warrant runtime enforcement (a capability preflight) over orchestrator
+judgment.
 **Refs.** #291; `docs/plans/2026-07-02-typed-artifact-pointer-passing-plan.md`.
 
 ### Team-spawn residency guard: name-only predicate, registry-parse trigger set (#289, plan)  {#team-spawn-residency-guard-ktds-289}

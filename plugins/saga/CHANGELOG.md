@@ -10,6 +10,10 @@
 - Lets a saga record typed artifact pointers (git-object diff pointers, content-addressed store
   pointers, or symbol pointers — see team-execution 2.8.0) so spawned team-execution agents can
   dereference stored artifacts the saga points at instead of receiving them inlined (KD5).
+- `/resume` now **consumes** the field: a restored tick's `artifact_pointers` are dereferenced via
+  `artifact_pointer.py deref` to recover the exact artifact bytes (fail-closed on
+  `POINTER_HASH_MISMATCH` / `POINTER_STALE`), closing the producer+consumer dead-wiring loop
+  (LEARNINGS `{#dead-wiring-needs-producer-and-consumer}`). The field was producer-only before this.
 
 ## 0.48.0 - 2026-07-02
 

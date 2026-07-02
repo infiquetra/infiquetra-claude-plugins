@@ -27,6 +27,25 @@
 
 ## 2026-07-02
 
+### `git gc` packs custom-namespace refs — a loose-file-mtime gc goes blind after any gc  {#git-gc-packs-custom-refs-291}
+
+**Context.** team-execution's Layer-1 artifact pointers pin a snapshot tree with a holding ref under `refs/team-execution/snapshots/<run-id>/<epoch>`; the TTL `gc` reclaimed old refs by the loose ref file's mtime.
+**Evidence.** Scratch repo, git 2.54: `git update-ref refs/team-execution/snapshots/run1/0 <tree>` then `git gc` moves the ref into `.git/packed-refs` and deletes the loose `.git/refs/.../run1/0`. `_snapshot_ref_paths` keyed off `ref_path.exists()`, so after any gc (including auto-gc) the ref became invisible to reclamation and leaked forever — the tree *object* still resolved (leak-not-break). devils-advocate consensus review, #291; commit 1c1cafc.
+**Mechanism.** `git gc` runs `pack-refs --all`, which packs refs under ANY namespace, not just `refs/heads`/`refs/tags`. A prior in-code comment asserted the opposite ("does not pack refs under a custom namespace by default") — empirically false.
+**Fix.** Create the ref with `git update-ref --create-reflog` and date it by the reflog file (`.git/logs/<ref>`), which git keeps loose even after packing the ref; enumerate via `for-each-ref` (which sees packed refs). Commit 1c1cafc.
+**Validation.** Scratch repo confirmed the reflog file survives `git gc` while the loose ref is packed; `test_gc_reclaims_stale_cas_entries_and_snapshot_refs_younger_survive` retargeted at the reflog mtime, green.
+**Generalizable rule.** Don't date a git ref by its loose-file mtime — that's an implementation detail git packs away. Use the reflog (a durable git-maintained timestamp) plus `for-each-ref`. And verify "git won't touch X" claims empirically before resting correctness on them.
+**Refs.** DECISIONS `{#artifact-pointer-ktds-291}`; commit 1c1cafc.
+
+### An e2e test can be green while a persisted-field consumer leg is a no-op — cross the persistence boundary  {#test-shape-masks-dead-wiring-291}
+
+**Context.** The saga `artifact_pointers` field was claimed "live on both axes" (producer + consumer), with a passing e2e test as the proof.
+**Evidence.** `test_layer2_end_to_end_producer_to_spawned_consumer` saved the tick (asserting the pointer was in the tick text) but the consumer leg derefed the in-memory `pointer_json` from the producer, threaded through the spawn template — never the value read back from the saved tick. grep confirmed no skill read `artifact_pointers` back. Producer→consumer connected through a shared variable, not the persisted field. devils-advocate consensus review, #291; commit 79a49ea.
+**Mechanism.** Both producer legs were real CLIs and both assertions passed, so the suite looked like a both-axes proof. The gap was which *variable* the consumer derefed — invisible unless you trace data flow rather than pass/fail.
+**Fix.** Consumer wired: `/resume` derefs a restored tick's pointers. e2e rewritten so the consumer leg does `saga.py restore` → reads `artifact_pointers` out of the persisted saga → derefs THAT. Commit 79a49ea.
+**Generalizable rule.** A round-trip test only proves the round-trip if the consumer reads from the boundary it claims to validate. If producer and consumer share an in-memory value, the persistence layer is untested no matter how green the test is — assert the consumer derives its input from disk/DB/wire, not from the producer's return value.
+**Refs.** LEARNINGS `{#dead-wiring-needs-producer-and-consumer}`; DECISIONS `{#artifact-pointer-ktds-291}`; commit 79a49ea.
+
 ### An open issue's core fix can silently ship inside unrelated work — re-verify premises against HEAD  {#issue-premises-drift-314}
 
 **Context.** Planning #314 (saga leak-guard false-positive). The issue body, filed 2026-06-30,

@@ -6,6 +6,23 @@ All notable changes to this plugin are documented here.
 
 ## [2.8.0] - 2026-07-02
 
+### Consensus-gate hardening (#291)
+- L1 `deref` no longer parses the free-form `deref` command string into git argv: a tampered
+  `git diff --output=<path> ...` was an arbitrary-file-write primitive. The base tree is now a
+  validated first-class `base` field, and the diff argv is rebuilt deterministically from
+  hex-validated OIDs (no option token is representable).
+- TTL `gc` now reclaims snapshot refs after `git gc` packs them: refs are created with
+  `--create-reflog` and dated by the reflog mtime (which survives packing), enumerated via
+  `for-each-ref`. (The prior loose-ref-mtime gc went blind once git packed the ref.)
+- `deref` on a `symbol` pointer is rejected with a clear error (exit 2); the CLI dereferences only
+  `diff` and `file` kinds. Sparse-checkout snapshots fail loudly (KTD7 inline fallback) rather than
+  shipping a diff with phantom deletions. CAS reads reject symlinks; run-id/epoch ref segments are
+  validated before ref construction.
+- `references/artifact-pointers.md` receiver contract now mandates the `deref` CLI as the required
+  verification path (the raw `git diff` skips freshness), documents the exit-code contract
+  (1 = typed pointer failure, 2 = malformed/git error), the `base` field, and the L2/L3 pointer
+  shapes with worked examples.
+
 ### Typed artifact-pointer passing (#291)
 - New `plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py` CLI: the pointer
   contract (kind `diff`/`file`/`symbol`, locator, integrity hash, freshness marker) plus four

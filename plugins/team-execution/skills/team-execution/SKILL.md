@@ -223,9 +223,15 @@ Append a plan section like this:
 ## Team Structure
 
 ### Workers
-| Agent | Units | Tier | Mode | Depends-on |
-|-------|-------|------|------|------------|
-| `worker-<plugin>` | U1, U2 | opus/high | bypassPermissions | — |
+| Agent | Units | Tier | Mode | Depends-on | Engine | Intent |
+|-------|-------|------|------|------------|--------|--------|
+| `worker-<plugin>` | U1, U2 | opus/high | bypassPermissions | — | — | — |
+| `worker-<engine>` | U3 | sonnet/medium | bypassPermissions | `worker-<plugin>` | `<engine-key>` | offload |
+
+`Engine` and `Intent` are `—` for Claude workers. An engine-owned worker (KTD3, U12) renders
+`Engine` as `<engine-key>` for an explicit selector or `cap:<capability-key>` for a capability
+route, and `Intent` as `offload` or `second-opinion` — see
+`team-execution/skills/team-execution/references/external-engine-workers.md`.
 
 ### Reviewers
 | Agent | Role | Required | Selection Reason |
@@ -256,6 +262,7 @@ Append a plan section like this:
 - `team-execution/skills/team-execution/references/validator-evidence-state.md`
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
 - `team-execution/skills/team-execution/references/worker-manifest.md`
+- `team-execution/skills/team-execution/references/external-engine-workers.md`
 ```
 
 Then submit the plan for approval. Do not start implementation during Phase A.
@@ -301,10 +308,19 @@ Workers execute approved tasks. Coordinate dependencies, keep work scoped to the
 - **Worker Reuse (R3):** Reuse the resident worker across all units in its segment via `SendMessage`. Never re-spawn the worker per unit; reusing the persistent teammate preserves its warm context/cache across all units it owns.
 - **Cross-Segment Summary-Handoff (R4):** When a dependent segment requires the result of a prior segment, seed the dependent segment's fresh worker with a short summary of the upstream segment's output via `SendMessage` instead of forwarding the upstream worker's entire context.
 - **Context Shedding (R11):** Shed a resident worker at its segment boundary, or when a block of time is expected to exceed the prompt cache TTL horizon (~5 minutes). Teammate reuse is for temporally-tight loops, not indefinite warmth.
+- **Chaperone Dispatch (KTD1, U12):** A resident worker whose `### Workers` row carries a non-`—`
+  `Engine` cell is a chaperone: it resolves, dispatches through the existing containment wrappers,
+  verifies the returned evidence, applies the patch as sole-committer, runs its unit's tests, and
+  writes the worker-exit manifest — the engine itself never joins wave scheduling or touches the
+  working tree. Full protocol in
+  `team-execution/skills/team-execution/references/external-engine-workers.md`.
 
 Each worker writes a provenance manifest at segment/unit exit — see
 `team-execution/skills/team-execution/references/worker-manifest.md` (attribution + disposition +,
-for contract-bearing units, output_completeness; evidence-only, grants no privilege).
+for contract-bearing units, output_completeness; evidence-only, grants no privilege). A chaperone
+worker's manifest additionally carries `kind=external-engine` attribution and the honest
+disposition (`ran-as-requested` / `fell-back-to-claude` / `substituted-engine`) per
+`external-engine-workers.md`.
 
 When all worker tasks are complete, capture changed files and a git diff summary for reviewers.
 
@@ -413,7 +429,8 @@ team-execution/
 │           ├── validator-execution-order.md
 │           ├── validator-registry.md
 │           ├── validator-spawn-quirks.md
-│           └── worker-manifest.md
+│           ├── worker-manifest.md
+│           └── external-engine-workers.md
 ├── agents/
 │   ├── devils-advocate-reviewer.md
 │   ├── security-reviewer.md

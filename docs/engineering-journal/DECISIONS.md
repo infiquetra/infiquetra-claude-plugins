@@ -1683,3 +1683,39 @@ schema-breaking. Review record: `docs/reviews/2026-06-27-worker-model-cache-sche
   `docs/reviews/2026-07-01-external-engine-capability-routing-plan-readiness.md`.
 
 ---
+
+## External-engine workers in team-execution: chaperone dispatch, not a second executor kind {#external-engine-chaperone-dispatch}
+
+**Date.** 2026-07-02. **Plan.** `docs/plans/2026-07-02-team-execution-external-engine-workers-plan.md`
+(#318, U12 follow-up from #283's ship-with-deferred). Fulfills the "team-execution gains an
+external-engine worker context-package slot" revisit trigger recorded in
+[External engines are never gatekeepers](#external-engines-never-gatekeepers).
+
+- **KTD1 — chaperone worker, not coordinator dispatch.** One resident Claude worker
+  (`worker-<engine>` / `worker-<capability>`) owns an engine's units end-to-end: resolve → wrapper
+  dispatch → verify → apply as sole-committer → test → manifest. There is no second executor kind
+  in wave scheduling — the engine is evidence the chaperone consumes (R23), never a participant in
+  residency, review, or git. *Rejected:* the coordinator dispatching inline (context bloat per
+  dispatch; a second driver-materialized manifest-writer mode; two executor kinds in wave
+  scheduling for what should be one).
+- **KTD2 — delegation intent drives chaperone tier, operator confirms.** `offload` defaults the
+  chaperone to `sonnet/medium` (a heavier chaperone erases the token savings that motivated the
+  delegation); `second-opinion` defaults it to `opus/high` (adversarial verification IS the
+  product; extra spend assumed). The two intents pull tier in opposite directions, so this is a
+  per-unit operator-confirmed recommendation in the `/plan` tier table, not a fixed policy.
+  *Rejected:* one fixed chaperone tier (wrong for one intent by construction).
+- **KTD5 — advisory validators are opt-in and structurally incapable of gating.** The
+  `external-second-opinion` validator is selected only via `.team-execution.json`'s
+  `external_second_opinion` key, never auto-selected by Phase A; its Gate Status can never resolve
+  to `hard-fail`/`blocked` for completion purposes (R13/R15), and Required-Evidence Absence does
+  not apply to it (it cannot be missing what it was never required to provide).
+- **Naming carve-out (KTD3).** An explicit-engine unit renders `worker-<engine-key>` (the bare
+  engine id, e.g. `worker-agy` — not `worker-agy/gemini-3.5-flash-high`); a capability-routed unit
+  renders `worker-<capability-key>` with Engine cell `cap:<key>` — the plan previews only what is
+  knowable at plan time, since the concrete engine for a capability route is resolved at run time.
+- **Revisit when.** The ideation-R14 sandbox profile ships and file-mutating external workers
+  become possible (issue #287) — this plan's evidence-only chaperone scope would need revisiting;
+  or `/retro` surfaces that the sonnet/medium offload default is still eating more than it saves.
+  Readiness record: `docs/reviews/2026-07-02-team-execution-external-engine-workers-plan-readiness.md`.
+
+---

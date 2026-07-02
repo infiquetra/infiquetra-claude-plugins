@@ -87,6 +87,74 @@ def test_existing_style_unit_has_no_external_engine_marker() -> None:
     assert 'effort: "high"' in script
 
 
+def test_engine_intent_without_selector_fails() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(engine_intent="offload"))
+    with pytest.raises(ES.SpecError, match="engine_intent requires engine or capability"):
+        spec.validate()
+
+
+def test_engine_intent_bad_vocabulary_fails() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(engine="codex/gpt-5.5-xhigh", engine_intent="urgent")
+    )
+    # "not in" pins the vocabulary-check branch specifically -- the bare substring
+    # "engine_intent" also appears in the sibling "requires engine or capability"
+    # error, so that weaker match wouldn't prove this branch actually fired.
+    with pytest.raises(ES.SpecError, match="not in"):
+        spec.validate()
+
+
+def test_engine_intent_bad_vocabulary_fails_for_capability_selector() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(capability="code-generation", engine_intent="urgent")
+    )
+    with pytest.raises(ES.SpecError, match="not in"):
+        spec.validate()
+
+
+def test_engine_and_capability_mutual_exclusion_fires_before_intent_vocabulary() -> None:
+    """A unit with both a conflicting selector pair AND an invalid intent must surface
+    the selector mutual-exclusion error, proving that check runs first (from_dict calls
+    _validate_external_engine_selector before resolving/validating engine_intent)."""
+    with pytest.raises(ES.SpecError, match="mutually exclusive"):
+        ES.ExecutionSpec.from_dict(
+            _spec_dict(
+                engine="codex/gpt-5.5-xhigh",
+                capability="code-generation",
+                engine_intent="urgent",
+            )
+        )
+
+
+def test_engine_intent_defaults_to_offload_when_omitted() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+    spec.validate()
+
+    assert spec.units[0].engine_intent == "offload"
+
+
+def test_engine_intent_defaults_to_offload_when_omitted_for_engine_selector() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(engine="codex/gpt-5.5-xhigh"))
+    spec.validate()
+
+    assert spec.units[0].engine_intent == "offload"
+
+
+def test_engine_intent_explicit_value_round_trips() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(engine="codex/gpt-5.5-xhigh", engine_intent="second-opinion")
+    )
+    spec.validate()
+
+    round_tripped = ES.ExecutionSpec.from_dict(spec.to_dict())
+    assert round_tripped.units[0].engine_intent == "second-opinion"
+
+
+def test_engine_intent_omitted_from_to_dict_for_plain_claude_unit() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+    assert "engine_intent" not in spec.units[0].to_dict()
+
+
 def test_advisory_consensus_routes_to_ultracode_backend() -> None:
     from lifecycle_state import recommend_execution_backend
 

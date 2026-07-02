@@ -16,9 +16,14 @@ dependency, or substitute for reviewer/validator consensus. It is read-only, adv
 (R8) that downstream consumers (`/code-review`, `/qa`, `/retro`) may use to spend attention more
 efficiently — never something a worker or coordinator can use to skip a required check. Nothing
 in this contract expands what a team-execution worker is authorized to mutate; workers keep
-today's file-edit scope (R21 — mutating external workers stays out of scope entirely; this
-contract covers Claude-agent team-execution workers only, the only kind that exist until #283's
-U12 external-engine-as-worker wrapper lands).
+today's file-edit scope (R21 — mutating external workers stay out of scope entirely, blocked on
+the ideation-R14 sandbox profile, issue #287). This covers both worker kinds: an ordinary
+Claude-agent worker, and a **chaperone worker** — a Claude-agent worker whose units are owned by
+an external engine (agy, codex) it resolves, dispatches, verifies, and applies on behalf of (KTD1,
+#283 U12). The chaperone is still the one that touches the working tree and owns the commit —
+R21's scope never widens; see `external-engine-workers.md` for the full resolve → dispatch →
+verify → apply → test → manifest protocol this document's attribution/disposition/tier fields feed
+into.
 
 ## Who writes it and when
 
@@ -39,14 +44,29 @@ python3 plugins/saga/scripts/manifest_store.py \
 
 ## Manifest shape for a worker exit
 
-**Attribution (R2):** `kind="team-execution"`, `identity="worker-<plugin>"` (the resident worker
-id, matching the `worker-<plugin>` naming in the residency table), `effort` the tier the worker
-ran at (`opus/high`, etc., from the team-execution spec), `protocol=""` (no external-engine
-protocol applies to a Claude-agent worker).
+**Attribution (R2), Claude-agent worker:** `kind="team-execution"`, `identity="worker-<plugin>"`
+(the resident worker id, matching the `worker-<plugin>` naming in the residency table), `effort`
+the tier the worker ran at (`opus/high`, etc., from the team-execution spec), `protocol=""` (no
+external-engine protocol applies to a Claude-agent worker).
 
-**Disposition (R18):** `ran-as-requested` for a worker that completed its assigned units;
-`fell-back-to-claude` / `substituted-engine` do not apply to a Claude-agent worker today — they
-are reserved for the future external-engine-as-worker leg (R14, deferred, #283 U12).
+**Attribution (R2), chaperone worker:** `kind="external-engine"`, `identity="<engine>/<variant>"`
+(the resolved engine and variant, not the resident id — the same identity format
+`engine_dispatch.build_dispatch_manifest` always emits), `effort` the resolved engine's effort,
+`protocol` populated from the resolution. The resident id (`worker-<engine>` /
+`worker-<capability>`) still names the segment in the Workers table (KTD3) — it is not what
+`identity` carries here, since `identity` attributes the *output*, not the residency slot that
+produced it. Full mechanics in `external-engine-workers.md` §5.
+
+**Disposition (R18):** `ran-as-requested` for a worker (either kind) that completed its assigned
+units as requested. For a chaperone worker, two more dispositions are live (not reserved): the
+engine call itself never runs — `fell-back-to-claude` when the resolver's own capability-no-fit /
+preflight-unavailable path routes the unit to the chaperone as Claude, carrying the fallback
+reason as `disposition_note`; the engine ran but wasn't the one the operator approved —
+`substituted-engine` when run-time capability routing resolved a different engine/variant than the
+plan-time preview the tier table recorded (KTD4). A Claude-agent worker (no `engine`/`capability`
+selector) only ever writes `ran-as-requested` — the other two dispositions require a resolution to
+diverge from. Trigger conditions and the halt path (R25/R26 — a halt writes no manifest at all,
+nothing ran) are in `external-engine-workers.md` §2 and §4.
 
 **Output completeness (R3):** one `OutputCompleteness` per unit the worker owned, derived the same
 way `completeness_gate.Contract.from_unit` + `classify()` already do for spec-driven runs:
@@ -55,11 +75,14 @@ changed/returned. A required, non-skipped, contract-bearing unit with no manifes
 a `missing-output` trip — consistent with `validator-evidence-state.md`'s Required-Evidence
 Absence rule for validators, applied here to workers.
 
-**Claim provenance:** optional at v1 for worker manifests — a worker's output is code/diff, not a
-set of prose claims the way an external-engine dispatch is. Leave `claim_provenance` absent
-(lightweight tier, KTD9) unless a future revision asks a worker to attest specific claims about
-its own diff (it would still require Claude adjudication before any claimed-`verified` status
-counts toward a gate — D5, no self-attestation).
+**Claim provenance:** optional at v1. For a Claude-agent worker, output is code/diff, not a set of
+prose claims — leave `claim_provenance` absent (lightweight tier, KTD9) unless a future revision
+asks a worker to attest specific claims about its own diff. For a chaperone worker whose engine
+returned prose claims alongside its evidence (e.g. a second-opinion review verdict), the chaperone
+may populate `claim_provenance` from the engine's claimed layer — but every claim stays
+producer-`claimed`-only until the chaperone adjudicates it (`engine_dispatch.adjudicate_manifest`,
+never the engine itself); a claimed-`verified` status never counts toward a gate on its own (D5, no
+self-attestation — same rule either worker kind).
 
 ## Tier
 

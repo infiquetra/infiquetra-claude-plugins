@@ -318,14 +318,19 @@ def _assemble_payload(protocol: list[str], context: str) -> str:
 
 
 def _assert_protocol_preserved(protocol: list[str], payload: str) -> None:
+    # Explicit checks, not `assert` -- this is the R11 byte-preservation guarantee the
+    # dispatch contract advertises to callers; it must still hold under `python -O`,
+    # which strips `assert` statements.
     encoded = payload.encode("utf-8")
     offset = 0
     for index, line in enumerate(protocol):
         expected = line.encode("utf-8")
-        assert encoded[offset : offset + len(expected)] == expected
+        if encoded[offset : offset + len(expected)] != expected:
+            raise RegistryError("assembled payload does not preserve the protocol verbatim")
         offset += len(expected)
         if index < len(protocol) - 1:
-            assert encoded[offset : offset + 1] == b"\n"
+            if encoded[offset : offset + 1] != b"\n":
+                raise RegistryError("assembled payload does not preserve the protocol verbatim")
             offset += 1
 
 

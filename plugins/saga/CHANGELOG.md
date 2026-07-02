@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.46.0 - 2026-07-02
+
+### External-engine workers — plan-time tier recommendation + resolution preview (#318)
+- `execution_spec.py`: new optional `Unit.engine_intent` (`offload` / `second-opinion`, valid only
+  alongside `engine`/`capability`, defaults to `offload`) carries the KTD2 delegation intent that
+  drives a team-execution chaperone worker's tier recommendation.
+- `segment_units()`: an engine/capability unit now gets its own resident boundary
+  (`worker-<engine>` / `worker-<capability>`, keyed on the bare engine id, not the full
+  engine/variant selector) instead of grouping purely by file path — it never merges with a plain
+  Claude segment or a different engine/capability, regardless of adjacent file paths.
+- `team_emitter.py`: the `### Workers` table gains Engine/Intent columns rendering the new
+  segmentation (`cap:<key>` for a capability route, `—`/`—` for Claude segments); new column-shape
+  test oracles (none existed before this change).
+- `/plan` SKILL.md's tier-derivation table gains the KTD2 intent→tier recommendation rows and the
+  plan-time capability-resolution preview ("resolves today to `<engine>/<variant>`") that a
+  team-execution chaperone's `substituted-engine` disposition compares the run-time resolution
+  against.
+
 ## 0.45.0 - 2026-07-01
 
 ### Evidence / provenance manifests — verified-vs-adjudicated record per delegated output (#285)

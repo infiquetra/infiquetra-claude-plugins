@@ -62,6 +62,11 @@ _CHEAP_MODELS = ("haiku",)
 # majority => >= ceil(N/2) verifiers refute; unanimous => all N refute.
 PASS_RULES = ("majority", "unanimous")
 
+# Delegation-intent vocabulary for an engine/capability unit (KTD2, U12). ``offload``
+# wants a cheap chaperone (the delegation is net-negative otherwise); ``second-opinion``
+# wants an expensive one (adversarial verification IS the product).
+ENGINE_INTENTS = ("offload", "second-opinion")
+
 # Hard upper bound on a verify panel's verifier count. N above this FAILS validate/emit --
 # the bound directly guards the rate-limit overcorrection (R3: the 22/23-judges panel that
 # tripped the concurrency cap). N <= CAP is allowed; a soft warn band starts at WARN below.
@@ -391,12 +396,25 @@ class Unit:
     # External-engine routing selectors (U5). Absent => normal Claude unit.
     engine: str | None = None
     capability: str | None = None
+    # Delegation intent for an engine/capability unit (KTD2, U12). Valid only alongside
+    # engine/capability; defaults to "offload" on parse when one of those is set (see
+    # from_dict) -- tier itself stays a required field, this is a plan-time recommendation
+    # input, not a schema default for tier.
+    engine_intent: str | None = None
 
     def validate(self, where: str) -> None:
         if not self.unit_id:
             raise SpecError(f"{where}: a unit needs a non-empty unit_id")
         self.tier.validate(f"unit {self.unit_id}")
         _validate_external_engine_selector(f"unit {self.unit_id}", self.engine, self.capability)
+        if self.engine_intent is not None:
+            if self.engine is None and self.capability is None:
+                raise SpecError(f"unit {self.unit_id}: engine_intent requires engine or capability")
+            if self.engine_intent not in ENGINE_INTENTS:
+                raise SpecError(
+                    f"unit {self.unit_id}: engine_intent {self.engine_intent!r} "
+                    f"not in {ENGINE_INTENTS}"
+                )
         if self.verify is not None:
             self.verify.validate(f"unit {self.unit_id}")
         if self.fanout and not self.targets:
@@ -422,6 +440,10 @@ class Unit:
         engine = str(engine_raw) if engine_raw is not None else None
         capability = str(capability_raw) if capability_raw is not None else None
         _validate_external_engine_selector(where, engine, capability)
+        engine_intent_raw = data.get("engine_intent")
+        engine_intent = str(engine_intent_raw) if engine_intent_raw is not None else None
+        if engine_intent is None and (engine is not None or capability is not None):
+            engine_intent = "offload"
         return cls(
             unit_id=unit_id,
             label=str(data.get("label", unit_id)),
@@ -437,6 +459,7 @@ class Unit:
             verify=(Verify.from_dict(data["verify"], where) if data.get("verify") else None),
             engine=engine,
             capability=capability,
+            engine_intent=engine_intent,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -461,6 +484,8 @@ class Unit:
             out["engine"] = self.engine
         if self.capability is not None:
             out["capability"] = self.capability
+        if self.engine_intent is not None:
+            out["engine_intent"] = self.engine_intent
         return out
 
 
@@ -1135,13 +1160,18 @@ class Segment:
     """One resident worker segment (U1).
 
     Carries the stable resident agent-id, the covered unit ids, the segment-level
-    tier (upgrade-only max), and the collapsed segment-level dependencies.
+    tier (upgrade-only max), and the collapsed segment-level dependencies. ``engine`` /
+    ``capability`` / ``engine_intent`` are set only for a chaperone segment (KTD1/KTD3,
+    U12) -- ``None`` for an ordinary Claude segment.
     """
 
     resident_id: str
     unit_ids: list[str]
     tier: Tier
     depends_on: list[str]
+    engine: str | None = None
+    capability: str | None = None
+    engine_intent: str | None = None
 
 
 def segment_units(spec: ExecutionSpec) -> list[Segment]:
@@ -1160,7 +1190,18 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
     current_units: list[Unit] = []
 
     for unit in spec.units:
-        if not unit.files:
+        if unit.engine is not None:
+            # Chaperone segments never merge with a plain Claude segment or a
+            # different engine/capability, regardless of file path (KTD1/KTD3, U12).
+            # One resident chaperone per *contiguous run* of the same engine (not per
+            # variant) -- "worker-agy", not "worker-agy/gemini-3.5-flash-high" (KTD1's
+            # own naming example). Same as the plugin-directory grouping below, this is
+            # contiguous-only: a non-contiguous re-appearance of the same engine (e.g.
+            # interleaved with a Claude unit) opens a new resident ("worker-agy-2").
+            key = f"engine:{unit.engine.split('/', 1)[0]}"
+        elif unit.capability is not None:
+            key = f"capability:{unit.capability}"
+        elif not unit.files:
             key = ""
         else:
             first_file = unit.files[0]
@@ -1192,8 +1233,13 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
     temp_segments: list[dict[str, Any]] = []
 
     for key, units in segments_data:
-        base_dir = key[len("plugins/") :] if key.startswith("plugins/") else key
-        base_id = f"worker-{base_dir}" if base_dir else "worker"
+        if key.startswith("engine:"):
+            base_id = f"worker-{key[len('engine:') :]}"
+        elif key.startswith("capability:"):
+            base_id = f"worker-{key[len('capability:') :]}"
+        else:
+            base_dir = key[len("plugins/") :] if key.startswith("plugins/") else key
+            base_id = f"worker-{base_dir}" if base_dir else "worker"
 
         count = counts.get(base_id, 0) + 1
         counts[base_id] = count
@@ -1222,6 +1268,17 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
         best_effort_idx = max(EFFORTS.index(u.tier.effort) for u in units)
         seg_tier = Tier(model=MODELS[best_model_idx], effort=EFFORTS[best_effort_idx])
 
+        # Resolve engine_intent the same way: upgrade-only max ("second-opinion" beats
+        # "offload") when a same-engine segment's members disagree, rather than silently
+        # taking the first unit's value (KTD1/U12 -- a chaperone is one resident worker, so
+        # the more conservative intent should govern its tier recommendation).
+        seg_intents = [u.engine_intent for u in units if u.engine_intent is not None]
+        seg_engine_intent = (
+            ENGINE_INTENTS[max(ENGINE_INTENTS.index(i) for i in seg_intents)]
+            if seg_intents
+            else None
+        )
+
         # Collapse depends_on graph
         seg_deps: list[str] = []
         for u in units:
@@ -1240,6 +1297,9 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
                 unit_ids=unit_ids,
                 tier=seg_tier,
                 depends_on=seg_deps,
+                engine=units[0].engine.split("/", 1)[0] if units[0].engine is not None else None,
+                capability=units[0].capability,
+                engine_intent=seg_engine_intent,
             )
         )
 

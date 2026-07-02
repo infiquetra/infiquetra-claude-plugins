@@ -24,6 +24,11 @@ Supported `.team-execution.json` keys:
 - `nonprod_workflows`
 - `scenario_hints`
 - `smoke_targets`
+- `external_second_opinion` — opts the `external-second-opinion` validator in (see Advisory,
+  below). Absent by default: this validator is never auto-selected by Phase A signals, unlike
+  every other row in this registry. Value is `true` (dispatch through the registry's
+  `second-opinion` capability) or `{"engine": "<key>"}` / `{"capability": "<key>"}` to name a
+  specific selector.
 
 Required validators block completion if they cannot run. Disabled validators do not run unless
 the user explicitly overrides.
@@ -74,6 +79,20 @@ Tester hard-fail findings block completion.
 | Agent | Select When | Evidence |
 |-------|-------------|----------|
 | `deploy-watcher` | A nonprod or publish-nonprod workflow is eligible and selected | Workflow run, artifact, environment URL, rollback notes |
+
+---
+
+## Advisory
+
+| Agent | Select When | Blocking | Evidence |
+|-------|-------------|----------|----------|
+| `external-second-opinion` | `external_second_opinion` opt-in key is present in `.team-execution.json` — **never** auto-selected by Phase A signals (KTD5) | never | Chaperone-dispatched external-engine review verdict (`external-engine-workers.md`) |
+
+An advisory validator's verdict enters validator evidence like any other run, but its Gate Status
+(`validator-criteria.md`) can never resolve to `hard-fail` or `blocked` for the purpose of
+completion — R13/R15 forbid an external engine from holding a gated verdict. A failed or
+unavailable dispatch records its downgrade note (R24) and the run proceeds; see
+`validator-evidence-state.md` for why Required-Evidence Absence does not apply here.
 
 ---
 

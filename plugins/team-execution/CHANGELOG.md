@@ -4,6 +4,22 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.6.0] - 2026-07-02
+
+### External-engine workers — chaperone dispatch (#318)
+- A resident Claude worker (`worker-<engine>` / `worker-<capability>`) can now own an engine's
+  (agy, codex) units end-to-end: resolve, dispatch through the existing containment wrappers,
+  verify, apply as sole-committer, test, and write the worker-exit manifest. New
+  `references/external-engine-workers.md` is the full protocol; `SKILL.md`'s `### Workers` table
+  gains Engine/Intent columns (`—` for Claude workers).
+- `worker-manifest.md` activates the `fell-back-to-claude` / `substituted-engine` dispositions
+  #285 reserved, with `kind=external-engine` attribution and claim-provenance/adjudication
+  guidance for engine-returned claims (D5, no self-attestation).
+- New advisory `external-second-opinion` validator (`validator-registry.md`): opt-in only via
+  `.team-execution.json`'s `external_second_opinion` key, never auto-selected, and structurally
+  incapable of gating (Gate Status can never resolve to `hard-fail`/`blocked`; exempt from
+  Required-Evidence Absence). External engines still never hold a gated verdict (R13/R15).
+
 ## [2.5.0] - 2026-07-01
 
 ### Worker-exit provenance manifests (#285)

@@ -66,3 +66,18 @@ production, staging, force-push, branch deletion, or credential-changing actions
 
 Any ambiguous workflow name, environment, remote, branch model, or credential action is a
 blocked gate.
+
+---
+
+## Advisory
+
+The `external-second-opinion` validator (registry: Advisory) is opt-in only and its verdict never
+gates. It must:
+
+- Dispatch through the chaperone protocol (`external-engine-workers.md`), never a raw engine CLI.
+- Report a Gate Status like any other validator, but the Gate Status table's `hard-fail` and
+  `blocked` effects **do not apply** to it — its worst-case status is `warn` for the purpose of
+  completion, no matter how the engine's review reads (R13/R15: never a gatekeeper).
+- Surface a failed or unavailable dispatch as its downgrade note (R24), not as a `blocked` gate —
+  the run proceeds regardless.
+- Never be substituted for a required scanner, tester, or monitor; it is additive evidence only.

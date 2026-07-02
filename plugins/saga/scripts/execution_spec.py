@@ -1265,6 +1265,17 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
         best_effort_idx = max(EFFORTS.index(u.tier.effort) for u in units)
         seg_tier = Tier(model=MODELS[best_model_idx], effort=EFFORTS[best_effort_idx])
 
+        # Resolve engine_intent the same way: upgrade-only max ("second-opinion" beats
+        # "offload") when a same-engine segment's members disagree, rather than silently
+        # taking the first unit's value (KTD1/U12 -- a chaperone is one resident worker, so
+        # the more conservative intent should govern its tier recommendation).
+        seg_intents = [u.engine_intent for u in units if u.engine_intent is not None]
+        seg_engine_intent = (
+            ENGINE_INTENTS[max(ENGINE_INTENTS.index(i) for i in seg_intents)]
+            if seg_intents
+            else None
+        )
+
         # Collapse depends_on graph
         seg_deps: list[str] = []
         for u in units:
@@ -1285,7 +1296,7 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
                 depends_on=seg_deps,
                 engine=units[0].engine.split("/", 1)[0] if units[0].engine is not None else None,
                 capability=units[0].capability,
-                engine_intent=units[0].engine_intent,
+                engine_intent=seg_engine_intent,
             )
         )
 

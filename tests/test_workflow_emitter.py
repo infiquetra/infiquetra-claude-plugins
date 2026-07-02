@@ -1060,6 +1060,121 @@ def test_segment_units_grouping_and_boundaries() -> None:
     assert segments[3].unit_ids == ["U5"]
 
 
+def test_segment_units_engine_and_capability_boundaries() -> None:
+    """KTD1/U12: one resident chaperone per *engine* (not per variant); engine/capability
+    segments never merge with a plain Claude segment or a different engine/capability,
+    even when file paths or adjacency would otherwise suggest a merge."""
+    mod = _load()
+    data = {
+        "name": "engine-segment-test",
+        "description": "testing engine/capability segmentation boundaries",
+        "units": [
+            # Two contiguous same-engine, DIFFERENT-variant units -> one segment ("worker-agy"),
+            # keyed on the bare engine id per KTD1's own "worker-agy" naming example.
+            {
+                "unit_id": "U1",
+                "label": "agy unit 1",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "agy-1",
+                "engine": "agy/gemini-3.5-flash-high",
+            },
+            {
+                "unit_id": "U2",
+                "label": "agy unit 2",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "agy-2",
+                "engine": "agy/gemini-3.1-pro-high",
+            },
+            # A capability-routed unit interleaved -> opens a new segment, never merges with
+            # the preceding engine segment even though both are "external-engine" flavored.
+            {
+                "unit_id": "U3",
+                "label": "capability unit",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "cap-1",
+                "capability": "code-generation",
+            },
+            # Adjacent Claude unit sharing the SAME file path as a later engine unit -> the
+            # engine boundary still wins; it must not merge into a file-path-derived segment.
+            {
+                "unit_id": "U4",
+                "label": "claude unit",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "claude-1",
+                "files": ["plugins/saga/scripts/execution_spec.py"],
+            },
+            # Non-contiguous return to the "agy" engine (U3/U4 intervened) -> reopens as
+            # "worker-agy-2", same dedup-counter convention the file-path case already uses.
+            # Shares a file path with U4 to prove the engine boundary wins over the file-path
+            # boundary even when both could plausibly apply.
+            {
+                "unit_id": "U5",
+                "label": "agy unit 3",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "agy-3",
+                "files": ["plugins/saga/scripts/execution_spec.py"],
+                "engine": "agy/gemini-3.5-flash-high",
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    segments = mod.segment_units(spec)
+
+    assert len(segments) == 4
+
+    assert segments[0].resident_id == "worker-agy"
+    assert segments[0].unit_ids == ["U1", "U2"]
+    assert segments[0].engine == "agy"
+    assert segments[0].capability is None
+
+    assert segments[1].resident_id == "worker-code-generation"
+    assert segments[1].unit_ids == ["U3"]
+    assert segments[1].engine is None
+    assert segments[1].capability == "code-generation"
+
+    assert segments[2].resident_id == "worker-saga"
+    assert segments[2].unit_ids == ["U4"]
+    assert segments[2].engine is None
+
+    assert segments[3].resident_id == "worker-agy-2"
+    assert segments[3].unit_ids == ["U5"]
+    assert segments[3].engine == "agy"
+
+
+def test_segment_units_engine_intent_upgrade_only_max() -> None:
+    """When a same-engine segment's members disagree on engine_intent, the segment resolves
+    to "second-opinion" (the more conservative intent) -- never a silent first-unit-wins."""
+    mod = _load()
+    data = {
+        "name": "engine-intent-merge-test",
+        "description": "engine_intent resolves like tier: upgrade-only max",
+        "units": [
+            {
+                "unit_id": "U1",
+                "label": "agy unit 1",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "agy-1",
+                "engine": "agy/gemini-3.5-flash-high",
+                "engine_intent": "offload",
+            },
+            {
+                "unit_id": "U2",
+                "label": "agy unit 2",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "agy-2",
+                "engine": "agy/gemini-3.1-pro-high",
+                "engine_intent": "second-opinion",
+            },
+        ],
+    }
+    spec = mod.ExecutionSpec.from_dict(data)
+    segments = mod.segment_units(spec)
+
+    assert len(segments) == 1
+    assert segments[0].unit_ids == ["U1", "U2"]
+    assert segments[0].engine_intent == "second-opinion"
+
+
 def test_segment_units_tier_upgrade_only_max() -> None:
     mod = _load()
 

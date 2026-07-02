@@ -574,6 +574,7 @@ here may be absent from the `provenance_manifest.py` dataclasses (drift, both di
 | `attribution.identity` | `engine_dispatch.py`, `manifest_store.py` | `manifest_reader.py` | live |
 | `attribution.effort` | `engine_dispatch.py`, `manifest_store.py` | `manifest_reader.py` | live |
 | `attribution.protocol` | `engine_dispatch.py` | `manifest_reader.py` | live |
+| `attribution.sandbox` | `engine_dispatch.py` (`build_dispatch_manifest`, #287 R7 pre-hoc scope) | operator/audit prose (declared-vs-actual scope review); `external-engine-workers.md` attribution note | live (optional, absent-tolerant — no `saga.manifest.v1` bump) |
 | `disposition` | `engine_dispatch.py`, `manifest_store.py` | `manifest_reader.py` (R18 disposition rate) | live |
 | `disposition_note` | `engine_dispatch.py` | operator/skill prose (`/work` SKILL.md post-run step) | live |
 | `created_at` | `engine_dispatch.py`, `manifest_store.py` | `manifest_store.py` (ordering on list) | live |

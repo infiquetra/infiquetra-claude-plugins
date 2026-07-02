@@ -101,18 +101,27 @@ class Attribution:
     identity: str
     effort: str = ""
     protocol: str = ""
+    # The leaf's DECLARED sandbox (#287 U5/R7) -- pre-hoc scope beside the post-hoc record.
+    # Optional and absent-tolerant: an empty value emits no key, so existing manifests round-trip
+    # byte-identical and the schema stays saga.manifest.v1 (additive field, no SCHEMA_VERSION bump).
+    sandbox: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "kind": self.kind.value,
             "identity": self.identity,
             "effort": self.effort,
             "protocol": self.protocol,
         }
+        if self.sandbox:
+            out["sandbox"] = self.sandbox
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Attribution:
-        _reject_unknown_keys(data, {"kind", "identity", "effort", "protocol"}, "attribution")
+        _reject_unknown_keys(
+            data, {"kind", "identity", "effort", "protocol", "sandbox"}, "attribution"
+        )
         try:
             kind = ProducerKind(data["kind"])
         except (KeyError, ValueError) as exc:
@@ -125,6 +134,7 @@ class Attribution:
             identity=identity,
             effort=str(data.get("effort", "")),
             protocol=str(data.get("protocol", "")),
+            sandbox=str(data.get("sandbox", "")),
         )
 
 

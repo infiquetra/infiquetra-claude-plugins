@@ -76,26 +76,38 @@ wrapper invocation from the resolution's own payload — never re-authored or pa
 
 ```python
 invocation = (
-    engine_dispatch.build_codex_invocation(resolution)      # engine_dispatch.py:39-48
+    engine_dispatch.build_codex_invocation(resolution, sandbox=unit_sandbox)
     if resolution.engine_id == "codex"
-    else engine_dispatch.build_agy_envelope(resolution, model=model)  # :50-69
+    else engine_dispatch.build_agy_envelope(
+        resolution, model=model, sandbox=unit_sandbox, write_set=unit_files
+    )
 )
-evidence = engine_dispatch.dispatch(resolution, runner=runner, model=model)  # :72-121
+evidence = engine_dispatch.dispatch(
+    resolution, runner=runner, model=model, sandbox=unit_sandbox, write_set=unit_files
+)
 ```
 
-Both builders assert byte-identical payload preservation (`_assert_payload_preserved`,
-`engine_dispatch.py:275-277`) — `resolution.payload` is the resolved prompting protocol plus
-context, assembled once by the resolver (`_assemble_payload`, `engine_resolver.py:313-317`) and
-never touched again. The `runner` that actually invokes the engine is the existing containment
-wrapper, not a new one this contract adds:
+`unit_sandbox` is the unit's declared `sandbox` envelope (or `None`) and `unit_files` its declared
+`files` list. Both builders assert byte-identical payload preservation (`_assert_payload_preserved`)
+— `resolution.payload` is the resolved prompting protocol plus context, assembled once by the
+resolver (`_assemble_payload`, `engine_resolver.py`) and never touched again. The `runner` that
+actually invokes the engine is the existing containment wrapper, not a new one this contract adds:
 
 - **agy** → `/agy:delegate` (or the `agy:agy-coder` / `agy:agy-reviewer` Bash-only bridge agents),
-  which calls `agy_delegate.py`. Never invoke raw `agy`. The envelope's `mode` stays `"no-write"`,
-  `write_set: []`, `apply_policy: "preserve-patch"` (`build_agy_envelope`,
-  `engine_dispatch.py:50-69`) — the wrapper is patch-only by construction; there is nothing here
-  to loosen even if a future unit wanted to (R23 gate is upstream of this contract).
-- **codex** → `codex:codex-rescue`, `sandbox: "read-only"` (`build_codex_invocation`,
-  `engine_dispatch.py:39-48`).
+  which calls `agy_delegate.py`. Never invoke raw `agy`. **Default / read-only units keep the
+  evidence-only ceiling** — `mode: "no-write"`, `write_set: []`, `apply_policy: "preserve-patch"`.
+  A **`sandboxed-mutate`** unit (read-write × owned-worktree) lifts that ceiling by WIRING agy's
+  existing clone + gated patch import (#287 U5): `mode: "patch-only"`, `write_set` = the unit's
+  declared files, `apply_policy: "preserve-patch"` (`build_agy_envelope`). No new isolation is
+  built — the remotes-stripped disposable clone agy already sets up is the workspace, and the
+  `git diff <BASE_SHA>` harvest imports only the declared write_set (R23 gate stays upstream).
+- **codex** → `codex:codex-rescue`, `sandbox: "read-only"` (`build_codex_invocation`). codex has
+  **no write adapter**: a `sandboxed-mutate` unit routed to codex HALTS with a visible
+  `DispatchError` rather than silently running read-only and dropping the write (#287 KTD4/R6).
+
+The leaf's declared sandbox is recorded on the provenance manifest as **pre-hoc attribution**
+(`build_dispatch_manifest(..., sandbox=<profile>)`, #287 R7) — an optional, absent-tolerant
+`attribution.sandbox` string that does not bump `saga.manifest.v1`.
 
 `dispatch()` short-circuits to a halted `AdvisoryEvidence` without invoking the runner at all when
 `resolution.halt is not None` (`engine_dispatch.py:79-90`) — the halt path in §4 never reaches the

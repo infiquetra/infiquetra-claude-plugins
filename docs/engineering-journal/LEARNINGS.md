@@ -25,6 +25,26 @@
 
 ---
 
+## 2026-07-02
+
+### A re-imported module's exception class is not the caught one  {#dynamic-module-reload-breaks-exception-identity}
+
+**Context.** #287 U3 needed `team_emitter.emit` to raise `execution_spec.SpecError` for a
+restrictive-sandbox unit the team-execution backend can't enforce.
+**Evidence.** `plugins/saga/scripts/team_emitter.py` (the `emit_team_structure` execution_spec
+load); `tests/test_team_emitter.py::test_restrictive_sandbox_unit_raises_naming_unit_axis_backend`.
+**Mechanism.** `team_emitter` loaded `execution_spec` via `importlib.util.spec_from_file_location` +
+`exec_module` WITHOUT registering it in `sys.modules`, minting a fresh module with its OWN
+`SpecError` class each call. When U3 made `emit_team_structure` *raise* `mod.SpecError`, an
+upstream `except execution_spec.SpecError` (the canonically-imported class) would not catch it —
+`except` matches by class *identity*, and two importlib loads of one file produce two distinct,
+non-`issubclass` classes sharing a name.
+**Fix (or queued).** Reuse `sys.modules.get("execution_spec")` before loading (register on first
+load) so all references collapse to one class.
+**Generalizable rule.** If a module dynamically re-loads a sibling and then raises or
+`isinstance`-checks that sibling's types, reuse the `sys.modules` copy — a name-equal class from a
+second `exec_module` sails past every `except`/`isinstance` written against the first.
+
 ## 2026-07-01
 
 ### Tier vocabulary tuples are ordered escalation ladders, not just closed sets  {#tier-vocab-ordering}

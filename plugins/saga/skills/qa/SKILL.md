@@ -168,7 +168,10 @@ broad, and gather **evidence** for every result:
 **Operator-choice for large/parallel verification.** When several risk classes warrant independent,
 parallel verification, **OFFER** a backend per `../../references/operator-choice.md` (`inline` /
 `team-execution` / `cc-workflows-ultracode`) — never auto-spawn. Parallel verification uses **generic
-`Explore` / `Task` agents** (this plugin has no `agents/` dir — do not reference named `ce-*` agents).
+`Explore` / `Task` agents** (this plugin has no `agents/` dir for class-specific personas — do not
+reference named `ce-*` agents); each read-only verification spawn names
+`subagent_type: saga:readonly-verifier` and `isolation: "worktree"` per
+`plugins/saga/references/sandbox-spawn-sites.md`.
 
 ---
 

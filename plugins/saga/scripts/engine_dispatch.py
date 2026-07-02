@@ -36,8 +36,19 @@ class AdvisoryEvidence:
     halt: str | None = None
 
 
-def build_codex_invocation(resolution: Resolution) -> dict[str, Any]:
-    """Build a read-only codex-rescue invocation with a verbatim task payload."""
+def build_codex_invocation(resolution: Resolution, *, sandbox: Any = None) -> dict[str, Any]:
+    """Build a read-only codex-rescue invocation with a verbatim task payload.
+
+    codex has no write adapter (#287 KTD4): ``sandbox: "read-only"`` is its only supported posture.
+    A sandboxed-mutate unit routed to codex HALTS visibly here rather than silently running
+    read-only and dropping the requested write -- halt-not-downgrade (R4/R6).
+    """
+    if _sandbox_requests_writes(sandbox):
+        raise DispatchError(
+            "codex has no write adapter: a sandboxed-mutate unit cannot run on codex "
+            "(#287 R6/KTD4 halt-not-downgrade) -- route write-mode work to agy, or drop the "
+            "sandbox to run codex read-only"
+        )
     invocation = {
         "via": "codex:codex-rescue",
         "task": resolution.payload,
@@ -47,15 +58,35 @@ def build_codex_invocation(resolution: Resolution) -> dict[str, Any]:
     return invocation
 
 
-def build_agy_envelope(resolution: Resolution, *, model: Any) -> dict[str, Any]:
-    """Build a no-write agy delegation envelope with a verbatim task payload."""
+def build_agy_envelope(
+    resolution: Resolution,
+    *,
+    model: Any,
+    sandbox: Any = None,
+    write_set: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build an agy delegation envelope with a verbatim task payload.
+
+    Default / read-only sandbox keeps the evidence-only ceiling (``mode: "no-write"``,
+    ``write_set: []``) -- byte-identical to before. A sandboxed-mutate sandbox (read-write into an
+    owned/isolated workspace) lifts the ceiling by WIRING agy's existing clone + gated patch import
+    (#287 U5/R6): ``mode: "patch-only"``, ``write_set`` = the unit's declared files,
+    ``apply_policy: "preserve-patch"``. No new isolation is built -- the remotes-stripped disposable
+    clone agy already sets up is the workspace, and preserve-patch was already the apply policy.
+    """
+    if _sandbox_requests_writes(sandbox):
+        mode = "patch-only"
+        allowed_writes = list(write_set or [])
+    else:
+        mode = "no-write"
+        allowed_writes = []
     envelope = {
         "schema": "agy.delegation.v1",
         "role": "coder",
-        "mode": "no-write",
+        "mode": mode,
         "task": resolution.payload,
         "model": model,
-        "write_set": [],
+        "write_set": allowed_writes,
         "apply_policy": "preserve-patch",
         "evidence": "summary",
         "verification": {
@@ -74,8 +105,16 @@ def dispatch(
     *,
     runner: Runner,
     model: Any | None = None,
+    sandbox: Any = None,
+    write_set: list[str] | None = None,
 ) -> AdvisoryEvidence:
-    """Run an external engine adapter and return advisory evidence only."""
+    """Run an external engine adapter and return advisory evidence only.
+
+    ``sandbox`` (a Unit's declared containment) + ``write_set`` (its declared files) thread through
+    to the envelope builders (#287 U5): a sandboxed-mutate agy unit lifts to patch-only; a
+    sandboxed-mutate codex unit raises ``DispatchError`` (no write adapter). Default/read-only is
+    byte-identical to before.
+    """
     if resolution.halt is not None:
         return AdvisoryEvidence(
             engine_id=resolution.engine_id,
@@ -89,7 +128,7 @@ def dispatch(
             halt=resolution.halt,
         )
 
-    invocation = _build_invocation(resolution, model=model)
+    invocation = _build_invocation(resolution, model=model, sandbox=sandbox, write_set=write_set)
     result = runner(invocation)
     status = _string_result(result.get("status"), default="malformed")
     output = _string_result(result.get("output"), default="")
@@ -129,6 +168,7 @@ def build_dispatch_manifest(
     created_at: str,
     effort: str = "",
     protocol: str = "",
+    sandbox: str = "",
     claim_provenance: pm.ClaimProvenance | None = None,
 ) -> pm.Manifest:
     """Type today's ad-hoc ``provenance`` dict into a saga.manifest.v1 envelope (U3/R2/R18).
@@ -153,6 +193,7 @@ def build_dispatch_manifest(
             identity=f"{evidence.engine_id}/{evidence.variant}",
             effort=effort,
             protocol=protocol,
+            sandbox=sandbox,
         ),
         disposition=disposition,
         disposition_note=str(note),
@@ -170,6 +211,7 @@ def record_dispatch_manifest(
     created_at: str,
     effort: str = "",
     protocol: str = "",
+    sandbox: str = "",
     claim_provenance: pm.ClaimProvenance | None = None,
 ) -> pm.Manifest:
     """Build and persist the typed manifest for one dispatch via ``manifest_store`` (KTD1)."""
@@ -180,6 +222,7 @@ def record_dispatch_manifest(
         created_at=created_at,
         effort=effort,
         protocol=protocol,
+        sandbox=sandbox,
         claim_provenance=claim_provenance,
     )
     manifest_store.write_manifest(store, execution_id, manifest.to_dict())
@@ -270,12 +313,32 @@ def downgrade_note(engine: str, reason: str) -> str:
     return f"Downgraded external engine {engine}: {safe_reason}"
 
 
-def _build_invocation(resolution: Resolution, *, model: Any | None) -> dict[str, Any]:
+def _build_invocation(
+    resolution: Resolution,
+    *,
+    model: Any | None,
+    sandbox: Any = None,
+    write_set: list[str] | None = None,
+) -> dict[str, Any]:
     if resolution.engine_id == "codex":
-        return build_codex_invocation(resolution)
+        return build_codex_invocation(resolution, sandbox=sandbox)
     if resolution.engine_id == "agy":
-        return build_agy_envelope(resolution, model=model)
+        return build_agy_envelope(resolution, model=model, sandbox=sandbox, write_set=write_set)
     raise DispatchError(f"unsupported external engine {resolution.engine_id!r}")
+
+
+def _sandbox_requests_writes(sandbox: Any) -> bool:
+    """True iff ``sandbox`` explicitly permits writes into an isolated workspace (sandboxed-mutate).
+
+    The default (None) and read-only sandboxes keep the evidence-only ceiling; only an explicit
+    restrictive read-write sandbox lifts it (#287 U5). Duck-typed so either spec house's Sandbox
+    object works.
+    """
+    return (
+        sandbox is not None
+        and getattr(sandbox, "is_restrictive", False)
+        and getattr(sandbox, "mutation_policy", None) == "read-write"
+    )
 
 
 def _assert_payload_preserved(task: Any, payload: str) -> None:

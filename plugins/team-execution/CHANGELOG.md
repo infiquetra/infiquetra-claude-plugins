@@ -4,6 +4,15 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.7.0] - 2026-07-02
+
+### Capability-scoped sandbox write-mode leg (#287)
+- `references/external-engine-workers.md`: documents the write-mode chaperone leg — a
+  `sandboxed-mutate` unit lifts agy to `mode: "patch-only"` with `write_set` = the unit's declared
+  files (wiring the existing remotes-stripped disposable clone), while a `sandboxed-mutate` codex
+  unit HALTS (no write adapter). The leaf's declared sandbox is recorded as pre-hoc
+  `attribution.sandbox` on the provenance manifest.
+
 ## [2.6.0] - 2026-07-02
 
 ### External-engine workers — chaperone dispatch (#318)

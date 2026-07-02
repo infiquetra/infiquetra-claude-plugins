@@ -161,3 +161,253 @@ def test_advisory_consensus_routes_to_ultracode_backend() -> None:
     result = recommend_execution_backend(needs_consensus=True, consensus_is_gated=False)
 
     assert result["recommended"] == "cc-workflows-ultracode"
+
+
+# --------------------------------------------------------------------------- sandbox (U1)
+# The two-axis capability envelope (#287 R1-R3): mutation_policy x workspace_isolation, with
+# named profile shorthand. Absent => ambient x read-write (today's behavior, no new key).
+
+
+def test_sandbox_profile_string_expands_to_axis_pair() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(sandbox="read-only-verify"))
+    spec.validate()
+    sb = spec.units[0].sandbox
+    assert sb is not None
+    assert sb.mutation_policy == "read-only"
+    assert sb.workspace_isolation == "disposable-worktree"
+    assert sb.is_restrictive
+
+
+def test_sandbox_sandboxed_mutate_profile_expands() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(sandbox="sandboxed-mutate"))
+    spec.validate()
+    sb = spec.units[0].sandbox
+    assert (sb.mutation_policy, sb.workspace_isolation) == ("read-write", "owned-worktree")
+
+
+def test_sandbox_explicit_axes_accepted() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(sandbox={"mutation_policy": "read-only", "workspace_isolation": "ambient"})
+    )
+    spec.validate()
+    sb = spec.units[0].sandbox
+    assert sb.mutation_policy == "read-only" and sb.workspace_isolation == "ambient"
+    # read-only alone (isolation ambient) still narrows a policy => restrictive.
+    assert sb.is_restrictive
+
+
+def test_sandbox_default_ambient_readwrite_is_not_restrictive() -> None:
+    sb = ES.Sandbox(mutation_policy="read-write", workspace_isolation="ambient")
+    assert not sb.is_restrictive
+
+
+def test_sandbox_absent_defaults_to_none_with_no_key() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+    unit = spec.units[0]
+    assert unit.sandbox is None
+    assert "sandbox" not in unit.to_dict()
+
+
+def test_sandbox_to_dict_emits_expanded_axes_not_shorthand() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(sandbox="read-only-verify"))
+    emitted = spec.units[0].to_dict()["sandbox"]
+    assert emitted == {
+        "mutation_policy": "read-only",
+        "workspace_isolation": "disposable-worktree",
+    }
+    # Round-trip is idempotent: the expanded form reparses to the same axes.
+    again = ES.ExecutionSpec.from_dict(spec.to_dict())
+    assert again.units[0].sandbox == spec.units[0].sandbox
+
+
+def test_sandbox_unknown_profile_raises() -> None:
+    with pytest.raises(ES.SpecError, match="unknown sandbox profile"):
+        ES.ExecutionSpec.from_dict(_spec_dict(sandbox="airtight"))
+
+
+def test_sandbox_unknown_axis_value_raises() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(sandbox={"mutation_policy": "write-anywhere", "workspace_isolation": "ambient"})
+    )
+    with pytest.raises(ES.SpecError, match="mutation_policy 'write-anywhere' not in"):
+        spec.validate()
+
+
+def test_sandbox_profile_key_conflicts_with_explicit_axes() -> None:
+    with pytest.raises(ES.SpecError, match="conflicts with the explicit-axes form"):
+        ES.ExecutionSpec.from_dict(
+            _spec_dict(
+                sandbox={
+                    "profile": "read-only-verify",
+                    "mutation_policy": "read-only",
+                    "workspace_isolation": "disposable-worktree",
+                }
+            )
+        )
+
+
+def test_sandbox_coexists_with_engine_selector_without_interference() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(capability="code-generation", sandbox="sandboxed-mutate")
+    )
+    spec.validate()
+    unit = spec.units[0]
+    assert unit.capability == "code-generation"
+    assert unit.engine_intent == "offload"  # selector default still applies
+    assert unit.sandbox.workspace_isolation == "owned-worktree"
+    # Both round-trip together, neither field perturbs the other.
+    again = ES.Unit.from_dict(unit.to_dict())
+    assert again.capability == "code-generation"
+    assert again.sandbox == unit.sandbox
+
+
+# ------------------------------------------------------ read-only verifier wiring (U2)
+# Every verifier agent() call the emitter renders MUST carry agentType + isolation across all
+# three emission shapes (plain panel, iterate-to-consensus singleton, parallel-layer thunk).
+# Missing any one site is exactly the R9 dead-wiring failure.
+
+AGENTS_DIR = ROOT / "plugins" / "saga" / "agents"
+READONLY_VERIFIER_AGENT = AGENTS_DIR / "readonly-verifier.md"
+
+
+def _frontmatter_scalar(text: str, key: str) -> str:
+    """Read one top-level single-line frontmatter scalar (name/model/tools) without a YAML dep.
+
+    Stops at the multi-line ``description: |`` block, which is fine -- the keys this test cares
+    about (name, tools) precede it.
+    """
+    in_fm = False
+    for line in text.splitlines():
+        if line.strip() == "---":
+            if in_fm:
+                break
+            in_fm = True
+            continue
+        if in_fm and line.startswith(f"{key}:"):
+            return line[len(key) + 1 :].strip()
+    raise AssertionError(f"{key!r} not found in frontmatter")
+
+
+def _emit_units(units: list[dict[str, object]]) -> str:
+    spec = ES.ExecutionSpec.from_dict(
+        {"name": "verify-demo", "description": "d", "repo": "/tmp/r", "units": units}
+    )
+    spec.validate()
+    return ES.emit_workflow_script(spec)
+
+
+def _verify_unit(uid: str, **kw: object) -> dict[str, object]:
+    unit: dict[str, object] = {
+        "unit_id": uid,
+        "label": uid,
+        "tier": {"model": "opus", "effort": "high"},
+        "prompt": "do the work",
+        "returns": ["result"],
+    }
+    unit.update(kw)
+    return unit
+
+
+def test_readonly_verifier_agent_definition_exists_with_readonly_toolset() -> None:
+    assert READONLY_VERIFIER_AGENT.exists()
+    text = READONLY_VERIFIER_AGENT.read_text(encoding="utf-8")
+    assert _frontmatter_scalar(text, "name") == "readonly-verifier"
+    tools = [t.strip() for t in _frontmatter_scalar(text, "tools").split(",")]
+    assert tools == ["Bash", "Read", "Grep", "Glob"]
+    # The read-only contract IS tool omission at spawn: Edit/Write must be absent.
+    assert "Edit" not in tools and "Write" not in tools
+
+
+def test_verifier_agenttype_literal_matches_agent_definition_name() -> None:
+    # Literal-consistency guard (#287 U2, saga-side half of the registry-drift risk): the
+    # agentType string the emitter bakes into every verifier call MUST equal the agent
+    # definition's `name:` plus the `saga:` plugin prefix. A rename on either side fails HERE
+    # rather than silently spawning verifiers with an unknown (=> unrestricted) agent type.
+    text = READONLY_VERIFIER_AGENT.read_text(encoding="utf-8")
+    name = _frontmatter_scalar(text, "name")
+    assert f"saga:{name}" == ES.READONLY_VERIFIER_AGENT_TYPE
+    assert ES.READONLY_VERIFIER_ISOLATION == "worktree"
+
+
+def test_verifier_panel_emits_readonly_agenttype_and_isolation() -> None:
+    script = _emit_units([_verify_unit("a", verify={"n": 2, "pass_rule": "majority"})])
+    assert 'agentType: "saga:readonly-verifier"' in script
+    assert 'isolation: "worktree"' in script
+
+
+def test_verifier_iterate_singleton_emits_readonly_agenttype_and_isolation() -> None:
+    script = _emit_units(
+        [_verify_unit("b", verify={"n": 2, "pass_rule": "majority", "iterate_to_consensus": True})]
+    )
+    assert 'agentType: "saga:readonly-verifier"' in script
+    assert 'isolation: "worktree"' in script
+    assert "for (let iter" in script  # proves the singleton loop path, not the plain panel
+
+
+def test_verifier_parallel_thunk_emits_readonly_agenttype_and_isolation() -> None:
+    # Two independent units land in one dependency layer => parallel([...]) of thunks; each
+    # thunk with iterate_to_consensus runs its own inline verifier loop (the third site).
+    script = _emit_units(
+        [
+            _verify_unit(
+                "c1", verify={"n": 2, "pass_rule": "majority", "iterate_to_consensus": True}
+            ),
+            _verify_unit(
+                "c2", verify={"n": 2, "pass_rule": "majority", "iterate_to_consensus": True}
+            ),
+        ]
+    )
+    assert "parallel(" in script
+    # Both units' verifier loops carry the opts: 2 units x n=2 verifiers = 4 tagged calls.
+    assert script.count('agentType: "saga:readonly-verifier"') == 4
+    assert script.count('isolation: "worktree"') == 4
+
+
+def test_unit_own_agent_call_is_not_verifier_restricted() -> None:
+    # A single unit with a 2-verifier panel: agentType appears on the TWO verifier calls only,
+    # never on the unit's own agent() call (which keeps the ambient x read-write R1 default).
+    script = _emit_units([_verify_unit("a", verify={"n": 2, "pass_rule": "majority"})])
+    assert script.count('agentType: "saga:readonly-verifier"') == 2
+
+
+def test_plain_unit_without_verify_emits_no_verifier_wiring() -> None:
+    script = _emit_units([_verify_unit("a")])
+    assert "agentType" not in script
+    assert "isolation:" not in script
+
+
+# ---------------------------------------------------------- enforceability matrix (U3)
+# unenforceable_sandbox_axis(backend, sandbox) -> the (axis, value) a backend cannot enforce, or
+# None. Only NON-default axis values need enforcing; unlisted backends enforce nothing (R4).
+
+
+@pytest.mark.parametrize(
+    "backend,profile,expected",
+    [
+        ("inline", "read-only-verify", None),
+        ("cc-workflows-ultracode", "read-only-verify", None),
+        ("inline", "sandboxed-mutate", ("workspace_isolation", "owned-worktree")),
+        ("team-execution", "read-only-verify", ("mutation_policy", "read-only")),
+        ("fork", "read-only-verify", ("mutation_policy", "read-only")),
+        ("subagent", "sandboxed-mutate", ("workspace_isolation", "owned-worktree")),
+        ("goal", "read-only-verify", ("mutation_policy", "read-only")),
+        ("manual", "read-only-verify", ("mutation_policy", "read-only")),
+    ],
+)
+def test_unenforceable_sandbox_axis_matrix(backend: str, profile: str, expected: object) -> None:
+    sb = ES.Sandbox.from_dict(profile, "w")
+    assert ES.unenforceable_sandbox_axis(backend, sb) == expected
+
+
+def test_unenforceable_sandbox_axis_none_and_default_are_enforceable_everywhere() -> None:
+    # No sandbox and the ambient x read-write default never trip on any backend (R1).
+    default = ES.Sandbox(mutation_policy="read-write", workspace_isolation="ambient")
+    for backend in ("inline", "team-execution", "fork", "manual", "goal", "subagent"):
+        assert ES.unenforceable_sandbox_axis(backend, None) is None
+        assert ES.unenforceable_sandbox_axis(backend, default) is None
+
+
+def test_unlisted_backend_is_never_permissive() -> None:
+    # A future/unknown backend enforces nothing => any restrictive sandbox halts (R4).
+    sb = ES.Sandbox.from_dict("read-only-verify", "w")
+    assert ES.unenforceable_sandbox_axis("some-future-backend", sb) is not None

@@ -591,3 +591,146 @@ def test_cli_store_and_gc_round_trip(tmp_path: Path) -> None:
     payload = json.loads(gc_result.stdout)
     assert payload["artifacts_removed"] == 0  # too fresh to reclaim
     assert payload["snapshot_refs_removed"] == 0
+
+
+# --- U4: saga envelope field + R11 end-to-end producer -> spawned-consumer proof -------------
+
+SAGA_SCRIPT = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
+
+
+def _extract_artifact_pointer_block(text: str) -> str:
+    """Extract the JSON inside the first fenced ```artifact-pointer block, exactly as a receiving
+    agent parsing a spawn prompt would. Coupled to the template's fence marker so that removing or
+    renaming the block (template drift) breaks the R11 end-to-end test."""
+    marker = "```artifact-pointer"
+    start = text.index(marker) + len(marker)
+    end = text.index("```", start)
+    return text[start:end].strip()
+
+
+def _newest_tick(saga_dir: Path) -> str:
+    """Text of the most recently written envelope tick (nanosecond mtime — same-second ``-seq``
+    filename suffixes sort ambiguously by name)."""
+    newest = max(saga_dir.glob("*.md"), key=lambda p: p.stat().st_mtime_ns)
+    return newest.read_text(encoding="utf-8")
+
+
+def test_layer2_end_to_end_producer_to_spawned_consumer(tmp_path: Path) -> None:
+    """R11 dead-wiring proof (LEARNINGS.md:400): the REAL ``artifact_pointer.py store`` producer and
+    the REAL ``saga.py save`` envelope feed a spawned-consumer leg that renders the REAL
+    consensus-protocol spawn template, extracts the pointer as a receiving agent would, and derefs
+    it via the CLI from a DIFFERENT cwd. No hand-built pointer JSON, no fabricated frontmatter."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+
+    # Producer leg 1: store a Layer-2 artifact via the REAL store CLI (its emitted pointer is the
+    # only pointer used downstream — never hand-built).
+    artifact = tmp_path / "big-output.txt"
+    artifact.write_text("generated artifact bytes\n" * 50, encoding="utf-8")
+    pointer_json = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--repo-root",
+            str(repo),
+            "store",
+            "--run",
+            "run-e2e",
+            "--epoch",
+            "0",
+            str(artifact),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    pointer = json.loads(pointer_json)
+    assert pointer["kind"] == "file"
+
+    # Producer leg 2: record the pointer on a saga tick via the REAL saga.py save CLI. saga.py
+    # resolves its state dir from cwd (``Path.cwd()``), so run it inside an isolated dir that never
+    # touches this repo's real .claude/saga.
+    saga_root = tmp_path / "saga-root"
+    saga_root.mkdir()
+    subprocess.run(
+        [
+            sys.executable,
+            str(SAGA_SCRIPT),
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "e2e",
+            "--lifecycle-phase",
+            "work",
+            "--artifact-pointers",
+            pointer_json,
+        ],
+        cwd=saga_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    tick_text = _newest_tick(saga_root / ".claude" / "saga" / "sagas" / "task-e2e")
+    assert "artifact_pointers:" in tick_text
+    assert pointer["hash"] in tick_text  # the real pointer's content is in the envelope
+
+    # Consumer leg: render the REAL spawn template, substituting the real store pointer into its
+    # fenced artifact-pointer block (the template ships a diff-kind placeholder). Template drift
+    # (fence removed/renamed) breaks this via _extract_artifact_pointer_block.
+    template = _read_text(CONSENSUS_PROTOCOL)
+    placeholder = _extract_artifact_pointer_block(template)
+    assert '"kind":"diff"' in placeholder
+    spawn_context = template.replace(placeholder, pointer_json, 1)
+
+    # A receiving agent extracts the fenced block back out of its spawn prompt...
+    received = _extract_artifact_pointer_block(spawn_context)
+    assert received == pointer_json
+
+    # ...and derefs it via the CLI from a DIFFERENT cwd (not the repo), pinning the store by
+    # --repo-root exactly as a spawned agent would. Content round-trips and verification passes.
+    other_cwd = tmp_path / "elsewhere"
+    other_cwd.mkdir()
+    deref = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo), "deref", received],
+        cwd=other_cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert deref.returncode == 0
+    assert deref.stdout == artifact.read_text(encoding="utf-8")
+
+
+def test_saga_save_round_trips_artifact_pointers_and_absent_emits_no_key(tmp_path: Path) -> None:
+    """The REAL saga.py save CLI round-trips ``artifact_pointers`` (save with flag, then without ->
+    full-snapshot carry-forward), and a saga that never sets the flag emits no key at all
+    (byte-identical existing sagas — the #287 KTD1 absent-emits-no-key precedent)."""
+    saga_root = tmp_path / "saga-root"
+    saga_root.mkdir()
+    ptr = '{"deref":"x","epoch":"run/0","hash":"abc","kind":"file","locator":"objects/ab/abc"}'
+
+    def _save(id_: str, *extra: str) -> None:
+        subprocess.run(
+            [sys.executable, str(SAGA_SCRIPT), "save", "--kind", "task", "--id", id_, *extra],
+            cwd=saga_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    # Save WITH the flag -> the pointer is serialized into the tick.
+    _save("rt", "--lifecycle-phase", "work", "--artifact-pointers", ptr)
+    saga_dir = saga_root / ".claude" / "saga" / "sagas" / "task-rt"
+    first = _newest_tick(saga_dir)
+    assert "artifact_pointers:" in first
+    assert "objects/ab/abc" in first
+
+    # Save again WITHOUT the flag -> ABSENT carries the prior snapshot forward (not dropped).
+    _save("rt", "--lifecycle-phase", "work", "--phase-status", "complete")
+    second = _newest_tick(saga_dir)
+    assert "objects/ab/abc" in second
+
+    # A saga that NEVER sets the flag emits no artifact_pointers key at all.
+    _save("clean", "--lifecycle-phase", "plan")
+    clean = _newest_tick(saga_root / ".claude" / "saga" / "sagas" / "task-clean")
+    assert "artifact_pointers" not in clean

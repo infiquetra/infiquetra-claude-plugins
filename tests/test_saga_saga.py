@@ -253,8 +253,11 @@ def test_save_writes_timestamped_envelope_and_full_frontmatter(
     assert envelope.name == "20260602-140510.md"
     assert envelope.parent == tmp_path / SAGAS_DIR / "issue-42"
     text = envelope.read_text(encoding="utf-8")
-    # Full frontmatter machine fields present.
+    # Full frontmatter machine fields present, except fields that render no key when empty
+    # (artifact_pointers omits when absent, keeping pre-field sagas byte-identical).
     for key in saga.FRONTMATTER_FIELDS:
+        if key in saga._OMIT_WHEN_EMPTY_FIELDS:
+            continue
         assert f"{key}:" in text
     assert "lifecycle_phase: work" in text
     assert "## Summary" in text and "## Decisions" in text

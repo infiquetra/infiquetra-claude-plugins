@@ -620,10 +620,16 @@ def _newest_tick(saga_dir: Path) -> str:
 
 
 def test_layer2_end_to_end_producer_to_spawned_consumer(tmp_path: Path) -> None:
-    """R11 dead-wiring proof (LEARNINGS.md:400): the REAL ``artifact_pointer.py store`` producer and
-    the REAL ``saga.py save`` envelope feed a spawned-consumer leg that renders the REAL
-    consensus-protocol spawn template, extracts the pointer as a receiving agent would, and derefs
-    it via the CLI from a DIFFERENT cwd. No hand-built pointer JSON, no fabricated frontmatter."""
+    """R11 + KTD5 dead-wiring proof (LEARNINGS.md:400): the REAL ``artifact_pointer.py store`` producer
+    and the REAL ``saga.py save`` envelope feed TWO consumer legs that both connect back to the
+    producer THROUGH a persistence boundary, never a shared in-memory variable:
+
+    * Leg A (saga-field): ``saga.py restore`` reads ``artifact_pointers`` back OUT of the saved tick
+      on disk, and that restored pointer is dereferenced — the leg the dead-wiring bar requires.
+    * Leg B (spawn-template): the REAL consensus-protocol template carries the pointer in its fenced
+      block; a receiving agent extracts it and derefs from a DIFFERENT cwd.
+
+    No hand-built pointer JSON, no fabricated frontmatter."""
     repo = _make_ignored_claude_repo(tmp_path / "repo")
 
     # Producer leg 1: store a Layer-2 artifact via the REAL store CLI (its emitted pointer is the
@@ -678,7 +684,35 @@ def test_layer2_end_to_end_producer_to_spawned_consumer(tmp_path: Path) -> None:
     assert "artifact_pointers:" in tick_text
     assert pointer["hash"] in tick_text  # the real pointer's content is in the envelope
 
-    # Consumer leg: render the REAL spawn template, substituting the real store pointer into its
+    # Consumer leg A — SAGA-FIELD round-trip through PERSISTENCE (KTD5 both-axes proof, the leg the
+    # dead-wiring bar requires): restore the tick from disk via the REAL saga.py restore CLI, read
+    # artifact_pointers back OUT of the persisted saga, and deref THAT pointer — producer and consumer
+    # connect THROUGH the saved file, not a shared in-memory variable.
+    restored = json.loads(
+        subprocess.run(
+            [sys.executable, str(SAGA_SCRIPT), "restore", "--saga-id", "task-e2e"],
+            cwd=saga_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+    persisted = restored["artifact_pointers"]
+    assert persisted, "artifact_pointers must survive the save->restore round-trip"
+    from_saga = persisted[0]
+    assert from_saga == pointer_json  # exact pointer bytes recovered from the persisted field
+    saga_cwd = tmp_path / "elsewhere-saga"
+    saga_cwd.mkdir()
+    saga_deref = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo), "deref", from_saga],
+        cwd=saga_cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert saga_deref.stdout == artifact.read_text(encoding="utf-8")
+
+    # Consumer leg B — render the REAL spawn template, substituting the real store pointer into its
     # fenced artifact-pointer block (the template ships a diff-kind placeholder). Template drift
     # (fence removed/renamed) breaks this via _extract_artifact_pointer_block.
     template = _read_text(CONSENSUS_PROTOCOL)

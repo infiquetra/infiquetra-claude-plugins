@@ -153,7 +153,7 @@ the one the operator approved in the tier table. This is the only reachable subs
      directly (this is `worker-manifest.md`'s documented "the worker itself writes it" path) with
      `disposition=pm.Disposition.SUBSTITUTED_ENGINE` and a `disposition_note` naming both the
      previewed and the resolved engine/variant, then writes it the same way (`manifest_store.py
-     write --execution-id <worker-id>-<unit-id> --file <manifest.json>`, `worker-manifest.md:30-36`).
+     write --execution-id <worker-id>-<unit-id> --file <manifest.json>`, `worker-manifest.md:37-41`).
 
    A halted unit (§2's R26/R25 halt paths) never reaches this step — nothing ran, so there is
    nothing to manifest. The chaperone surfaces `resolution.halt` to the coordinator and stops on

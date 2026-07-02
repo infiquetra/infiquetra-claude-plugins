@@ -1175,6 +1175,41 @@ def test_segment_units_engine_intent_upgrade_only_max() -> None:
     assert segments[0].engine_intent == "second-opinion"
 
 
+def test_segment_units_engine_intent_agreement_does_not_spuriously_upgrade() -> None:
+    """Members that all agree on "offload" must stay "offload" -- max-of-indices must
+    not be misread as "any second unit upgrades", and the result must not depend on
+    which member is listed first."""
+    mod = _load()
+    for first, second in (("offload", "offload"), ("second-opinion", "offload")):
+        data = {
+            "name": "engine-intent-agreement-test",
+            "description": "same-engine members that agree (or reverse order) resolve correctly",
+            "units": [
+                {
+                    "unit_id": "U1",
+                    "label": "agy unit 1",
+                    "tier": {"model": "sonnet", "effort": "medium"},
+                    "prompt": "agy-1",
+                    "engine": "agy/gemini-3.5-flash-high",
+                    "engine_intent": first,
+                },
+                {
+                    "unit_id": "U2",
+                    "label": "agy unit 2",
+                    "tier": {"model": "sonnet", "effort": "medium"},
+                    "prompt": "agy-2",
+                    "engine": "agy/gemini-3.1-pro-high",
+                    "engine_intent": second,
+                },
+            ],
+        }
+        spec = mod.ExecutionSpec.from_dict(data)
+        segments = mod.segment_units(spec)
+        assert len(segments) == 1
+        expected = "second-opinion" if "second-opinion" in (first, second) else "offload"
+        assert segments[0].engine_intent == expected
+
+
 def test_segment_units_tier_upgrade_only_max() -> None:
     mod = _load()
 

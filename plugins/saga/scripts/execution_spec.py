@@ -1193,8 +1193,11 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
         if unit.engine is not None:
             # Chaperone segments never merge with a plain Claude segment or a
             # different engine/capability, regardless of file path (KTD1/KTD3, U12).
-            # One resident chaperone per *engine* (not per variant) -- "worker-agy",
-            # not "worker-agy/gemini-3.5-flash-high" (KTD1's own naming example).
+            # One resident chaperone per *contiguous run* of the same engine (not per
+            # variant) -- "worker-agy", not "worker-agy/gemini-3.5-flash-high" (KTD1's
+            # own naming example). Same as the plugin-directory grouping below, this is
+            # contiguous-only: a non-contiguous re-appearance of the same engine (e.g.
+            # interleaved with a Claude unit) opens a new resident ("worker-agy-2").
             key = f"engine:{unit.engine.split('/', 1)[0]}"
         elif unit.capability is not None:
             key = f"capability:{unit.capability}"

@@ -430,13 +430,14 @@ def deref_file(pointer: ArtifactPointer, *, repo_root: Path) -> str:
 
 
 def _snapshot_ref_paths(repo_root: Path) -> dict[str, Path]:
-    """Map every Layer-1 snapshot ref name to the on-disk file whose mtime dates it, for age-based gc.
+    """Map every Layer-1 snapshot ref name to its reflog file (``.git/logs/<refname>``), for age gc.
 
-    ``git gc`` packs refs under ANY namespace into ``packed-refs`` and deletes the loose file (verified
-    empirically — the loose-ref path is therefore NOT a durable age signal). The reflog
-    (``.git/logs/<refname>``, created via ``update-ref --create-reflog`` in ``snapshot``) survives
-    packing, so it is the age source here. Refs enumerate via ``for-each-ref`` (which sees packed
-    refs); one with no reflog is skipped — best-effort, degrade-not-break.
+    ``git gc`` packs refs under ANY namespace into ``packed-refs`` and deletes the loose ref file
+    (verified empirically), so the loose-ref path is NOT a durable age signal. The reflog file
+    (created via ``update-ref --create-reflog`` in ``snapshot``) survives packing; its *file mtime*
+    does not (gc's internal ``reflog expire`` rewrites the file and resets it), so gc dates a ref by
+    the reflog ENTRY timestamp instead — see ``_reflog_creation_time``. Refs enumerate via
+    ``for-each-ref`` (which sees packed refs); one with no reflog is skipped — degrade-not-break.
     """
     common_dir_raw = _git(["rev-parse", "--git-common-dir"], repo_root=repo_root).stdout.strip()
     common_dir = Path(common_dir_raw)
@@ -455,12 +456,38 @@ def _snapshot_ref_paths(repo_root: Path) -> dict[str, Path]:
     return paths
 
 
+def _reflog_creation_time(reflog_path: Path) -> float | None:
+    """Return the unix timestamp of a reflog's first (creation) entry, or ``None`` if unreadable.
+
+    This is the durable age signal. ``git gc`` runs ``git reflog expire`` internally, which rewrites
+    the reflog file and resets its FILE mtime to now (even when it expires zero entries) — so the file
+    mtime is unusable for age. The per-entry commit timestamp embedded in the reflog line IS preserved
+    by ``reflog expire``. Line format: ``<old> <new> <name> <email> <ts> <tz>\\t<msg>`` — the timestamp
+    is the second-to-last space-separated token before the tab (robust to spaces in the committer name).
+    """
+    try:
+        first_line = reflog_path.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+    except (OSError, IndexError):
+        return None
+    parts = first_line.split("\t", 1)[0].split()
+    if len(parts) < 2:
+        return None
+    try:
+        return float(parts[-2])
+    except ValueError:
+        return None
+
+
 def _gc_snapshot_refs(repo_root: Path, cutoff: float) -> int:
-    """Prune Layer-1 snapshot refs older than ``cutoff`` (mtime of the ref's reflog, which survives
-    ``git gc`` packing — see ``_snapshot_ref_paths``)."""
+    """Prune Layer-1 snapshot refs whose reflog creation entry predates ``cutoff``.
+
+    Age comes from the reflog ENTRY timestamp (``_reflog_creation_time``), which survives both
+    ``git gc``'s ref-packing and its internal ``reflog expire`` — unlike the reflog file mtime, which
+    gc resets. A ref whose reflog is unreadable is left alone (degrade-not-break)."""
     removed = 0
-    for refname, ref_path in _snapshot_ref_paths(repo_root).items():
-        if ref_path.stat().st_mtime < cutoff:
+    for refname, reflog_path in _snapshot_ref_paths(repo_root).items():
+        created = _reflog_creation_time(reflog_path)
+        if created is not None and created < cutoff:
             _git(["update-ref", "-d", refname], repo_root=repo_root, check=False)
             removed += 1
     return removed
@@ -525,6 +552,11 @@ def gc(
 
 def _verify_integrity(pointer: ArtifactPointer, *, repo_root: Path) -> None:
     """L1 integrity: the tree OID resolves as a tree AND the holding ref still points at it."""
+    # Defense-in-depth: gate the untrusted hash to an OID shape before it reaches git plumbing, so a
+    # leading-`-` value can never be interpreted as an option token (the plumbing here is read-only,
+    # so this hardens rather than fixes).
+    if not _is_git_oid(pointer.hash):
+        raise PointerError(ERR_HASH_MISMATCH, "pointer hash is not a git object id")
     kind = _git(["cat-file", "-t", pointer.hash], repo_root=repo_root, check=False)
     if kind.returncode != 0 or kind.stdout.strip() != "tree":
         raise PointerError(ERR_HASH_MISMATCH, f"tree {pointer.hash} not resolvable")

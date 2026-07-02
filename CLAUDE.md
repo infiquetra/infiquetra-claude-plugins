@@ -35,7 +35,9 @@ plugin-name/
 └── CHANGELOG.md
 ```
 
-**Examples**: `saga`, `home-lab-ops`, `team-execution`
+**Examples**: `saga`, `home-lab-ops`. Note: `team-execution` is primarily skills-based but is now
+**hybrid** — it also carries a CLI script (`skills/team-execution/scripts/artifact_pointer.py`) beside
+its skills/agents; see DECISIONS `{#artifact-pointer-ktds-291}`.
 
 ### CLI-based Plugins
 Python CLI scripts wrapped as Claude skills/commands for interacting with external services.

@@ -179,6 +179,11 @@ the pointer contract: the CLI verifies integrity **and** freshness and fails clo
 (`POINTER_HASH_MISMATCH` / `POINTER_STALE`, exit 1) instead of returning wrong or stale bytes. On
 `POINTER_STALE`, regenerate from the live tree — do not trust the superseded snapshot.
 
+The pointer JSON is a single-quoted argument above; a well-formed pointer from
+`artifact_pointer.py store`/`snapshot` never contains a single quote. If a restored pointer somehow
+does (a tampered tick), write it to a file and pass that path rather than inlining it, to avoid
+breaking the shell quoting.
+
 ---
 
 ## Phase 3a — Reconcile and synthesize (Tier 1)

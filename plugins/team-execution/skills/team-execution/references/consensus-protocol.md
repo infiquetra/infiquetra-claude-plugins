@@ -151,10 +151,12 @@ You are reviewing the implementation of the following plan:
 ## Changes Made
 Below the SKILL.md Step B1 threshold: inline the git diff or summary of files changed, as today.
 Above threshold: an `artifact-pointer` block in place of the inlined diff — dereference it per
-`references/artifact-pointers.md` (full read, no per-lens scoping) before scoring.
+`references/artifact-pointers.md` (full read, no per-lens scoping) before scoring. The block is the
+JSON emitted by `artifact_pointer.py snapshot` (do not hand-construct it — the `base` field must be a
+real base-tree OID or the deref fails):
 
 ```artifact-pointer
-{"kind":"diff","locator":"refs/team-execution/snapshots/<run-id>/<epoch>","hash":"<tree-oid>","epoch":"<epoch>","deref":"git diff <base-tree> <tree-oid>"}
+{"kind":"diff","locator":"refs/team-execution/snapshots/<run-id>/<epoch>","hash":"<snapshot-tree-oid>","epoch":"<epoch>","deref":"git diff <base-tree> <snapshot-tree>","base":"<base-tree-oid>"}
 ```
 
 ## Review Instructions
@@ -178,7 +180,7 @@ diff. Above threshold: an UPDATED `artifact-pointer` block (epoch incremented fr
 in place of the inlined delta — dereference it per `references/artifact-pointers.md`.
 
 ```artifact-pointer
-{"kind":"diff","locator":"refs/team-execution/snapshots/<run-id>/<epoch+1>","hash":"<new-tree-oid>","epoch":"<epoch+1>","deref":"git diff <prior-tree-oid> <new-tree-oid>"}
+{"kind":"diff","locator":"refs/team-execution/snapshots/<run-id>/<epoch+1>","hash":"<snapshot-tree-oid>","epoch":"<epoch+1>","deref":"git diff <base-tree> <snapshot-tree>","base":"<base-tree-oid>"}
 ```
 
 ## Review Instructions

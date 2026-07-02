@@ -507,6 +507,22 @@ def test_superseded_l2_epoch_raises_stale(tmp_path: Path) -> None:
         assert exc.code == ap.ERR_STALE
 
 
+def _backdate_reflog_entry(reflog_path: Path, seconds_ago: float) -> None:
+    """Rewrite a reflog's entries so their embedded creation timestamp is `seconds_ago` in the past.
+
+    That per-entry timestamp — not the reflog file mtime — is the age signal gc reads (the file mtime
+    is reset by `git gc`'s internal `reflog expire`). Line: `<old> <new> <name> <email> <ts> <tz>\\t<msg>`.
+    """
+    old_ts = str(int(time.time() - seconds_ago))
+    out = []
+    for line in reflog_path.read_text(encoding="utf-8").splitlines():
+        prefix, _, msg = line.partition("\t")
+        parts = prefix.split()
+        parts[-2] = old_ts
+        out.append(" ".join(parts) + "\t" + msg)
+    reflog_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
 def test_gc_reclaims_stale_cas_entries_and_snapshot_refs_younger_survive(tmp_path: Path) -> None:
     """``gc`` removes CAS entries and snapshot refs older than the TTL; younger entries survive."""
     repo = _make_ignored_claude_repo(tmp_path / "repo")
@@ -526,13 +542,14 @@ def test_gc_reclaims_stale_cas_entries_and_snapshot_refs_younger_survive(tmp_pat
     store_root = ap.resolve_store_root(repo)
     old_cas_path = store_root / old_pointer.locator
     old_ref_path = repo / ".git" / "refs" / "team-execution" / "snapshots" / "run-old" / "0"
-    # gc dates a snapshot ref by its REFLOG mtime (survives git-gc packing), not the loose-ref file.
+    # gc dates a snapshot ref by its reflog ENTRY timestamp (survives git gc + reflog expire), not the
+    # reflog file mtime; the CAS artifact is still dated by its own file mtime.
     old_reflog_path = (
         repo / ".git" / "logs" / "refs" / "team-execution" / "snapshots" / "run-old" / "0"
     )
     stale_ts = time.time() - (10 * 86400)
     os.utime(old_cas_path, (stale_ts, stale_ts))
-    os.utime(old_reflog_path, (stale_ts, stale_ts))
+    _backdate_reflog_entry(old_reflog_path, 10 * 86400)
 
     result = ap.gc(repo_root=repo, max_age_days=7)
 
@@ -980,3 +997,51 @@ def test_pointer_base_field_round_trips_and_defaults_absent() -> None:
         }
     )
     assert ap.ArtifactPointer.from_json(legacy).base == ""
+
+
+def test_gc_dates_snapshot_refs_by_reflog_entry_surviving_real_git_gc(tmp_path: Path) -> None:
+    """Regression (devils-advocate cycle 2): gc dates a snapshot ref by its reflog ENTRY timestamp,
+    which survives a REAL `git gc` — not the reflog file mtime, which gc's internal `reflog expire`
+    resets. Backdate the entry, run a real `git gc` (packs the ref + rewrites the reflog file), then
+    confirm gc still reclaims the aged ref and spares the young one."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    ap.snapshot("run-old", "0", repo_root=repo)
+    (repo / "new.txt").write_text("new\n", encoding="utf-8")
+    ap.snapshot("run-new", "0", repo_root=repo)
+
+    old_reflog = repo / ".git" / "logs" / "refs" / "team-execution" / "snapshots" / "run-old" / "0"
+    _backdate_reflog_entry(old_reflog, 10 * 86400)
+    _git(repo, "gc")  # packs refs (deletes loose files) AND runs reflog expire (resets file mtimes)
+
+    result = ap.gc(repo_root=repo, max_age_days=7)
+    assert result["snapshot_refs_removed"] == 1
+    remaining = _git(repo, "for-each-ref", "--format=%(refname)", "refs/team-execution/snapshots/")
+    assert "run-old" not in remaining  # aged ref reclaimed despite the file-mtime reset
+    assert "run-new" in remaining  # young ref survives
+
+
+def test_snapshot_rejects_sparse_checkout_worktree(tmp_path: Path) -> None:
+    """devils-advocate P3: a sparse-checkout worktree fails snapshot loudly (KTD7 inline fallback)
+    rather than shipping a diff with phantom deletions from dropped skip-worktree paths."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    _git(repo, "config", "core.sparseCheckout", "true")
+    try:
+        ap.snapshot("run", "0", repo_root=repo)
+    except ap.GitError as exc:
+        assert "sparse" in str(exc).lower()
+    else:
+        raise AssertionError("expected GitError for a sparse-checkout worktree")
+
+
+def test_resume_skill_references_valid_artifact_pointer_script_path() -> None:
+    """Architecture P3: /resume's consumer instruction hardcodes the artifact_pointer.py path; guard
+    that the referenced script exists so a future move cannot silently break the consumer."""
+    repo_root = Path(__file__).resolve().parent.parent
+    resume_skill = repo_root / "plugins" / "saga" / "skills" / "resume" / "SKILL.md"
+    text = resume_skill.read_text(encoding="utf-8")
+    script_rel = "plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py"
+    assert script_rel in text, "resume SKILL must reference the artifact_pointer.py deref path"
+    assert (repo_root / script_rel).is_file(), f"{script_rel} referenced by resume SKILL is missing"

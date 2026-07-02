@@ -12,8 +12,9 @@ All notable changes to this plugin are documented here.
   validated first-class `base` field, and the diff argv is rebuilt deterministically from
   hex-validated OIDs (no option token is representable).
 - TTL `gc` now reclaims snapshot refs after `git gc` packs them: refs are created with
-  `--create-reflog` and dated by the reflog mtime (which survives packing), enumerated via
-  `for-each-ref`. (The prior loose-ref-mtime gc went blind once git packed the ref.)
+  `--create-reflog`, enumerated via `for-each-ref`, and dated by the reflog ENTRY timestamp — which
+  survives both ref-packing and `git gc`'s internal `reflog expire` (the reflog FILE mtime does not:
+  gc resets it). The prior loose-ref-mtime gc went blind once git packed the ref.
 - `deref` on a `symbol` pointer is rejected with a clear error (exit 2); the CLI dereferences only
   `diff` and `file` kinds. Sparse-checkout snapshots fail loudly (KTD7 inline fallback) rather than
   shipping a diff with phantom deletions. CAS reads reject symlinks; run-id/epoch ref segments are

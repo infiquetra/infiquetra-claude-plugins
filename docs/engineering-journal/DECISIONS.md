@@ -54,8 +54,10 @@ e.g. git bundle); or per-lens scoping gains a no-silent-drop guarantee; or live 
 gaps, now closed: (a) `git gc` **does** pack custom-namespace refs into `packed-refs` and delete the
 loose file (verified empirically, git 2.54) — the KTD1 "survives `git gc`" claim held for the tree
 *object* (pinned by the ref) but the gc *reclamation* went blind once the loose ref was packed,
-leaking L1 refs and defeating R9. Fixed: snapshot refs are created with `--create-reflog`; gc dates
-them by the reflog mtime (which survives packing) and enumerates via `for-each-ref`. (b) The KTD5
+leaking L1 refs and defeating R9. Fixed: snapshot refs are created with `--create-reflog`, enumerated
+via `for-each-ref`, and dated by the reflog ENTRY timestamp — which survives both ref-packing and
+`git gc`'s internal `reflog expire`, whereas the reflog file mtime does not (a cycle-2 correction:
+the first fix dated by the file mtime, which `reflog expire` resets to now). (b) The KTD5
 `artifact_pointers` field was producer-only — no skill read it back, and the e2e test's consumer leg
 reused the in-memory store output, masking the gap. Fixed: `/resume` now derefs a restored tick's
 pointers, and the e2e test crosses the persistence boundary (`saga.py restore` → `deref`). Also
@@ -65,9 +67,13 @@ deref rejects cleanly; sparse-checkout snapshots fail loud (KTD7). **KTD6 (scrip
 `artifact_pointer.py` lives under `team-execution/skills/team-execution/scripts/` — team-execution is
 now a **hybrid** plugin (its first executable script beside its skills/agents), no longer purely
 skills-based.
-**Revisit when (added).** A packed-refs-heavy repo shows reflog-mtime gc mis-dating; or the advisory
-KTD4 threshold / KTD7 fallback warrant runtime enforcement (a capability preflight) over orchestrator
-judgment.
+**Revisit when (added).** The `base` tree OID needs authentication — it is format-validated
+(`_is_git_oid`) but not cryptographically bound to the snapshot, so a tampered persisted pointer could
+substitute another valid tree, yielding a misleading (but strictly git-object-store-confined, never
+filesystem-escaping) diff on `/resume`; or the advisory KTD4 threshold / KTD7 fallback warrant runtime
+enforcement (a capability preflight) over orchestrator judgment; or reflog-entry gc dating needs
+revisiting under an aggressive `gc.reflogExpire` that could prune a snapshot's creation entry before
+its TTL.
 **Refs.** #291; `docs/plans/2026-07-02-typed-artifact-pointer-passing-plan.md`.
 
 ### Team-spawn residency guard: name-only predicate, registry-parse trigger set (#289, plan)  {#team-spawn-residency-guard-ktds-289}

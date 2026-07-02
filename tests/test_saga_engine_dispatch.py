@@ -381,3 +381,113 @@ def test_adjudicate_manifest_keys_same_text_claims_independently(tmp_path: Path)
     by_source = {c.source_ref: c for c in adjudicated.claim_provenance.claims}
     assert by_source["tests/test_a.py"].adjudicated is PM.AdjudicatedStatus.VERIFIED
     assert by_source["tests/test_b.py"].adjudicated is PM.AdjudicatedStatus.REFUTED
+
+
+# --------------------------------------------------------- sandbox write-ceiling lift (U5)
+# A sandboxed-mutate unit lifts agy to patch-only (wiring the existing clone); codex halts
+# (no write adapter). Default / read-only is byte-identical to before. -k sandboxed_harvest.
+
+ES = _load("execution_spec", SCRIPT_DIR / "execution_spec.py")
+
+
+def test_agy_sandboxed_mutate_lifts_to_patch_only_with_write_set() -> None:
+    sb = ES.Sandbox.from_dict("sandboxed-mutate", "w")
+    resolution = _resolution(engine_id="agy", variant="gemini-3.1-pro-high", payload="do it")
+    envelope = D.build_agy_envelope(
+        resolution, model="opus", sandbox=sb, write_set=["a.py", "b.py"]
+    )
+    assert envelope["mode"] == "patch-only"
+    assert envelope["write_set"] == ["a.py", "b.py"]
+    assert envelope["apply_policy"] == "preserve-patch"
+    assert envelope["task"].encode("utf-8") == b"do it"  # payload still byte-preserved
+
+
+def test_agy_read_only_sandbox_keeps_no_write_ceiling() -> None:
+    # read-only mutation_policy does NOT lift the ceiling even with a write_set present.
+    sb = ES.Sandbox.from_dict("read-only-verify", "w")
+    resolution = _resolution(engine_id="agy", variant="v", payload="p")
+    envelope = D.build_agy_envelope(resolution, model="opus", sandbox=sb, write_set=["x.py"])
+    assert envelope["mode"] == "no-write"
+    assert envelope["write_set"] == []
+
+
+def test_agy_no_sandbox_dispatch_is_byte_identical_to_today() -> None:
+    # The whole envelope for a no-sandbox unit is unchanged from the pre-#287 shape.
+    resolution = _resolution(engine_id="agy", variant="v", payload="p")
+    assert D.build_agy_envelope(resolution, model="opus") == {
+        "schema": "agy.delegation.v1",
+        "role": "coder",
+        "mode": "no-write",
+        "task": "p",
+        "model": "opus",
+        "write_set": [],
+        "apply_policy": "preserve-patch",
+        "evidence": "summary",
+        "verification": {"commands": [], "required": False, "run_scope": "none"},
+        "provenance_required": True,
+    }
+
+
+def test_codex_sandboxed_mutate_enforce_halt() -> None:
+    sb = ES.Sandbox.from_dict("sandboxed-mutate", "w")
+    resolution = _resolution(engine_id="codex", payload="p")
+    with pytest.raises(D.DispatchError, match="no write adapter"):
+        D.build_codex_invocation(resolution, sandbox=sb)
+
+
+def test_codex_no_sandbox_still_read_only() -> None:
+    resolution = _resolution(engine_id="codex", payload="p")
+    assert D.build_codex_invocation(resolution)["sandbox"] == "read-only"
+
+
+def test_dispatch_codex_sandboxed_mutate_propagates_enforce_halt() -> None:
+    sb = ES.Sandbox.from_dict("sandboxed-mutate", "w")
+    with pytest.raises(D.DispatchError, match="no write adapter"):
+        D.dispatch(_resolution(engine_id="codex"), runner=lambda inv: {"status": "ok"}, sandbox=sb)
+
+
+def test_dispatch_agy_sandboxed_mutate_passes_patch_only_to_runner() -> None:
+    sb = ES.Sandbox.from_dict("sandboxed-mutate", "w")
+    seen: dict[str, Any] = {}
+
+    def runner(inv: dict[str, Any]) -> dict[str, Any]:
+        seen.update(inv)
+        return {"status": "ok", "output": "diff"}
+
+    evidence = D.dispatch(
+        _resolution(engine_id="agy", variant="v"),
+        runner=runner,
+        model="opus",
+        sandbox=sb,
+        write_set=["a.py"],
+    )
+    assert seen["mode"] == "patch-only"
+    assert seen["write_set"] == ["a.py"]
+    assert evidence.evidence == "diff"
+
+
+def test_manifest_records_declared_sandbox_attribution() -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="agy", variant="v", evidence="out", provenance={"status": "ok"}
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id="e1",
+        saga_ref="s1",
+        created_at="2026-07-02",
+        sandbox="sandboxed-mutate",
+    )
+    assert manifest.to_dict()["attribution"]["sandbox"] == "sandboxed-mutate"
+
+
+def test_manifest_absent_sandbox_emits_no_key_and_round_trips() -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="agy", variant="v", evidence="out", provenance={"status": "ok"}
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence, execution_id="e1", saga_ref="s1", created_at="2026-07-02"
+    )
+    d = manifest.to_dict()
+    assert "sandbox" not in d["attribution"]  # absent-tolerant, no new key
+    assert d["schema"] == PM.SCHEMA_VERSION  # no version bump
+    assert PM.Manifest.from_dict(d).attribution.sandbox == ""  # round-trips clean

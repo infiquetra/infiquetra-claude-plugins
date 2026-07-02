@@ -103,13 +103,34 @@ def emit_team_structure(spec: Any) -> str:
     lines.append("### Workers")
     lines.append("| Agent | Units | Tier | Mode | Depends-on | Engine | Intent |")
     lines.append("|-------|-------|------|------|------------|--------|--------|")
-    spec_module_path = Path(__file__).parent / "execution_spec.py"
     import importlib.util
 
-    _spec = importlib.util.spec_from_file_location("execution_spec", spec_module_path)
-    assert _spec is not None and _spec.loader is not None
-    mod = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(mod)
+    # Reuse the canonical execution_spec module if it is already imported so the classes this
+    # emitter references -- notably ``SpecError`` raised on an unenforceable sandbox (U3) -- are
+    # IDENTITY-equal to the ones the caller catches. A fresh per-call load would define distinct
+    # class objects, and an ``except execution_spec.SpecError`` upstream would silently miss them.
+    mod = sys.modules.get("execution_spec")
+    if mod is None:
+        spec_module_path = Path(__file__).parent / "execution_spec.py"
+        _spec = importlib.util.spec_from_file_location("execution_spec", spec_module_path)
+        assert _spec is not None and _spec.loader is not None
+        mod = importlib.util.module_from_spec(_spec)
+        sys.modules["execution_spec"] = mod
+        _spec.loader.exec_module(mod)
+    # KTD3 halt-not-downgrade at the cheapest failure point (authoring time): a team-execution
+    # resident runs bypassPermissions with no per-leaf tool restriction, so it cannot enforce a
+    # restrictive sandbox. A unit that asks for one is rejected HERE rather than silently emitted
+    # unrestricted -- reroute it to inline/cc-workflows or drop the sandbox (R4).
+    for unit in spec.units:
+        offending = mod.unenforceable_sandbox_axis("team-execution", unit.sandbox)
+        if offending is not None:
+            axis_name, axis_value = offending
+            raise mod.SpecError(
+                f"unit {unit.unit_id}: sandbox {axis_name}={axis_value!r} cannot be enforced by "
+                f"backend 'team-execution' (KTD3 -- residents run bypassPermissions with no "
+                f"per-leaf tool restriction). Route this unit to inline or cc-workflows, or drop "
+                f"the restrictive sandbox. Halt-not-downgrade (R4)."
+            )
     segments = mod.segment_units(spec)
 
     for seg in segments:

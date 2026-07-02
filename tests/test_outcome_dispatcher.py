@@ -238,3 +238,44 @@ def test_cli_dispatch_dry_run(capsys: pytest.CaptureFixture[str]) -> None:
     assert D.main(["ship-x", "build", "fork"]) == 0
     halt = json.loads(capsys.readouterr().out)
     assert halt["status"] == "halt"
+
+
+# --------------------------------------------------------- sandbox enforceability (U3)
+# The resolved backend must be able to enforce the leaf's declared sandbox, or dispatch HALTs
+# with the offending axis named -- never silently runs the leaf uncontained (R4).
+
+OS = _load("outcome_spec")
+
+
+def _req_sandbox(backend: str, sandbox: Any, **kw: Any) -> Any:
+    req = _req(backend, **kw)
+    req.sandbox = sandbox
+    return req
+
+
+def test_dispatch_halts_when_backend_cannot_enforce_sandbox() -> None:
+    # inline cannot provide owned-worktree (halt-v1) -> halt receipt naming the axis.
+    sb = OS.Sandbox.from_dict("sandboxed-mutate", "w")
+    out = D.dispatch(_req_sandbox("inline", sb))
+    assert out["status"] == "halt"
+    assert "workspace_isolation" in out["receipt"]["reason"]
+    assert out["receipt"]["backend"] == "inline"
+
+
+def test_dispatch_enforceable_sandbox_dispatches() -> None:
+    sb = OS.Sandbox.from_dict("read-only-verify", "w")
+    assert D.dispatch(_req_sandbox("inline", sb))["status"] == "dispatched"
+
+
+def test_dispatch_no_sandbox_is_backward_compatible() -> None:
+    # A req without a sandbox attribute dispatches exactly as before (getattr default None).
+    assert D.dispatch(_req("inline"))["status"] == "dispatched"
+
+
+def test_make_dispatcher_raises_backend_halt_on_unenforceable_sandbox() -> None:
+    # The halt flows through the make_dispatcher seam outcome.advance uses (BackendHaltError).
+    sb = OS.Sandbox.from_dict("sandboxed-mutate", "w")
+    dispatcher = D.make_dispatcher()
+    with pytest.raises(D.BackendHaltError) as exc:
+        dispatcher(_req_sandbox("inline", sb))
+    assert "workspace_isolation" in exc.value.receipt.reason

@@ -482,3 +482,70 @@ def test_cli_layers(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rc = M.main(["layers", str(p)])
     assert rc == 0
     assert json.loads(capsys.readouterr().out) == {"layers": [["design"], ["build"], ["docs"]]}
+
+
+# --------------------------------------------------------------------------- sandbox (U1)
+# Node mirrors execution_spec's sandbox envelope (#287 R1-R3), raising OutcomeSpecError so the
+# Node error contract stays intact. A cross-module drift guard keeps the two houses in lockstep.
+
+
+def _node_with_sandbox(sandbox: Any) -> dict[str, Any]:
+    data = _valid_spec_dict()
+    data["nodes"][0]["sandbox"] = sandbox
+    return data
+
+
+def test_node_sandbox_profile_expands_and_validates() -> None:
+    spec = _spec(_node_with_sandbox("sandboxed-mutate"))
+    spec.validate()
+    sb = spec.nodes[0].sandbox
+    assert sb is not None
+    assert (sb.mutation_policy, sb.workspace_isolation) == ("read-write", "owned-worktree")
+    assert sb.is_restrictive
+
+
+def test_node_sandbox_absent_round_trips_with_no_key() -> None:
+    spec = _spec(_valid_spec_dict())
+    node = spec.nodes[0]
+    assert node.sandbox is None
+    assert "sandbox" not in node.to_dict()
+
+
+def test_node_sandbox_to_dict_emits_expanded_axes() -> None:
+    spec = _spec(_node_with_sandbox("read-only-verify"))
+    assert spec.nodes[0].to_dict()["sandbox"] == {
+        "mutation_policy": "read-only",
+        "workspace_isolation": "disposable-worktree",
+    }
+    # Full-spec JSON round-trip stays stable with a sandbox present.
+    again = M.OutcomeSpec.from_json(spec.to_json())
+    assert again.to_dict() == spec.to_dict()
+
+
+def test_node_sandbox_unknown_axis_raises_outcome_error() -> None:
+    spec = _spec(
+        _node_with_sandbox({"mutation_policy": "read-only", "workspace_isolation": "vault"})
+    )
+    with pytest.raises(M.OutcomeSpecError, match="workspace_isolation 'vault' not in"):
+        spec.validate()
+
+
+def test_node_sandbox_unknown_profile_raises_at_from_dict() -> None:
+    with pytest.raises(M.OutcomeSpecError, match="unknown sandbox profile"):
+        _spec(_node_with_sandbox("hermetic"))
+
+
+def test_sandbox_vocabulary_matches_execution_spec_house() -> None:
+    """Cross-module drift guard: the two independent spec houses MUST agree on the sandbox
+    vocabulary and profile expansions verbatim -- they mirror rather than share (#287 KTD1).
+    A rename or re-expansion on one side without the other silently splits the contract."""
+    es_spec = importlib.util.spec_from_file_location(
+        "execution_spec", ROOT / "plugins" / "saga" / "scripts" / "execution_spec.py"
+    )
+    assert es_spec is not None and es_spec.loader is not None
+    es_mod = importlib.util.module_from_spec(es_spec)
+    sys.modules["execution_spec"] = es_mod
+    es_spec.loader.exec_module(es_mod)
+    assert M.MUTATION_POLICIES == es_mod.MUTATION_POLICIES
+    assert M.WORKSPACE_ISOLATIONS == es_mod.WORKSPACE_ISOLATIONS
+    assert M.SANDBOX_PROFILES == es_mod.SANDBOX_PROFILES

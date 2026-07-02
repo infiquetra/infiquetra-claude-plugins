@@ -213,7 +213,9 @@ independent subsystems**, OFFER a backend per `../../references/operator-choice.
 `team-execution` / `cc-workflows-ultracode`) to dispatch read-only probes in parallel — each with one
 explicit hypothesis and a structured evidence-return format, **no edits**. Never auto-spawn; skip when
 hypotheses depend on each other. Parallel sub-agents use **generic** `Explore` / `Task` agents (this
-plugin has no `agents/` dir).
+plugin has no `agents/` dir for probe-specific personas), each spawned with
+`subagent_type: saga:readonly-verifier` and `isolation: "worktree"` per
+`plugins/saga/references/sandbox-spawn-sites.md`.
 
 **Present findings + the gate.** Present the root cause (causal-chain summary with `file:line`), the
 proposed fix and which files would change, the recommended regression test, and whether existing tests

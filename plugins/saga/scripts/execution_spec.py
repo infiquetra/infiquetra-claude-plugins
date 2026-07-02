@@ -67,6 +67,47 @@ PASS_RULES = ("majority", "unanimous")
 # wants an expensive one (adversarial verification IS the product).
 ENGINE_INTENTS = ("offload", "second-opinion")
 
+# Sandbox capability axes (issue #287 R1-R3) -- a delegated leaf's declared containment,
+# orthogonal to the model/effort tier. ``mutation_policy`` is enforced by tool-set omission at
+# spawn (a restricted agentType without Edit/Write); ``workspace_isolation`` by worktree/clone
+# routing. Absent on a unit => ambient x read-write, exactly today's behavior (R1).
+MUTATION_POLICIES = ("read-only", "read-write")
+WORKSPACE_ISOLATIONS = ("ambient", "disposable-worktree", "owned-worktree")
+
+# Named profiles are compositions accepted as authoring shorthand (R2). A profile string
+# expands to its exact axis pair at parse; the pair is authoritative thereafter, so ``to_dict``
+# emits the expanded axes (canonical + diffable), never the shorthand. NOTE: outcome_spec.py
+# mirrors these three names verbatim (deliberate parallel house, different error type) -- a
+# cross-module drift-guard test asserts the two copies stay identical.
+SANDBOX_PROFILES = {
+    "read-only-verify": ("read-only", "disposable-worktree"),
+    "sandboxed-mutate": ("read-write", "owned-worktree"),
+}
+
+# The restricted agent type + isolation every verifier is spawned with (#287 U2, R5/KTD6). The
+# ``agentType`` string MUST equal plugins/saga/agents/readonly-verifier.md's ``name:`` frontmatter
+# plus the ``saga:`` plugin prefix; the literal-consistency guard test asserts this, so a rename on
+# either side fails a test rather than silently spawning verifiers unrestricted (the R9 dead-wiring
+# failure). ``isolation: 'worktree'`` is the load-bearing clobber defense (R3): a Bash
+# ``git checkout`` needs no Edit/Write tool, so only a throwaway worktree can contain it.
+READONLY_VERIFIER_AGENT_TYPE = "saga:readonly-verifier"
+READONLY_VERIFIER_ISOLATION = "worktree"
+
+# Per-backend sandbox enforceability (#287 U3, R4). Each backend can structurally enforce a set of
+# NON-default axis values; a restrictive sandbox requiring a value its backend cannot enforce HALTS
+# visibly (never downgrades). Keys are NODE_BACKENDS names (kept as string literals so this module
+# does not import outcome_spec). Backends NOT listed -- fork, subagent, goal, manual, and any future
+# one -- enforce NOTHING, so any restrictive sandbox on them halts: unknown is never permissive (R4).
+# inline/cc-workflows enforce read-only (tool omission) + disposable-worktree (harness isolation)
+# natively; internal owned-worktree is halt-v1 (no defined internal harvest -- sandboxed-mutate's
+# only v1 consumer is the engine path, U5). team-execution enforces neither restrictive axis (KTD3):
+# its residents run bypassPermissions with no per-leaf tool restriction.
+SANDBOX_ENFORCEABLE_BY_BACKEND: dict[str, frozenset[str]] = {
+    "inline": frozenset({"read-only", "disposable-worktree"}),
+    "cc-workflows-ultracode": frozenset({"read-only", "disposable-worktree"}),
+    "team-execution": frozenset(),
+}
+
 # Hard upper bound on a verify panel's verifier count. N above this FAILS validate/emit --
 # the bound directly guards the rate-limit overcorrection (R3: the 22/23-judges panel that
 # tripped the concurrency cap). N <= CAP is allowed; a soft warn band starts at WARN below.
@@ -362,6 +403,106 @@ class Verify:
         }
 
 
+@dataclass(frozen=True)
+class Sandbox:
+    """A delegated leaf's two-axis containment envelope (issue #287 R1-R3, KTD1).
+
+    ``mutation_policy`` (read-only | read-write) is enforced by tool-set omission at spawn -- a
+    restricted ``agentType`` without Edit/Write; ``workspace_isolation`` (ambient |
+    disposable-worktree | owned-worktree) by worktree/clone routing. The isolation axis is the
+    load-bearing clobber defense (R3): a Bash ``git checkout`` needs no Edit/Write tool, so tool
+    omission alone cannot contain it -- only running in a throwaway worktree can.
+
+    Absent on a Unit => ambient x read-write, exactly today's behavior. A bare profile string
+    ("read-only-verify") is authoring shorthand that expands to its axis pair at ``from_dict``;
+    the expanded pair is authoritative, so ``to_dict`` emits axes, not the shorthand. This class
+    is mirrored verbatim in outcome_spec.py (deliberate parallel house, different error type).
+    """
+
+    mutation_policy: str
+    workspace_isolation: str
+
+    def validate(self, where: str) -> None:
+        if self.mutation_policy not in MUTATION_POLICIES:
+            raise SpecError(
+                f"{where}: sandbox mutation_policy {self.mutation_policy!r} "
+                f"not in {MUTATION_POLICIES}"
+            )
+        if self.workspace_isolation not in WORKSPACE_ISOLATIONS:
+            raise SpecError(
+                f"{where}: sandbox workspace_isolation {self.workspace_isolation!r} "
+                f"not in {WORKSPACE_ISOLATIONS}"
+            )
+
+    @property
+    def is_restrictive(self) -> bool:
+        """True iff this sandbox narrows either axis below the ambient x read-write default.
+
+        The enforceability matrix (U3) only needs to probe a backend when the sandbox actually
+        constrains something -- a default sandbox is a no-op every backend "enforces".
+        """
+        return self.mutation_policy != "read-write" or self.workspace_isolation != "ambient"
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> Sandbox:
+        # Profile-string shorthand (R2): expand to the canonical axis pair.
+        if isinstance(data, str):
+            if data not in SANDBOX_PROFILES:
+                raise SpecError(
+                    f"{where}: unknown sandbox profile {data!r} not in {tuple(SANDBOX_PROFILES)}"
+                )
+            mutation_policy, workspace_isolation = SANDBOX_PROFILES[data]
+            return cls(mutation_policy=mutation_policy, workspace_isolation=workspace_isolation)
+        if not isinstance(data, dict):
+            raise SpecError(
+                f"{where}: sandbox must be a profile string or a "
+                f"{{mutation_policy, workspace_isolation}} object, got {type(data).__name__}"
+            )
+        # A profile key mixed with the explicit-axes form is the KTD1 conflict: two shorthands
+        # racing. Force the author to pick one -- the bare string OR both axes spelled out.
+        if "profile" in data:
+            raise SpecError(
+                f"{where}: sandbox 'profile' key conflicts with the explicit-axes form -- use a "
+                f"bare profile string ('sandbox': 'read-only-verify') OR spell out both axes"
+            )
+        if "mutation_policy" not in data or "workspace_isolation" not in data:
+            raise SpecError(
+                f"{where}: sandbox needs both 'mutation_policy' and 'workspace_isolation' "
+                f"(or a bare profile string)"
+            )
+        return cls(
+            mutation_policy=str(data["mutation_policy"]),
+            workspace_isolation=str(data["workspace_isolation"]),
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "mutation_policy": self.mutation_policy,
+            "workspace_isolation": self.workspace_isolation,
+        }
+
+
+def unenforceable_sandbox_axis(backend: str, sandbox: Sandbox | None) -> tuple[str, str] | None:
+    """Return the (axis, value) ``backend`` cannot enforce for ``sandbox``, or None if it can.
+
+    Only NON-default axis values need enforcing: ``mutation_policy=read-write`` and
+    ``workspace_isolation=ambient`` are the ambient default (R1) and always fine. A backend absent
+    from ``SANDBOX_ENFORCEABLE_BY_BACKEND`` enforces nothing, so any restrictive value trips (R4 --
+    unknown never permissive). ``sandbox`` is duck-typed (execution_spec.Sandbox OR
+    outcome_spec.Sandbox -- the two mirrors share this shape), so the one matrix serves both the
+    Unit and the Node house. Returns the FIRST offending axis (mutation_policy before
+    workspace_isolation) so a halt message can name a concrete axis.
+    """
+    if sandbox is None or not sandbox.is_restrictive:
+        return None
+    enforceable = SANDBOX_ENFORCEABLE_BY_BACKEND.get(backend, frozenset())
+    if sandbox.mutation_policy != "read-write" and sandbox.mutation_policy not in enforceable:
+        return ("mutation_policy", sandbox.mutation_policy)
+    if sandbox.workspace_isolation != "ambient" and sandbox.workspace_isolation not in enforceable:
+        return ("workspace_isolation", sandbox.workspace_isolation)
+    return None
+
+
 @dataclass
 class Unit:
     """One execution unit -- one ``agent()`` call in the emitted script.
@@ -401,6 +542,9 @@ class Unit:
     # from_dict) -- tier itself stays a required field, this is a plan-time recommendation
     # input, not a schema default for tier.
     engine_intent: str | None = None
+    # Sandbox capability envelope (#287 U1). Absent => ambient x read-write (today's behavior);
+    # an absent field emits no new key so existing specs round-trip byte-identical.
+    sandbox: Sandbox | None = None
 
     def validate(self, where: str) -> None:
         if not self.unit_id:
@@ -417,6 +561,8 @@ class Unit:
                 )
         if self.verify is not None:
             self.verify.validate(f"unit {self.unit_id}")
+        if self.sandbox is not None:
+            self.sandbox.validate(f"unit {self.unit_id}")
         if self.fanout and not self.targets:
             # R10: a fan-out unit MUST enumerate its targets -- never a silent filter.
             raise SpecError(
@@ -444,6 +590,8 @@ class Unit:
         engine_intent = str(engine_intent_raw) if engine_intent_raw is not None else None
         if engine_intent is None and (engine is not None or capability is not None):
             engine_intent = "offload"
+        sandbox_raw = data.get("sandbox")
+        sandbox = Sandbox.from_dict(sandbox_raw, where) if sandbox_raw else None
         return cls(
             unit_id=unit_id,
             label=str(data.get("label", unit_id)),
@@ -460,6 +608,7 @@ class Unit:
             engine=engine,
             capability=capability,
             engine_intent=engine_intent,
+            sandbox=sandbox,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -486,6 +635,10 @@ class Unit:
             out["capability"] = self.capability
         if self.engine_intent is not None:
             out["engine_intent"] = self.engine_intent
+        # Absent sandbox emits no key (existing specs stay byte-identical); a profile-authored
+        # sandbox emits its expanded axes -- the canonical form (KTD1).
+        if self.sandbox is not None:
+            out["sandbox"] = self.sandbox.to_dict()
         return out
 
 
@@ -731,6 +884,28 @@ def _verifier_prompt(unit: Unit) -> str:
     return "\n\n".join(parts)
 
 
+def _verifier_agent_opts(unit: Unit) -> list[str]:
+    """Build the agent() opts for one verifier call in ``unit``'s refute-N panel (#287 U2).
+
+    Single source of truth for all three verifier-emitting sites (``_emit_thunk``,
+    ``_emit_verify_loop_singleton``, ``_emit_verify_panel``) so the enforcement opts cannot drift
+    across them -- three hand-maintained copies is exactly the R9 dead-wiring risk. Every verifier
+    is spawned read-only-verify UNCONDITIONALLY (KTD6): the restricted ``agentType`` omits
+    Edit/Write (mutation_policy: read-only) and ``isolation: 'worktree'`` runs it in a throwaway
+    worktree (workspace_isolation: disposable-worktree), so a verifier's Bash ``git checkout``
+    cannot clobber the primary tree. No opt-out -- a verifier that needs write access is a design
+    smell, and an opt-out would be an escalation channel contradicting R8. The unit's per-tier
+    ``model``/``effort`` still ride so the panel runs at the same tier as the unit (R4).
+    """
+    return [
+        f"label: {_js_string(unit.label + ' verifier')}",
+        f"model: {_js_string(unit.tier.model)}",
+        f"effort: {_js_string(unit.tier.effort)}",
+        f"agentType: {_js_string(READONLY_VERIFIER_AGENT_TYPE)}",
+        f"isolation: {_js_string(READONLY_VERIFIER_ISOLATION)}",
+    ]
+
+
 def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
     """Append one thunk entry for ``unit`` inside a ``parallel([...])``.
 
@@ -744,11 +919,7 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
         verifier_prompt = _verifier_prompt(unit)
         prompt = _agent_prompt(spec, unit)
         opts = _agent_opts(unit)
-        verifier_opts = [
-            f"label: {_js_string(unit.label + ' verifier')}",
-            f"model: {_js_string(unit.tier.model)}",
-            f"effort: {_js_string(unit.tier.effort)}",
-        ]
+        verifier_opts = _verifier_agent_opts(unit)
         marker = _external_engine_marker(unit)
 
         lines.append("  async () => {")
@@ -816,11 +987,7 @@ def _emit_verify_loop_singleton(
     verifier_prompt = _verifier_prompt(unit)
     prompt = _agent_prompt(spec, unit)
     opts = _agent_opts(unit)
-    verifier_opts = [
-        f"label: {_js_string(unit.label + ' verifier')}",
-        f"model: {_js_string(unit.tier.model)}",
-        f"effort: {_js_string(unit.tier.effort)}",
-    ]
+    verifier_opts = _verifier_agent_opts(unit)
     marker = _external_engine_marker(unit)
 
     lines.append(f"let {var};")
@@ -879,11 +1046,7 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
     n = panel.n
     threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
     verifier_prompt = _verifier_prompt(unit)
-    opts = [
-        f"label: {_js_string(unit.label + ' verifier')}",
-        f"model: {_js_string(unit.tier.model)}",
-        f"effort: {_js_string(unit.tier.effort)}",
-    ]
+    opts = _verifier_agent_opts(unit)
 
     lines.append(f"// verify: refute-{n} panel over {unit.unit_id} (pass_rule: {panel.pass_rule};")
     lines.append(

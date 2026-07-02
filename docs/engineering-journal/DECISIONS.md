@@ -22,6 +22,54 @@
 
 ---
 
+## 2026-07-02
+
+### Capability-scoped sandbox — implementation decisions (#287)  {#capability-sandbox-implementation}
+
+**Status.** Adopted, ships in saga 0.47.0 / team-execution 2.7.0. Builds on
+`{#capability-sandbox-plan-stance}`.
+
+**Decision.**
+- KTD1 — field name `sandbox`, an envelope of two axes (`Unit.capability` was taken by engine
+  routing); profile-string shorthand expands at parse; `to_dict` emits expanded axes; absent = no
+  key (existing specs byte-identical).
+- KTD2 — native harness isolation (`agentType` + `isolation: 'worktree'`), not a per-leaf saga
+  wrapper; `outcome_worktrees.py` granularity untouched.
+- KTD3 — team-execution is authoring-time-unenforceable: `team_emitter.emit` raises `SpecError` for
+  a restrictive-sandbox unit (residents run bypassPermissions with no per-leaf tool restriction).
+- KTD4 — external face is a dispatch-builder change: agy `sandboxed-mutate` ⇒ patch-only +
+  write_set; codex `sandboxed-mutate` ⇒ halt. No new isolation built.
+- KTD5 — no hook interception (PreToolUse can't see the caller's profile).
+- KTD6 — verify-class default has no opt-out (an opt-out would be an escalation channel
+  contradicting R8).
+- KTD7 — `.git`-shared worktree residuals accepted under the accidental-clobber threat model;
+  documented in `sandbox-spawn-sites.md`, not defended.
+
+**Rejected alternatives.** A shared `Sandbox` class imported across `execution_spec`/`outcome_spec`
+— would cross the deliberate independent-houses boundary and leak the wrong error type past
+`Node.validate`; mirrored instead, guarded by a cross-module drift test.
+
+**Revisit when.** A team-execution per-leaf tool-restriction consumer exists (flips KTD3), or a
+codex write adapter ships (flips KTD4).
+
+**Refs.** `{#capability-sandbox-plan-stance}`; LEARNINGS `{#dynamic-module-reload-breaks-exception-identity}`.
+
+---
+
+### Capability-scoped sandbox stance (planned): `sandbox` envelope, native isolation, wire-don't-build external face (#287)  {#capability-sandbox-plan-stance}
+
+**Decision.** Plan #287 as a two-axis `sandbox` envelope on `Unit`/`Node` (`mutation_policy` × `workspace_isolation`, profile shorthands `read-only-verify`/`sandboxed-mutate`), enforced by native harness primitives (`agentType` + `isolation: 'worktree'`) on inline/cc-workflows, authoring-time `SpecError` halt for team-execution, and the external write-ceiling lift as a **dispatch-builder wiring** of `agy_delegate.py`'s proven clone mechanism (`mode: "patch-only"` + unit `write_set`) — codex `sandboxed-mutate` halts.
+
+**Rejected alternatives.** Naming the field `capability` (collides with #283's engine-routing `Unit.capability`); a saga-side per-leaf worktree wrapper (duplicates harness-native isolation and violates `outcome_worktrees.py`'s deliberate per-sub-outcome granularity); building a generalized owned-worktree harvest for external engines (duplicates the n=3-dogfooded clone + patch-import path); `PreToolUse` command interception (hook cannot see the caller's profile); the issue's full original scope (its "S-4/R11 unbuilt" premise was falsified by PRs #316/#317/#319).
+
+**Rationale.** A trust-but-verify re-grounding on 2026-07-02 found the issue's center of gravity had moved: the external `sandboxed-mutate` face largely exists (remotes-stripped clone, `git diff <BASE_SHA>` harvest, out-of-scope-mutation detection — LEARNINGS `{#agy-pro-high-coder-dogfood-281}`), while the `read-only-verify` face (the clobber closer) is entirely unbuilt. Tool omission alone cannot stop the clobber (Bash `git checkout` needs no Edit/Write), so the isolation axis is the load-bearing layer.
+
+**Revisit when.** A team-execution per-leaf tool-restriction consumer ships (flips that matrix row from halt to enforce); codex grows a write-capable sandbox flag (lifts its halt); an internal Claude leaf genuinely needs `sandboxed-mutate` (defines the internal owned-worktree harvest v1 deliberately omitted).
+
+**Refs.** Plan `docs/plans/2026-07-02-capability-scoped-sandbox-plan.md` (Drift audit + KTD1-KTD7); requirements `docs/brainstorms/2026-06-28-capability-scoped-sandbox-requirements.md`; LEARNINGS `{#verify-agent-git-checkout-clobber}`, `{#agy-delegated-coder-contain-agency}`; DECISIONS `{#agy-delegated-build-no-jail}`, `{#antigravity-teammate-plugin-plan-stance}`.
+
+---
+
 ## 2026-07-01
 
 ### Manifest carrier = git-common-dir `saga-manifests/` tree + typed `manifest_ref` pointer (#285 KTD1)  {#manifest-carrier-git-common-dir}

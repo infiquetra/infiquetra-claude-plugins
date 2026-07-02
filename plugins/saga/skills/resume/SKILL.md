@@ -229,11 +229,14 @@ extract content into the dispatch prompt. (Full recipe + the CE guardrails: `ref
    python3 plugins/saga/scripts/extract_session_skeleton.py --output "$SCRATCH/<id>.skeleton.txt" < <session-file>
    ```
 
-4. **Dispatch a GENERIC synthesis agent** (`Explore` / `Task` — this plugin has **no** `agents/` dir, so
-   do **not** reference a named `ce-*` / `resume-session-historian` agent; mirror `/code-review` SKILL
-   line 164). Pass the scratch **paths** + the historian guardrails as prompt text: read ONLY these
-   paths, never read raw `~/.claude/projects/`, never invoke `Skill`, never reproduce tool I/O or thinking
-   blocks, synthesize *what was tried / what didn't work / key decisions / related context*.
+4. **Dispatch a GENERIC synthesis agent** (`Explore` / `Task` — this plugin has **no** `agents/` dir for a
+   historian persona, so do **not** reference a named `ce-*` / `resume-session-historian` agent; mirror
+   `/code-review` SKILL line 164), spawned with `subagent_type: saga:readonly-verifier` and
+   `isolation: "worktree"` (read-only synthesis over disposable session extracts, per
+   `plugins/saga/references/sandbox-spawn-sites.md`). Pass the scratch **paths** + the historian
+   guardrails as prompt text: read ONLY these paths, never read raw `~/.claude/projects/`, never invoke
+   `Skill`, never reproduce tool I/O or thinking blocks, synthesize *what was tried / what didn't work /
+   key decisions / related context*.
 
 5. Optional explicit cleanup (the OS reclaims it regardless):
 

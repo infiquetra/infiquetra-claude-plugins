@@ -161,9 +161,11 @@ a lens that has no real work on this diff.
 
 ## Phase 3 — Review (fan-out)
 
-Spawn the selected lenses as **generic agents** (`Explore`/`Task` — this plugin has no `agents/` dir, so
-do **not** reference named `ce-*` agents). Each lens returns findings in the schema defined by
-`references/findings-schema.md`.
+Spawn the selected lenses as **generic agents** (`Explore`/`Task` — this plugin has no `agents/` dir for
+lens-specific personas, so do **not** reference named `ce-*` agents). Each review/verify-class lens
+spawn names `subagent_type: saga:readonly-verifier` (read-only toolset) and `isolation: "worktree"`
+(disposable worktree) — see `plugins/saga/references/sandbox-spawn-sites.md`. Each lens returns
+findings in the schema defined by `references/findings-schema.md`.
 
 **Operator-choice backend.** Offer the execution backend per `../../references/operator-choice.md` (the
 plugin-root decision contract). There are exactly three backends — `inline` ("inline") |

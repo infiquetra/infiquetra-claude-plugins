@@ -79,6 +79,9 @@ class DispatchRequest:
     title: str
     backend: str
     repo_root: Path
+    # The leaf's declared sandbox (#287 U3), so the dispatcher can probe backend enforceability and
+    # HALT rather than silently run the leaf uncontained. Absent (None) => ambient x read-write.
+    sandbox: outcome_spec.Sandbox | None = None
 
 
 def _default_dispatcher(req: DispatchRequest) -> str:
@@ -769,6 +772,9 @@ def _reconcile_once(
                     title=node.title,
                     backend=resolved_backend,
                     repo_root=Path(repo_root),
+                    # Producer half of the U3 sandbox probe: the resolved backend (post-degrade)
+                    # must be able to enforce this node's declared containment or dispatch HALTs.
+                    sandbox=node.sandbox,
                 )
             )
         except outcome_dispatcher.BackendHaltError as halt:

@@ -26,6 +26,7 @@ import os
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -504,3 +505,48 @@ def test_segment_tier_merge_prefers_fable_and_xhigh() -> None:
     assert len(segments) == 1
     assert segments[0].tier.model == "fable"
     assert segments[0].tier.effort == "xhigh"
+
+
+# ---------------------------------------------------------------------------
+# Sandbox enforceability halt (U3, KTD3): team-execution cannot enforce a
+# restrictive sandbox, so emit raises at authoring time rather than downgrading.
+# ---------------------------------------------------------------------------
+
+
+def _spec_with_sandbox(sandbox: object) -> dict[str, Any]:
+    data: dict[str, Any] = _valid_spec_dict()
+    data["units"][0]["sandbox"] = sandbox
+    return data
+
+
+def test_restrictive_sandbox_unit_raises_naming_unit_axis_backend() -> None:
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    spec = es_mod.ExecutionSpec.from_dict(_spec_with_sandbox("read-only-verify"))
+    with pytest.raises(es_mod.SpecError) as exc:
+        te_mod.emit_team_structure(spec)
+    msg = str(exc.value)
+    assert "U1" in msg  # names the offending unit
+    assert "mutation_policy" in msg  # names the axis
+    assert "team-execution" in msg  # names the backend
+
+
+def test_sandboxed_mutate_unit_also_halts_on_team_execution() -> None:
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    spec = es_mod.ExecutionSpec.from_dict(_spec_with_sandbox("sandboxed-mutate"))
+    with pytest.raises(es_mod.SpecError, match="workspace_isolation"):
+        te_mod.emit_team_structure(spec)
+
+
+def test_default_sandbox_unit_emits_unchanged() -> None:
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    # No sandbox on any unit: emit succeeds exactly as before.
+    spec = es_mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    assert "## Team Structure" in te_mod.emit_team_structure(spec)
+    # An explicit ambient x read-write sandbox is non-restrictive => also fine.
+    spec2 = es_mod.ExecutionSpec.from_dict(
+        _spec_with_sandbox({"mutation_policy": "read-write", "workspace_isolation": "ambient"})
+    )
+    assert "## Team Structure" in te_mod.emit_team_structure(spec2)

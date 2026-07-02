@@ -6,6 +6,8 @@ Living journal at [`docs/engineering-journal/`](docs/engineering-journal/) (`LEA
 
 Repo-specific signals worth a `LEARNINGS.md` entry: marketplace registry drift, hook timing races, skill-activation gotchas, MCP env propagation, build-tool surprises. Plugin-pattern choices (skills-based vs CLI-based, version-bump strategy, hook event choice) belong in `DECISIONS.md`.
 
+Any verify/review-class Agent-tool spawn made outside a saga skill must pass `subagent_type: saga:readonly-verifier` + `isolation: "worktree"` — see `plugins/saga/references/sandbox-spawn-sites.md` for the full spawn-site inventory and rationale.
+
 ## Repository Information
 
 - **Repository**: infiquetra-claude-plugins
@@ -119,8 +121,8 @@ uv run pytest tests/test_deploy_plugin.py -v
 # Run linting
 uv run ruff check .
 
-# Run type checking
-uv run mypy plugins/
+# Run type checking (match CI scope — CI checks plugins/ scripts/ tests/, not just plugins/)
+uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports
 
 # Run security scan
 uv run bandit -r plugins/

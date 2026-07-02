@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.46.0"  # external-engine workers tier preview (#318)
+    assert plugin_json["version"] == "0.47.0"  # capability-scoped agent sandbox (#287)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -1452,9 +1452,10 @@ def test_retro_engine_merge_contract() -> None:
     if (PLUGIN_ROOT / "agents").exists():
         agent_files = list((PLUGIN_ROOT / "agents").glob("*.md"))
         agent_names = {f.stem for f in agent_files}
-        assert agent_names == {"mechanical-executor"}, (
-            f"plugins/saga/agents/ must contain ONLY mechanical-executor.md (U14/R16); "
-            f"found: {sorted(agent_names)}. Named ce-* or judgment agents belong outside this dir."
+        assert agent_names == {"mechanical-executor", "readonly-verifier"}, (
+            f"plugins/saga/agents/ must contain ONLY the structural saga agents "
+            f"mechanical-executor.md (U14/R16) and readonly-verifier.md (#287 U2 sandbox agent); "
+            f"found: {sorted(agent_names)}. Named ce-* or judgment personas belong outside this dir."
         )
 
     # --- MECHANISM FLOOR 9: the durable artifact dir (docs/retros/) + journal promotion into the
@@ -1821,9 +1822,10 @@ def test_investigate_engine_merge_contract() -> None:
     if (PLUGIN_ROOT / "agents").exists():
         agent_files = list((PLUGIN_ROOT / "agents").glob("*.md"))
         agent_names = {f.stem for f in agent_files}
-        assert agent_names == {"mechanical-executor"}, (
-            f"plugins/saga/agents/ must contain ONLY mechanical-executor.md (U14/R16); "
-            f"found: {sorted(agent_names)}. Named ce-* or judgment agents belong outside this dir."
+        assert agent_names == {"mechanical-executor", "readonly-verifier"}, (
+            f"plugins/saga/agents/ must contain ONLY the structural saga agents "
+            f"mechanical-executor.md (U14/R16) and readonly-verifier.md (#287 U2 sandbox agent); "
+            f"found: {sorted(agent_names)}. Named ce-* or judgment personas belong outside this dir."
         )
 
     # --- MECHANISM FLOOR 10: docs/investigations/ artifact + dispatch REFERENCED not restated +

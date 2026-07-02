@@ -95,6 +95,17 @@ NODE_BACKENDS = (
 # an autonomous pre-side-effect leaf may drop one rung; ``none`` — no degrade constraint.
 DEGRADE_POLICIES = ("halt", "operator_away_one_rung", "none")
 
+# Sandbox capability axes (issue #287 R1-R3) -- MIRRORED verbatim from execution_spec.py so the
+# two independent spec houses (Unit / Node) share one vocabulary without cross-importing. The
+# cross-module drift-guard test (tests/test_outcome_spec.py) asserts these stay identical to
+# execution_spec's copies; keep the two in lockstep on any edit.
+MUTATION_POLICIES = ("read-only", "read-write")
+WORKSPACE_ISOLATIONS = ("ambient", "disposable-worktree", "owned-worktree")
+SANDBOX_PROFILES = {
+    "read-only-verify": ("read-only", "disposable-worktree"),
+    "sandboxed-mutate": ("read-write", "owned-worktree"),
+}
+
 
 class OutcomeSpecError(ValueError):
     """An outcome spec that violates a structural invariant or is malformed.
@@ -103,6 +114,73 @@ class OutcomeSpecError(ValueError):
     (R20 review-before-dispatch / R31 DAG validation). Carrying the offending ``subplot_id``
     in the message keeps the failure actionable for ``/outcome`` and the decompose flow (U7).
     """
+
+
+@dataclass(frozen=True)
+class Sandbox:
+    """A subplot's two-axis containment envelope (issue #287 R1-R3, KTD1).
+
+    Mirror of ``execution_spec.Sandbox`` for the outcome (Node) house -- same axes, same profile
+    shorthand, but raising ``OutcomeSpecError`` so ``Node.validate`` stays within its own error
+    contract. The two copies are kept identical by a drift-guard test (see MUTATION_POLICIES).
+    Absent on a Node => ambient x read-write, exactly today's behavior. A bare profile string
+    expands to its axis pair at ``from_dict``; ``to_dict`` emits the expanded axes, not shorthand.
+    """
+
+    mutation_policy: str
+    workspace_isolation: str
+
+    def validate(self, where: str) -> None:
+        if self.mutation_policy not in MUTATION_POLICIES:
+            raise OutcomeSpecError(
+                f"{where}: sandbox mutation_policy {self.mutation_policy!r} "
+                f"not in {MUTATION_POLICIES}"
+            )
+        if self.workspace_isolation not in WORKSPACE_ISOLATIONS:
+            raise OutcomeSpecError(
+                f"{where}: sandbox workspace_isolation {self.workspace_isolation!r} "
+                f"not in {WORKSPACE_ISOLATIONS}"
+            )
+
+    @property
+    def is_restrictive(self) -> bool:
+        """True iff this sandbox narrows either axis below the ambient x read-write default."""
+        return self.mutation_policy != "read-write" or self.workspace_isolation != "ambient"
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> Sandbox:
+        if isinstance(data, str):
+            if data not in SANDBOX_PROFILES:
+                raise OutcomeSpecError(
+                    f"{where}: unknown sandbox profile {data!r} not in {tuple(SANDBOX_PROFILES)}"
+                )
+            mutation_policy, workspace_isolation = SANDBOX_PROFILES[data]
+            return cls(mutation_policy=mutation_policy, workspace_isolation=workspace_isolation)
+        if not isinstance(data, dict):
+            raise OutcomeSpecError(
+                f"{where}: sandbox must be a profile string or a "
+                f"{{mutation_policy, workspace_isolation}} object, got {type(data).__name__}"
+            )
+        if "profile" in data:
+            raise OutcomeSpecError(
+                f"{where}: sandbox 'profile' key conflicts with the explicit-axes form -- use a "
+                f"bare profile string ('sandbox': 'read-only-verify') OR spell out both axes"
+            )
+        if "mutation_policy" not in data or "workspace_isolation" not in data:
+            raise OutcomeSpecError(
+                f"{where}: sandbox needs both 'mutation_policy' and 'workspace_isolation' "
+                f"(or a bare profile string)"
+            )
+        return cls(
+            mutation_policy=str(data["mutation_policy"]),
+            workspace_isolation=str(data["workspace_isolation"]),
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "mutation_policy": self.mutation_policy,
+            "workspace_isolation": self.workspace_isolation,
+        }
 
 
 @dataclass
@@ -142,6 +220,9 @@ class Node:
     worktree: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] = field(default_factory=dict)
     cost: dict[str, Any] = field(default_factory=dict)
+    # Sandbox capability envelope (#287 U1). Absent => ambient x read-write; consumed by the
+    # outcome_dispatcher enforceability probe (U3). Absent field emits no key (round-trip stable).
+    sandbox: Sandbox | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -199,11 +280,15 @@ class Node:
                 raise OutcomeSpecError(
                     f"node {sid}: child_spec_ref equals the node's own subplot_id"
                 )
+        if self.sandbox is not None:
+            self.sandbox.validate(f"node {sid}")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Node:
         subplot_id = str(data.get("subplot_id", ""))
         where = f"node {subplot_id or '<unnamed>'}"
+        sandbox_raw = data.get("sandbox")
+        sandbox = Sandbox.from_dict(sandbox_raw, where) if sandbox_raw else None
         return cls(
             subplot_id=subplot_id,
             title=str(data.get("title", subplot_id)),
@@ -229,10 +314,11 @@ class Node:
             worktree=copy.deepcopy(dict(data.get("worktree", {}))),
             evidence=copy.deepcopy(dict(data.get("evidence", {}))),
             cost=copy.deepcopy(dict(data.get("cost", {}))),
+            sandbox=sandbox,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "subplot_id": self.subplot_id,
             "title": self.title,
             "kind": self.kind,
@@ -255,6 +341,11 @@ class Node:
             "evidence": copy.deepcopy(self.evidence),
             "cost": copy.deepcopy(self.cost),
         }
+        # Absent sandbox emits no key so existing node specs round-trip byte-identical; a
+        # profile-authored sandbox emits its expanded axes (canonical form, KTD1).
+        if self.sandbox is not None:
+            out["sandbox"] = self.sandbox.to_dict()
+        return out
 
 
 @dataclass

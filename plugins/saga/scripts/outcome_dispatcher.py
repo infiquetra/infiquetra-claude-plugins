@@ -36,6 +36,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import execution_spec  # noqa: E402  (after the sys.path shim, by design)
 import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 
 # The always-available floor (R6): the agent can always run inline, emit a team-execution artifact, or
@@ -122,6 +123,25 @@ def dispatch(req: Any, *, available: Sequence[str] = DEFAULT_AVAILABLE) -> dict[
             available=tuple(available),
         )
         return {"status": "halt", "receipt": receipt.to_dict()}
+    # Sandbox enforceability probe (#287 U3, R4): the resolved backend must be able to enforce the
+    # leaf's declared containment. If it cannot, HALT with the axis named rather than silently
+    # running the leaf without the requested sandbox. Duck-typed ``sandbox`` (a Node carries it as
+    # of #287 U1; older reqs simply lack it) keeps this backward compatible.
+    offending = execution_spec.unenforceable_sandbox_axis(backend, getattr(req, "sandbox", None))
+    if offending is not None:
+        axis_name, axis_value = offending
+        receipt = HaltReceipt(
+            outcome_id=str(req.outcome_id),
+            subplot_id=str(req.subplot_id),
+            backend=backend,
+            reason=(
+                f"backend {backend!r} cannot enforce sandbox {axis_name}={axis_value!r} "
+                f"(#287 R4 halt-not-downgrade) -- it would run the leaf without the requested "
+                f"containment. HALT and page rather than silently drop the sandbox."
+            ),
+            available=tuple(available),
+        )
+        return {"status": "halt", "receipt": receipt.to_dict()}
     leaf_saga_id = f"leaf-{req.outcome_id}-{req.subplot_id}"
     return {
         "status": "dispatched",
@@ -164,19 +184,13 @@ def team_execution_artifact(execution_spec_obj: Any) -> str:
     """Emit the team-execution ``## Team Structure`` markdown for a leaf's execution spec (R5).
 
     Delegates to ``execution_spec.recompile_for_tier(spec, "team-execution")`` — the by-mode
-    dispatcher seam whose third leg is now ``team_emitter`` — so the team-execution backend's runnable
-    artifact is produced through the single seam, not reinvented here. Lazily loaded by path so this
-    module is importable standalone.
+    dispatcher seam whose third leg is ``team_emitter`` — so the team-execution backend's runnable
+    artifact is produced through the single seam, not reinvented here. Uses the module-level
+    ``execution_spec`` import (loaded under the sys.path shim) so this and ``team_emitter`` reach the
+    SAME class objects — a fresh per-call ``exec_module`` would mint a second ``SpecError`` that an
+    upstream ``except`` misses (the #287 U3 dynamic-reload identity trap).
     """
-    import importlib.util
-
-    path = Path(__file__).resolve().parent / "execution_spec.py"
-    loaded = importlib.util.spec_from_file_location("execution_spec", path)
-    assert loaded is not None and loaded.loader is not None
-    module = importlib.util.module_from_spec(loaded)
-    sys.modules.setdefault("execution_spec", module)
-    loaded.loader.exec_module(module)
-    return str(module.recompile_for_tier(execution_spec_obj, "team-execution"))
+    return str(execution_spec.recompile_for_tier(execution_spec_obj, "team-execution"))
 
 
 # ---------------------------------------------------------------------------

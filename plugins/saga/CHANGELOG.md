@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.47.0 - 2026-07-02
+
+### Capability-scoped agent sandbox (#287)
+- `execution_spec.py` / `outcome_spec.py`: new optional two-axis `sandbox` envelope on `Unit`/`Node`
+  — `mutation_policy` (read-only | read-write) × `workspace_isolation` (ambient |
+  disposable-worktree | owned-worktree), with named profile shorthand (`read-only-verify`,
+  `sandboxed-mutate`) that expands at parse. Absent ⇒ ambient × read-write (existing specs
+  round-trip byte-identical).
+- New `plugins/saga/agents/readonly-verifier.md` (read-only toolset: Bash/Read/Grep/Glob, no
+  Edit/Write). All three verifier-emitting sites now emit `agentType: "saga:readonly-verifier"` +
+  `isolation: "worktree"` unconditionally (KTD6), collapsed into one `_verifier_agent_opts` helper.
+- Per-backend enforceability matrix (`SANDBOX_ENFORCEABLE_BY_BACKEND` +
+  `unenforceable_sandbox_axis`): a restrictive sandbox a backend cannot enforce HALTS (never
+  downgrades). `team_emitter.emit` raises `SpecError` at authoring time (KTD3);
+  `outcome_dispatcher.dispatch` probes the matrix into an axis-naming `HaltReceipt`; unlisted
+  backends (fork/subagent/goal/manual) default to halt (R4).
+- External write-ceiling lift (`engine_dispatch.py`): a `sandboxed-mutate` agy unit ⇒
+  `mode: "patch-only"` + `write_set` from the unit's files; a `sandboxed-mutate` codex unit HALTS
+  (no write adapter). Default/read-only is byte-identical. The declared sandbox is recorded as
+  optional `attribution.sandbox` on the provenance manifest (no `saga.manifest.v1` bump).
+- New `plugins/saga/references/sandbox-spawn-sites.md` inventory + ad-hoc spawn rule + `CLAUDE.md`
+  pointer; four verify/review skills (code-review/qa/investigate/resume) name the read-only
+  verifier + worktree isolation.
+- New tests: `tests/test_sandbox_clobber_contained.py` (a real disposable worktree contains a
+  `git checkout` clobber; the primary tree's uncommitted work survives), plus
+  `tests/test_sandbox_spawn_sites.py` and sandbox coverage across the spec/emitter/dispatch suites.
+
 ## 0.46.0 - 2026-07-02
 
 ### External-engine workers — plan-time tier recommendation + resolution preview (#318)

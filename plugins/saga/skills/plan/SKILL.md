@@ -300,9 +300,21 @@ tier from the work-shape heuristic (R10). Surface the tier table for operator ov
 | Judgment, design, adversarial review, architectural decisions | `opus / high` | Deep reasoning needed; cost-justified |
 | Mechanical, deterministic, scripted transforms, scaffolding | `sonnet / medium` (or `haiku / low` for purely mechanical) | Bounded output, predictable steps |
 | Read-only survey, search, grep, sampling, census | `sonnet / low` | Low-effort read, no write risk |
+| External-engine delegation, `intent=offload` (unit carries `engine`/`capability`, U12) | `sonnet / medium` | Chaperone is mechanical verify-apply-test; a heavier chaperone erases the token savings that motivated the delegation (KTD2) |
+| External-engine delegation, `intent=second-opinion` (U12) | `opus / high` | Adversarial verification IS the product; extra spend assumed; `fable/xhigh` available as a per-unit override, never a default (KTD2) |
 
 Apply the heuristic per unit, then present the full tier table (U-ID, label, proposed tier, rationale)
 and ask the operator to confirm or override before proceeding. Do not lock tiers silently.
+
+For a unit carrying `engine`/`capability` (U12 chaperone-worker units), the recommendation row also
+carries the unit's `intent` and a **plan-time resolution preview**: for a capability-routed unit, call
+`engine_resolver.resolve({"role_kind": "worker", "capability": <value>}, mode="advisory", registry=…)`
+(`mode="advisory"` — R7 — since this is a non-binding preview, not the run-time dispatch) and surface
+"resolves today to `<engine_id>/<variant>`" alongside the tier row; an explicit-engine unit has no
+preview to show (naming the engine already fixes it — R26 halts rather than substitutes if it becomes
+unavailable). This preview is the baseline the chaperone's `substituted-engine` disposition compares
+the run-time resolution against (KTD4, `references/external-engine-workers.md` §4 in team-execution) —
+record it in the saga tick / emitted plan alongside the tier so it survives to `/work`.
 
 **Step 2 — Author thin per-unit prompts (KTD2).** Each unit's prompt is a **thin pointer**, not a prose
 transcription of the plan:

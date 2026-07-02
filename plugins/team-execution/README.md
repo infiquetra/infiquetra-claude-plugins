@@ -144,6 +144,7 @@ remediation loops, and final gate status.
 - `team-execution/skills/team-execution/references/validator-execution-order.md`
 - `team-execution/skills/team-execution/references/validator-evidence-state.md`
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
+- `team-execution/skills/team-execution/references/external-engine-workers.md`
 
 ---
 
@@ -165,7 +166,8 @@ team-execution/
 │           ├── validator-evidence-state.md
 │           ├── validator-execution-order.md
 │           ├── validator-registry.md
-│           └── validator-spawn-quirks.md
+│           ├── validator-spawn-quirks.md
+│           └── external-engine-workers.md
 ├── agents/
 │   ├── devils-advocate-reviewer.md
 │   ├── security-reviewer.md

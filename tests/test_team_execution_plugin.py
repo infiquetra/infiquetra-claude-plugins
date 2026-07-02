@@ -38,6 +38,10 @@ VALIDATOR_REFERENCES = {
     "validator-spawn-quirks.md",
 }
 
+WORKER_REFERENCES = {
+    "external-engine-workers.md",
+}
+
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -83,6 +87,18 @@ def test_validator_references_are_packaged_and_linked() -> None:
     for filename in VALIDATOR_REFERENCES:
         path = references_dir / filename
         assert path.exists(), f"missing validator reference: {path}"
+        assert filename in skill_doc
+        assert filename in readme
+
+
+def test_worker_references_are_packaged_and_linked() -> None:
+    references_dir = PLUGIN_ROOT / "skills" / "team-execution" / "references"
+    skill_doc = _read(PLUGIN_ROOT / "skills" / "team-execution" / "SKILL.md")
+    readme = _read(PLUGIN_ROOT / "README.md")
+
+    for filename in WORKER_REFERENCES:
+        path = references_dir / filename
+        assert path.exists(), f"missing worker reference: {path}"
         assert filename in skill_doc
         assert filename in readme
 

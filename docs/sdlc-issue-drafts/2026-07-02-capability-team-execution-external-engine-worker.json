@@ -1,0 +1,77 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-02T04:59:38.062658+00:00",
+  "created_issue_number": 318,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/318",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-02-capability-team-execution-external-engine-worker.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: capability.yml, enhancement.yml, defect.yml, exploration.yml, context-update.yml, objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "plan-ready",
+    "Objective": "docs/plans/2026-07-02-team-execution-external-engine-workers-plan.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing required H3 sections for capability/unknown-risk: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria', 'Verification']",
+      "Missing author-visible risk metadata"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [
+    "status"
+  ],
+  "repo": "infiquetra-claude-plugins",
+  "risk": null,
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-02-capability-team-execution-external-engine-worker.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ntitle: team-execution external-engine workers (U12 follow-up from #283)\ntype: feat\nstatus: active\ndate: 2026-07-02\norigin: docs/plans/2026-07-01-external-engine-capability-routing-plan.md\n---\n\n# team-execution external-engine workers (U12 follow-up from #283)\n\nClose the one deliberately-deferred leg of #283 (ship-with-deferred, KTD7): let an external engine\n(agy, codex) run **as a team-execution worker or advisory validator** \u2014 via a resident Claude\n**chaperone worker** that resolves, dispatches through the existing containment wrappers, verifies\nthe returned evidence, applies the patch as sole-committer, and writes the worker-exit provenance\nmanifest. This activates the dispositions #285 reserved in\n`plugins/team-execution/skills/team-execution/references/worker-manifest.md:47-49`\n(`fell-back-to-claude` / `substituted-engine`) and completes R10/R12 of the #283 requirements doc.\n\n**Operator decisions already made (2026-07-02):** chaperone-worker dispatch shape (over\ncoordinator-dispatches); scope = workers **and** advisory validators; chaperone tier is\n**intent-driven and operator-confirmed** (see KTD2).\n\n## Problem frame (carried WHAT \u2014 do not re-litigate)\n\n- Requirements: `do",
+    "inferred_maturity": "plan-ready",
+    "kind": "plan",
+    "path": "docs/plans/2026-07-02-team-execution-external-engine-workers-plan.md",
+    "ref": "docs/plans/2026-07-02-team-execution-external-engine-workers-plan.md",
+    "title": "team-execution external-engine workers (U12 follow-up from #283)",
+    "url": null
+  },
+  "state": "post_create_pending",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: team-execution external-engine workers \u2014 chaperone dispatch (U12 from #283)",
+  "updated_at": "2026-07-02T04:59:40.858591+00:00"
+}

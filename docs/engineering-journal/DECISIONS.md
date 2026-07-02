@@ -24,6 +24,43 @@
 
 ## 2026-07-02
 
+### Team-spawn residency guard: name-only predicate, registry-parse trigger set (#289, plan)  {#team-spawn-residency-guard-ktds-289}
+
+**Decision.** The warn-only spawn-shape hook (plan
+`docs/plans/2026-07-02-team-spawn-residency-guard-plan.md`) commits six KTDs: (1) persistence
+predicate is **non-empty `name` only** with matcher `Agent|Task` — the go/no-go probe found the
+current `Agent` tool schema has **no `run_in_background` parameter** (live transcript + session
+schema), so requiring it per S-1 U3's prose would false-warn on every correctly-named spawn;
+(2) normalize `subagent_type` by stripping the `<plugin>:` prefix (live spawns use
+`team-execution:security-reviewer`, registries hold bare names); (3) locate registries via a four-step pure-pathlib chain — plugin-root sibling (dev repo);
+versioned-cache lookup reading `installed_plugins.json` for team-execution's **active**
+`installPath` (installed layout is `cache/<marketplace>/<plugin>/<version>/`, so the naive
+sibling path is wrong there; max-semver glob only as last resort when the registry file is
+absent/unreadable); `CLAUDE_PROJECT_DIR`; then bounded cwd-ancestor scan — no subprocess (R11),
+silent degrade when absent (D5); (4) parse the two registries per invocation, **no cache/materialized
+file** — a data file would be the drift-prone second source R4 forbids, and two ≤5K reads are
+negligible; (5) operator override via `TEAM_SPAWN_GUARD_INCLUDE`/`EXCLUDE` env vars, not a config
+file; (6) no debounce in v1 — stateless per D4.
+
+**Rejected alternatives.** Requiring `run_in_background` (field no longer exists); suffix-matching
+`-reviewer`/`-tester` instead of registry parsing (violates R4, triggers on non-team agents);
+materialized trigger-set data file (dead-wiring/drift); `git rev-parse` for repo root (subprocess
+on the spawn hot path).
+
+**Rationale.** The probe-before-plan gate in #289 paid off: the harness drifted from the S-1
+protocol prose (`consensus-protocol.md:26` still names `run_in_background`), and only a live-source
+check caught it. D6's sequencing gate is cleared — S-1 (#275) is closed and the residency prose is
+live at `consensus-protocol.md:26,51-53`.
+
+**Revisit when.** The `Agent` tool schema reintroduces or renames persistence fields; U3 worker
+roles gain a parseable registry section (extend the parse, drop the INCLUDE workaround); telemetry
+shows advisory fatigue (add debounce) or routinely-ignored warnings with real cost (revisit
+blocking).
+
+**Refs.** Plan `docs/plans/2026-07-02-team-spawn-residency-guard-plan.md`; requirements
+`docs/brainstorms/2026-06-28-team-spawn-residency-guard-requirements.md`; S-1 record
+[#worker-cache-scheduling](#worker-cache-scheduling) (KTD3/KTD4 context).
+
 ### Pre-push gate enforces CI's mypy step, not just documents it (#314)  {#local-gate-enforces-ci-mypy-314}
 
 **Decision.** Add a `mypy` step to `tools/gate-manifest.json`

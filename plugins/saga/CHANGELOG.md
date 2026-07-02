@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.48.0 - 2026-07-02
+
+### Team-spawn residency guard (#289)
+- New warn-only `PreToolUse` hook, `team_spawn_residency_hook.py`: when a team-execution
+  reviewer or tester is spawned (`Agent` in this harness, `Task` on stock Claude Code) without
+  the named-persistent-teammate shape S-1 (#275) mandates, emits a one-line
+  `additionalContext` advisory pointing at spawning with `name` for `SendMessage`
+  re-addressability. Never blocks, denies, or mutates the spawn.
+- Trigger set (18 agents: 10 reviewers, 8 testers) is parsed fresh from
+  `reviewer-registry.md` / `validator-registry.md`'s `## Testers` section on every
+  invocation — no materialized manifest to drift. Scanners, monitors, and `deploy-watcher`
+  are excluded.
+- Registry directory resolved via a four-step chain (dev-repo sibling → versioned-cache
+  install, reading the active version from `installed_plugins.json` with a max-semver glob
+  as last resort → `CLAUDE_PROJECT_DIR` → bounded cwd-ancestor scan) so it resolves correctly
+  under both the dev-repo layout and a marketplace-installed versioned cache.
+- Registered as a third `PreToolUse` entry (matcher `Agent|Task`) alongside the existing
+  `Edit|Write|MultiEdit` and `Bash` entries.
+
 ## 0.47.0 - 2026-07-02
 
 ### Capability-scoped agent sandbox (#287)

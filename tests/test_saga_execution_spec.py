@@ -293,7 +293,7 @@ def _emit_units(units: list[dict[str, object]]) -> str:
         {"name": "verify-demo", "description": "d", "repo": "/tmp/r", "units": units}
     )
     spec.validate()
-    return ES.emit_workflow_script(spec)
+    return str(ES.emit_workflow_script(spec))
 
 
 def _verify_unit(uid: str, **kw: object) -> dict[str, object]:

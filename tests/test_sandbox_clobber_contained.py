@@ -115,7 +115,7 @@ def _emit(units: list[dict[str, object]]) -> str:
         {"name": "u6", "description": "d", "repo": "/tmp/r", "units": units}
     )
     spec.validate()
-    return ES.emit_workflow_script(spec)
+    return str(ES.emit_workflow_script(spec))
 
 
 def test_verify_panel_wiring_end_to_end_carries_isolation_and_agenttype() -> None:

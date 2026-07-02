@@ -26,6 +26,7 @@ import os
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -512,8 +513,8 @@ def test_segment_tier_merge_prefers_fable_and_xhigh() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _spec_with_sandbox(sandbox: object) -> dict:
-    data = _valid_spec_dict()
+def _spec_with_sandbox(sandbox: object) -> dict[str, Any]:
+    data: dict[str, Any] = _valid_spec_dict()
     data["units"][0]["sandbox"] = sandbox
     return data
 

@@ -27,6 +27,28 @@
 
 ## 2026-07-02
 
+### CI mypy checks `tests/` but the documented local command only checks `plugins/`  {#ci-mypy-scope-wider-than-local}
+
+**Context.** The #287 PR (#320) went green locally on `uv run mypy plugins/` (the command in
+CLAUDE.md) but CI's Type Check failed after push.
+**Evidence.** PR #320 CI run 28607919032, job "Type Check": `uv run python -m mypy plugins/
+scripts/ tests/ --ignore-missing-imports` found 3 errors in `tests/`
+(`test_team_emitter.py:517` `[index]`, `test_sandbox_clobber_contained.py:118` +
+`test_saga_execution_spec.py:296` `[no-any-return]`) that `mypy plugins/` never sees.
+**Mechanism.** CI type-checks a WIDER path set (`plugins/ scripts/ tests/`) than the local command
+documented in CLAUDE.md (`plugins/`). Test helpers that `return module.fn(...)` from a
+dynamically-imported `ModuleType` (whose attributes are `Any`) under a `-> str` signature, or index
+into a `dict[str, object]`, only trip under CI's scope.
+**Fix.** Wrapped the `Any` returns in `str(...)`, annotated the dict local `dict[str, Any]`, and
+updated CLAUDE.md's Quality Checks so the local mypy runs `plugins/ scripts/ tests/
+--ignore-missing-imports` — same scope as CI (same commit as this entry).
+**Validation.** `uv run python -m mypy plugins/ scripts/ tests/ --ignore-missing-imports` →
+"no issues found in 113 source files"; CI Type Check re-run green.
+**Generalizable rule.** Mirror CI's exact check scope in the documented local command — a local
+gate narrower than CI produces confident-but-wrong "green" that only fails after push. When a green
+local run is contradicted by CI, diff the CI command against the local one first.
+**Refs.** `{#dynamic-module-reload-breaks-exception-identity}` (sibling #287 learning).
+
 ### A re-imported module's exception class is not the caught one  {#dynamic-module-reload-breaks-exception-identity}
 
 **Context.** #287 U3 needed `team_emitter.emit` to raise `execution_spec.SpecError` for a

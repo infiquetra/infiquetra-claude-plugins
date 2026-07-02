@@ -121,8 +121,8 @@ uv run pytest tests/test_deploy_plugin.py -v
 # Run linting
 uv run ruff check .
 
-# Run type checking
-uv run mypy plugins/
+# Run type checking (match CI scope — CI checks plugins/ scripts/ tests/, not just plugins/)
+uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports
 
 # Run security scan
 uv run bandit -r plugins/

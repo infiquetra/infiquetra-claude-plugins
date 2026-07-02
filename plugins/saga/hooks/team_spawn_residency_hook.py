@@ -194,7 +194,7 @@ def _find_references_dir(cwd: str | None) -> Path | None:
         if project_candidate.is_dir():
             return project_candidate
 
-    current = Path(cwd) if cwd else Path.cwd()
+    current = Path(cwd) if isinstance(cwd, str) and cwd else Path.cwd()
     for _ in range(_MAX_ANCESTOR_LEVELS):
         candidate = current / "plugins" / "team-execution" / _TEAM_EXECUTION_REFERENCES
         if candidate.is_dir():

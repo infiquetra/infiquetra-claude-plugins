@@ -255,6 +255,16 @@ class TestFindReferencesDir:
 
         assert hook._find_references_dir(str(empty_cwd)) is None
 
+    @pytest.mark.parametrize("bad_cwd", [123, ["a"], {"x": 1}])
+    def test_non_string_cwd_falls_back_to_process_cwd_without_raising(
+        self, hook: Any, monkeypatch: pytest.MonkeyPatch, bad_cwd: Any
+    ) -> None:
+        """Delta-review follow-up: a non-string `cwd` must not raise TypeError from Path()."""
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        # Just proving no exception escapes — the resolved value is process-cwd-dependent.
+        hook._find_references_dir(bad_cwd)
+
 
 # ---------------------------------------------------------------------------
 # decide() — pure predicate (KTD1, KTD2, KTD5, R2, R5, R7, R8)

@@ -7,6 +7,7 @@ real object store).
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -440,6 +441,49 @@ def test_tampered_stored_file_raises_hash_mismatch(tmp_path: Path) -> None:
     try:
         ap.deref(pointer, repo_root=repo)
         raise AssertionError("expected PointerError")
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+
+
+def test_l2_deref_rejects_path_traversal_locator(tmp_path: Path) -> None:
+    """A pointer is untrusted (it travels inside spawn prompts). A hostile ``locator`` that names a
+    file outside the store — absolute or ``..``-escaping — must be rejected, never followed, even
+    when the pointer carries that file's real sha256. Otherwise deref is an arbitrary-file read and
+    the mismatch error a hash-disclosure oracle."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET\n", encoding="utf-8")
+    secret_digest = hashlib.sha256(secret.read_bytes()).hexdigest()
+
+    hostile_locators = [
+        str(secret),  # absolute path — pathlib join lets the RHS win outright
+        f"../../../../{secret.name}",  # dotdot escape
+    ]
+    for locator in hostile_locators:
+        pointer = ap.ArtifactPointer(
+            kind="file", locator=locator, hash=secret_digest, epoch="0", deref="cat"
+        )
+        try:
+            ap.deref(pointer, repo_root=repo)
+            raise AssertionError(f"expected PointerError for hostile locator {locator!r}")
+        except ap.PointerError as exc:
+            assert exc.code == ap.ERR_HASH_MISMATCH
+            assert "TOP SECRET" not in exc.detail  # no content or path leaked back
+
+
+def test_l2_deref_rejects_non_hex_hash(tmp_path: Path) -> None:
+    """A non-sha256 ``hash`` cannot address the CAS — it is rejected before any path is built."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    pointer = ap.ArtifactPointer(
+        kind="file", locator="objects/xx/not-a-digest", hash="not-a-digest", epoch="0", deref="cat"
+    )
+    try:
+        ap.deref(pointer, repo_root=repo)
+        raise AssertionError("expected PointerError for non-hex hash")
     except ap.PointerError as exc:
         assert exc.code == ap.ERR_HASH_MISMATCH
 

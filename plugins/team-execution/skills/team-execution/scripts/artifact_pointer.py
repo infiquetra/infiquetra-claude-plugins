@@ -43,6 +43,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess  # nosec B404 — git only, fixed argv, no shell
 import sys
@@ -64,6 +65,14 @@ DEFAULT_GC_MAX_AGE_DAYS = 7.0
 # Typed error codes the orchestrator branches on (R2/KTD2). Stable strings, printed to stderr.
 ERR_HASH_MISMATCH = "POINTER_HASH_MISMATCH"
 ERR_STALE = "POINTER_STALE"
+
+# A CAS address is a lowercase sha256 hex digest. A pointer's ``hash`` is untrusted input (it travels
+# inside spawn prompts), so it is validated against this before it is ever used to build a path.
+_SHA256_HEX = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
+def _is_sha256_hex(value: str) -> bool:
+    return bool(_SHA256_HEX.match(value))
 
 
 class GitError(RuntimeError):
@@ -311,16 +320,27 @@ def store(run_id: str, epoch: str, file_path: Path, *, repo_root: Path) -> Artif
 
 
 def _verify_l2_integrity(pointer: ArtifactPointer, *, repo_root: Path) -> Path:
-    """L2 integrity: the CAS file exists AND its sha256 matches the pointer's hash."""
+    """L2 integrity: the CAS file exists AND its sha256 matches the pointer's hash.
+
+    The stored path is rebuilt from the *validated* hash, never joined from the free-form
+    ``locator``. A pointer is untrusted input — it travels inside spawn prompts — so a
+    ``locator`` of ``/etc/passwd`` or ``../../secret`` would otherwise escape the store and read
+    an arbitrary file, and the mismatch error would leak that file's sha256 (a hash oracle).
+    Confining the address to ``<store>/objects/<hash[:2]>/<hash>`` built from a 64-hex-char digest
+    removes both: the only file addressable is one whose name already equals its own hash.
+    """
+    if not _is_sha256_hex(pointer.hash):
+        raise PointerError(ERR_HASH_MISMATCH, "pointer hash is not a sha256 digest")
+    expected_locator = f"{CAS_SUBDIR}/{pointer.hash[:2]}/{pointer.hash}"
+    if pointer.locator != expected_locator:
+        raise PointerError(ERR_HASH_MISMATCH, "pointer locator does not match its content hash")
     store_root = resolve_store_root(repo_root)
-    cas_path = store_root / pointer.locator
+    cas_path = _cas_path(store_root, pointer.hash)
     if not cas_path.exists():
-        raise PointerError(ERR_HASH_MISMATCH, f"stored artifact not found at {pointer.locator}")
+        raise PointerError(ERR_HASH_MISMATCH, "stored artifact not found")
     actual = hashlib.sha256(cas_path.read_bytes()).hexdigest()
     if actual != pointer.hash:
-        raise PointerError(
-            ERR_HASH_MISMATCH, f"stored artifact hash {actual} does not match pointer hash"
-        )
+        raise PointerError(ERR_HASH_MISMATCH, "stored artifact hash does not match pointer hash")
     return cas_path
 
 

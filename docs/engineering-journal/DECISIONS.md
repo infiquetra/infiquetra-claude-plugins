@@ -24,6 +24,32 @@
 
 ## 2026-07-02
 
+### Typed artifact pointers: temp-index tree snapshot, 4 KB threshold, live-on-both-axes saga field (#291, plan)  {#artifact-pointer-ktds-291}
+
+**Decision.** The typed-pointer plan (`docs/plans/2026-07-02-typed-artifact-pointer-passing-plan.md`)
+commits: (KTD1) the issue-Q1 dirty-tree locator is a **temp-index tree snapshot**
+(`GIT_INDEX_FILE=<tmp> git add -A && git write-tree`) pinned by a holding ref
+`refs/team-execution/snapshots/<run-id>/<epoch>` — covers staged/unstaged/untracked, survives
+`git gc`, resolves from linked worktrees, mutates neither the real index nor the worktree;
+(KTD4) pointerize at **> 4 KB, or > 1 KB with ≥ 2 recipients; ≤ 1 KB always inline**; (KTD5) the
+saga envelope gains one `artifact_pointers` list field shipped with producer + consumer + real-CLI
+end-to-end test in one unit (dead-wiring rule, LEARNINGS
+`{#dead-wiring-needs-producer-and-consumer}`); (KTD7) degradation is **capability-keyed** — git-object
+pointers do not resolve in external-engine disposable clones
+(`external-engine-workers.md:99-105`), so those paths keep inlined content.
+**Rejected alternatives.** `git stash create` (skips untracked; dangling-object GC-bait); a
+checkpoint commit (mutates history); routing diffs through the Layer-2 store (loses git's free
+content addressing and worktree sharing); a new pointer envelope parallel to saga's path fields
+(violates the no-back-edge rule, DECISIONS.md `{#saga-docs-source-model}` lineage).
+**Premise drift honored.** The issue's "reviewers re-spawned fresh each cycle" premise was reversed
+by the residency protocol (`consensus-protocol.md:53,169-170` — persistent teammates, delta-only
+re-engagement); the plan sizes the win as N ≥ 3 initial full-diff copies + inlined deltas, not
+per-cycle full re-sends.
+**Revisit when.** External-engine envelopes need pointerizing (requires a clone-visible locator,
+e.g. git bundle); or per-lens scoping gains a no-silent-drop guarantee; or live runs show the
+4 KB threshold mis-set.
+**Refs.** #291; `docs/plans/2026-07-02-typed-artifact-pointer-passing-plan.md`.
+
 ### Team-spawn residency guard: name-only predicate, registry-parse trigger set (#289, plan)  {#team-spawn-residency-guard-ktds-289}
 
 **Decision.** The warn-only spawn-shape hook (plan

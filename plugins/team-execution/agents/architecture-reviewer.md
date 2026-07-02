@@ -63,7 +63,9 @@ If any location exists, read the index or list of documents to understand what's
 
 ### Step 2: Keyword-Match the Plan
 
-From the plan content and git diff, extract key topics:
+From the plan content and git diff — dereference an `artifact-pointer` block per
+`team-execution/skills/team-execution/references/artifact-pointers.md` if you were given one
+instead of an inlined diff — extract key topics:
 - Technologies used (frameworks, databases, message queues, etc.)
 - Patterns introduced (event sourcing, CQRS, repository pattern, etc.)
 - Cross-cutting concerns (auth, caching, observability, etc.)

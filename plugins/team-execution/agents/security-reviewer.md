@@ -39,7 +39,9 @@ Score the implementation against these 5 dimensions. Load rubrics from:
 
 ### Step 1: Identify Security Surface
 
-From the plan and diff, identify:
+From the plan and diff — if you were given an `artifact-pointer` block instead of an inlined diff,
+dereference it per
+`team-execution/skills/team-execution/references/artifact-pointers.md` first — identify:
 - New API endpoints or mutations
 - New or changed IAM roles/policies
 - New or changed secrets or config values

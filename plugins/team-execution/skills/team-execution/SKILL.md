@@ -263,6 +263,7 @@ route, and `Intent` as `offload` or `second-opinion` — see
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
 - `team-execution/skills/team-execution/references/worker-manifest.md`
 - `team-execution/skills/team-execution/references/external-engine-workers.md`
+- `team-execution/skills/team-execution/references/artifact-pointers.md`
 ```
 
 Then submit the plan for approval. Do not start implementation during Phase A.
@@ -322,7 +323,17 @@ worker's manifest additionally carries `kind=external-engine` attribution and th
 disposition (`ran-as-requested` / `fell-back-to-claude` / `substituted-engine`) per
 `external-engine-workers.md`.
 
-When all worker tasks are complete, capture changed files and a git diff summary for reviewers.
+When all worker tasks are complete, run `artifact_pointer.py snapshot --run <run-id> --epoch
+<epoch>` once per review epoch (`team-execution/skills/team-execution/scripts/artifact_pointer.py`,
+epoch = the consensus iteration counter) to capture the changed files as a Layer-1 tree snapshot.
+Pass the resulting pointer to reviewers and validators **in place of an inlined diff** whenever the
+artifact is above threshold: **pointerize at > 4 KB, or > 1 KB with >= 2 recipients; an artifact
+<= 1 KB always stays inline, regardless of recipient count.** This threshold is the single
+source of truth — `consensus-protocol.md`, `validator-spawn-quirks.md`, and
+`references/artifact-pointers.md` reference it rather than restating the numbers. Reviewers (full
+diff) and validators (diff summary) are evaluated against the threshold independently. See
+`references/artifact-pointers.md` for the receiver contract (dereference procedure, full-read
+invariance, and the KTD7 capability-keyed fallback to inlined content).
 
 ---
 
@@ -430,7 +441,8 @@ team-execution/
 │           ├── validator-registry.md
 │           ├── validator-spawn-quirks.md
 │           ├── worker-manifest.md
-│           └── external-engine-workers.md
+│           ├── external-engine-workers.md
+│           └── artifact-pointers.md
 ├── agents/
 │   ├── devils-advocate-reviewer.md
 │   ├── security-reviewer.md

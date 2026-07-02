@@ -46,7 +46,10 @@ looks like from the plan's perspective.
 
 ### Step 2: Review the Implementation
 
-Read the git diff or changed files. Ask for each piece:
+Read the git diff or changed files — if you were given an `artifact-pointer` block instead of an
+inlined diff, dereference it per
+`team-execution/skills/team-execution/references/artifact-pointers.md` and read the FULL artifact
+before scoring. Ask for each piece:
 - What assumption is this code making?
 - What happens if that assumption is wrong?
 - What edge cases exist at this boundary?

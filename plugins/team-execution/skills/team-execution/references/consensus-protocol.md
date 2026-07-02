@@ -25,7 +25,7 @@ For iteration 1..3:
 
   B3a. Spawn all reviewers IN PARALLEL as NAMED, persistent teammates (using Agent `name` + `run_in_background`). The Team Lead MUST record each reviewer's handle/name for later re-engagement (no anonymous one-shot spawns). Provide each with:
         - Full plan context (what was being built)
-        - git diff of all changes made
+        - git diff of all changes made — above the SKILL.md Step B1 threshold, an `artifact-pointer` block (see `artifact-pointers.md`) instead of the inlined diff
         - Intended outcome (what success looks like)
         - Path to review-criteria.md for scoring rubrics
 
@@ -139,7 +139,7 @@ If consensus is not reached after 3 iterations:
 
 When spawning reviewers in Step B3a (Initial Pass, Iteration 1), provide this context:
 
-```
+`````
 You are reviewing the implementation of the following plan:
 
 ## Plan Summary
@@ -149,29 +149,41 @@ You are reviewing the implementation of the following plan:
 [What success looks like — what should work after this change]
 
 ## Changes Made
-[git diff or summary of files changed]
+Below the SKILL.md Step B1 threshold: inline the git diff or summary of files changed, as today.
+Above threshold: an `artifact-pointer` block in place of the inlined diff — dereference it per
+`references/artifact-pointers.md` (full read, no per-lens scoping) before scoring.
+
+```artifact-pointer
+{"kind":"diff","locator":"refs/team-execution/snapshots/<run-id>/<epoch>","hash":"<tree-oid>","epoch":"<epoch>","deref":"git diff <base-tree> <tree-oid>"}
+```
 
 ## Review Instructions
 Score the implementation against your 5 dimensions from:
 team-execution/skills/team-execution/references/review-criteria.md
 
 Produce your score table, verdict, and fix requests (if NEEDS REVISION).
-```
+`````
 
 When re-engaging reviewers in Step B3e (Re-engagement, Iteration N >= 2), send a message carrying only the delta context to preserve conversation history and residency:
 
-```
+`````
 The requested fixes have been implemented. Review the specific delta/changes made since your last review pass:
 
 ## Implemented Fixes
 [Description of specific fixes made in response to your prior fix requests]
 
 ## Changes Made (Delta Only)
-[git diff showing only the changes made since your last pass, NOT the full diff]
+Below threshold: inline a git diff showing only the changes made since your last pass, NOT the full
+diff. Above threshold: an UPDATED `artifact-pointer` block (epoch incremented from your prior pass)
+in place of the inlined delta — dereference it per `references/artifact-pointers.md`.
+
+```artifact-pointer
+{"kind":"diff","locator":"refs/team-execution/snapshots/<run-id>/<epoch+1>","hash":"<new-tree-oid>","epoch":"<epoch+1>","deref":"git diff <prior-tree-oid> <new-tree-oid>"}
+```
 
 ## Review Instructions
 Re-evaluate the implementation, focusing on whether your previous fix requests have been satisfied. Update your scores, verdict, and remaining issues.
-```
+`````
 
 ---
 

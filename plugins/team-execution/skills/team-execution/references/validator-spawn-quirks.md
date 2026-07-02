@@ -9,7 +9,10 @@ Validator agents are specialized evidence collectors. Spawn only selected valida
 Each validator receives:
 
 - Plan summary and intended outcome.
-- Relevant changed files or diff summary.
+- Relevant changed files or diff summary — below the SKILL.md Step B1 threshold, inline as today;
+  above threshold, the same Layer-1 tree pointer given to reviewers, with a
+  `git diff --stat <base-tree> <snapshot-tree>` deref command (no Layer-2 dependency). See
+  `references/artifact-pointers.md` for the dereference procedure and verification rules.
 - Selected command/tool candidates.
 - Required vs optional status.
 - State file path.

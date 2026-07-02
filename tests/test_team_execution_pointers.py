@@ -1,4 +1,4 @@
-"""Unit tests for team-execution typed artifact pointers — Layer 1 (U1).
+"""Unit tests for team-execution typed artifact pointers — Layer 1 (U1) and template wiring (U2).
 
 All git behavior is exercised against real scratch repos built in ``tmp_path`` fixtures; git is
 never mocked (KTD1's temp-index guarantee and the holding-ref retention can only be shown against a
@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
+PLUGIN_ROOT = ROOT / "plugins" / "team-execution"
 SCRIPT = (
     ROOT
     / "plugins"
@@ -22,6 +23,21 @@ SCRIPT = (
     / "scripts"
     / "artifact_pointer.py"
 )
+SKILL_MD = PLUGIN_ROOT / "skills" / "team-execution" / "SKILL.md"
+CONSENSUS_PROTOCOL = (
+    PLUGIN_ROOT / "skills" / "team-execution" / "references" / "consensus-protocol.md"
+)
+VALIDATOR_SPAWN_QUIRKS = (
+    PLUGIN_ROOT / "skills" / "team-execution" / "references" / "validator-spawn-quirks.md"
+)
+ARTIFACT_POINTERS_DOC = (
+    PLUGIN_ROOT / "skills" / "team-execution" / "references" / "artifact-pointers.md"
+)
+README = PLUGIN_ROOT / "README.md"
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def _load():
@@ -248,3 +264,86 @@ def test_cli_deref_prints_typed_code_to_stderr(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "POINTER_STALE" in result.stderr
+
+
+# --- U2: spawn templates pass pointers, receivers dereference ------------------------------
+
+
+def test_b3a_spawn_template_carries_pointer_block_not_mandatory_inline_diff() -> None:
+    """The B3a initial-pass template offers an `artifact-pointer` block above threshold and no
+    longer mandates an inlined full-diff body (R3/R7)."""
+    doc = _read_text(CONSENSUS_PROTOCOL)
+    assert "```artifact-pointer" in doc
+    assert '"kind":"diff"' in doc
+    # The old unconditional instruction ("git diff or summary of files changed") is replaced by a
+    # threshold-conditional one.
+    assert "[git diff or summary of files changed]" not in doc
+    assert "Below the SKILL.md Step B1 threshold" in doc
+
+
+def test_b3e_reengagement_template_passes_updated_pointer() -> None:
+    """The B3e re-engagement (delta) template carries an UPDATED pointer with an incremented
+    epoch above threshold, alongside the still-live below-threshold inline path (R7)."""
+    doc = _read_text(CONSENSUS_PROTOCOL)
+    delta_section = doc[doc.index("Changes Made (Delta Only)") :]
+    assert "artifact-pointer" in delta_section
+    assert "epoch incremented" in delta_section
+    assert "UPDATED" in delta_section
+
+
+def test_validator_context_package_reuses_layer1_pointer_with_stat_deref() -> None:
+    """Above threshold, validators get the same Layer-1 tree pointer with a `git diff --stat`
+    deref command — no Layer-2 dependency (U2 self-contained)."""
+    doc = _read_text(VALIDATOR_SPAWN_QUIRKS)
+    assert "git diff --stat" in doc
+    assert "artifact-pointers.md" in doc
+
+
+def test_artifact_pointers_doc_is_packaged_and_linked() -> None:
+    """`artifact-pointers.md` exists, is linked from SKILL.md and README.md (packaging parity
+    with the existing VALIDATOR_REFERENCES/WORKER_REFERENCES doc-guard pattern)."""
+    assert ARTIFACT_POINTERS_DOC.exists()
+    skill_doc = _read_text(SKILL_MD)
+    readme = _read_text(README)
+    assert "artifact-pointers.md" in skill_doc
+    assert "artifact-pointers.md" in readme
+
+
+def test_artifact_pointers_doc_states_full_dereference_and_ktd7_fallback() -> None:
+    """The receiver contract mandates full-artifact dereference (R5/R14 review invariance, no
+    per-lens scoping) and states the KTD7 capability-keyed fallback to inlined content verbatim."""
+    doc = _read_text(ARTIFACT_POINTERS_DOC)
+    assert "always dereference and read the FULL artifact" in doc
+    assert "not allowed" in doc  # per-lens scoping is explicitly not allowed in v1
+    assert "capability-keyed" in doc
+    assert "falls back to inlined content" in doc
+    assert "POINTER_HASH_MISMATCH" in doc
+    assert "POINTER_STALE" in doc
+
+
+def test_threshold_rule_stated_once_in_skill_and_referenced_elsewhere() -> None:
+    """The 4 KB / >= 2 recipient / <= 1 KB threshold numbers are the authoritative text in
+    SKILL.md; other files reference the rule instead of restating the numbers."""
+    skill_doc = _read_text(SKILL_MD)
+    assert "> 4 KB" in skill_doc
+    assert ">= 2 recipients" in skill_doc
+    assert "<= 1 KB" in skill_doc
+
+    for path in (CONSENSUS_PROTOCOL, VALIDATOR_SPAWN_QUIRKS, ARTIFACT_POINTERS_DOC):
+        doc = _read_text(path)
+        assert "> 4 KB" not in doc, f"{path} restates the threshold instead of referencing SKILL.md"
+        assert "SKILL.md" in doc or "Step B1" in doc
+
+
+def test_base_reviewer_agents_reference_artifact_pointers_doc() -> None:
+    """Each base reviewer agent gains a short pointer-dereference instruction pointing at the
+    receiver contract (U2 scope: minimal edits, no restructuring)."""
+    agents_dir = PLUGIN_ROOT / "agents"
+    for agent_file in (
+        "devils-advocate-reviewer.md",
+        "architecture-reviewer.md",
+        "security-reviewer.md",
+    ):
+        doc = _read_text(agents_dir / agent_file)
+        assert "artifact-pointers.md" in doc
+        assert "artifact-pointer" in doc

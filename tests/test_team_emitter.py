@@ -150,6 +150,71 @@ def test_one_resident_row_per_segment() -> None:
     assert "`worker-3`" not in result
 
 
+def test_workers_table_header_includes_engine_and_intent_columns() -> None:
+    """The Workers table header carries the new Engine/Intent columns (KTD3, U12)."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    spec = es_mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    result = te_mod.emit_team_structure(spec)
+    assert "| Agent | Units | Tier | Mode | Depends-on | Engine | Intent |" in result
+
+
+def test_claude_worker_row_renders_dash_for_engine_and_intent() -> None:
+    """A plain Claude segment renders '—' for both Engine and Intent (KTD3)."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    spec = es_mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    result = te_mod.emit_team_structure(spec)
+    assert "| `worker` | U1, U2, U3 | opus/high | bypassPermissions | — | — | — |" in result
+
+
+def test_explicit_engine_segment_renders_bare_engine_key() -> None:
+    """An explicit-engine unit renders 'worker-agy' with Engine cell 'agy' (KTD3) --
+    the bare engine id, not the full engine/variant selector (KTD1's own example)."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = _valid_spec_dict()
+    data["units"] = [
+        {
+            "unit_id": "U1",
+            "label": "external draft",
+            "tier": {"model": "sonnet", "effort": "medium"},
+            "prompt": "draft a bounded diff",
+            "returns": ["diff"],
+            "engine": "agy/gemini-3.5-flash-high",
+            "engine_intent": "offload",
+        },
+    ]
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    result = te_mod.emit_team_structure(spec)
+    assert "| `worker-agy` | U1 | sonnet/medium | bypassPermissions | — | agy | offload |" in result
+
+
+def test_capability_segment_renders_cap_prefixed_engine_cell() -> None:
+    """A capability-routed unit renders 'worker-<capability>' with Engine cell 'cap:<key>'
+    (KTD3) -- no plan-time engine guess in the resident id or the cell."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = _valid_spec_dict()
+    data["units"] = [
+        {
+            "unit_id": "U1",
+            "label": "external second opinion",
+            "tier": {"model": "opus", "effort": "high"},
+            "prompt": "review the diff",
+            "returns": ["verdict"],
+            "capability": "code-generation",
+            "engine_intent": "second-opinion",
+        },
+    ]
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    result = te_mod.emit_team_structure(spec)
+    assert (
+        "| `worker-code-generation` | U1 | opus/high | bypassPermissions | — "
+        "| cap:code-generation | second-opinion |" in result
+    )
+
+
 def test_two_plugin_spec_emits_two_resident_rows() -> None:
     """A spec with units under different plugin directories emits separate resident rows."""
     es_mod = _load_execution_spec()

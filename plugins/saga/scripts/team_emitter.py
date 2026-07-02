@@ -101,8 +101,8 @@ def emit_team_structure(spec: Any) -> str:
 
     # ---- Workers ---- one row per resident-worker segment (U2/KTD3)
     lines.append("### Workers")
-    lines.append("| Agent | Units | Tier | Mode | Depends-on |")
-    lines.append("|-------|-------|------|------|------------|")
+    lines.append("| Agent | Units | Tier | Mode | Depends-on | Engine | Intent |")
+    lines.append("|-------|-------|------|------|------------|--------|--------|")
     spec_module_path = Path(__file__).parent / "execution_spec.py"
     import importlib.util
 
@@ -117,7 +117,16 @@ def emit_team_structure(spec: Any) -> str:
         units = ", ".join(seg.unit_ids)
         tier = f"{seg.tier.model}/{seg.tier.effort}"
         deps = ", ".join(seg.depends_on) if seg.depends_on else "—"
-        lines.append(f"| {agent} | {units} | {tier} | bypassPermissions | {deps} |")
+        if seg.engine is not None:
+            engine = seg.engine
+        elif seg.capability is not None:
+            engine = f"cap:{seg.capability}"
+        else:
+            engine = "—"
+        intent = seg.engine_intent if seg.engine_intent is not None else "—"
+        lines.append(
+            f"| {agent} | {units} | {tier} | bypassPermissions | {deps} | {engine} | {intent} |"
+        )
     lines.append("")
 
     # ---- Reviewers ---- always the base set

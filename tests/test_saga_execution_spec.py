@@ -87,6 +87,37 @@ def test_existing_style_unit_has_no_external_engine_marker() -> None:
     assert 'effort: "high"' in script
 
 
+def test_engine_intent_without_selector_fails() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(engine_intent="offload"))
+    with pytest.raises(ES.SpecError, match="engine_intent requires engine or capability"):
+        spec.validate()
+
+
+def test_engine_intent_bad_vocabulary_fails() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(engine="codex/gpt-5.5-xhigh", engine_intent="urgent")
+    )
+    with pytest.raises(ES.SpecError, match="engine_intent"):
+        spec.validate()
+
+
+def test_engine_intent_defaults_to_offload_when_omitted() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+    spec.validate()
+
+    assert spec.units[0].engine_intent == "offload"
+
+
+def test_engine_intent_explicit_value_round_trips() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(engine="codex/gpt-5.5-xhigh", engine_intent="second-opinion")
+    )
+    spec.validate()
+
+    round_tripped = ES.ExecutionSpec.from_dict(spec.to_dict())
+    assert round_tripped.units[0].engine_intent == "second-opinion"
+
+
 def test_advisory_consensus_routes_to_ultracode_backend() -> None:
     from lifecycle_state import recommend_execution_backend
 

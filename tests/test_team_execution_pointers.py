@@ -8,8 +8,11 @@ real object store).
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -347,3 +350,200 @@ def test_base_reviewer_agents_reference_artifact_pointers_doc() -> None:
         doc = _read_text(agents_dir / agent_file)
         assert "artifact-pointers.md" in doc
         assert "artifact-pointer" in doc
+
+
+# --- U3: Layer-2 content-addressed store ----------------------------------------------------
+
+
+def _make_ignored_claude_repo(path: Path) -> Path:
+    """A scratch repo whose ``.claude/`` is git-ignored (Step B0a's safe path)."""
+    repo = _init_repo(path)
+    (repo / ".gitignore").write_text(".claude/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-q", "-m", "ignore .claude")
+    return repo
+
+
+def test_store_write_once_dedups_identical_bytes(tmp_path: Path) -> None:
+    """Storing the same bytes twice (even under a different run/epoch) reuses one CAS path."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    artifact = tmp_path / "a.txt"
+    artifact.write_text("same content\n", encoding="utf-8")
+
+    p1 = ap.store("run-1", "0", artifact, repo_root=repo)
+    p2 = ap.store("run-2", "5", artifact, repo_root=repo)
+
+    assert p1.hash == p2.hash
+    assert p1.locator == p2.locator
+    store_root = ap.resolve_store_root(repo)
+    cas_files = list((store_root / "objects").rglob("*"))
+    cas_files = [f for f in cas_files if f.is_file()]
+    assert len(cas_files) == 1
+
+
+def test_store_different_bytes_get_different_paths(tmp_path: Path) -> None:
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    a = tmp_path / "a.txt"
+    a.write_text("content A\n", encoding="utf-8")
+    b = tmp_path / "b.txt"
+    b.write_text("content B\n", encoding="utf-8")
+
+    p1 = ap.store("run-1", "0", a, repo_root=repo)
+    p2 = ap.store("run-1", "1", b, repo_root=repo)
+
+    assert p1.hash != p2.hash
+    assert p1.locator != p2.locator
+
+
+def test_store_deref_round_trips_content(tmp_path: Path) -> None:
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    artifact = tmp_path / "a.txt"
+    artifact.write_text("stored content\n", encoding="utf-8")
+    pointer = ap.store("run-1", "0", artifact, repo_root=repo)
+
+    assert ap.deref(pointer, repo_root=repo) == "stored content\n"
+
+
+def test_store_falls_back_to_home_when_claude_dir_not_ignored(tmp_path: Path, monkeypatch) -> None:
+    """When ``.claude`` is NOT git-ignored, the store falls back to the home-dir namespace
+    (Step B0a safety) rather than writing under the repo's ``.claude/``."""
+    repo = _init_repo(tmp_path / "repo")  # no .gitignore for .claude/
+    ap = _load()
+
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    monkeypatch.setattr(ap.Path, "home", classmethod(lambda cls: fake_home))
+
+    store_root = ap.resolve_store_root(repo)
+    assert str(fake_home) in str(store_root)
+    assert not (repo / ".claude" / "team-execution" / "artifacts").exists()
+
+
+def test_tampered_stored_file_raises_hash_mismatch(tmp_path: Path) -> None:
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    artifact = tmp_path / "a.txt"
+    artifact.write_text("original\n", encoding="utf-8")
+    pointer = ap.store("run-1", "0", artifact, repo_root=repo)
+
+    store_root = ap.resolve_store_root(repo)
+    cas_path = store_root / pointer.locator
+    cas_path.write_text("tampered\n", encoding="utf-8")
+
+    try:
+        ap.deref(pointer, repo_root=repo)
+        raise AssertionError("expected PointerError")
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+
+
+def test_superseded_l2_epoch_raises_stale(tmp_path: Path) -> None:
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    a0 = tmp_path / "a0.txt"
+    a0.write_text("epoch 0 content\n", encoding="utf-8")
+    old_pointer = ap.store("run-1", "0", a0, repo_root=repo)
+
+    a1 = tmp_path / "a1.txt"
+    a1.write_text("epoch 1 content\n", encoding="utf-8")
+    ap.store("run-1", "1", a1, repo_root=repo)  # supersedes epoch 0
+
+    try:
+        ap.deref(old_pointer, repo_root=repo)
+        raise AssertionError("expected PointerError")
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_STALE
+
+
+def test_gc_reclaims_stale_cas_entries_and_snapshot_refs_younger_survive(tmp_path: Path) -> None:
+    """``gc`` removes CAS entries and snapshot refs older than the TTL; younger entries survive."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    old_artifact = tmp_path / "old.txt"
+    old_artifact.write_text("old artifact\n", encoding="utf-8")
+    old_pointer = ap.store("run-old", "0", old_artifact, repo_root=repo)
+
+    ap.snapshot("run-old", "0", repo_root=repo)
+
+    new_artifact = tmp_path / "new.txt"
+    new_artifact.write_text("new artifact\n", encoding="utf-8")
+    new_pointer = ap.store("run-new", "0", new_artifact, repo_root=repo)
+    new_snapshot = ap.snapshot("run-new", "0", repo_root=repo)
+
+    store_root = ap.resolve_store_root(repo)
+    old_cas_path = store_root / old_pointer.locator
+    old_ref_path = repo / ".git" / "refs" / "team-execution" / "snapshots" / "run-old" / "0"
+    stale_ts = time.time() - (10 * 86400)
+    os.utime(old_cas_path, (stale_ts, stale_ts))
+    os.utime(old_ref_path, (stale_ts, stale_ts))
+
+    result = ap.gc(repo_root=repo, max_age_days=7)
+
+    assert result["artifacts_removed"] == 1
+    assert result["snapshot_refs_removed"] == 1
+    assert not old_cas_path.exists()
+    assert not old_ref_path.exists()
+
+    # Younger entries survive and remain fully usable.
+    new_store_root = ap.resolve_store_root(repo)
+    assert (new_store_root / new_pointer.locator).exists()
+    assert ap.deref(new_pointer, repo_root=repo) == "new artifact\n"
+    assert _git(repo, "rev-parse", "--verify", new_snapshot.locator) == new_snapshot.hash
+
+    # The stale run's freshness-index entry is pruned too.
+    index = ap._read_index(store_root)
+    assert "run-old" not in index
+
+
+def test_cli_store_and_gc_round_trip(tmp_path: Path) -> None:
+    """The ``store`` and ``gc`` CLI subcommands work end-to-end (no direct module import)."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    artifact = tmp_path / "cli.txt"
+    artifact.write_text("cli content\n", encoding="utf-8")
+
+    store_result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--repo-root",
+            str(repo),
+            "store",
+            "--run",
+            "cli-run",
+            "--epoch",
+            "0",
+            str(artifact),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    pointer_json = store_result.stdout.strip()
+    assert '"kind":"file"' in pointer_json
+
+    deref_result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo), "deref", pointer_json],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert deref_result.stdout == "cli content\n"
+
+    gc_result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo), "gc", "--max-age-days", "7"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(gc_result.stdout)
+    assert payload["artifacts_removed"] == 0  # too fresh to reclaim
+    assert payload["snapshot_refs_removed"] == 0

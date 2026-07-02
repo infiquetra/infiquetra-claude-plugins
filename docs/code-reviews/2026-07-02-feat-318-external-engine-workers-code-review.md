@@ -1,7 +1,7 @@
 # Code review — feat/318-external-engine-workers
 
 - **Target:** branch diff vs merge-base `e901ae1` (origin/main) · **Reviewed SHA:** `8d48e20`
-  (round 1) → `dba707f` (round 2)
+  (round 1) → `dba707f` (round 2) → `6486726` (round-2 operator-approved scope expansion)
 - **Mode:** programmatic (called by /work) · **Backend:** inline, 4 parallel read-only lenses
   (correctness, security, testing, maintainability — Explore agents, no fable subagents)
 - **Round 1 model:** Sonnet 5 (session default; `model=` not set on dispatch — flagged post-hoc).
@@ -10,8 +10,8 @@
 - **Blocked:** NO — all P1/P2 findings fixed in round 1 (commit `8d48e20`); round 2 re-verified
   both fixes independently correct and complete, and closed every in-diff P3 it surfaced plus the
   one round 1 left residual (commit `dba707f`). Two low-severity hardening findings in
-  `engine_dispatch.py`/`engine_resolver.py` — files outside this diff's scope — are pending an
-  explicit operator scope decision (see Round 2 below).
+  `engine_dispatch.py`/`engine_resolver.py` (outside #318's own diff scope) were fixed on explicit
+  operator approval (commit `6486726`) — see Round 2 below.
 - **Linked:** issue infiquetra/infiquetra-claude-plugins#318 · plan
   docs/plans/2026-07-02-team-execution-external-engine-workers-plan.md · work-session
   docs/work-sessions/2026-07-02-team-execution-external-engine-workers.md
@@ -86,8 +86,8 @@ holds. Round 2 surfaced a further tail — all P3, none P0-P2:
 | 9 | P3 | tests/test_saga_execution_spec.py | Bad-vocabulary test's `match="engine_intent"` also matches the sibling "requires engine or capability" error — didn't pin the vocabulary branch specifically | testing | 60 | **Fixed** — tightened to `match="not in"`; added the capability-selector negative case too |
 | 10 | P3 | plugins/saga/scripts/execution_spec.py (to_dict) | `to_dict()` omitting `engine_intent` for a plain Claude unit was untested | testing | 55 | **Fixed** — `test_engine_intent_omitted_from_to_dict_for_plain_claude_unit` added |
 | 11 | P3 | tests/test_workflow_emitter.py | No test proved an all-`offload` same-engine segment stays `offload` (no spurious upgrade), or that the result is order-independent | testing | 40 | **Fixed** — `test_segment_units_engine_intent_agreement_does_not_spuriously_upgrade` added, covering both same-value agreement and reversed member order |
-| 12 | P3 | plugins/saga/scripts/engine_dispatch.py:275-277, engine_resolver.py:320-329 | Byte-preservation/type guarantees (`_assert_payload_preserved` etc.) use bare `assert`, stripped under `python -O` | security | 50 | **Pending** — file outside this diff's scope (shipped in prior #285 PR); not fixed, operator scope decision requested |
-| 13 | P3 | plugins/saga/scripts/engine_dispatch.py:251-252 | `satisfy_gate`'s per-claim adjudication check is skipped entirely when the caller omits `manifest` (defaults `None`, early-returns) | security | 50 | **Pending** — same as above: outside this diff's scope, not fixed |
+| 12 | P3 | plugins/saga/scripts/engine_dispatch.py:275-277, engine_resolver.py:320-329 | Byte-preservation/type guarantees (`_assert_payload_preserved` etc.) use bare `assert`, stripped under `python -O` | security | 50 | **Fixed** (commit `6486726`, operator-approved scope expansion beyond #318's own diff) — both guards now raise `DispatchError`/`RegistryError` explicitly instead of `assert` |
+| 13 | P3 | plugins/saga/scripts/engine_dispatch.py:251-252 | `satisfy_gate`'s per-claim adjudication check is skipped entirely when the caller omits `manifest` (defaults `None`, early-returns) | security | 50 | **Fixed as documentation** (commit `6486726`) — making `manifest` mandatory would break its already-tested optional contract (`test_saga_engine_dispatch.py` asserts `satisfy_gate(verified)` with no manifest returns cleanly) and there is no live call site outside tests today; hardened the docstring to make the caller obligation explicit instead |
 
 Security lens independently re-verified every safety claim in `external-engine-workers.md` against
 the current code (no-write containment via hardcoded `mode`/`write_set`/`sandbox` in the dispatch
@@ -99,9 +99,8 @@ Full suite re-verified green after the round-2 fix commit (`dba707f`): 1640 pass
 ruff check / ruff format --check / mypy clean, bandit unchanged (only the pre-existing
 `team_emitter.py` CLI B101 note).
 
-> **Round 2 verdict: NOT BLOCKED.** Findings 5-11 fixed in commit `dba707f`. Findings 12-13 are
-> low-severity, pre-existing, and outside this diff's file scope — held pending an explicit
-> operator decision on whether to expand this PR's scope, file a follow-up, or leave undecided.
-> Route: **`/qa`** advisorily after merge, per the clean-review path.
+> **Round 2 verdict: NOT BLOCKED.** Findings 5-11 fixed in commit `dba707f`. Findings 12-13 were
+> outside #318's own diff scope; the operator explicitly approved fixing them anyway, closed in
+> commit `6486726`. Route: **`/qa`** advisorily after merge, per the clean-review path.
 
 Review complete

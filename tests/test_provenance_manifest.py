@@ -6,6 +6,7 @@ import dataclasses
 import importlib.util
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -26,7 +27,7 @@ def _load():
 pm = _load()
 
 
-def _attribution(kind: str = "external-engine") -> pm.Attribution:
+def _attribution(kind: str = "external-engine") -> Any:
     return pm.Attribution(kind=pm.ProducerKind(kind), identity="agy/gemini-3.1-pro", effort="high")
 
 
@@ -35,7 +36,7 @@ def _claim(
     adjudicated: str | None = None,
     mismatch_reason: str | None = None,
     source_ref: str = "plugins/saga/scripts/saga.py:42",
-) -> pm.Claim:
+) -> Any:
     return pm.Claim(
         text="the guard rejects stale bases",
         claimed=pm.ClaimedStatus(claimed),
@@ -57,7 +58,7 @@ def _claim(
     )
 
 
-def _manifest(**overrides) -> pm.Manifest:
+def _manifest(**overrides: Any) -> Any:
     kwargs = {
         "execution_id": "exec-001",
         "saga_ref": "saga-2026-07-01-manifests",
@@ -69,7 +70,7 @@ def _manifest(**overrides) -> pm.Manifest:
     return pm.Manifest(**kwargs)
 
 
-def _full_manifest() -> pm.Manifest:
+def _full_manifest() -> Any:
     return _manifest(
         output_completeness=pm.OutputCompleteness.derive(
             declared_keys=["files_changed", "tests_added"],

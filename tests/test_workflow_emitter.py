@@ -304,6 +304,36 @@ def test_opus_agent_has_no_budget_rider() -> None:
     assert "BUDGET DISCIPLINE" not in script
 
 
+def test_tier_accepts_fable_model() -> None:
+    """A fable-tier unit validates and emits with its tier rendered on the agent() call."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    last = units[-1]
+    assert isinstance(last, dict)
+    last["tier"] = {"model": "fable", "effort": "high"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    spec.validate()
+    script = mod.emit_workflow_script(spec)
+    assert 'model: "fable"' in script
+
+
+def test_tier_accepts_xhigh_effort() -> None:
+    """An xhigh-effort unit validates and emits with its effort rendered on the agent() call."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    last = units[-1]
+    assert isinstance(last, dict)
+    last["tier"] = {"model": "fable", "effort": "xhigh"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    spec.validate()
+    script = mod.emit_workflow_script(spec)
+    assert 'effort: "xhigh"' in script
+
+
 # ---------------------------------------------------------------------------
 # Malformed specs are rejected with actionable messages.
 # ---------------------------------------------------------------------------

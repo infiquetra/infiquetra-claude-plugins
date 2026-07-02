@@ -402,3 +402,40 @@ def test_emitter_does_not_import_team_execution_plugin() -> None:
     assert forbidden2 not in source, (
         "team_emitter.py must not import team-execution plugin code (R9 -- never vendor machinery)"
     )
+
+
+def test_segment_tier_merge_prefers_fable_and_xhigh() -> None:
+    """Upgrade-only segment tier merge picks fable over opus-tier models and xhigh effort.
+
+    Guards the MODELS/EFFORTS ordering contract: MODELS is strongest-first
+    (min index wins), EFFORTS is weakest-first (max index wins) -- a fable unit
+    merged with a sonnet/xhigh sibling must yield a fable/xhigh segment.
+    """
+    es_mod = _load_execution_spec()
+    data = {
+        "name": "fable-merge",
+        "description": "segment tier merge with Claude 5 tiers",
+        "units": [
+            {
+                "unit_id": "U1",
+                "label": "judgment",
+                "tier": {"model": "fable", "effort": "high"},
+                "prompt": "design the contract",
+                "files": ["plugins/saga/scripts/execution_spec.py"],
+            },
+            {
+                "unit_id": "U2",
+                "label": "hard-verify",
+                "tier": {"model": "sonnet", "effort": "xhigh"},
+                "prompt": "verify the contract",
+                "depends_on": ["U1"],
+                "files": ["plugins/saga/scripts/team_emitter.py"],
+            },
+        ],
+    }
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    spec.validate()
+    segments = es_mod.segment_units(spec)
+    assert len(segments) == 1
+    assert segments[0].tier.model == "fable"
+    assert segments[0].tier.effort == "xhigh"

@@ -243,6 +243,12 @@ def satisfy_gate(evidence: AdvisoryEvidence, manifest: pm.Manifest | None = None
     claimed-only manifest (any claim with no adjudicated status or no attested
     adjudication record) is refused. The manifest itself stays advisory evidence (R8/R20);
     only this existing gate consumes it.
+
+    `manifest` is opt-in by signature, not by safety: this function cannot detect that a
+    manifest with unresolved claim_provenance exists and simply wasn't threaded through.
+    Any caller that has a manifest for this evidence MUST pass it here for the R11
+    per-claim check to run at all -- silently omitting it degrades the guarantee to the
+    evidence-level `verified_by_claude` bit alone.
     """
     if evidence.verified_by_claude is not True:
         raise DispatchError(
@@ -273,8 +279,13 @@ def _build_invocation(resolution: Resolution, *, model: Any | None) -> dict[str,
 
 
 def _assert_payload_preserved(task: Any, payload: str) -> None:
-    assert isinstance(task, str)
-    assert task.encode("utf-8") == payload.encode("utf-8")
+    # Explicit checks, not `assert` -- this is the R11 byte-preservation guarantee the
+    # dispatch contract advertises to callers; it must still hold under `python -O`,
+    # which strips `assert` statements.
+    if not isinstance(task, str):
+        raise DispatchError("dispatch task must be a str")
+    if task.encode("utf-8") != payload.encode("utf-8"):
+        raise DispatchError("dispatch task does not match the resolved payload byte-for-byte")
 
 
 def _failure_reason(status: str, output: str) -> str:

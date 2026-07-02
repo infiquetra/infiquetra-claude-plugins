@@ -32,6 +32,10 @@ def _load(name: str, path: Path) -> ModuleType:
 REG = _load("engine_registry", REGISTRY_SCRIPT)
 R = _load("engine_resolver", RESOLVER_SCRIPT)
 D = _load("engine_dispatch", DISPATCH_SCRIPT)
+# Reuse the exact module objects engine_dispatch imported (a re-_load would mint distinct
+# enum classes and break `is` identity checks).
+MS = D.manifest_store
+PM = D.pm
 
 
 def _resolution(
@@ -170,3 +174,165 @@ def test_dispatch_returns_advisory_evidence_without_tree_mutation_surface() -> N
         "status": "ok",
     }
     assert not hasattr(evidence, "gated_verdict")
+
+
+# --- U3: typed manifests (claim_provenance, attribution, disposition) + R11 gate ----------
+
+
+def _ok_runner(_invocation: dict[str, Any]) -> dict[str, str]:
+    return {"status": "ok", "output": "external finding"}
+
+
+def _store(tmp_path: Path) -> Any:
+    return MS.Store(root=tmp_path / "saga-manifests" / "saga-1").ensure()
+
+
+def test_dispatch_emits_manifest_with_attribution(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    evidence = D.dispatch(_resolution(), runner=_ok_runner)
+
+    manifest = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-1",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+        effort="high",
+        protocol="codex:codex-rescue",
+    )
+
+    assert manifest.attribution.kind is PM.ProducerKind.EXTERNAL_ENGINE
+    assert manifest.attribution.identity == "codex/gpt-5.5-xhigh"
+    assert manifest.attribution.effort == "high"
+    assert manifest.attribution.protocol == "codex:codex-rescue"
+    assert manifest.disposition is PM.Disposition.RAN_AS_REQUESTED
+
+    persisted = MS.read_manifest(store, "exec-1")
+    assert persisted is not None
+    round_tripped = PM.Manifest.from_dict(persisted)
+    assert round_tripped.attribution.identity == "codex/gpt-5.5-xhigh"
+    assert round_tripped.schema == PM.SCHEMA_VERSION
+
+
+def test_halted_dispatch_records_disposition_note(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+
+    def failing_runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        return {"status": "timeout", "output": "wrapper timed out"}
+
+    evidence = D.dispatch(_resolution(), runner=failing_runner)
+    manifest = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-halt",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+    )
+
+    assert manifest.disposition is PM.Disposition.FELL_BACK_TO_CLAUDE
+    assert "Downgraded external engine codex" in manifest.disposition_note
+    assert "timeout" in manifest.disposition_note
+
+    persisted = MS.read_manifest(store, "exec-halt")
+    assert persisted is not None
+    assert persisted["disposition"] == "fell-back-to-claude"
+    assert "Downgraded external engine codex" in persisted["disposition_note"]
+
+
+def test_satisfy_gate_refuses_claimed_only_manifest(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    evidence = D.dispatch(_resolution(), runner=_ok_runner)
+    claims = PM.ClaimProvenance(
+        claims=(
+            PM.Claim(
+                text="all tests pass",
+                claimed=PM.ClaimedStatus.VERIFIED,
+                source_ref="tests/test_example.py",
+            ),
+        )
+    )
+    manifest = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-claims",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+        claim_provenance=claims,
+    )
+
+    verified = D.AdvisoryEvidence(
+        engine_id=evidence.engine_id,
+        variant=evidence.variant,
+        evidence=evidence.evidence,
+        provenance=evidence.provenance,
+        verified_by_claude=True,
+    )
+
+    # Claimed-`verified` without adjudication cannot satisfy a gate (R11/AE1).
+    with pytest.raises(D.DispatchError):
+        D.satisfy_gate(verified, manifest)
+
+    # After the driving session adjudicates every claim, the gate opens.
+    adjudicated = D.adjudicate_manifest(
+        store,
+        "exec-claims",
+        {
+            "all tests pass": (
+                PM.AdjudicatedStatus.VERIFIED,
+                PM.Adjudication(
+                    adjudicator="claude",
+                    sources_read=("tests/test_example.py",),
+                    decision="re-ran suite, all green",
+                ),
+            )
+        },
+    )
+    assert D.satisfy_gate(verified, adjudicated) is None
+
+    # verified_by_claude is still required even with a fully adjudicated manifest.
+    with pytest.raises(D.DispatchError):
+        D.satisfy_gate(evidence, adjudicated)
+
+
+def test_adjudicated_refuted_counts_as_parroting(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    evidence = D.dispatch(_resolution(), runner=_ok_runner)
+    claims = PM.ClaimProvenance(
+        claims=(
+            PM.Claim(
+                text="lint is clean",
+                claimed=PM.ClaimedStatus.VERIFIED,
+                source_ref="pyproject.toml",
+            ),
+        )
+    )
+    D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-parrot",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+        claim_provenance=claims,
+    )
+
+    adjudicated = D.adjudicate_manifest(
+        store,
+        "exec-parrot",
+        {
+            "lint is clean": (
+                PM.AdjudicatedStatus.REFUTED,
+                PM.Adjudication(adjudicator="claude", decision="ruff reported 3 errors"),
+            )
+        },
+    )
+
+    claim = adjudicated.claim_provenance.claims[0]
+    assert claim.adjudicated is PM.AdjudicatedStatus.REFUTED
+    assert claim.mismatch_reason is PM.MismatchReason.REFUTED
+    assert PM.is_parroting(claim) is True
+    assert PM.parroting_count(adjudicated) == 1
+
+    # The parroting signal stays advisory: it is countable, never a gate of its own (R12).
+    persisted = MS.read_manifest(store, "exec-parrot")
+    assert persisted is not None
+    assert "verdict" not in persisted

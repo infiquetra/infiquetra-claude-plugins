@@ -4,6 +4,15 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.5.0] - 2026-07-01
+
+### Worker-exit provenance manifests (#285)
+- Team-execution workers emit a manifest at worker exit via the saga `manifest_store` CLI, attributed
+  with worker kind and declared-vs-produced completeness (R2, R3, R21). New
+  `references/worker-manifest.md` defines the worker-exit contract, complementing (never duplicating)
+  the existing repo-local `validator-evidence-state.md` per-run evidence JSON; `SKILL.md` points at
+  it. Evidence-only — a manifest grants no privilege and holds no verdict.
+
 ## [2.4.0] - 2026-06-29
 
 ### Required-evidence-absence completeness gate (#277)

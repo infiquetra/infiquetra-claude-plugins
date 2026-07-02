@@ -526,9 +526,13 @@ def test_gc_reclaims_stale_cas_entries_and_snapshot_refs_younger_survive(tmp_pat
     store_root = ap.resolve_store_root(repo)
     old_cas_path = store_root / old_pointer.locator
     old_ref_path = repo / ".git" / "refs" / "team-execution" / "snapshots" / "run-old" / "0"
+    # gc dates a snapshot ref by its REFLOG mtime (survives git-gc packing), not the loose-ref file.
+    old_reflog_path = (
+        repo / ".git" / "logs" / "refs" / "team-execution" / "snapshots" / "run-old" / "0"
+    )
     stale_ts = time.time() - (10 * 86400)
     os.utime(old_cas_path, (stale_ts, stale_ts))
-    os.utime(old_ref_path, (stale_ts, stale_ts))
+    os.utime(old_reflog_path, (stale_ts, stale_ts))
 
     result = ap.gc(repo_root=repo, max_age_days=7)
 
@@ -748,3 +752,197 @@ def test_symbol_pointers_light_form_documented_in_artifact_pointers_md() -> None
     assert "no formal resolver" in doc
     assert "formal resolver is deferred" in doc
     assert "grep/read tools" in doc
+
+
+# --- Remediation cycle 1 (consensus gate) ------------------------------------------------------
+
+
+def test_l1_deref_ignores_tampered_deref_field_no_arbitrary_write(tmp_path: Path) -> None:
+    """Security P1: the free-form ``deref`` field is never parsed into argv. A pointer whose ``deref``
+    is tampered to smuggle ``git diff --output=<path>`` (an arbitrary-file-write) is dereferenced by
+    rebuilding argv from the validated base+hash, so the injected option is ignored, no file is
+    written, and the correct diff is still returned."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "new.txt").write_text("untracked payload\n", encoding="utf-8")
+    pointer = ap.snapshot("run", "0", repo_root=repo)
+
+    evil = tmp_path / "evil.txt"
+    tampered = ap.ArtifactPointer(
+        kind=pointer.kind,
+        locator=pointer.locator,
+        hash=pointer.hash,
+        epoch=pointer.epoch,
+        deref=f"git diff --output={evil} {pointer.base} {pointer.hash}",
+        base=pointer.base,
+    )
+    out = ap.deref(tampered, repo_root=repo)
+
+    assert not evil.exists()  # the --output= option never reached git
+    assert "untracked payload" in out  # correct diff still rebuilt from base+hash
+
+
+def test_l1_deref_rejects_non_oid_base(tmp_path: Path) -> None:
+    """Security P1: a diff pointer whose base is not a hex object id (e.g. an option token) is
+    rejected before any git invocation, so no option token can reach ``git diff``."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    pointer = ap.snapshot("run", "0", repo_root=repo)
+    hostile = ap.ArtifactPointer(
+        kind="diff",
+        locator=pointer.locator,
+        hash=pointer.hash,
+        epoch=pointer.epoch,
+        deref=pointer.deref,
+        base="--output=pwned",
+    )
+    try:
+        ap.deref(hostile, repo_root=repo)
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+    else:
+        raise AssertionError("expected PointerError for non-OID base")
+
+
+def test_l1_deref_pins_base_across_head_movement(tmp_path: Path) -> None:
+    """KTD1: the pointer pins the base tree at snapshot time, so a HEAD commit AFTER the snapshot does
+    not change what deref shows — the diff stays base->snapshot, not HEAD->snapshot."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "snap.txt").write_text("snapshot-only content\n", encoding="utf-8")
+    pointer = ap.snapshot("run", "0", repo_root=repo)
+
+    (repo / "later.txt").write_text("post-snapshot commit\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "advance HEAD")
+
+    out = ap.deref(pointer, repo_root=repo)
+    assert "snapshot-only content" in out  # snapshot's untracked add still present
+    assert "post-snapshot commit" not in out  # later commit absent from the pinned base->snapshot
+
+
+def test_l1_non_numeric_epoch_skips_freshness_enforcement(tmp_path: Path) -> None:
+    """Contract: a non-numeric ('opaque') epoch is carried but freshness is NOT enforced — a newer
+    numeric epoch for the same run does not make an opaque-epoch pointer stale."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("opaque payload\n", encoding="utf-8")
+    opaque = ap.snapshot("run", "opaque", repo_root=repo)
+    (repo / "b.txt").write_text("newer\n", encoding="utf-8")
+    ap.snapshot("run", "99", repo_root=repo)
+
+    out = ap.deref(opaque, repo_root=repo)  # freshness skipped for non-numeric epoch
+    assert "opaque payload" in out
+
+
+def test_l1_deref_rejects_ref_pointing_at_non_tree(tmp_path: Path) -> None:
+    """Integrity P3: if the pointer hash is a non-tree object (a blob), deref fails with HASH_MISMATCH
+    via the tree-type check rather than producing a bogus diff."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "x.txt").write_text("content\n", encoding="utf-8")
+    pointer = ap.snapshot("run", "0", repo_root=repo)
+    blob = _git(repo, "hash-object", "-w", str(repo / "x.txt"))
+    hostile = ap.ArtifactPointer(
+        kind="diff",
+        locator=pointer.locator,
+        hash=blob,
+        epoch=pointer.epoch,
+        deref=pointer.deref,
+        base=pointer.base,
+    )
+    try:
+        ap.deref(hostile, repo_root=repo)
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+    else:
+        raise AssertionError("expected HASH_MISMATCH for non-tree hash")
+
+
+def test_deref_symbol_pointer_rejected_with_clear_message(tmp_path: Path) -> None:
+    """A kind:symbol pointer is NOT dereferenced by the CLI (resolved with grep/read); deref raises a
+    clear ValueError instead of falling through to an opaque git failure."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    sym = ap.ArtifactPointer(
+        kind="symbol",
+        locator="path/to/file.py#my_func",
+        hash="",
+        epoch="0",
+        deref="grep -n my_func",
+    )
+    try:
+        ap.deref(sym, repo_root=repo)
+    except ValueError as exc:
+        assert "grep/read" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for symbol pointer deref")
+
+
+def test_snapshot_rejects_ref_unsafe_run_id_and_epoch(tmp_path: Path) -> None:
+    """Security P3: run-id / epoch are interpolated into a ref name + passed to update-ref; a segment
+    with path structure or whitespace is rejected up front."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    for bad in ("../evil", "a b", "run/../x"):
+        try:
+            ap.snapshot(bad, "0", repo_root=repo)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for unsafe run id {bad!r}")
+    try:
+        ap.snapshot("run", "0 1", repo_root=repo)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for unsafe epoch")
+
+
+def test_l2_deref_rejects_symlink_in_store(tmp_path: Path) -> None:
+    """Security P3: a symlink planted at the CAS path is rejected (not followed) so it cannot redirect
+    the read/re-hash to an arbitrary target, and the error leaks nothing about the target."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    payload = repo / "artifact.txt"
+    payload.write_text("real artifact\n", encoding="utf-8")
+    pointer = ap.store("run", "0", payload, repo_root=repo)
+
+    store_root = ap.resolve_store_root(repo)
+    cas_path = store_root / pointer.locator
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET\n", encoding="utf-8")
+    cas_path.unlink()
+    cas_path.symlink_to(secret)
+    try:
+        ap.deref(pointer, repo_root=repo)
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+        assert "TOP SECRET" not in exc.detail
+    else:
+        raise AssertionError("expected symlink rejection")
+
+
+def test_pointer_base_field_round_trips_and_defaults_absent() -> None:
+    """The new ``base`` field round-trips through to_json/from_json, and a legacy 5-field pointer JSON
+    (no base) still parses with base defaulting to empty (backward compatible)."""
+    ap = _load()
+    p = ap.ArtifactPointer(
+        kind="diff",
+        locator="refs/x",
+        hash="a" * 40,
+        epoch="0",
+        deref="git diff x y",
+        base="b" * 40,
+    )
+    assert ap.ArtifactPointer.from_json(p.to_json()).base == "b" * 40
+    legacy = json.dumps(
+        {
+            "kind": "file",
+            "locator": "objects/ab/abcd",
+            "hash": "abcd",
+            "epoch": "run/0",
+            "deref": "x deref",
+        }
+    )
+    assert ap.ArtifactPointer.from_json(legacy).base == ""

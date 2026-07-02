@@ -44,7 +44,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import subprocess  # nosec B404 — git only, fixed argv, no shell
 import sys
 import tempfile
@@ -70,9 +69,30 @@ ERR_STALE = "POINTER_STALE"
 # inside spawn prompts), so it is validated against this before it is ever used to build a path.
 _SHA256_HEX = re.compile(r"\A[0-9a-f]{64}\Z")
 
+# A git object id is 40 hex chars (sha1) or 64 (sha256). A diff pointer's base/snapshot tree OIDs are
+# untrusted input, so they are validated against this before being placed on a git argv — a tampered
+# ``deref`` field must never reach git (see ``_diff_argv``).
+_GIT_OID = re.compile(r"\A[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
+
+# A ref-name segment (run-id / epoch) is interpolated into a holding-ref path passed to
+# ``git update-ref``. Constrain it up front so a hostile segment cannot inject ref-path structure;
+# git's own ref-name rules are only the backstop.
+_REF_SEGMENT = re.compile(r"\A[A-Za-z0-9._-]+\Z")
+
 
 def _is_sha256_hex(value: str) -> bool:
     return bool(_SHA256_HEX.match(value))
+
+
+def _is_git_oid(value: str) -> bool:
+    return bool(_GIT_OID.match(value))
+
+
+def _validate_ref_segment(value: str, *, label: str) -> None:
+    if not _REF_SEGMENT.match(value) or ".." in value:
+        raise ValueError(
+            f"{label} {value!r} is not a ref-name-safe segment ([A-Za-z0-9._-], no '..')"
+        )
 
 
 class GitError(RuntimeError):
@@ -90,13 +110,19 @@ class PointerError(RuntimeError):
 
 @dataclass(frozen=True)
 class ArtifactPointer:
-    """One typed artifact reference (R1): kind, locator, integrity hash, freshness epoch, deref."""
+    """One typed artifact reference (R1): kind, locator, integrity hash, freshness epoch, deref, base.
+
+    ``base`` is the diff base tree OID for ``kind == "diff"`` (empty for ``file`` / ``symbol``). It is
+    a first-class validated field, never parsed out of ``deref``: the L1 deref argv is rebuilt
+    deterministically from ``base`` + ``hash`` so a tampered ``deref`` string can never reach git.
+    """
 
     kind: str
     locator: str
     hash: str
     epoch: str
     deref: str
+    base: str = ""
 
     def to_json(self) -> str:
         """Serialize to a single-line JSON object (KTD3: one fenced ``artifact-pointer`` block)."""
@@ -107,6 +133,7 @@ class ArtifactPointer:
                 "hash": self.hash,
                 "epoch": self.epoch,
                 "deref": self.deref,
+                "base": self.base,
             },
             separators=(",", ":"),
             sort_keys=True,
@@ -133,6 +160,7 @@ class ArtifactPointer:
             hash=str(data["hash"]),
             epoch=str(data["epoch"]),
             deref=str(data["deref"]),
+            base=str(data.get("base", "")),
         )
 
 
@@ -174,14 +202,34 @@ def resolve_repo_root(repo_root_arg: str | None) -> Path:
     return Path(result.stdout.strip())
 
 
+def _require_dense_worktree(repo_root: Path) -> None:
+    """Refuse to snapshot a sparse-checkout worktree (KTD7 loud-fail → orchestrator inlines).
+
+    ``git add -A`` under a temp index can drop skip-worktree paths, yielding a tree that is MISSING
+    entries — ``git diff base snapshot`` would then render phantom deletions (silently-wrong bytes,
+    violating R2). Sparse-checkout is unsupported by L1; fail loudly here so the orchestrator falls
+    back to inlined content (KTD7) rather than shipping a wrong diff.
+    """
+    result = _git(["config", "--bool", "core.sparseCheckout"], repo_root=repo_root, check=False)
+    if result.returncode == 0 and result.stdout.strip() == "true":
+        raise GitError(
+            "sparse-checkout is not supported by Layer-1 snapshots (git add -A can drop "
+            "skip-worktree paths); inline the artifact instead (KTD7 fallback)"
+        )
+
+
 def snapshot(run_id: str, epoch: str, *, repo_root: Path) -> ArtifactPointer:
     """Build a Layer-1 diff pointer via the KTD1 temp-index tree snapshot + holding ref.
 
     Captures staged + unstaged + untracked files into a tree OID without touching the real index or
-    working tree. Pins it with ``refs/team-execution/snapshots/<run-id>/<epoch>`` and records the base
-    tree (``HEAD^{tree}`` at snapshot time) inside the fully-pinned deref command so it cannot drift if
-    HEAD moves mid-run.
+    working tree. Pins it with ``refs/team-execution/snapshots/<run-id>/<epoch>`` (created WITH a
+    reflog so gc can reclaim it by age even after ``git gc`` packs the loose ref away) and records the
+    base tree (``HEAD^{tree}`` at snapshot time) as the pointer's first-class ``base`` field so the
+    deref is fully pinned and cannot drift if HEAD moves mid-run.
     """
+    _validate_ref_segment(run_id, label="run id")
+    _validate_ref_segment(epoch, label="epoch")
+    _require_dense_worktree(repo_root)
     base_tree = _git(["rev-parse", "HEAD^{tree}"], repo_root=repo_root).stdout.strip()
     fd, index_path = tempfile.mkstemp(prefix="te-artifact-index-")
     os.close(fd)
@@ -197,10 +245,13 @@ def snapshot(run_id: str, epoch: str, *, repo_root: Path) -> ArtifactPointer:
         if os.path.exists(index_path):
             os.unlink(index_path)
     ref = f"{SNAPSHOT_REF_PREFIX}/{run_id}/{epoch}"
-    _git(["update-ref", ref, tree_oid], repo_root=repo_root)
+    # --create-reflog forces a reflog for this custom namespace (git does not log it by default). The
+    # reflog file (``.git/logs/<ref>``) survives ``git gc`` — which packs the loose ref away — giving
+    # gc a durable age signal (see ``_snapshot_ref_paths``).
+    _git(["update-ref", "--create-reflog", ref, tree_oid], repo_root=repo_root)
     deref_cmd = f"git diff {base_tree} {tree_oid}"
     return ArtifactPointer(
-        kind="diff", locator=ref, hash=tree_oid, epoch=str(epoch), deref=deref_cmd
+        kind="diff", locator=ref, hash=tree_oid, epoch=str(epoch), deref=deref_cmd, base=base_tree
     )
 
 
@@ -336,11 +387,15 @@ def _verify_l2_integrity(pointer: ArtifactPointer, *, repo_root: Path) -> Path:
         raise PointerError(ERR_HASH_MISMATCH, "pointer locator does not match its content hash")
     store_root = resolve_store_root(repo_root)
     cas_path = _cas_path(store_root, pointer.hash)
-    if not cas_path.exists():
-        raise PointerError(ERR_HASH_MISMATCH, "stored artifact not found")
+    # A CAS entry is a plain file whose name equals its own hash; a symlink there could redirect the
+    # read/re-hash to an arbitrary target (needs a local store write — out of the pointer threat
+    # model, but cheap to deny). Reject it, and use ONE message for every miss so nothing
+    # distinguishes "absent" from "present-but-wrong" (closes a low-value store-membership oracle).
+    if cas_path.is_symlink() or not cas_path.is_file():
+        raise PointerError(ERR_HASH_MISMATCH, "stored artifact does not match pointer hash")
     actual = hashlib.sha256(cas_path.read_bytes()).hexdigest()
     if actual != pointer.hash:
-        raise PointerError(ERR_HASH_MISMATCH, "stored artifact hash does not match pointer hash")
+        raise PointerError(ERR_HASH_MISMATCH, "stored artifact does not match pointer hash")
     return cas_path
 
 
@@ -375,10 +430,13 @@ def deref_file(pointer: ArtifactPointer, *, repo_root: Path) -> str:
 
 
 def _snapshot_ref_paths(repo_root: Path) -> dict[str, Path]:
-    """Map every Layer-1 snapshot ref name to its on-disk loose-ref path (for age-based gc).
+    """Map every Layer-1 snapshot ref name to the on-disk file whose mtime dates it, for age-based gc.
 
-    Packed refs (no loose file) are skipped — best-effort, matching the store's degrade-not-break
-    posture; ``git gc`` does not pack refs under a custom namespace by default.
+    ``git gc`` packs refs under ANY namespace into ``packed-refs`` and deletes the loose file (verified
+    empirically — the loose-ref path is therefore NOT a durable age signal). The reflog
+    (``.git/logs/<refname>``, created via ``update-ref --create-reflog`` in ``snapshot``) survives
+    packing, so it is the age source here. Refs enumerate via ``for-each-ref`` (which sees packed
+    refs); one with no reflog is skipped — best-effort, degrade-not-break.
     """
     common_dir_raw = _git(["rev-parse", "--git-common-dir"], repo_root=repo_root).stdout.strip()
     common_dir = Path(common_dir_raw)
@@ -391,14 +449,15 @@ def _snapshot_ref_paths(repo_root: Path) -> dict[str, Path]:
     )
     paths: dict[str, Path] = {}
     for refname in listing.stdout.splitlines():
-        ref_path = common_dir / refname
-        if ref_path.exists():
-            paths[refname] = ref_path
+        reflog_path = common_dir / "logs" / refname
+        if reflog_path.exists():
+            paths[refname] = reflog_path
     return paths
 
 
 def _gc_snapshot_refs(repo_root: Path, cutoff: float) -> int:
-    """Prune Layer-1 snapshot refs older than ``cutoff`` (mtime of the loose-ref file)."""
+    """Prune Layer-1 snapshot refs older than ``cutoff`` (mtime of the ref's reflog, which survives
+    ``git gc`` packing — see ``_snapshot_ref_paths``)."""
     removed = 0
     for refname, ref_path in _snapshot_ref_paths(repo_root).items():
         if ref_path.stat().st_mtime < cutoff:
@@ -504,35 +563,40 @@ def _verify_freshness(pointer: ArtifactPointer, *, repo_root: Path) -> None:
             )
 
 
-def _deref_argv(command: str, *, expected_snapshot: str) -> list[str]:
-    """Parse and validate the pointer's deref command into a fixed git argv (no shell exec).
+def _diff_argv(base: str, snapshot: str) -> list[str]:
+    """Build the Layer-1 deref argv deterministically from validated tree OIDs (never parse ``deref``).
 
-    The command is generated by this module (``git diff [--stat] <base> <snapshot>``); we still parse
-    and bind it to the pointer's own hash rather than exec a raw string, so a tampered command cannot
-    smuggle in a different invocation.
+    A pointer is untrusted input (it travels inside spawn prompts), so the free-form ``deref`` string
+    is NEVER parsed into argv: a tampered ``deref`` like ``git diff --output=/path <base> <snapshot>``
+    would otherwise smuggle an arbitrary-file-write option onto the git command. Rebuilding argv from
+    the pointer's ``base`` + ``snapshot`` OIDs — each constrained to a hex object id, so no option
+    token is representable — removes that surface entirely (the L1 analogue of the L2 hash-derived-path
+    confinement).
     """
-    tokens = shlex.split(command)
-    if len(tokens) < 4 or tokens[0] != "git" or tokens[1] != "diff":
-        raise PointerError(ERR_HASH_MISMATCH, f"malformed deref command: {command!r}")
-    if tokens[-1] != expected_snapshot:
-        raise PointerError(
-            ERR_HASH_MISMATCH, "deref command snapshot tree does not match pointer hash"
-        )
-    return tokens[1:]
+    for oid, label in ((base, "base"), (snapshot, "snapshot")):
+        if not _is_git_oid(oid):
+            raise PointerError(ERR_HASH_MISMATCH, f"{label} tree is not a git object id")
+    return ["diff", base, snapshot]
 
 
 def deref(pointer: ArtifactPointer, *, repo_root: Path) -> str:
     """Verify (integrity + freshness) then dereference a pointer, returning the full artifact.
 
     Raises ``PointerError`` with a typed code on a verification failure (never returns wrong/stale
-    bytes, R2). Dispatches by ``kind``: ``file`` uses the Layer-2 CAS (U3); everything else uses the
-    Layer-1 git-object path, running the pinned deref command and returning its stdout (R5).
+    bytes, R2). Dispatches by ``kind``: ``file`` uses the Layer-2 CAS (U3); ``diff`` uses the Layer-1
+    git-object path, rebuilding the diff argv deterministically from the validated base + snapshot
+    OIDs (R5). ``symbol`` pointers are NOT dereferenced here — they are resolved with grep/read.
     """
     if pointer.kind == "file":
         return deref_file(pointer, repo_root=repo_root)
+    if pointer.kind == "symbol":
+        raise ValueError(
+            "symbol pointers are resolved with grep/read, not the deref CLI "
+            "(only diff and file kinds are dereferenceable)"
+        )
     _verify_integrity(pointer, repo_root=repo_root)
     _verify_freshness(pointer, repo_root=repo_root)
-    argv = _deref_argv(pointer.deref, expected_snapshot=pointer.hash)
+    argv = _diff_argv(pointer.base, pointer.hash)
     return _git(argv, repo_root=repo_root).stdout
 
 

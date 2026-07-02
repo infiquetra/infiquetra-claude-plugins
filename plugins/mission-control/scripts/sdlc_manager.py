@@ -687,6 +687,12 @@ def _rest_patch(path: str, body: dict) -> Any:
     return json.loads(result)
 
 
+def _rest_put(path: str, body: dict) -> Any:
+    """Execute a REST PUT via gh CLI."""
+    result = _gh(["api", "--method", "PUT", path, "--input", "-"], input_data=json.dumps(body))
+    return json.loads(result)
+
+
 def _rest_delete(path: str) -> Any:
     """Execute a REST DELETE via gh CLI. May return empty body (e.g. 204 No Content)."""
     result = _gh(["api", "--method", "DELETE", path])
@@ -2054,10 +2060,7 @@ def rollout_deploy_templates(repo: str, fmt: str) -> None:
             body["sha"] = sha
 
         try:
-            if not sha:
-                _rest_post(api_path, body)
-            else:
-                _rest_patch(api_path, body)
+            _rest_put(api_path, body)
             results.append(f"OK: {template_path.name}")
         except Exception as e:
             results.append(f"FAIL: {template_path.name}: {e}")

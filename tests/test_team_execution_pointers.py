@@ -734,3 +734,17 @@ def test_saga_save_round_trips_artifact_pointers_and_absent_emits_no_key(tmp_pat
     _save("clean", "--lifecycle-phase", "plan")
     clean = _newest_tick(saga_root / ".claude" / "saga" / "sagas" / "task-clean")
     assert "artifact_pointers" not in clean
+
+
+# --- U5: Layer 3 light path+symbol pointers ---------------------------------------------------
+
+
+def test_symbol_pointers_light_form_documented_in_artifact_pointers_md() -> None:
+    """Layer 3 symbol section documents light `<path>#<symbol>` form and explicitly defers formal
+    resolver dependency (R12/R13, plan U5)."""
+    doc = _read_text(ARTIFACT_POINTERS_DOC)
+    assert "Layer 3 — symbol pointers" in doc
+    assert "<repo-relative-path>#<symbol-name>" in doc
+    assert "no formal resolver" in doc
+    assert "formal resolver is deferred" in doc
+    assert "grep/read tools" in doc

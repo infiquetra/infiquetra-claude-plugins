@@ -74,3 +74,8 @@ Final reports include:
 A **required, non-skipped** validator whose evidence record is absent at completion is a
 `missing-output` omission, not a silent pass — see `validator-execution-order.md`
 (Required-Evidence Absence). A `skipped-by-config` validator's absent evidence is expected.
+
+The `external-second-opinion` validator (Advisory, `validator-registry.md`) is exempt from
+Required-Evidence Absence even when opted in: it is never `required` in the gate sense (R13/R15,
+it cannot block), so an absent or failed dispatch is expected evidence-state, recorded via its
+downgrade note (R24) rather than treated as a `missing-output` omission.

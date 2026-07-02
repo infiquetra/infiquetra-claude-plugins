@@ -11,6 +11,8 @@ Oracles pinned here:
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -176,3 +178,119 @@ def test_manifest_store_rejects_path_traversal_ids(tmp_path: Path, bad_id: str) 
 def test_manifest_store_for_saga_rejects_bad_saga_id() -> None:
     with pytest.raises(M.ManifestStoreError):
         M.Store.for_saga("a/b", Path("/repo"), runner=_runner_returning("/repo/.git"))
+
+
+# ---------------------------------------------------------------------------
+# record-completeness (U4/KTD7) — driver-materialized output_completeness
+# ---------------------------------------------------------------------------
+
+
+def _load_execution_spec() -> ModuleType:
+    scripts = ROOT / "plugins" / "saga" / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    spec = importlib.util.spec_from_file_location("execution_spec", scripts / "execution_spec.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["execution_spec"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+ES = _load_execution_spec()
+
+
+def _spec(units: list[dict[str, Any]]) -> Any:
+    return ES.ExecutionSpec.from_dict({"name": "t", "units": units})
+
+
+def test_completeness_contract_bearing_leaf_missing_manifest_trips(tmp_path: Path) -> None:
+    store = M.Store(root=tmp_path / "saga-manifests" / "saga-1").ensure()
+    spec = _spec(
+        [
+            {
+                "unit_id": "U1",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "p",
+                "returns": ["a", "b"],
+            }
+        ]
+    )
+    records = M.record_completeness(spec, {}, saga_id="saga-1", store=store)
+    assert len(records) == 1
+    assert records[0].failure is not None
+    assert records[0].failure.failure_class.value == "missing-output"
+    assert M.read_manifest(store, "U1")["output_completeness"]["missing_keys"] == ["a", "b"]
+
+
+def test_completeness_contract_bearing_exempts_contract_less_leaf(tmp_path: Path) -> None:
+    store = M.Store(root=tmp_path / "saga-manifests" / "saga-1").ensure()
+    spec = _spec(
+        [{"unit_id": "U1", "tier": {"model": "sonnet", "effort": "medium"}, "prompt": "p"}]
+    )
+    records = M.record_completeness(spec, {}, saga_id="saga-1", store=store)
+    assert len(records) == 1
+    assert records[0].failure is None
+
+
+def test_record_completeness_persists_declared_vs_produced_diff(tmp_path: Path) -> None:
+    store = M.Store(root=tmp_path / "saga-manifests" / "saga-1").ensure()
+    spec = _spec(
+        [
+            {
+                "unit_id": "U1",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "p",
+                "returns": ["a", "b"],
+            }
+        ]
+    )
+    records = M.record_completeness(spec, {"U1": {"a": 1}}, saga_id="saga-1", store=store)
+    manifest = M.read_manifest(store, "U1")
+    oc = manifest["output_completeness"]
+    assert oc["declared_keys"] == ["a", "b"]
+    assert oc["produced_keys"] == ["a"]
+    assert oc["missing_keys"] == ["b"]
+    assert records[0].failure is not None
+    assert "b" in records[0].failure.message
+
+
+def test_record_completeness_cli_exits_nonzero_on_trip(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+    spec_path = repo_root / "spec.json"
+    spec_path.write_text(
+        json.dumps(
+            {
+                "name": "t",
+                "units": [
+                    {
+                        "unit_id": "U1",
+                        "tier": {"model": "sonnet", "effort": "medium"},
+                        "prompt": "p",
+                        "returns": ["a"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    results_path = repo_root / "results.json"
+    results_path.write_text(json.dumps({}), encoding="utf-8")
+
+    rc = M.main(
+        [
+            "--repo-root",
+            str(repo_root),
+            "--saga-id",
+            "saga-1",
+            "record-completeness",
+            "--spec",
+            str(spec_path),
+            "--results",
+            str(results_path),
+        ]
+    )
+    assert rc == 1
+    assert (repo_root / ".git" / "saga-manifests" / "saga-1" / "U1.json").exists()

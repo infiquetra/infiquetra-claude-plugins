@@ -169,7 +169,7 @@ def check_fanout_count(result: Any, *, contract: Contract, unit_id: str = "") ->
     return None
 
 
-def check_manifest(result: Any, *, contract: Contract, unit_id: str = "") -> Failure | None:
+def check_required_keys(result: Any, *, contract: Contract, unit_id: str = "") -> Failure | None:
     """Trip when any declared key in contract.returns is absent from emitted keys."""
     if not contract.returns:
         return None
@@ -212,7 +212,7 @@ def classify(result: Any, *, contract: Contract, unit_id: str = "") -> Failure |
     if fail is not None:
         return fail
 
-    fail = check_manifest(result, contract=contract, unit_id=unit_id)
+    fail = check_required_keys(result, contract=contract, unit_id=unit_id)
     if fail is not None:
         return fail
 

@@ -22,9 +22,17 @@ CLI::
     python3 manifest_store.py write --repo-root <path> --saga-id <id> --execution-id <id> --file <manifest.json>
     python3 manifest_store.py read --repo-root <path> --saga-id <id> --execution-id <id>
     python3 manifest_store.py list --repo-root <path> --saga-id <id> [--json]
+    python3 manifest_store.py record-completeness --repo-root <path> --saga-id <id> \\
+        --spec <spec.json> --results <results.json>
 
-``record-completeness`` (persisting the ``output_completeness`` subrecord for spec-driven runs) is
-added in U4 — out of scope here.
+``record-completeness`` (U4/KTD7) is the driver-materialized path for cc-workflows runs: a
+Workflow script cannot touch the filesystem, so the *driving session* persists one manifest per
+spec-declared unit after the run, deriving the declared side of ``output_completeness`` from
+``completeness_gate.Contract.from_unit`` and the produced side from ``--results`` (a JSON object
+mapping ``unit_id`` -> that unit's returned result, the same shape ``completeness_gate.classify``
+already consumes). A missing-output trip is reported (non-fatal to the write itself, but the CLI
+exits non-zero) only for a contract-bearing unit (``Contract.expects_output``); prose/side-effect-
+only leaves are never tripped (R10/AE3), matching ``classify()``'s existing semantics.
 """
 
 from __future__ import annotations
@@ -33,12 +41,16 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import outcome_store  # noqa: E402  (after the sys.path shim, by design)
+import completeness_gate  # noqa: E402  (after the sys.path shim, by design)
+import execution_spec  # noqa: E402
+import outcome_store  # noqa: E402
+import provenance_manifest  # noqa: E402
 
 # Subdirectory under the git common dir that holds every saga's manifest tree. Namespaced
 # separately from ``outcome_store.STORE_NAMESPACE`` — manifests exist independent of the
@@ -199,6 +211,86 @@ def resolve_manifest_ref(
 
 
 # ---------------------------------------------------------------------------
+# record-completeness (U4/KTD7) — driver-materialized output_completeness
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CompletenessRecord:
+    """One unit's persisted manifest plus the completeness_gate verdict that produced it."""
+
+    unit_id: str
+    path: Path
+    manifest: dict[str, Any]
+    failure: completeness_gate.Failure | None
+
+
+def _output_completeness_for(
+    unit: execution_spec.Unit, result: Any
+) -> tuple[provenance_manifest.OutputCompleteness, completeness_gate.Failure | None]:
+    """Derive the declared-vs-produced subrecord and any completeness_gate trip for one unit."""
+    contract = completeness_gate.Contract.from_unit(unit)
+    failure = completeness_gate.classify(result, contract=contract, unit_id=unit.unit_id)
+    parsed = completeness_gate._parse_result(result)
+    if isinstance(parsed, dict):
+        produced_keys: list[str] = list(parsed.keys())
+    else:
+        produced_keys = []
+    produced_count: int | None = None
+    if isinstance(parsed, (list, dict, set, tuple)):
+        produced_count = len(parsed)
+    output_completeness = provenance_manifest.OutputCompleteness.derive(
+        declared_keys=list(contract.returns),
+        target_count=contract.target_count,
+        produced_keys=produced_keys,
+        produced_count=produced_count,
+    )
+    return output_completeness, failure
+
+
+def record_completeness(
+    spec: execution_spec.ExecutionSpec,
+    results: dict[str, Any],
+    *,
+    saga_id: str,
+    store: Store,
+) -> list[CompletenessRecord]:
+    """Persist one driver-materialized manifest per unit in ``spec`` (KTD7).
+
+    Every declared unit gets an ``output_completeness`` subrecord (not only contract-bearing
+    ones) — the missing-output *trip* is what's restricted to contract-bearing units (R10/AE3);
+    a prose/side-effect-only leaf still gets a (zero-declared, always-passing) subrecord so the
+    manifest tree stays a complete per-unit ledger.
+    """
+    records: list[CompletenessRecord] = []
+    created_at = datetime.now(UTC).isoformat()
+    for unit in spec.units:
+        result = results.get(unit.unit_id)
+        output_completeness, failure = _output_completeness_for(unit, result)
+        manifest = provenance_manifest.Manifest(
+            execution_id=unit.unit_id,
+            saga_ref=saga_id,
+            attribution=provenance_manifest.Attribution(
+                kind=provenance_manifest.ProducerKind.CC_WORKFLOWS,
+                identity=unit.label or unit.unit_id,
+                effort=unit.tier.effort,
+                protocol="",
+            ),
+            disposition=provenance_manifest.Disposition.RAN_AS_REQUESTED,
+            created_at=created_at,
+            output_completeness=output_completeness,
+        )
+        manifest_dict = manifest.to_dict()
+        path = write_manifest(store, unit.unit_id, manifest_dict)
+        records.append(
+            CompletenessRecord(
+                unit_id=unit.unit_id, path=path, manifest=manifest_dict, failure=failure
+            )
+        )
+    return records
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -217,6 +309,15 @@ def main(argv: list[str] | None = None) -> int:
     p_read.add_argument("--execution-id", required=True)
 
     sub.add_parser("list", help="List execution ids with a manifest for this saga.")
+
+    p_completeness = sub.add_parser(
+        "record-completeness",
+        help="Persist a driver-materialized output_completeness manifest per spec unit (U4/KTD7).",
+    )
+    p_completeness.add_argument("--spec", required=True, help="Path to the execution spec JSON.")
+    p_completeness.add_argument(
+        "--results", required=True, help="Path to a JSON object mapping unit_id -> result."
+    )
 
     args = parser.parse_args(argv)
     repo_root = Path(args.repo_root)
@@ -242,6 +343,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "list":
         for execution_id in list_manifests(store):
             print(execution_id)
+        return 0
+
+    if args.command == "record-completeness":
+        spec_data = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+        spec = execution_spec.ExecutionSpec.from_dict(spec_data)
+        results_data = json.loads(Path(args.results).read_text(encoding="utf-8"))
+        if not isinstance(results_data, dict):
+            print("results file must contain a JSON object of unit_id -> result", file=sys.stderr)
+            return 1
+        records = record_completeness(spec, results_data, saga_id=args.saga_id, store=store)
+        tripped = [r for r in records if r.failure is not None]
+        for record in records:
+            print(str(record.path))
+        if tripped:
+            for record in tripped:
+                failure = record.failure
+                if failure is None:
+                    continue
+                print(
+                    f"missing-output: unit={record.unit_id} "
+                    f"class={failure.failure_class.value} "
+                    f"{failure.message}",
+                    file=sys.stderr,
+                )
+            return 1
         return 0
 
     parser.error(f"unknown command {args.command!r}")

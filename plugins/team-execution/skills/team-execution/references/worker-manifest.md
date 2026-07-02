@@ -30,9 +30,9 @@ materialized path, which exists only because workflow scripts have no filesystem
 Call the store CLI directly:
 
 ```bash
-python3 plugins/saga/scripts/manifest_store.py write \
-  --repo-root <repo-root> --saga-id <saga-id> --execution-id <worker-id>-<unit-id> \
-  --file <path-to-manifest.json>
+python3 plugins/saga/scripts/manifest_store.py \
+  --repo-root <repo-root> --saga-id <saga-id> \
+  write --execution-id <worker-id>-<unit-id> --file <path-to-manifest.json>
 ```
 
 `<manifest.json>` is the `to_dict()` output of a `provenance_manifest.Manifest` built as below.

@@ -10,9 +10,10 @@
 - `manifest_store.py`: git-common-dir carrier at `<git-common-dir>/saga-manifests/<saga-id>/
   <execution-id>.json` (reusing `resolve_common_dir`), a typed `manifest_ref` payload-key helper for
   outcome leaves, and CLI `write`/`read`/`list`/`record-completeness` entry points (R19, R3, R10, R13).
-- `engine_dispatch.py`: `dispatch()` emits an envelope-backed manifest through `manifest_store`;
-  `satisfy_gate()` now enforces R11 — a gated verdict cannot persist unless gate-relevant claims are
-  Claude-adjudicated.
+- `engine_dispatch.py`: new `build_dispatch_manifest`/`record_dispatch_manifest` let the driving
+  session persist an envelope-backed manifest for a dispatch through `manifest_store` (`dispatch()`
+  itself does not auto-emit); `satisfy_gate()` now enforces R11 — a gated verdict cannot persist
+  unless gate-relevant claims are Claude-adjudicated.
 - `completeness_gate.py`: renamed `check_manifest` → `check_required_keys` (no external callers) to
   free "manifest" for the new envelope; `classify()` behavior unchanged.
 - `manifest_reader.py`: advisory reader (parroting count, disposition rate, adjudicated-verified

@@ -34,6 +34,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import manifest_store  # noqa: E402
 import outcome_github  # noqa: E402  (after the sys.path shim, by design)
 import outcome_spec  # noqa: E402
 import outcome_store  # noqa: E402
@@ -174,13 +175,29 @@ def harvest(
         # plus the success-sticky `already` skip keep this idempotent regardless of attempt number.
         existing = outcome_store.read_completion_events(store, sid)
         attempt = max((e.attempt for e in existing), default=0) + 1
+        payload = {"contract": verdict.contract, "evidence": verdict.evidence, "canonical": True}
+        # Attach the advisory manifest pointer (R19/KTD1) when this leaf's dispatch recorded a
+        # provenance manifest: saga_id convention = outcome id, execution_id = subplot id. Only
+        # derivable when the store sits in the canonical <common>/saga-outcomes/<id> layout;
+        # the pointer is advisory (R8) — any other layout, unsafe id, or absent manifest simply
+        # means no pointer.
+        if store.root.parent.name == outcome_store.STORE_NAMESPACE:
+            outcome_id = store.root.name
+            mstore = manifest_store.Store(
+                root=store.root.parent.parent / manifest_store.MANIFEST_NAMESPACE / outcome_id
+            )
+            try:
+                if mstore.manifest_path(sid).is_file():
+                    payload = manifest_store.set_manifest_ref(payload, outcome_id, sid)
+            except manifest_store.ManifestStoreError:
+                pass
         event = outcome_store.CompletionEvent(
             subplot_id=sid,
             state="done",
             idempotency_key=f"harvest:{sid}:{verdict.contract}",
             attempt=attempt,
             at=at,
-            payload={"contract": verdict.contract, "evidence": verdict.evidence, "canonical": True},
+            payload=payload,
         )
         outcome_store.write_completion_event(store, event)
         harvested.append(sid)

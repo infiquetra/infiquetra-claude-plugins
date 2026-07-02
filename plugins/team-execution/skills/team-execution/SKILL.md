@@ -255,6 +255,7 @@ Append a plan section like this:
 - `team-execution/skills/team-execution/references/validator-execution-order.md`
 - `team-execution/skills/team-execution/references/validator-evidence-state.md`
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
+- `team-execution/skills/team-execution/references/worker-manifest.md`
 ```
 
 Then submit the plan for approval. Do not start implementation during Phase A.
@@ -300,6 +301,10 @@ Workers execute approved tasks. Coordinate dependencies, keep work scoped to the
 - **Worker Reuse (R3):** Reuse the resident worker across all units in its segment via `SendMessage`. Never re-spawn the worker per unit; reusing the persistent teammate preserves its warm context/cache across all units it owns.
 - **Cross-Segment Summary-Handoff (R4):** When a dependent segment requires the result of a prior segment, seed the dependent segment's fresh worker with a short summary of the upstream segment's output via `SendMessage` instead of forwarding the upstream worker's entire context.
 - **Context Shedding (R11):** Shed a resident worker at its segment boundary, or when a block of time is expected to exceed the prompt cache TTL horizon (~5 minutes). Teammate reuse is for temporally-tight loops, not indefinite warmth.
+
+Each worker writes a provenance manifest at segment/unit exit — see
+`team-execution/skills/team-execution/references/worker-manifest.md` (attribution + disposition +,
+for contract-bearing units, output_completeness; evidence-only, grants no privilege).
 
 When all worker tasks are complete, capture changed files and a git diff summary for reviewers.
 
@@ -407,7 +412,8 @@ team-execution/
 │           ├── validator-evidence-state.md
 │           ├── validator-execution-order.md
 │           ├── validator-registry.md
-│           └── validator-spawn-quirks.md
+│           ├── validator-spawn-quirks.md
+│           └── worker-manifest.md
 ├── agents/
 │   ├── devils-advocate-reviewer.md
 │   ├── security-reviewer.md

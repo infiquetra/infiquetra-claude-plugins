@@ -214,6 +214,27 @@ checked-but-clean class is an empty `{}` map and scores 100; an absent class is 
 
 The score is **one signal**, not the gate: its inputs are LLM-assigned severities (principle 4).
 
+### 4.1b Provenance-manifest confidence input (R16, advisory)
+
+When the change under QA carried delegated execution(s) with recorded provenance manifests, pull
+the adjudicated verified ratio as a second, independent confidence signal alongside the health score:
+
+```bash
+python3 plugins/saga/scripts/manifest_reader.py --root <saga-manifests-dir> [--json]
+```
+
+The reader's `verified_ratio` is `verified / (verified + inferred + not-checked)` among claims
+Claude has adjudicated (R16) — a measure of how much of the delegated output's claim surface has
+actually been checked and confirmed, distinct from the LLM-assigned severity counts the health score
+is built from. A low ratio (little has been adjudicated, or much of what has been checked came back
+`inferred`/`not-checked` rather than `verified`) is a reason to widen Phase 2's acceptance checks
+before trusting a clean severity count; a nonzero `parroting_count` (R7) is a reason to re-verify the
+specific claims a producer over-asserted. **Zero-data ("no data yet") is not a failure** — most
+changes have no delegated executions and no manifest tree; treat it as "no additional signal," never
+as a deduction. This input is **advisory only** (R8/R12): it never changes the score formula or the
+verdict threshold, it informs how much Phase 2/3 evidence-gathering to spend before trusting a clean
+result.
+
 ### 4.2 Derive the ship verdict
 
 State **pass/fail per risk class**, then derive the overall **ship verdict** from the tier's blocking

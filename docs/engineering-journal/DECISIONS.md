@@ -22,6 +22,205 @@
 
 ---
 
+## 2026-07-01
+
+### Manifest carrier = git-common-dir `saga-manifests/` tree + typed `manifest_ref` pointer (#285 KTD1)  {#manifest-carrier-git-common-dir}
+
+**Decision.** One JSON file per delegated invocation at
+`<git-common-dir>/saga-manifests/<saga-id>/<execution-id>.json`, resolved through the same
+`resolve_common_dir()` `outcome_store.py` already uses, plus a typed `manifest_ref` pointer key in
+`CompletionEvent.payload` for outcome leaves.
+
+**Rejected alternatives.** (1) `CompletionEvent.payload`-only — rejected: covers outcome leaves only;
+fails R19 breadth because delegations that never emit a `CompletionEvent` (agy runs during plain
+`/work`, team-execution outside an outcome) would have no manifest at all. (2) Saga tick pointer —
+rejected: ticks are per-checkout, git-ignored, and worktree-local, so a bg-worktree manifest would be
+invisible to `/code-review` running in main.
+
+**Rationale.** `resolve_common_dir()` is the only candidate location that is both cross-worktree-stable
+and already load-bearing for a sibling cross-worktree store (`outcome_store.py:93`), so reuse avoids a
+second resolution mechanism.
+
+**Revisit when.** A carrier needs to survive outside a single git checkout entirely (e.g. cross-repo
+delegation) — the git-common-dir home stops being sufficient.
+
+**Refs.** Plan `docs/plans/2026-07-01-evidence-provenance-manifests-plan.md`; issue #285; commit f2f7160 (U1-U2).
+
+### Full-loop v1: producers + both already-shipped gates + advisory consumers, one PR (#285 KTD2)  {#manifest-full-loop-one-pr}
+
+**Decision.** Ship the manifest schema, carrier, producers (external-engine + cc-workflows +
+team-execution), both gate wirings, and the three advisory consumers (`/code-review`, `/qa`, `/retro`)
+in one PR rather than sequencing gates after a contract-first landing.
+
+**Rejected alternatives.** The requirements doc's contract-first sequencing (D7), which assumed the two
+consuming gates did not yet exist.
+
+**Rationale.** Drift-driven (V2 in the issue verification report): `completeness_gate.py` (#277) and
+`engine_dispatch.py`'s `satisfy_gate()` (#283) already compute-and-discard exactly the data R11/R13
+need persisted — gate wiring is persistence of already-computed data, not new verification logic, so
+the sequencing risk the contract-first plan was hedging against doesn't exist.
+
+**Revisit when.** A future manifest-consuming gate needs verification logic that doesn't already exist
+elsewhere in the codebase — then contract-first sequencing becomes the safer default again.
+
+**Refs.** Issue #285 drift report V2; plan `docs/plans/2026-07-01-evidence-provenance-manifests-plan.md`.
+
+### Saga-local schema version key; external attestation vocabularies are prior art only (#285 KTD3)  {#manifest-schema-saga-local}
+
+**Decision.** The envelope carries a saga-local `schema: "saga.manifest.v1"` version key rather than
+adopting an external attestation vocabulary (in-toto, SLSA, PROV) wholesale.
+
+**Rejected alternatives.** in-toto / SLSA / PROV adoption — rejected: those solve cross-organization
+supply-chain attestation with signing and verifier ecosystems saga doesn't have; adopting one wholesale
+is ceremony disproportionate to a one-operator plugin system.
+
+**Rationale.** Field *naming* may still borrow from those vocabularies where it clarifies intent, but
+that's a non-authoritative styling choice (D2), not a schema dependency.
+
+**Revisit when.** saga manifests need to be verified or consumed outside this repo's own tooling (a
+real cross-organization boundary appears) — then a real attestation format becomes worth the ceremony.
+
+**Refs.** Plan `docs/plans/2026-07-01-evidence-provenance-manifests-plan.md` KTD3.
+
+### Producer-claimed vocabulary stays three-valued: `verified | inferred | not-checked` (#285 KTD4)  {#manifest-producer-claimed-three-valued}
+
+**Decision.** Keep the producer-claimed status vocabulary three-valued. At a gate, every gate-relevant
+claim requires Claude adjudication before a verdict persists regardless of the producer's tag — the tag
+never changes what the gate accepts, only where the verifier spends budget first (`not-checked`/
+`inferred` before claimed-`verified`, per R15's budget-concentration logic).
+
+**Rejected alternatives.** Collapsing to a two-valued `verified | unverified` — rejected: erases the
+`inferred`-vs-`not-checked` distinction the verifier uses to rank attention, and buys nothing since the
+producer-claimed layer is non-authoritative either way (D2).
+
+**Rationale.** Closes R5's open question about gate-effect: the taxonomy exists to help the verifier
+triage, not to grant any producer claim authority.
+
+**Revisit when.** A producer tag needs to carry gate-relevant authority of its own (would contradict D2
+directly) — not expected under the current "external engines never gatekeepers" decision.
+
+**Refs.** Plan KTD4; `#external-engines-never-gatekeepers`; commit landing U1.
+
+### Adjudicated-status taxonomy as a pure predicate, `is_parroting` unit-testable without I/O (#285 KTD5)  {#manifest-parroting-pure-predicate}
+
+**Decision.** Adjudicated statuses are `verified | inferred | not-checked | refuted`; `mismatch_reason`
+is `not-adjudicated | scope-excluded | source-stale | unsupported | refuted`. Parroting is counted iff
+claimed-`verified` AND adjudicated is in `{refuted, unsupported}` (R7), implemented as a pure
+`is_parroting(claim)` predicate in the schema module.
+
+**Rejected alternatives.** Computing the parroting check inline at each call site (reader, gate) —
+rejected: duplicates taxonomy logic and makes it untestable without constructing full manifest I/O
+fixtures at each site.
+
+**Rationale.** Matches the house pattern already established by `completeness_gate.py` ("pure Python,
+no I/O at import") — a pure predicate is trivially unit-testable and has exactly one place to fix if
+the taxonomy changes.
+
+**Revisit when.** The taxonomy grows a case that depends on runtime state (e.g. a live source-freshness
+check) — then `is_parroting` needs an injectable clock/fetcher seam instead of staying pure.
+
+**Refs.** `tests/test_provenance_manifest.py`; plan KTD5.
+
+### Rename `completeness_gate.check_manifest` → `check_required_keys` (#285 KTD6)  {#completeness-gate-check-manifest-rename}
+
+**Decision.** Rename the existing `completeness_gate.py:172` function `check_manifest` (meaning
+"required-keys check") to `check_required_keys` before landing the new provenance `Manifest` envelope,
+since the two now collide in name but mean different things.
+
+**Rejected alternatives.** Leaving the name as-is and relying on module-qualified imports to
+disambiguate — rejected: cheap now (zero external callers per a repo-wide grep across `tests/`,
+`plugins/`, `status_card.py`; module was two days old), confusing forever later once the new manifest
+concept ships and both names are load-bearing.
+
+**Rationale.** `classify()`'s behavior is unchanged by the rename; `tests/test_completeness_gate.py`
+updated in the same unit (U4) that ships the rename, so there's no drift window.
+
+**Revisit when.** N/A — mechanical rename, no future condition changes the calculus.
+
+**Refs.** Issue #285 drift report V6; plan KTD6; commit landing U4.
+
+### cc-workflows manifests are driver-materialized, not leaf-emitted (#285 KTD7)  {#manifest-cc-workflows-driver-materialized}
+
+**Decision.** Workflow scripts cannot touch the filesystem (V13 in the drift report), so a cc-workflows
+leaf cannot emit its own manifest file. The driving session persists one manifest per unit post-run via
+`manifest_store.py record-completeness --spec <spec.json> --results <results.json>`, deriving the
+declared contract from `completeness_gate.Contract.from_unit` and the produced side from returned
+results; attribution (R2) uses the spec's per-unit label/model/effort.
+
+**Rejected alternatives.** Requiring the cc-workflows leaf itself to write a manifest — rejected: not
+possible given the workflow runtime's filesystem sandboxing; the issue's phrasing ("the producing agent
+emits a manifest") needed this qualification for the cc-workflows leg specifically.
+
+**Rationale.** The producer *declares* (in the spec and its return value); the driver *materializes*
+(writes the file) — a clean split that matches how cc-workflows already separates producer intent from
+driver-owned side effects.
+
+**Revisit when.** The cc-workflows runtime gains a sandboxed filesystem write capability for leaves —
+then leaf-emitted manifests become possible and the driver-materialization step could be dropped.
+
+**Refs.** Issue #285 drift report V13; plan KTD7; commit landing U4.
+
+### `/retro` surfacing via a new `manifest_reader.py`, sibling to `override_rate_reader.py` (#285 KTD8)  {#manifest-reader-sibling-override-rate}
+
+**Decision.** Add `plugins/saga/scripts/manifest_reader.py` as an advisory reader (parroting count,
+disposition rate, adjudicated-verified ratio) invoked by `/retro` alongside the existing
+`override_rate_reader.py`, rather than folding manifest reporting into the override-rate reader itself.
+
+**Rejected alternatives.** Extending `override_rate_reader.py` to also read manifests — rejected: the
+two readers consume different carriers (override-rate reads saga tick history; manifests read the
+git-common-dir store) and different questions; merging them would couple unrelated read paths.
+
+**Rationale.** Mirrors an already-proven pattern in the same skill (`/retro` already invokes one
+sibling reader), keeping each reader single-purpose and independently testable.
+
+**Revisit when.** Two readers start needing to cross-reference each other's data for a single report —
+then a shared aggregation layer above both becomes worth building.
+
+**Refs.** Plan KTD8; `plugins/saga/skills/retro/SKILL.md`; commit landing U6.
+
+### One schema, tier-sized payload — lightweight vs full manifest (#285 KTD9)  {#manifest-tier-sized-payload}
+
+**Decision.** One schema serves both payload sizes (R9): a *lightweight* manifest is the envelope with
+both subrecords absent (attribution + disposition + an existence bit); a *full* manifest adds the
+`output_completeness` and `claim_provenance` subrecords. No second schema, no second store path —
+`validate()` enforces that gate-feeding or contract-bearing outputs carry the relevant subrecord.
+
+**Rejected alternatives.** A separate lightweight schema/store path — rejected: doubles the surface
+area for no benefit, since the only difference is subrecord presence, which `validate()` can already
+express as a constraint.
+
+**Rationale.** Keeps the schema module single-sourced (one `Manifest` dataclass, one round-trip test
+suite) while still letting low-stakes delegations skip the cost of computing subrecords they don't need.
+
+**Revisit when.** A third payload tier is needed (e.g. partial subrecords) — then the binary
+lightweight/full split stops being sufficient and `validate()`'s constraint logic needs to grow a real
+tier enum.
+
+**Refs.** Plan KTD9; `tests/test_provenance_manifest.py::test_advisory_never_blocks_no_verdict_field`
+(covers the lightweight-valid-with-zero-subrecords case); commit landing U1.
+
+### Tier the schema and gate-semantics units on Claude Fable 5 xhigh (#285 KTD10)  {#manifest-fable-xhigh-tiering}
+
+**Decision.** U1 (the schema contract everything downstream consumes) and U3 (gate semantics) run on
+Claude Fable 5 at `xhigh` effort — the highest generally-available capability tier, above Opus 4.8 —
+bounded to 8 calls total (2 units + 2×3 same-tier verifiers). Mechanical units stay on the `sonnet`
+alias, which the harness now resolves to Claude Sonnet 5.
+
+**Rejected alternatives.** Running every unit at a uniform tier (e.g. all-opus or all-sonnet) —
+rejected: the schema and gate-semantics units are the load-bearing, hardest-to-unwind design surface
+(everything downstream consumes them), justifying the cost premium ($10/$50 per MTok vs Opus 4.8's
+$5/$25) on a bounded call count, while mechanical units don't need it.
+
+**Rationale.** `execution_spec.py:49-50` only accepted `opus|sonnet|haiku` × `low|medium|high` before
+U0 extended `MODELS`/`EFFORTS` to include `fable`/`xhigh` — gated as U0 so later units could declare the
+tier without a spec-validator change mid-campaign. Fallback if the Workflow runtime rejects fable
+dispatch is opus/high.
+
+**Revisit when.** Fable-tier costs or availability change materially, or a cheaper tier proves adequate
+for schema/gate-semantics work on a future campaign.
+
+**Refs.** claude-api skill (cached 2026-06-24); plan KTD10; commit 766145a (U0).
+
 ## 2026-06-30
 
 ### PreCompact spore = a two-hook structured re-grounding at the compaction boundary (#281)  {#precompact-spore-two-hook}

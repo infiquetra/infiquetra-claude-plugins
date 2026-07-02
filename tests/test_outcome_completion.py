@@ -315,3 +315,24 @@ def test_production_harvester_child_outcome_recurses(repo: Path) -> None:
     )
     # the child outcome's leaf reads done -> child terminal-successful -> parent's child node unlocks
     assert result.harvested == ["sub"]
+
+
+def test_harvest_attaches_manifest_ref_when_dispatch_manifest_exists(tmp_path: Path) -> None:
+    """A harvested leaf whose dispatch recorded a provenance manifest gets the advisory pointer."""
+    store = STORE.Store(root=tmp_path / "saga-outcomes" / "o").ensure()
+    manifest_dir = tmp_path / "saga-manifests" / "o"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "design.json").write_text("{}", encoding="utf-8")
+    spec = _spec(
+        [
+            {"subplot_id": "design", "title": "d", "kind": "code", "github": {"pr": "1"}},
+            {"subplot_id": "bare", "title": "b", "kind": "code", "github": {"pr": "2"}},
+        ]
+    )
+    runner = _gh(pr={"1": "MERGED", "2": "MERGED"})
+    harvested = ORCH.harvest(spec, store=store, github_runner=runner)
+    assert sorted(harvested) == ["bare", "design"]
+    with_manifest = STORE.read_completion_events(store, "design")[0]
+    assert with_manifest.payload.get("manifest_ref") == "saga-manifests/o/design.json"
+    bare = STORE.read_completion_events(store, "bare")[0]
+    assert "manifest_ref" not in bare.payload

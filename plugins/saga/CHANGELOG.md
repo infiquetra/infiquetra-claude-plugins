@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.45.0 - 2026-07-01
+
+### Evidence / provenance manifests — verified-vs-adjudicated record per delegated output (#285)
+- `provenance_manifest.py`: frozen-dataclass envelope (`schema: "saga.manifest.v1"`) with
+  `output_completeness` (declared vs produced) and `claim_provenance` (producer-claimed vs
+  Claude-adjudicated) subrecords, pure `is_parroting`/`mismatch_reason_for`/`validate` predicates,
+  no verdict field, no I/O at import (R1-R9, R12, R18, R20).
+- `manifest_store.py`: git-common-dir carrier at `<git-common-dir>/saga-manifests/<saga-id>/
+  <execution-id>.json` (reusing `resolve_common_dir`), a typed `manifest_ref` payload-key helper for
+  outcome leaves, and CLI `write`/`read`/`list`/`record-completeness` entry points (R19, R3, R10, R13).
+- `outcome_orchestrator.py`: `harvest` attaches the advisory `manifest_ref` pointer to a leaf's
+  CompletionEvent payload when its dispatch recorded a provenance manifest (saga id = outcome id,
+  execution id = subplot id; canonical store layout only — advisory, R8).
+- `engine_dispatch.adjudicate_manifest` keys adjudications by `(claim text, source_ref)` so two
+  claims sharing text but grounded in different sources adjudicate independently.
+- `manifest_store._safe_name` delegates to `outcome_store._safe_name` — one implementation of the
+  traversal guard, translated into `ManifestStoreError`.
+- `engine_dispatch.py`: new `build_dispatch_manifest`/`record_dispatch_manifest` let the driving
+  session persist an envelope-backed manifest for a dispatch through `manifest_store` (`dispatch()`
+  itself does not auto-emit); `satisfy_gate()` now enforces R11 — a gated verdict cannot persist
+  unless gate-relevant claims are Claude-adjudicated.
+- `completeness_gate.py`: renamed `check_manifest` → `check_required_keys` (no external callers) to
+  free "manifest" for the new envelope; `classify()` behavior unchanged.
+- `manifest_reader.py`: advisory reader (parroting count, disposition rate, adjudicated-verified
+  ratio) wired into `/code-review`, `/qa`, and `/retro` as a non-blocking signal (R7, R8, R15, R16,
+  R18).
+- `saga-spec.md` gains the manifest contract section (envelope/subrecord field reference + R17
+  producer/reader matrix); a guard test enforces no manifest field ships without a live-or-scheduled
+  reader.
+- Enabled `fable`/`xhigh` execution-spec tiers (#285 U0) so judgment-heavy units (schema, gate
+  semantics) can run on Claude Fable 5 xhigh.
+
 ## 0.44.0 - 2026-07-01
 
 ### External-engine capability routing — right engine, effort, protocol per task (#283)

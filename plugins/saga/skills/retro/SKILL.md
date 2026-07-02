@@ -222,6 +222,27 @@ via `scripts/outcome_costs.py` `rollup(spec, store)`. Surface, in the evidence b
 fabricate a zero. This pass is **read-only**; the leaves produce the telemetry (`record_cost`), the retro
 only consumes it.
 
+**1.8 Provenance-manifest signals (read-only, R16/R18).** Run the manifest reader beside the
+override-rate reader (1.6) to surface parroting count, disposition rate, and the adjudicated
+verified-vs-inferred/not-checked ratio across the manifest tree:
+
+```bash
+python3 plugins/saga/scripts/manifest_reader.py --root <saga-manifests-dir> [--json]
+```
+
+This surfaces three R7/R16/R18 signals:
+
+- **Parroting count** — claims a producer claimed `verified` that Claude's adjudication refuted
+  or found unsupported (R7 taxonomy, defined once in `provenance_manifest.py`, never redefined here).
+- **Disposition rate** — the fraction of manifests landing `ran-as-requested` /
+  `fell-back-to-claude` / `substituted-engine` (R18).
+- **Adjudicated verified ratio** — `verified / (verified + inferred + not-checked)` among
+  adjudicated claims (R16), the confidence signal `/qa` also consumes directly (Phase 2.x there).
+
+**Zero-data contract** (same as 1.6/1.7): an empty manifest tree is **"no data yet"** — carry it
+verbatim, never fabricate a rate. This pass is **read-only and advisory-only** (R8/R12): a low
+verified ratio or a nonzero parroting count is signal for the interview, never a gate.
+
 ---
 
 ## Phase 2 — Structured interview
@@ -369,3 +390,7 @@ It never blocks the router.
 - `../../scripts/override_rate_reader.py` — R12 telemetry reader: scans saga envelopes for
   override-rate, over/under-tier, and budget-exhaustion signals (Phase 1.6). Zero-data reports
   "no data yet"; read-only; `--json` for machine-readable output.
+- `../../scripts/manifest_reader.py` — R7/R16/R18 telemetry reader: scans the provenance-manifest
+  tree for parroting count, disposition rate, and the adjudicated verified ratio (Phase 1.8).
+  Zero-data reports "no data yet"; read-only and advisory-only (R8/R12); `--json` for
+  machine-readable output.

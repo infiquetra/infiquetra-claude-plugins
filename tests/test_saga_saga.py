@@ -1340,16 +1340,28 @@ def test_orchestration_override_rate_fields_present_in_frontmatter_output(saga: 
 # ===========================================================================
 
 
+# Collection-time snapshot: real operator saga state already on this machine (the repo's
+# .claude/saga is live, machine-local state on a dev box) is NOT test leakage. Only dirs
+# that appear AFTER collection — i.e. created by this test run — count as leaks.
+_PREEXISTING_SAGA_DIRS = (
+    frozenset(p.name for p in (ROOT / SAGAS_DIR).iterdir())
+    if (ROOT / SAGAS_DIR).exists()
+    else frozenset()
+)
+
+
 def test_suite_does_not_create_claude_dir_under_repo_root() -> None:
     """Every test must land its state in tmp_path; none under the repo's .claude/.
 
     ``.gitignore`` hides ``.claude/``, so a test that forgot to ``chdir`` (or
     passed the real cwd as ``root``) would silently pollute the working tree
-    without ``git status`` noticing. This guard fails loudly instead.
+    without ``git status`` noticing. This guard fails loudly instead — but only
+    on dirs created during this run (baseline above), so live operator saga
+    state on a dev machine does not false-positive the gate.
     """
     stray_sagas = ROOT / SAGAS_DIR
     if stray_sagas.exists():
-        leaked = [p.name for p in stray_sagas.iterdir()]
+        leaked = [p.name for p in stray_sagas.iterdir() if p.name not in _PREEXISTING_SAGA_DIRS]
         assert leaked == [], f"saga tests leaked state under repo-root .claude/: {leaked}"
     stray_legacy = ROOT / LEGACY_CHECKPOINT_DIR
     if stray_legacy.exists():

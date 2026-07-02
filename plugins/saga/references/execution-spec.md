@@ -94,7 +94,8 @@ broken script. `ExecutionSpec.validate()` runs at emit time and raises `SpecErro
 
 It also rejects: an empty name / empty units, duplicate `unit_id`s, a `depends_on` / `pilot`
 that does not resolve to a declared unit, a `targets` list without `fanout: true`, and any
-`model` / `effort` outside the closed tier vocabulary (`opus|sonnet|haiku` × `low|medium|high`).
+`model` / `effort` outside the closed tier vocabulary (`fable|opus|sonnet|haiku` ×
+`low|medium|high|xhigh`).
 
 ## Cheap-tier budget discipline (baked in)
 

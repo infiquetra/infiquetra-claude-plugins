@@ -261,6 +261,27 @@ the operator picks a backend, `/work` records exactly that pick via `--orchestra
 `orchestration_operator_choice` derives equal to it — no divergence), and a genuine capability degrade is
 recorded as `orchestration_downgrade` WITH the divergence (operator-choice §6).
 
+**Post-run manifest persistence (U4/KTD7).** A Workflow script has no filesystem access, so it cannot
+write its own provenance manifest — the *driving session* (this `/work` run) is the producer of record
+for `cc-workflows-ultracode` units. Once the Workflow returns, before moving on to Phase 2 wrap-up:
+
+1. Collect the run's per-unit returned results into a JSON object mapping `unit_id -> result` (the same
+   shape each unit returned to the Workflow — a dict of the unit's `returns` keys, a fan-out list, or
+   `null`/absent for a prose-only leaf).
+2. Persist one manifest per spec-declared unit:
+
+   ```bash
+   python3 plugins/saga/scripts/manifest_store.py --repo-root . --saga-id <saga-id> \
+     record-completeness --spec <orchestration_ref_spec.json> --results <results.json>
+   ```
+
+3. A non-zero exit means at least one **contract-bearing** unit (a unit with a non-empty `returns` or an
+   enumerated fan-out) tripped `missing-output` (R10) — every manifest is still written (the trip is
+   reported, not silently dropped), so treat this like any other Phase 3 completeness finding: investigate
+   the named unit before treating the round as PR-ready.
+4. Team-execution runs follow the same CLI, called by the worker at exit per `references/*` in
+   `team-execution` (U5) — `/work` does not additionally persist those on the worker's behalf.
+
 ---
 
 ## Phase 2 — Execute phase by phase

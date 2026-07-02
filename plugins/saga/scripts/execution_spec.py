@@ -46,8 +46,11 @@ from typing import Any
 # Tier vocabulary (Epic 0 tier rule R1). The emitter does not invent tiers; it only
 # validates that authored tiers are drawn from these closed sets so a typo
 # ("opus-high", "med") fails emit rather than silently producing an un-runnable script.
-MODELS = ("opus", "sonnet", "haiku")
-EFFORTS = ("low", "medium", "high")
+# ORDERING IS LOAD-BEARING: segment_units() merges tiers upgrade-only via
+# min(MODELS.index) / max(EFFORTS.index), so MODELS is strongest-first and
+# EFFORTS is weakest-first.
+MODELS = ("fable", "opus", "sonnet", "haiku")
+EFFORTS = ("low", "medium", "high", "xhigh")
 
 # Models cheap enough that the structuredoutput-budget lesson MUST be baked into the
 # generated agent prompt. An opus/high agent has budget headroom; a haiku or a

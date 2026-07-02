@@ -103,6 +103,34 @@ def test_enum_extensibility_dispatch() -> None:
     assert result == "default: some detail"
 
 
+def test_check_required_keys_rename_preserves_classify_behavior() -> None:
+    """check_manifest was renamed check_required_keys (KTD6); classify()'s dispatch and the four
+    canonical omission fixtures are unchanged."""
+    cg = _load()
+    assert not hasattr(cg, "check_manifest")
+    assert hasattr(cg, "check_required_keys")
+
+    # 1. null-when-expected
+    fail = cg.classify(None, contract=cg.Contract(expects_output=True), unit_id="U1")
+    assert fail is not None and fail.failure_class == cg.FailureClass.MISSING_OUTPUT
+
+    # 2. truncated string
+    fail = cg.classify('{"key": "value', contract=cg.Contract(expects_output=True), unit_id="U2")
+    assert fail is not None and fail.failure_class == cg.FailureClass.MALFORMED_OUTPUT
+
+    # 3. fan-out shortfall
+    contract = cg.Contract(expects_output=True, target_count=3)
+    fail = cg.classify([1, 2], contract=contract, unit_id="U3")
+    assert fail is not None and fail.failure_class == cg.FailureClass.MISSING_OUTPUT
+
+    # 4. missing required key, now via check_required_keys directly
+    contract = cg.Contract(expects_output=True, returns=["a", "b"])
+    fail = cg.check_required_keys({"a": 1}, contract=contract, unit_id="U4")
+    assert fail is not None
+    assert fail.failure_class == cg.FailureClass.MISSING_OUTPUT
+    assert "b" in fail.message
+
+
 def test_self_test_cli() -> None:
     """Test the --self-test CLI command runs successfully."""
     res = subprocess.run(

@@ -213,9 +213,27 @@ proceed with in-distribution knowledge.
 
 ### Stage B — validator pass (mode-based right-sizing)
 
+**B.0 — Skip re-verifying adjudicated-verified claims (R15, advisory).** When the diff under review
+carries delegated output with a provenance manifest, check it before spawning validators:
+
+```bash
+python3 plugins/saga/scripts/manifest_reader.py --root <saga-manifests-dir> [--json]
+```
+
+A survivor whose underlying claim already has an **attested** Claude adjudication
+(`Claim.adjudication` present) landing `AdjudicatedStatus.VERIFIED` needs no fresh validator pass —
+the adjudication record (adjudicator, sources read, scope, revision) IS the independent check;
+re-running it would burn budget re-deriving a result already on file. Route that budget instead to
+survivors tied to `not-checked`/`inferred` claims (R16's confidence gap) and to any survivor with no
+manifest coverage at all, which still gets the full Stage-B pass unchanged. This is a **skip, never a
+suppress**: a claim only skips validator dispatch when its adjudication is present and attested; a
+missing or absent manifest tree changes nothing (R8/R12 — no manifest data means the ordinary Stage-B
+path runs). No manifest field ever raises or lowers a finding's severity or confidence anchor (R12 —
+no gate of R11's own).
+
 Run CE's independent per-finding validator (`references/validator.md`) — a fresh agent re-checks each
-survivor: is it real in the code, introduced by THIS diff, and not handled elsewhere? -> `{validated,
-reason}`. Right-sizing is **mode-based**, matching CE's actual mechanism:
+remaining survivor: is it real in the code, introduced by THIS diff, and not handled elsewhere? ->
+`{validated, reason}`. Right-sizing is **mode-based**, matching CE's actual mechanism:
 
 - **Programmatic / report-only mode:** spawn one validator per Stage-A survivor, **capped at 15**
   (ordered P0 -> P3 by anchor; drop and note the over-budget count beyond 15). Validator-reject or
@@ -327,3 +345,6 @@ artifact, append the saga tick (if one exists), route — then stop.
   right-sizing, conservative bias, read-only constraint, `{validated, reason}` return.
 - `references/built-vs-planned.md` — scope-drift detection (informational) + the 5-state plan-completion
   audit + the three verification modes + the honesty rule, reading `docs/plans/` and the journal.
+- `../../scripts/manifest_reader.py` — R7/R16/R18 provenance-manifest reader consumed by Stage B.0 to
+  skip re-verifying attested adjudicated-verified claims. Advisory-only (R8/R12); `--json` for
+  machine-readable output.

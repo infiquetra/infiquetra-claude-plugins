@@ -25,6 +25,25 @@
 
 ---
 
+## 2026-07-01
+
+### Tier vocabulary tuples are ordered escalation ladders, not just closed sets  {#tier-vocab-ordering}
+
+**Context.** Enabling Claude 5 tiers (`fable`, `xhigh`) in the execution-spec validator for #285
+looked like "append two tuple entries" — the plan even said "smallest possible diff (two tuple
+entries + tests)".
+**Evidence.** `plugins/saga/scripts/execution_spec.py:49-56` (MODELS/EFFORTS + ordering comment) and
+the segment tier merge at `segment_units()` (`min(MODELS.index)` / `max(EFFORTS.index)`); guard test
+`test_segment_tier_merge_prefers_fable_and_xhigh` in `tests/test_team_emitter.py`.
+**Mechanism.** `segment_units()` derives a segment's upgrade-only tier by index arithmetic over the
+tuples: MODELS is strongest-first (min index wins), EFFORTS weakest-first (max index wins). Appending
+`"fable"` would have validated fine but made every merge rank fable *weaker than haiku* — a silent
+mis-tier, not a validation failure.
+**Fix.** Prepend to MODELS / append to EFFORTS, an ORDERING IS LOAD-BEARING comment at the definition,
+and a merge-order test so the next model addition fails loudly (this commit).
+**Generalizable rule.** Before extending a "closed vocabulary" constant, grep for `.index(` on it —
+a tuple used for membership *and* ordering has two contracts, and only one shows up in the validator.
+
 ## 2026-06-30
 
 ### Gemini 3.1 Pro (High) first real run — the exact fix catalog: lint + wrong-domain-enum guesses + one atomic-write edge  {#gemini-31-pro-first-run-fix-catalog}

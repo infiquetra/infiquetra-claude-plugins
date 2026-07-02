@@ -27,6 +27,27 @@
 
 ## 2026-07-02
 
+### An open issue's core fix can silently ship inside unrelated work — re-verify premises against HEAD  {#issue-premises-drift-314}
+
+**Context.** Planning #314 (saga leak-guard false-positive). The issue body, filed 2026-06-30,
+described an absolute `assert leaked == []` and proposed a `pytest_sessionstart` baseline in
+`conftest.py`.
+**Evidence.** The sagas-branch baseline (`_PREEXISTING_SAGA_DIRS`) already existed at
+`tests/test_saga_saga.py:1346-1364`, landed in `e901ae1` (#317, the evidence-manifest work) — after
+the issue was filed and unrelated to it. Two of four acceptance criteria (AC#2/AC#3) were already
+satisfied; `conftest.py` never gained the proposed hook.
+**Mechanism.** #317 touched the same guard for its own reasons and added the baseline as a side
+effect. Nothing linked that change back to #314, so the issue stayed open describing code that no
+longer existed.
+**Fix.** Plan + `/work` re-baselined against HEAD via a "Drift audit" table: only the
+legacy-checkpoint branch parity (AC#4) and the AC#1 proof-test remained open; the mypy-gate comment
+scope was still valid. Shipped in the #314 PR.
+**Generalizable rule.** Before planning or working an issue more than a few days old, diff its
+load-bearing claims against HEAD and write the deltas as a Drift audit. A filed issue is a snapshot,
+not current truth — an unrelated PR can quietly overtake it.
+**Refs.** DECISIONS `{#local-gate-enforces-ci-mypy-314}`; `{#ci-mypy-scope-wider-than-local}` (the
+sibling mypy-scope learning this issue's comment-scope built on).
+
 ### CI mypy checks `tests/` but the documented local command only checks `plugins/`  {#ci-mypy-scope-wider-than-local}
 
 **Context.** The #287 PR (#320) went green locally on `uv run mypy plugins/` (the command in

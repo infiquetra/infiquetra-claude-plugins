@@ -49,6 +49,15 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_push_gate_hook.py\""
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/team_spawn_residency_hook.py\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

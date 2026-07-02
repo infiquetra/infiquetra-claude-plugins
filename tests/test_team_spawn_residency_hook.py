@@ -26,7 +26,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -409,3 +409,47 @@ class TestSubprocessInvocation:
         result = self._run(payload)
         assert result.returncode == 0
         assert result.stdout == ""
+
+
+# ---------------------------------------------------------------------------
+# hooks.json registration (U2, issue #289) — mirrors test_spore_hooks_registration.py
+# ---------------------------------------------------------------------------
+
+HOOKS_JSON_PATH = REPO_ROOT / "plugins" / "saga" / "hooks" / "hooks.json"
+
+
+def _hooks_json() -> dict[str, list[dict]]:
+    data = json.loads(HOOKS_JSON_PATH.read_text(encoding="utf-8"))
+    return cast("dict[str, list[dict]]", data["hooks"])
+
+
+def _commands_for(entries: list[dict], matcher: str) -> list[str]:
+    """All hook commands registered under a PreToolUse entry whose matcher equals ``matcher``."""
+    cmds: list[str] = []
+    for entry in entries:
+        if entry.get("matcher") == matcher:
+            cmds.extend(h.get("command", "") for h in entry.get("hooks", []))
+    return cmds
+
+
+class TestHooksJsonRegistration:
+    def test_team_spawn_residency_hook_registered_on_agent_or_task_matcher(self) -> None:
+        pre_tool_use = _hooks_json()["PreToolUse"]
+        cmds = _commands_for(pre_tool_use, "Agent|Task")
+        assert any("team_spawn_residency_hook.py" in c for c in cmds), (
+            "team_spawn_residency_hook.py not registered under an 'Agent|Task' PreToolUse matcher"
+        )
+
+    def test_existing_pretooluse_entries_unchanged(self) -> None:
+        """No-regression: sibling PreToolUse entries keep their own matcher and hook (R12)."""
+        pre_tool_use = _hooks_json()["PreToolUse"]
+        json_validate_cmds = _commands_for(pre_tool_use, "Edit|Write|MultiEdit")
+        assert any("validate_json_hook.py" in c for c in json_validate_cmds)
+
+        pre_push_cmds = _commands_for(pre_tool_use, "Bash")
+        assert any("pre_push_gate_hook.py" in c for c in pre_push_cmds)
+
+        # The new matcher must not leak the pre-push or json-validate hooks, nor vice versa.
+        team_spawn_cmds = _commands_for(pre_tool_use, "Agent|Task")
+        assert not any("pre_push_gate_hook.py" in c for c in team_spawn_cmds)
+        assert not any("validate_json_hook.py" in c for c in team_spawn_cmds)

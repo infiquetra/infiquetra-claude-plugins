@@ -525,7 +525,87 @@ machine-local `.claude/` location.
 
 ---
 
-## 13. References
+## 13. Provenance manifests (`saga.manifest.v1`)
+
+A provenance manifest is a typed, persisted evidence record for one delegated execution — never a
+verdict (schema holds no verdict field; advisory only, R20). Producers write it; gates and reporting
+skills consume it. Full contract, requirements (R1-R21), and rejected alternatives: `#285`,
+`docs/plans/2026-07-01-evidence-provenance-manifests-plan.md`.
+
+### 13.1 Carrier
+
+One JSON file per execution at `<git-common-dir>/saga-manifests/<saga-id>/<execution-id>.json`
+(`../scripts/manifest_store.py`), resolved through the same `resolve_common_dir()` `outcome_store.py`
+uses — cross-worktree and cross-session (R19), unlike git-ignored per-checkout ticks. Outcome leaves
+additionally carry a typed `manifest_ref` pointer in `CompletionEvent.payload["manifest_ref"]`.
+
+### 13.2 Schema (`../scripts/provenance_manifest.py`)
+
+```
+Manifest
+├── execution_id, saga_ref, schema ("saga.manifest.v1")
+├── attribution: Attribution {kind, identity, effort, protocol}
+├── disposition: Disposition, disposition_note
+├── created_at
+├── output_completeness: OutputCompleteness | None
+│   {declared_keys, target_count, produced_keys, produced_count, missing_keys}
+└── claim_provenance: ClaimProvenance | None
+    {claims: [Claim {text, claimed, source_ref, source_revision, adjudicated,
+                      mismatch_reason, adjudication: Adjudication | None
+                      {adjudicator, sources_read, scope, revision, decision}}]}
+```
+
+A *lightweight* manifest carries the envelope with both subrecords `None` (attribution + disposition
++ existence bit only, R9); a *full* manifest adds one or both subrecords. `validate()` enforces the
+subrecord is present wherever a gate or contract-bearing unit needs it.
+
+### 13.3 Producer / consumer matrix (R17)
+
+Every schema field below names its producer(s) and every live-or-scheduled reader. No field may
+appear here without a reader (guard: `tests/test_manifest_consumer_matrix.py`), and no field named
+here may be absent from the `provenance_manifest.py` dataclasses (drift, both directions).
+
+| Field | Producer | Reader | Status |
+|---|---|---|---|
+| `execution_id` | `manifest_store.py`, `engine_dispatch.py` | `manifest_store.py` (read/list) | live |
+| `saga_ref` | `engine_dispatch.py`, `manifest_store.py` | `manifest_store.py` (path resolution) | live |
+| `schema` | `provenance_manifest.py` (`Manifest` default) | `manifest_store.py` (version check on read) | live |
+| `attribution.kind` | `engine_dispatch.py` (`external-engine`), `manifest_store.py` (`cc-workflows`), team-execution worker exit (`worker-manifest.md`) | `manifest_reader.py` (disposition/attribution tallies) | live (cc-workflows/engine); scheduled (team-execution-worker producer path, R2) |
+| `attribution.identity` | `engine_dispatch.py`, `manifest_store.py` | `manifest_reader.py` | live |
+| `attribution.effort` | `engine_dispatch.py`, `manifest_store.py` | `manifest_reader.py` | live |
+| `attribution.protocol` | `engine_dispatch.py` | `manifest_reader.py` | live |
+| `disposition` | `engine_dispatch.py`, `manifest_store.py` | `manifest_reader.py` (R18 disposition rate) | live |
+| `disposition_note` | `engine_dispatch.py` | operator/skill prose (`/work` SKILL.md post-run step) | live |
+| `created_at` | `engine_dispatch.py`, `manifest_store.py` | `manifest_store.py` (ordering on list) | live |
+| `output_completeness` | `manifest_store.py` `record-completeness` (U4/KTD7, driver-materialized) | `completeness_gate.py` semantics via `/work` post-run persistence step (R13); `manifest_reader.py` | live |
+| `output_completeness.declared_keys` | `manifest_store.py` (from `Contract.from_unit`) | `/work` SKILL.md post-run step (missing-output trip, R10) | live |
+| `output_completeness.target_count` | `manifest_store.py`, `completeness_gate.py` (`Contract`) | `manifest_store.py` (`record-completeness` diff) | live |
+| `output_completeness.produced_keys` | `manifest_store.py` (`record-completeness`) | `/work` SKILL.md post-run step | live |
+| `output_completeness.produced_count` | `manifest_store.py` (`record-completeness`) | `/work` SKILL.md post-run step | live |
+| `output_completeness.missing_keys` | `manifest_store.py` (`record-completeness`) | `/work` SKILL.md post-run step (missing-output trip, R10) | live |
+| `claim_provenance` / `claims` | `engine_dispatch.py` (claimed-layer at dispatch; adjudicated layer written by Claude via a `manifest_store` update helper, D5) | `manifest_reader.py` (parroting count, verified ratio); `code-review/SKILL.md` B.0 (skip re-verify) | live |
+| `claims[].text` | `engine_dispatch.py` | `manifest_reader.py` | live |
+| `claims[].claimed` | `engine_dispatch.py` | `manifest_reader.py`, gate adjudication ranking (KTD4) | live |
+| `claims[].source_ref` | `engine_dispatch.py` | `code-review/SKILL.md` B.0 | live |
+| `claims[].source_revision` | `engine_dispatch.py` | `code-review/SKILL.md` B.0 | live |
+| `claims[].adjudicated` | `engine_dispatch.py` (Claude adjudication write path) | `manifest_reader.py` (R16 ratio), `engine_dispatch.satisfy_gate()` (R11) | live |
+| `claims[].mismatch_reason` | `provenance_manifest.py` (`mismatch_reason_for`), `engine_dispatch.py` | `manifest_reader.py` (parroting count, R7) | live |
+| `claims[].adjudication` | `engine_dispatch.py` | `manifest_reader.py`, `code-review/SKILL.md` B.0 (attested-adjudication check) | live |
+| `claims[].adjudication.adjudicator` | `engine_dispatch.py` | `code-review/SKILL.md` B.0 | live |
+| `claims[].adjudication.sources_read` | `engine_dispatch.py` | `code-review/SKILL.md` B.0 | live |
+| `claims[].adjudication.scope` | `engine_dispatch.py` | `code-review/SKILL.md` B.0 | live |
+| `claims[].adjudication.revision` | `engine_dispatch.py` | `code-review/SKILL.md` B.0 | live |
+| `claims[].adjudication.decision` | `engine_dispatch.py` | `manifest_reader.py`, `retro/SKILL.md` Phase 1.8 | live |
+
+The one honestly-scheduled leg is `attribution.kind == team-execution` as a *producer* of the
+`claim_provenance` subrecord for **external-engine workers running inside team-execution** — it waits
+on `#283`'s deferred U12 external-worker wrapper contract (R14). Claude team-execution workers already
+emit manifests today per `worker-manifest.md`; only the external-engine-via-team-execution leg is
+scheduled, not the field itself.
+
+---
+
+## 14. References
 
 - Engine: [`../scripts/saga.py`](../scripts/saga.py)
 - Wrappers (delegate to the engine): `../scripts/scaffold_checkpoint.py`,
@@ -535,3 +615,6 @@ machine-local `.claude/` location.
 - Destination normalization: `../scripts/lifecycle_state.py` (`normalize_destination`)
 - Design rationale (rejected alternatives, revisit conditions):
   `../../../docs/engineering-journal/DECISIONS.md` (saga-foundation ADR)
+- Provenance manifests: `../scripts/provenance_manifest.py`, `../scripts/manifest_store.py`,
+  `../scripts/manifest_reader.py`, `#285`,
+  `../../../docs/plans/2026-07-01-evidence-provenance-manifests-plan.md`

@@ -69,16 +69,14 @@ class ManifestStoreError(ValueError):
 def _safe_name(name: str, *, what: str = "id") -> str:
     """Reject a name that would escape the store directory (path traversal / separators).
 
-    Parity with ``outcome_store._safe_name`` (V9/KTD1's shared carrier convention) —
-    duplicated rather than imported since it is a private helper of a sibling module.
+    Delegates to ``outcome_store._safe_name`` — one implementation of the security-relevant
+    traversal guard (this module already leans on the sibling's private helpers, e.g.
+    ``_atomic_write``), translated into this store's error type.
     """
-    if not name:
-        raise ManifestStoreError(f"{what} must be non-empty")
-    if "/" in name or "\\" in name or name in (".", "..") or "\x00" in name:
-        raise ManifestStoreError(
-            f"{what} {name!r} must not contain a path separator or be '.'/'..'"
-        )
-    return name
+    try:
+        return outcome_store._safe_name(name, what=what)
+    except outcome_store.OutcomeStoreError as exc:
+        raise ManifestStoreError(str(exc)) from exc
 
 
 @dataclass(frozen=True)

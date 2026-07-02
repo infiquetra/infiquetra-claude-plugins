@@ -52,7 +52,7 @@ Coordinator-only verbs — run via `python3 plugins/saga/scripts/outcome.py <ver
 | `resume <id>` | reconstruct live status from spec + store (works even if the cache was wiped) |
 | `status <id>` | the derived-on-read cockpit snapshot — rendered as the operator status header via `project_outcome` in `plugins/saga/scripts/status_card.py` (states, counts, frontier, milestone health) |
 | `commit <id> [--push]` | **commit (+ push) the spec to the outcome's own branch** — the R26/R27 cross-machine durability step (refuses on `main`/`master`) |
-| `report <id>` / `project <id>` | regenerate the derived-on-read status card via `project_outcome` (R19/R25) — the single emitter of the operator-facing outcome summary; the card's cells (milestone health, leaf progress, frontier, blockers) are derived on read from the committed spec + completion events, never from an operator-writable status field |
+| `report <id>` / `project <id>` | regenerate the derived-on-read status card via `project_outcome` (R19/R25); when a completion event carries a `manifest_ref` pointer, resolve it via `manifest_store.resolve_manifest_ref` to show the leaf's producer attribution and disposition (advisory, R8) — the single emitter of the operator-facing outcome summary; the card's cells (milestone health, leaf progress, frontier, blockers) are derived on read from the committed spec + completion events, never from an operator-writable status field |
 | `approve <id>` / `prune <id> <subplot>` / `promote <id> <subplot> <child>` | the R20 frontier approval + the R33 graph edits |
 | `export <id>` / `import <bundle>` | a portable spec + completion bundle to move an outcome across machines |
 

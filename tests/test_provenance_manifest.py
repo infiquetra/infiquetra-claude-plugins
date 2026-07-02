@@ -270,3 +270,16 @@ def test_team_execution_attribution_kind() -> None:
     again = pm.Manifest.from_dict(m.to_dict())
     assert again.attribution.kind is pm.ProducerKind.TEAM_EXECUTION
     assert pm.validate(again, "lightweight") == []
+
+
+def test_claim_from_dict_rejects_unknown_enum_values() -> None:
+    """Corrupt or future-schema enum payloads are rejected loudly, never silently accepted."""
+    base = {"text": "t", "claimed": "verified"}
+    with pytest.raises(pm.ManifestError, match="valid claimed status"):
+        pm.Claim.from_dict({**base, "claimed": "not-a-status"})
+    with pytest.raises(pm.ManifestError, match="invalid enum value"):
+        pm.Claim.from_dict({**base, "adjudicated": "not-a-status"})
+    with pytest.raises(pm.ManifestError, match="invalid enum value"):
+        pm.Claim.from_dict({**base, "mismatch_reason": "not-a-reason"})
+    with pytest.raises(pm.ManifestError, match="non-empty text"):
+        pm.Claim.from_dict({"text": "   ", "claimed": "verified"})

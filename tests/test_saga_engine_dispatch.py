@@ -277,7 +277,7 @@ def test_satisfy_gate_refuses_claimed_only_manifest(tmp_path: Path) -> None:
         store,
         "exec-claims",
         {
-            "all tests pass": (
+            ("all tests pass", "tests/test_example.py"): (
                 PM.AdjudicatedStatus.VERIFIED,
                 PM.Adjudication(
                     adjudicator="claude",
@@ -319,7 +319,7 @@ def test_adjudicated_refuted_counts_as_parroting(tmp_path: Path) -> None:
         store,
         "exec-parrot",
         {
-            "lint is clean": (
+            ("lint is clean", "pyproject.toml"): (
                 PM.AdjudicatedStatus.REFUTED,
                 PM.Adjudication(adjudicator="claude", decision="ruff reported 3 errors"),
             )
@@ -336,3 +336,48 @@ def test_adjudicated_refuted_counts_as_parroting(tmp_path: Path) -> None:
     persisted = MS.read_manifest(store, "exec-parrot")
     assert persisted is not None
     assert "verdict" not in persisted
+
+
+def test_adjudicate_manifest_keys_same_text_claims_independently(tmp_path: Path) -> None:
+    """Two claims sharing text but grounded in different sources adjudicate independently."""
+    store = _store(tmp_path)
+    evidence = D.dispatch(_resolution(), runner=_ok_runner)
+    claims = PM.ClaimProvenance(
+        claims=(
+            PM.Claim(
+                text="module is covered",
+                claimed=PM.ClaimedStatus.VERIFIED,
+                source_ref="tests/test_a.py",
+            ),
+            PM.Claim(
+                text="module is covered",
+                claimed=PM.ClaimedStatus.VERIFIED,
+                source_ref="tests/test_b.py",
+            ),
+        )
+    )
+    D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-dup-text",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+        claim_provenance=claims,
+    )
+    adjudicated = D.adjudicate_manifest(
+        store,
+        "exec-dup-text",
+        {
+            ("module is covered", "tests/test_a.py"): (
+                PM.AdjudicatedStatus.VERIFIED,
+                PM.Adjudication(adjudicator="claude", decision="ran test_a, green"),
+            ),
+            ("module is covered", "tests/test_b.py"): (
+                PM.AdjudicatedStatus.REFUTED,
+                PM.Adjudication(adjudicator="claude", decision="test_b does not exist"),
+            ),
+        },
+    )
+    by_source = {c.source_ref: c for c in adjudicated.claim_provenance.claims}
+    assert by_source["tests/test_a.py"].adjudicated is PM.AdjudicatedStatus.VERIFIED
+    assert by_source["tests/test_b.py"].adjudicated is PM.AdjudicatedStatus.REFUTED

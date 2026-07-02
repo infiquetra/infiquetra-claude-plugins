@@ -10,6 +10,13 @@
 - `manifest_store.py`: git-common-dir carrier at `<git-common-dir>/saga-manifests/<saga-id>/
   <execution-id>.json` (reusing `resolve_common_dir`), a typed `manifest_ref` payload-key helper for
   outcome leaves, and CLI `write`/`read`/`list`/`record-completeness` entry points (R19, R3, R10, R13).
+- `outcome_orchestrator.py`: `harvest` attaches the advisory `manifest_ref` pointer to a leaf's
+  CompletionEvent payload when its dispatch recorded a provenance manifest (saga id = outcome id,
+  execution id = subplot id; canonical store layout only — advisory, R8).
+- `engine_dispatch.adjudicate_manifest` keys adjudications by `(claim text, source_ref)` so two
+  claims sharing text but grounded in different sources adjudicate independently.
+- `manifest_store._safe_name` delegates to `outcome_store._safe_name` — one implementation of the
+  traversal guard, translated into `ManifestStoreError`.
 - `engine_dispatch.py`: new `build_dispatch_manifest`/`record_dispatch_manifest` let the driving
   session persist an envelope-backed manifest for a dispatch through `manifest_store` (`dispatch()`
   itself does not auto-emit); `satisfy_gate()` now enforces R11 — a gated verdict cannot persist

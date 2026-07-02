@@ -189,13 +189,16 @@ def record_dispatch_manifest(
 def adjudicate_manifest(
     store: manifest_store.Store,
     execution_id: str,
-    adjudications: dict[str, tuple[pm.AdjudicatedStatus, pm.Adjudication]],
+    adjudications: dict[tuple[str, str], tuple[pm.AdjudicatedStatus, pm.Adjudication]],
 ) -> pm.Manifest:
     """Write Claude's adjudication layer onto a persisted claimed-only manifest (D5/R6).
 
-    ``adjudications`` maps claim text → (adjudicated status, attested adjudication record).
-    Called by the driving session only — never by an engine adapter. Claims not named keep
-    their claimed-only state (mismatch_reason ``not-adjudicated`` when read by the gate).
+    ``adjudications`` maps ``(claim text, source_ref)`` → (adjudicated status, attested
+    adjudication record). The key includes ``source_ref`` so two claims sharing text but
+    grounded in different sources can be adjudicated independently — text alone is not
+    unique within a manifest. Called by the driving session only — never by an engine
+    adapter. Claims not named keep their claimed-only state (mismatch_reason
+    ``not-adjudicated`` when read by the gate).
     """
     raw = manifest_store.read_manifest(store, execution_id)
     if raw is None:
@@ -205,8 +208,9 @@ def adjudicate_manifest(
         raise DispatchError("manifest carries no claim_provenance to adjudicate")
     updated_claims = []
     for claim in manifest.claim_provenance.claims:
-        if claim.text in adjudications:
-            status, record = adjudications[claim.text]
+        key = (claim.text, claim.source_ref)
+        if key in adjudications:
+            status, record = adjudications[key]
             claim = pm.Claim(
                 text=claim.text,
                 claimed=claim.claimed,

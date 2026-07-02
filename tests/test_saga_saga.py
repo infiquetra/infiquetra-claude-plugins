@@ -1348,6 +1348,24 @@ _PREEXISTING_SAGA_DIRS = (
     if (ROOT / SAGAS_DIR).exists()
     else frozenset()
 )
+# Same collection-time baseline for the legacy-checkpoint format (#314 AC#4): a legacy
+# checkpoint that predates the run is real operator state, not leakage.
+_PREEXISTING_LEGACY_CHECKPOINTS = (
+    frozenset(p.name for p in (ROOT / LEGACY_CHECKPOINT_DIR).glob("issue-*-phase*.md"))
+    if (ROOT / LEGACY_CHECKPOINT_DIR).exists()
+    else frozenset()
+)
+
+
+def _leaked_children(current: frozenset[str], baseline: frozenset[str]) -> list[str]:
+    """Names present now but absent from the collection-time baseline.
+
+    Both guard branches share this: a name in ``current`` that was not in ``baseline``
+    appeared *during* the run and is therefore test leakage. A pre-existing live saga (or
+    legacy checkpoint) sits in the baseline and is ignored — the false positive #314 fixed.
+    Returns a sorted list so failure messages are deterministic.
+    """
+    return sorted(current - baseline)
 
 
 def test_suite_does_not_create_claude_dir_under_repo_root() -> None:
@@ -1361,12 +1379,89 @@ def test_suite_does_not_create_claude_dir_under_repo_root() -> None:
     """
     stray_sagas = ROOT / SAGAS_DIR
     if stray_sagas.exists():
-        leaked = [p.name for p in stray_sagas.iterdir() if p.name not in _PREEXISTING_SAGA_DIRS]
+        current = frozenset(p.name for p in stray_sagas.iterdir())
+        leaked = _leaked_children(current, _PREEXISTING_SAGA_DIRS)
         assert leaked == [], f"saga tests leaked state under repo-root .claude/: {leaked}"
     stray_legacy = ROOT / LEGACY_CHECKPOINT_DIR
     if stray_legacy.exists():
-        leaked_cp = [p.name for p in stray_legacy.glob("issue-*-phase*.md")]
+        current_cp = frozenset(p.name for p in stray_legacy.glob("issue-*-phase*.md"))
+        leaked_cp = _leaked_children(current_cp, _PREEXISTING_LEGACY_CHECKPOINTS)
         assert leaked_cp == [], f"saga tests leaked legacy checkpoints: {leaked_cp}"
+
+
+# --- #314: leak-guard precision — helper logic + guard-wiring proofs -------
+
+
+def test_leaked_children_flags_new_entries() -> None:
+    """A name absent from the baseline is reported as leaked (R2: a new dir is caught)."""
+    assert _leaked_children(frozenset({"issue-99"}), frozenset()) == ["issue-99"]
+
+
+def test_leaked_children_ignores_preexisting_entries() -> None:
+    """A name already in the baseline (a live saga) is not a leak — the #314 fix."""
+    assert _leaked_children(frozenset({"issue-42"}), frozenset({"issue-42"})) == []
+
+
+def test_leaked_children_flags_only_the_new_among_preexisting() -> None:
+    """A new dir is caught even while a pre-existing live saga coexists (the #281 case)."""
+    assert _leaked_children(frozenset({"issue-42", "issue-99"}), frozenset({"issue-42"})) == [
+        "issue-99"
+    ]
+
+
+def test_guard_raises_on_new_saga_dir_under_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The guard itself (not just the helper) fails when a NEW saga dir appears.
+
+    Redirect the guard's ROOT to tmp_path so a fresh saga dir can be created without
+    polluting the real repo (honoring the guard's own contract), then prove the guard
+    raises — the literal #314 AC#1 protection.
+    """
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "_PREEXISTING_SAGA_DIRS", frozenset())
+    (tmp_path / SAGAS_DIR / "issue-99").mkdir(parents=True)
+    with pytest.raises(AssertionError, match="leaked state"):
+        test_suite_does_not_create_claude_dir_under_repo_root()
+
+
+def test_guard_passes_when_only_preexisting_saga_dir_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The guard does NOT fire on a saga dir that existed before the run (baseline)."""
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "_PREEXISTING_SAGA_DIRS", frozenset({"issue-99"}))
+    (tmp_path / SAGAS_DIR / "issue-99").mkdir(parents=True)
+    # No raise: the pre-existing dir is baselined out (the false positive #314 fixed).
+    test_suite_does_not_create_claude_dir_under_repo_root()
+
+
+def test_guard_raises_on_new_legacy_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Legacy-checkpoint branch parity: a NEW checkpoint file trips the guard (#314 AC#4)."""
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "_PREEXISTING_LEGACY_CHECKPOINTS", frozenset())
+    (tmp_path / LEGACY_CHECKPOINT_DIR).mkdir(parents=True)
+    (tmp_path / LEGACY_CHECKPOINT_DIR / "issue-1-phase2.md").write_text("x", encoding="utf-8")
+    with pytest.raises(AssertionError, match="legacy checkpoints"):
+        test_suite_does_not_create_claude_dir_under_repo_root()
+
+
+def test_guard_passes_when_only_preexisting_legacy_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Legacy branch: a pre-existing checkpoint in the baseline does not false-positive."""
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "_PREEXISTING_LEGACY_CHECKPOINTS", frozenset({"issue-1-phase2.md"}))
+    (tmp_path / LEGACY_CHECKPOINT_DIR).mkdir(parents=True)
+    (tmp_path / LEGACY_CHECKPOINT_DIR / "issue-1-phase2.md").write_text("x", encoding="utf-8")
+    # No raise: baselined out.
+    test_suite_does_not_create_claude_dir_under_repo_root()
 
 
 # ===========================================================================

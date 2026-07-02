@@ -14,6 +14,12 @@
       "failure_hint": "Run `uv run python -m ruff check --fix .` to apply safe auto-fixes."
     },
     {
+      "id": "mypy",
+      "label": "mypy type check",
+      "command": ["uv", "run", "python", "-m", "mypy", "plugins/", "scripts/", "tests/", "--ignore-missing-imports"],
+      "failure_hint": "Run `uv run python -m mypy plugins/ scripts/ tests/ --ignore-missing-imports` and fix the type errors reported above."
+    },
+    {
       "id": "validate-plugins",
       "label": "validate plugin manifests",
       "command": ["uv", "run", "python", "scripts/validate_plugins.py"],

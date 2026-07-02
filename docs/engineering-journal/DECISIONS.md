@@ -24,6 +24,25 @@
 
 ## 2026-07-02
 
+### Pre-push gate enforces CI's mypy step, not just documents it (#314)  {#local-gate-enforces-ci-mypy-314}
+
+**Decision.** Add a `mypy` step to `tools/gate-manifest.json`
+(`uv run python -m mypy plugins/ scripts/ tests/ --ignore-missing-imports`) so the *enforced*
+pre-push gate runs it, and require it in the drift-guard test
+(`test_manifest_contains_required_gate_steps`). This closes the loop on
+`{#ci-mypy-scope-wider-than-local}`, which had aligned only the *documented* command in CLAUDE.md —
+the gate the hook actually runs still never invoked mypy.
+**Rejected alternatives.** (a) Rely on the documented command alone — rejected: documentation is not
+enforcement; a dev who skips the manual command still pushes type errors (the #314 comment cites PR
+#315's post-push Type Check failure, fixed in `1fdda3b`). (b) Hardcode the step in
+`pre_push_gate_hook.py` — rejected: breaks the single-source manifest contract (R15/KTD10).
+**Rationale.** The gate-manifest is the single source the hook executes; adding one step makes
+local↔CI "green" mean the same thing with zero hook change.
+**Revisit when.** CI changes its static-check set (a new linter, bandit becomes required, or mypy's
+path scope shifts) — mirror it in the manifest and the drift-guard's `required` set in the same PR.
+**Refs.** LEARNINGS `{#ci-mypy-scope-wider-than-local}`, `{#issue-premises-drift-314}`;
+`.github/workflows/ci.yml:123`; `tools/gate-manifest.json`.
+
 ### Capability-scoped sandbox — implementation decisions (#287)  {#capability-sandbox-implementation}
 
 **Status.** Adopted, ships in saga 0.47.0 / team-execution 2.7.0. Builds on

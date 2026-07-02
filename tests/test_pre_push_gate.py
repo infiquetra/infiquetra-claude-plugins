@@ -6,7 +6,7 @@ Unit tests for U9 (R15, KTD10):
   - plugins/saga/hooks/pre_push_gate_hook.py — the hook runner
 
 Contract under test:
-  1. The manifest exists, is valid JSON, and lists the 5 expected gate steps.
+  1. The manifest exists, is valid JSON, and lists the 6 expected gate steps.
   2. The manifest is the single source of truth: the hook reads it at runtime.
   3. The hook is silent on an all-green tree (report by exception).
   4. The hook reports failures and exits 2 (blocking) when any step fails.
@@ -75,14 +75,15 @@ class TestGateManifest:
 
     def test_manifest_contains_required_gate_steps(self) -> None:
         """
-        The manifest must list all 5 CI gate steps (per R15 + spec §U9):
-          ruff format --check, ruff check, validate_plugins, validate marketplace, pytest
+        The manifest must list all 6 CI gate steps (per R15 + spec §U9; mypy added #314):
+          ruff format --check, ruff check, mypy, validate_plugins, validate marketplace, pytest
         """
         data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
         step_ids = {s.get("id") for s in data["steps"]}
         required = {
             "ruff-format",
             "ruff-lint",
+            "mypy",
             "validate-plugins",
             "validate-marketplace",
             "pytest",

@@ -1,0 +1,192 @@
+{
+  "name": "evidence-provenance-manifests",
+  "description": "Issue #285: typed provenance manifest envelope per delegated output \u2014 schema, git-common-dir carrier, producer wiring into the shipped #277/#283 gates, advisory consumers, matrix guard, release surfaces.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "manifest schema module",
+      "tier": {
+        "model": "fable",
+        "effort": "xhigh"
+      },
+      "prompt": "U1: Create plugins/saga/scripts/provenance_manifest.py \u2014 the manifest envelope, both subrecords, parroting taxonomy as pure predicates, tier sizing, and tests/test_provenance_manifest.py. Read the plan at docs/plans/2026-07-01-evidence-provenance-manifests-plan.md (U1, KTD3-KTD5, KTD9) as the authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/saga/scripts/provenance_manifest.py",
+        "tests/test_provenance_manifest.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U2",
+      "label": "manifest store carrier",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U2: Create plugins/saga/scripts/manifest_store.py \u2014 git-common-dir saga-manifests/ tree via outcome_store.resolve_common_dir, write/read/list CLI, CompletionEvent.payload manifest_ref pointer helper, and tests/test_manifest_store.py. Read the plan at docs/plans/2026-07-01-evidence-provenance-manifests-plan.md (U2, KTD1) as the authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/saga/scripts/manifest_store.py",
+        "tests/test_manifest_store.py"
+      ]
+    },
+    {
+      "unit_id": "U3",
+      "label": "engine producer and gate read",
+      "tier": {
+        "model": "fable",
+        "effort": "xhigh"
+      },
+      "prompt": "U3: Wire plugins/saga/scripts/engine_dispatch.py to emit typed manifests (claim_provenance, attribution, disposition) via manifest_store and extend satisfy_gate to enforce R11 (gated verdict requires Claude-adjudicated claims); extend tests/test_saga_engine_dispatch.py. Read the plan at docs/plans/2026-07-01-evidence-provenance-manifests-plan.md (U3, KTD4-KTD5) as the authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/saga/scripts/engine_dispatch.py",
+        "tests/test_saga_engine_dispatch.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U4",
+      "label": "completeness persistence and rename",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U4: Add record-completeness to manifest_store.py (driver-materialized output_completeness per spec unit via completeness_gate.Contract), rename completeness_gate.check_manifest to check_required_keys, add the /work SKILL post-run persistence step, update tests. Read the plan at docs/plans/2026-07-01-evidence-provenance-manifests-plan.md (U4, KTD6-KTD7) as the authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/saga/scripts/manifest_store.py",
+        "plugins/saga/scripts/completeness_gate.py",
+        "plugins/saga/skills/work/SKILL.md",
+        "tests/test_completeness_gate.py",
+        "tests/test_manifest_store.py"
+      ]
+    },
+    {
+      "unit_id": "U5",
+      "label": "team-execution worker manifest contract",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U5: Define the team-execution worker-exit manifest contract (reference doc + SKILL pointer, complements validator-evidence-state, evidence-only) and the worker-attribution validation test. Read the plan at docs/plans/2026-07-01-evidence-provenance-manifests-plan.md (U5) as the authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/team-execution/skills/team-execution/SKILL.md",
+        "plugins/team-execution/skills/team-execution/references/validator-evidence-state.md",
+        "tests/test_provenance_manifest.py"
+      ]
+    },
+    {
+      "unit_id": "U6",
+      "label": "advisory reader and skill wiring",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U6: Create plugins/saga/scripts/manifest_reader.py (parroting count, disposition rate, verified ratio; --json) modeled on override_rate_reader.py, wire /code-review R15 skip, /qa R16 ratio, /retro reader invocation; add tests/test_manifest_reader.py. Read the plan at docs/plans/2026-07-01-evidence-provenance-manifests-plan.md (U6, KTD8) as the authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U3",
+        "U4",
+        "U5"
+      ],
+      "files": [
+        "plugins/saga/scripts/manifest_reader.py",
+        "plugins/saga/skills/code-review/SKILL.md",
+        "plugins/saga/skills/qa/SKILL.md",
+        "plugins/saga/skills/retro/SKILL.md",
+        "tests/test_manifest_reader.py"
+      ]
+    },
+    {
+      "unit_id": "U7",
+      "label": "saga-spec docs and matrix guard",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U7: Document the manifest contract and the R17 producer/consumer matrix in plugins/saga/references/saga-spec.md; add tests/test_manifest_consumer_matrix.py enforcing no-orphan-field in both directions. Read the plan at docs/plans/2026-07-01-evidence-provenance-manifests-plan.md (U7) as the authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U6"
+      ],
+      "files": [
+        "plugins/saga/references/saga-spec.md",
+        "tests/test_manifest_consumer_matrix.py"
+      ]
+    },
+    {
+      "unit_id": "U8",
+      "label": "release surfaces and journal",
+      "tier": {
+        "model": "sonnet",
+        "effort": "low"
+      },
+      "prompt": "U8: Bump saga and team-execution plugin.json versions, mirror marketplace.json, CHANGELOG entries, DECISIONS.md entries for KTD1-KTD9, draft the #285 drift-correction comment. Read the plan at docs/plans/2026-07-01-evidence-provenance-manifests-plan.md (U8 and the drift report) as the authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U7"
+      ],
+      "files": [
+        "plugins/saga/.claude-plugin/plugin.json",
+        "plugins/team-execution/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/saga/CHANGELOG.md",
+        "plugins/team-execution/CHANGELOG.md",
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    }
+  ]
+}

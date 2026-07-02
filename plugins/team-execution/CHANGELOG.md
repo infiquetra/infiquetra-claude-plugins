@@ -4,6 +4,35 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.8.0] - 2026-07-02
+
+### Typed artifact-pointer passing (#291)
+- New `plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py` CLI: the pointer
+  contract (kind `diff`/`file`/`symbol`, locator, integrity hash, freshness marker) plus four
+  subcommands — `snapshot` (Layer 1: a dirty-tree-safe locator via a temp-index `git write-tree`,
+  pinned by a holding ref under `refs/team-execution/snapshots/<run-id>/<epoch>`, covering staged,
+  unstaged, and untracked files without touching the real index or worktree), `store` (Layer 2: a
+  write-once content-addressed store at `.claude/team-execution/artifacts/`, sha256-keyed, with an
+  epoch freshness sidecar and TTL-bounded `gc`), `deref` (verifies both hash and freshness, emitting
+  typed `POINTER_HASH_MISMATCH` / `POINTER_STALE` errors on mismatch — never a silent review of
+  wrong or stale bytes), and `gc` (reclaims snapshot refs and stale CAS entries past the TTL).
+- Spawn templates (`references/consensus-protocol.md` B3a fan-out and B3e delta re-engagement,
+  `references/validator-spawn-quirks.md`) pass an `artifact-pointer` fenced-JSON block instead of an
+  inlined diff once the artifact crosses threshold (> 4 KB solo, > 1 KB with >= 2 recipients; <= 1 KB
+  always stays inline). New `references/artifact-pointers.md` states the receiver contract: dereference,
+  verify hash and freshness, and always read the FULL artifact in v1 — review invariance is
+  preserved, per-lens scoping stays deferred. Base reviewer agents each carry a pointer-dereference
+  line referencing the contract.
+- Light Layer-3 `symbol` pointer form (`<repo-relative-path>#<symbol-name>`), resolved by the
+  receiver's existing grep/read tools — no formal resolver, no feasibility probe.
+- KTD7 capability-keyed degradation: git-object pointers resolve for same-cwd resident teammates and
+  linked worktrees (shared `.git/objects`) but not inside external-engine disposable clones: those
+  paths fall back to inlined content, stated explicitly in the spawn templates and
+  `artifact-pointers.md`.
+- Security hardening (887f769): confined the Layer-2 `deref` path resolution to the hash-derived CAS
+  path only, blocking a path-traversal arbitrary-file-read and an accompanying hash oracle that a
+  crafted pointer locator could otherwise exploit.
+
 ## [2.7.0] - 2026-07-02
 
 ### Capability-scoped sandbox write-mode leg (#287)

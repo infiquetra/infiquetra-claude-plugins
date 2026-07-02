@@ -26,6 +26,8 @@
 
 ### Typed artifact pointers: temp-index tree snapshot, 4 KB threshold, live-on-both-axes saga field (#291, plan)  {#artifact-pointer-ktds-291}
 
+**Status.** Shipped in team-execution 2.8.0 / saga 0.49.0.
+
 **Decision.** The typed-pointer plan (`docs/plans/2026-07-02-typed-artifact-pointer-passing-plan.md`)
 commits: (KTD1) the issue-Q1 dirty-tree locator is a **temp-index tree snapshot**
 (`GIT_INDEX_FILE=<tmp> git add -A && git write-tree`) pinned by a holding ref

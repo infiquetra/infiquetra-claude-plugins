@@ -24,6 +24,36 @@
 
 ## 2026-07-02
 
+### /outcome board status: schema-resolve from phase_board_map, not a literal swap (#326, plan)  {#outcome-board-status-schema-resolve-326}
+
+**Status.** Planned (`docs/plans/2026-07-02-outcome-board-status-schema-resolve-plan.md`); ships with the #326 fix.
+
+**Decision.** Replace the hardcoded `"In Progress"` in `outcome_board_sync._candidate_ops` with a
+status resolved from mission-control's `sdlc-schema.json` `saga_lifecycle.phase_board_map`, mapping
+leaf-state `ready` through the `review` phase row and `dispatched` through the `work` phase row for
+the target project. Thread one `project` value from the `advance` call site to both the board writer
+and the resolver; schema-resolution failure is per-op fail-loud + retryable (no ledger key), never
+tick-fatal.
+
+**Rejected alternatives.** (a) Literal `"Active"` swap — re-breaks on the next ladder/board change,
+still wrong for campps, and couples the fix to the open Operations-ladder decision. (b) Resolving
+the map in `outcome.py` and injecting it — strands the mapping logic away from its consumer and
+bypasses the module's own testable seam.
+
+**Rationale.** Operations/asgard run `intent_flow` (no `In Progress`); campps runs
+`campps_initiative`. Only schema resolution is correct for all boards simultaneously and stays
+correct under ladder changes. Known consequence: campps `ready` moves from `"In Progress"` to
+`"Committed"` — the schema-correct value, asserted by test and called out in the CHANGELOG.
+
+**Revisit when.** `phase_board_map` rows stop being single-element lists, a board gains a workflow
+with no `review`/`work` row, or `/outcome` grows an operator-facing `--project` flag (then the
+threading default should be revisited).
+
+**Refs.** Issue #326; upstream `infiquetra-context-library/docs/plans/2026-07-02-operations-board-followups-plan.md`
+(Workstream A/U1); verification corrections recorded in the plan's Problem Frame (nested
+`saga_lifecycle.phase_board_map`; pre-existing `tests/test_outcome_board_sync.py` asserting the
+buggy literal at `:102`).
+
 ### Typed artifact pointers: temp-index tree snapshot, 4 KB threshold, live-on-both-axes saga field (#291, plan)  {#artifact-pointer-ktds-291}
 
 **Status.** Shipped in team-execution 2.8.0 / saga 0.49.0.

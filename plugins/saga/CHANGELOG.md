@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.49.1 - 2026-07-03
+
+### Fix: `/outcome` autonomous board-sync schema-resolves status instead of a hardcoded literal (#326)
+- `outcome_board_sync._candidate_ops` mapped every `ready`/`dispatched` leaf state to a hardcoded
+  `"In Progress"` — a campps-workflow value with no meaning on the operations/asgard `intent_flow`
+  board (`Idea → Shaping → Ready → Active → Verify → Done`), where the autonomous write failed
+  loud and repeated. Now resolves `ready`/`dispatched` from mission-control's `sdlc-schema.json`
+  `saga_lifecycle.phase_board_map` for the target project — correct for every board, and
+  decoupled from any future ladder change.
+- `reconcile_board` and `outcome.advance` gain a `project` parameter (default `"operations"`),
+  threaded to both the board writer and the status resolver so they can never disagree about
+  which board they're targeting. Resolution is lazy (attempted only when a leaf is actually
+  `ready`/`dispatched`) and, on failure (missing schema, unknown project), fails loud and
+  retryably per-op — no ledger key written, so the next tick re-attempts — while the coalesced
+  progress comment for the same leaf still posts.
+- **Behavior change:** on `campps`, a `ready` leaf now resolves to `"Committed"` instead of
+  `"In Progress"` — the schema-correct value for that board's `campps_initiative` workflow.
+  `dispatched` on campps is unchanged (`"In Progress"`).
+- `done` (`SUB_ISSUE_CLOSE`) and the deferred no-op terminals (`blocked`/`failed`/`rejected`/
+  `stalled`) are unchanged.
+
 ## 0.49.0 - 2026-07-02
 
 ### Artifact-pointers saga envelope field (#291)

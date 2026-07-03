@@ -24,22 +24,65 @@
 
 ## 2026-07-03
 
-### Verify-panel missing-member KTDs: null-only detection, no v1 timeout, ⌈n/2⌉ floor, skeptical asymmetry (#293)  {#verify-panel-missing-member-ktds-293}
+### Layer B dimension exclusion is honesty-gated, not counter-pressured — accepted for v1 (#293)  {#layer-b-exclusion-honesty-gap-293}
+
+**Decision.** Ship `architecture-reviewer.md`'s non-applicable-dimension exclusion (#293 U4)
+without a counter-pressure mechanism against over-exclusion. A reviewer that excludes a
+dimension in bad faith (claiming "no architecture docs" to drop what would otherwise be a
+low-scoring dimension) faces no penalty: exclusion is explicitly exempted from the re-review
+path and does not lower the overall. An adversarial review pass (and its Stage-B validator)
+confirmed this is *more* gameable than the fabricated-N/A-8.0-default it replaces — the old
+default was a headwind dragging the overall toward 8.0; exclusion removes that headwind
+entirely, so a would-be-blocking (<7.0) score can be made to vanish from the denominator rather
+than fail the gate.
+
+**Rejected alternatives.** (a) A runtime penalty or escalation for exclusion — no scoring
+engine exists to enforce it; Layer B is prompt-only by design (KTD7), so any counter-pressure
+would itself be prompt-enforced and equally honesty-dependent, adding complexity without
+closing the gap. (b) Blocking #293 on this finding — the gaming surface is bounded to one
+dimension (Architecture Documentation Coverage) on one reviewer, is strictly narrower than the
+uphold-bias defect #293 exists to fix, and a runtime enforcement mechanism is a larger design
+change than this issue's scope.
+
+**Rationale.** Layer B's only enforcement lever available in v1 is the drift-guard test suite
+(`tests/test_team_execution_consensus.py`), which pins the contract *text*, not whether a given
+review applies it honestly — the same limitation the rest of the prompt-contract system
+(reviewer scoring generally) already lives with. Accepting this now, with the gap explicitly
+recorded, is preferable to silently shipping it undocumented.
+
+**Revisit when.** A reviewer is observed (or suspected) excluding a dimension to reach ACCEPT
+in a real review cycle, or Layer B gains a scoring engine / cross-reviewer audit step that could
+carry a counter-pressure check.
+
+**Refs.** infiquetra/infiquetra-claude-plugins#293;
+`docs/code-reviews/2026-07-03-fix-293-verify-panel-robustness-code-review.md` (finding #3).
+
+### Verify-panel missing-member KTDs: null-or-malformed detection, no v1 timeout, ⌈n/2⌉ floor, skeptical asymmetry (#293)  {#verify-panel-missing-member-ktds-293}
 
 **Decision.** For #293 (plan `docs/plans/2026-07-03-verify-panel-robustness-plan.md`): (1) a
-"missing" verifier is exactly a `null` verdict — the harness's skip/terminal-error signal;
-malformed non-null verdicts stay in `malformed-output` territory. (2) No verifier-level timeout in
-v1 — workflow scripts have no timer primitive (`Date.now()`/`new Date()` throw for resume-safety)
-and `agent()` exposes no timeout opt, so a hung verifier remains a harness/operator liveness
-concern. (3) Quorum floor = `⌈n/2⌉` of the declared n, baked at emit time; recomputed threshold =
-`max(1, ⌈reported/2⌉)` (majority) / `max(1, reported)` (unanimous), so all-missing is
-deterministically not-refuted. (4) Skeptical asymmetry: a refutation over reporters always acts,
-even under-strength; the quorum floor only annotates the accept path. (5) The recompute is emitted
-from one shared helper across all three reconciliation sites (the `_verifier_agent_opts` precedent).
+"missing" verifier is a `null` verdict **or** a non-null verdict lacking a usable `.refuted`
+array (`v == null || !Array.isArray(v.refuted)`) — both are the harness/verifier failing to
+deliver a trustworthy signal, and neither should be silently counted as a reporting non-refuter.
+**Corrected during `/code-review`** (see `#verify-panel-malformed-verdict-superseded` in
+ARCHIVE.md): the original decision treated malformed-non-null verdicts as already handled by
+`completeness_gate.py`'s malformed-output failure class — that premise was false
+(`completeness_gate.classify()` never inspects verifier panel verdicts, only the unit's own
+result), so the malformed case is folded into "missing" instead of left unguarded. (2) No
+verifier-level timeout in v1 — workflow scripts have no timer primitive
+(`Date.now()`/`new Date()` throw for resume-safety) and `agent()` exposes no timeout opt, so a
+hung verifier remains a harness/operator liveness concern. (3) Quorum floor = `⌈n/2⌉` of the
+declared n, baked at emit time; recomputed threshold = `max(1, ⌈reported/2⌉)` (majority) /
+`max(1, reported)` (unanimous), so all-missing is deterministically not-refuted. (4) Skeptical
+asymmetry: a refutation over reporters always acts, even under-strength; the quorum floor only
+annotates the accept path. (5) The recompute is emitted from one shared helper across all three
+reconciliation sites (the `_verifier_agent_opts` precedent).
 
-**Rejected alternatives.** Treating malformed verdicts as missing (conflates two diagnoses);
-`Promise.race` sleep timeout (no timer in the script sandbox); a fixed floor of 2 (doesn't scale
-with n); suppressing under-strength refutations (reintroduces the uphold bias being fixed).
+**Rejected alternatives.** `Promise.race` sleep timeout (no timer in the script sandbox); a
+fixed floor of 2 (doesn't scale with n); suppressing under-strength refutations (reintroduces
+the uphold bias being fixed); leaving malformed-verdict handling deferred to a follow-up issue
+once the original rationale was shown false (the fix was small and mechanically localized to
+the already-consolidated shared helper, so shipping it in the same PR was cheaper than tracking
+a known, adversarially-confirmed gap across two PRs).
 
 **Rationale.** See KTD1–KTD5 in the plan — each names the tradeoff; the load-bearing one is that
 the defect under repair is *masked refutation*, so every ambiguity resolves toward skepticism.
@@ -47,7 +90,9 @@ the defect under repair is *masked refutation*, so every ambiguity resolves towa
 **Revisit when.** The harness grows a per-agent timeout or scripts get a timer primitive (the Q1
 residue becomes implementable), or real panel telemetry shows `⌈n/2⌉` mis-sized.
 
-**Refs.** infiquetra/infiquetra-claude-plugins#293; `docs/reviews/2026-06-28-verify-panel-robustness-readiness.md`.
+**Refs.** infiquetra/infiquetra-claude-plugins#293; `docs/reviews/2026-06-28-verify-panel-robustness-readiness.md`;
+`docs/code-reviews/2026-07-03-fix-293-verify-panel-robustness-code-review.md` (finding #1, the
+malformed-verdict correction).
 
 ### readonly-verifier fallback: Explore-first ladder, not general-purpose-only (#325)  {#readonly-verifier-fallback-ladder-325}
 

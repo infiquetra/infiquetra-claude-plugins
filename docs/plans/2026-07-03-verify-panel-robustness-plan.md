@@ -98,13 +98,21 @@ premise drift above.
 
 ## Key Technical Decisions
 
-- KTD1 — "Reported" means the harness returned a non-null verdict: the workflow harness resolves a
-  skipped or terminally-errored agent to `null` (harness contract; the shipped `v &&` guard in all
-  three reconciliation sites is the in-repo acknowledgment that a verdict slot can be null), and
-  that is the only machine-detectable absence in the emitted script. A non-null but malformed
-  verdict (no `.refuted` array) keeps today's did-not-refute handling — malformed-output is
-  already a separate `completeness_gate.py` failure class, and folding it into "missing" would
-  conflate two diagnoses.
+- KTD1 — "Reported" means the harness returned a usable, non-null verdict: the workflow harness
+  resolves a skipped or terminally-errored agent to `null` (harness contract; the shipped `v &&`
+  guard in all three reconciliation sites is the in-repo acknowledgment that a verdict slot can
+  be null). **Revised during `/code-review` (docs/code-reviews/2026-07-03-fix-293-verify-panel-robustness-code-review.md,
+  finding #1):** the original decision treated a non-null-but-malformed verdict (no `.refuted`
+  array) as a legitimate did-not-refute reporter, reasoning that malformed output was "already a
+  separate `completeness_gate.py` failure class." An adversarial review pass, confirmed by an
+  independent validator, found that reasoning factually wrong — `completeness_gate.classify()`
+  and every `__gate` call site run only against the unit's own structured result, never against
+  verifier panel verdicts, so nothing else in the system catches a malformed verdict. A malformed
+  verdict is therefore now also treated as missing (`v == null || !Array.isArray(v.refuted)`):
+  it is excluded from `reported`, recorded in `missing_idx`, and cannot silently inflate the
+  recompute denominator or suppress the UNDER-STRENGTH marker. "Missing" is the only
+  machine-detectable absence in the emitted script, and it now covers both the null-slot case
+  and the malformed-non-null case.
 
 - KTD2 — Q1 resolved: no verifier-level timeout in v1: workflow scripts cannot express timers —
   `Date.now()` / `new Date()` throw by design (resume-safety) and `agent()` exposes no timeout
@@ -395,8 +403,10 @@ green; `grep -r "0.49.2\|2.8.0"` finds no stale pin for these plugins.
 
 - Single-saga cost rubric; new concurrency caps (`VERIFY_N_CAP=7` + harness cap stand); model
   homogeneity (same-tier rule stands); `pass_rule` semantics for members that do report;
-  the gated-vs-advisory governance split; malformed-but-non-null verdict handling (KTD1 —
-  existing `malformed-output` failure-class territory).
+  the gated-vs-advisory governance split.
+- ~~Malformed-but-non-null verdict handling~~ — **brought into scope during `/code-review`**
+  (see revised KTD1): the original out-of-scope rationale rested on a factually incorrect
+  premise, so this shipped in the same PR rather than deferred.
 
 ---
 

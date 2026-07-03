@@ -113,21 +113,51 @@ def _board_sync_dir(store: Any) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# State → candidate ops mapping (KTD6)
+# State → candidate ops mapping (KTD6), status resolution (KTD1/KTD2/KTD3, #326)
 # ---------------------------------------------------------------------------
 
 
-def _candidate_ops(state: str) -> list[tuple[str, str]]:
+def _default_schema_path() -> Path:
+    """The default ``sdlc-schema.json`` location, derived from this module's own file path.
+
+    Module-file-relative, not ``repo_root``-relative (KTD3) — so ``reconcile_board``'s existing
+    test call sites (no ``schema_path`` passed, ``tmp_path`` stores) keep resolving correctly
+    without threading a repo root through the test seam.
+    """
+    return Path(__file__).resolve().parents[2] / "mission-control" / "config" / "sdlc-schema.json"
+
+
+def _resolve_status_map(schema_path: Path, project: str) -> dict[str, str]:
+    """Resolve ``{"ready": <status>, "dispatched": <status>}`` for ``project`` (KTD1/KTD2).
+
+    Reads ``saga_lifecycle.phase_board_map`` from the canonical mission-control SDLC schema.
+    ``ready`` (pre-dispatch, approved-awaiting-start) resolves through the ``review`` phase row;
+    ``dispatched`` (routed-and-running, ``outcome_dispatcher.py`` sets ``status="dispatched"``)
+    resolves through the ``work`` phase row — both rows are single-element lists per project.
+    Raises on a missing/unreadable schema file or a project absent from either row; the caller
+    (``reconcile_board``) converts any exception into a per-op ``failed`` record (KTD4) rather than
+    letting it propagate.
+    """
+    schema = json.loads(schema_path.read_text())
+    phase_board_map = schema["saga_lifecycle"]["phase_board_map"]
+    return {
+        "ready": phase_board_map["review"][project][0],
+        "dispatched": phase_board_map["work"][project][0],
+    }
+
+
+def _candidate_ops(state: str, status_map: dict[str, str]) -> list[tuple[str, str]]:
     """Return ``[(op_kind_str, target_state), ...]`` for the given derived leaf state.
 
-    Negative terminals (failed/rejected/stalled) and blocked → empty list (deferred
-    non-goal per Scope Boundaries).  The ``ISSUE_PROGRESS_COMMENT`` is always coalesced
-    alongside a status change so one comment is posted per meaningful state reached (R6).
+    ``ready``/``dispatched`` target states come from the schema-resolved ``status_map`` (KTD1) —
+    never a hardcoded literal. Negative terminals (failed/rejected/stalled) and blocked → empty
+    list (deferred non-goal per Scope Boundaries). The ``ISSUE_PROGRESS_COMMENT`` is always
+    coalesced alongside a status change so one comment is posted per meaningful state reached (R6).
     """
     cert = _cert()
     if state in ("ready", "dispatched"):
         return [
-            (str(cert.OpKind.SET_FIELD_STATUS), "In Progress"),
+            (str(cert.OpKind.SET_FIELD_STATUS), status_map.get(state, "")),
             (str(cert.OpKind.ISSUE_PROGRESS_COMMENT), state),
         ]
     if state == "done":
@@ -151,13 +181,16 @@ def reconcile_board(
     board_writer: Callable[..., None],
     now: Callable[[], float] = time.time,
     max_attempts: int = 3,
+    project: str = "operations",
+    schema_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Reconcile the board for all leaf nodes against their live derived states.
 
     For each leaf node with a resolvable issue ref this function:
 
     1. Derives the node's current state via ``outcome_engine.derive_states``.
-    2. Maps the state to candidate board ops (KTD6).
+    2. Maps the state to candidate board ops (KTD6), resolving ``ready``/``dispatched`` target
+       states from the schema for ``project`` (#326 KTD1/KTD2) — never a hardcoded literal.
     3. For each candidate op, calls ``reversibility_certificate.authorize_write`` (R1).
     4. GATE → appends a ``{status:"gated"}`` record; no write, no ledger, no silence (R17).
     5. AUTHORIZED → checks the board-sync ledger for the idempotency key:
@@ -165,6 +198,13 @@ def reconcile_board(
        - Key absent   → attempts ``board_writer`` with bounded retry (AE8); on success
          writes the ledger key and appends ``{status:"written"}``; on all-attempt failure
          appends ``{status:"failed"}`` WITHOUT writing the key so the next tick retries (R18).
+
+    Schema resolution for ``ready``/``dispatched`` statuses is attempted at most once per call,
+    and only when at least one leaf is actually in one of those states — a run touching only
+    ``done``/negative-terminal leaves never reads the schema file. A resolution failure (missing
+    schema, unknown ``project``) does not raise: the affected ``set-field-status`` op records
+    ``{status:"failed"}`` with no ledger key (retryable next tick, #326 R5), while the coalesced
+    ``ISSUE_PROGRESS_COMMENT`` for the same leaf still proceeds.
 
     The board-sync ledger lives under ``store.root / "board-sync"`` — NEVER in
     ``events_dir`` (KTD4; that ledger requires terminal COMPLETION_STATES and feeds
@@ -177,6 +217,10 @@ def reconcile_board(
                       Drives the matching mission-control verb.  Never imported here.
         now:          Time source (injectable for tests).
         max_attempts: Retry cap per op (default 3 — bounded, not infinite).
+        project:      The target board's mission-control project slug — resolves the
+                      ``ready``/``dispatched`` status from that project's schema row.
+        schema_path:  Override for the SDLC schema location; defaults to the real
+                      mission-control config file (module-file-relative, #326 KTD3).
 
     Returns:
         A list of record dicts — one per candidate op — with the keys documented above.
@@ -188,6 +232,17 @@ def reconcile_board(
     states: dict[str, str] = engine.derive_states(spec, store)
     ledger_dir = _board_sync_dir(store)
     records: list[dict[str, Any]] = []
+
+    # Lazy, at-most-once-per-call resolution (#326 KTD3) — skipped entirely when no leaf is in a
+    # status-bearing state, so a done-only / no-schema-file test run never touches the schema.
+    status_map: dict[str, str] | None = None
+    status_map_error: str | None = None
+    if any(s in ("ready", "dispatched") for s in states.values()):
+        try:
+            resolved_path = schema_path if schema_path is not None else _default_schema_path()
+            status_map = _resolve_status_map(resolved_path, project)
+        except Exception as exc:  # noqa: BLE001
+            status_map_error = str(exc)
 
     for node in spec.nodes:
         if node.is_outcome:
@@ -211,9 +266,30 @@ def reconcile_board(
 
         repo, number = parsed
         state = states.get(node.subplot_id, "blocked")
-        candidate_ops = _candidate_ops(state)
+        candidate_ops = _candidate_ops(state, status_map or {})
 
         for op_kind_str, target_state in candidate_ops:
+            # #326 R5/KTD4: schema resolution failed for a ready/dispatched leaf — the status op
+            # has no status to write. Fail loud + retryable (no ledger key); the coalesced
+            # ISSUE_PROGRESS_COMMENT for this same leaf is unaffected and proceeds below.
+            if (
+                op_kind_str == str(cert.OpKind.SET_FIELD_STATUS)
+                and state in ("ready", "dispatched")
+                and status_map is None
+            ):
+                records.append(
+                    {
+                        "status": "failed",
+                        "subplot_id": node.subplot_id,
+                        "op_kind": op_kind_str,
+                        "repo": repo,
+                        "number": number,
+                        "target_state": "",
+                        "error": f"board status schema resolution failed: {status_map_error}",
+                    }
+                )
+                continue
+
             # R1: the verdict MUST come from the certificate; never re-derived here.
             verdict = cert.authorize_write(op_kind_str)
 

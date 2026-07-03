@@ -556,6 +556,7 @@ def advance(
     runner: Callable[..., Any] | None = None,
     autonomous: bool = False,
     board_writer: Callable[..., None] | None = None,
+    project: str = "operations",
 ) -> AdvanceResult:
     """Run one (``loop=False``) or repeated (``loop=True``) reconcile ticks.
 
@@ -568,6 +569,10 @@ def advance(
     leaf's work here (R3); then return the derived status. Idempotent: a leaf with a settled
     (``commit``) dispatch record is skipped, so repeated ticks never double-dispatch. ``loop`` repeats
     until the frontier is empty or ``max_ticks``, which the host (`/loop`/cron) would otherwise drive.
+
+    ``project`` (#326) names the target mission-control board/workflow and is the single source
+    threaded to both the default board writer and ``outcome_board_sync.reconcile_board`` — the two
+    must never disagree about which board they're resolving statuses against.
     """
     holder = holder if holder is not None else _default_holder()
     dispatch = dispatcher if dispatcher is not None else _default_dispatcher
@@ -639,9 +644,15 @@ def advance(
                 # under the coordinator lease so board-sync is serialized per outcome.
                 import outcome_board_sync
 
-                _bw = board_writer if board_writer is not None else _default_board_writer(repo_root)
+                _bw = (
+                    board_writer
+                    if board_writer is not None
+                    else _default_board_writer(repo_root, project=project)
+                )
                 all_board_synced.extend(
-                    outcome_board_sync.reconcile_board(spec, store, board_writer=_bw, now=now)
+                    outcome_board_sync.reconcile_board(
+                        spec, store, board_writer=_bw, now=now, project=project
+                    )
                 )
             if not loop:
                 break

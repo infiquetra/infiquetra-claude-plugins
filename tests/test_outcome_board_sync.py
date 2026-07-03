@@ -94,12 +94,13 @@ class RecordingWriter:
 
 
 # ---------------------------------------------------------------------------
-# AE1: ready state → set-field-status "In Progress" written (R5, R16, R19)
+# AE1: ready state → set-field-status schema-resolved status written (#326, R5, R16, R19)
 # ---------------------------------------------------------------------------
 
 
 def test_ae1_ready_state_writes_set_field_status(tmp_path: Path) -> None:
-    """AE1: a leaf in ready state has board_writer called with set-field-status In Progress."""
+    """AE1: a leaf in ready state on the default (operations) board resolves to "Ready" — the
+    intent_flow schema value, NOT the campps-workflow "In Progress" literal (#326)."""
     store = _store(tmp_path)
     # No completion events and no deps → leaf1 is in the ready frontier.
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
@@ -111,7 +112,7 @@ def test_ae1_ready_state_writes_set_field_status(tmp_path: Path) -> None:
     assert sf_records, "expected a set-field-status record for a ready leaf"
     r = sf_records[0]
     assert r["status"] == "written", f"expected written, got {r['status']!r}"
-    assert r["target_state"] == "In Progress"
+    assert r["target_state"] == "Ready"
     assert r["repo"] == "infiquetra/x"
     assert r["number"] == 42
 
@@ -119,7 +120,53 @@ def test_ae1_ready_state_writes_set_field_status(tmp_path: Path) -> None:
     assert len(sf_calls) == 1, "board_writer must be called exactly once for set-field-status"
     assert sf_calls[0]["repo"] == "infiquetra/x"
     assert sf_calls[0]["number"] == 42
-    assert sf_calls[0]["payload"].get("target_state") == "In Progress"
+    assert sf_calls[0]["payload"].get("target_state") == "Ready"
+
+
+@pytest.mark.parametrize(
+    ("project", "state", "expected"),
+    [
+        ("operations", "dispatched", "Active"),
+        ("asgard", "dispatched", "Active"),
+        ("campps", "dispatched", "In Progress"),
+        ("campps", "ready", "Committed"),
+    ],
+)
+def test_schema_resolved_status_per_project(
+    tmp_path: Path, project: str, state: str, expected: str
+) -> None:
+    """#326 KTD1/KTD2: ready/dispatched resolve per-project from the real sdlc-schema.json — proves
+    the fix is correct for every board, not just a literal Active swap for operations."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    if state == "dispatched":
+        # A settled (commit-phase) dispatch ledger record — the same shape derive_states()
+        # requires (outcome.py:319) to surface LIVE_DISPATCHED instead of LIVE_READY.
+        STORE_MOD.append_ledger(
+            store,
+            {
+                "phase": "commit",
+                "kind": "dispatch",
+                "key": "d:leaf1",
+                "subplot_id": "leaf1",
+                "leaf_saga_id": "l-leaf1",
+            },
+        )
+    writer = RecordingWriter()
+
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer, project=project)
+
+    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
+    assert sf_records and sf_records[0]["status"] == "written"
+    assert sf_records[0]["target_state"] == expected
+
+
+def test_candidate_ops_no_hardcoded_board_status_literal() -> None:
+    """#326: no hardcoded ladder literal remains in the module source — schema-resolve only."""
+    source = (SCRIPTS / "outcome_board_sync.py").read_text()
+    assert '"In Progress"' not in source, (
+        "outcome_board_sync.py must not contain a hardcoded board-status literal"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +288,7 @@ def test_ae8_retry_on_transient_failure_succeeds(tmp_path: Path) -> None:
         f"expected written, got {sf_records}"
     )
     # Exactly one ledger file for the set-field-status op — use the module's own
-    # _safe_ledger_name to handle the SHA-1 fallback for keys with spaces (e.g. "In Progress").
+    # _safe_ledger_name to handle the SHA-1 fallback for keys with unsafe characters.
     ledger_dir = Path(store.root) / "board-sync"
     sf_key = sf_records[0]["key"]
     ledger_file = ledger_dir / SYNC_MOD._safe_ledger_name(sf_key)
@@ -566,11 +613,12 @@ def test_candidate_ops_negative_terminals_and_blocked_emit_no_op() -> None:
 
     Mutation-proof at the boundary itself: a mutant emitting any op for failed/rejected/stalled/blocked
     autonomously advances/closes a dead leaf and this goes red."""
+    status_map = {"ready": "Ready", "dispatched": "Active"}
     for dead in ("failed", "rejected", "stalled", "blocked"):
-        assert SYNC_MOD._candidate_ops(dead) == [], f"{dead} must yield no board op"
+        assert SYNC_MOD._candidate_ops(dead, status_map) == [], f"{dead} must yield no board op"
     # positive control — live states DO emit ops (so the test isn't vacuously asserting [])
-    assert SYNC_MOD._candidate_ops("ready")
-    assert SYNC_MOD._candidate_ops("done")
+    assert SYNC_MOD._candidate_ops("ready", status_map)
+    assert SYNC_MOD._candidate_ops("done", status_map)
 
 
 def test_failed_leaf_drives_no_board_write(tmp_path: Path) -> None:
@@ -613,3 +661,82 @@ def test_parse_issue_ref_accepts_three_forms_and_rejects_garbage() -> None:
     assert SYNC_MOD._parse_issue_ref("infiquetra/saga#5") == ("infiquetra/saga", 5)
     assert SYNC_MOD._parse_issue_ref("!!garbage") is None
     assert SYNC_MOD._parse_issue_ref("") is None
+
+
+# ---------------------------------------------------------------------------
+# #326 R5/KTD4: schema resolution failure is per-op fail-loud + retryable, never tick-fatal
+# ---------------------------------------------------------------------------
+
+
+def test_schema_resolution_missing_file_fails_status_op_but_comment_still_posts(
+    tmp_path: Path,
+) -> None:
+    """A missing schema file: set-field-status records 'failed' with no ledger key (retryable);
+    the coalesced issue-progress-comment for the same leaf still proceeds and is written."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    writer = RecordingWriter()
+
+    result = SYNC_MOD.reconcile_board(
+        spec, store, board_writer=writer, schema_path=tmp_path / "nonexistent-schema.json"
+    )
+
+    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
+    assert sf_records and sf_records[0]["status"] == "failed"
+    assert "error" in sf_records[0]
+
+    comment_records = [r for r in result if r.get("op_kind") == "issue-progress-comment"]
+    assert comment_records and comment_records[0]["status"] == "written"
+    assert writer.calls_for("issue-progress-comment"), "comment write must still fire"
+    assert not writer.calls_for("set-field-status"), "no board_writer attempt without a resolved status"
+
+    ledger_dir = Path(store.root) / "board-sync"
+    ledger_files = list(ledger_dir.glob("*.json")) if ledger_dir.exists() else []
+    assert len(ledger_files) == 1, "only the comment's ledger key is written, not a status key"
+
+
+def test_schema_resolution_missing_project_fails_status_op_retryably(tmp_path: Path) -> None:
+    """A project absent from phase_board_map: same failed/retryable semantics as a missing file."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    writer = RecordingWriter()
+
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer, project="no-such-project")
+
+    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
+    assert sf_records and sf_records[0]["status"] == "failed"
+
+
+def test_schema_resolution_retries_successfully_on_next_call(tmp_path: Path) -> None:
+    """After a failed resolution (no ledger key written), a subsequent call with a valid schema
+    path succeeds — proving the failure is genuinely retryable, not permanently stuck."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+
+    bad_writer = RecordingWriter()
+    SYNC_MOD.reconcile_board(
+        spec, store, board_writer=bad_writer, schema_path=tmp_path / "nonexistent-schema.json"
+    )
+
+    good_writer = RecordingWriter()
+    result2 = SYNC_MOD.reconcile_board(spec, store, board_writer=good_writer)
+
+    sf_records = [r for r in result2 if r.get("op_kind") == "set-field-status"]
+    assert sf_records and sf_records[0]["status"] == "written"
+    assert sf_records[0]["target_state"] == "Ready"
+
+
+def test_done_leaf_never_touches_schema_file(tmp_path: Path) -> None:
+    """A done-only leaf never needs a status resolution — a missing/bogus schema_path must not
+    affect it (the lazy-resolution guarantee KTD3 depends on)."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    _done(store, "leaf1", "done")
+    writer = RecordingWriter()
+
+    result = SYNC_MOD.reconcile_board(
+        spec, store, board_writer=writer, schema_path=tmp_path / "nonexistent-schema.json"
+    )
+
+    close_records = [r for r in result if r.get("op_kind") == "sub-issue-close"]
+    assert close_records and close_records[0]["status"] == "written"

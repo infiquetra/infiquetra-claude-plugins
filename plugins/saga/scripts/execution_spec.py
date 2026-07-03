@@ -944,9 +944,7 @@ def _emit_panel_reconciliation(
     for _ in range(n):
         lines.append(f"{indent}  () => agent(")
         lines.append(f"{indent}    {_js_string(verifier_prompt)},")
-        lines.append(
-            f"{indent}    {{ " + ", ".join(verifier_opts) + f", input: {result_var} }},"
-        )
+        lines.append(f"{indent}    {{ " + ", ".join(verifier_opts) + f", input: {result_var} }},")
         lines.append(f"{indent}  ),")
     lines.append(f"{indent}])")
     # R1/R5: record which verifiers reported vs. runtime-missing; R3: recompute the pass-rule

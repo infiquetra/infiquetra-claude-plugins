@@ -874,8 +874,7 @@ def test_missing_verifier_recording_emits_runtime_failure_log() -> None:
     script = mod.emit_workflow_script(spec)
 
     assert (
-        "U2_reported = U2_verdicts.filter((v) => v != null && Array.isArray(v.refuted))"
-        in script
+        "U2_reported = U2_verdicts.filter((v) => v != null && Array.isArray(v.refuted))" in script
     )
     assert (
         "U2_missing_idx = U2_verdicts.map((v, i) => "
@@ -969,8 +968,7 @@ def test_malformed_verdict_treated_as_missing_not_implicit_uphold() -> None:
     # Both the reported-filter and the missing-index map must check verdict shape, not just
     # null-ness, so `{}` / `{refuted: null}` / a truncated object is treated as missing.
     assert (
-        "U2_reported = U2_verdicts.filter((v) => v != null && Array.isArray(v.refuted))"
-        in script
+        "U2_reported = U2_verdicts.filter((v) => v != null && Array.isArray(v.refuted))" in script
     )
     assert (
         "U2_missing_idx = U2_verdicts.map((v, i) => "

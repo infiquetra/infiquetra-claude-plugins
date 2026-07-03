@@ -873,8 +873,14 @@ def test_missing_verifier_recording_emits_runtime_failure_log() -> None:
     spec = mod.ExecutionSpec.from_dict(data)
     script = mod.emit_workflow_script(spec)
 
-    assert "U2_reported = U2_verdicts.filter((v) => v != null)" in script
-    assert "U2_missing_idx = U2_verdicts.map((v, i) => (v == null ? i + 1 : null))" in script
+    assert (
+        "U2_reported = U2_verdicts.filter((v) => v != null && Array.isArray(v.refuted))"
+        in script
+    )
+    assert (
+        "U2_missing_idx = U2_verdicts.map((v, i) => "
+        "(v == null || !Array.isArray(v.refuted) ? i + 1 : null))" in script
+    )
     assert "if (U2_missing_idx.length > 0) {" in script
     assert "verify panel over U2:" in script
     assert 'runtime-failure: #${U2_missing_idx.join(", #")}' in script
@@ -936,7 +942,88 @@ def test_missing_verifier_unanimous_threshold_over_reporters() -> None:
 
     assert "U2_threshold = Math.max(1, U2_reported.length)" in script
     assert "UNDER-STRENGTH (quorum floor 3)" in script
-    assert "U2_missing_idx = U2_verdicts.map((v, i) => (v == null ? i + 1 : null))" in script
+    assert (
+        "U2_missing_idx = U2_verdicts.map((v, i) => "
+        "(v == null || !Array.isArray(v.refuted) ? i + 1 : null))" in script
+    )
+
+
+def test_malformed_verdict_treated_as_missing_not_implicit_uphold() -> None:
+    """A non-null verdict lacking a usable `.refuted` array (e.g. `{}`, a partial/malformed
+    verifier response) must not be silently counted as a reporting non-refuter -- that would
+    inflate the reported-count denominator and could suppress the UNDER-STRENGTH marker for a
+    verifier that never actually delivered a usable verdict. completeness_gate.py's classify()
+    only gates the unit's own result, never verifier verdicts, so this predicate is the only
+    place a malformed verdict is caught."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": "majority"}
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # Both the reported-filter and the missing-index map must check verdict shape, not just
+    # null-ness, so `{}` / `{refuted: null}` / a truncated object is treated as missing.
+    assert (
+        "U2_reported = U2_verdicts.filter((v) => v != null && Array.isArray(v.refuted))"
+        in script
+    )
+    assert (
+        "U2_missing_idx = U2_verdicts.map((v, i) => "
+        "(v == null || !Array.isArray(v.refuted) ? i + 1 : null))" in script
+    )
+    # refute_count no longer needs a redundant `v.refuted &&` guard -- reported already
+    # guarantees `Array.isArray(v.refuted)` for every element.
+    assert "U2_refute_count = U2_reported.filter((v) => v.refuted.length > 0).length" in script
+
+
+def test_refute_throw_guard_is_unconditional_on_quorum_floor() -> None:
+    """KTD4 (skeptical asymmetry): a refutation over reporters always throws/retries, even
+    under-strength -- the quorum floor only annotates the accept-path log, never gates the
+    throw. A regression that gated the throw on the floor (e.g.
+    `if (refuted && reported.length >= floor)`) would still satisfy the _refuted-formula,
+    threshold-formula, and throw-message assertions elsewhere, so this pins the guard's literal
+    shape directly: the `if (refuted)` block's very next line is the throw, with no
+    floor/reported.length condition folded into the guard."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": "majority"}
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    assert "if (U2_refuted) {\n  throw new Error(`verifier-disagreement:" in script
+
+
+def test_iterate_throw_at_max_iterations_is_unconditional_on_quorum_floor() -> None:
+    """Same KTD4 guard-independence property as the one-shot panel, for the iterate-to-consensus
+    loop's max-iterations throw: `if (iter === max) { throw ... }` must not also require
+    `reported.length >= floor`."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {
+        "n": 3,
+        "pass_rule": "majority",
+        "iterate_to_consensus": True,
+        "max_iterations": 2,
+    }
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    assert "if (iter === 2) {\n    throw new Error(`verifier-disagreement:" in script
 
 
 def test_all_three_reconciliation_sites_carry_the_recompute() -> None:

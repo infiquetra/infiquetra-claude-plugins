@@ -915,7 +915,7 @@ def _emit_panel_reconciliation(
     *,
     direct_throw: bool,
 ) -> None:
-    """Emit the verdict-collection / threshold / consumer block for a refute-N panel (KTD5).
+    """Emit the verdict-collection / threshold / consumer block for a refute-N panel (plan KTD5).
 
     Single source of truth for the reconciliation shared by ``_emit_thunk``,
     ``_emit_verify_loop_singleton``, and ``_emit_verify_panel`` -- three hand-maintained copies
@@ -929,7 +929,7 @@ def _emit_panel_reconciliation(
     panel = unit.verify
     assert panel is not None
     n = panel.n
-    floor = (n + 1) // 2  # KTD3: quorum floor, baked as a literal per panel
+    floor = (n + 1) // 2  # plan KTD3: quorum floor, baked as a literal per panel
     verifier_prompt = _verifier_prompt(unit)
     verifier_opts = _verifier_agent_opts(unit)
 
@@ -949,16 +949,24 @@ def _emit_panel_reconciliation(
         )
         lines.append(f"{indent}  ),")
     lines.append(f"{indent}])")
-    # R1/R5: record which verifiers reported vs. runtime-missing (null); R3: recompute the
-    # pass-rule threshold over the reporters, not the declared n (KTD1/KTD3).
-    lines.append(f"{indent}const {reported_var} = {verdicts_var}.filter((v) => v != null)")
+    # R1/R5: record which verifiers reported vs. runtime-missing; R3: recompute the pass-rule
+    # threshold over the reporters, not the declared n (plan KTD1/KTD3). A verdict that is
+    # non-null but lacks a usable `.refuted` array is a runtime failure too (a verifier that
+    # returned a malformed/partial response is not distinguishable from one that returned a
+    # legitimate non-refuting verdict unless shape is checked here -- completeness_gate.py's
+    # classify() only gates the unit's own result, never verifier verdicts, so this is the only
+    # place malformed verdicts get caught).
     lines.append(
-        f"{indent}const {missing_idx_var} = {verdicts_var}.map((v, i) => "
-        f"(v == null ? i + 1 : null)).filter((i) => i != null)"
+        f"{indent}const {reported_var} = {verdicts_var}.filter((v) => "
+        f"v != null && Array.isArray(v.refuted))"
     )
     lines.append(
-        f"{indent}const {refute_count_var} = {reported_var}.filter((v) => v.refuted "
-        f"&& v.refuted.length > 0).length"
+        f"{indent}const {missing_idx_var} = {verdicts_var}.map((v, i) => "
+        f"(v == null || !Array.isArray(v.refuted) ? i + 1 : null)).filter((i) => i != null)"
+    )
+    lines.append(
+        f"{indent}const {refute_count_var} = {reported_var}.filter((v) => "
+        f"v.refuted.length > 0).length"
     )
     if panel.pass_rule == "majority":
         lines.append(
@@ -972,7 +980,8 @@ def _emit_panel_reconciliation(
         )
     lines.append(f"{indent}const {refuted_var} = {refute_count_var} >= {threshold_var}")
     # R4/R5: annotate missing verifiers and mark UNDER-STRENGTH below the baked quorum floor;
-    # this fires on both the accept and refute paths -- KTD4 keeps refutation acting regardless.
+    # this fires on both the accept and refute paths -- plan KTD4 keeps refutation acting
+    # regardless of under-strength.
     lines.append(f"{indent}if ({missing_idx_var}.length > 0) {{")
     lines.append(
         f"{indent}  log(`verify panel over {unit.unit_id}: "
@@ -1085,11 +1094,13 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
 
     Renders a ``parallel([...])`` of ``unit.verify.n`` verifier ``agent()`` calls over the
     unit's result (each at the SAME ``{model, effort}`` tier as the unit per R4), then
-    records which verifiers reported vs. runtime-missing -- a ``null`` verdict slot (R1/R5,
-    KTD1) -- and recomputes the pass-rule threshold over the reporters (R3): ``majority`` =>
-    ``>= max(1, ceil(k/2))`` of the ``k`` reporting verifiers refuted; ``unanimous`` => all
-    ``k`` refuted. A quorum floor of ``ceil(n/2)`` of the declared ``n`` (KTD3) marks the
-    result UNDER-STRENGTH when under-met, but a refutation still acts regardless (KTD4).
+    records which verifiers reported vs. runtime-missing (R1/R5) -- a ``null`` verdict slot
+    OR a non-null verdict lacking a usable ``.refuted`` array both count as missing, since
+    neither is a trustworthy signal -- and recomputes the pass-rule threshold over the
+    reporters (R3): ``majority`` => ``>= max(1, ceil(k/2))`` of the ``k`` reporting verifiers
+    refuted; ``unanimous`` => all ``k`` refuted. A quorum floor of ``ceil(n/2)`` of the
+    declared ``n`` (plan KTD3) marks the result UNDER-STRENGTH when under-met, but a
+    refutation still acts regardless (plan KTD4).
     (This is a panel-level signal, not per-finding survival: a generic emitter cannot match
     findings across verifiers, so it surfaces "did enough skeptics refute anything" for the
     operator/runtime to act on.) The resulting ``<var>_refuted`` boolean is CONSUMED: when

@@ -1,6 +1,6 @@
 {
   "name": "team-execution",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "description": "Two-phase plan execution with reviewer consensus, validator gates, and guarded nonprod automation for Infiquetra repositories.",
   "author": {
     "name": "Infiquetra",

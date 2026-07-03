@@ -27,6 +27,46 @@
 
 ## 2026-07-03
 
+### A null-tolerant filter plus a fixed threshold silently converts member failure into member assent  {#uphold-bias-nullable-quorum-293}
+
+**Context.** Issue #293's verify-panel reconciliation (`execution_spec.py`) and the
+team-execution architecture-reviewer had the same defect shape on two different surfaces: a
+mechanism meant to detect disagreement instead silently tolerated a missing input as agreement.
+**Evidence.** Layer A: `verdicts.filter((v) => v && v.refuted && ...)` treated a `null` verdict
+(a verifier that died before emitting) identically to a verdict that explicitly upheld the
+result — both simply fell out of the refute-count numerator — while the pass-rule threshold
+stayed fixed at `⌈n/2⌉` of the DECLARED `n`, not the reporting count. Layer B:
+`architecture-reviewer.md:82` scored a dimension with no applicable precondition as a
+fabricated `N/A -> 8.0`, folded into the same average that feeds the unanimous-ACCEPT gate.
+Both existed before #293 (Layer A since #277/0.40.0, commit b09ad50) and both silently
+converted "this member said nothing" into "this member agrees." Fixed at #293 (commits
+195ce44, ec402a7).
+**Mechanism.** A quorum-over-array pattern (`array.filter(predicate).length >= threshold`) has
+two independent places a null/missing entry can hide: inside the filter predicate (a `null`
+fails `predicate(v)` the same way a legitimate "not refuted" verdict does — the filter can't
+tell absence from disagreement), and in the threshold itself (when the threshold is computed
+from the array's DECLARED length rather than the count of entries that actually carry
+information, a shrinking numerator against a fixed denominator systematically biases toward
+the "not enough refuted" outcome — acceptance). Both bugs push the same direction because
+acceptance is the quiet/default path and refutation is the loud/blocking one — a missing
+member always erodes the side that requires active signal.
+**Fix.** Layer A: recompute the threshold over the reporting count `k`, not the declared `n`
+(`max(1, ⌈k/2⌉)` majority / `max(1, k)` unanimous), and record which members were missing
+rather than silently dropping them. Layer B: exclude a non-applicable dimension from the
+averaging denominator instead of substituting a value. Both fixes share the same shape:
+separate "this member had nothing to contribute" (excluded from the denominator) from "this
+member contributed and it was negative" (counted against the numerator) — never let the
+former decay into the latter's default. Commits 195ce44 (Layer A), ec402a7 (Layer B).
+**Generalizable rule.** Any quorum computed as `X.filter(predicate).length >= threshold` over
+an array that can contain nulls/missing entries is a latent uphold-bias unless the threshold
+is explicitly recomputed over the count of entries that actually reported. Audit two things
+separately: (1) does the filter predicate treat "null/missing" the same as "present and
+negative" — it shouldn't; and (2) is the threshold a function of the array's declared/
+allocated size, or its live reporting count — it must be the latter. This generalizes past
+verify panels to any voting, consensus, or moderation quorum over a nullable array.
+**Refs.** DECISIONS `{#verify-panel-missing-member-ktds-293}`; issue #293; plan
+`docs/plans/2026-07-03-verify-panel-robustness-plan.md`.
+
 ### A just-merged agent is invisible to a session whose plugin loaded pre-merge  {#stale-agent-roster-325}
 
 **Context.** `saga:readonly-verifier` is mandated by `CLAUDE.md` and `sandbox-spawn-sites.md` for every ad-hoc verify/review-class spawn, but a `/saga:work` run on #291 hit `Agent type 'saga:readonly-verifier' not found` and fell back to an ungoverned `general-purpose` spawn.

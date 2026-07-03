@@ -10,7 +10,7 @@ Read this before running the review cycle to understand scoring, fix routing, an
 After implementation is complete (Step B2), the **Team Lead** (the main orchestrator agent, Claude/Gemini) coordinates a structured review cycle with all spawned **Reviewers** (the specialized reviewer subagents).
 
 The goal is a mutual consensus agreement between the Team Lead and the Reviewers:
-1. **Reviewers** evaluate the implementation and score 5 dimensions. Each reviewer must achieve an overall score of **>= 9.0/10** to signal acceptance.
+1. **Reviewers** evaluate the implementation and score their dimensions per their own agent prompt's rubric. A reviewer whose prompt defines a dimension with a repo-state precondition (currently: architecture-reviewer's Architecture Documentation Coverage) excludes that dimension when the precondition is absent, rather than scoring it with a fabricated default — see "Non-applicable dimensions". Every other reviewer's dimensions are always-applicable by their own prompt's design; this exclusion mechanism only activates for a reviewer whose prompt defines it. Each reviewer must achieve an overall score of **>= 9.0/10** to signal acceptance.
 2. **Team Lead** reviews each reviewer's assessment, verifies that all requested fixes are soundly implemented, and provides the final lead consensus sign-off.
 3. The **Human User (Client/Stakeholder)** is **not** part of this consensus loop or the review-revise iterations. They are kept informed of progress and only alerted for severe escalations.
 
@@ -30,8 +30,13 @@ For iteration 1..3:
         - Path to review-criteria.md for scoring rubrics
 
   B3b. Each reviewer:
-        - Scores 5 dimensions (0-10 each)
-        - Produces overall score (average of 5 dimensions)
+        - Scores each APPLICABLE dimension (0-10) per its own prompt; for a reviewer whose
+          prompt defines a precondition-bearing dimension (currently only architecture-reviewer),
+          a dimension whose repo-state precondition is absent is EXCLUDED, not scored with a
+          fabricated default — see "Non-applicable dimensions" below. A reviewer with no
+          precondition-bearing dimension scores all of its dimensions; "applicable" is a no-op
+          restriction for it.
+        - Produces overall score (average of the applicable dimensions)
         - Issues verdict: ACCEPT (>= 9.0) or NEEDS REVISION (< 9.0)
         - If NEEDS REVISION: provides specific fix requests
 
@@ -66,15 +71,48 @@ After 3 iterations: proceed with best version, document final scores in completi
 | 7.0 – 8.9 | NEEDS REVISION — issues exist but not blocking if isolated |
 | < 7.0 | BLOCKING — dimension must be fixed before proceeding |
 
-**Pass threshold**: Overall score >= 9.0 AND no individual dimension < 7.0.
+**Pass threshold**: Overall score (average of applicable dimensions) >= 9.0 AND no individual
+*applicable* dimension < 7.0. An EXCLUDED dimension carries no score and cannot trigger this
+rule — see "Non-applicable dimensions" below.
 
-If any dimension scores < 7.0, that reviewer MUST be re-run in the next cycle regardless of overall score.
+If any applicable dimension scores < 7.0, that reviewer MUST be re-run in the next cycle regardless of overall score.
+
+---
+
+## Non-applicable dimensions (R7/R8/R9)
+
+This mechanism activates only for a reviewer whose own agent prompt defines a
+precondition-bearing dimension — currently `architecture-reviewer` only (its Architecture
+Documentation Coverage dimension). The other reviewer prompts in this roster define all of
+their dimensions as always-applicable and carry no exclusion instruction; extending this
+mechanism to a future reviewer requires updating that reviewer's own prompt, not just this
+document.
+
+A dimension whose repo-state precondition is absent (e.g. no architecture-decision docs to
+check for Architecture Documentation Coverage) is EXCLUDED from that reviewer's overall, not
+scored with a fabricated default. Exclusion is dimension-granular: a reviewer whose entire
+lens is non-applicable is excluded WHOLE from the consensus denominator, with a logged cause.
+The cause vocabulary is shared with the Layer A `execution-spec.md` contract:
+`static-non-applicable` (R9) — the two surfaces name the same kind of absence even though
+they run on distinct paths (this reference's dimensions are precondition-bearing and
+reconciled by prompt; Layer A's verifiers are homogeneous and reconciled by generated code).
+
+A static exclusion is never a failure signal: it does not lower the overall score, does not
+count against the "no applicable dimension < 7.0" rule, and does not trigger the re-review
+path below — an excluded dimension/reviewer has nothing further to say and is not re-run in
+subsequent cycles.
+
+Example: a repo with no `docs/adrs/` and no observable architectural patterns scores the 4
+precondition-independent dimensions and excludes Architecture Documentation Coverage; the
+overall is the average of those 4, named as such ("avg of 4 applicable") rather than folding
+a fabricated N/A default into a 5-dimension average.
 
 ---
 
 ## Re-review Scoping
 
-To minimize cost, only re-run reviewers that scored < 9.0:
+To minimize cost, only re-run reviewers that scored < 9.0 (an EXCLUDED dimension/reviewer has
+no score and is never re-run on that basis):
 
 ```
 Cycle 1 scores:

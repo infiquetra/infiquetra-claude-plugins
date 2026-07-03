@@ -475,6 +475,36 @@ the Infiquetra command after normal README and marketplace documentation.
 
 ## Superseded
 
+### "Malformed non-null verdicts stay in `malformed-output` territory" (pre-correction of `#verify-panel-missing-member-ktds-293`)  {#verify-panel-malformed-verdict-superseded}
+
+**SUPERSEDED 2026-07-03** (same session it shipped) by the inline correction in DECISIONS
+[#verify-panel-missing-member-ktds-293](DECISIONS.md#verify-panel-missing-member-ktds-293).
+
+**Original (pre-correction) KTD1 claim.** "A 'missing' verifier is exactly a `null` verdict —
+the harness's skip/terminal-error signal; malformed non-null verdicts stay in
+`malformed-output` territory," with the stated reasoning that "malformed-output is already a
+separate `completeness_gate.py` failure class, and folding it into 'missing' would conflate two
+diagnoses."
+
+**Why superseded.** The reasoning was false-to-source. `completeness_gate.py`'s `classify()`
+and every `__gate` call site in `execution_spec.py` run only against a **unit's own**
+structured result — never against verifier panel verdicts. There is no existing mechanism that
+catches a malformed verifier verdict at all, so the "already handled elsewhere" premise that
+justified leaving this out of scope was incorrect. Caught by the adversarial/red-team lens
+during the `/code-review` pre-PR gate (`docs/code-reviews/2026-07-03-fix-293-verify-panel-robustness-code-review.md`,
+finding #1), confirmed by an independent Stage-B validator before the code fix landed.
+
+**The fix.** Broadened the missing-detection predicate to `v == null ||
+!Array.isArray(v.refuted)` in the shared `_emit_panel_reconciliation` helper — a malformed
+verdict is now excluded from `reported`, recorded in `missing_idx`, and can no longer inflate
+the recompute denominator or silently suppress the UNDER-STRENGTH marker. This landed in the
+same PR as the rest of #293, not deferred, since the original out-of-scope decision rested on
+a factual error rather than a genuine tradeoff.
+
+**Refs.** Corrected inline: DECISIONS
+[#verify-panel-missing-member-ktds-293](DECISIONS.md#verify-panel-missing-member-ktds-293).
+infiquetra/infiquetra-claude-plugins#293.
+
 ### "gstack has no scoring formula — its health score is LLM-eyeballed" (pre-correction of `#source-fidelity-cuts-both-ways`)  {#source-fidelity-no-formula-superseded}
 
 **SUPERSEDED 2026-06-03** (same session it shipped) by the inline correction in LEARNINGS [#source-fidelity-cuts-both-ways](LEARNINGS.md#source-fidelity-cuts-both-ways). The pre-correction version made the exact source-fidelity error that very entry warns against.

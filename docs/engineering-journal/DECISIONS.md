@@ -24,6 +24,31 @@
 
 ## 2026-07-03
 
+### Verify-panel missing-member KTDs: null-only detection, no v1 timeout, ⌈n/2⌉ floor, skeptical asymmetry (#293)  {#verify-panel-missing-member-ktds-293}
+
+**Decision.** For #293 (plan `docs/plans/2026-07-03-verify-panel-robustness-plan.md`): (1) a
+"missing" verifier is exactly a `null` verdict — the harness's skip/terminal-error signal;
+malformed non-null verdicts stay in `malformed-output` territory. (2) No verifier-level timeout in
+v1 — workflow scripts have no timer primitive (`Date.now()`/`new Date()` throw for resume-safety)
+and `agent()` exposes no timeout opt, so a hung verifier remains a harness/operator liveness
+concern. (3) Quorum floor = `⌈n/2⌉` of the declared n, baked at emit time; recomputed threshold =
+`max(1, ⌈reported/2⌉)` (majority) / `max(1, reported)` (unanimous), so all-missing is
+deterministically not-refuted. (4) Skeptical asymmetry: a refutation over reporters always acts,
+even under-strength; the quorum floor only annotates the accept path. (5) The recompute is emitted
+from one shared helper across all three reconciliation sites (the `_verifier_agent_opts` precedent).
+
+**Rejected alternatives.** Treating malformed verdicts as missing (conflates two diagnoses);
+`Promise.race` sleep timeout (no timer in the script sandbox); a fixed floor of 2 (doesn't scale
+with n); suppressing under-strength refutations (reintroduces the uphold bias being fixed).
+
+**Rationale.** See KTD1–KTD5 in the plan — each names the tradeoff; the load-bearing one is that
+the defect under repair is *masked refutation*, so every ambiguity resolves toward skepticism.
+
+**Revisit when.** The harness grows a per-agent timeout or scripts get a timer primitive (the Q1
+residue becomes implementable), or real panel telemetry shows `⌈n/2⌉` mis-sized.
+
+**Refs.** infiquetra/infiquetra-claude-plugins#293; `docs/reviews/2026-06-28-verify-panel-robustness-readiness.md`.
+
 ### readonly-verifier fallback: Explore-first ladder, not general-purpose-only (#325)  {#readonly-verifier-fallback-ladder-325}
 
 **Decision.** When `saga:readonly-verifier` is unresolvable in a session, degrade through a

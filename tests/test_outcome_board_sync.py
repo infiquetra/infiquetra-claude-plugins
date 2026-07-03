@@ -852,3 +852,39 @@ def test_done_leaf_never_touches_schema_file(tmp_path: Path) -> None:
 
     close_records = [r for r in result if r.get("op_kind") == "sub-issue-close"]
     assert close_records and close_records[0]["status"] == "written"
+
+
+# ---------------------------------------------------------------------------
+# hold_issues — #295 U5/KTD3 drift-hold: withhold ONLY the drifted issue's ops
+# ---------------------------------------------------------------------------
+
+
+def test_hold_issues_withholds_only_that_issues_ops(tmp_path: Path) -> None:
+    """A held issue's candidate ops become drift-hold records; other leaves are written normally."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("l1", "infiquetra/x#42"), _leaf("l2", "infiquetra/x#99")])
+    writer = RecordingWriter()
+    result = SYNC_MOD.reconcile_board(
+        spec, store, board_writer=writer, hold_issues={("infiquetra/x", 42)}
+    )
+    held = [r for r in result if r.get("status") == "drift-hold"]
+    assert held, "expected drift-hold records for the held issue"
+    assert all(r["number"] == 42 for r in held)  # only #42 withheld
+    # #42's board ops were NOT driven; #99's were.
+    driven_numbers = {c["number"] for c in writer.calls}
+    assert 42 not in driven_numbers
+    assert 99 in driven_numbers
+
+
+def test_hold_issues_none_is_byte_identical_to_today(tmp_path: Path) -> None:
+    """With no hold set, board-sync behavior is unchanged (regression guard for the new param)."""
+    store_a = _store(tmp_path / "a")
+    store_b = _store(tmp_path / "b")
+    spec_a = _spec([_leaf("l1", "infiquetra/x#42")])
+    spec_b = _spec([_leaf("l1", "infiquetra/x#42")])
+    r_default = SYNC_MOD.reconcile_board(spec_a, store_a, board_writer=RecordingWriter())
+    r_none = SYNC_MOD.reconcile_board(
+        spec_b, store_b, board_writer=RecordingWriter(), hold_issues=None
+    )
+    assert [r["status"] for r in r_default] == [r["status"] for r in r_none]
+    assert not [r for r in r_none if r.get("status") == "drift-hold"]

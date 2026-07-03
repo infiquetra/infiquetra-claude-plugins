@@ -183,6 +183,7 @@ def reconcile_board(
     max_attempts: int = 3,
     project: str = "operations",
     schema_path: Path | None = None,
+    hold_issues: set[tuple[str, int]] | None = None,
 ) -> list[dict[str, Any]]:
     """Reconcile the board for all leaf nodes against their live derived states.
 
@@ -221,6 +222,11 @@ def reconcile_board(
                       ``ready``/``dispatched`` status from that project's schema row.
         schema_path:  Override for the SDLC schema location; defaults to the real
                       mission-control config file (module-file-relative, #326 KTD3).
+        hold_issues:  ``{(repo, number), ...}`` of issues with a detected board<->saga drift
+                      (#295 U5/KTD3). Every candidate op for a held issue is WITHHELD and recorded
+                      as ``{status: "drift-hold"}`` instead of driven — the write must not act on a
+                      board that moved underneath it until the operator resolves the drift. Other
+                      leaves' ops proceed normally (drift-hold, not gate-all).
 
     Returns:
         A list of record dicts — one per candidate op — with the keys documented above.
@@ -267,6 +273,22 @@ def reconcile_board(
         repo, number = parsed
         state = states.get(node.subplot_id, "blocked")
         candidate_ops = _candidate_ops(state, status_map or {})
+
+        # #295 U5/KTD3: a detected drift on this issue withholds ALL its board ops for the tick —
+        # never write against a board that moved underneath saga until the operator resolves it.
+        if hold_issues and (repo, number) in hold_issues:
+            for op_kind_str, target_state in candidate_ops:
+                records.append(
+                    {
+                        "status": "drift-hold",
+                        "subplot_id": node.subplot_id,
+                        "op_kind": op_kind_str,
+                        "repo": repo,
+                        "number": number,
+                        "target_state": target_state,
+                    }
+                )
+            continue
 
         for op_kind_str, target_state in candidate_ops:
             # #326 R5/KTD4: schema resolution failed for a ready/dispatched leaf — the status op

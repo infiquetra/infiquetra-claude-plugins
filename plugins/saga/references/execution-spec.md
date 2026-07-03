@@ -50,15 +50,56 @@ generated script:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `n` | integer ≥ 1 | Number of independent adversarial verifiers. Hard cap: `VERIFY_N_CAP = 7` (above the cap, `validate` hard-blocks — guards the rate-limit overcorrection). Soft warn band: `n > 5` validates but emits a stderr warning. |
-| `pass_rule` | `"majority"` \| `"unanimous"` | A finding **survives** unless refuted per this rule. `majority` → ≥ ⌈N/2⌉ verifiers refute it; `unanimous` → all N must refute. |
+| `n` | integer ≥ 1 | Number of independent adversarial verifiers dispatched. Hard cap: `VERIFY_N_CAP = 7` (above the cap, `validate` hard-blocks — guards the rate-limit overcorrection). Soft warn band: `n > 5` validates but emits a stderr warning. |
+| `pass_rule` | `"majority"` \| `"unanimous"` | A finding **survives** unless refuted per this rule, recomputed over the verifiers that actually reported — see "Missing verdicts" below. |
+| `iterate_to_consensus` | boolean, default `false` | When `true`, a refuted result retries (re-runs the unit, re-panels) up to `max_iterations` instead of failing on the first refutation. |
+| `max_iterations` | integer | Retry ceiling for `iterate_to_consensus`; the final iteration throws instead of retrying. |
 
 **Defaults for `/plan` authoring (KTD3):** `n=3`, `pass_rule="majority"` — a finding survives unless ≥2 of
 3 verifiers refute it. Override per unit when the operator requests a different panel size. N=3/majority is
 the conservative default: enough independent skeptics to surface noise without hitting the rate-limit
 overcorrection that prompted the cap.
 
+**Consumption.** A refuted panel is never silently logged: the emitted script `throw`s
+`verifier-disagreement: …` so a refuted unit result halts the workflow rather than being relied on —
+a one-shot panel (`iterate_to_consensus: false`) throws immediately; an iterate-to-consensus panel
+retries up to `max_iterations` then throws on the final attempt.
+
 Absent `verify` round-trips unchanged — existing specs and the `team_emitter.py` never gain a spurious key.
+
+### Missing verdicts — runtime failure vs. static non-applicability (R1–R5, KTD7–KTD10)
+
+A verifier that dies before emitting resolves to a `null` verdict slot (harness contract: terminal
+error → `null`, KTD7) — the only machine-detectable absence in the emitted script. The reconciliation
+treats this as a **runtime failure**, recomputing the pass-rule threshold over the `k` verifiers that
+actually reported rather than the declared `n`:
+
+| `pass_rule` | Threshold over `k` reporters |
+|---|---|
+| `majority` | `max(1, ⌈k/2⌉)` |
+| `unanimous` | `max(1, k)` |
+
+The `max(1, …)` guard makes an all-missing panel (`k = 0`) deterministically **not refuted**, rather
+than vacuously refuted (`0 >= ⌈0/2⌉ = 0` would otherwise hold). A quorum floor of `⌈n/2⌉` of the
+**declared** `n` is baked as a literal at emit time (KTD9) — distinct from the `n=3` authoring
+default above; when the reporting count `k` falls under it, the emitted script logs which verifiers
+were missing (by index) and the `k/n` the verdict was computed over, with an UNDER-STRENGTH marker.
+The floor only *annotates* — a refutation over reporters still throws (or retries, for
+`iterate_to_consensus`) regardless of under-strength (KTD10); suppressing a refutation because the
+quorum ran small would reintroduce the exact uphold-bias this recompute exists to remove.
+
+**Two-kinds boundary (R2/R9).** Runtime failure (above) is never conflated with **static
+non-applicability** — a panel member whose precondition is absent (e.g. a reviewer dimension with no
+relevant repo state). Static non-applicability is resolved **at composition**: author a smaller `n`
+before dispatch, so it never enters the floor or the missing-verdict bookkeeping at all. Runtime
+failure is resolved **at reconciliation**, as above. A unit's `verify.n` is always the count actually
+dispatched.
+
+**Known residue (KTD8, Q1).** There is no verifier-level timeout in v1: workflow scripts cannot
+express timers (`Date.now()` / `new Date()` throw by design, for resume-safety) and `agent()` exposes
+no timeout option, so a *hung* (not terminally-errored) verifier is unreachable from the emitted
+script and blocks the panel's `parallel([...])`. This stays a harness/operator liveness concern, not
+something the emitted script can detect.
 
 ## Topological-layer parallelism (KTD4)
 

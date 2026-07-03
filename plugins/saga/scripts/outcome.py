@@ -423,6 +423,9 @@ class AdvanceResult:
     board_synced: list[dict[str, Any]] = field(
         default_factory=list
     )  # per-tick autonomous board-sync records (U4/#279 — only when autonomous=True)
+    drift: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # per-tick board<->saga drift/recovered records (#295 — only when autonomous=True)
     skipped_busy: bool = False  # coordinator lease held by another tick -> no-op (R13)
     ticks: int = 1
     status: dict[str, Any] = field(default_factory=dict)
@@ -439,6 +442,7 @@ class AdvanceResult:
             "gated": self.gated,
             "degraded": self.degraded,
             "board_synced": self.board_synced,
+            "drift": self.drift,
             "skipped_busy": self.skipped_busy,
             "ticks": self.ticks,
             "status": self.status,
@@ -556,6 +560,8 @@ def advance(
     runner: Callable[..., Any] | None = None,
     autonomous: bool = False,
     board_writer: Callable[..., None] | None = None,
+    board_reader: Callable[[str], str] | None = None,
+    issue_reader: Callable[[str], dict[str, str]] | None = None,
     project: str = "operations",
 ) -> AdvanceResult:
     """Run one (``loop=False``) or repeated (``loop=True``) reconcile ticks.
@@ -593,6 +599,7 @@ def advance(
     all_gated: list[str] = []
     all_degraded: list[dict[str, Any]] = []
     all_board_synced: list[dict[str, Any]] = []
+    all_drift: list[dict[str, Any]] = []
     merge_runs: list[Any] = []
     worktree_runs: list[Any] = []
     liveness_runs: list[Any] = []
@@ -643,15 +650,44 @@ def advance(
                 # idempotency ledger bound it; it only fires on the explicit autonomous path, and runs
                 # under the coordinator lease so board-sync is serialized per outcome.
                 import outcome_board_sync
+                import outcome_github
+                import outcome_reconcile
 
                 _bw = (
                     board_writer
                     if board_writer is not None
                     else _default_board_writer(repo_root, project=project)
                 )
+                _br = (
+                    board_reader
+                    if board_reader is not None
+                    else (lambda ref: outcome_github.board_status(ref, project=project))
+                )
+                _ir = issue_reader if issue_reader is not None else outcome_github.issue_close_info
+
+                # #295 U5/KTD2: DETECT board<->saga drift BEFORE any board write. A detected drift
+                # withholds that issue's ops (hold_issues) so the write never acts on a board that
+                # moved underneath saga; a detection failure degrades to a note, never wedges the tick.
+                try:
+                    drift_records = outcome_reconcile.detect(
+                        spec, store, board_reader=_br, issue_reader=_ir, project=project, now=now
+                    )
+                except Exception as exc:  # noqa: BLE001 — best-effort; never tick-fatal
+                    drift_records = [{"kind": "unreadable", "error": str(exc)}]
+                all_drift.extend(drift_records)
+                hold_issues = {
+                    (str(r["repo"]), int(r["number"]))
+                    for r in drift_records
+                    if r.get("kind") in outcome_reconcile.DRIFT_KINDS
+                }
                 all_board_synced.extend(
                     outcome_board_sync.reconcile_board(
-                        spec, store, board_writer=_bw, now=now, project=project
+                        spec,
+                        store,
+                        board_writer=_bw,
+                        now=now,
+                        project=project,
+                        hold_issues=hold_issues,
                     )
                 )
             if not loop:
@@ -674,6 +710,7 @@ def advance(
         gated=sorted(set(all_gated)),
         degraded=all_degraded,
         board_synced=all_board_synced,
+        drift=all_drift,
         ticks=ticks,
         status=status(repo_root, outcome_id, spec=spec, store=store),
     )
@@ -1126,6 +1163,19 @@ def main(argv: list[str] | None = None) -> int:
     p_promote.add_argument("subplot_id")
     p_promote.add_argument("child_spec_ref")
 
+    p_reconcile = sub.add_parser(
+        "reconcile",
+        help="detect board<->saga drift for this outcome (#295); --resolve to apply a decision",
+    )
+    p_reconcile.add_argument("outcome_id")
+    p_reconcile.add_argument("--project", default="operations")
+    p_reconcile.add_argument(
+        "--resolve", metavar="DRIFT_ID", help="apply --action to the drift with this id"
+    )
+    p_reconcile.add_argument(
+        "--action", choices=("accept-board", "re-assert", "hold"), help="resolution for --resolve"
+    )
+
     args = parser.parse_args(argv)
     # Resolve the repo root to an absolute, symlink-collapsed path. The default is ``.`` (relative),
     # and a relative/symlinked root would make the worktree registry paths diverge from git's absolute
@@ -1241,6 +1291,41 @@ def main(argv: list[str] | None = None) -> int:
             bundle = json.loads(Path(args.path).read_text(encoding="utf-8"))
             spec = import_bundle(root, bundle)
             print(json.dumps({"imported": spec.outcome_id, "nodes": len(spec.nodes)}))
+        elif args.command == "reconcile":
+            # #295 U5: explicit board<->saga drift detection (read-only on the world; no lease).
+            import outcome_github
+            import outcome_reconcile
+
+            spec = load_spec(root, args.outcome_id)
+            store = _store(root, args.outcome_id)
+
+            def _br(ref: str) -> str:
+                return outcome_github.board_status(ref, project=args.project)
+
+            drift = outcome_reconcile.detect(
+                spec,
+                store,
+                board_reader=_br,
+                issue_reader=outcome_github.issue_close_info,
+                project=args.project,
+            )
+            if args.resolve:
+                if not args.action:
+                    raise OutcomeError("--resolve requires --action")
+                match = next((d for d in drift if d.get("drift_id") == args.resolve), None)
+                if match is None:
+                    print(
+                        json.dumps({"ok": False, "error": f"no live drift id {args.resolve!r}"}),
+                        file=sys.stderr,
+                    )
+                    return 1
+                writer = _default_board_writer(root, project=args.project)
+                resolved = outcome_reconcile.apply_resolution(
+                    match, args.action, store=store, board_writer=writer
+                )
+                print(json.dumps({"resolved": resolved}))
+            else:
+                print(json.dumps({"drift": drift}))
     except (OutcomeError, outcome_spec.OutcomeSpecError, outcome_store.OutcomeStoreError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         return 1

@@ -54,6 +54,7 @@ Coordinator-only verbs — run via `python3 plugins/saga/scripts/outcome.py <ver
 | `commit <id> [--push]` | **commit (+ push) the spec to the outcome's own branch** — the R26/R27 cross-machine durability step (refuses on `main`/`master`) |
 | `report <id>` / `project <id>` | regenerate the derived-on-read status card via `project_outcome` (R19/R25); when a completion event carries a `manifest_ref` pointer, resolve it via `manifest_store.resolve_manifest_ref` to show the leaf's producer attribution and disposition (advisory, R8) — the single emitter of the operator-facing outcome summary; the card's cells (milestone health, leaf progress, frontier, blockers) are derived on read from the committed spec + completion events, never from an operator-writable status field |
 | `approve <id>` / `prune <id> <subplot>` / `promote <id> <subplot> <child>` | the R20 frontier approval + the R33 graph edits |
+| `reconcile <id> [--resolve <drift-id> --action ...]` | detect board↔saga drift over the board-sync ledger (#295); silent unless divergent, `--resolve` applies an operator decision (see Reconcile-on-wake) |
 | `export <id>` / `import <bundle>` | a portable spec + completion bundle to move an outcome across machines |
 
 **Persist the spec to the branch (R26/R27).** The committed `docs/outcomes/<id>/outcome-spec.json` on the
@@ -118,6 +119,40 @@ bounded number of times and then **surfaced as a failed record** — the campaig
 and never silently skips the write. **Every autonomous write is recorded** (in the tick's
 `board_synced` results) so there is an auditable trail of what the coordinator changed, when, and why it
 was authorized.
+
+## Reconcile-on-wake (`reconcile`, and `advance --autonomous`)
+
+Autonomous board-sync writes the board but never re-reads it, so an **outside** writer — the operator, a
+CI bot, a review agent — who changes a saga-owned field while saga is at rest goes unnoticed, and because
+a recorded idempotency key makes the next tick *skip* the op, that drift would persist silently. **Reconcile
+closes that loop** (#295): it re-fetches the saga-owned fields, diffs them against what the ledger recorded,
+and surfaces any divergence for you to resolve. It adds no writer of its own and no new persistence.
+
+**When it runs.** Automatically at the top of every `advance --autonomous` tick, *before* any board write
+(a detected drift **drift-holds** only that issue's ops for the tick — `{status: drift-hold}` — while other
+leaves proceed), and on demand via `outcome reconcile <id>` (read-only; no coordinator lease). It is silent
+unless something diverged.
+
+**The saga-owned field class** is exactly what the writer writes: board **Status** and issue **open/closed**.
+A field saga never wrote (a hand-added label) is out of scope and never a false positive. An external close
+is **contract-aware**: a `completed` close that satisfies a non-code leaf's completion contract is the
+harvester's sanctioned path and stays silent; a `not_planned` close, or a close on a code leaf (whose
+contract is a merged PR, not a closed issue), is drift.
+
+**Resolving a drift.** Each divergence surfaces as one line — `{kind} {repo}#{number}: saga={X} board={Y}
+(author?)` — and offers three actions (`outcome reconcile <id> --resolve <drift-id> --action ...`):
+
+- **accept-board** — the board's value wins; recorded as an append-only override so it never re-flags. For a
+  `not_planned` external close this records the acceptance but mints **no** completion event — it advises
+  `/outcome prune <subplot>` to drop the leaf from the frontier (a graph edit stays yours).
+- **re-assert** — saga's value wins; re-driven through the certificate (`authorize_write` first) and the
+  same board-sync writer, never a direct write.
+- **hold** — records nothing; the drift resurfaces on the next detection.
+
+Resolution is **human-in-the-loop** today, behind a single replaceable policy seam so a future
+writer-precedence rule ("field X's authoritative writer auto-resolves") can supersede the ask without
+touching detection. Use `AskUserQuestion` (or, in a channel session, inline the three choices) — one line
+per drift.
 
 ## Interaction method
 

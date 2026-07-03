@@ -18,6 +18,7 @@ no I/O at import.
 from __future__ import annotations
 
 import json
+import re
 import subprocess  # nosec B404 — gh CLI only, fixed argv, no shell
 import sys
 from collections.abc import Callable
@@ -89,6 +90,110 @@ def issue_state(issue_ref: str, *, runner: Callable[..., Any] | None = None) -> 
         return "unknown"
     state = str(data.get("state", "")).upper()
     return {"CLOSED": "closed", "OPEN": "open"}.get(state, "unknown")
+
+
+def board_status(issue_ref: str, *, project: str, runner: Callable[..., Any] | None = None) -> str:
+    """Live board Status option name for ``issue_ref`` on the ``project`` board; "" on any failure.
+
+    Reads ``gh issue view <ref> --json projectItems`` (probed live 2026-07-03: each item carries
+    ``{"status": {"name": ...}, "title": <project title>}``) and returns the Status name of the
+    project whose ``title`` matches ``project`` case-insensitively ("Operations" ↔ "operations").
+    Every failure — gh down, malformed JSON, no matching project item, a null/absent status —
+    degrades to "" (the reconcile caller treats "" as unreadable, never as drift), mirroring
+    ``issue_state``'s never-raise contract. This is the board-Status half of the saga-owned field
+    class (#295 U1); it adds no GraphQL and no mission-control surface.
+    """
+    rc, out, _err = _run_gh(
+        ["issue", "view", str(issue_ref), "--json", "projectItems"], runner=runner
+    )
+    if rc != 0 or not out:
+        return ""
+    try:
+        data = json.loads(out)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    items = data.get("projectItems")
+    if not isinstance(items, list):
+        return ""
+    want = project.strip().lower()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("title", "")).strip().lower() != want:
+            continue
+        status = item.get("status")
+        if isinstance(status, dict):
+            name = status.get("name")
+            if isinstance(name, str) and name:
+                return name
+        return ""  # matched the project but its Status is unset/null → unreadable
+    return ""
+
+
+# stateReason values gh reports (upper-cased on the wire), normalized to lowercase snake_case.
+_STATE_REASONS = {"COMPLETED": "completed", "NOT_PLANNED": "not_planned", "REOPENED": "reopened"}
+
+
+def _closed_by(issue_ref: str, *, runner: Callable[..., Any] | None = None) -> str:
+    """Best-effort login of whoever last closed ``issue_ref``; "" when undiscoverable.
+
+    ``gh issue view`` exposes no close-actor field, so this rides the REST events endpoint, which
+    needs an ``owner/repo`` — only an ``owner/repo#N`` ref yields one, so a bare or unqualified ref
+    degrades to "". ``--paginate`` concatenates every event page into one array (an issue with >30
+    events would otherwise drop the close), and the LAST ``closed`` event is selected AFTER the
+    concatenation (never per-page). Any failure → "".
+    """
+    m = re.fullmatch(r"(?P<owner>[^/]+)/(?P<repo>[^#/]+)#(?P<number>\d+)", str(issue_ref).strip())
+    if not m:
+        return ""
+    path = f"repos/{m['owner']}/{m['repo']}/issues/{m['number']}/events"
+    rc, out, _err = _run_gh(["api", path, "--paginate"], runner=runner)
+    if rc != 0 or not out:
+        return ""
+    try:
+        events = json.loads(out)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    if not isinstance(events, list):
+        return ""
+    login = ""
+    for ev in events:
+        if isinstance(ev, dict) and ev.get("event") == "closed":
+            actor = ev.get("actor")
+            if isinstance(actor, dict) and isinstance(actor.get("login"), str):
+                login = actor["login"]
+    return login
+
+
+def issue_close_info(issue_ref: str, *, runner: Callable[..., Any] | None = None) -> dict[str, str]:
+    """How an issue was closed: ``{"state", "state_reason", "closed_by"}`` — every field degrade-safe.
+
+    ``state`` ∈ {open, closed, unknown}; ``state_reason`` ∈ {completed, not_planned, reopened,
+    unknown}; ``closed_by`` is a best-effort login or "". Powers the reconcile close semantics
+    (#295 KTD4): a contract-satisfying ``completed`` close is the harvester's sanctioned silent
+    path, while a ``not_planned`` close — or an unreadable reason on a contract a close does not
+    satisfy — is drift. ``issue_state`` is left untouched so the harvester barrier keeps its exact
+    open/closed semantics.
+    """
+    rc, out, _err = _run_gh(
+        ["issue", "view", str(issue_ref), "--json", "state,stateReason"], runner=runner
+    )
+    state = "unknown"
+    reason = "unknown"
+    if rc == 0 and out:
+        try:
+            data = json.loads(out)
+        except (json.JSONDecodeError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            state = {"CLOSED": "closed", "OPEN": "open"}.get(
+                str(data.get("state", "")).upper(), "unknown"
+            )
+            reason = _STATE_REASONS.get(str(data.get("stateReason", "") or "").upper(), "unknown")
+    closed_by = _closed_by(issue_ref, runner=runner) if state == "closed" else ""
+    return {"state": state, "state_reason": reason, "closed_by": closed_by}
 
 
 # ---------------------------------------------------------------------------

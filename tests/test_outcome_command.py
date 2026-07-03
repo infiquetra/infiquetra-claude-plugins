@@ -324,3 +324,126 @@ def test_cli_missing_outcome_errors(repo: Path, capsys: pytest.CaptureFixture[st
     assert rc == 1
     err = json.loads(capsys.readouterr().err)
     assert err["ok"] is False
+
+
+# --------------------------------------------------------------------------- reconcile (#295 U5)
+
+
+class _RecWriter:
+    """A fake board_writer that records calls and never touches gh."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, *, op_kind: str, repo: str, number: int, payload: dict[str, Any]) -> None:
+        self.calls.append({"op_kind": op_kind, "repo": repo, "number": number, "payload": payload})
+
+
+def _seed_ledger(store: Any, *, op_kind: str, repo: str, number: int, target_state: str) -> None:
+    d = Path(store.root) / "board-sync"
+    d.mkdir(parents=True, exist_ok=True)
+    rec = {
+        "op_kind": op_kind,
+        "repo": repo,
+        "number": number,
+        "target_state": target_state,
+        "ts": 1.0,
+    }
+    (d / f"seed_{op_kind}_{number}.json").write_text(json.dumps(rec), encoding="utf-8")
+
+
+def _issue_leaves() -> list[dict[str, Any]]:
+    return [
+        {
+            "subplot_id": "a",
+            "title": "A",
+            "kind": "non-code",
+            "github": {"issue": "infiquetra/x#42"},
+        },
+        {
+            "subplot_id": "b",
+            "title": "B",
+            "kind": "non-code",
+            "github": {"issue": "infiquetra/x#99"},
+        },
+    ]
+
+
+def test_advance_autonomous_drift_holds_only_drifted_issue(repo: Path) -> None:
+    """advance --autonomous detects drift BEFORE writing: the drifted issue is held, others proceed."""
+    M.start(repo, "o", "obj", nodes=_issue_leaves())
+    store = STORE.Store.for_outcome("o", repo)
+    _seed_ledger(
+        store,
+        op_kind="set-field-status",
+        repo="infiquetra/x",
+        number=42,
+        target_state="In Progress",
+    )
+    _seed_ledger(
+        store, op_kind="set-field-status", repo="infiquetra/x", number=99, target_state="Ready"
+    )
+
+    def board_reader(ref: str) -> str:
+        return "Blocked" if "#42" in ref else "Ready"  # #42 drifted, #99 matches
+
+    def issue_reader(ref: str) -> dict[str, str]:
+        return {"state": "open", "state_reason": "unknown", "closed_by": ""}
+
+    writer = _RecWriter()
+    dispatcher, _ = _recorder()
+    result = M.advance(
+        repo,
+        "o",
+        dispatcher=dispatcher,
+        autonomous=True,
+        board_reader=board_reader,
+        issue_reader=issue_reader,
+        board_writer=writer,
+    )
+    # drift surfaced for #42, on the AdvanceResult
+    assert any(d["kind"] == "status-drift" and d["number"] == 42 for d in result.drift)
+    # #42's ops were drift-held (never driven); #99's were written
+    held = [r for r in result.board_synced if r.get("status") == "drift-hold"]
+    assert held and all(r["number"] == 42 for r in held)
+    driven = {c["number"] for c in writer.calls}
+    assert 42 not in driven and 99 in driven
+
+
+def test_advance_non_autonomous_never_detects(repo: Path) -> None:
+    """The default (non-autonomous) advance performs no drift detection — no board/issue reads."""
+    M.start(repo, "o", "obj", nodes=_issue_leaves())
+    store = STORE.Store.for_outcome("o", repo)
+    _seed_ledger(
+        store,
+        op_kind="set-field-status",
+        repo="infiquetra/x",
+        number=42,
+        target_state="In Progress",
+    )
+    reads: list[str] = []
+
+    def board_reader(ref: str) -> str:
+        reads.append(ref)
+        return "Blocked"
+
+    dispatcher, _ = _recorder()
+    result = M.advance(repo, "o", dispatcher=dispatcher, board_reader=board_reader)
+    assert reads == []  # detection never ran on the non-autonomous path
+    assert result.drift == []
+
+
+def test_reconcile_cli_empty_when_no_ledger(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`outcome reconcile <id>` on an outcome that never board-synced prints an empty drift list."""
+    M.start(repo, "o", "obj", nodes=_issue_leaves())
+    rc = M.main(["--repo-root", str(repo), "reconcile", "o"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out == {"drift": []}
+
+
+def test_reconcile_cli_resolve_requires_action(repo: Path) -> None:
+    """`--resolve` without `--action` is rejected (no silent guess at the operator's decision)."""
+    M.start(repo, "o", "obj", nodes=_issue_leaves())
+    rc = M.main(["--repo-root", str(repo), "reconcile", "o", "--resolve", "abc123"])
+    assert rc != 0  # OutcomeError surfaced as a non-zero exit

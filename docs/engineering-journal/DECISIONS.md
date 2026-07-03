@@ -24,6 +24,46 @@
 
 ## 2026-07-03
 
+### Board-saga reconcile: reconstruct intent from the success-only ledger, trigger at the /outcome boundary (#295)  {#board-saga-reconcile-ktds-295}
+
+**Status.** Shipped in saga 0.51.0 (`outcome_reconcile.py`; `advance --autonomous` detect-before-write +
+the `outcome reconcile` verb). The doc-review revision of KTD7 (board Status read via `gh issue view
+--json projectItems` in `outcome_github.board_status`, no mission-control verb) is what shipped.
+
+**Decision.** Build #295's reconcile-on-wake as pure detection over #279's shipped board-sync
+ledger: the baseline is ledger records + append-only `reconcile-override` records + expected values
+*recomputed* from `derive_states`/`_candidate_ops`/the schema status map (no intent ledger, no #279
+record-schema change). Detection auto-runs at the top of `advance --autonomous` (drift-holding only
+the affected issue's ops) plus an explicit `outcome.py reconcile` verb. External closes are
+contract-aware with `stateReason`: contract-satisfied + `completed` stays the harvester's sanctioned
+silent path; `not_planned` or contract-unsatisfied closes are drift; unreadable `stateReason`
+degrades to today's contract-only behavior. v1 field class = exactly what the writer writes (Status,
+open/closed); resolution is HITL behind a `decide(drift, policy=None)` seam.
+
+**Rejected alternatives.** (a) Two-phase intent/commit board-sync ledger — duplicates what
+deterministic key/value recomputation gives free, and touches the scope-locked shipped writer.
+(b) Trigger via `/resume` or a SessionStart hook (the issue's Q1 lean) — `/resume` is contractually
+read-only on the world, and hooks are deadline-bounded/offline; board fetches don't belong there.
+(c) Treating all external closes as drift (issue R1.6 literal) — fights the shipped harvester,
+which already adopts a contract-satisfying close as GitHub-canonical completion, and would prompt
+on every legitimately completed non-code leaf. (d) Label/comment-deletion drift — the writer never
+emits label ops; every finding would be a false positive.
+
+**Rationale.** Idempotency keys and target values are pure functions of observable state
+(`reversibility_certificate.idempotency_key`, `outcome_board_sync._candidate_ops`), so the
+landed-but-unrecorded crash case reconciles by recomputation — persistence would add a second
+source of truth to keep honest. The `/outcome` boundary is where the ledger lives and where the
+writer is about to act on a possibly-moved board, making detect-before-write the natural gate.
+
+**Revisit when.** The writer starts emitting label ops (field class grows); a precedence policy
+lands behind the R8 seam (HITL default changes); the harvester adopts `issue_close_info` (the
+never-written-leaf `not_planned` blind spot closes); or `advance` gains a live read-before-write
+guard (the accepted mid-run window shrinks).
+
+**Refs.** Plan `docs/plans/2026-07-03-board-saga-reconciliation-plan.md`; issue #295 + brainstorm
+`docs/brainstorms/2026-06-28-board-saga-reconciliation-requirements.md`; #279 shipped writer
+`{#outcome-board-status-schema-resolve-326}` and `plugins/saga/scripts/outcome_board_sync.py`.
+
 ### Layer B dimension exclusion is honesty-gated, not counter-pressured — accepted for v1 (#293)  {#layer-b-exclusion-honesty-gap-293}
 
 **Decision.** Ship `architecture-reviewer.md`'s non-applicable-dimension exclusion (#293 U4)

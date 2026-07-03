@@ -117,29 +117,52 @@ def _read_ledger(store: Any) -> dict[tuple[str, int], list[dict[str, Any]]]:
     return by_issue
 
 
-def _asserted_value(records: list[dict[str, Any]], family: str) -> str | None:
-    """Latest asserted value for ``family`` across write + override records, by ``ts`` (KTD5).
+def _record_value(rec: dict[str, Any], family: str) -> str:
+    """The value a single record asserts for ``family``: an override's accepted ``board_value``, a
+    status write's ``target_state``, or the implicit ``"closed"`` for a close write."""
+    if rec.get("kind") == _OVERRIDE_KIND:
+        return str(rec.get("board_value", ""))
+    if family == _CLOSE_FAMILY:
+        return "closed"
+    return str(rec.get("target_state", ""))
 
-    A write record's value is its ``target_state`` (status) or the implicit ``"closed"`` (close); an
-    override record's value is its ``board_value`` (what the operator accepted). ``None`` means saga
-    never asserted this family for the issue — the signal that a live close/Status is *external*.
+
+def _asserted_value(records: list[dict[str, Any]], family: str) -> str | None:
+    """The latest asserted value for ``family``, override-preferring on a ``ts`` tie (KTD5).
+
+    Ordering is by ``ts``; on an equal ``ts`` an override beats a write record, because an override
+    is *causally* later than the write it supersedes (the operator resolved a drift the writer had
+    already recorded). Production writes carry distinct wall-clock ``ts``, so an equal-``ts`` tie only
+    arises under a frozen/coarse clock — the override-preference keeps that deterministic and sound
+    rather than resolving by ledger-file iteration order. ``None`` means saga never asserted this
+    family — the signal that a live close/Status is *external*.
     """
-    best_ts: float | None = None
+    best_key: tuple[float, int] | None = None
     best_val: str | None = None
     for rec in records:
         if rec.get("op_kind") != family:
             continue
         ts = float(rec.get("ts", 0) or 0)
-        if rec.get("kind") == _OVERRIDE_KIND:
-            val = str(rec.get("board_value", ""))
-        elif family == _CLOSE_FAMILY:
-            val = "closed"
-        else:
-            val = str(rec.get("target_state", ""))
-        if best_ts is None or ts >= best_ts:
-            best_ts = ts
-            best_val = val
+        key = (ts, 1 if rec.get("kind") == _OVERRIDE_KIND else 0)
+        if best_key is None or key >= best_key:
+            best_key = key
+            best_val = _record_value(rec, family)
     return best_val
+
+
+def _asserted_at_max_ts(records: list[dict[str, Any]], family: str) -> set[str]:
+    """Every value asserted for ``family`` at the maximum ``ts`` (usually one — production ``ts`` are
+    distinct). A live value matching ANY of these is consistent, so an equal-``ts`` tie between two
+    writes never spuriously reports drift when the board actually matches one of them."""
+    tss = [float(r.get("ts", 0) or 0) for r in records if r.get("op_kind") == family]
+    if not tss:
+        return set()
+    max_ts = max(tss)
+    return {
+        _record_value(r, family)
+        for r in records
+        if r.get("op_kind") == family and float(r.get("ts", 0) or 0) == max_ts
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +315,9 @@ def detect(
                     }
                 )
         elif asserted_status is not None:
-            if live_status != asserted_status:
+            # Tie-robust: consistent when live matches ANY assertion at the latest ts (a single
+            # value for distinct-ts production writes; the set only widens under an equal-ts tie).
+            if live_status not in _asserted_at_max_ts(issue_records, _STATUS_FAMILY):
                 records.append(
                     _drift_record(
                         "status-drift",
@@ -304,7 +329,7 @@ def detect(
                         board_value=live_status,
                     )
                 )
-            # else: live == asserted → silent
+            # else: live matches the latest asserted Status → silent
         elif expected_status and live_status == expected_status:
             # Landed-but-unrecorded write (AE3): the board holds saga's expected Status but the
             # ledger key was lost. Rewrite the key so the baseline is whole again — informational.

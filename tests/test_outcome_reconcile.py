@@ -417,3 +417,44 @@ def test_accept_external_close_carries_prune_advisory(tmp_path: Path) -> None:
     assert out["status"] == "accepted"
     assert "prune" in out["advisory"]
     assert writer.calls == []
+
+
+# ---------------------------------------------------------------------------
+# ts-tie robustness — the _asserted_value / _asserted_at_max_ts fix (adversarial P2)
+# ---------------------------------------------------------------------------
+
+
+def test_equal_ts_write_tie_no_false_drift_when_live_matches(tmp_path: Path) -> None:
+    """Two status writes at the SAME ts: live matching either one is consistent (no false drift)."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1")])
+    # Same ts, different target states — a frozen-clock artifact; production ts are distinct.
+    _seed(store, op_kind="set-field-status", target_state="In Progress", ts=5.0)
+    _seed(store, op_kind="set-field-status", target_state="Blocked", ts=5.0)
+    # Live board reads one of the tied assertions → must NOT report drift (was a false positive).
+    for live in ("In Progress", "Blocked"):
+        br, ir = _readers(status=live, state="open")
+        out = RECON.detect(spec, store, board_reader=br, issue_reader=ir)
+        assert [r["kind"] for r in out if r["kind"] in RECON.DRIFT_KINDS] == [], (
+            f"false drift for {live!r}"
+        )
+    # Live matching NEITHER tied value is still a real drift.
+    br, ir = _readers(status="Done", state="open")
+    out = RECON.detect(spec, store, board_reader=br, issue_reader=ir)
+    assert [r["kind"] for r in out if r["kind"] in RECON.DRIFT_KINDS] == ["status-drift"]
+
+
+def test_override_beats_write_on_equal_ts(tmp_path: Path) -> None:
+    """On an equal-ts tie an override wins (it is causally later than the write it supersedes)."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1")])
+    _seed(store, op_kind="set-field-status", target_state="In Progress", ts=7.0)
+    _seed(store, op_kind="set-field-status", override=True, board_value="Blocked", ts=7.0)
+    # The override (accept "Blocked") is the baseline → live "Blocked" is silent...
+    br, ir = _readers(status="Blocked", state="open")
+    assert RECON.detect(spec, store, board_reader=br, issue_reader=ir) == []
+    # ...and the drift record (if live differs) names the override's value as saga_value.
+    br2, ir2 = _readers(status="Done", state="open")
+    out = RECON.detect(spec, store, board_reader=br2, issue_reader=ir2)
+    drift = [r for r in out if r["kind"] == "status-drift"]
+    assert len(drift) == 1 and drift[0]["saga_value"] == "Blocked"

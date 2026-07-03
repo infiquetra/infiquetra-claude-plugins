@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.49.2 - 2026-07-03
+
+### Fix: documented fallback + registration drift guard for `saga:readonly-verifier` (#325)
+- `saga:readonly-verifier` is mandated by `CLAUDE.md` and `sandbox-spawn-sites.md` for every
+  ad-hoc verify/review-class spawn, but a session whose plugin roster predates the agent's merge
+  (#287/#320) cannot resolve it — the spawn hard-fails with no documented degrade path. Root cause
+  confirmed at plan time: a live spawn in a fresh session resolved and ran successfully, so this is
+  environmental staleness, not a registration defect.
+- `sandbox-spawn-sites.md` gains a two-step fallback ladder: `Explore` + `isolation: "worktree"`
+  first (structurally omits `Edit`/`Write` while keeping `Bash`, preserving the read-only axis by
+  tool omission), then `general-purpose` + worktree + an explicit read-only prompt instruction only
+  if `Explore` is also absent. `CLAUDE.md`'s ad-hoc spawn rule now points to it.
+- New `tests/test_agent_registration_drift.py` pins the repo-side preconditions of
+  discoverability: agent frontmatter `name:` matches its file stem, `execution_spec.py`'s
+  `READONLY_VERIFIER_AGENT_TYPE` matches the on-disk agent, every spawn-context
+  (`subagent_type`/`agentType`) `saga:<name>` reference resolves to a real agent file, and the
+  fallback section is documented. Scoped to spawn-context lines specifically — a bare
+  `saga:<name>` grep would false-positive on skill mentions like `/saga:work`, which share the
+  same namespace.
+
 ## 0.49.1 - 2026-07-03
 
 ### Fix: `/outcome` autonomous board-sync schema-resolves status instead of a hardcoded literal (#326)

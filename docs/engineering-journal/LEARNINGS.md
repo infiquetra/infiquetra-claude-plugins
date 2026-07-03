@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-07-03
+
+### A just-merged agent is invisible to a session whose plugin loaded pre-merge  {#stale-agent-roster-325}
+
+**Context.** `saga:readonly-verifier` is mandated by `CLAUDE.md` and `sandbox-spawn-sites.md` for every ad-hoc verify/review-class spawn, but a `/saga:work` run on #291 hit `Agent type 'saga:readonly-verifier' not found` and fell back to an ungoverned `general-purpose` spawn.
+**Evidence.** `plugins/saga/agents/readonly-verifier.md` was added by `697fff1` (2026-07-02, #287 via #320) — its sibling `mechanical-executor.md` (`9bdf363`, 2026-06-21) resolved fine in the same failing session. A live spawn of `saga:readonly-verifier` with `isolation: "worktree"` in a fresh session at #325's plan time resolved and ran successfully end to end.
+**Mechanism.** The Claude Code agent roster is fixed at plugin load time for a session; an agent added to the plugin's `agents/` directory after a session's plugin loaded is not retroactively discoverable within that session, even though the file is present on disk and the plugin version has moved on.
+**Fix.** `plugins/saga/references/sandbox-spawn-sites.md` gained a two-step fallback ladder (`Explore` + worktree, then `general-purpose` + worktree + explicit read-only instruction) so the mandate degrades gracefully instead of hard-failing; `tests/test_agent_registration_drift.py` pins the repo-side preconditions that keep the agent statically discoverable. Commit range: #325.
+**Validation.** `uv run pytest tests/test_agent_registration_drift.py` — 10 passed, including 3 synthetic-negative regression cases.
+**Generalizable rule.** After merging a new agent or skill, reload the plugin (start a fresh session) before relying on it — a mandate that names a specific agent type needs a documented degrade path for the session that hasn't reloaded yet, because "just merged" and "just registered" are not the same moment.
+**Refs.** DECISIONS `{#readonly-verifier-fallback-ladder-325}`; issue #325; #291 saga follow-up note ("register saga:readonly-verifier agent (roster gap)").
+
 ## 2026-07-02
 
 ### `git gc` packs custom-namespace refs — a loose-file-mtime gc goes blind after any gc  {#git-gc-packs-custom-refs-291}

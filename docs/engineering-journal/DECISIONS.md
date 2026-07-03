@@ -72,8 +72,10 @@ skills-based.
 substitute another valid tree, yielding a misleading (but strictly git-object-store-confined, never
 filesystem-escaping) diff on `/resume`; or the advisory KTD4 threshold / KTD7 fallback warrant runtime
 enforcement (a capability preflight) over orchestrator judgment; or reflog-entry gc dating needs
-revisiting under an aggressive `gc.reflogExpire` that could prune a snapshot's creation entry before
-its TTL.
+revisiting under an aggressive reflog-expiry config (`git reflog expire --expire=now` or
+`gc.reflogExpireUnreachable < 7d` — these refs point at trees, so the *unreachable* expiry applies and
+the 30d default exceeds the 7d TTL), which would prune a snapshot's creation entry and leak the ref
+(bounded, non-default-config).
 **Refs.** #291; `docs/plans/2026-07-02-typed-artifact-pointer-passing-plan.md`.
 
 ### Team-spawn residency guard: name-only predicate, registry-parse trigger set (#289, plan)  {#team-spawn-residency-guard-ktds-289}

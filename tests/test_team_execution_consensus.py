@@ -6,6 +6,7 @@ text itself: the fabricated N/A->8.0 default is gone, the applicable-dimensions 
 defined, and a static exclusion is never a failure signal.
 """
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -27,9 +28,12 @@ def test_dimension_exclusion_replaces_fabricated_default() -> None:
 
     assert "8.0 default" not in doc
     assert "N/A (8.0" not in doc
+    # Broader than the two literal strings above: catches a differently-worded reintroduction
+    # of a fabricated numeric default (e.g. "N/A (7.5 default)"), not just the exact old value.
+    assert not re.search(r"N/A\s*\(\d", doc)
     assert "EXCLUDE" in doc
     assert "static-non-applicable" in doc
-    assert "avg of" in doc and "applicable" in doc
+    assert "avg of 4 applicable" in doc
 
 
 def test_consensus_gate_evaluates_applicable_dimensions() -> None:
@@ -38,7 +42,10 @@ def test_consensus_gate_evaluates_applicable_dimensions() -> None:
     doc = _read(CONSENSUS_PROTOCOL)
 
     assert "average of applicable dimensions" in doc
-    assert "no individual" in doc and "applicable" in doc and "7.0" in doc
+    # Line-wrapped in the source doc, so pinned as two adjacent contiguous fragments rather
+    # than one substring or fully-independent tokens.
+    assert "no individual" in doc
+    assert "applicable* dimension < 7.0" in doc
     assert "excluded WHOLE from the consensus denominator" in doc
 
 

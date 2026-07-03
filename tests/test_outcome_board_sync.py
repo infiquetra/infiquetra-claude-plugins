@@ -748,7 +748,9 @@ def test_schema_resolution_missing_file_fails_status_op_but_comment_still_posts(
     comment_records = [r for r in result if r.get("op_kind") == "issue-progress-comment"]
     assert comment_records and comment_records[0]["status"] == "written"
     assert writer.calls_for("issue-progress-comment"), "comment write must still fire"
-    assert not writer.calls_for("set-field-status"), "no board_writer attempt without a resolved status"
+    assert not writer.calls_for("set-field-status"), (
+        "no board_writer attempt without a resolved status"
+    )
 
     ledger_dir = Path(store.root) / "board-sync"
     ledger_files = list(ledger_dir.glob("*.json")) if ledger_dir.exists() else []
@@ -767,7 +769,9 @@ def test_schema_resolution_missing_project_fails_status_op_retryably(tmp_path: P
     sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
     assert sf_records and sf_records[0]["status"] == "failed"
     assert "error" in sf_records[0]
-    assert not writer.calls_for("set-field-status"), "no board_writer attempt without a resolved status"
+    assert not writer.calls_for("set-field-status"), (
+        "no board_writer attempt without a resolved status"
+    )
 
     comment_records = [r for r in result if r.get("op_kind") == "issue-progress-comment"]
     assert comment_records and comment_records[0]["status"] == "written"
@@ -784,7 +788,16 @@ def test_schema_resolution_missing_project_fails_status_op_retryably(tmp_path: P
         "not valid json {{{",
         json.dumps({"no_saga_lifecycle_key": True}),
         json.dumps({"saga_lifecycle": {"phase_board_map": {}}}),  # missing review/work rows
-        json.dumps({"saga_lifecycle": {"phase_board_map": {"review": {"operations": []}, "work": {"operations": ["Active"]}}}}),  # noqa: E501
+        json.dumps(
+            {
+                "saga_lifecycle": {
+                    "phase_board_map": {
+                        "review": {"operations": []},
+                        "work": {"operations": ["Active"]},
+                    }
+                }
+            }
+        ),  # noqa: E501
     ],
     ids=["malformed-json", "missing-saga-lifecycle", "missing-phase-rows", "empty-status-list"],
 )

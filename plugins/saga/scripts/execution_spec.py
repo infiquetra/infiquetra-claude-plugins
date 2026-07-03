@@ -906,6 +906,73 @@ def _verifier_agent_opts(unit: Unit) -> list[str]:
     ]
 
 
+def _emit_panel_reconciliation(
+    lines: list[str],
+    unit: Unit,
+    result_var: str,
+    name_prefix: str,
+    indent: str,
+    *,
+    direct_throw: bool,
+) -> None:
+    """Emit the verdict-collection / threshold / consumer block for a refute-N panel (KTD5).
+
+    Single source of truth for the reconciliation shared by ``_emit_thunk``,
+    ``_emit_verify_loop_singleton``, and ``_emit_verify_panel`` -- three hand-maintained copies
+    is the same drift risk ``_verifier_agent_opts`` was created to kill for verifier opts.
+    ``name_prefix`` disambiguates the one-shot panel's top-level ``const`` names (unit-scoped,
+    e.g. ``"result_"``) from the iterate sites' block-scoped bare names (``""``). ``direct_throw``
+    selects the one-shot panel's immediate throw-if-refuted consumer instead of the iterate
+    loop's break-if-accepted / throw-at-max-iterations consumer; callers remain responsible for
+    opening/closing their own enclosing loop.
+    """
+    panel = unit.verify
+    assert panel is not None
+    n = panel.n
+    threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
+    verifier_prompt = _verifier_prompt(unit)
+    verifier_opts = _verifier_agent_opts(unit)
+
+    verdicts_var = f"{name_prefix}verdicts"
+    refute_count_var = f"{name_prefix}refute_count"
+    refuted_var = f"{name_prefix}refuted"
+
+    lines.append(f"{indent}const {verdicts_var} = await parallel([")
+    for _ in range(n):
+        lines.append(f"{indent}  () => agent(")
+        lines.append(f"{indent}    {_js_string(verifier_prompt)},")
+        lines.append(
+            f"{indent}    {{ " + ", ".join(verifier_opts) + f", input: {result_var} }},"
+        )
+        lines.append(f"{indent}  ),")
+    lines.append(f"{indent}])")
+    lines.append(
+        f"{indent}const {refute_count_var} = {verdicts_var}.filter((v) => v && v.refuted "
+        f"&& v.refuted.length > 0).length"
+    )
+    lines.append(
+        f"{indent}const {refuted_var} = {refute_count_var} >= {threshold}  // {panel.pass_rule}"
+    )
+    if direct_throw:
+        lines.append(f"{indent}if ({refuted_var}) {{")
+        lines.append(
+            f"{indent}  throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+            f"${{{refute_count_var}}} verifiers`)"
+        )
+        lines.append(f"{indent}}}")
+        lines.append("")
+    else:
+        lines.append(f"{indent}if (!{refuted_var}) {{")
+        lines.append(f"{indent}  break")
+        lines.append(f"{indent}}}")
+        lines.append(f"{indent}if (iter === {panel.max_iterations}) {{")
+        lines.append(
+            f"{indent}  throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+            f"${{{refute_count_var}}} verifiers`)"
+        )
+        lines.append(f"{indent}}}")
+
+
 def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
     """Append one thunk entry for ``unit`` inside a ``parallel([...])``.
 
@@ -914,12 +981,8 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
     """
     if unit.verify is not None and unit.verify.iterate_to_consensus:
         panel = unit.verify
-        n = panel.n
-        threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
-        verifier_prompt = _verifier_prompt(unit)
         prompt = _agent_prompt(spec, unit)
         opts = _agent_opts(unit)
-        verifier_opts = _verifier_agent_opts(unit)
         marker = _external_engine_marker(unit)
 
         lines.append("  async () => {")
@@ -932,27 +995,7 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
         lines.append("        { " + ", ".join(opts) + " },")
         lines.append("      )")
         lines.append(f"      {_emit_gate_call(unit, 'result')}")
-        lines.append("      const verdicts = await parallel([")
-        for _ in range(n):
-            lines.append("        () => agent(")
-            lines.append(f"          {_js_string(verifier_prompt)},")
-            lines.append("          { " + ", ".join(verifier_opts) + ", input: result },")
-            lines.append("        ),")
-        lines.append("      ])")
-        lines.append(
-            "      const refute_count = verdicts.filter((v) => v && v.refuted "
-            "&& v.refuted.length > 0).length"
-        )
-        lines.append(f"      const refuted = refute_count >= {threshold}  // {panel.pass_rule}")
-        lines.append("      if (!refuted) {")
-        lines.append("        break")
-        lines.append("      }")
-        lines.append(f"      if (iter === {panel.max_iterations}) {{")
-        lines.append(
-            f"        throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
-            f"${{refute_count}} verifiers`)"
-        )
-        lines.append("      }")
+        _emit_panel_reconciliation(lines, unit, "result", "", "      ", direct_throw=False)
         lines.append("    }")
         lines.append("    return result")
         lines.append("  },")
@@ -983,11 +1026,8 @@ def _emit_verify_loop_singleton(
     panel = unit.verify
     assert panel is not None
     n = panel.n
-    threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
-    verifier_prompt = _verifier_prompt(unit)
     prompt = _agent_prompt(spec, unit)
     opts = _agent_opts(unit)
-    verifier_opts = _verifier_agent_opts(unit)
     marker = _external_engine_marker(unit)
 
     lines.append(f"let {var};")
@@ -1003,27 +1043,7 @@ def _emit_verify_loop_singleton(
     lines.append("    { " + ", ".join(opts) + " },")
     lines.append("  )")
     lines.append(f"  {_emit_gate_call(unit, var)}")
-    lines.append("  const verdicts = await parallel([")
-    for _ in range(n):
-        lines.append("    () => agent(")
-        lines.append(f"      {_js_string(verifier_prompt)},")
-        lines.append("      { " + ", ".join(verifier_opts) + f", input: {var} }},")
-        lines.append("    ),")
-    lines.append("  ])")
-    lines.append(
-        "  const refute_count = verdicts.filter((v) => v && v.refuted "
-        "&& v.refuted.length > 0).length"
-    )
-    lines.append(f"  const refuted = refute_count >= {threshold}  // {panel.pass_rule}")
-    lines.append("  if (!refuted) {")
-    lines.append("    break")
-    lines.append("  }")
-    lines.append(f"  if (iter === {panel.max_iterations}) {{")
-    lines.append(
-        f"    throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
-        f"${{refute_count}} verifiers`)"
-    )
-    lines.append("  }")
+    _emit_panel_reconciliation(lines, unit, var, "", "  ", direct_throw=False)
     lines.append("}")
     lines.append("")
 
@@ -1045,34 +1065,12 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
     assert panel is not None  # caller guards this
     n = panel.n
     threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
-    verifier_prompt = _verifier_prompt(unit)
-    opts = _verifier_agent_opts(unit)
 
     lines.append(f"// verify: refute-{n} panel over {unit.unit_id} (pass_rule: {panel.pass_rule};")
     lines.append(
         f"// panel-level: the unit result is refuted when >= {threshold} of {n} verifiers refute)"
     )
-    lines.append(f"const {var}_verdicts = await parallel([")
-    for _ in range(n):
-        lines.append("  () => agent(")
-        lines.append(f"    {_js_string(verifier_prompt)},")
-        lines.append("    { " + ", ".join(opts) + f", input: {var} }},")
-        lines.append("  ),")
-    lines.append("])")
-    # Pass-rule reconciliation: count verifiers that refuted at least one finding.
-    lines.append(
-        f"const {var}_refute_count = {var}_verdicts.filter((v) => v && v.refuted "
-        f"&& v.refuted.length > 0).length"
-    )
-    lines.append(f"const {var}_refuted = {var}_refute_count >= {threshold}  // {panel.pass_rule}")
-    # Consume the verdict: surface a refuted unit result instead of relying on it silently.
-    lines.append(f"if ({var}_refuted) {{")
-    lines.append(
-        f"  throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
-        f"${{{var}_refute_count}} verifiers`)"
-    )
-    lines.append("}")
-    lines.append("")
+    _emit_panel_reconciliation(lines, unit, var, f"{var}_", "", direct_throw=True)
 
 
 def _agent_prompt(spec: ExecutionSpec, unit: Unit) -> str:

@@ -295,9 +295,15 @@ class _RecordingWriter:
 
 def _status_drift() -> dict[str, Any]:
     return {
-        "kind": "status-drift", "repo": "infiquetra/x", "number": 42, "subplot_id": "leaf1",
-        "op_kind": "set-field-status", "saga_value": "In Progress", "board_value": "Blocked",
-        "author": "", "drift_id": RECON._drift_id("status-drift", "infiquetra/x", 42, "In Progress", "Blocked"),
+        "kind": "status-drift",
+        "repo": "infiquetra/x",
+        "number": 42,
+        "subplot_id": "leaf1",
+        "op_kind": "set-field-status",
+        "saga_value": "In Progress",
+        "board_value": "Blocked",
+        "author": "",
+        "drift_id": RECON._drift_id("status-drift", "infiquetra/x", 42, "In Progress", "Blocked"),
     }
 
 
@@ -369,7 +375,9 @@ def test_reassert_all_attempts_fail_no_record(tmp_path: Path) -> None:
     """When board_writer fails every attempt → failed result, no override record (retryable next tick)."""
     store = _store(tmp_path)
     writer = _RecordingWriter(fail=True)
-    out = RECON.apply_resolution(_status_drift(), "re-assert", store=store, board_writer=writer, max_attempts=3)
+    out = RECON.apply_resolution(
+        _status_drift(), "re-assert", store=store, board_writer=writer, max_attempts=3
+    )
     assert out["status"] == "failed"
     assert out["attempts"] == 3
     assert len(writer.calls) == 3
@@ -395,9 +403,15 @@ def test_accept_external_close_carries_prune_advisory(tmp_path: Path) -> None:
     store = _store(tmp_path)
     writer = _RecordingWriter()
     close_drift = {
-        "kind": "external-close", "repo": "infiquetra/x", "number": 42, "subplot_id": "leaf1",
-        "op_kind": "sub-issue-close", "saga_value": "open", "board_value": "closed",
-        "author": "operator", "drift_id": "abc123",
+        "kind": "external-close",
+        "repo": "infiquetra/x",
+        "number": 42,
+        "subplot_id": "leaf1",
+        "op_kind": "sub-issue-close",
+        "saga_value": "open",
+        "board_value": "closed",
+        "author": "operator",
+        "drift_id": "abc123",
     }
     out = RECON.apply_resolution(close_drift, "accept-board", store=store, board_writer=writer)
     assert out["status"] == "accepted"

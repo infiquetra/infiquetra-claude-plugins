@@ -167,9 +167,7 @@ def _closed_by(issue_ref: str, *, runner: Callable[..., Any] | None = None) -> s
     return login
 
 
-def issue_close_info(
-    issue_ref: str, *, runner: Callable[..., Any] | None = None
-) -> dict[str, str]:
+def issue_close_info(issue_ref: str, *, runner: Callable[..., Any] | None = None) -> dict[str, str]:
     """How an issue was closed: ``{"state", "state_reason", "closed_by"}`` — every field degrade-safe.
 
     ``state`` ∈ {open, closed, unknown}; ``state_reason`` ∈ {completed, not_planned, reopened,

@@ -142,16 +142,6 @@ def _asserted_value(records: list[dict[str, Any]], family: str) -> str | None:
     return best_val
 
 
-def _has_write_key(records: list[dict[str, Any]], family: str, target_state: str) -> bool:
-    """True if a #279 write record (not an override) already recorded ``(family, target_state)``."""
-    for rec in records:
-        if rec.get("kind") == _OVERRIDE_KIND:
-            continue
-        if rec.get("op_kind") == family and str(rec.get("target_state", "")) == target_state:
-            return True
-    return False
-
-
 # ---------------------------------------------------------------------------
 # Classification helpers
 # ---------------------------------------------------------------------------
@@ -292,15 +282,26 @@ def detect(
         if live_status == "":
             if asserted_status is not None:
                 records.append(
-                    {"kind": "unreadable", "repo": repo, "number": number,
-                     "subplot_id": sid, "op_kind": _STATUS_FAMILY, "field": "status"}
+                    {
+                        "kind": "unreadable",
+                        "repo": repo,
+                        "number": number,
+                        "subplot_id": sid,
+                        "op_kind": _STATUS_FAMILY,
+                        "field": "status",
+                    }
                 )
         elif asserted_status is not None:
             if live_status != asserted_status:
                 records.append(
                     _drift_record(
-                        "status-drift", repo=repo, number=number, subplot_id=sid,
-                        op_kind=_STATUS_FAMILY, saga_value=asserted_status, board_value=live_status,
+                        "status-drift",
+                        repo=repo,
+                        number=number,
+                        subplot_id=sid,
+                        op_kind=_STATUS_FAMILY,
+                        saga_value=asserted_status,
+                        board_value=live_status,
                     )
                 )
             # else: live == asserted → silent
@@ -311,14 +312,26 @@ def detect(
             ledger_file = Path(store.root) / "board-sync" / sync._safe_ledger_name(key)
             record_json = json.dumps(
                 {
-                    "key": key, "op_kind": _STATUS_FAMILY, "repo": repo, "number": number,
-                    "target_state": expected_status, "ts": now(), "recovered": True,
+                    "key": key,
+                    "op_kind": _STATUS_FAMILY,
+                    "repo": repo,
+                    "number": number,
+                    "target_state": expected_status,
+                    "ts": now(),
+                    "recovered": True,
                 }
             )
             _store_mod()._write_once(ledger_file, record_json)  # False on race = benign no-op
             records.append(
-                {"kind": "recovered", "repo": repo, "number": number, "subplot_id": sid,
-                 "op_kind": _STATUS_FAMILY, "target_state": expected_status, "key": key}
+                {
+                    "kind": "recovered",
+                    "repo": repo,
+                    "number": number,
+                    "subplot_id": sid,
+                    "op_kind": _STATUS_FAMILY,
+                    "target_state": expected_status,
+                    "key": key,
+                }
             )
 
         # ---- Open/closed field ---------------------------------------------
@@ -327,8 +340,14 @@ def detect(
         asserted_close = _asserted_value(issue_records, _CLOSE_FAMILY)
         if live_close == "unknown":
             records.append(
-                {"kind": "unreadable", "repo": repo, "number": number,
-                 "subplot_id": sid, "op_kind": _CLOSE_FAMILY, "field": "state"}
+                {
+                    "kind": "unreadable",
+                    "repo": repo,
+                    "number": number,
+                    "subplot_id": sid,
+                    "op_kind": _CLOSE_FAMILY,
+                    "field": "state",
+                }
             )
         elif live_close == "closed" and asserted_close != "closed":
             # External close saga never drove. Contract-aware + stateReason (KTD4): a completed close
@@ -340,16 +359,26 @@ def detect(
             if not sanctioned:
                 records.append(
                     _drift_record(
-                        "external-close", repo=repo, number=number, subplot_id=sid,
-                        op_kind=_CLOSE_FAMILY, saga_value="open", board_value="closed",
+                        "external-close",
+                        repo=repo,
+                        number=number,
+                        subplot_id=sid,
+                        op_kind=_CLOSE_FAMILY,
+                        saga_value="open",
+                        board_value="closed",
                         author=str(close_info.get("closed_by", "")),
                     )
                 )
         elif live_close == "open" and asserted_close == "closed":
             records.append(
                 _drift_record(
-                    "external-reopen", repo=repo, number=number, subplot_id=sid,
-                    op_kind=_CLOSE_FAMILY, saga_value="closed", board_value="open",
+                    "external-reopen",
+                    repo=repo,
+                    number=number,
+                    subplot_id=sid,
+                    op_kind=_CLOSE_FAMILY,
+                    saga_value="closed",
+                    board_value="open",
                 )
             )
 
@@ -409,9 +438,14 @@ def apply_resolution(
     if resolution == "accept-board":
         board_value = str(drift.get("board_value", ""))
         rec = {
-            "kind": _OVERRIDE_KIND, "resolution": "accept-board", "op_kind": op_kind,
-            "repo": repo, "number": number, "board_value": board_value,
-            "drift_id": drift_id, "ts": now(),
+            "kind": _OVERRIDE_KIND,
+            "resolution": "accept-board",
+            "op_kind": op_kind,
+            "repo": repo,
+            "number": number,
+            "board_value": board_value,
+            "drift_id": drift_id,
+            "ts": now(),
         }
         wrote = store_mod._write_once(
             ledger_dir / f"override-accept-board-{drift_id}.json", json.dumps(rec)
@@ -444,17 +478,30 @@ def apply_resolution(
                 last_exc = exc
         if last_exc is not None:
             return {
-                "status": "failed", "drift_id": drift_id, "op_kind": op_kind,
-                "error": str(last_exc), "attempts": max_attempts,
+                "status": "failed",
+                "drift_id": drift_id,
+                "op_kind": op_kind,
+                "error": str(last_exc),
+                "attempts": max_attempts,
             }
         rec = {
-            "kind": _OVERRIDE_KIND, "resolution": "re-assert", "op_kind": op_kind,
-            "repo": repo, "number": number, "board_value": saga_value,
-            "drift_id": drift_id, "ts": now(),
+            "kind": _OVERRIDE_KIND,
+            "resolution": "re-assert",
+            "op_kind": op_kind,
+            "repo": repo,
+            "number": number,
+            "board_value": saga_value,
+            "drift_id": drift_id,
+            "ts": now(),
         }
         wrote = store_mod._write_once(
             ledger_dir / f"override-re-assert-{drift_id}.json", json.dumps(rec)
         )
-        return {"status": "reasserted", "drift_id": drift_id, "attempts": attempts, "recorded": wrote}
+        return {
+            "status": "reasserted",
+            "drift_id": drift_id,
+            "attempts": attempts,
+            "recorded": wrote,
+        }
 
     raise ValueError(f"unknown resolution {resolution!r}")

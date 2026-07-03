@@ -342,14 +342,30 @@ class _RecWriter:
 def _seed_ledger(store: Any, *, op_kind: str, repo: str, number: int, target_state: str) -> None:
     d = Path(store.root) / "board-sync"
     d.mkdir(parents=True, exist_ok=True)
-    rec = {"op_kind": op_kind, "repo": repo, "number": number, "target_state": target_state, "ts": 1.0}
+    rec = {
+        "op_kind": op_kind,
+        "repo": repo,
+        "number": number,
+        "target_state": target_state,
+        "ts": 1.0,
+    }
     (d / f"seed_{op_kind}_{number}.json").write_text(json.dumps(rec), encoding="utf-8")
 
 
 def _issue_leaves() -> list[dict[str, Any]]:
     return [
-        {"subplot_id": "a", "title": "A", "kind": "non-code", "github": {"issue": "infiquetra/x#42"}},
-        {"subplot_id": "b", "title": "B", "kind": "non-code", "github": {"issue": "infiquetra/x#99"}},
+        {
+            "subplot_id": "a",
+            "title": "A",
+            "kind": "non-code",
+            "github": {"issue": "infiquetra/x#42"},
+        },
+        {
+            "subplot_id": "b",
+            "title": "B",
+            "kind": "non-code",
+            "github": {"issue": "infiquetra/x#99"},
+        },
     ]
 
 
@@ -357,8 +373,16 @@ def test_advance_autonomous_drift_holds_only_drifted_issue(repo: Path) -> None:
     """advance --autonomous detects drift BEFORE writing: the drifted issue is held, others proceed."""
     M.start(repo, "o", "obj", nodes=_issue_leaves())
     store = STORE.Store.for_outcome("o", repo)
-    _seed_ledger(store, op_kind="set-field-status", repo="infiquetra/x", number=42, target_state="In Progress")
-    _seed_ledger(store, op_kind="set-field-status", repo="infiquetra/x", number=99, target_state="Ready")
+    _seed_ledger(
+        store,
+        op_kind="set-field-status",
+        repo="infiquetra/x",
+        number=42,
+        target_state="In Progress",
+    )
+    _seed_ledger(
+        store, op_kind="set-field-status", repo="infiquetra/x", number=99, target_state="Ready"
+    )
 
     def board_reader(ref: str) -> str:
         return "Blocked" if "#42" in ref else "Ready"  # #42 drifted, #99 matches
@@ -369,8 +393,13 @@ def test_advance_autonomous_drift_holds_only_drifted_issue(repo: Path) -> None:
     writer = _RecWriter()
     dispatcher, _ = _recorder()
     result = M.advance(
-        repo, "o", dispatcher=dispatcher, autonomous=True,
-        board_reader=board_reader, issue_reader=issue_reader, board_writer=writer,
+        repo,
+        "o",
+        dispatcher=dispatcher,
+        autonomous=True,
+        board_reader=board_reader,
+        issue_reader=issue_reader,
+        board_writer=writer,
     )
     # drift surfaced for #42, on the AdvanceResult
     assert any(d["kind"] == "status-drift" and d["number"] == 42 for d in result.drift)
@@ -385,7 +414,13 @@ def test_advance_non_autonomous_never_detects(repo: Path) -> None:
     """The default (non-autonomous) advance performs no drift detection — no board/issue reads."""
     M.start(repo, "o", "obj", nodes=_issue_leaves())
     store = STORE.Store.for_outcome("o", repo)
-    _seed_ledger(store, op_kind="set-field-status", repo="infiquetra/x", number=42, target_state="In Progress")
+    _seed_ledger(
+        store,
+        op_kind="set-field-status",
+        repo="infiquetra/x",
+        number=42,
+        target_state="In Progress",
+    )
     reads: list[str] = []
 
     def board_reader(ref: str) -> str:

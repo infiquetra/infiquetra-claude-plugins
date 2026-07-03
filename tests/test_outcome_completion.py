@@ -367,8 +367,14 @@ def _gh_reads(
 
 def test_board_status_happy_path() -> None:
     """The Operations item's Status name is returned for project=operations."""
-    view = {"projectItems": [{"status": {"optionId": "x", "name": "In Progress"}, "title": "Operations"}]}
-    assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(view=view)) == "In Progress"
+    view = {
+        "projectItems": [
+            {"status": {"optionId": "x", "name": "In Progress"}, "title": "Operations"}
+        ]
+    }
+    assert (
+        GH.board_status("o/r#5", project="operations", runner=_gh_reads(view=view)) == "In Progress"
+    )
 
 
 def test_board_status_multi_board_reads_only_slug_match() -> None:
@@ -395,14 +401,14 @@ def test_board_status_degrades_on_failure_bad_json_and_null_status() -> None:
     assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(bad_json=True)) == ""
     null_status = {"projectItems": [{"status": None, "title": "Operations"}]}
     assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(view=null_status)) == ""
-    no_items = {"projectItems": []}
+    no_items: dict[str, Any] = {"projectItems": []}
     assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(view=no_items)) == ""
 
 
 def test_issue_close_info_completed_with_actor() -> None:
     """A completed close with a discoverable actor returns the full dict."""
     view = {"state": "CLOSED", "stateReason": "COMPLETED"}
-    events = [
+    events: list[dict[str, Any]] = [
         {"event": "labeled"},
         {"event": "closed", "actor": {"login": "namredips"}},
     ]
@@ -459,6 +465,8 @@ def test_issue_close_info_last_closed_event_wins_after_pagination() -> None:
 def test_issue_close_info_bare_ref_has_no_author() -> None:
     """A ref without owner/repo can't build the events path → closed_by degrades to "" (still closed)."""
     view = {"state": "CLOSED", "stateReason": "COMPLETED"}
-    info = GH.issue_close_info("5", runner=_gh_reads(view=view, events=[{"event": "closed", "actor": {"login": "x"}}]))
+    info = GH.issue_close_info(
+        "5", runner=_gh_reads(view=view, events=[{"event": "closed", "actor": {"login": "x"}}])
+    )
     assert info["state"] == "closed"
     assert info["closed_by"] == ""

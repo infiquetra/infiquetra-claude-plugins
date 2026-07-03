@@ -22,6 +22,42 @@
 
 ---
 
+## 2026-07-03
+
+### readonly-verifier fallback: Explore-first ladder, not general-purpose-only (#325)  {#readonly-verifier-fallback-ladder-325}
+
+**Decision.** When `saga:readonly-verifier` is unresolvable in a session, degrade through a
+two-step ladder documented in `sandbox-spawn-sites.md`: (1) `subagent_type: Explore` +
+`isolation: "worktree"` — `Explore` structurally lacks `Edit`/`Write`/`NotebookEdit` while
+retaining `Bash`, preserving the `mutation_policy: read-only` axis by tool omission; (2)
+`general-purpose` + worktree + an explicit read-only prompt instruction, only if `Explore` is
+also absent. `CLAUDE.md`'s ad-hoc spawn rule carries a one-line pointer into the ladder rather
+than restating it.
+
+**Rejected alternatives.** (a) `general-purpose`-only, as #325 originally proposed — simpler, but
+loses the structural mutation-by-tool-omission guarantee when a stronger rung (`Explore`) is
+already available in virtually every session. (b) Hard-fail with no fallback — rejects the
+issue's graceful-degrade premise and reproduces the exact ungoverned-spawn outcome (#291) the
+mandate exists to prevent. (c) A runtime roster-registration drift guard in CI — the running
+session's agent roster is unobservable from CI, so this failure class cannot be tested directly;
+the guard instead pins static discoverability preconditions (frontmatter validity, name/reference
+consistency, fallback-doc presence).
+
+**Rationale.** Tool omission is enforcement; a prose instruction to a tool-capable agent is a
+request. `Explore` is already a saga-plugin dependency (used for fan-out grounding elsewhere), so
+promoting it to the fallback ladder's first rung introduces no new dependency, and it strictly
+dominates the issue's original proposal on the one property (`mutation_policy: read-only`) the
+mandate exists to guarantee.
+
+**Revisit when.** The harness exposes the running session's agent roster to hooks or CI (then a
+true runtime registration guard becomes possible, superseding the static-precondition guard); or
+`Explore` stops being a load-bearing saga-plugin dependency (then re-justify it as the fallback's
+first rung independently).
+
+**Refs.** LEARNINGS `{#stale-agent-roster-325}`; `plugins/saga/references/sandbox-spawn-sites.md`
+"Fallback when `saga:readonly-verifier` is unavailable"; `tests/test_agent_registration_drift.py`;
+issue #325; plan `docs/plans/2026-07-03-readonly-verifier-registration-fallback-plan.md`.
+
 ## 2026-07-02
 
 ### /outcome board status: schema-resolve from phase_board_map, not a literal swap (#326, plan)  {#outcome-board-status-schema-resolve-326}

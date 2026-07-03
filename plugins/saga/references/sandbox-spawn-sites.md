@@ -54,6 +54,35 @@ This is the least-instruction-guarded spawn class — nothing in a skill file ca
 lives here as the one place every agent reading repo context can find it. The repo-root `CLAUDE.md`
 carries a one-line pointer to this section.
 
+## Fallback when `saga:readonly-verifier` is unavailable (#325 Key Technical Decision 1)
+
+Agent rosters change between sessions — the mandate above must not become a hard failure just
+because the current session's plugin roster predates a just-merged agent (this is exactly what
+happened in #325: `saga:readonly-verifier` was merged via #287/#320 but a session loaded before
+that merge could not resolve it). When a spawn following the ad-hoc rule above fails to resolve
+`saga:readonly-verifier`, degrade through this two-step ladder instead of failing the spawn
+outright or silently reverting to an unsandboxed spawn:
+
+1. **`subagent_type: Explore` + `isolation: "worktree"`.** The built-in `Explore` agent type
+   structurally lacks `Edit` / `Write` / `NotebookEdit` while retaining `Bash` — so the
+   `mutation_policy: read-only` axis survives by tool omission, the same enforcement mechanism
+   `saga:readonly-verifier` uses, not a prose instruction hoping the agent complies. Preserved:
+   both sandbox axes (read-only by tool omission, worktree isolation). Lost: the verifier-specific
+   system prompt (the REFUTE-first framing, the structured `{refuted, upheld}` verdict contract) —
+   restate that framing in the dispatch prompt itself.
+2. **`subagent_type: general-purpose` + `isolation: "worktree"` + an explicit read-only
+   instruction in the prompt** — only if `Explore` is *also* absent from the session. Preserved:
+   worktree isolation (accidental-clobber protection per KTD7 below). Lost: the structural
+   mutation-by-tool-omission guarantee — `general-purpose` retains `Edit`/`Write`, so read-only is
+   now a request, not an enforced constraint. This is the terminal rung because `general-purpose`
+   is the harness's default agent type and is assumed always present.
+
+A rung applies only when its named agent type is actually present in the current session's roster
+— do not assume `Explore` exists any more than the original mandate assumed
+`saga:readonly-verifier` did; the same staleness class that motivated this ladder can affect any
+agent type. If neither rung resolves, surface the gap to the operator rather than spawning
+unsandboxed.
+
 ## KTD7 residual boundary (documented, not defended)
 
 A git worktree shares `.git` with the primary checkout. A `git push` or a branch-ref mutation run via

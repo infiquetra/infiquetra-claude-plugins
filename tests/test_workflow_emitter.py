@@ -776,8 +776,11 @@ def test_verify_panel_emits_n_verifier_agents_and_majority_check() -> None:
     assert script.count("() => agent(") == 3
     # The verifiers are adversarial skeptics over the unit's output (refute, not redo).
     assert "REFUTE-N VERIFIER" in script
-    # Majority pass-rule reconciliation: a finding survives unless >= ceil(3/2)=2 refute.
-    assert "U2_refute_count >= 2" in script
+    # Majority pass-rule reconciliation: recomputed over REPORTING verifiers (R3), not the
+    # declared n; with no missing verifiers this is equivalent to the old fixed ceil(3/2)=2
+    # (R10 no-regression).
+    assert "U2_threshold = Math.max(1, Math.ceil(U2_reported.length / 2))" in script
+    assert "U2_refuted = U2_refute_count >= U2_threshold" in script
     assert "majority" in script
     # The verifier tier == the unit tier (R4): U2 is sonnet/high -> verifiers are too.
     assert 'label: "build verifier"' in script
@@ -793,8 +796,10 @@ def test_unanimous_verify_panel_requires_all_to_refute() -> None:
     first["verify"] = {"n": 3, "pass_rule": "unanimous"}
     spec = mod.ExecutionSpec.from_dict(data)
     script = mod.emit_workflow_script(spec)
-    # Unanimous: a finding survives unless ALL N refute -> threshold == n == 3.
-    assert "U1_refute_count >= 3" in script
+    # Unanimous: recomputed over REPORTING verifiers -> threshold == reported.length,
+    # equivalent to n == 3 when no verifiers are missing (R10 no-regression).
+    assert "U1_threshold = Math.max(1, U1_reported.length)" in script
+    assert "U1_refuted = U1_refute_count >= U1_threshold" in script
     assert "unanimous" in script
 
 
@@ -841,11 +846,141 @@ def test_layered_spec_with_verify_panel_full_emission() -> None:
     # N=3 verifier agent() calls for C's panel.
     assert "C_verdicts = await parallel([" in script
     assert script.count("() => agent(") == 3
-    assert "C_refute_count >= 2" in script
+    assert "C_threshold = Math.max(1, Math.ceil(C_reported.length / 2))" in script
+    assert "C_refuted = C_refute_count >= C_threshold" in script
     # Every unit's model/effort tier is present.
     assert 'model: "sonnet"' in script
     assert 'model: "opus"' in script
     assert 'effort: "high"' in script
+
+
+# ---------------------------------------------------------------------------
+# U2 (#293): runtime-missing recompute, quorum floor, honest missing-verifier bookkeeping.
+# ---------------------------------------------------------------------------
+
+
+def test_missing_verifier_recording_emits_runtime_failure_log() -> None:
+    """R1/R5: missing-verifier bookkeeping is always emitted, with the baked quorum floor
+    (KTD3) noted when the reporting count falls under it."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": "majority"}
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    assert "U2_reported = U2_verdicts.filter((v) => v != null)" in script
+    assert "U2_missing_idx = U2_verdicts.map((v, i) => (v == null ? i + 1 : null))" in script
+    assert "if (U2_missing_idx.length > 0) {" in script
+    assert "verify panel over U2:" in script
+    assert 'runtime-failure: #${U2_missing_idx.join(", #")}' in script
+    assert "UNDER-STRENGTH (quorum floor 2)" in script
+    # R13: the throw carries the reporting-count detail after the intact prefix.
+    assert (
+        "verifier-disagreement: Unit U2 refuted by ${U2_refute_count}/${U2_reported.length} "
+        "reporting verifiers (${U2_missing_idx.length} missing)" in script
+    )
+
+
+@pytest.mark.parametrize(("n", "floor"), [(3, 2), (7, 4), (1, 1)])
+def test_missing_verifier_quorum_floor_scales_with_declared_n(n: int, floor: int) -> None:
+    """KTD3: the quorum floor is ceil(n/2) of the declared n, baked as a literal per panel."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": n, "pass_rule": "majority"}
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    assert f"UNDER-STRENGTH (quorum floor {floor})" in script
+
+
+def test_missing_verifier_n1_all_missing_not_refuted_via_max_guard() -> None:
+    """KTD3: n=1 all-missing (reported=0) is deterministically not-refuted via max(1, ...) --
+    0 >= ceil(0/2) == 0 would otherwise be vacuously true."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 1, "pass_rule": "majority"}
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    assert "U2_threshold = Math.max(1, Math.ceil(U2_reported.length / 2))" in script
+    assert "UNDER-STRENGTH (quorum floor 1)" in script
+
+
+def test_missing_verifier_unanimous_threshold_over_reporters() -> None:
+    """R3: unanimous recomputes over reporters too, with the same missing-verifier bookkeeping."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 5, "pass_rule": "unanimous"}
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    assert "U2_threshold = Math.max(1, U2_reported.length)" in script
+    assert "UNDER-STRENGTH (quorum floor 3)" in script
+    assert "U2_missing_idx = U2_verdicts.map((v, i) => (v == null ? i + 1 : null))" in script
+
+
+def test_all_three_reconciliation_sites_carry_the_recompute() -> None:
+    """R12: the thunk, singleton-loop, and one-shot panel sites all emit the shared helper's
+    recompute -- guards against any one site regressing to the old fixed-threshold pattern."""
+    mod = _load()
+    data = _layered_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    a, b, c = units  # A, B independent (parallel wave); C depends on both (singleton)
+    assert isinstance(a, dict)
+    assert isinstance(b, dict)
+    assert isinstance(c, dict)
+    # A: iterate-to-consensus inside the parallel wave's thunk.
+    a["verify"] = {
+        "n": 3,
+        "pass_rule": "majority",
+        "iterate_to_consensus": True,
+        "max_iterations": 2,
+    }
+    # B: a one-shot panel, emitted after the parallel wave resolves.
+    b["verify"] = {"n": 3, "pass_rule": "majority"}
+    # C: iterate-to-consensus as a standalone singleton loop.
+    c["verify"] = {
+        "n": 3,
+        "pass_rule": "majority",
+        "iterate_to_consensus": True,
+        "max_iterations": 2,
+    }
+
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # Thunk site (A): bare `verdicts` names, inside the async () => {} thunk.
+    assert "async () => {" in script
+    # Singleton-loop site (C): bare `verdicts` names again -- both non-panel sites share it.
+    assert "let C;" in script
+    assert script.count("const verdicts = await parallel([") == 2
+    # One-shot panel site (B): `B_`-prefixed names, after the parallel wave resolves.
+    assert "const B_verdicts = await parallel([" in script
+    assert "B_threshold = Math.max(1, Math.ceil(B_reported.length / 2))" in script
+    # All three sites carry the missing-verifier bookkeeping and the throw (R12).
+    assert script.count("missing_idx = ") == 3
+    assert script.count("verifier-disagreement") == 3
 
 
 def test_inline_baseline_of_layered_spec_stays_serial() -> None:

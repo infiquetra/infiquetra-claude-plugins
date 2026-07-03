@@ -929,12 +929,15 @@ def _emit_panel_reconciliation(
     panel = unit.verify
     assert panel is not None
     n = panel.n
-    threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
+    floor = (n + 1) // 2  # KTD3: quorum floor, baked as a literal per panel
     verifier_prompt = _verifier_prompt(unit)
     verifier_opts = _verifier_agent_opts(unit)
 
     verdicts_var = f"{name_prefix}verdicts"
+    reported_var = f"{name_prefix}reported"
+    missing_idx_var = f"{name_prefix}missing_idx"
     refute_count_var = f"{name_prefix}refute_count"
+    threshold_var = f"{name_prefix}threshold"
     refuted_var = f"{name_prefix}refuted"
 
     lines.append(f"{indent}const {verdicts_var} = await parallel([")
@@ -946,19 +949,51 @@ def _emit_panel_reconciliation(
         )
         lines.append(f"{indent}  ),")
     lines.append(f"{indent}])")
+    # R1/R5: record which verifiers reported vs. runtime-missing (null); R3: recompute the
+    # pass-rule threshold over the reporters, not the declared n (KTD1/KTD3).
+    lines.append(f"{indent}const {reported_var} = {verdicts_var}.filter((v) => v != null)")
     lines.append(
-        f"{indent}const {refute_count_var} = {verdicts_var}.filter((v) => v && v.refuted "
-        f"&& v.refuted.length > 0).length"
+        f"{indent}const {missing_idx_var} = {verdicts_var}.map((v, i) => "
+        f"(v == null ? i + 1 : null)).filter((i) => i != null)"
     )
     lines.append(
-        f"{indent}const {refuted_var} = {refute_count_var} >= {threshold}  // {panel.pass_rule}"
+        f"{indent}const {refute_count_var} = {reported_var}.filter((v) => v.refuted "
+        f"&& v.refuted.length > 0).length"
+    )
+    if panel.pass_rule == "majority":
+        lines.append(
+            f"{indent}const {threshold_var} = "
+            f"Math.max(1, Math.ceil({reported_var}.length / 2))  // majority over reporters"
+        )
+    else:
+        lines.append(
+            f"{indent}const {threshold_var} = "
+            f"Math.max(1, {reported_var}.length)  // unanimous over reporters"
+        )
+    lines.append(f"{indent}const {refuted_var} = {refute_count_var} >= {threshold_var}")
+    # R4/R5: annotate missing verifiers and mark UNDER-STRENGTH below the baked quorum floor;
+    # this fires on both the accept and refute paths -- KTD4 keeps refutation acting regardless.
+    lines.append(f"{indent}if ({missing_idx_var}.length > 0) {{")
+    lines.append(
+        f"{indent}  log(`verify panel over {unit.unit_id}: "
+        f"${{{missing_idx_var}.length}}/{n} verifier(s) missing "
+        f'(runtime-failure: #${{{missing_idx_var}.join(", #")}}); '
+        f"verdict computed over ${{{reported_var}.length}}/{n}` +"
+    )
+    lines.append(
+        f"{indent}      ({reported_var}.length < {floor} ? "
+        f'" — UNDER-STRENGTH (quorum floor {floor})" : ""))'
+    )
+    lines.append(f"{indent}}}")
+
+    throw_line = (
+        f"throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+        f"${{{refute_count_var}}}/${{{reported_var}.length}} reporting verifiers "
+        f"(${{{missing_idx_var}.length}} missing)`)"
     )
     if direct_throw:
         lines.append(f"{indent}if ({refuted_var}) {{")
-        lines.append(
-            f"{indent}  throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
-            f"${{{refute_count_var}}} verifiers`)"
-        )
+        lines.append(f"{indent}  {throw_line}")
         lines.append(f"{indent}}}")
         lines.append("")
     else:
@@ -966,10 +1001,7 @@ def _emit_panel_reconciliation(
         lines.append(f"{indent}  break")
         lines.append(f"{indent}}}")
         lines.append(f"{indent}if (iter === {panel.max_iterations}) {{")
-        lines.append(
-            f"{indent}  throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
-            f"${{{refute_count_var}}} verifiers`)"
-        )
+        lines.append(f"{indent}  {throw_line}")
         lines.append(f"{indent}}}")
 
 
@@ -1052,23 +1084,28 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
     """Append a refute-N judge-panel + pass-rule reconciliation for ``unit`` to ``lines``.
 
     Renders a ``parallel([...])`` of ``unit.verify.n`` verifier ``agent()`` calls over the
-    unit's result (each at the SAME ``{model, effort}`` tier as the unit per R4), then a
-    PANEL-LEVEL pass-rule verdict: count the verifiers that returned at least one refutation
-    and compare to the threshold -- ``majority`` => ``>= ceil(N/2)`` verifiers refuted;
-    ``unanimous`` => all N refuted. (This is a panel-level signal, not per-finding survival:
-    a generic emitter cannot match findings across verifiers, so it surfaces "did enough
-    skeptics refute anything" for the operator/runtime to act on.) The resulting
-    ``<var>_refuted`` boolean is CONSUMED: when set, the script ``log()``s a review warning so
-    a refuted unit result is surfaced rather than silently relied upon.
+    unit's result (each at the SAME ``{model, effort}`` tier as the unit per R4), then
+    records which verifiers reported vs. runtime-missing -- a ``null`` verdict slot (R1/R5,
+    KTD1) -- and recomputes the pass-rule threshold over the reporters (R3): ``majority`` =>
+    ``>= max(1, ceil(k/2))`` of the ``k`` reporting verifiers refuted; ``unanimous`` => all
+    ``k`` refuted. A quorum floor of ``ceil(n/2)`` of the declared ``n`` (KTD3) marks the
+    result UNDER-STRENGTH when under-met, but a refutation still acts regardless (KTD4).
+    (This is a panel-level signal, not per-finding survival: a generic emitter cannot match
+    findings across verifiers, so it surfaces "did enough skeptics refute anything" for the
+    operator/runtime to act on.) The resulting ``<var>_refuted`` boolean is CONSUMED: when
+    set, the script THROWS ``verifier-disagreement: ...`` so a refuted unit result halts
+    rather than being silently relied upon.
     """
     panel = unit.verify
     assert panel is not None  # caller guards this
     n = panel.n
-    threshold = (n + 1) // 2 if panel.pass_rule == "majority" else n
+    floor = (n + 1) // 2
 
     lines.append(f"// verify: refute-{n} panel over {unit.unit_id} (pass_rule: {panel.pass_rule};")
     lines.append(
-        f"// panel-level: the unit result is refuted when >= {threshold} of {n} verifiers refute)"
+        f"// panel-level: refuted when the pass-rule threshold over REPORTING verifiers is "
+        f"met (quorum floor {floor} of {n} declared; runtime-missing verifiers shrink the "
+        f"denominator))"
     )
     _emit_panel_reconciliation(lines, unit, var, f"{var}_", "", direct_throw=True)
 

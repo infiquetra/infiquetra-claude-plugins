@@ -1,0 +1,1047 @@
+"""Unit tests for team-execution typed artifact pointers — Layer 1 (U1) and template wiring (U2).
+
+All git behavior is exercised against real scratch repos built in ``tmp_path`` fixtures; git is
+never mocked (KTD1's temp-index guarantee and the holding-ref retention can only be shown against a
+real object store).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).parent.parent
+PLUGIN_ROOT = ROOT / "plugins" / "team-execution"
+SCRIPT = (
+    ROOT
+    / "plugins"
+    / "team-execution"
+    / "skills"
+    / "team-execution"
+    / "scripts"
+    / "artifact_pointer.py"
+)
+SKILL_MD = PLUGIN_ROOT / "skills" / "team-execution" / "SKILL.md"
+CONSENSUS_PROTOCOL = (
+    PLUGIN_ROOT / "skills" / "team-execution" / "references" / "consensus-protocol.md"
+)
+VALIDATOR_SPAWN_QUIRKS = (
+    PLUGIN_ROOT / "skills" / "team-execution" / "references" / "validator-spawn-quirks.md"
+)
+ARTIFACT_POINTERS_DOC = (
+    PLUGIN_ROOT / "skills" / "team-execution" / "references" / "artifact-pointers.md"
+)
+README = PLUGIN_ROOT / "README.md"
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("artifact_pointer", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["artifact_pointer"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _init_repo(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-q")
+    _git(path, "config", "user.email", "test@example.com")
+    _git(path, "config", "user.name", "Test")
+    (path / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(path, "add", "-A")
+    _git(path, "commit", "-q", "-m", "initial")
+    return path
+
+
+def test_contract_round_trips_all_kinds() -> None:
+    """Construct -> serialize -> parse round-trips every field for diff/file/symbol kinds."""
+    ap = _load()
+    for kind, locator in (
+        ("diff", "refs/team-execution/snapshots/run-1/0"),
+        ("file", "src/app.py"),
+        ("symbol", "src/app.py#handler"),
+    ):
+        pointer = ap.ArtifactPointer(
+            kind=kind, locator=locator, hash="deadbeef", epoch="3", deref="git diff A B"
+        )
+        parsed = ap.ArtifactPointer.from_json(pointer.to_json())
+        assert parsed == pointer
+        assert parsed.kind == kind
+
+
+def test_from_json_rejects_unknown_kind_and_missing_fields() -> None:
+    ap = _load()
+    import json
+
+    good = {
+        "kind": "diff",
+        "locator": "r",
+        "hash": "h",
+        "epoch": "0",
+        "deref": "git diff A B",
+    }
+    try:
+        ap.ArtifactPointer.from_json(json.dumps({**good, "kind": "bogus"}))
+        raise AssertionError("expected ValueError for unknown kind")
+    except ValueError:
+        pass
+    incomplete = dict(good)
+    del incomplete["hash"]
+    try:
+        ap.ArtifactPointer.from_json(json.dumps(incomplete))
+        raise AssertionError("expected ValueError for missing field")
+    except ValueError:
+        pass
+
+
+def test_snapshot_captures_staged_unstaged_untracked(tmp_path: Path) -> None:
+    """The tree OID covers staged + unstaged + untracked files (KTD1)."""
+    repo = _init_repo(tmp_path / "repo")
+    ap = _load()
+
+    (repo / "tracked.txt").write_text("unstaged change\n", encoding="utf-8")  # unstaged
+    (repo / "staged.txt").write_text("staged new\n", encoding="utf-8")
+    _git(repo, "add", "staged.txt")  # staged
+    (repo / "untracked.txt").write_text("untracked new\n", encoding="utf-8")  # untracked
+
+    pointer = ap.snapshot("run-1", "0", repo_root=repo)
+    diff = ap.deref(pointer, repo_root=repo)
+
+    assert "unstaged change" in diff
+    assert "staged new" in diff
+    assert "untracked new" in diff
+
+
+def test_snapshot_leaves_real_index_and_worktree_untouched(tmp_path: Path) -> None:
+    """The real index and working tree are byte-identical before and after snapshot (KTD1)."""
+    repo = _init_repo(tmp_path / "repo")
+    ap = _load()
+
+    (repo / "tracked.txt").write_text("unstaged change\n", encoding="utf-8")
+    (repo / "staged.txt").write_text("staged new\n", encoding="utf-8")
+    _git(repo, "add", "staged.txt")
+    (repo / "untracked.txt").write_text("untracked new\n", encoding="utf-8")
+
+    status_before = _git(repo, "status", "--porcelain=v1")
+    index_tree_before = _git(repo, "write-tree")  # OID of the *real* index
+
+    ap.snapshot("run-1", "0", repo_root=repo)
+
+    assert _git(repo, "status", "--porcelain=v1") == status_before
+    assert _git(repo, "write-tree") == index_tree_before
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "unstaged change\n"
+
+
+def test_holding_ref_survives_gc(tmp_path: Path) -> None:
+    """The snapshot tree survives ``git gc --prune=now`` via its holding ref (issue Q1)."""
+    repo = _init_repo(tmp_path / "repo")
+    ap = _load()
+
+    (repo / "untracked.txt").write_text("keep me\n", encoding="utf-8")
+    pointer = ap.snapshot("run-1", "0", repo_root=repo)
+
+    _git(repo, "gc", "--prune=now")
+
+    assert _git(repo, "cat-file", "-t", pointer.hash) == "tree"
+    diff = ap.deref(pointer, repo_root=repo)
+    assert "keep me" in diff
+
+
+def test_byte_drift_raises_hash_mismatch(tmp_path: Path) -> None:
+    """Moving the holding ref to a different tree while keeping the pointer -> HASH_MISMATCH."""
+    repo = _init_repo(tmp_path / "repo")
+    ap = _load()
+
+    (repo / "untracked.txt").write_text("original\n", encoding="utf-8")
+    pointer = ap.snapshot("run-1", "0", repo_root=repo)
+
+    other_tree = _git(repo, "rev-parse", "HEAD^{tree}")  # a different, valid tree OID
+    _git(repo, "update-ref", pointer.locator, other_tree)
+
+    try:
+        ap.deref(pointer, repo_root=repo)
+        raise AssertionError("expected PointerError")
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+
+
+def test_superseding_epoch_raises_stale(tmp_path: Path) -> None:
+    """A newer epoch ref for the same run-id makes an older pointer STALE (freshness)."""
+    repo = _init_repo(tmp_path / "repo")
+    ap = _load()
+
+    (repo / "untracked.txt").write_text("epoch 0\n", encoding="utf-8")
+    old_pointer = ap.snapshot("run-1", "0", repo_root=repo)
+
+    (repo / "untracked.txt").write_text("epoch 1\n", encoding="utf-8")
+    ap.snapshot("run-1", "1", repo_root=repo)  # supersedes epoch 0
+
+    # Integrity still holds for the old pointer (its ref + tree are intact)...
+    assert _git(repo, "rev-parse", old_pointer.locator) == old_pointer.hash
+    try:
+        ap.deref(old_pointer, repo_root=repo)
+        raise AssertionError("expected PointerError")
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_STALE
+
+
+def test_deref_resolves_from_linked_worktree(tmp_path: Path) -> None:
+    """A pointer snapshotted in the main repo dereferences from a linked worktree (KTD7)."""
+    repo = _init_repo(tmp_path / "repo")
+    ap = _load()
+
+    (repo / "untracked.txt").write_text("shared object\n", encoding="utf-8")
+    pointer = ap.snapshot("run-1", "0", repo_root=repo)
+
+    worktree = tmp_path / "linked"
+    _git(repo, "worktree", "add", "-q", str(worktree), "HEAD")
+
+    diff = ap.deref(pointer, repo_root=worktree)
+    assert "shared object" in diff
+
+
+def test_cli_deref_prints_typed_code_to_stderr(tmp_path: Path) -> None:
+    """The CLI exits non-zero and prints the typed code to stderr on a stale pointer."""
+    repo = _init_repo(tmp_path / "repo")
+
+    (repo / "untracked.txt").write_text("epoch 0\n", encoding="utf-8")
+    snap0 = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--repo-root",
+            str(repo),
+            "snapshot",
+            "--run",
+            "r",
+            "--epoch",
+            "0",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    pointer_json = snap0.stdout.strip()
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--repo-root",
+            str(repo),
+            "snapshot",
+            "--run",
+            "r",
+            "--epoch",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo), "deref", pointer_json],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "POINTER_STALE" in result.stderr
+
+
+# --- U2: spawn templates pass pointers, receivers dereference ------------------------------
+
+
+def test_b3a_spawn_template_carries_pointer_block_not_mandatory_inline_diff() -> None:
+    """The B3a initial-pass template offers an `artifact-pointer` block above threshold and no
+    longer mandates an inlined full-diff body (R3/R7)."""
+    doc = _read_text(CONSENSUS_PROTOCOL)
+    assert "```artifact-pointer" in doc
+    assert '"kind":"diff"' in doc
+    # The old unconditional instruction ("git diff or summary of files changed") is replaced by a
+    # threshold-conditional one.
+    assert "[git diff or summary of files changed]" not in doc
+    assert "Below the SKILL.md Step B1 threshold" in doc
+
+
+def test_b3e_reengagement_template_passes_updated_pointer() -> None:
+    """The B3e re-engagement (delta) template carries an UPDATED pointer with an incremented
+    epoch above threshold, alongside the still-live below-threshold inline path (R7)."""
+    doc = _read_text(CONSENSUS_PROTOCOL)
+    delta_section = doc[doc.index("Changes Made (Delta Only)") :]
+    assert "artifact-pointer" in delta_section
+    assert "epoch incremented" in delta_section
+    assert "UPDATED" in delta_section
+
+
+def test_validator_context_package_reuses_layer1_pointer_with_stat_deref() -> None:
+    """Above threshold, validators get the same Layer-1 tree pointer with a `git diff --stat`
+    deref command — no Layer-2 dependency (U2 self-contained)."""
+    doc = _read_text(VALIDATOR_SPAWN_QUIRKS)
+    assert "git diff --stat" in doc
+    assert "artifact-pointers.md" in doc
+
+
+def test_artifact_pointers_doc_is_packaged_and_linked() -> None:
+    """`artifact-pointers.md` exists, is linked from SKILL.md and README.md (packaging parity
+    with the existing VALIDATOR_REFERENCES/WORKER_REFERENCES doc-guard pattern)."""
+    assert ARTIFACT_POINTERS_DOC.exists()
+    skill_doc = _read_text(SKILL_MD)
+    readme = _read_text(README)
+    assert "artifact-pointers.md" in skill_doc
+    assert "artifact-pointers.md" in readme
+
+
+def test_artifact_pointers_doc_states_full_dereference_and_ktd7_fallback() -> None:
+    """The receiver contract mandates full-artifact dereference (R5/R14 review invariance, no
+    per-lens scoping) and states the KTD7 capability-keyed fallback to inlined content verbatim."""
+    doc = _read_text(ARTIFACT_POINTERS_DOC)
+    assert "always dereference and read the FULL artifact" in doc
+    assert "not allowed" in doc  # per-lens scoping is explicitly not allowed in v1
+    assert "capability-keyed" in doc
+    assert "falls back to inlined content" in doc
+    assert "POINTER_HASH_MISMATCH" in doc
+    assert "POINTER_STALE" in doc
+
+
+def test_threshold_rule_stated_once_in_skill_and_referenced_elsewhere() -> None:
+    """The 4 KB / >= 2 recipient / <= 1 KB threshold numbers are the authoritative text in
+    SKILL.md; other files reference the rule instead of restating the numbers."""
+    skill_doc = _read_text(SKILL_MD)
+    assert "> 4 KB" in skill_doc
+    assert ">= 2 recipients" in skill_doc
+    assert "<= 1 KB" in skill_doc
+
+    for path in (CONSENSUS_PROTOCOL, VALIDATOR_SPAWN_QUIRKS, ARTIFACT_POINTERS_DOC):
+        doc = _read_text(path)
+        assert "> 4 KB" not in doc, f"{path} restates the threshold instead of referencing SKILL.md"
+        assert "SKILL.md" in doc or "Step B1" in doc
+
+
+def test_base_reviewer_agents_reference_artifact_pointers_doc() -> None:
+    """Each base reviewer agent gains a short pointer-dereference instruction pointing at the
+    receiver contract (U2 scope: minimal edits, no restructuring)."""
+    agents_dir = PLUGIN_ROOT / "agents"
+    for agent_file in (
+        "devils-advocate-reviewer.md",
+        "architecture-reviewer.md",
+        "security-reviewer.md",
+    ):
+        doc = _read_text(agents_dir / agent_file)
+        assert "artifact-pointers.md" in doc
+        assert "artifact-pointer" in doc
+
+
+# --- U3: Layer-2 content-addressed store ----------------------------------------------------
+
+
+def _make_ignored_claude_repo(path: Path) -> Path:
+    """A scratch repo whose ``.claude/`` is git-ignored (Step B0a's safe path)."""
+    repo = _init_repo(path)
+    (repo / ".gitignore").write_text(".claude/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-q", "-m", "ignore .claude")
+    return repo
+
+
+def test_store_write_once_dedups_identical_bytes(tmp_path: Path) -> None:
+    """Storing the same bytes twice (even under a different run/epoch) reuses one CAS path."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    artifact = tmp_path / "a.txt"
+    artifact.write_text("same content\n", encoding="utf-8")
+
+    p1 = ap.store("run-1", "0", artifact, repo_root=repo)
+    p2 = ap.store("run-2", "5", artifact, repo_root=repo)
+
+    assert p1.hash == p2.hash
+    assert p1.locator == p2.locator
+    store_root = ap.resolve_store_root(repo)
+    cas_files = list((store_root / "objects").rglob("*"))
+    cas_files = [f for f in cas_files if f.is_file()]
+    assert len(cas_files) == 1
+
+
+def test_store_different_bytes_get_different_paths(tmp_path: Path) -> None:
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    a = tmp_path / "a.txt"
+    a.write_text("content A\n", encoding="utf-8")
+    b = tmp_path / "b.txt"
+    b.write_text("content B\n", encoding="utf-8")
+
+    p1 = ap.store("run-1", "0", a, repo_root=repo)
+    p2 = ap.store("run-1", "1", b, repo_root=repo)
+
+    assert p1.hash != p2.hash
+    assert p1.locator != p2.locator
+
+
+def test_store_deref_round_trips_content(tmp_path: Path) -> None:
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    artifact = tmp_path / "a.txt"
+    artifact.write_text("stored content\n", encoding="utf-8")
+    pointer = ap.store("run-1", "0", artifact, repo_root=repo)
+
+    assert ap.deref(pointer, repo_root=repo) == "stored content\n"
+
+
+def test_store_falls_back_to_home_when_claude_dir_not_ignored(tmp_path: Path, monkeypatch) -> None:
+    """When ``.claude`` is NOT git-ignored, the store falls back to the home-dir namespace
+    (Step B0a safety) rather than writing under the repo's ``.claude/``."""
+    repo = _init_repo(tmp_path / "repo")  # no .gitignore for .claude/
+    ap = _load()
+
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    monkeypatch.setattr(ap.Path, "home", classmethod(lambda cls: fake_home))
+
+    store_root = ap.resolve_store_root(repo)
+    assert str(fake_home) in str(store_root)
+    assert not (repo / ".claude" / "team-execution" / "artifacts").exists()
+
+
+def test_tampered_stored_file_raises_hash_mismatch(tmp_path: Path) -> None:
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    artifact = tmp_path / "a.txt"
+    artifact.write_text("original\n", encoding="utf-8")
+    pointer = ap.store("run-1", "0", artifact, repo_root=repo)
+
+    store_root = ap.resolve_store_root(repo)
+    cas_path = store_root / pointer.locator
+    cas_path.write_text("tampered\n", encoding="utf-8")
+
+    try:
+        ap.deref(pointer, repo_root=repo)
+        raise AssertionError("expected PointerError")
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+
+
+def test_l2_deref_rejects_path_traversal_locator(tmp_path: Path) -> None:
+    """A pointer is untrusted (it travels inside spawn prompts). A hostile ``locator`` that names a
+    file outside the store — absolute or ``..``-escaping — must be rejected, never followed, even
+    when the pointer carries that file's real sha256. Otherwise deref is an arbitrary-file read and
+    the mismatch error a hash-disclosure oracle."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET\n", encoding="utf-8")
+    secret_digest = hashlib.sha256(secret.read_bytes()).hexdigest()
+
+    hostile_locators = [
+        str(secret),  # absolute path — pathlib join lets the RHS win outright
+        f"../../../../{secret.name}",  # dotdot escape
+    ]
+    for locator in hostile_locators:
+        pointer = ap.ArtifactPointer(
+            kind="file", locator=locator, hash=secret_digest, epoch="0", deref="cat"
+        )
+        try:
+            ap.deref(pointer, repo_root=repo)
+            raise AssertionError(f"expected PointerError for hostile locator {locator!r}")
+        except ap.PointerError as exc:
+            assert exc.code == ap.ERR_HASH_MISMATCH
+            assert "TOP SECRET" not in exc.detail  # no content or path leaked back
+
+
+def test_l2_deref_rejects_non_hex_hash(tmp_path: Path) -> None:
+    """A non-sha256 ``hash`` cannot address the CAS — it is rejected before any path is built."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    pointer = ap.ArtifactPointer(
+        kind="file", locator="objects/xx/not-a-digest", hash="not-a-digest", epoch="0", deref="cat"
+    )
+    try:
+        ap.deref(pointer, repo_root=repo)
+        raise AssertionError("expected PointerError for non-hex hash")
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+
+
+def test_superseded_l2_epoch_raises_stale(tmp_path: Path) -> None:
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    a0 = tmp_path / "a0.txt"
+    a0.write_text("epoch 0 content\n", encoding="utf-8")
+    old_pointer = ap.store("run-1", "0", a0, repo_root=repo)
+
+    a1 = tmp_path / "a1.txt"
+    a1.write_text("epoch 1 content\n", encoding="utf-8")
+    ap.store("run-1", "1", a1, repo_root=repo)  # supersedes epoch 0
+
+    try:
+        ap.deref(old_pointer, repo_root=repo)
+        raise AssertionError("expected PointerError")
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_STALE
+
+
+def _backdate_reflog_entry(reflog_path: Path, seconds_ago: float) -> None:
+    """Rewrite a reflog's entries so their embedded creation timestamp is `seconds_ago` in the past.
+
+    That per-entry timestamp — not the reflog file mtime — is the age signal gc reads (the file mtime
+    is reset by `git gc`'s internal `reflog expire`). Line: `<old> <new> <name> <email> <ts> <tz>\\t<msg>`.
+    """
+    old_ts = str(int(time.time() - seconds_ago))
+    out = []
+    for line in reflog_path.read_text(encoding="utf-8").splitlines():
+        prefix, _, msg = line.partition("\t")
+        parts = prefix.split()
+        parts[-2] = old_ts
+        out.append(" ".join(parts) + "\t" + msg)
+    reflog_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def test_gc_reclaims_stale_cas_entries_and_snapshot_refs_younger_survive(tmp_path: Path) -> None:
+    """``gc`` removes CAS entries and snapshot refs older than the TTL; younger entries survive."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    ap = _load()
+
+    old_artifact = tmp_path / "old.txt"
+    old_artifact.write_text("old artifact\n", encoding="utf-8")
+    old_pointer = ap.store("run-old", "0", old_artifact, repo_root=repo)
+
+    ap.snapshot("run-old", "0", repo_root=repo)
+
+    new_artifact = tmp_path / "new.txt"
+    new_artifact.write_text("new artifact\n", encoding="utf-8")
+    new_pointer = ap.store("run-new", "0", new_artifact, repo_root=repo)
+    new_snapshot = ap.snapshot("run-new", "0", repo_root=repo)
+
+    store_root = ap.resolve_store_root(repo)
+    old_cas_path = store_root / old_pointer.locator
+    old_ref_path = repo / ".git" / "refs" / "team-execution" / "snapshots" / "run-old" / "0"
+    # gc dates a snapshot ref by its reflog ENTRY timestamp (survives git gc + reflog expire), not the
+    # reflog file mtime; the CAS artifact is still dated by its own file mtime.
+    old_reflog_path = (
+        repo / ".git" / "logs" / "refs" / "team-execution" / "snapshots" / "run-old" / "0"
+    )
+    stale_ts = time.time() - (10 * 86400)
+    os.utime(old_cas_path, (stale_ts, stale_ts))
+    _backdate_reflog_entry(old_reflog_path, 10 * 86400)
+
+    result = ap.gc(repo_root=repo, max_age_days=7)
+
+    assert result["artifacts_removed"] == 1
+    assert result["snapshot_refs_removed"] == 1
+    assert not old_cas_path.exists()
+    assert not old_ref_path.exists()
+
+    # Younger entries survive and remain fully usable.
+    new_store_root = ap.resolve_store_root(repo)
+    assert (new_store_root / new_pointer.locator).exists()
+    assert ap.deref(new_pointer, repo_root=repo) == "new artifact\n"
+    assert _git(repo, "rev-parse", "--verify", new_snapshot.locator) == new_snapshot.hash
+
+    # The stale run's freshness-index entry is pruned too.
+    index = ap._read_index(store_root)
+    assert "run-old" not in index
+
+
+def test_cli_store_and_gc_round_trip(tmp_path: Path) -> None:
+    """The ``store`` and ``gc`` CLI subcommands work end-to-end (no direct module import)."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+    artifact = tmp_path / "cli.txt"
+    artifact.write_text("cli content\n", encoding="utf-8")
+
+    store_result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--repo-root",
+            str(repo),
+            "store",
+            "--run",
+            "cli-run",
+            "--epoch",
+            "0",
+            str(artifact),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    pointer_json = store_result.stdout.strip()
+    assert '"kind":"file"' in pointer_json
+
+    deref_result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo), "deref", pointer_json],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert deref_result.stdout == "cli content\n"
+
+    gc_result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo), "gc", "--max-age-days", "7"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(gc_result.stdout)
+    assert payload["artifacts_removed"] == 0  # too fresh to reclaim
+    assert payload["snapshot_refs_removed"] == 0
+
+
+# --- U4: saga envelope field + R11 end-to-end producer -> spawned-consumer proof -------------
+
+SAGA_SCRIPT = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
+
+
+def _extract_artifact_pointer_block(text: str) -> str:
+    """Extract the JSON inside the first fenced ```artifact-pointer block, exactly as a receiving
+    agent parsing a spawn prompt would. Coupled to the template's fence marker so that removing or
+    renaming the block (template drift) breaks the R11 end-to-end test."""
+    marker = "```artifact-pointer"
+    start = text.index(marker) + len(marker)
+    end = text.index("```", start)
+    return text[start:end].strip()
+
+
+def _newest_tick(saga_dir: Path) -> str:
+    """Text of the most recently written envelope tick (nanosecond mtime — same-second ``-seq``
+    filename suffixes sort ambiguously by name)."""
+    newest = max(saga_dir.glob("*.md"), key=lambda p: p.stat().st_mtime_ns)
+    return newest.read_text(encoding="utf-8")
+
+
+def test_layer2_end_to_end_producer_to_spawned_consumer(tmp_path: Path) -> None:
+    """R11 + KTD5 dead-wiring proof (LEARNINGS.md:400): the REAL ``artifact_pointer.py store`` producer
+    and the REAL ``saga.py save`` envelope feed TWO consumer legs that both connect back to the
+    producer THROUGH a persistence boundary, never a shared in-memory variable:
+
+    * Leg A (saga-field): ``saga.py restore`` reads ``artifact_pointers`` back OUT of the saved tick
+      on disk, and that restored pointer is dereferenced — the leg the dead-wiring bar requires.
+    * Leg B (spawn-template): the REAL consensus-protocol template carries the pointer in its fenced
+      block; a receiving agent extracts it and derefs from a DIFFERENT cwd.
+
+    No hand-built pointer JSON, no fabricated frontmatter."""
+    repo = _make_ignored_claude_repo(tmp_path / "repo")
+
+    # Producer leg 1: store a Layer-2 artifact via the REAL store CLI (its emitted pointer is the
+    # only pointer used downstream — never hand-built).
+    artifact = tmp_path / "big-output.txt"
+    artifact.write_text("generated artifact bytes\n" * 50, encoding="utf-8")
+    pointer_json = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--repo-root",
+            str(repo),
+            "store",
+            "--run",
+            "run-e2e",
+            "--epoch",
+            "0",
+            str(artifact),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    pointer = json.loads(pointer_json)
+    assert pointer["kind"] == "file"
+
+    # Producer leg 2: record the pointer on a saga tick via the REAL saga.py save CLI. saga.py
+    # resolves its state dir from cwd (``Path.cwd()``), so run it inside an isolated dir that never
+    # touches this repo's real .claude/saga.
+    saga_root = tmp_path / "saga-root"
+    saga_root.mkdir()
+    subprocess.run(
+        [
+            sys.executable,
+            str(SAGA_SCRIPT),
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "e2e",
+            "--lifecycle-phase",
+            "work",
+            "--artifact-pointers",
+            pointer_json,
+        ],
+        cwd=saga_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    tick_text = _newest_tick(saga_root / ".claude" / "saga" / "sagas" / "task-e2e")
+    assert "artifact_pointers:" in tick_text
+    assert pointer["hash"] in tick_text  # the real pointer's content is in the envelope
+
+    # Consumer leg A — SAGA-FIELD round-trip through PERSISTENCE (KTD5 both-axes proof, the leg the
+    # dead-wiring bar requires): restore the tick from disk via the REAL saga.py restore CLI, read
+    # artifact_pointers back OUT of the persisted saga, and deref THAT pointer — producer and consumer
+    # connect THROUGH the saved file, not a shared in-memory variable.
+    restored = json.loads(
+        subprocess.run(
+            [sys.executable, str(SAGA_SCRIPT), "restore", "--saga-id", "task-e2e"],
+            cwd=saga_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+    persisted = restored["artifact_pointers"]
+    assert persisted, "artifact_pointers must survive the save->restore round-trip"
+    from_saga = persisted[0]
+    assert from_saga == pointer_json  # exact pointer bytes recovered from the persisted field
+    saga_cwd = tmp_path / "elsewhere-saga"
+    saga_cwd.mkdir()
+    saga_deref = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo), "deref", from_saga],
+        cwd=saga_cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert saga_deref.stdout == artifact.read_text(encoding="utf-8")
+
+    # Consumer leg B — render the REAL spawn template, substituting the real store pointer into its
+    # fenced artifact-pointer block (the template ships a diff-kind placeholder). Template drift
+    # (fence removed/renamed) breaks this via _extract_artifact_pointer_block.
+    template = _read_text(CONSENSUS_PROTOCOL)
+    placeholder = _extract_artifact_pointer_block(template)
+    assert '"kind":"diff"' in placeholder
+    spawn_context = template.replace(placeholder, pointer_json, 1)
+
+    # A receiving agent extracts the fenced block back out of its spawn prompt...
+    received = _extract_artifact_pointer_block(spawn_context)
+    assert received == pointer_json
+
+    # ...and derefs it via the CLI from a DIFFERENT cwd (not the repo), pinning the store by
+    # --repo-root exactly as a spawned agent would. Content round-trips and verification passes.
+    other_cwd = tmp_path / "elsewhere"
+    other_cwd.mkdir()
+    deref = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo), "deref", received],
+        cwd=other_cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert deref.returncode == 0
+    assert deref.stdout == artifact.read_text(encoding="utf-8")
+
+
+def test_saga_save_round_trips_artifact_pointers_and_absent_emits_no_key(tmp_path: Path) -> None:
+    """The REAL saga.py save CLI round-trips ``artifact_pointers`` (save with flag, then without ->
+    full-snapshot carry-forward), and a saga that never sets the flag emits no key at all
+    (byte-identical existing sagas — the #287 KTD1 absent-emits-no-key precedent)."""
+    saga_root = tmp_path / "saga-root"
+    saga_root.mkdir()
+    ptr = '{"deref":"x","epoch":"run/0","hash":"abc","kind":"file","locator":"objects/ab/abc"}'
+
+    def _save(id_: str, *extra: str) -> None:
+        subprocess.run(
+            [sys.executable, str(SAGA_SCRIPT), "save", "--kind", "task", "--id", id_, *extra],
+            cwd=saga_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    # Save WITH the flag -> the pointer is serialized into the tick.
+    _save("rt", "--lifecycle-phase", "work", "--artifact-pointers", ptr)
+    saga_dir = saga_root / ".claude" / "saga" / "sagas" / "task-rt"
+    first = _newest_tick(saga_dir)
+    assert "artifact_pointers:" in first
+    assert "objects/ab/abc" in first
+
+    # Save again WITHOUT the flag -> ABSENT carries the prior snapshot forward (not dropped).
+    _save("rt", "--lifecycle-phase", "work", "--phase-status", "complete")
+    second = _newest_tick(saga_dir)
+    assert "objects/ab/abc" in second
+
+    # A saga that NEVER sets the flag emits no artifact_pointers key at all.
+    _save("clean", "--lifecycle-phase", "plan")
+    clean = _newest_tick(saga_root / ".claude" / "saga" / "sagas" / "task-clean")
+    assert "artifact_pointers" not in clean
+
+
+# --- U5: Layer 3 light path+symbol pointers ---------------------------------------------------
+
+
+def test_symbol_pointers_light_form_documented_in_artifact_pointers_md() -> None:
+    """Layer 3 symbol section documents light `<path>#<symbol>` form and explicitly defers formal
+    resolver dependency (R12/R13, plan U5)."""
+    doc = _read_text(ARTIFACT_POINTERS_DOC)
+    assert "Layer 3 — symbol pointers" in doc
+    assert "<repo-relative-path>#<symbol-name>" in doc
+    assert "no formal resolver" in doc
+    assert "formal resolver is deferred" in doc
+    assert "grep/read tools" in doc
+
+
+# --- Remediation cycle 1 (consensus gate) ------------------------------------------------------
+
+
+def test_l1_deref_ignores_tampered_deref_field_no_arbitrary_write(tmp_path: Path) -> None:
+    """Security P1: the free-form ``deref`` field is never parsed into argv. A pointer whose ``deref``
+    is tampered to smuggle ``git diff --output=<path>`` (an arbitrary-file-write) is dereferenced by
+    rebuilding argv from the validated base+hash, so the injected option is ignored, no file is
+    written, and the correct diff is still returned."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "new.txt").write_text("untracked payload\n", encoding="utf-8")
+    pointer = ap.snapshot("run", "0", repo_root=repo)
+
+    evil = tmp_path / "evil.txt"
+    tampered = ap.ArtifactPointer(
+        kind=pointer.kind,
+        locator=pointer.locator,
+        hash=pointer.hash,
+        epoch=pointer.epoch,
+        deref=f"git diff --output={evil} {pointer.base} {pointer.hash}",
+        base=pointer.base,
+    )
+    out = ap.deref(tampered, repo_root=repo)
+
+    assert not evil.exists()  # the --output= option never reached git
+    assert "untracked payload" in out  # correct diff still rebuilt from base+hash
+
+
+def test_l1_deref_rejects_non_oid_base(tmp_path: Path) -> None:
+    """Security P1: a diff pointer whose base is not a hex object id (e.g. an option token) is
+    rejected before any git invocation, so no option token can reach ``git diff``."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    pointer = ap.snapshot("run", "0", repo_root=repo)
+    hostile = ap.ArtifactPointer(
+        kind="diff",
+        locator=pointer.locator,
+        hash=pointer.hash,
+        epoch=pointer.epoch,
+        deref=pointer.deref,
+        base="--output=pwned",
+    )
+    try:
+        ap.deref(hostile, repo_root=repo)
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+    else:
+        raise AssertionError("expected PointerError for non-OID base")
+
+
+def test_l1_deref_pins_base_across_head_movement(tmp_path: Path) -> None:
+    """KTD1: the pointer pins the base tree at snapshot time, so a HEAD commit AFTER the snapshot does
+    not change what deref shows — the diff stays base->snapshot, not HEAD->snapshot."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "snap.txt").write_text("snapshot-only content\n", encoding="utf-8")
+    pointer = ap.snapshot("run", "0", repo_root=repo)
+
+    (repo / "later.txt").write_text("post-snapshot commit\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "advance HEAD")
+
+    out = ap.deref(pointer, repo_root=repo)
+    assert "snapshot-only content" in out  # snapshot's untracked add still present
+    assert "post-snapshot commit" not in out  # later commit absent from the pinned base->snapshot
+
+
+def test_l1_non_numeric_epoch_skips_freshness_enforcement(tmp_path: Path) -> None:
+    """Contract: a non-numeric ('opaque') epoch is carried but freshness is NOT enforced — a newer
+    numeric epoch for the same run does not make an opaque-epoch pointer stale."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("opaque payload\n", encoding="utf-8")
+    opaque = ap.snapshot("run", "opaque", repo_root=repo)
+    (repo / "b.txt").write_text("newer\n", encoding="utf-8")
+    ap.snapshot("run", "99", repo_root=repo)
+
+    out = ap.deref(opaque, repo_root=repo)  # freshness skipped for non-numeric epoch
+    assert "opaque payload" in out
+
+
+def test_l1_deref_rejects_ref_pointing_at_non_tree(tmp_path: Path) -> None:
+    """Integrity P3: if the pointer hash is a non-tree object (a blob), deref fails with HASH_MISMATCH
+    via the tree-type check rather than producing a bogus diff."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "x.txt").write_text("content\n", encoding="utf-8")
+    pointer = ap.snapshot("run", "0", repo_root=repo)
+    blob = _git(repo, "hash-object", "-w", str(repo / "x.txt"))
+    hostile = ap.ArtifactPointer(
+        kind="diff",
+        locator=pointer.locator,
+        hash=blob,
+        epoch=pointer.epoch,
+        deref=pointer.deref,
+        base=pointer.base,
+    )
+    try:
+        ap.deref(hostile, repo_root=repo)
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+    else:
+        raise AssertionError("expected HASH_MISMATCH for non-tree hash")
+
+
+def test_deref_symbol_pointer_rejected_with_clear_message(tmp_path: Path) -> None:
+    """A kind:symbol pointer is NOT dereferenced by the CLI (resolved with grep/read); deref raises a
+    clear ValueError instead of falling through to an opaque git failure."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    sym = ap.ArtifactPointer(
+        kind="symbol",
+        locator="path/to/file.py#my_func",
+        hash="",
+        epoch="0",
+        deref="grep -n my_func",
+    )
+    try:
+        ap.deref(sym, repo_root=repo)
+    except ValueError as exc:
+        assert "grep/read" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for symbol pointer deref")
+
+
+def test_snapshot_rejects_ref_unsafe_run_id_and_epoch(tmp_path: Path) -> None:
+    """Security P3: run-id / epoch are interpolated into a ref name + passed to update-ref; a segment
+    with path structure or whitespace is rejected up front."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    for bad in ("../evil", "a b", "run/../x"):
+        try:
+            ap.snapshot(bad, "0", repo_root=repo)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for unsafe run id {bad!r}")
+    try:
+        ap.snapshot("run", "0 1", repo_root=repo)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for unsafe epoch")
+
+
+def test_l2_deref_rejects_symlink_in_store(tmp_path: Path) -> None:
+    """Security P3: a symlink planted at the CAS path is rejected (not followed) so it cannot redirect
+    the read/re-hash to an arbitrary target, and the error leaks nothing about the target."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    payload = repo / "artifact.txt"
+    payload.write_text("real artifact\n", encoding="utf-8")
+    pointer = ap.store("run", "0", payload, repo_root=repo)
+
+    store_root = ap.resolve_store_root(repo)
+    cas_path = store_root / pointer.locator
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET\n", encoding="utf-8")
+    cas_path.unlink()
+    cas_path.symlink_to(secret)
+    try:
+        ap.deref(pointer, repo_root=repo)
+    except ap.PointerError as exc:
+        assert exc.code == ap.ERR_HASH_MISMATCH
+        assert "TOP SECRET" not in exc.detail
+    else:
+        raise AssertionError("expected symlink rejection")
+
+
+def test_pointer_base_field_round_trips_and_defaults_absent() -> None:
+    """The new ``base`` field round-trips through to_json/from_json, and a legacy 5-field pointer JSON
+    (no base) still parses with base defaulting to empty (backward compatible)."""
+    ap = _load()
+    p = ap.ArtifactPointer(
+        kind="diff",
+        locator="refs/x",
+        hash="a" * 40,
+        epoch="0",
+        deref="git diff x y",
+        base="b" * 40,
+    )
+    assert ap.ArtifactPointer.from_json(p.to_json()).base == "b" * 40
+    legacy = json.dumps(
+        {
+            "kind": "file",
+            "locator": "objects/ab/abcd",
+            "hash": "abcd",
+            "epoch": "run/0",
+            "deref": "x deref",
+        }
+    )
+    assert ap.ArtifactPointer.from_json(legacy).base == ""
+
+
+def test_gc_dates_snapshot_refs_by_reflog_entry_surviving_real_git_gc(tmp_path: Path) -> None:
+    """Regression (devils-advocate cycle 2): gc dates a snapshot ref by its reflog ENTRY timestamp,
+    which survives a REAL `git gc` — not the reflog file mtime, which gc's internal `reflog expire`
+    resets. Backdate the entry, run a real `git gc` (packs the ref + rewrites the reflog file), then
+    confirm gc still reclaims the aged ref and spares the young one."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    ap.snapshot("run-old", "0", repo_root=repo)
+    (repo / "new.txt").write_text("new\n", encoding="utf-8")
+    ap.snapshot("run-new", "0", repo_root=repo)
+
+    old_reflog = repo / ".git" / "logs" / "refs" / "team-execution" / "snapshots" / "run-old" / "0"
+    _backdate_reflog_entry(old_reflog, 10 * 86400)
+    _git(repo, "gc")  # packs refs (deletes loose files) AND runs reflog expire (resets file mtimes)
+
+    result = ap.gc(repo_root=repo, max_age_days=7)
+    assert result["snapshot_refs_removed"] == 1
+    remaining = _git(repo, "for-each-ref", "--format=%(refname)", "refs/team-execution/snapshots/")
+    assert "run-old" not in remaining  # aged ref reclaimed despite the file-mtime reset
+    assert "run-new" in remaining  # young ref survives
+
+
+def test_snapshot_rejects_sparse_checkout_worktree(tmp_path: Path) -> None:
+    """devils-advocate P3: a sparse-checkout worktree fails snapshot loudly (KTD7 inline fallback)
+    rather than shipping a diff with phantom deletions from dropped skip-worktree paths."""
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    _git(repo, "config", "core.sparseCheckout", "true")
+    try:
+        ap.snapshot("run", "0", repo_root=repo)
+    except ap.GitError as exc:
+        assert "sparse" in str(exc).lower()
+    else:
+        raise AssertionError("expected GitError for a sparse-checkout worktree")
+
+
+def test_resume_skill_references_valid_artifact_pointer_script_path() -> None:
+    """Architecture P3: /resume's consumer instruction hardcodes the artifact_pointer.py path; guard
+    that the referenced script exists so a future move cannot silently break the consumer."""
+    repo_root = Path(__file__).resolve().parent.parent
+    resume_skill = repo_root / "plugins" / "saga" / "skills" / "resume" / "SKILL.md"
+    text = resume_skill.read_text(encoding="utf-8")
+    script_rel = "plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py"
+    assert script_rel in text, "resume SKILL must reference the artifact_pointer.py deref path"
+    assert (repo_root / script_rel).is_file(), f"{script_rel} referenced by resume SKILL is missing"

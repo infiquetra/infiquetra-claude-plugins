@@ -193,6 +193,7 @@ class Saga:
     work_session_paths: ListOrAbsent = ABSENT
     review_paths: ListOrAbsent = ABSENT
     qa_paths: ListOrAbsent = ABSENT
+    artifact_pointers: ListOrAbsent = ABSENT
 
     # Git snapshot (cached for offline display; never the authority).
     branch: str = ""
@@ -253,6 +254,7 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "work_session_paths",
     "review_paths",
     "qa_paths",
+    "artifact_pointers",
     "branch",
     "head_sha",
     "last_commit_sha",
@@ -274,6 +276,7 @@ _LIST_FIELDS = {
     "work_session_paths",
     "review_paths",
     "qa_paths",
+    "artifact_pointers",
     "files_modified",
     "rounds_seen",
     "pr_refs",
@@ -283,6 +286,12 @@ _LIST_FIELDS = {
     "checks_run",
     "gate_verdicts",
 }
+
+# List fields that render NO key at all when empty/absent (rather than the ``key: []`` the
+# legacy list fields emit). This keeps a saga that never records artifact pointers byte-identical
+# to a pre-field envelope — the same absent-emits-no-key contract #287's ``sandbox`` field adopted —
+# while a populated value still round-trips through save/load.
+_OMIT_WHEN_EMPTY_FIELDS = {"artifact_pointers"}
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +361,10 @@ def render_envelope(saga: Saga) -> str:
     """Render a saga to a gstack-style frontmatter + body envelope (str)."""
     lines: list[str] = ["---"]
     for key in FRONTMATTER_FIELDS:
-        lines.append(_render_value(key, getattr(saga, key)))
+        value = getattr(saga, key)
+        if key in _OMIT_WHEN_EMPTY_FIELDS and not _materialize(value):
+            continue
+        lines.append(_render_value(key, value))
     for key in sorted(saga.extra):
         lines.append(_render_value(key, saga.extra[key]))
     lines.append("---")
@@ -1218,6 +1230,7 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         work_session_paths=_split_list(args.work_session_paths),
         review_paths=_split_list(args.review_paths),
         qa_paths=_split_list(args.qa_paths),
+        artifact_pointers=_split_list(args.artifact_pointers),
         files_modified=_split_list(args.files_modified),
         rounds_seen=_split_int_list(args.rounds_seen),
         pr_refs=_split_list(args.pr_refs),
@@ -1279,6 +1292,11 @@ def _add_save_parser(sub: Any) -> None:
     )
     p.add_argument("--review-paths", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--qa-paths", default=None, help="pipe-separated; omit = carry forward")
+    p.add_argument(
+        "--artifact-pointers",
+        default=None,
+        help="pipe-separated typed artifact-pointer JSON blocks; omit = carry forward",
+    )
     p.add_argument("--files-modified", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--rounds-seen", default=None, help="pipe-separated ints; omit = carry forward")
     p.add_argument("--pr-refs", default=None, help="pipe-separated; omit = carry forward")

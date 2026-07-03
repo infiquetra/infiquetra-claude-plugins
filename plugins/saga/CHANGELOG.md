@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.49.0 - 2026-07-02
+
+### Artifact-pointers saga envelope field (#291)
+- New `artifact_pointers` field on the `Saga` dataclass and `FRONTMATTER_FIELDS`, beside the
+  existing `review_paths` block (`saga.py:192-195/253-254/274-275`), plus an `--artifact-pointers`
+  flag on the `save` subparser wired into `_build_save_saga` (beside `--review-paths`,
+  `saga.py:1218-1219/1280`). Absent field round-trips byte-identical on existing sagas.
+- Lets a saga record typed artifact pointers (git-object diff pointers, content-addressed store
+  pointers, or symbol pointers — see team-execution 2.8.0) so spawned team-execution agents can
+  dereference stored artifacts the saga points at instead of receiving them inlined (KD5).
+- `/resume` now **consumes** the field: a restored tick's `artifact_pointers` are dereferenced via
+  `artifact_pointer.py deref` to recover the exact artifact bytes (fail-closed on
+  `POINTER_HASH_MISMATCH` / `POINTER_STALE`), closing the producer+consumer dead-wiring loop
+  (LEARNINGS `{#dead-wiring-needs-producer-and-consumer}`). The field was producer-only before this.
+
 ## 0.48.0 - 2026-07-02
 
 ### Team-spawn residency guard (#289)

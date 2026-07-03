@@ -27,6 +27,25 @@
 
 ## 2026-07-02
 
+### `git gc` packs custom-namespace refs — a loose-file-mtime gc goes blind after any gc  {#git-gc-packs-custom-refs-291}
+
+**Context.** team-execution's Layer-1 artifact pointers pin a snapshot tree with a holding ref under `refs/team-execution/snapshots/<run-id>/<epoch>`; the TTL `gc` reclaimed old refs by the loose ref file's mtime.
+**Evidence.** Scratch repo, git 2.54: `git update-ref refs/team-execution/snapshots/run1/0 <tree>` then `git gc` moves the ref into `.git/packed-refs` and deletes the loose `.git/refs/.../run1/0`. `_snapshot_ref_paths` keyed off `ref_path.exists()`, so after any gc (including auto-gc) the ref became invisible to reclamation and leaked forever — the tree *object* still resolved (leak-not-break). devils-advocate consensus review, #291; commit 1c1cafc.
+**Mechanism.** `git gc` runs `pack-refs --all`, which packs refs under ANY namespace, not just `refs/heads`/`refs/tags`. A prior in-code comment asserted the opposite ("does not pack refs under a custom namespace by default") — empirically false.
+**Fix (two-step, cycle 1 → cycle 2).** Create the ref with `git update-ref --create-reflog` and enumerate via `for-each-ref` (sees packed refs). Cycle 1 dated the ref by the reflog FILE mtime — still wrong: `git gc` runs `git reflog expire --all` internally, which rewrites every reflog file and resets its mtime to now (even when it expires zero entries), so refs looked age-0 and never aged out (same leak, same `git gc` trigger). Cycle 2 dates by the reflog ENTRY's embedded commit timestamp (`_reflog_creation_time` parses the reflog line), which `reflog expire` preserves.
+**Validation.** Scratch repo, git 2.54: backdated a reflog entry 10 days, ran a real `git gc` → the loose ref is packed AND the reflog file mtime resets to now, but the ENTRY timestamp stays 10 days. `test_gc_dates_snapshot_refs_by_reflog_entry_surviving_real_git_gc` runs a real `git gc` between snapshot and reclaim, green.
+**Generalizable rule.** Git metadata has layers of durability: a loose ref file is packed away by gc; a reflog FILE survives packing but its mtime is reset by `reflog expire`; the reflog ENTRY timestamp (semantic content git writes) survives both. Date by the value git promises to preserve, not the filesystem artifact around it — and test the age path against a REAL `git gc`, not a simulated mtime.
+**Refs.** DECISIONS `{#artifact-pointer-ktds-291}`; devils-advocate consensus cycles 1–2, #291.
+
+### An e2e test can be green while a persisted-field consumer leg is a no-op — cross the persistence boundary  {#test-shape-masks-dead-wiring-291}
+
+**Context.** The saga `artifact_pointers` field was claimed "live on both axes" (producer + consumer), with a passing e2e test as the proof.
+**Evidence.** `test_layer2_end_to_end_producer_to_spawned_consumer` saved the tick (asserting the pointer was in the tick text) but the consumer leg derefed the in-memory `pointer_json` from the producer, threaded through the spawn template — never the value read back from the saved tick. grep confirmed no skill read `artifact_pointers` back. Producer→consumer connected through a shared variable, not the persisted field. devils-advocate consensus review, #291; commit 79a49ea.
+**Mechanism.** Both producer legs were real CLIs and both assertions passed, so the suite looked like a both-axes proof. The gap was which *variable* the consumer derefed — invisible unless you trace data flow rather than pass/fail.
+**Fix.** Consumer wired: `/resume` derefs a restored tick's pointers. e2e rewritten so the consumer leg does `saga.py restore` → reads `artifact_pointers` out of the persisted saga → derefs THAT. Commit 79a49ea.
+**Generalizable rule.** A round-trip test only proves the round-trip if the consumer reads from the boundary it claims to validate. If producer and consumer share an in-memory value, the persistence layer is untested no matter how green the test is — assert the consumer derives its input from disk/DB/wire, not from the producer's return value.
+**Refs.** LEARNINGS `{#dead-wiring-needs-producer-and-consumer}`; DECISIONS `{#artifact-pointer-ktds-291}`; commit 79a49ea.
+
 ### An open issue's core fix can silently ship inside unrelated work — re-verify premises against HEAD  {#issue-premises-drift-314}
 
 **Context.** Planning #314 (saga leak-guard false-positive). The issue body, filed 2026-06-30,

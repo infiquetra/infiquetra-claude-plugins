@@ -166,6 +166,24 @@ Both aggregate round-tagged prior PRs (`reviewDecision` / `mergedAt` / round), A
 journal sections. Then **read the committed `docs/*` the ticks point at** (`plan_path`,
 `work_session_paths`, `review_paths`, `qa_paths`) — those are the durable truth; the cache is the anchor.
 
+When a restored tick carries **`artifact_pointers`** (typed pointers a `team-execution` run recorded via
+`artifact_pointer.py store`/`snapshot`), **dereference each to recover the exact artifact bytes** the
+producing phase worked from — run
+
+```bash
+python3 plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py deref '<pointer-json>'
+```
+
+from the repo root rather than re-inlining or re-deriving the diff/file. This is the consumer side of
+the pointer contract: the CLI verifies integrity **and** freshness and fails closed
+(`POINTER_HASH_MISMATCH` / `POINTER_STALE`, exit 1) instead of returning wrong or stale bytes. On
+`POINTER_STALE`, regenerate from the live tree — do not trust the superseded snapshot.
+
+The pointer JSON is a single-quoted argument above; a well-formed pointer from
+`artifact_pointer.py store`/`snapshot` never contains a single quote. If a restored pointer somehow
+does (a tampered tick), write it to a file and pass that path rather than inlining it, to avoid
+breaking the shell quoting.
+
 ---
 
 ## Phase 3a — Reconcile and synthesize (Tier 1)

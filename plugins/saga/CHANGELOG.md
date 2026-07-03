@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.50.0 - 2026-07-03
+
+### Fix: verify-panel reconciliation recomputes over reporting verifiers, not declared n (#293)
+- A runtime-missing verifier (a `null` verdict slot from a skipped or terminally-errored
+  `agent()` call) was previously counted as "did not refute" while the pass-rule threshold
+  stayed fixed at the declared panel size (`⌈n/2⌉` majority / `n` unanimous) — masking genuine
+  majority refutations, the unsafe direction, across all three emission sites
+  (`_emit_thunk`, `_emit_verify_loop_singleton`, `_emit_verify_panel`).
+- The three sites are consolidated into one shared `_emit_panel_reconciliation` helper
+  (mirroring the `_verifier_agent_opts` single-source precedent), which now records which
+  verifiers reported vs. went missing (by index), recomputes the threshold over the reporters
+  (`majority`: `max(1, ⌈k/2⌉)`; `unanimous`: `max(1, k)`), and logs an UNDER-STRENGTH marker
+  when the reporting count falls under a baked `⌈n/2⌉` quorum floor of the declared `n`. A
+  refutation over reporters still throws/retries regardless of under-strength — the floor only
+  annotates the accept path, so a small quorum disagreeing is never silently suppressed.
+- **No behavior change when every verifier reports**: the recomputed expressions are
+  arithmetically identical to today's fixed threshold in the all-report case (`k = n`).
+- `plugins/saga/references/execution-spec.md` documents the throw consumer (not `log()`-only),
+  the recompute table, the quorum floor, the static-vs-runtime two-kinds boundary, and the
+  known no-verifier-timeout residue (workflow scripts have no timer primitive).
+
 ## 0.49.2 - 2026-07-03
 
 ### Fix: documented fallback + registration drift guard for `saga:readonly-verifier` (#325)

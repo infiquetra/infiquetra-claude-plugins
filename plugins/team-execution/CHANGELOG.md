@@ -4,6 +4,27 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.9.0] - 2026-07-03
+
+### Consensus dimension exclusion replaces fabricated N/A default (#293)
+- `architecture-reviewer.md` scored a dimension whose repo-state precondition was absent (e.g.
+  Architecture Documentation Coverage with no ADRs or observable patterns to check) as a
+  fabricated N/A -> 8.0 default, folded into the five-dimension average that feeds the
+  unanimous-ACCEPT gate. It now EXCLUDES the dimension from the denominator with a logged
+  `static-non-applicable` cause, and reports the overall as the average of the applicable
+  dimensions, naming the denominator (e.g. "avg of 4 applicable").
+- `consensus-protocol.md` defines the same applicable-dimensions denominator for the `>= 9.0` /
+  no-dimension-`< 7.0` pass gate and the re-review path: a static exclusion is never itself a
+  NEEDS REVISION signal, does not lower the overall, and does not trigger re-review or
+  escalation. The exclusion vocabulary (`static-non-applicable`) is shared with the Layer A
+  `saga` `execution-spec.md` contract, even though the two surfaces reconcile on distinct paths
+  (prompt-reconciled dimensions here; generated-code-reconciled verifiers there).
+- Exclusion is dimension-granular: a reviewer whose entire lens is non-applicable is excluded
+  whole from the consensus denominator; the other four dimensions have no repo-state
+  precondition and are never excludable.
+- New `tests/test_team_execution_consensus.py` drift-guards pin the contract text so a future
+  edit cannot silently reintroduce the fabricated default.
+
 ## [2.8.0] - 2026-07-02
 
 ### Consensus-gate hardening (#291)

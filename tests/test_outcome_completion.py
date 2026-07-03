@@ -336,3 +336,129 @@ def test_harvest_attaches_manifest_ref_when_dispatch_manifest_exists(tmp_path: P
     assert with_manifest.payload.get("manifest_ref") == "saga-manifests/o/design.json"
     bare = STORE.read_completion_events(store, "bare")[0]
     assert "manifest_ref" not in bare.payload
+
+
+# ---------------------------------------------------------------------------
+# board_status + issue_close_info — the saga-owned field-class reads (#295 U1/U2)
+# ---------------------------------------------------------------------------
+
+
+def _gh_reads(
+    *,
+    view: dict[str, Any] | None = None,
+    events: list[dict[str, Any]] | None = None,
+    fail: bool = False,
+    bad_json: bool = False,
+):
+    """Fake gh: ``issue view`` returns ``view`` JSON; ``api .../events`` returns ``events`` JSON."""
+
+    def runner(args: list[str], **_kw: Any) -> SimpleNamespace:
+        if fail:
+            return SimpleNamespace(returncode=1, stdout="", stderr="gh down")
+        if bad_json:
+            return SimpleNamespace(returncode=0, stdout="{not json", stderr="")
+        sub = args[1]  # args = ["gh", <sub>, ...]
+        if sub == "api":
+            return SimpleNamespace(returncode=0, stdout=json.dumps(events or []), stderr="")
+        return SimpleNamespace(returncode=0, stdout=json.dumps(view or {}), stderr="")
+
+    return runner
+
+
+def test_board_status_happy_path() -> None:
+    """The Operations item's Status name is returned for project=operations."""
+    view = {"projectItems": [{"status": {"optionId": "x", "name": "In Progress"}, "title": "Operations"}]}
+    assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(view=view)) == "In Progress"
+
+
+def test_board_status_multi_board_reads_only_slug_match() -> None:
+    """With two project memberships, only the title-matched project's Status is read."""
+    view = {
+        "projectItems": [
+            {"status": {"name": "Todo"}, "title": "Operations"},
+            {"status": {"name": "Active"}, "title": "Asgard"},
+        ]
+    }
+    assert GH.board_status("o/r#5", project="asgard", runner=_gh_reads(view=view)) == "Active"
+    assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(view=view)) == "Todo"
+
+
+def test_board_status_no_matching_project_is_empty() -> None:
+    """An issue on no matching project degrades to ""."""
+    view = {"projectItems": [{"status": {"name": "Todo"}, "title": "Asgard"}]}
+    assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(view=view)) == ""
+
+
+def test_board_status_degrades_on_failure_bad_json_and_null_status() -> None:
+    """gh non-zero, malformed JSON, and a null/absent status all degrade to "" without raising."""
+    assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(fail=True)) == ""
+    assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(bad_json=True)) == ""
+    null_status = {"projectItems": [{"status": None, "title": "Operations"}]}
+    assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(view=null_status)) == ""
+    no_items = {"projectItems": []}
+    assert GH.board_status("o/r#5", project="operations", runner=_gh_reads(view=no_items)) == ""
+
+
+def test_issue_close_info_completed_with_actor() -> None:
+    """A completed close with a discoverable actor returns the full dict."""
+    view = {"state": "CLOSED", "stateReason": "COMPLETED"}
+    events = [
+        {"event": "labeled"},
+        {"event": "closed", "actor": {"login": "namredips"}},
+    ]
+    info = GH.issue_close_info("o/r#5", runner=_gh_reads(view=view, events=events))
+    assert info == {"state": "closed", "state_reason": "completed", "closed_by": "namredips"}
+
+
+def test_issue_close_info_not_planned() -> None:
+    """A not_planned close surfaces state_reason=not_planned (the drift signal)."""
+    view = {"state": "CLOSED", "stateReason": "NOT_PLANNED"}
+    info = GH.issue_close_info("o/r#5", runner=_gh_reads(view=view, events=[]))
+    assert info["state"] == "closed"
+    assert info["state_reason"] == "not_planned"
+    assert info["closed_by"] == ""
+
+
+def test_issue_close_info_open_skips_events() -> None:
+    """An open issue reports open, no reason, empty author — and never reads the events endpoint."""
+    view = {"state": "OPEN", "stateReason": None}
+
+    calls: list[str] = []
+
+    def runner(args: list[str], **_kw: Any) -> SimpleNamespace:
+        calls.append(args[1])
+        return SimpleNamespace(returncode=0, stdout=json.dumps(view), stderr="")
+
+    info = GH.issue_close_info("o/r#5", runner=runner)
+    assert info == {"state": "open", "state_reason": "unknown", "closed_by": ""}
+    assert "api" not in calls  # events endpoint not consulted for an open issue
+
+
+def test_issue_close_info_degrades_on_failure() -> None:
+    """gh failure / malformed JSON degrade to an all-unknown dict without raising."""
+    assert GH.issue_close_info("o/r#5", runner=_gh_reads(fail=True)) == {
+        "state": "unknown",
+        "state_reason": "unknown",
+        "closed_by": "",
+    }
+    assert GH.issue_close_info("o/r#5", runner=_gh_reads(bad_json=True))["state"] == "unknown"
+
+
+def test_issue_close_info_last_closed_event_wins_after_pagination() -> None:
+    """The LAST closed event (post-concatenation) is the author — reopen/close churn resolves right."""
+    view = {"state": "CLOSED", "stateReason": "COMPLETED"}
+    events = [
+        {"event": "closed", "actor": {"login": "first"}},
+        {"event": "reopened", "actor": {"login": "mid"}},
+        {"event": "closed", "actor": {"login": "final"}},
+    ]
+    info = GH.issue_close_info("o/r#5", runner=_gh_reads(view=view, events=events))
+    assert info["closed_by"] == "final"
+
+
+def test_issue_close_info_bare_ref_has_no_author() -> None:
+    """A ref without owner/repo can't build the events path → closed_by degrades to "" (still closed)."""
+    view = {"state": "CLOSED", "stateReason": "COMPLETED"}
+    info = GH.issue_close_info("5", runner=_gh_reads(view=view, events=[{"event": "closed", "actor": {"login": "x"}}]))
+    assert info["state"] == "closed"
+    assert info["closed_by"] == ""

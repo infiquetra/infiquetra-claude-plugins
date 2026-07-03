@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.51.0 - 2026-07-03
+
+### Feat: board↔saga reconciliation on resume — detect drift over the /outcome board-sync ledger (#295)
+- `/outcome` gains **reconcile-on-wake**, the companion to #279's autonomous board-sync writer.
+  #279 drives and records autonomous board writes but never re-reads the live board, so an
+  outside writer (operator, CI, a review agent) who changes a saga-owned board field while saga
+  is at rest was never noticed — and a recorded idempotency key made the next tick *skip* the op,
+  so the drift persisted silently forever. Reconcile closes that loop.
+- New `outcome reconcile <id> [--resolve <drift-id> --action accept-board|re-assert|hold]` verb,
+  and `advance --autonomous` now **detects drift before any board write**: a detected drift
+  drift-holds only the affected issue's ops (`{status: drift-hold}`) while other leaves proceed
+  (KTD3, not gate-all), and drift/recovered records ride `AdvanceResult.drift`.
+- Detection is pure classification over three per-issue views: **asserted** (latest of ledger
+  write record + reconcile-override, KTD5), **expected** (recomputed from `derive_states` →
+  `_candidate_ops` → the schema status map, so a landed-but-unrecorded write is reconciled by
+  recomputation with zero change to #279's writer, KTD1), and **live** (`outcome_github.board_status`
+  + `issue_close_info`). Scope is ledger-bearing issues only (KTD6) — an untouched issue is never
+  probed, so no false positives.
+- External closes are **contract-aware + stateReason** (KTD4): a `completed` close that satisfies
+  a non-code leaf's completion contract stays the harvester's sanctioned silent path; a
+  `not_planned` close, or a close on a code leaf (contract = PR-merged), is drift. An unreadable
+  stateReason degrades to today's contract-only behavior.
+- Resolution is **HITL behind a replaceable policy seam** (`decide(drift, policy=None)`, R8);
+  accept-board / re-assert / hold are recorded as append-only `reconcile-override` records.
+  re-assert `authorize_write`s FIRST, then re-drives through the injected `board_writer` — never a
+  direct gh call (R9). No new autonomous writer, no new persistence, no mission-control change.
+- New reads `outcome_github.board_status` (via `gh issue view --json projectItems`) and
+  `issue_close_info` (state/stateReason + best-effort close author from the REST events endpoint);
+  both mirror `issue_state`'s never-raise degrade-safe contract. `issue_state` is untouched.
+- `plugins/saga/references/outcome-spec.md` documents the reconcile-on-wake contract, the
+  saga-owned field class, and the drift-hold semantics.
+
 ## 0.50.0 - 2026-07-03
 
 ### Fix: verify-panel reconciliation recomputes over reporting verifiers, not declared n (#293)

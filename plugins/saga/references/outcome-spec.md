@@ -144,3 +144,52 @@ python3 plugins/saga/scripts/outcome_spec.py layers   docs/outcomes/<id>/outcome
 `validate` exits non-zero with a JSON `{"valid": false, "error": ...}` on a malformed spec; `layers`
 prints the topological layers. No I/O happens at import (pure functions), so the module is unit-testable
 offline — see `tests/test_outcome_spec.py`.
+
+## Board↔saga reconciliation (`outcome_reconcile`, #295)
+
+Autonomous board-sync (`advance --autonomous`, #279) *writes* the board but never re-reads it. An outside
+writer who changes a saga-owned field while saga is at rest is therefore invisible — and because a recorded
+idempotency key makes the next tick **skip** the op, the drift would persist silently. `outcome_reconcile`
+is the resume-time detector that closes that loop. It adds **no writer and no new persistence**: it reads
+#279's board-sync ledger and re-drives any resolution through #279's existing writer.
+
+**Trigger.** `detect` runs at the top of every `advance --autonomous` tick *before* any board write, and on
+demand via `outcome reconcile <id>` (read-only; no coordinator lease). Silent unless something diverged.
+
+**Three per-issue views** (`detect`):
+
+- **asserted** — the latest of {ledger write record, `reconcile-override` record} per op family, by `ts`.
+  What saga last drove or the operator last accepted.
+- **expected** — recomputed from `derive_states` → `outcome_board_sync._candidate_ops` → the schema status
+  map. Because idempotency keys and target values are pure functions of observable state, a
+  landed-but-unrecorded write (a ledger key lost to a crash) is reconciled by *recomputation* — no intent
+  ledger, zero change to #279's scope-locked writer.
+- **live** — `outcome_github.board_status` (board Status) + `outcome_github.issue_close_info` (open/closed +
+  stateReason + best-effort close author).
+
+**Saga-owned field class.** Exactly what the writer writes: board **Status** and issue **open/closed**.
+**Scope** is ledger-bearing issues only — an issue with no recorded write is never read, so a field saga
+never owned (a hand-added label) can never be a false positive.
+
+**Close semantics (contract-aware + stateReason).** A `completed` close that satisfies a leaf's completion
+contract (a non-code leaf's contract *is* the closed issue) is the harvester's sanctioned silent path; a
+`not_planned` close, or a close on a code leaf (contract = merged PR), is drift. An unreadable stateReason
+degrades to contract-only — today's behavior.
+
+**Records.** `detect` returns a list of dicts: `status-drift` / `external-close` / `external-reopen` drift
+records (each with `{kind, repo, number, subplot_id, op_kind, saga_value, board_value, author, drift_id}`),
+`recovered` records (a rewritten missing ledger key — informational, never a drift), and `unreadable` notes
+(a field that could not be read this tick — never fatal). A drift drift-holds only its own issue's board ops
+(`reconcile_board(hold_issues=…)` → `{status: drift-hold}`); other leaves proceed.
+
+**Resolution** (`decide` / `apply_resolution`). HITL behind a single replaceable policy seam
+(`decide(drift, policy=None)` → `None` = ask). `accept-board` / `re-assert` / `hold` are recorded as
+append-only `reconcile-override` records in the board-sync ledger namespace; `re-assert` calls
+`reversibility_certificate.authorize_write` first, then re-drives through the injected `board_writer` — never
+a direct gh call. PR-merge and deploy autonomy stay permanently HITL (#279 R20).
+
+```bash
+python3 plugins/saga/scripts/outcome.py reconcile <id>                 # detect (silent unless drift)
+python3 plugins/saga/scripts/outcome.py reconcile <id> \
+  --resolve <drift-id> --action accept-board|re-assert|hold            # apply an operator decision
+```

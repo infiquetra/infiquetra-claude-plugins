@@ -129,6 +129,7 @@ def test_ae1_ready_state_writes_set_field_status(tmp_path: Path) -> None:
         ("operations", "dispatched", "Active"),
         ("asgard", "dispatched", "Active"),
         ("campps", "dispatched", "In Progress"),
+        ("asgard", "ready", "Ready"),
         ("campps", "ready", "Committed"),
     ],
 )
@@ -465,6 +466,41 @@ def test_advance_autonomous_drives_board_sync(tmp_path: Path) -> None:
     assert result.to_dict()["board_synced"], "board_synced surfaces in the AdvanceResult envelope"
 
 
+def test_advance_threads_project_to_reconcile_board_for_nondefault_project(tmp_path: Path) -> None:
+    """#326 R4: advance(project=...) threads the SAME project value into reconcile_board's schema
+    resolution — proven through the REAL advance() entrypoint, not just a direct reconcile_board
+    call, for both asgard and campps (not just the default operations).
+
+    A leaf starting "ready" is dispatched within the SAME advance() tick (dispatch runs before
+    board-sync each tick), so by the time board-sync observes it the derived state is
+    "dispatched" — this test proves threading through that real, naturally-reached path."""
+    for project, expected_dispatched in (("asgard", "Active"), ("campps", "In Progress")):
+        project_root = tmp_path / project
+        project_root.mkdir()
+        repo = _git_repo(project_root)
+        ENG_MOD.start(repo, "o", "ship", nodes=[_leaf("leaf1", "infiquetra/x#42")])
+        store = ENG_MOD._store(repo, "o")
+        DEC_MOD.approve_frontier(store, ENG_MOD.load_spec(repo, "o"))
+        # No completion event → leaf1 starts "ready"; advance() dispatches it this same tick.
+
+        writer = RecordingWriter()
+        result = ENG_MOD.advance(
+            repo, "o", autonomous=True, board_writer=writer, project=project, attending=False
+        )
+
+        sf_records = [r for r in result.board_synced if r.get("op_kind") == "set-field-status"]
+        assert sf_records and sf_records[0]["status"] == "written", (
+            f"{project}: expected a written set-field-status record, got {sf_records}"
+        )
+        assert sf_records[0]["target_state"] == expected_dispatched, (
+            f"{project}: advance() did not thread its project into reconcile_board's resolution"
+        )
+        assert (
+            writer.calls_for("set-field-status")[0]["payload"]["target_state"]
+            == expected_dispatched
+        )
+
+
 def test_advance_without_autonomous_does_no_board_sync(tmp_path: Path) -> None:
     """The default path (autonomous=False) performs NO board writes — the capability is opt-in."""
     repo = _git_repo(tmp_path)
@@ -524,6 +560,30 @@ def test_default_board_writer_builds_correct_commands(tmp_path: Path) -> None:
     assert calls[2][2:4] == ["issue", "comment"] and "hi" in calls[2]
     assert calls[3][2:4] == ["issue", "label-add"] and "blocked" in calls[3]
     assert calls[4][2:4] == ["issue", "label-remove"] and "blocked" in calls[4]
+
+
+def test_default_board_writer_respects_nondefault_project(tmp_path: Path) -> None:
+    """#326: _default_board_writer's --project flag reflects a NON-default project (not just the
+    "operations" default every other command-construction test exercises)."""
+    calls: list[list[str]] = []
+
+    class _Ok:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd: list[str], **kw: Any) -> Any:
+        calls.append(cmd)
+        return _Ok()
+
+    writer = ENG_MOD._default_board_writer(tmp_path, project="asgard", runner=fake_run)
+    writer(
+        op_kind="set-field-status",
+        repo="infiquetra/x",
+        number=42,
+        payload={"target_state": "Active"},
+    )
+
+    assert calls[0][2:6] == ["flow", "set-field", "--project", "asgard"]
 
 
 def test_default_board_writer_raises_on_nonzero_exit(tmp_path: Path) -> None:
@@ -696,7 +756,8 @@ def test_schema_resolution_missing_file_fails_status_op_but_comment_still_posts(
 
 
 def test_schema_resolution_missing_project_fails_status_op_retryably(tmp_path: Path) -> None:
-    """A project absent from phase_board_map: same failed/retryable semantics as a missing file."""
+    """A project absent from phase_board_map: same failed/retryable semantics as a missing file —
+    including no board_writer attempt, no ledger key, and the comment still posting."""
     store = _store(tmp_path)
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
     writer = RecordingWriter()
@@ -705,6 +766,44 @@ def test_schema_resolution_missing_project_fails_status_op_retryably(tmp_path: P
 
     sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
     assert sf_records and sf_records[0]["status"] == "failed"
+    assert "error" in sf_records[0]
+    assert not writer.calls_for("set-field-status"), "no board_writer attempt without a resolved status"
+
+    comment_records = [r for r in result if r.get("op_kind") == "issue-progress-comment"]
+    assert comment_records and comment_records[0]["status"] == "written"
+    assert writer.calls_for("issue-progress-comment"), "comment write must still fire"
+
+    ledger_dir = Path(store.root) / "board-sync"
+    ledger_files = list(ledger_dir.glob("*.json")) if ledger_dir.exists() else []
+    assert len(ledger_files) == 1, "only the comment's ledger key is written, not a status key"
+
+
+@pytest.mark.parametrize(
+    "corrupt_schema",
+    [
+        "not valid json {{{",
+        json.dumps({"no_saga_lifecycle_key": True}),
+        json.dumps({"saga_lifecycle": {"phase_board_map": {}}}),  # missing review/work rows
+        json.dumps({"saga_lifecycle": {"phase_board_map": {"review": {"operations": []}, "work": {"operations": ["Active"]}}}}),  # noqa: E501
+    ],
+    ids=["malformed-json", "missing-saga-lifecycle", "missing-phase-rows", "empty-status-list"],
+)
+def test_schema_resolution_corrupt_schema_fails_status_op(
+    tmp_path: Path, corrupt_schema: str
+) -> None:
+    """#326: every corrupt-schema shape (malformed JSON, missing keys, empty status list) hits the
+    same fail-loud/retryable path as a missing file — never a raw exception escaping reconcile_board."""
+    bad_schema = tmp_path / "bad-schema.json"
+    bad_schema.write_text(corrupt_schema)
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    writer = RecordingWriter()
+
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer, schema_path=bad_schema)
+
+    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
+    assert sf_records and sf_records[0]["status"] == "failed"
+    assert "error" in sf_records[0]
 
 
 def test_schema_resolution_retries_successfully_on_next_call(tmp_path: Path) -> None:

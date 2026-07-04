@@ -104,7 +104,7 @@ profile (model/effort); the `.json` sidecar carries authoritative backend detail
 | # | Issue | Slug | Session tier | Upstream edges | Shipped |
 |---|---|---|---|---|---|
 | 1 | #461 | pf-fleet-baseline-metrics | sonnet/low | none — must ship before any other Phase 0 change | [x] |
-| 2 | #399 | pf-gate-divergence-telemetry | sonnet/low | none | [ ] |
+| 2 | #399 | pf-gate-divergence-telemetry | sonnet/low | none | [x] |
 | 3 | #463 | pf-fleet-commons-decision | opus/medium | none (blocks items 9–10) | [ ] |
 | 4 | #345 | pf-ship-ceremony-primitive | sonnet/high | none | [ ] |
 | 5 | #429 | pf-release-surface-single-source | sonnet/high | none | [ ] |

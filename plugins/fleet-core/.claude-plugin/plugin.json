@@ -1,0 +1,16 @@
+{
+  "name": "fleet-core",
+  "version": "0.1.0",
+  "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only — no skills, commands, or agents.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": [
+    "fleet-commons",
+    "shared-primitives",
+    "tier-palette",
+    "library"
+  ]
+}

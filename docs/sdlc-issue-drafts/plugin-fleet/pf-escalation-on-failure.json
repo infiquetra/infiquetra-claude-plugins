@@ -1,0 +1,111 @@
+{
+  "absorbed": [
+    {
+      "id": "T3-F6-4",
+      "role": "primary",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json"
+    },
+    {
+      "id": "T3-F1-5",
+      "role": "facet",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json"
+    },
+    {
+      "id": "T12-F5-1",
+      "role": "facet",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T12.json"
+    },
+    {
+      "id": "T12-F5-6",
+      "role": "facet",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T12.json"
+    }
+  ],
+  "absorbed_ids": [
+    "T3-F6-4",
+    "T3-F1-5",
+    "T12-F5-1",
+    "T12-F5-6"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:50:40.913909+00:00",
+  "created_issue_number": 364,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/364",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-escalation-on-failure.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical extension of an already-ordered, already-validated tier vocabulary (index arithmetic + one new return-disposition enum value + a documented between-rounds affordance) \u2014 no architectural ambiguity requiring opus-level judgment, but the gating logic (attended-vs-unattended asks, end-clamping, batched pull-cord asks) has enough edge-case surface to warrant high effort over medium.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make tier+effort a first-class priced resolvable lever",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make tier+effort a first-class priced resolvable lever",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-escalation-on-failure.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Runtime ladder climbing: gated one-rung escalation on failure signals, titrate-to-effect, and the andon cord. Merges escalate_tier()/bump_tier() + gated /work round-N recovery proposing the next rung with cost delta, escalate_on_signal on the segment/verify path, and a pull_cord disposition batched into one escalation ask.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json;docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T12.json",
+    "title": "Runtime ladder climbing: gated one-rung escalation on failure signals, titrate-to-effect, and the andon cord",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: runtime ladder climbing \u2014 gated one-rung escalation on failure signals",
+  "type": "capability",
+  "updated_at": "2026-07-04T08:21:02.023470+00:00",
+  "wave": "wave-1"
+}

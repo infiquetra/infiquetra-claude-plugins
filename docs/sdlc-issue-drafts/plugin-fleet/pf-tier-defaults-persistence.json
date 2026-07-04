@@ -1,0 +1,97 @@
+{
+  "absorbed": [
+    {
+      "id": "T12-F4-4",
+      "role": "primary"
+    },
+    {
+      "id": "T12-F6-8",
+      "role": "facet"
+    }
+  ],
+  "absorbed_ids": [
+    "T12-F4-4",
+    "T12-F6-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:51:44.413413+00:00",
+  "created_issue_number": 368,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/368",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-defaults-persistence.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Schema/loader/write-back plumbing over an already-well-specified tier vocabulary and existing tier table; mechanical scaffolding, not judgment or architectural design.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make tier+effort a first-class priced resolvable lever",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make tier+effort a first-class priced resolvable lever",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-defaults-persistence.json",
+  "slug": "pf-tier-defaults-persistence",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Persisted tier preferences: per-repo tier defaults with remembered overrides (T12-F4-4, primary) plus issue-carried recommended tier bands (T12-F6-8, facet) so /plan's tier table stops being hand-built every run.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-consolidation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/",
+    "ref": "T12-F4-4,T12-F6-8",
+    "title": "Persisted tier preferences: per-repo defaults with remembered overrides, and issue-carried tier bands",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: persisted tier preferences \u2014 per-repo tier defaults with remembered overrides, plus issue-carried tier bands",
+  "updated_at": "2026-07-04T07:51:49.773083+00:00",
+  "wave": "wave-1"
+}

@@ -1,0 +1,111 @@
+{
+  "absorbed_ids": [
+    "S-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:01:42.492447+00:00",
+  "created_issue_number": 400,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/400",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-pulse-live-telemetry.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "this is a bounded, well-precedented capability (a read-only rendering component consuming two already-defined data sources) with no architectural ambiguity left to resolve \u2014 the hard sequencing and scope-boundary decisions are already settled in the grounding brief and `DECISIONS.md`. It does not warrant opus-tier judgment or an external-LLM posture above the fleet's default advisory-only stance (`{#external-engines-never-gatekeepers}`, `{#external-engine-chaperone-dispatch}`). Escalate to opus/high only if `/plan` surfaces a genuine design ambiguity in how ledger-vs-tick-history interim sourcing should degrade (AC5).",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_map": {
+    "absorbed": [
+      {
+        "id": "S-8",
+        "role": "primary"
+      }
+    ],
+    "absorbed_ids": [
+      "S-8"
+    ],
+    "consolidation_rationale": "Orphan seed placed by reconciler: a live telemetry surface is a read-side consumer of the run-fact ledger substrate; belongs with the telemetry objective, sequenced after the ledger spine.",
+    "executor_profile": {
+      "backend": "inline",
+      "effort": "medium",
+      "external_llm": "none",
+      "justification": "Bounded, well-precedented read-only component consuming already-defined data sources; no architectural ambiguity beyond what /plan may need to resolve for interim-source degrade (AC5).",
+      "model": "sonnet"
+    },
+    "objective": "Build the fleet telemetry and ledger substrate",
+    "slug": "pf-pulse-live-telemetry",
+    "tier": "structural",
+    "type": "capability",
+    "wave": "wave-2"
+  },
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Build the fleet telemetry and ledger substrate",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "Owning plugin (new standalone plugin vs. component inside an existing plugin) is left to /plan; release-surface checklist paths are templated pending that decision.",
+      "Sequenced after pf-run-fact-ledger; AC5 defines an explicit interim-source degrade path if worked before the ledger lands."
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-pulse-live-telemetry.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Merged live-telemetry surface (board/agent/run state) rendered from real signals. Verify: component reflects an actual in-flight run's state, not a stub (drive a run, observe update).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-seed",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json",
+    "ref": "S-8",
+    "title": "Pulse live-telemetry component",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: Pulse live-telemetry component \u2014 board/agent/run state rendered from real signals",
+  "updated_at": "2026-07-04T08:01:48.783949+00:00"
+}

@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T15-F3-5",
+    "T15-F1-5",
+    "T15-F2-6",
+    "T15-F6-4"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:08:46.736857+00:00",
+  "created_issue_number": 423,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/423",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-authorship-provenance.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Bounded, mechanical wiring against an existing manifest/schema (provenance_manifest.py, engine_resolver.py) plus a reconciliation function and gate-check tests; no open-ended design or adversarial judgment call justifying opus/high.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-authorship-provenance.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T15-F3-5 (primary): Machine-checked engine-vs-chaperone authorship ledger, replacing the manual commit-provenance correction; absorbed facets T15-F1-5 (provenance trailer on delivered artifact), T15-F2-6 (/retro claim-vs-proof reconciliation), T15-F6-4 (PR-gate cross-check on unproven delegation claims).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "title": "Engine-vs-chaperone authorship: computed ledger, artifact provenance trailer, /retro claim-vs-proof report, PR-gate cross-check",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement: computed engine-vs-chaperone authorship ledger, artifact provenance trailer, /retro claim-vs-proof reconciliation, PR-gate cross-check",
+  "updated_at": "2026-07-04T08:08:54.530843+00:00"
+}

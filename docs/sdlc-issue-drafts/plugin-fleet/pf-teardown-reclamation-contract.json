@@ -1,0 +1,94 @@
+{
+  "absorbed_ids": [
+    "T6-F2-1",
+    "T6-F4-1",
+    "T6-F5-1",
+    "T6-F6-2",
+    "T6-F6-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:48:48.418873+00:00",
+  "created_issue_number": 358,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/358",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-teardown-reclamation-contract.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical multi-file capability (lifecycle step, ledger primitive, TTL reaper, CI test) with a well-bounded contract and no ambiguous design judgment beyond what /plan resolves; sonnet at high effort matches the fleet's tiering guidance for structural-but-mechanical work. No external-LLM involvement -- purely internal plugin surface, no generator/advisory-reviewer role applicable. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "grounding_references": [
+    "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:86-88",
+    "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:139-140",
+    "docs/engineering-journal/DECISIONS.md:1950",
+    "plugins/team-execution/skills/team-execution/SKILL.md:277-410"
+  ],
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-teardown-reclamation-contract.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Five mechanisms against one disease (15 stale worktrees, missing Step B8): the contract (F2-1), the ledger it executes against (F4-1), the time-based backstop for what the contract misses (F5-1 TTL reaper, F6-2 idle-TTL eviction of resident teammates), and the invariant that keeps it honest (F6-8 CI leak check). Contract without backstop re-leaks on crash; backstop without contract normalizes leaking -- they are one deliverable.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/pool-final.json",
+    "ref": "issue-map-final.json#pf-teardown-reclamation-contract",
+    "title": "Non-skippable teardown: Step B8 run-exit Teardown & Reclaim contract, register-on-spawn reclamation ledger, TTL worktree reaper, idle-TTL eviction, and a CI leak invariant",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: non-skippable teardown & reclamation contract for team-execution",
+  "updated_at": "2026-07-04T08:20:35.664292+00:00",
+  "wave": "wave-1"
+}

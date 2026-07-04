@@ -1,0 +1,133 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "Direct synthesis (parents H-F2-7, T13-F5-3, H-F6-6, T13-F4-5) of the fleet's static-cap-with-no-feedback gap (VERIFY_N_CAP, execution_spec.py:114) and the recorded shed-not-implemented pain (grounding brief \u00a77 pattern 4: rate-limit fan-out kills, 'the emitter has no concurrency knob... KTD6 aspiration, not machinery').",
+      "id": "G-hybrids-8",
+      "role": "primary",
+      "title": "Ambient AIMD admission control with a requeue ledger \u2014 cap, backoff, and shed as one governor"
+    },
+    {
+      "basis": "External (AIMD congestion-control pattern applied to agent fan-out); dod_sketch: merged AIMD governor persisting state in saga session state, bounded by the policy ceiling, verified by a deterministic 429-burst-then-quiet trace test showing width descends to 1 then recovers toward the cap.",
+      "id": "T13-F1-6",
+      "role": "facet",
+      "title": "Per-session AIMD concurrency governor that dials wave width to the observed 429 rate"
+    },
+    {
+      "basis": "Direct; outcome_shape: merged shed-priority tagging convention + requeue-ledger schema and supervisor loop in the workflow emitter path, with team-execution reviewer fan-out as first adopter.",
+      "id": "H-F6-6",
+      "role": "facet",
+      "title": "Shed, don't cap: a 429-driven preemption supervisor with a requeue ledger instead of static concurrency knobs"
+    },
+    {
+      "basis": "External (codex/GPT proposal): concurrency must be governed at the fleet level because rate limits fail at the fleet level. Source outcome_shape proposed a standalone fleet_dispatch_broker.py + dispatch-policy.yaml; narrowed here to one governor module fronting the two named surfaces, per the registry-home precedent in {#external-engines-never-gatekeepers} (extend the seam-owning location, don't add a new plugin).",
+      "id": "X-codex-3",
+      "role": "facet",
+      "title": "Rate-Limit Air Traffic Control"
+    },
+    {
+      "basis": "Reasoned (T13 x T2 rerouting intersection); dod_sketch: merged reroute branch on the shared 429 primitive consulting engine_resolver for offload-tagged units + dispatch-ledger reroute stamps, verified by a 429-storm test where offload units reroute, gated units HALT-queue, and every reroute is ledgered.",
+      "id": "G-negative-space-4",
+      "role": "facet",
+      "title": "Route around the rate limit: 429 pressure sheds offloadable work to the $0/external provider lane instead of queueing it"
+    }
+  ],
+  "absorbed_ids": [
+    "G-hybrids-8",
+    "T13-F1-6",
+    "H-F6-6",
+    "X-codex-3",
+    "G-negative-space-4"
+  ],
+  "approval_state": null,
+  "binding_decisions": [
+    "{#external-engines-never-gatekeepers} (#283): a diverted unit's result is AdvisoryEvidence only; engine_dispatch.satisfy_gate still requires a distinct Claude verification step before any gated outcome depends on it",
+    "{#external-engine-chaperone-dispatch} (#318): offload diversion routes through the existing chaperone-dispatch shape; no new executor kind or residency/git-participant role",
+    "/outcome campaign (U1-U11): derived-on-read status, never committed status fields; HALT-not-degrade for genuine (non-429) failures \u2014 the requeue ledger is a leaf-produced fact stream, not a new status field"
+  ],
+  "created_at": "2026-07-04T07:46:12.295191+00:00",
+  "created_issue_number": 349,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/349",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-adaptive-admission-governor.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "second-opinion",
+    "justification": "Control-loop design (AIMD tuning, shed/preemption ordering, offload diversion gating) with failure modes spanning every spawn site the governor fronts; getting width-adjustment or shed ordering wrong fails silently (starvation, oscillation) rather than loudly, warranting opus over sonnet. An advisory second opinion specifically targets control-loop stability (oscillation under adversarial 429 patterns, starvation in the requeue ledger) given the four absorbed ideas propose meaningfully different mechanisms that must reconcile into one coherent module. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "opus"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Govern fleet concurrency and reclaim leaked resources",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/saga/.claude-plugin/plugin.json version bump",
+    ".claude-plugin/marketplace.json updated for the version bump",
+    "plugins/saga/CHANGELOG.md entry describing the AIMD admission governor, requeue ledger, and feature-flagged offload diversion",
+    "plugin-metadata/version drift-guard tests re-run green",
+    "docs/engineering-journal/DECISIONS.md entry recording the governor's design and a revisit-when condition (e.g., a fleet-wide broker spanning team-execution per X-codex-3's broader proposal)"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-adaptive-admission-governor.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Adaptive admission control: AIMD wave-width governor with a requeue ledger, shed-over-cap preemption, and 429-pressure routing to the offload lane. Consolidates G-hybrids-8 (primary), T13-F1-6, H-F6-6, X-codex-3, G-negative-space-4 from the 2026-07-03 plugin-fleet ideation pass.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map/issue-map-final.json",
+    "ref": "pf-adaptive-admission-governor",
+    "title": "Adaptive admission control: AIMD wave-width governor with a requeue ledger, shed-over-cap preemption, and 429-pressure routing to the offload lane",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "moonshot",
+  "title": "capability: adaptive admission governor \u2014 AIMD wave-width control, shed-to-requeue-ledger preemption, and 429-pressure offload routing",
+  "updated_at": "2026-07-04T07:46:17.592847+00:00",
+  "wave": "wave-1"
+}

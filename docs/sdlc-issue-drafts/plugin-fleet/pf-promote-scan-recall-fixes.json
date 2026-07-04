@@ -1,0 +1,90 @@
+{
+  "absorbed_ids": [
+    "T10-F4-1",
+    "T10-F6-1",
+    "H-F3-9",
+    "H-F4-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:16:31.800137+00:00",
+  "created_issue_number": 446,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/446",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-promote-scan-recall-fixes.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Four coordinated but individually well-specified extensions to a single, already-understood script (promote_scan.py) and its companion skill doc \u2014 no architectural ambiguity, but enough combined surface area (four modes, a new classifier, a new frontmatter convention, and a real backfill against this repo's own journal) to warrant high effort at sonnet rather than medium; no external-engine or embedding dependency is introduced, so no above-sonnet escalation is justified.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make the backlog and lifecycle self-improving",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make the backlog and lifecycle self-improving",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-promote-scan-recall-fixes.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Four mechanisms attacking the same zero-promotions fact from the recall side: measure the friction, break the exact-wording floor, fix the one-operator >=3-repo bar, and move clustering cost to capture time.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json",
+    "ref": "issue-map-final.json#pf-promote-scan-recall-fixes",
+    "title": "Fix promote_scan recall: diagnose mode, lexical clustering, subject scoping, capture-time slugs",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: fix promote_scan recall \u2014 diagnose mode, lexical clustering, subject scoping, capture-time slugs",
+  "updated_at": "2026-07-04T08:16:39.217962+00:00",
+  "wave": "wave-3"
+}

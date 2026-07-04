@@ -1,0 +1,118 @@
+{
+  "absorbed_ids": [
+    "G-negative-space-6",
+    "S-9",
+    "S-10"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:54:58.755225+00:00",
+  "created_issue_number": 379,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/379",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-remote-gate-approval.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "this is a well-scoped extension of an existing, already-documented fallback pattern (inline-choice-over-channel) plus wiring two existing plugins (redis-channel transport, saga gate records) together \u2014 mechanical integration work with a clear existing contract to extend, not novel design requiring judgment above Sonnet. High effort reflects the number of call sites (`/plan`, `/work`, `/outcome`, team-execution validator gates) that must be audited for consistent answerer/transport recording and no-answer-behavior parity, not model-tier escalation. No external-LLM (codex/agy) involvement is warranted \u2014 this does not touch a gated decision boundary where an external engine would need chaperone dispatch.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "plugin_fleet": {
+    "absorbed": [
+      {
+        "id": "G-negative-space-6",
+        "role": "primary",
+        "source_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T6.json"
+      },
+      {
+        "id": "S-9",
+        "role": "dedup-merged",
+        "source_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json"
+      },
+      {
+        "id": "S-10",
+        "role": "dedup-merged",
+        "source_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json"
+      }
+    ],
+    "absorbed_ids": [
+      "G-negative-space-6",
+      "S-9",
+      "S-10"
+    ],
+    "executor_profile": {
+      "backend": "inline",
+      "effort": "high",
+      "external_llm": "none",
+      "justification": "Mechanical extension of an existing documented inline-choice-over-channel fallback pattern plus wiring two existing plugins (redis-channel transport, saga gate records); high effort reflects call-site count across /plan, /work, /outcome, and team-execution validator gates, not model-tier escalation.",
+      "model": "sonnet"
+    },
+    "objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "slug": "pf-remote-gate-approval",
+    "tier": "structural",
+    "wave": "wave-1"
+  },
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-remote-gate-approval.json",
+  "source_artifact": {
+    "branch": null,
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T6.json",
+    "ref": "issue-map-final.json#pf-remote-gate-approval",
+    "title": "Remote gate approval over the fleet's own channel: gates delivered and answered through redis-channel/Discord",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: remote gate approval over the fleet's own channel (redis-channel/Discord)",
+  "updated_at": "2026-07-04T07:55:03.909356+00:00"
+}

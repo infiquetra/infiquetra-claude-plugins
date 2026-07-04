@@ -1,0 +1,135 @@
+{
+  "absorbed": [
+    {
+      "basis": "DECISIONS.md:1965-1968 KTD4/KTD5 (\"behavioral residency is markdown protocol... R15a context-GC excluded \u2014 no harness lever\"); worker table at team-execution/skills/team-execution/SKILL.md:226-230 has no shed/boundary column; plan R11 (shed at boundary expected to exceed ~5-min TTL) and R8 (segment-dep collapse) are derivable saga-side.",
+      "basis_type": "direct",
+      "id": "T4-F2-2",
+      "role": "primary",
+      "title": "Remove the runtime shed judgment \u2014 saga emits an explicit shed/summary-handoff marker per segment boundary"
+    },
+    {
+      "basis": "plugins/saga/scripts/execution_spec.py:1405-1421 comment: 'a non-contiguous re-appearance of the same engine (e.g. interleaved with a Claude unit) opens a new resident (worker-agy-2).' Explicitly engages worker-cache-scheduling revisit-when: 'Named-teammate residency proves insufficient (revisit warm-pool / crew-pairing)' (DECISIONS.md:1970).",
+      "basis_type": "direct",
+      "id": "T4-F4-3",
+      "role": "facet",
+      "title": "Non-contiguous segment re-pairing: reorder-or-warm-pool to stop worker-N cold restarts"
+    },
+    {
+      "basis": "DECISIONS worker-cache-scheduling KTD5 names 'context-GC (Messages-API-only)' as an un-shipped residency refinement (DECISIONS.md:1965-1970); consensus-protocol.md:57 'RE-ENGAGE the same named reviewer via SendMessage' is the residency seam being extended, not crossed.",
+      "basis_type": "direct",
+      "id": "T4-F6-6",
+      "role": "facet",
+      "title": "Ship KTD5 context-GC for resident teammates"
+    },
+    {
+      "basis": "plugins/saga/scripts/execution_spec.py:1384 segment_units returns list[Segment] (structured, saga-side), but DECISIONS.md:1965 KTD4 states 'behavioral residency is markdown protocol' \u2014 so no non-team-execution dispatcher can read it. /outcome verify-panels spawn up to VERIFY_N_CAP=7 same-type readonly-verifiers (execution_spec.py:114) sharing a byte-identical prefix.",
+      "basis_type": "direct",
+      "id": "T4-F3-7",
+      "role": "facet",
+      "title": "Residency manifest: unlock the derived schedule for /outcome dispatch and verify-panels"
+    },
+    {
+      "basis": "First principles: prompt cache TTL is 5 minutes (300s); the intake concurrency cap of 3 forces a wide frontier into serial batches; if inter-batch latency exceeds the TTL the warm prefix is evicted and cache_read drops to zero, so batch ordering that clusters same-segment units within one TTL window is the only way to preserve cache under the cap.",
+      "basis_type": "reasoned",
+      "id": "T4-F6-7",
+      "role": "facet",
+      "title": "TTL-aware batch scheduling under the concurrency cap"
+    }
+  ],
+  "absorbed_ids": [
+    "T4-F2-2",
+    "T4-F4-3",
+    "T4-F6-6",
+    "T4-F3-7",
+    "T4-F6-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:49:30.605818+00:00",
+  "created_issue_number": 360,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/360",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-residency-derived-scheduling.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "A coordinated five-facet change touching saga's derivation core, the team-execution worker table and consensus protocol, and two new /outcome-side consumers, with dependency-preserving-reorder subtlety warranting high effort and team-execution's coordination/review-loop machinery \u2014 but mechanical extension of an already-settled architecture, not judgment-laden design, so Sonnet rather than Opus is sufficient. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make cache economics an engineered, measured win",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make cache economics an engineered, measured win",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/saga/.claude-plugin/plugin.json",
+    "plugins/team-execution/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/saga/CHANGELOG.md",
+    "plugins/team-execution/CHANGELOG.md",
+    "release-surface / version-metadata drift-guard tests"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-residency-derived-scheduling.json",
+  "slug": "pf-residency-derived-scheduling",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Merges five absorbed ideation facets (T4-F2-2 primary, T4-F4-3, T4-F6-6, T4-F3-7, T4-F6-7 facets) from theme T4 (segment-residency scheduling / cache-aware prompt architecture) into one structural change set: an emitted per-segment boundary action (reuse/summary-handoff/shed), a dependency-preserving segment reorder pass, context-GC for resident teammates, a residency manifest consumed by /outcome frontier dispatch and verify-panels, and TTL-aware batch scheduling under the concurrency cap.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json#T4-F2-2,T4-F4-3,T4-F6-6,T4-F3-7,T4-F6-7",
+    "title": "Derived residency scheduling: emitted shed/boundary actions, dependency-preserving segment reordering, context-GC, residency manifest, TTL-aware batching",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: derived residency scheduling \u2014 emitted boundary actions, dependency-preserving reorder, context-GC, residency manifest, TTL-aware batching",
+  "updated_at": "2026-07-04T08:20:48.971906+00:00",
+  "wave": "wave-1"
+}

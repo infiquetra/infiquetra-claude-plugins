@@ -1,0 +1,62 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-baseline-metrics.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "context-update",
+  "labels": [
+    "context-update",
+    "documentation",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "context-update",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Build the fleet telemetry and ledger substrate",
+    "Technical Risk": "low",
+    "Wave": "wave-2",
+    "Tier": "quick-win"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-baseline-metrics.json",
+  "source_artifact": {
+    "branch": null,
+    "commit": null,
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json",
+    "ref": "G-negative-space-10",
+    "title": "Baseline before wave: freeze today's pain metrics so 'the fleet got better' is measurement, not vibe",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "context-update: freeze the before picture \u2014 fleet baseline pain metrics",
+  "updated_at": "2026-07-03T00:00:00+00:00",
+  "absorbed_ids": [
+    "G-negative-space-10"
+  ],
+  "slug": "pf-fleet-baseline-metrics",
+  "objective": "Build the fleet telemetry and ledger substrate",
+  "wave": "wave-2",
+  "tier": "quick-win",
+  "executor_profile": {
+    "model": "sonnet",
+    "effort": "low",
+    "backend": "inline",
+    "external_llm": "none",
+    "justification": "Documentation-transcription task pulling already-known numbers from the grounding brief into one committed file with executable recipes; no architectural judgment or code change required."
+  },
+  "created_issue_number": 461,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/461"
+}

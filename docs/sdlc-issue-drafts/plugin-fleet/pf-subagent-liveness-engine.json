@@ -1,0 +1,122 @@
+{
+  "absorbed": [
+    {
+      "basis": "plugins/saga/scripts/outcome_liveness.py:112 (harvest_liveness); plugins/saga/scripts/outcome.py:1050-1058 (sole consumer); zero liveness code under plugins/team-execution/",
+      "id": "T6-F4-3",
+      "role": "primary",
+      "title": "Extract outcome_liveness into a fleet-shared heartbeat/stalled engine"
+    },
+    {
+      "basis": "plugins/saga/scripts/outcome_liveness.py (fixed heartbeat_seconds/timeout_seconds threshold, no statistical staleness scoring today)",
+      "id": "T6-F5-3",
+      "role": "facet",
+      "title": "Phi-accrual failure detector for subagent liveness"
+    },
+    {
+      "basis": "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md \u00a73 recurring-pattern 9 (idle-without-delivering, stale idle notifications, reproduced live)",
+      "id": "T6-F6-6",
+      "role": "facet",
+      "title": "Every idle notification is a lie until acknowledged: a delivery-receipt handshake"
+    },
+    {
+      "basis": "plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py:112 (ArtifactPointer), :221 (snapshot())",
+      "id": "H-F1-3",
+      "role": "facet",
+      "title": "Liveness derived from artifact-pointer appearance, not agent chattiness"
+    }
+  ],
+  "absorbed_ids": [
+    "T6-F4-3",
+    "T6-F5-3",
+    "H-F1-3",
+    "T6-F6-6"
+  ],
+  "ac_sketch": [
+    "team-execution and /outcome both consume the shared engine (no second copy)",
+    "Stalled-agent fixture crosses suspicion threshold and surfaces; chatty-but-artifactless agent flagged",
+    "Unacknowledged idle notification treated as undelivered, triggering re-ping"
+  ],
+  "approval_state": null,
+  "consolidation_rationale": "Four survivors share one axis (liveness-delivery / derive-on-read-liveness) and one underlying substrate (outcome_liveness.py plus team-execution's artifact-pointer machinery): extracting the reaper into a shared module is the necessary host for the other three facets (phi-accrual scoring, artifact-pointer-derived progress, acknowledged-idle-notification handshake) to land in one PR rather than four uncoordinated ones touching the same file.",
+  "created_at": "2026-07-04T07:48:34.385533+00:00",
+  "created_issue_number": 357,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/357",
+  "dod_sketch": "outcome_liveness generalized into a shared module any coordinator polls: suspicion score from heartbeat inter-arrival (phi-accrual), progress derived from artifact-pointer appearance, idle notifications requiring acknowledgment before being trusted.",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-subagent-liveness-engine.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical extraction of one existing module into a shared one, wired to a second consumer, plus a well-bounded statistical addition over an existing heartbeat ledger, against two already-verified concrete integration points; no architectural ambiguity remains for /plan to resolve beyond module boundaries.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Govern fleet concurrency and reclaim leaked resources",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-subagent-liveness-engine.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Fleet-shared liveness engine: extract outcome_liveness, phi-accrual staleness scoring, artifact-pointer-derived progress, and acknowledged idle notifications",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T6.json",
+    "ref": "pf-subagent-liveness-engine",
+    "title": "Fleet-shared liveness engine: extract outcome_liveness, phi-accrual staleness scoring, artifact-pointer-derived progress, and acknowledged idle notifications",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: fleet-shared subagent liveness engine \u2014 phi-accrual staleness, artifact-pointer progress, acknowledged idle notifications",
+  "type": "enhancement",
+  "updated_at": "2026-07-04T07:48:39.612906+00:00",
+  "wave": "wave-1"
+}

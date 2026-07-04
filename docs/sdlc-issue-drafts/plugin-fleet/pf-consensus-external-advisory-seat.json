@@ -1,0 +1,98 @@
+{
+  "absorbed": [
+    {
+      "id": "T5-F4-4",
+      "role": "primary",
+      "title": "External-engine advisory reviewer slot in the consensus panel (non-scoring)"
+    },
+    {
+      "id": "T5-F2-5",
+      "role": "facet",
+      "title": "Automate the hand-reconciliation: an advisory convergence-diff between Claude and an external synthesis"
+    }
+  ],
+  "absorbed_ids": [
+    "T5-F4-4",
+    "T5-F2-5"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:55:48.853418+00:00",
+  "created_issue_number": 382,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/382",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-consensus-external-advisory-seat.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "second-opinion",
+    "justification": "The deliverable itself is second-opinion wiring; dogfooding the reconciliation on its own PR is the natural acceptance evidence.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-consensus-external-advisory-seat.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Non-scoring external-engine advisory seat in the consensus panel, with automated Claude-vs-external convergence diff. Absorbed T5-F4-4 (primary): external-engine advisory reviewer slot in the consensus panel; T5-F2-5 (facet): automate the hand-reconciliation as a Claude-vs-external convergence diff. Panel roster accepts an external advisory participant (chaperone-dispatched per #318); its synthesis is auto-diffed against Claude reviewers into a convergence report attached to the verdict, never counted in the score.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map-entry",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T5.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T5.json#T5-F4-4,T5-F2-5",
+    "title": "Non-scoring external-engine advisory seat in the consensus panel, with automated Claude-vs-external convergence diff",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: non-scoring external-engine advisory seat in the team-execution consensus panel",
+  "updated_at": "2026-07-04T08:21:48.328254+00:00",
+  "wave": "wave-1"
+}

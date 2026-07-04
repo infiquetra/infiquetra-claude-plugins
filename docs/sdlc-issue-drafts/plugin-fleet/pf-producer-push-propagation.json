@@ -1,0 +1,120 @@
+{
+  "absorbed": [
+    {
+      "basis": "direct \u2014 the current consumer-pull vendoring model ({#mission-control-issue-contract-consumer-sync}) only detects drift when the consumer's own CI runs check_issue_contract_parity.py; nothing on the producer side pushes a refresh toward registered consumers, which is exactly how the #222 stale-mirror incident (343 clean cards) went unnoticed.",
+      "frame": "F2",
+      "id": "H-F2-5",
+      "role": "primary",
+      "theme": "T14"
+    },
+    {
+      "basis": "direct \u2014 same #222 stale-mirror incident; the existing byte-parity check cannot express which specific fields a consumer actually depends on, so a provider rename of an unrelated field is indistinguishable from one that breaks a real dependency.",
+      "frame": "F5",
+      "id": "H-F5-6",
+      "role": "facet",
+      "theme": "T14"
+    },
+    {
+      "basis": "external \u2014 aviation NOTAM broadcast pattern (moonshot-tier idea); not every registered consumer needs a code-bearing refresh PR, some only need notification that a named contract changed, which is a lighter delivery mode on the same registry.",
+      "frame": null,
+      "id": "T14-F5-6",
+      "role": "facet",
+      "theme": "T14"
+    }
+  ],
+  "absorbed_ids": [
+    "H-F2-5",
+    "H-F5-6",
+    "T14-F5-6"
+  ],
+  "approval_state": null,
+  "binding_decisions_engaged": [
+    "{#mission-control-issue-contract-consumer-sync}"
+  ],
+  "created_at": "2026-07-04T08:06:17.117067+00:00",
+  "created_issue_number": 416,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/416",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-producer-push-propagation.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Matches the issue-map's own executor recommendation. Two coordinated CLI scripts (a registry-driven dispatcher with two delivery modes, and a field-level manifest guard) plus a real conversion of an existing production consumer (mission-control's issue-contract vendoring) without breaking its existing byte-parity gate -- higher-context mechanical-plus-integration work than a single-script build, warranting high effort over medium, but a well-understood existing-gate extension rather than open-ended architectural judgment, so sonnet/inline is sufficient without cross-subsystem reviewer consensus.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Establish single-source-of-truth for shared primitives",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/mission-control/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/mission-control/CHANGELOG.md",
+    "version/metadata drift-guard tests"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-producer-push-propagation.json",
+  "slug": "pf-producer-push-propagation",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Inverts the propagation burden the consumer-graph issue only maps: producer dispatches refresh PRs on contract change, consumers publish Pact-style expectations the provider CI honors; NOTAM broadcast is the same push model at moonshot scale.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-consolidation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+    "ref": "issue-map-final.json#pf-producer-push-propagation",
+    "title": "Producer-push contract propagation: source repo opens refresh PRs; consumer-driven contract tests",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: producer-push contract propagation and consumer-driven contract guard",
+  "updated_at": "2026-07-04T08:06:23.712410+00:00",
+  "wave": "wave-2"
+}

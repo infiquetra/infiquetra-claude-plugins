@@ -1,0 +1,102 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "theme T10, frame F4, axis feedback-pipeline; issue-map dod_sketch: 'Merged PR: mining_harvest writeback emitting gated Evidence-stamped LEARNINGS.md draft entries from a findings payload; verified by feeding the 10-pattern payload and producing valid drafts that promote_scan then detects.' Grounded in docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:120-121 (workflow wf_7e5d77a2-5c0: 70/70 skeletons distilled, 27 sessions, 175 findings \u2192 10 recurring patterns + 8 singletons) and :76 (promote ledger: 0 learnings ever promoted; cross-repo learning loop exists but never fired).",
+      "id": "T10-F4-4",
+      "role": "primary",
+      "title": "Mining-harvest writeback \u2014 stop letting 175 mined findings evaporate into a workflow journal"
+    },
+    {
+      "basis": "theme T10, frame F6, axis feedback-pipeline; issue-map dod_sketch: 'Merged PR: plugins/saga/skills/mine-to-backlog command consuming a synthesis report and emitting mission-control:issue-ready drafts halting at Gate E; verified by regenerating this session's candidate drafts from its synthesis report with no GitHub writes.' Grounded in docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:140 (theme 10: cross-repo learning-mining & provenance discipline) and docs/plans/2026-07-03-plugin-fleet-ideation-intake-brief.md:13 (writes happen only after Gate E / Gate F approval).",
+      "id": "T10-F6-8",
+      "role": "facet",
+      "title": "Durable /mine-to-backlog harness so pattern-to-issue stops being a one-off"
+    }
+  ],
+  "absorbed_ids": [
+    "T10-F4-4",
+    "T10-F6-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:15:58.560386+00:00",
+  "created_issue_number": 444,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/444",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-mining-harvest-writeback.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Both halves are import-and-transform work over already-specified target shapes (findings payload to documented LEARNINGS entry template; synthesis report to the existing pf-*.md/.json prepared-draft schema). No architectural judgment call is required, so sonnet at medium effort is sufficient; no external-engine involvement is needed since the work is a straight consume-transform-emit task against existing, well-understood contracts.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make the backlog and lifecycle self-improving",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make the backlog and lifecycle self-improving",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-mining-harvest-writeback.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Mining-harvest writeback and a durable /mine-to-backlog harness. mining_harvest emits gated Evidence-stamped LEARNINGS.md drafts above a repo-spread threshold; a mine-to-backlog command emits mission-control-ready drafts, halting at Gate E with no GitHub writes.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json",
+    "ref": "issue-map-final.json#pf-mining-harvest-writeback",
+    "title": "Mining-harvest writeback and a durable /mine-to-backlog harness",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: mining-harvest writeback and a durable /mine-to-backlog harness",
+  "updated_at": "2026-07-04T08:16:05.974452+00:00",
+  "wave": "wave-3"
+}

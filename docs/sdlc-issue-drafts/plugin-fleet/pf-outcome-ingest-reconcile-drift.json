@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T8-F1-2",
+    "T8-F5-2"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:54:00.939219+00:00",
+  "created_issue_number": 376,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/376",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-ingest-reconcile-drift.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "mechanical extension of an existing, well-understood detector/growth pattern (outcome_reconcile.py drift kinds, outcome_decompose.py lazy_grow, outcome.py derive_states) in a single file family with clear existing precedent to mirror",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-ingest-reconcile-drift.json",
+  "slug": "pf-outcome-ingest-reconcile-drift",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Ingest provenance reconcile: structural drift detection and idempotent in-flight Objective ingestion \u2014 outcome_reconcile.py already handles field-level board<->saga drift (#295, DRIFT_KINDS = status-drift/external-close/external-reopen) but has no structure-drift kind for added sub-issues and no ingestion path that derives initial node state from GitHub reality or guarantees idempotent re-ingestion.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T8.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T8.json",
+    "title": "Ingest provenance reconcile: structural drift detection and idempotent in-flight Objective ingestion",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: outcome-ingest provenance + structural-drift and idempotent in-flight ingestion",
+  "updated_at": "2026-07-04T08:21:28.942280+00:00",
+  "wave": "wave-1"
+}

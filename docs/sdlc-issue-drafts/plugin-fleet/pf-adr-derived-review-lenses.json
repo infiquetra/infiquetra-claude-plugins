@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T9-F3-2",
+    "T9-F4-8",
+    "T11-F4-3"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:02:36.086738+00:00",
+  "created_issue_number": 403,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/403",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-adr-derived-review-lenses.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical-but-careful consolidation (promote/rename an existing file, add a generator over an already-structured markdown source, add a mapping column, add parity/resolution tests) rather than novel design or adversarial judgment; sonnet/high matches the fleet's own work-shape heuristic for bounded mechanical transforms with real cross-file correctness risk.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Enforce context-library standards at authoring time",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Enforce context-library standards at authoring time",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-adr-derived-review-lenses.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "One shared review-lens catalog consumed by both saga /code-review and team-execution reviewer consensus, with a subset of lenses generated from the DECISIONS.md binding-decision register (parity-tested) and a distinct advisory-only ADR-to-code-pattern lens registered on the shared catalog.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json#T9-F3-2,T9-F4-8;docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json#T11-F4-3",
+    "title": "One shared review-lens catalog for both consensus loci, with ADR-derived and ADR-pattern lenses",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: one shared review-lens catalog for both consensus loci, with ADR-derived and ADR-pattern lenses",
+  "updated_at": "2026-07-04T08:02:41.874086+00:00",
+  "wave": "wave-2"
+}

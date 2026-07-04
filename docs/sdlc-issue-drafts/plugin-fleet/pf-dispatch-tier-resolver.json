@@ -1,0 +1,93 @@
+{
+  "absorbed_ids": [
+    "G-hybrids-5",
+    "H-F4-2",
+    "T3-F3-1",
+    "T3-F6-7",
+    "T3-F2-4",
+    "T12-F2-5",
+    "T12-F4-1",
+    "S-1",
+    "S-25"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:50:05.920156+00:00",
+  "created_issue_number": 362,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/362",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-dispatch-tier-resolver.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Bounded structural refactor (shared resolver + registry, 25 frontmatter migrations, drift-guard test, adoption at named spawn sites) with no open design ambiguity; matches the mechanical/deterministic-transform tier the capability itself resolves to, not a judgment-tier decision requiring opus. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make tier+effort a first-class priced resolvable lever",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make tier+effort a first-class priced resolvable lever",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-dispatch-tier-resolver.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Fuse the tier-currency stack into one seam: T3-F4-1's shared palette module (kill the literal-string scatter), H-F4-2's dispatch-time resolver (instead of 24 frontmatter edits), T3-F2-3's effort-injection shim generalizing the readonly-verifier per-call pattern, T12-F3-2's requirement that every recommendation emit a 'because' plus a cheaper fallback, and H-F4-4's cost-fact priors so the 'because' cites measured history instead of re-reasoned vibes...",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/*.json (ids: G-hybrids-5, H-F4-2, T3-F3-1, T3-F6-7, T3-F2-4, T12-F2-5, T12-F4-1, S-1, S-25)",
+    "title": "Dispatch-time tier resolver: one seam mapping (role-class, work-shape, overrides) to {model, effort} across the fleet",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: Dispatch-time tier resolver \u2014 one seam mapping (role-class, work-shape, overrides) to {model, effort} across the fleet",
+  "updated_at": "2026-07-04T08:20:55.528649+00:00",
+  "wave": "wave-1"
+}

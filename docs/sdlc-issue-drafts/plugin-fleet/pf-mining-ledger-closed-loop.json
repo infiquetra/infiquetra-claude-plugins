@@ -1,0 +1,109 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "theme T10, frame F2, axis mining-substrates; issue-map dod_sketch: 'Merged PR: mined-session ledger (promote-keys idiom) + delta-skip + unmined-count report in retro mining; verified by a second pass over unchanged corpus mining 0 sessions while reporting standing unmined count.' Grounded in plugins/saga/scripts/promote_scan.py:19-21,74,203 (existing promote-keys idempotency-ledger idiom), plugins/saga/skills/retro/references/retro-passes.md:81-88 (retro Pass 3 discovery/extraction seam), and docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:113,115 (70/70-skeleton mining synthesis; 219 codex sessions in-window with no mining substrate).",
+      "id": "T10-F2-8",
+      "role": "primary",
+      "title": "Mined-session ledger \u2014 remove blind re-mining and make the dark zone countable"
+    },
+    {
+      "basis": "theme T10, frame F3, axis feedback-pipeline; issue-map dod_sketch: 'Merged PR: resolution back-annotation (merged issue -> mark originating finding resolved with PR evidence) + mining de-rank filter; verified by a resolved-pattern issue causing its finding to be skipped/flagged on the next mining pass.' Grounded in docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:76 (promote ledger: 0 learnings ever promoted; cross-repo learning loop exists but never fired) and :99-116 (theme 10 recurring-pain synthesis).",
+      "id": "T10-F3-8",
+      "role": "facet",
+      "title": "Closed-loop retirement \u2014 a merged fix must silence its originating pattern"
+    },
+    {
+      "basis": "theme T10, frame F6, axis provenance-discipline; issue-map dod_sketch/outcome_shape: 'PR touching plugins/saga/scripts/provenance_manifest.py adding a mined-pattern lineage record (source session IDs + skeleton hashes); verified by round-tripping one distilled pattern back to its exact source skeleton set from the durable manifest alone.' Grounded in plugins/saga/scripts/provenance_manifest.py:1-18 (schema saga.manifest.v1, unknown keys rejected) and :300 (class ClaimProvenance \u2014 existing source-attributed claim record family this lineage record extends).",
+      "id": "T10-F6-6",
+      "role": "facet",
+      "title": "Durable lineage records so every mined pattern is re-verifiable to source"
+    }
+  ],
+  "absorbed_ids": [
+    "T10-F2-8",
+    "T10-F3-8",
+    "T10-F6-6"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:16:15.316602+00:00",
+  "created_issue_number": 445,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/445",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-mining-ledger-closed-loop.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "All three facets are mechanical bookkeeping extensions over already-specified idioms: the ledger reuses /promote's proven promote-keys pattern verbatim in shape, the lineage record extends an existing typed manifest class family with a documented rejection discipline, and the back-annotation filter is a gated-write-with-evidence pattern the plugin already uses elsewhere. No architectural judgment call or novel design space is required, so sonnet at medium effort is sufficient; no external-engine involvement is warranted since the work is a straight extend-existing-contract task against fixtures, not open-ended synthesis or adversarial review.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make the backlog and lifecycle self-improving",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make the backlog and lifecycle self-improving",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-mining-ledger-closed-loop.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Mined-session ledger, pattern lineage, and closed-loop retirement of resolved findings. A promote-keys-style ledger delta-skips already-mined sessions and reports an unmined count; a provenance-manifest lineage record round-trips a distilled pattern to its source skeleton set; a resolution back-annotation with mining de-rank stops a merged fix's originating pattern from being re-surfaced.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json",
+    "ref": "issue-map-final.json#pf-mining-ledger-closed-loop",
+    "title": "Mined-session ledger, pattern lineage, and closed-loop retirement of resolved findings",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: mined-session ledger, pattern lineage, and closed-loop retirement of resolved findings",
+  "updated_at": "2026-07-04T08:16:23.112886+00:00",
+  "wave": "wave-3"
+}

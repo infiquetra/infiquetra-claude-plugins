@@ -1,0 +1,84 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-residency-evidence.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make cache economics an engineered, measured win",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-residency-evidence.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Merges two absorbed ideation facets (T4-F3-6 primary, T4-F1-6 facet) from theme T4 (cache-aware prompt architecture) into one exploration: a one-shot residency A/B benchmark that proves or falsifies the worker-cache-scheduling cost claim, and a standing warm-reuse-benefit regression guard over the run ledger.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json#T4-F3-6,T4-F1-6",
+    "title": "Prove the cache claim: residency A/B benchmark and warm-reuse benefit regression guard",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "exploration: prove the cache claim \u2014 residency A/B benchmark and warm-reuse benefit regression guard",
+  "updated_at": "2026-07-03T00:00:00.000000+00:00",
+  "slug": "pf-residency-evidence",
+  "tier": "quick-win",
+  "wave": "wave-2",
+  "objective": "Make cache economics an engineered, measured win",
+  "absorbed_ids": [
+    "T4-F3-6",
+    "T4-F1-6"
+  ],
+  "absorbed": [
+    {
+      "id": "T4-F3-6",
+      "role": "primary",
+      "title": "Residency A/B benchmark: prove the recon fan-out cache claim before scaling the architecture",
+      "basis_type": "reasoned",
+      "basis": "First-principles: residency only saves tokens if same-segment spawns actually achieve cache_read>0; no repo artifact measures the residency-ON vs residency-OFF delta, so the architecture's core premise is currently asserted, not checked, directly conflicting with this repo's stated Validation Discipline norm."
+    },
+    {
+      "id": "T4-F1-6",
+      "role": "facet",
+      "title": "Residency-benefit regression guard: prove the warm reuse actually cached",
+      "basis_type": "direct",
+      "basis": "Grounding brief section 6.1: silent no-ops are the dominant failure class and any bridge/delegation idea needs did-it-actually-run/persist verification (agy silent Claude-fallback, dead-wiring learnings). Operationalizes the verified cache-hit check: if cache_read_input_tokens is zero across repeated identical-prefix requests, a silent invalidator is at work (claude-api shared/prompt-caching.md). Consumes the ledger from T4-F3-5 where available."
+    }
+  ],
+  "executor_profile": {
+    "model": "sonnet",
+    "effort": "medium",
+    "backend": "inline",
+    "external_llm": "none",
+    "justification": "Bounded measurement-and-guard engineering: one benchmark harness with a fixed fan-out shape and a documented verdict format, plus one ledger-based assertion with synthetic fixtures, with clear testable acceptance criteria and no architectural ambiguity."
+  },
+  "release_surface_checklist": [
+    "plugins/team-execution/.claude-plugin/plugin.json (or plugins/saga/.claude-plugin/plugin.json, whichever plugin's aggregator the guard is wired into) -- only if /plan determines shipped behavior changes",
+    ".claude-plugin/marketplace.json",
+    "affected plugin's CHANGELOG.md",
+    "release-surface / version-metadata drift-guard tests",
+    "explicit no-release-surface-change note in the PR if none of the above applies"
+  ],
+  "created_issue_number": 467,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/467"
+}

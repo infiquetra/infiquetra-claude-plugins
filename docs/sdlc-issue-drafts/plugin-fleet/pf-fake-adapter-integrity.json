@@ -1,0 +1,118 @@
+{
+  "absorbed": [
+    {
+      "id": "T11-F2-8",
+      "role": "primary",
+      "title": "Fake-adapter detector: lint away test suites that never touch real code"
+    },
+    {
+      "id": "T11-F1-6",
+      "role": "facet",
+      "title": "Fake-adapter suites must pin a golden fixture derived from the real producer"
+    },
+    {
+      "id": "T11-F6-8",
+      "role": "facet",
+      "title": "Fake-adapter registry with mandatory real-contract shadow"
+    },
+    {
+      "id": "T11-F4-8",
+      "role": "facet",
+      "title": "Real-adapter contract lane: a registry of fake-only seams gets one real-substrate test each"
+    },
+    {
+      "id": "T11-F4-7",
+      "role": "facet",
+      "title": "Boundary-crossing test convention + shared helper so round-trip tests actually cross persistence"
+    }
+  ],
+  "absorbed_ids": [
+    "T11-F2-8",
+    "T11-F1-6",
+    "T11-F6-8",
+    "T11-F4-8",
+    "T11-F4-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:25:27.814032+00:00",
+  "created_issue_number": 458,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/458",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fake-adapter-integrity.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical, well-specified tooling work (AST lint, fixture diffing, registry + parity test, two converted worked examples) with no architectural ambiguity or adversarial judgment call; sonnet at high effort, no external-LLM involvement needed. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fake-adapter-integrity.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Fake-adapter integrity: shape lint, golden fixtures, fakes registry with real-contract shadow, real-adapter lane, boundary-crossing convention. Absorbs T11-F2-8 (primary), T11-F1-6, T11-F6-8, T11-F4-8, T11-F4-7.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "ideation/issue-map/issue-map-final.json",
+    "ref": "pf-fake-adapter-integrity",
+    "title": "Fake-adapter integrity: shape lint, golden fixtures, fakes registry with real-contract shadow, real-adapter lane, boundary-crossing convention",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: fake-adapter integrity \u2014 shape lint, golden fixtures, fakes registry, real-adapter lane, boundary-crossing convention",
+  "updated_at": "2026-07-04T08:25:35.398724+00:00",
+  "wave": "wave-2"
+}

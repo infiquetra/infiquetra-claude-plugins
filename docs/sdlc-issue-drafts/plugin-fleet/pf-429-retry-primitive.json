@@ -1,0 +1,127 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "grounding brief \u00a71: 'HTTP-level 429 handling exists only in unifi/mission-control clients.' Session-mining pattern 4: 'Rate-limit fan-out kills \u2014 6 of 7 agents failed on rate-limiting.'",
+      "id": "T13-F4-3",
+      "role": "primary",
+      "title": "Extract the 429-backoff logic into one shared retry primitive the whole fleet reuses"
+    },
+    {
+      "basis": "grounding brief line 129: 'Rate-limit fan-out kills \u2014 6/7 agents failed on rate-limiting' (3 repos); the /outcome HALT-not-degrade decision (grounding line 48) is engaged directly \u2014 429 is classified transient-retryable, not a degrade path.",
+      "id": "T13-F2-3",
+      "role": "facet",
+      "title": "Auto-retry-on-429 wrapper in the emitted parallel helper so a rate-limited agent re-queues, not dies"
+    },
+    {
+      "basis": "outcome_github.py:10: 'Every read degrades safely: if gh is unavailable / rate-limited / the ref is unknown, the state is degraded' \u2014 this idea extends that same safe-degrade posture from reads to dispatch. Consistent with the /outcome derived-on-read-status-never-committed decision.",
+      "id": "T13-F2-4",
+      "role": "facet",
+      "title": "Resume-on-429: /outcome marks a rate-limited leaf dispatch retriable-pending, next advance re-picks it"
+    },
+    {
+      "basis": "Source domain: Netflix Hystrix circuit breaker + AWS 'Exponential Backoff and Jitter' (Marc Brooker). Grounding brief \u00a71: engine bridges unbounded, HTTP-level 429 handling exists only in unifi/mission-control clients; session-mining pattern 4: '6/7 agents failed on rate-limiting.'",
+      "id": "T13-F5-4",
+      "role": "facet",
+      "title": "Circuit breaker + backoff-with-jitter at the unbounded engine bridges"
+    }
+  ],
+  "absorbed_ids": [
+    "T13-F4-3",
+    "T13-F2-3",
+    "T13-F2-4",
+    "T13-F5-4"
+  ],
+  "approval_state": null,
+  "binding_decisions": [
+    "/outcome campaign (U1-U11): derived-on-read status never committed status fields; HALT-not-degrade",
+    "{#external-engine-chaperone-dispatch} (#318): this issue hardens transport-level retry only, does not add a new executor kind or dispatch shape"
+  ],
+  "created_at": "2026-07-04T07:45:51.634869+00:00",
+  "created_issue_number": 348,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/348",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-429-retry-primitive.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical extraction-and-adoption work across four already-specified call sites with a well-defined target shape; high effort reflects breadth (four modules, each keeping its own test suite green plus new fault-injection coverage), not novelty or architectural ambiguity.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Govern fleet concurrency and reclaim leaked resources",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/saga/.claude-plugin/plugin.json version bump",
+    "plugins/agy/.claude-plugin/plugin.json version bump",
+    ".claude-plugin/marketplace.json updated for both bumps",
+    "plugins/saga/CHANGELOG.md entry",
+    "plugins/agy/CHANGELOG.md entry",
+    "plugin-metadata/version drift-guard tests re-run green",
+    "docs/engineering-journal/DECISIONS.md entry recording the shared-primitive pattern"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-429-retry-primitive.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "One shared 429 retry/backoff primitive: emitted-wave auto-retry, engine-bridge circuit breakers, /outcome retriable-pending leaves. Consolidates T13-F4-3 (primary), T13-F2-3, T13-F2-4, T13-F5-4 from the 2026-07-03 plugin-fleet ideation pass.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map/issue-map-final.json",
+    "ref": "pf-429-retry-primitive",
+    "title": "One shared 429 retry/backoff primitive: emitted-wave auto-retry, engine-bridge circuit breakers, /outcome retriable-pending leaves",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: one shared 429 retry/backoff primitive across emitted waves, engine bridges, and /outcome dispatch",
+  "updated_at": "2026-07-04T08:20:09.021153+00:00",
+  "wave": "wave-1"
+}

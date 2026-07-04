@@ -1,0 +1,90 @@
+{
+  "absorbed_ids": [
+    "G-hybrids-2",
+    "H-F4-3",
+    "S-12",
+    "S-32",
+    "T13-F1-4",
+    "T13-F5-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:48:13.516021+00:00",
+  "created_issue_number": 356,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/356",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-resource-lease-broker.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "xhigh",
+    "external_llm": "none",
+    "justification": "The mechanical shape (a file-backed lease registry with flock, TTL arithmetic, and a sweep) mirrors an existing house pattern (outcome_worktrees.py's own read-modify-write-under-lease registry), so opus is not warranted. xhigh effort reflects genuine cross-cutting risk: the broker underlies every fan-out spawn site in the fleet, its correctness is concurrency-and-race-sensitive (TTL expiry racing a renew, a fencing-token check racing a write), and a defect here reproduces exactly the failure modes it is meant to close. team-execution backend is recommended over inline because the blast radius (every spawn site in the fleet) benefits from reviewer-consensus gating before merge. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Govern fleet concurrency and reclaim leaked resources",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-resource-lease-broker.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "A file-based TTL-lease broker module: spawns acquire a slot lease (fleet-wide, cross-workflow), worktrees/teams register leases on creation, expired leases fence orphan writes and mark resources reclaimable. Merges H-F4-3 (concurrency+teardown are both leases), T6-F3-1 (ephemeral resources as leases with a reaper), T15-F5-6 (fencing tokens reject stale writes), and T13-F1-4 (fleet-wide lease file) into one primitive; also folds in the T13-F5-7 session-scoped ceiling and the S-12/S-32 worktree write-routing and team-teardown seeds.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/pool-final.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/pool-final.json#G-hybrids-2,H-F4-3,S-12,S-32,T13-F1-4,T13-F5-7",
+    "title": "TTL-lease broker: concurrency slots, worktree/teardown reclamation, and orphan write-fencing as one cross-workflow primitive",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: TTL-lease broker for fleet concurrency slots, worktree/teardown reclamation, and orphan write-fencing",
+  "updated_at": "2026-07-04T08:20:28.971155+00:00",
+  "wave": "wave-1"
+}

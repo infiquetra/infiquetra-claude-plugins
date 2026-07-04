@@ -1,0 +1,137 @@
+{
+  "absorbed": [
+    {
+      "id": "G-hybrids-10",
+      "role": "primary"
+    },
+    {
+      "id": "S-29",
+      "role": "dedup-merged"
+    },
+    {
+      "id": "S-20",
+      "role": "dedup-merged"
+    },
+    {
+      "id": "T5-F2-1",
+      "role": "facet"
+    },
+    {
+      "id": "T5-F1-1",
+      "role": "facet"
+    },
+    {
+      "id": "T5-F6-2",
+      "role": "facet"
+    },
+    {
+      "id": "T5-F4-3",
+      "role": "facet"
+    },
+    {
+      "id": "T5-F5-2",
+      "role": "facet"
+    },
+    {
+      "id": "T5-F1-8",
+      "role": "facet"
+    },
+    {
+      "id": "T5-F5-8",
+      "role": "facet"
+    }
+  ],
+  "absorbed_ids": [
+    "G-hybrids-10",
+    "S-29",
+    "S-20",
+    "T5-F2-1",
+    "T5-F1-1",
+    "T5-F6-2",
+    "T5-F4-3",
+    "T5-F5-2",
+    "T5-F1-8",
+    "T5-F5-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:04:48.460088+00:00",
+  "created_issue_number": 411,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/411",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-consensus-kernel.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "xhigh",
+    "external_llm": "none",
+    "justification": "Structural, multi-plugin (saga + team-execution) extraction touching a load-bearing governance invariant (external-engines-never-gatekeepers), with byte-equivalence and invariant tests as hard acceptance gates; xhigh effort holds the parity/invariant proofs together across both plugins. Sonnet is sufficient because the work is mechanical extraction of an already-decided contract, not a new judgment call. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-consensus-kernel.json",
+  "slug": "pf-consensus-kernel",
+  "source_context": {
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T5.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map/issue-map-final.json#pf-consensus-kernel",
+    "title": "Portable consensus kernel: consensus_spec.py extraction, portable invocation contract and verdict envelope, typed gated/advisory participant bit, worthiness pre-gate, append-only score log",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: portable consensus kernel \u2014 consensus_spec.py extraction, invocation contract, verdict envelope, authority bit, worthiness pre-gate, append-only score log",
+  "type": "capability",
+  "updated_at": "2026-07-04T08:24:42.283150+00:00",
+  "wave": "wave-2"
+}

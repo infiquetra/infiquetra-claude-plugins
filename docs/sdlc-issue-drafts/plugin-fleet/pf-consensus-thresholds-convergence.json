@@ -1,0 +1,94 @@
+{
+  "absorbed_ids": [
+    "T5-F1-5",
+    "T5-F4-2",
+    "T5-F1-4",
+    "T5-F2-7",
+    "T5-F3-8",
+    "T5-F5-5"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:05:12.195014+00:00",
+  "created_issue_number": 412,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/412",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-consensus-thresholds-convergence.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Well-bounded structural protocol change across two plugins' consensus kernels with explicit dod_sketch/ac_sketch facets and existing hard-coded defaults to preserve; no external-engine involvement since Claude remains verifier-of-record for gated logic touched here.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Establish single-source-of-truth for shared primitives",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "Four of six absorbed facets (T5-F2-7, T5-F3-8, T5-F4-2, T5-F5-5) had null/elided body text in the source survivor record; acceptance criteria for those facets were reconstructed from title/axis/dod_sketch fields and flagged inline in the issue body's Absorbed Ideas table for /plan to re-verify against the source ideation thread if available."
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-consensus-thresholds-convergence.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Consensus threshold and convergence policy: risk-tiered plan-authored profiles, HALT on non-convergence, convergence-based stopping, Byzantine-tolerant quorum, reconciled panel bounds",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T5.json",
+    "ref": "issue-map-final.json#pf-consensus-thresholds-convergence",
+    "title": "Consensus threshold and convergence policy",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: consensus threshold and convergence policy (risk-tiered profiles, HALT on non-convergence, Byzantine-tolerant quorum)",
+  "updated_at": "2026-07-04T08:05:19.167042+00:00",
+  "wave": "wave-2"
+}

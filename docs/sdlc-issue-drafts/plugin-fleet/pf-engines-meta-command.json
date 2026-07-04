@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T1-F4-8",
+    "T2-F6-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:22:36.252719+00:00",
+  "created_issue_number": 453,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/453",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-engines-meta-command.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "low",
+    "external_llm": "none",
+    "justification": "Both surfaces are thin, read-only (or overlay-only) CLI wrappers over an already-built and already-tested registry module (Registry.by_capability(), Registry.stale()) with no ranking algorithm to design and no gated-decision risk to reason about; sonnet/low is sufficient, no case for opus or an external engine.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "low",
+    "Tier": "quick-win",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-engines-meta-command.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Two read-only operator ergonomics surfaces over the same registry: an /engines command (list/pin/deprecate per-repo) and a route-explain recommendation dry-run over capability x rating x cost; one small CLI PR.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json#T1-F4-8;docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json#T2-F6-8",
+    "title": "/engines meta-command + route-explain dry-run for operator-facing engine visibility",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "quick-win",
+  "title": "enhancement: /engines meta-command + route-explain dry-run for operator-facing engine visibility",
+  "updated_at": "2026-07-04T08:22:43.854386+00:00",
+  "wave": "wave-1"
+}

@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T15-F3-1",
+    "T15-F1-4",
+    "T15-F2-5",
+    "T15-F2-4",
+    "T15-F1-3"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:58:26.739063+00:00",
+  "created_issue_number": 390,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/390",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-silent-fallback-elimination.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Every facet is a mechanical wiring fix connecting an already-defined field or already-documented disposition/reason to a status/exit-code/render decision that currently ignores it; none requires novel architecture or ambiguous design judgment.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-silent-fallback-elimination.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T15-F3-1 (primary) closes real dead-wiring: provenance_required parsed/threaded end to end in agy_delegate.py but never consulted for status/exit. Absorbed facets T15-F1-4/F2-5/F2-4/F1-3 close the sibling silent-fallback gaps: fallback-reason propagation, first-class SUBSTITUTED disposition replacing the chaperone hand-build path, empty-delivery HALT at the unit boundary, and attributed verify-spawn fallback-ladder depth in the gate summary.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json (ids: T15-F3-1 (primary), T15-F1-4, T15-F2-5, T15-F2-4, T15-F1-3 (facets))",
+    "title": "No silent Claude-fallback: fail-loud provenance_required, SUBSTITUTED disposition, fallback-reason propagation, empty-delivery HALT, attributed verify-fallback",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "defect: no silent Claude-fallback -- fail-loud provenance_required, SUBSTITUTED disposition, fallback-reason propagation, empty-delivery HALT, attributed verify-fallback",
+  "updated_at": "2026-07-04T08:23:45.057402+00:00",
+  "wave": "wave-1"
+}

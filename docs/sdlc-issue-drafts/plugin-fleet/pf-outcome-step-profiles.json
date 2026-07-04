@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T8-F4-3",
+    "T8-F1-6"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:54:37.716573+00:00",
+  "created_issue_number": 378,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/378",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-step-profiles.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "mechanical, well-scoped registry-plus-resolver work over an existing, already-typed schema (OutcomeSpec.Node) with a clear table-test contract; no architectural ambiguity or adversarial-review need that would justify opus or an external-engine chaperone dispatch.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-step-profiles.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Declarative lifecycle step-profile registry: input shape derives which steps each leaf runs. Absorbs T8-F4-3 (primary) and T8-F1-6 (facet) from plugin-fleet-ideation-2026-07-03, theme T8 axis step-selection-derivation.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T8.json",
+    "ref": "issue-map-final.json#pf-outcome-step-profiles",
+    "title": "Lifecycle step-profile registry: input shape -> which steps a leaf runs, as data not code",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: declarative lifecycle step-profile registry (input shape -> steps)",
+  "updated_at": "2026-07-04T08:21:35.495881+00:00",
+  "wave": "wave-1"
+}

@@ -1,0 +1,128 @@
+{
+  "absorbed": [
+    {
+      "basis": "plugins/mission-control/config/generated/check_issue_contract_parity.py:15-21 docstring: 'Design (deliberately does NOT run the sdlc generator)... A match means the vendored bytes equal what the source generator LAST produced and pinned' \u2014 upstream advance is undetectable. Origin pain: grounding brief section 3, card_validator.py 343 cards / #222 stale hand-mirror.",
+      "frame": "F1",
+      "id": "T14-F1-1",
+      "role": "primary",
+      "theme": "T14"
+    },
+    {
+      "basis": "Grounding brief section 7 pattern 7: 'Stale memory/doc claims asserted fact, caught only by operator recall or lucky re-verification (2 repos)'. Section 3.3: 'mission-control/saga contract copies drifting from source truth (2 repos)'. Section 3 scanned 19 repos reactively to find this.",
+      "frame": "F6",
+      "id": "T14-F6-3",
+      "role": "facet",
+      "theme": "T14"
+    },
+    {
+      "basis": "External: RTS lockstep networking desync detection \u2014 per-frame world-state checksums that halt on first divergence (Bettner & Terrano, 'GDC 2001: 1500 Archers on a 28.8'). Aligns with the binding {#outcome HALT-not-degrade} decision (grounding brief section 2) rather than contradicting it.",
+      "frame": "F5",
+      "id": "T14-F5-7",
+      "role": "facet",
+      "theme": "T14"
+    },
+    {
+      "basis": "Thin seed reconstructed from grounding brief sections 4-6: section 4 \u2014 'Enforcement already exists inside library: validate.yml CI runs check_docs.py ... + context_census.py --check (keeps llms.txt honest)'; section 4 notes 'Absent: pull library into mission-control:issue / saga:plan creation; any ADR<->code-pattern lint; library repo's CI [auditing consumers].' Facet closes that absence by extending the existing census-job pattern to audit registered fleet mirror sites.",
+      "frame": "F3",
+      "id": "H-F3-8",
+      "role": "facet",
+      "theme": "T9"
+    }
+  ],
+  "absorbed_ids": [
+    "T14-F1-1",
+    "T14-F6-3",
+    "T14-F5-7",
+    "H-F3-8"
+  ],
+  "approval_state": null,
+  "binding_decisions_engaged": [
+    "/outcome campaign HALT-not-degrade posture (U1-U11, grounding brief section 2)"
+  ],
+  "created_at": "2026-07-04T08:07:57.893775+00:00",
+  "created_issue_number": 420,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/420",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-upstream-drift-sweep.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Establish single-source-of-truth for shared primitives",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/mission-control/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/mission-control/CHANGELOG.md",
+    "version/metadata drift-guard tests"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-upstream-drift-sweep.json",
+  "slug": "pf-upstream-drift-sweep",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Four mechanisms for the same blind spot (#222: source moved ahead of the pin): scheduled upstream parity, cross-repo hunt filing defects, lockstep halt-on-first-divergence, and the context-library CI auditing registered fleet mirrors.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-consolidation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+    "ref": "issue-map-final.json#pf-upstream-drift-sweep",
+    "title": "Continuous upstream drift detection: cron parity vs live source, fleet-wide sweep, halt-on-divergence, library-side mirror audit",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: continuous upstream drift detection \u2014 cron parity vs live source, fleet-wide sweep, halt-on-divergence, library-side mirror audit",
+  "updated_at": "2026-07-04T08:08:04.614695+00:00",
+  "wave": "wave-2"
+}

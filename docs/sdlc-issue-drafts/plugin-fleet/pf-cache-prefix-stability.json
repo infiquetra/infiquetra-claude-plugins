@@ -1,0 +1,117 @@
+{
+  "absorbed": [
+    {
+      "basis": "Anthropic prompt-caching silent-invalidator audit table (claude-api shared/prompt-caching.md); lint pattern mirrors check_docs.py (infiquetra-context-library validate.yml CI, grounding brief section 4).",
+      "basis_type": "external",
+      "id": "T4-F1-4",
+      "role": "primary",
+      "title": "Silent-invalidator lint: no volatile token ahead of stable prose in any injected skill/reference"
+    },
+    {
+      "basis": "First-principles prompt-cache mechanics: a hit requires stable content to precede volatile content; today three call sites (SKILL.md:305, consensus-protocol.md:207, external-engine-workers.md) each assemble context independently with no shared stable-first ordering.",
+      "basis_type": "reasoned",
+      "id": "T4-F4-5",
+      "role": "facet",
+      "title": "Stable-prefix context-package primitive shared by seed, re-engagement, and chaperone dispatch"
+    },
+    {
+      "basis": "First principles: prompt caching is prefix-exact; execution_spec.py:1384 segment_units and agents/*.md are the prefix-determining inputs and both change routinely with no cache-awareness (grounding brief section 1).",
+      "basis_type": "reasoned",
+      "id": "T4-F6-8",
+      "role": "facet",
+      "title": "Cache-prefix stability regression guard in CI"
+    }
+  ],
+  "absorbed_ids": [
+    "T4-F1-4",
+    "T4-F4-5",
+    "T4-F6-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:49:09.498675+00:00",
+  "created_issue_number": 359,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/359",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-cache-prefix-stability.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Well-scoped mechanical engineering: a lint script, routing three existing call sites through one new assembler module, and a golden snapshot test, with clear testable acceptance criteria and no architectural ambiguity.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make cache economics an engineered, measured win",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make cache economics an engineered, measured win",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/team-execution/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/team-execution/CHANGELOG.md",
+    "release-surface / version-metadata drift-guard tests"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-cache-prefix-stability.json",
+  "slug": "pf-cache-prefix-stability",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Merges three absorbed ideation facets (T4-F1-4 primary, T4-F4-5 and T4-F6-8 facets) from theme T4 (cache-aware prompt architecture) into one structural change set: a silent-invalidator lint, a shared stable-first context-package assembly primitive adopted by three existing prompt-assembly call sites, and a CI byte-stability regression guard.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json#T4-F1-4,T4-F4-5,T4-F6-8",
+    "title": "Cache-prefix stability: silent-invalidator lint, stable-first context-package primitive, and CI byte-stability regression guard",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: cache-prefix stability \u2014 silent-invalidator lint, stable-first context-package primitive, and CI byte-stability regression guard",
+  "updated_at": "2026-07-04T08:20:42.194986+00:00",
+  "wave": "wave-1"
+}

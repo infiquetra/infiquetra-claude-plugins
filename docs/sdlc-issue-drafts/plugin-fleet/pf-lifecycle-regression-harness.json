@@ -1,0 +1,99 @@
+{
+  "absorbed_ids": [
+    "G-negative-space-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:10:51.658716+00:00",
+  "created_issue_number": 428,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/428",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-lifecycle-regression-harness.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "This is mechanical test/fixture-infrastructure work \u2014 scaffolding a fixture repo, wiring scenario runners, writing artifact-shape assertions against already-defined contracts (completeness-gate classes, worktree-isolation rules, saga-log format). It requires no novel architectural judgment or adversarial review posture, so sonnet at high effort (enough to carefully wire 3-5 scenarios and their negative-test counterparts without missing an assertion) is sufficient; no case for opus or an external-LLM chaperone is present here.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "plugin_fleet_ideation": {
+    "absorbed_ids": [
+      "G-negative-space-7"
+    ],
+    "executor_profile": {
+      "backend": "inline",
+      "effort": "high",
+      "external_llm": "none",
+      "justification": "Mechanical fixture/scenario-scaffolding work against already-defined contracts (completeness-gate classes, worktree isolation, saga-log format); no novel architectural judgment or adversarial-review posture required.",
+      "model": "sonnet"
+    },
+    "objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "slug": "pf-lifecycle-regression-harness",
+    "tier": "structural",
+    "type": "capability",
+    "wave": "wave-2"
+  },
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-lifecycle-regression-harness.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "None of the fleet's existing checks exercise the lifecycle skills (saga:spec, saga:plan, saga:work, saga:code-review, saga:doc-review, saga:qa, saga:outcome, ...) end-to-end as a running system. Coverage today is unit-level and structural. This capability adds tests/lifecycle-fixture/ plus a scheduled, cheap-tier CI job that drives 3-5 canonical lifecycle scenarios headlessly and asserts on artifact shape (spec JSON validity, saga-log append, gate-record presence, worktree reclamation).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+    "ref": "G-negative-space-7",
+    "title": "End-to-end lifecycle regression harness on a fixture repo",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: end-to-end lifecycle regression harness on a fixture repo",
+  "updated_at": "2026-07-04T08:10:59.078589+00:00"
+}

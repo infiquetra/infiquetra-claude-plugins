@@ -1,0 +1,86 @@
+{
+  "absorbed_ids": [
+    "T8-F6-8",
+    "T8-F5-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:53:10.704628+00:00",
+  "created_issue_number": 373,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/373",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-backend-spend-envelope.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical dataclass extension + a pre-dispatch conditional check against an existing, well-documented seam (outcome_dispatcher.py); no novel design judgment beyond following the #287 precedent already recorded in DECISIONS.md.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-backend-spend-envelope.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T8-F6-8 (primary): Capture backend + degrade posture once, host-conditional, HALT when unsatisfiable. T8-F5-7 (facet): Pre-authorized credit line: a spend envelope set once, step-up auth on overage.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T8.json",
+    "ref": "issue-map-final.json#pf-outcome-backend-spend-envelope",
+    "title": "Backend + degrade posture and spend envelope captured once, enforced at the dispatch seam",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: run-start intent envelope \u2014 backend/degrade posture + spend ceiling captured once, enforced at the /outcome dispatch seam",
+  "updated_at": "2026-07-04T07:53:16.041626+00:00",
+  "wave": "wave-1"
+}

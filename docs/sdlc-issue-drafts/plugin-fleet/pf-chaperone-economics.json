@@ -1,0 +1,89 @@
+{
+  "absorbed_ids": [
+    "T1-F1-6",
+    "T1-F1-5",
+    "T1-F3-4",
+    "T1-F5-4",
+    "T1-F2-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:55:27.107018+00:00",
+  "created_issue_number": 381,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/381",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-chaperone-economics.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Bounded, mechanical extension of the already-settled chaperone-dispatch protocol (#318): batching shape, tier-escalation ladder, verifiability split, sampling-fraction table, and cache key are all fully specified by the absorbed ideas; no open architectural or adversarial-review question justifies opus-tier judgment.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-chaperone-economics.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Cheap chaperoning: batched same-engine dispatch, evidence-size-adaptive and verifiability-keyed chaperone tiers, acceptance sampling, content-addressed re-assembly. Absorbs T1-F1-6 (primary, batched single-context chaperoning), T1-F1-5 (evidence-size-adaptive tier escalation), T1-F3-4 (verifiability-keyed tier), T1-F5-4 (acceptance-sampling verification), T1-F2-7 (content-addressed payload cache).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json (ids: T1-F1-6, T1-F1-5, T1-F3-4, T1-F5-4, T1-F2-7)",
+    "title": "Cheap chaperoning: batched same-engine dispatch, evidence-size-adaptive and verifiability-keyed chaperone tiers, acceptance sampling, content-addressed re-assembly",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: Cheap chaperoning \u2014 batched same-engine dispatch, evidence-size-adaptive and verifiability-keyed chaperone tiers, acceptance sampling, content-addressed re-assembly",
+  "updated_at": "2026-07-04T08:21:41.861494+00:00",
+  "wave": "wave-1"
+}

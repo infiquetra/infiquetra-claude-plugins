@@ -1,0 +1,101 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "theme T6, frame gap-hybrids, axis fleet-doctor; issue-map dod_sketch: 'A CLI/skill command that scans worktrees, lease/reclamation ledgers, spawn manifests, and delegation receipts and prints a derived-on-read health report; zero mutations.' Consolidation rationale: 'Stands alone: a read-only diagnostic that reports what the teardown/lease machinery should have prevented \u2014 deliberately not merged into them so the auditor is independent of the mechanisms it audits.'",
+      "id": "G-hybrids-7",
+      "role": "primary",
+      "title": "fleet doctor: one derived-on-read audit of leaked resources, dead wiring, and receiptless delegations"
+    },
+    {
+      "basis": "theme T6, frame F1, axis state-visibility; killed as duplicate with kept_duplicate_of: G-hybrids-7 \u2014 'Duplicate read-only cross-source inventory; the kept fleet-doctor hybrid subsumes it with three lenses over the same evidence pass.'",
+      "id": "T6-F1-7",
+      "role": "subsumed-duplicate",
+      "title": "fleet ps \u2014 one-shot inventory of running/held/leaked"
+    }
+  ],
+  "absorbed_ids": [
+    "G-hybrids-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:47:25.829509+00:00",
+  "created_issue_number": 353,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/353",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-doctor.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Read-only reconciliation command over three already-existing, well-understood data sources (worktree registry, provenance manifests, delegation records) with a fully specified target shape and no architectural judgment call \u2014 sonnet at medium effort is sufficient; no external-engine involvement needed for a straight import-and-reconcile task.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Govern fleet concurrency and reclaim leaked resources",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "low",
+    "Tier": "quick-win",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-doctor.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "fleet doctor: one derived-on-read audit command for leaked resources, dead wiring, and receiptless delegations. A CLI/skill command that scans worktrees, lease/reclamation ledgers, spawn manifests, and delegation receipts and prints a derived-on-read health report; zero mutations.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T6.json",
+    "ref": "issue-map-final.json#pf-fleet-doctor",
+    "title": "fleet doctor: one derived-on-read audit command for leaked resources, dead wiring, and receiptless delegations",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "quick-win",
+  "title": "capability: fleet doctor \u2014 one derived-on-read audit for leaked resources, dead wiring, and receiptless delegations",
+  "updated_at": "2026-07-04T07:47:30.848860+00:00",
+  "wave": "wave-1"
+}

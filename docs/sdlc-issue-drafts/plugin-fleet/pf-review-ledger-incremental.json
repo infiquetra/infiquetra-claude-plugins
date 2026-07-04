@@ -1,0 +1,116 @@
+{
+  "absorbed_ids": [
+    "T11-F3-3",
+    "T11-F2-6"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:11:25.084929+00:00",
+  "created_issue_number": 430,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/430",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-review-ledger-incremental.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical scaffolding work (a JSON ledger schema, a diff-to-directory mapper, a CI step, and pytest coverage) following two well-established this-repo patterns (`tools/stale_main_guard.py`'s guard-script shape, `plugins/mission-control/config/generated/check_issue_contract_parity.py`'s CI-step shape). No architectural ambiguity or adversarial judgment call is required, so this does not need an above-sonnet tier; matches the absorbed ideas' own `executor_profile` (sonnet/medium/inline/none).",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "plugin_fleet": {
+    "absorbed": [
+      {
+        "id": "T11-F3-3",
+        "role": "primary",
+        "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+        "title": "A comprehensive review is not one heroic pass \u2014 segment the fleet into a standing review ledger"
+      },
+      {
+        "id": "T11-F2-6",
+        "role": "facet",
+        "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+        "title": "Incremental changed-plugin review: remove the 'when do we review the whole fleet' decision"
+      }
+    ],
+    "consolidation_rationale": "The ledger (last-reviewed SHA, staleness check) and the diff-to-segment incremental reviewer are the durable machinery the one-time campaign seeds; same files, one PR.",
+    "executor_profile": {
+      "backend": "inline",
+      "effort": "medium",
+      "external_llm": "none",
+      "justification": "Mechanical scaffolding following established this-repo guard-script and CI-step patterns (tools/stale_main_guard.py, plugins/mission-control/config/generated/check_issue_contract_parity.py); no architectural ambiguity requiring above-sonnet judgment.",
+      "model": "sonnet"
+    },
+    "grounding_refs": [
+      "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:174-175 (theme 11: Fleet quality)",
+      "docs/engineering-journal/DECISIONS.md:1950-1970 ({#worker-cache-scheduling} KTD2 segment boundary = plugin directory)",
+      "docs/engineering-journal/DECISIONS.md:1031 ({#plugin-portfolio-groom-17-to-7} structural-not-enumerative convention)"
+    ],
+    "objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "slug": "pf-review-ledger-incremental",
+    "tier": "structural",
+    "wave": "wave-2"
+  },
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-review-ledger-incremental.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T11-F3-3 + T11-F2-6: per-plugin review ledger (last-reviewed SHA, staleness check) merged with diff-to-segment incremental reviewer invoking saga:code-review scoped to the touched plugin directory only.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+    "ref": "issue-map-final.json#pf-review-ledger-incremental",
+    "title": "Standing per-plugin review ledger + incremental changed-plugin review",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement: standing per-plugin review ledger + incremental changed-plugin review",
+  "updated_at": "2026-07-04T08:11:32.349010+00:00"
+}

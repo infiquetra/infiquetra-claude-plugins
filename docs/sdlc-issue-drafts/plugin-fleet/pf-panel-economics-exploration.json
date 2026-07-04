@@ -1,0 +1,63 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-panel-economics-exploration.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Build the fleet telemetry and ledger substrate",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-panel-economics-exploration.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Exploration: panel economics -- measured reviewer independence, consensus elasticity, acceptance-sampling review. Absorbed H-F6-10 (primary, consensus elasticity), T5-F3-6 (facet, measured independence), T5-F5-7 (facet, acceptance-sampling review), all theme T5, verdict survive.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T5.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T5.json#H-F6-10",
+    "title": "Consensus elasticity: shrink panels where measured reviewer agreement is high, backed by sampled spot-checks",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "exploration: panel economics \u2014 measured reviewer independence, consensus elasticity, acceptance-sampling review",
+  "updated_at": "2026-07-03T00:00:00.000000+00:00",
+  "absorbed_ids": [
+    "H-F6-10",
+    "T5-F3-6",
+    "T5-F5-7"
+  ],
+  "wave": "wave-2",
+  "tier": "structural",
+  "objective": "Build the fleet telemetry and ledger substrate",
+  "executor_profile": {
+    "model": "sonnet",
+    "effort": "high",
+    "backend": "inline",
+    "external_llm": "second-opinion",
+    "justification": "Judgment-shaped statistical-design question (independence metric, acceptance-sampling AQL parameters, cost/gate-quality tradeoff); cheap external second opinion on sampling/independence methodology is intake-sanctioned and does not gate the recommendation."
+  },
+  "created_issue_number": 462,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/462"
+}

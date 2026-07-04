@@ -1,0 +1,91 @@
+{
+  "absorbed_ids": [
+    "H-F1-2",
+    "T6-F5-6",
+    "T6-F5-4"
+  ],
+  "approval_state": null,
+  "consolidation_rationale": "H-F1-2 (primary) establishes the dispatch-manifest + casualty-reconciliation contract itself. T6-F5-6 supplies the double-entry spawn-settle ledger and 'reconcile --leaks' reader that makes settlement queryable and generalizes the existing /outcome worktree registry/reaper precedent (outcome_worktrees.py) beyond worktrees. T6-F5-4 supplies the dead-letter queue + at-least-once re-dispatch that turns a named casualty into recovered work rather than a dead end. All three are structural, wave-1, and share one seam (fan-out dispatch/collection across team-execution and /outcome) \u2014 merging them avoids three overlapping ledger/manifest schemas landing independently.",
+  "created_at": "2026-07-04T07:46:40.663704+00:00",
+  "created_issue_number": 351,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/351",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-dispatch-settlement.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical-but-structural accounting work (manifest schema, append-only ledger writer, casualty classifier) layered on an already-verified precedent (outcome_worktrees.py's registry/reaper) rather than novel judgment-heavy design \u2014 sonnet/high is proportionate. Inline backend is sufficient: work is confined to plugins/saga and plugins/team-execution scripts/tests with no external-engine, review-panel, or cross-repo dispatch surface that would justify a team-execution or chaperone-dispatch backend. No external LLM involvement \u2014 this touches fan-out accounting, not engine adjudication, and stays clear of {#external-engines-never-gatekeepers} (#283) entirely.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Govern fleet concurrency and reclaim leaked resources",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "Touches team-execution's reviewer/validator fan-out steps (SKILL.md Step B2/B3) and /outcome's dispatcher seam (outcome_dispatcher.dispatch()); regression risk against existing reviewer-consensus and worktree-reaper behavior must be explicitly regression-tested, not just asserted.",
+      "Ideation-stage dod_sketch referenced team-execution 'Step A7' for fan-out wiring; verified current SKILL.md numbering shows Step A7 is 'Embed Team Structure' (not a fan-out site) and the real reviewer/validator fan-out sites are Step B2 and Step B3 \u2014 this draft grounds against the verified current step numbers."
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-dispatch-settlement.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Every fan-out site must account for its dead: a shared dispatch-manifest + casualty-reconciliation contract, generalized double-entry spawn-settle ledger, and dead-letter at-least-once re-dispatch across team-execution reviewer/validator dispatch, /outcome leaf dispatch, and workflow emitters.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/",
+    "ref": "H-F1-2",
+    "title": "Dispatch manifest + casualty reconciliation: every fan-out must account for its dead",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: dispatch settlement \u2014 fan-out manifest, casualty reconciliation, spawn-settle ledger, and dead-letter re-dispatch",
+  "updated_at": "2026-07-04T07:46:45.712858+00:00",
+  "wave": "wave-1"
+}

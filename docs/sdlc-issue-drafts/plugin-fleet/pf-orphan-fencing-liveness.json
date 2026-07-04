@@ -1,0 +1,115 @@
+{
+  "absorbed": [
+    {
+      "basis": "plugins/agy/scripts/agy_delegate.py:319 (run-lease.json write); plugins/agy/skills/agy-delegate/references/delegation-contract.md:110",
+      "id": "T15-F1-8",
+      "role": "primary",
+      "title": "Run-lease fencing so late orphan runner cannot clobber retry's evidence"
+    },
+    {
+      "basis": "plugins/saga/scripts/outcome.py:1055 (outcome_liveness.harvest_liveness); reuses outcome_liveness for quarantine_late_write() on the delegated-build path",
+      "id": "T15-F2-7",
+      "role": "facet",
+      "title": "Bridge-run liveness leases + late-write quarantine \u2014 automate git-status defense against orphans"
+    },
+    {
+      "basis": "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md section 6 item 1 (delegation-integrity recurring-pain theme); no existing register/heartbeat module today (proposed delegation_runners.py / reap_orphans.py)",
+      "id": "T15-F4-4",
+      "role": "facet",
+      "title": "Shared runner-liveness heartbeat + orphan reaper across teammate bridges"
+    }
+  ],
+  "absorbed_ids": [
+    "T15-F1-8",
+    "T15-F2-7",
+    "T15-F4-4"
+  ],
+  "ac_sketch": [
+    "A superseded-lease write is rejected while the current-lease write persists (T15-F1-8)",
+    "An expired-lease runner's write is quarantined aside, not lost or landed (T15-F2-7)",
+    "Stalled (aged-heartbeat, empty-artifact) runners and late-writers are both flagged for reaping (T15-F4-4)"
+  ],
+  "approval_state": null,
+  "consolidation_rationale": "T15-F1-8, T15-F2-7, and T15-F4-4 all live on the orphan-liveness axis and share the same underlying lease/heartbeat substrate (run-lease.json, outcome_liveness), but each covers a distinct failure shape: F1-8 rejects a write from a superseded (fenced-out) lease, F2-7 quarantines a write from a merely expired lease rather than dropping or landing it, and F4-4 adds the shared heartbeat/reaper layer that flags a runner as stalled or late-writing in the first place. Consolidating them into one capability avoids three separate PRs against the same lease-write seam while keeping each failure mode as its own acceptance criterion.",
+  "created_at": "2026-07-04T07:47:52.944460+00:00",
+  "created_issue_number": 355,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/355",
+  "dod_sketch": "Merged PR adds epoch fencing to every evidence write against the existing run-lease.json (rejecting superseded-lease writes with ORPHAN_WRITE_BLOCKED while the current-lease write persists), a quarantine-aside path for expired-lease late writes (quarantine_late_write(), reusing outcome_liveness), and a shared register/heartbeat + reaper (delegation_runners.py / reap_orphans.py) flagging stalled runners (aged heartbeat, empty artifacts) and late-writers-after-close. Verified by tests for each of the three failure shapes plus a regression pass on existing agy lease-write and saga R31 stalled-terminal tests.",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-orphan-fencing-liveness.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical, well-scoped change against two already-verified concrete code seams (agy_delegate.py's lease writes, outcome.py's liveness processor) with no architectural ambiguity left open; sonnet at high effort is sufficient, no case for opus-tier judgment or an external engine.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Govern fleet concurrency and reclaim leaked resources",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-orphan-fencing-liveness.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Run-lease fencing so late orphan runner cannot clobber retry's evidence (T15-F1-8); bridge-run liveness leases + late-write quarantine (T15-F2-7); shared runner-liveness heartbeat + orphan reaper across teammate bridges (T15-F4-4). Grounded on run-lease.json write sites in plugins/agy/scripts/agy_delegate.py and the R31 stalled-terminal liveness processor in plugins/saga/scripts/outcome.py:1055.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "ref": "pf-orphan-fencing-liveness",
+    "title": "Orphan runner containment: epoch fencing on evidence writes, lease quarantine, heartbeat reaper",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: orphan runner containment \u2014 epoch fencing on evidence writes, lease quarantine, heartbeat reaper",
+  "type": "capability",
+  "updated_at": "2026-07-04T08:20:22.269310+00:00",
+  "wave": "wave-1"
+}

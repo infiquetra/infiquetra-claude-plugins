@@ -1,0 +1,89 @@
+{
+  "absorbed_ids": [
+    "T1-F2-1",
+    "T1-F2-2",
+    "T1-F2-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:22:03.737756+00:00",
+  "created_issue_number": 451,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/451",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-engine-offer-helper.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Self-contained, mechanically-scoped helper-plus-call-sites change; intent/tier vocabulary and chaperone-dispatch constraints already settled by binding decisions #283 and #318 and the existing /plan-time tier table; no architectural ambiguity warranting opus or an external engine.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-engine-offer-helper.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "One helper returns the correct intent/tier per stage class; drift guard covers all five surfaces (T1-F2-1). Per-repo prefs are remembered \u2014 silent reuse unattended, confirm-prompt attended \u2014 with a DECISIONS entry (T1-F2-2). Scaffold-shaped units default to offload opt-out; judgment-shaped units never do (T1-F2-8).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json#T1-F2-1,T1-F2-2,T1-F2-8",
+    "title": "Shared engine_offer helper: one per-stage offer primitive with remembered per-repo prefs and mechanical opt-out defaults",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: shared engine_offer helper \u2014 one per-stage offer primitive with remembered per-repo prefs and mechanical opt-out defaults",
+  "updated_at": "2026-07-04T08:22:10.773134+00:00",
+  "wave": "wave-1"
+}

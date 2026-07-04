@@ -1,0 +1,109 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "Grounding brief SS1 ('fable/xhigh unreachable outside saga plan vocabulary') and execution_spec.py:96-109 (existing SANDBOX_ENFORCEABLE_BY_BACKEND halt-not-degrade template).",
+      "id": "T3-F2-1",
+      "role": "primary",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json"
+    },
+    {
+      "basis": "execution_spec.py:1473-1475 (upgrade-only max merge, no floor); crosses {#tier-vocab-ordering} (LEARNINGS.md:164).",
+      "id": "T3-F1-6",
+      "role": "facet",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json"
+    },
+    {
+      "basis": "Verified via direct grep: all 25 plugins/team-execution/agents/*.md files pin model:, none pin effort:; corroborates grounding brief SS1 and QUEUED {#team-execution-per-teammate-effort}.",
+      "id": "T3-F3-8",
+      "role": "facet",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json"
+    }
+  ],
+  "absorbed_ids": [
+    "T3-F2-1",
+    "T3-F1-6",
+    "T3-F3-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:51:58.569815+00:00",
+  "created_issue_number": 369,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/369",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-floors-halt-not-degrade.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical extension of an existing, proven halt-not-degrade pattern (SANDBOX_ENFORCEABLE_BY_BACKEND) to a sibling axis plus one new optional dataclass field; no novel architecture or judgment-heavy design.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make tier+effort a first-class priced resolvable lever",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make tier+effort a first-class priced resolvable lever",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-floors-halt-not-degrade.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Three mechanisms for the same guarantee -- a unit or teammate can never silently run below its intended tier: backend-enforceability matrix (halt at emit), Unit.min_tier clamp in segment merge, and agent-owned tier-floor frontmatter.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json",
+    "title": "Tier floors and backend enforceability: halt, never silently degrade or under-tier",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: tier floors and backend enforceability -- halt, never silently degrade or under-tier",
+  "updated_at": "2026-07-04T07:52:03.664014+00:00",
+  "wave": "wave-1"
+}

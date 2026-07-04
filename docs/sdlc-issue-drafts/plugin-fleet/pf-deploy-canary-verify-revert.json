@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "S-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:12:51.434956+00:00",
+  "created_issue_number": 435,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/435",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-deploy-canary-verify-revert.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Single well-bounded new module plus fixture-driven tests inside one existing plugin's script directory, extending an already-documented tag-promotion model; mechanical build-to-spec work, no opus-tier judgment or cross-plugin consensus surface.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Expand saga+deploy capability breadth (misc/quick-wins)",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Expand saga+deploy capability breadth (misc/quick-wins)",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "plugin-fleet",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-deploy-canary-verify-revert.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Deploy canary + verify + auto-revert flow for the deploy plugin; absorbs S-7 (primary, sole absorbed id) \u2014 relocated QUEUED anchor {#infiquetra-deploy-canary-verify-revert}, orphan seed against deploy-state fixtures.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/c23d3bf9-9081-4727-8e0d-140ebc73f63f/scratchpad/ideation/issue-map/issue-map-final.json",
+    "ref": "issue-map-final.json#pf-deploy-canary-verify-revert",
+    "title": "Deploy canary + verify + auto-revert flow for the deploy plugin",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: Deploy canary + verify + auto-revert flow for the deploy plugin",
+  "updated_at": "2026-07-04T08:12:58.530524+00:00",
+  "wave": "wave-3"
+}

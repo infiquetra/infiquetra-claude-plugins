@@ -1,0 +1,114 @@
+{
+  "absorbed_ids": [
+    "G-negative-space-1",
+    "T12-F1-2",
+    "T12-F3-7",
+    "T12-F6-7",
+    "T4-F4-1",
+    "T4-F4-2",
+    "H-F2-9",
+    "T1-F5-8",
+    "T1-F6-8",
+    "S-22",
+    "G-hybrids-4",
+    "T8-F1-3",
+    "T7-F3-2",
+    "T7-F6-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:55:12.796220+00:00",
+  "created_issue_number": 380,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/380",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-runstart-intent-envelope.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "second-opinion",
+    "justification": "Cross-plugin schema consumed by every autonomy/spend gate; architectural blast radius warrants Opus plus advisory second opinion. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "opus"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface": {
+    "changelogs": [
+      "plugins/saga/CHANGELOG.md",
+      "plugins/team-execution/CHANGELOG.md",
+      "plugins/mission-control/CHANGELOG.md"
+    ],
+    "drift_guard_tests": [
+      "tests/test_intent_envelope.py"
+    ],
+    "marketplace_json": ".claude-plugin/marketplace.json",
+    "plugin_json": [
+      "plugins/saga/.claude-plugin/plugin.json",
+      "plugins/team-execution/.claude-plugin/plugin.json",
+      "plugins/mission-control/.claude-plugin/plugin.json"
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-runstart-intent-envelope.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "One committed IntentEnvelope: run-start posture interview, issue-carried ship policy, shared posture primitive consumed by every autonomy and spend gate. Merges G-negative-space-1, G-hybrids-4 and 12 facet/dedup ideas from themes T1, T4, T7, T8, T12 into a single intent_envelope.py schema and one run-start interview.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/issue-map/issue-map-final.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/issue-map/issue-map-final.json",
+    "title": "pf-runstart-intent-envelope",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: one committed IntentEnvelope for run-start posture across the plugin fleet",
+  "updated_at": "2026-07-04T07:55:17.994407+00:00",
+  "wave": "wave-1"
+}

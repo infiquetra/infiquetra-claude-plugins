@@ -1,0 +1,94 @@
+{
+  "absorbed_ids": [
+    "T7-F4-2",
+    "T7-F1-3",
+    "T7-F2-4",
+    "S-19"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:43:59.135782+00:00",
+  "created_issue_number": 344,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/344",
+  "depends_on": [
+    "#279",
+    "#295"
+  ],
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-board-progression-shared-writer.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Cross-skill extraction (outcome/work/loop) with autonomy-policy implications; consensus-worthy. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: capability.yml, enhancement.yml, defect.yml, exploration.yml, context-update.yml, objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-board-progression-shared-writer.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "board_progression.py extracted from outcome_board_sync with a reversibility-classified allowlist config, consumed by /work post-merge and /loop; project_arc renderer in status_card.py.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json#T7-F4-2",
+    "title": "board_progression.py: certificate-gated autonomous status writer shared by /outcome, /work, and /loop",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability \u2014 board_progression.py, the certificate-gated autonomous status writer shared by /outcome, /work, and /loop",
+  "updated_at": "2026-07-04T07:44:04.335625+00:00",
+  "wave": "wave-1"
+}

@@ -1,0 +1,2100 @@
+{
+ "generated": "2026-07-04",
+ "revision": 2,
+ "status": "DRY-RUN \u2014 no mutation until Gate F approval",
+ "repo": "infiquetra-claude-plugins",
+ "project": "operations (#3)",
+ "shape": "Norns pattern on Operations: Objective field 'improve-claude-plugins' (existing, reused) -> 12 objective parent issues -> 126 leaf sub-issues",
+ "phase0_board_upgrade": {
+  "status_options_add": [
+   "Idea",
+   "Shaping",
+   "Ready",
+   "Active",
+   "Verify"
+  ],
+  "status_migration": {
+   "Todo/OPEN -> Idea": 10,
+   "Todo/CLOSED -> Done": 13,
+   "NO-STATUS/CLOSED -> Done": 1
+  },
+  "status_options_remove_when_empty": [
+   "Todo",
+   "In Progress",
+   "Blocked"
+  ],
+  "risk_field_create": [
+   "Low",
+   "Medium",
+   "High",
+   "Critical"
+  ],
+  "objective_field": "UNTOUCHED \u2014 reuse existing option improve-claude-plugins",
+  "milestones_create": [
+   "wave-1",
+   "wave-2",
+   "wave-3"
+  ],
+  "labels_verify": [
+   "tier-structural",
+   "tier-quick-win",
+   "tier-moonshot",
+   "objective",
+   "hermes-not-actionable"
+  ]
+ },
+ "phase1_objective_parents": [
+  {
+   "title": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "wave": "wave-1",
+   "mission": "One committed intent envelope at run start makes autonomy, spend, and ceremony posture explicit, durable, and consumed by every gate.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-1",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 14
+  },
+  {
+   "title": "objective: Make tier+effort a first-class priced resolvable lever",
+   "wave": "wave-1",
+   "mission": "Tier and effort become authored, resolved, priced, and enforced fields with one palette, one resolver, and halt-not-degrade guarantees.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-1",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 9
+  },
+  {
+   "title": "objective: Stand up the external-engine offload lane",
+   "wave": "wave-1",
+   "mission": "External engines become a registry-driven, receipt-proven, economically-guarded advisory lane that can never silently substitute or gatekeep.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-1",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 20
+  },
+  {
+   "title": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "wave": "wave-1",
+   "mission": "Concurrency becomes declared policy with leases, retry, settlement, and liveness so nothing leaks, dies silently, or sums past the cap.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-1",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 11
+  },
+  {
+   "title": "objective: Automate the ship ceremony end-to-end",
+   "wave": "wave-1",
+   "mission": "One resumable guarded ship primitive replaces the manual commit-to-cleanup ritual, with hazard preflight, undo, and teardown reconciliation.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-1",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 5
+  },
+  {
+   "title": "objective: Make cache economics an engineered, measured win",
+   "wave": "wave-1",
+   "mission": "Prompt-cache reuse becomes designed, scheduled, and benchmarked instead of accidental: stable prefixes, residency scheduling, and proven savings.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-1",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 6
+  },
+  {
+   "title": "objective: Build the fleet telemetry and ledger substrate",
+   "wave": "wave-2",
+   "mission": "One append-only run-fact ledger under all telemetry: spend, cache, evidence, delegation, and the reports that make claims falsifiable.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-2",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 10
+  },
+  {
+   "title": "objective: Enforce context-library standards at authoring time",
+   "wave": "wave-2",
+   "mission": "Standards become machine-readable contracts enforced at authoring and CI time, with authority resolution and enforcement-coverage gates.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-2",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 7
+  },
+  {
+   "title": "objective: Establish single-source-of-truth for shared primitives",
+   "wave": "wave-2",
+   "mission": "Shared vocabularies, contracts, and vendored artifacts get one source, one parity registry, and guarded propagation instead of hand copies.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-2",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 14
+  },
+  {
+   "title": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "wave": "wave-2",
+   "mission": "Agent files, prompts, tests, CI parity, and release surfaces are linted, audited, and generated so drift cannot land silently.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-2",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 15
+  },
+  {
+   "title": "objective: Make the backlog and lifecycle self-improving",
+   "wave": "wave-3",
+   "mission": "Mining, promotion, liveness tripwires, and admission control close the loop from finished work back into a healthier backlog.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-3",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 10
+  },
+  {
+   "title": "objective: Expand saga+deploy capability breadth (misc/quick-wins)",
+   "wave": "wave-3",
+   "mission": "Capability-breadth extensions and grooming quick wins that ride on the wave-1/2 substrates.",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "milestone": "wave-3",
+   "labels": [
+    "objective",
+    "hermes-not-actionable"
+   ],
+   "children_count": 5
+  }
+ ],
+ "phase2_leaves": [
+  {
+   "slug": "pf-ship-ceremony-primitive",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-ship-ceremony-primitive.md",
+   "parent": "objective: Automate the ship ceremony end-to-end",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-ship-hazard-preflight-and-undo",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-ship-hazard-preflight-and-undo.md",
+   "parent": "objective: Automate the ship ceremony end-to-end",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-ship-teardown-reconciliation",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-ship-teardown-reconciliation.md",
+   "parent": "objective: Automate the ship ceremony end-to-end",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-429-retry-primitive",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-429-retry-primitive.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-adaptive-admission-governor",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-adaptive-admission-governor.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-1",
+   "tier_label": "tier-moonshot",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-concurrency-policy-spec",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-concurrency-policy-spec.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-dispatch-settlement",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-dispatch-settlement.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-fanout-dispatch-economics",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-fanout-dispatch-economics.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-fleet-doctor",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-doctor.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-1",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-optimize-concurrency-knob",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-optimize-concurrency-knob.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-1",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-orphan-fencing-liveness",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-orphan-fencing-liveness.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-resource-lease-broker",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-resource-lease-broker.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-subagent-liveness-engine",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-subagent-liveness-engine.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-teardown-reclamation-contract",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-teardown-reclamation-contract.md",
+   "parent": "objective: Govern fleet concurrency and reclaim leaked resources",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-cache-prefix-stability",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-cache-prefix-stability.md",
+   "parent": "objective: Make cache economics an engineered, measured win",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-residency-derived-scheduling",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-residency-derived-scheduling.md",
+   "parent": "objective: Make cache economics an engineered, measured win",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-review-delta-packets",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-review-delta-packets.md",
+   "parent": "objective: Make cache economics an engineered, measured win",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-dispatch-tier-resolver",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-dispatch-tier-resolver.md",
+   "parent": "objective: Make tier+effort a first-class priced resolvable lever",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-effort-first-class",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-effort-first-class.md",
+   "parent": "objective: Make tier+effort a first-class priced resolvable lever",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-escalation-on-failure",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-escalation-on-failure.md",
+   "parent": "objective: Make tier+effort a first-class priced resolvable lever",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-midrun-tier-lever",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-midrun-tier-lever.md",
+   "parent": "objective: Make tier+effort a first-class priced resolvable lever",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-spend-budget-envelope",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-budget-envelope.md",
+   "parent": "objective: Make tier+effort a first-class priced resolvable lever",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-spend-gate-asymmetry",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-gate-asymmetry.md",
+   "parent": "objective: Make tier+effort a first-class priced resolvable lever",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-tier-defaults-persistence",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-defaults-persistence.md",
+   "parent": "objective: Make tier+effort a first-class priced resolvable lever",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-tier-floors-halt-not-degrade",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-floors-halt-not-degrade.md",
+   "parent": "objective: Make tier+effort a first-class priced resolvable lever",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-tier-vocab-single-source",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-vocab-single-source.md",
+   "parent": "objective: Make tier+effort a first-class priced resolvable lever",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-board-progression-shared-writer",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-board-progression-shared-writer.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-durable-gate-records",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-durable-gate-records.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-midrun-adjustment-envelope",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-midrun-adjustment-envelope.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-outcome-backend-spend-envelope",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-backend-spend-envelope.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-outcome-draft-unstructured",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-draft-unstructured.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-outcome-from-objective-ingestion",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-from-objective-ingestion.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-outcome-ingest-reconcile-drift",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-ingest-reconcile-drift.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-outcome-intent-capture-ux",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-intent-capture-ux.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-outcome-step-profiles",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-step-profiles.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-remote-gate-approval",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-remote-gate-approval.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-runstart-intent-envelope",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-runstart-intent-envelope.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-chaperone-economics",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-chaperone-economics.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-consensus-external-advisory-seat",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-consensus-external-advisory-seat.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-delegation-receipt-contract",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-receipt-contract.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-delegation-tripwires-audit",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-tripwires-audit.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-engine-offer-helper",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-engine-offer-helper.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-engine-output-trust-boundary",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-engine-output-trust-boundary.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-engine-registry-schema",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-engine-registry-schema.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-engines-meta-command",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-engines-meta-command.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-1",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-ideate-engine-lane",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-ideate-engine-lane.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-offload-economics-guards",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-offload-economics-guards.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-openai-http-bridge",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-openai-http-bridge.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-output-attestation-liedetector",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-output-attestation-liedetector.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-provider-auth-preflight",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-provider-auth-preflight.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-provider-onboarding-conformance",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-provider-onboarding-conformance.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-silent-fallback-elimination",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-silent-fallback-elimination.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-task-provider-recommend",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-task-provider-recommend.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-team-engine-worker-slot",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-team-engine-worker-slot.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-typed-reconciliation",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-typed-reconciliation.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-work-review-second-opinion",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-work-review-second-opinion.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-1",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-positive-handoff-ack",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-positive-handoff-ack.md",
+   "parent": "objective: Automate the ship ceremony end-to-end",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-delegation-evidence-durability",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-evidence-durability.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-evidence-gated-closure",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-evidence-gated-closure.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-evidence-immutability",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-evidence-immutability.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-fleet-baseline-metrics",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-baseline-metrics.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-2",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "context-update",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-gate-divergence-telemetry",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-gate-divergence-telemetry.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-2",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-panel-economics-exploration",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-panel-economics-exploration.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "exploration",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-pulse-live-telemetry",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-pulse-live-telemetry.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-run-fact-ledger",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-run-fact-ledger.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-spend-observability-reports",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-observability-reports.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-adr-derived-review-lenses",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-adr-derived-review-lenses.md",
+   "parent": "objective: Enforce context-library standards at authoring time",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-authority-resolver-stop-surface",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-authority-resolver-stop-surface.md",
+   "parent": "objective: Enforce context-library standards at authoring time",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-checkable-surface-census",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-checkable-surface-census.md",
+   "parent": "objective: Enforce context-library standards at authoring time",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-2",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-enforcement-coverage-gates",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-enforcement-coverage-gates.md",
+   "parent": "objective: Enforce context-library standards at authoring time",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-journal-schema-lint",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-journal-schema-lint.md",
+   "parent": "objective: Enforce context-library standards at authoring time",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-2",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-standards-index-machine-contract",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-standards-index-machine-contract.md",
+   "parent": "objective: Enforce context-library standards at authoring time",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-standards-preflight-issue-authoring",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-standards-preflight-issue-authoring.md",
+   "parent": "objective: Enforce context-library standards at authoring time",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-abolish-contract-mirrors",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-abolish-contract-mirrors.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-consensus-kernel",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-consensus-kernel.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-consensus-thresholds-convergence",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-consensus-thresholds-convergence.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-contract-consumer-graph",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-contract-consumer-graph.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-contract-coupling-policy",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-contract-coupling-policy.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-execution-substrate-decoupling",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-execution-substrate-decoupling.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-fleet-commons-decision",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-commons-decision.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "exploration",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-producer-push-propagation",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-producer-push-propagation.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-rename-campaign-executor",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-rename-campaign-executor.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-retired-vocabulary-guards",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-retired-vocabulary-guards.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-2",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan",
+    "quick-win"
+   ]
+  },
+  {
+   "slug": "pf-reviewer-lens-registry",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-reviewer-lens-registry.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-single-vocab-source",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-single-vocab-source.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-upstream-drift-sweep",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-upstream-drift-sweep.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-vendored-parity-registry",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-vendored-parity-registry.md",
+   "parent": "objective: Establish single-source-of-truth for shared primitives",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-agent-file-ci-lint",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-agent-file-ci-lint.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-agent-prompt-audit",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-agent-prompt-audit.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "exploration",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-authorship-provenance",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-authorship-provenance.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-board-live-schema-pagination",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-board-live-schema-pagination.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-ci-local-parity",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-ci-local-parity.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-contract-reachability-parity",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-contract-reachability-parity.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-delegation-ci-integrity",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-ci-integrity.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan",
+    "ci"
+   ]
+  },
+  {
+   "slug": "pf-fake-adapter-integrity",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-fake-adapter-integrity.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-fleet-review-campaign",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-review-campaign.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "exploration",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-guard-mutation-canary",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-guard-mutation-canary.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-moonshot",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-lever-site-census",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-lever-site-census.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "context-update",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-lifecycle-regression-harness",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-lifecycle-regression-harness.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-release-surface-single-source",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-release-surface-single-source.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-review-ledger-incremental",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-review-ledger-incremental.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-write-ownership-lanes-ci-lint",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-write-ownership-lanes-ci-lint.md",
+   "parent": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-recon-memoization",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-recon-memoization.md",
+   "parent": "objective: Make cache economics an engineered, measured win",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-residency-evidence",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-residency-evidence.md",
+   "parent": "objective: Make cache economics an engineered, measured win",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "exploration",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-outcome-intent-renegotiation",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-intent-renegotiation.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-zero-token-fire-drill",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-zero-token-fire-drill.md",
+   "parent": "objective: Stand up the external-engine offload lane",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-2",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "exploration",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-stacked-pr-cascade-guard",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-stacked-pr-cascade-guard.md",
+   "parent": "objective: Automate the ship ceremony end-to-end",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-moonshot",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-registry-calibration-loop",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-registry-calibration-loop.md",
+   "parent": "objective: Build the fleet telemetry and ledger substrate",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-moonshot",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-dark-plugin-parity",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-dark-plugin-parity.md",
+   "parent": "objective: Expand saga+deploy capability breadth (misc/quick-wins)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "exploration",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-deploy-canary-verify-revert",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-deploy-canary-verify-revert.md",
+   "parent": "objective: Expand saga+deploy capability breadth (misc/quick-wins)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-misc-quick-wins",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-misc-quick-wins.md",
+   "parent": "objective: Expand saga+deploy capability breadth (misc/quick-wins)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Low",
+   "milestone": "wave-3",
+   "tier_label": "tier-quick-win",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-outcome-multi-repo-arc",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-multi-repo-arc.md",
+   "parent": "objective: Expand saga+deploy capability breadth (misc/quick-wins)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan",
+    "saga"
+   ]
+  },
+  {
+   "slug": "pf-team-park-resume",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-team-park-resume.md",
+   "parent": "objective: Expand saga+deploy capability breadth (misc/quick-wins)",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-crossleaf-resident-crew",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-crossleaf-resident-crew.md",
+   "parent": "objective: Make cache economics an engineered, measured win",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-3",
+   "tier_label": "tier-moonshot",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-backlog-admission-governor",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-backlog-admission-governor.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-ideate-program-foldback",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-ideate-program-foldback.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-journal-query-join",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-journal-query-join.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-learning-capture-nomination",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-learning-capture-nomination.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-liveness-tripwire-engine",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-liveness-tripwire-engine.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-mining-harvest-writeback",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-mining-harvest-writeback.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-mining-ledger-closed-loop",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-mining-ledger-closed-loop.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-promote-scan-recall-fixes",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-promote-scan-recall-fixes.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-session-substrate-registry",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-session-substrate-registry.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-standing-doc-provenance",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-standing-doc-provenance.md",
+   "parent": "objective: Make the backlog and lifecycle self-improving",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "Medium",
+   "milestone": "wave-3",
+   "tier_label": "tier-structural",
+   "sidecar_labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+   ]
+  },
+  {
+   "slug": "pf-envelope-authorized-merge",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-envelope-authorized-merge.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-3",
+   "tier_label": "tier-moonshot",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan",
+    "moonshot"
+   ]
+  },
+  {
+   "slug": "pf-reconcile-controller",
+   "draft": "docs/sdlc-issue-drafts/plugin-fleet/pf-reconcile-controller.md",
+   "parent": "objective: Ship run-start intent envelope for lifecycle autonomy",
+   "objective_option": "improve-claude-plugins",
+   "status": "Idea",
+   "risk": "High",
+   "milestone": "wave-3",
+   "tier_label": "tier-moonshot",
+   "sidecar_labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+   ]
+  }
+ ]
+}

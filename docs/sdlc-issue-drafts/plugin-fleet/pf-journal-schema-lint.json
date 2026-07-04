@@ -1,0 +1,85 @@
+{
+  "absorbed_ids": [
+    "T9-F3-5"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:03:44.226007+00:00",
+  "created_issue_number": 407,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/407",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-journal-schema-lint.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Bounded, mechanical parser/checker over two well-structured markdown files with a documented template (anchor regex extraction, cross-reference resolution, required-phrase presence) \u2014 no novel design or adversarial judgment required; sonnet/medium matches the fleet's own work-shape heuristic for a quick-win, single-file-surface lint tool.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Enforce context-library standards at authoring time",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Enforce context-library standards at authoring time",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-journal-schema-lint.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "check_journal.py in CI linting journal frontmatter, anchor uniqueness, cited-anchor existence, and required revisit-when/commit-hash; verified by breaking one cross-ref anchor and dropping one revisit-when and watching CI go red.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json#T9-F3-5",
+    "title": "check_journal.py \u2014 schema-validate engineering-journal ADRs and learnings",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "quick-win",
+  "title": "enhancement: check_journal.py \u2014 schema-validate engineering-journal ADRs and learnings",
+  "updated_at": "2026-07-04T08:03:51.350151+00:00",
+  "wave": "wave-2"
+}

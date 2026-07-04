@@ -1,0 +1,92 @@
+{
+  "absorbed": [
+    {
+      "id": "OP-gateE-1",
+      "role": "primary"
+    }
+  ],
+  "absorbed_ids": [
+    "OP-gateE-1"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:06:00.285365+00:00",
+  "created_issue_number": 415,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/415",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-execution-substrate-decoupling.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Negotiation-dense contract/rubric design touching a governance seam (degrade HALT semantics) \u2014 by this issue's own chooser rubric that is agent-team-shaped work where persistent reviewer dialogue earns its cost. Opus because contract design and rubric authoring are judgment work, not mechanical extraction. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands.",
+    "model": "opus"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-execution-substrate-decoupling.json",
+  "slug": "pf-execution-substrate-decoupling",
+  "source_context": {
+    "inferred_maturity": "requirements-ready",
+    "kind": "operator",
+    "path": "docs/plans/2026-07-04-plugin-fleet-issue-plan.md",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map-final.json#pf-execution-substrate-decoupling",
+    "title": "Execution-substrate decoupling \u2014 one review/ceremony contract, two coordination mechanisms, inherent-property backend choice",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: execution-substrate decoupling \u2014 mechanism-neutral review/ceremony substrate rendered onto agent-team and workflow backends, inherent-property backend chooser, rigor-preserving degrade ladder",
+  "type": "capability",
+  "updated_at": "2026-07-04T08:06:07.060422+00:00",
+  "wave": "wave-2"
+}

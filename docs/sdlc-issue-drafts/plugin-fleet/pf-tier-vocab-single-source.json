@@ -1,0 +1,92 @@
+{
+  "absorbed_ids": [
+    "T3-F1-1",
+    "T3-F4-2",
+    "T3-F4-4",
+    "T3-F1-7",
+    "T3-F6-5",
+    "T3-F4-8",
+    "T3-F6-6",
+    "T3-F4-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:52:12.952461+00:00",
+  "created_issue_number": 370,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/370",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-vocab-single-source.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical-but-careful refactor (extract existing tuples into a registry, add named wrapper functions, add guard tests) rather than novel design or adversarial judgment; sonnet/high matches the fleet's own work-shape heuristic for bounded mechanical transforms.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make tier+effort a first-class priced resolvable lever",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make tier+effort a first-class priced resolvable lever",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-vocab-single-source.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Extract MODELS/EFFORTS from execution_spec.py:52-53 into a single-source tier_vocab.py module + models.json registry with explicit rank/rung/effort_ceiling data, ladder operations (escalate/downgrade/clamp), a MODEL_EFFORT_SUPPORT halt guard, and drift-proofing (bare-literal guard, ladder-monotonicity invariant, tier_catalog --check syncing the /plan and team-execution operator-facing tables).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json#T3-F1-1,T3-F4-2,T3-F4-4,T3-F1-7,T3-F6-5,T3-F4-8,T3-F6-6,T3-F4-7",
+    "title": "Single-source tier palette: tier_vocab module, models.json registry, ladder operations, and drift-proofing guards",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: single-source tier palette (tier_vocab module, models.json registry, ladder ops, drift-proofing)",
+  "updated_at": "2026-07-04T08:21:08.809061+00:00",
+  "wave": "wave-1"
+}

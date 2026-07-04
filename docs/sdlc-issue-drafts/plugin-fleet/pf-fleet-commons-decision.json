@@ -1,0 +1,83 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-commons-decision.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "high",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-commons-decision.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "At least 28 pool ideas presuppose a shared-primitive home that does not exist; this decision doc must settle the mechanism before the single-source issues multiply ad-hoc answers.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/OTHER.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/OTHER.json#G-negative-space-3",
+    "title": "Name the import mechanism: where cross-plugin shared primitives actually live and how a plugin gets them",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "exploration: name the import mechanism \u2014 where cross-plugin shared primitives live and how a plugin gets them",
+  "updated_at": "2026-07-04T00:00:00.000000+00:00",
+  "slug": "pf-fleet-commons-decision",
+  "tier": "structural",
+  "wave": "wave-2",
+  "objective": "Establish single-source-of-truth for shared primitives",
+  "absorbed_ids": [
+    "G-negative-space-3"
+  ],
+  "absorbed": [
+    {
+      "id": "G-negative-space-3",
+      "role": "primary",
+      "theme": "NEW:fleet-commons",
+      "frame": "gap-negative-space",
+      "basis": "First-principles: grounding brief \u00a71 lists 8 independently versioned plugins; the marketplace installs each in isolation, so 'X.py every plugin imports' has no resolvable import path today \u2014 verified by the repo layout (each plugin's scripts live under its own skills/ tree, tests import via repo-root paths that do not exist at install time). 28 pool ideas (jq census on 'shared primitive'/'imports') depend on this unnamed mechanism; if unresolved, each ships as a hand-copy, which the 4-repo contract-mirror-drift evidence (grounding \u00a73 finding 1) shows will drift. Engages {#plugin-portfolio-groom-17-to-7}: a fleet-core home is consolidation, not sprawl \u2014 it deletes future copies rather than adding a surface."
+    }
+  ],
+  "binding_decisions_engaged": [
+    "{#plugin-portfolio-groom-17-to-7}",
+    "{#worker-cache-scheduling}",
+    "{#external-engines-never-gatekeepers}"
+  ],
+  "executor_profile": {
+    "model": "opus",
+    "effort": "medium",
+    "backend": "inline",
+    "external_llm": "second-opinion",
+    "justification": "Architectural decision shaping 28+ downstream issues; judgment-shaped (packaging complexity vs. marketplace-install constraints vs. anti-sprawl posture), benefits from an advisory second opinion reconciled by Claude, who remains verifier-of-record."
+  },
+  "release_surface_checklist": [
+    "plugins/<chosen-commons-home>/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/<affected-plugin>/CHANGELOG.md",
+    "version/metadata drift-guard tests",
+    "docs/engineering-journal/DECISIONS.md"
+  ],
+  "created_issue_number": 463,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/463"
+}

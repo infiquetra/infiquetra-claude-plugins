@@ -1,0 +1,101 @@
+{
+  "absorbed": [
+    {
+      "id": "T14-F3-2",
+      "role": "primary"
+    },
+    {
+      "id": "T14-F4-2",
+      "role": "facet"
+    },
+    {
+      "id": "H-F4-1",
+      "role": "facet"
+    }
+  ],
+  "absorbed_ids": [
+    "T14-F3-2",
+    "T14-F4-2",
+    "H-F4-1"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:07:40.873129+00:00",
+  "created_issue_number": 419,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/419",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-single-vocab-source.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": " Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-single-vocab-source.json",
+  "slug": "pf-single-vocab-source",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Collapse the deliberate parallel houses: one ordered vocabulary module, declarative mirror-drift registry, generated mirrors. Absorbs T14-F3-2 (primary), T14-F4-2 (facet), H-F4-1 (facet) from the 2026-07-03 plugin-fleet ideation.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+    "ref": "issue-map-final.json#pf-single-vocab-source",
+    "title": "Collapse the deliberate parallel houses: one ordered vocabulary module, declarative mirror-drift registry, generated mirrors",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: collapse deliberate parallel houses into one ordered vocabulary source",
+  "updated_at": "2026-07-04T08:07:48.498007+00:00",
+  "wave": "wave-2"
+}

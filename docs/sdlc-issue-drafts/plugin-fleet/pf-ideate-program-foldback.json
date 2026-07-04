@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "G-negative-space-12"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:14:51.214265+00:00",
+  "created_issue_number": 440,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/440",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ideate-program-foldback.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Self-contained skill-text upgrade fully specified by the two dated plan briefs (intake brief + grounding brief); transcription and skill authoring, not architectural judgment or adversarial review, so no Opus/Fable tier is warranted.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make the backlog and lifecycle self-improving",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ideate-program-foldback.json",
+  "slug": "pf-ideate-program-foldback",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "This program is running on a hand-built pipeline \u2014 12-theme grounding, ~72 Opus frame agents, 6 blind Fable novelty hunters, gap synthesis reading the merged pool, a basis-type contract ('ideas without a supporting basis are killed'), concurrency-capped batching, and an anti-anchoring rule (hunters run blind, only gap-synthesis reads the pool). None of it lives in saga:ideate; it lives in two dated plan docs for a bespoke workflow, and will evaporate once this backlog ships. No pool idea proposes capturing it: 17 /ideate-adjacent hits are all engine-lane offers into /ideate, not upgrades to /ideate's own architecture. idea: promote the proven elements into /ideate as declared modes \u2014 a grounding-brief stage, a basis_type contract on every emitted idea, an optional blind-hunter lane, a terminal gap-synthesis pass, and cap-aware batch dispatch \u2014 so the next big divergence run is an invocation, not a two-day pipeline build.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json#G-negative-space-12",
+    "title": "Fold this ideation program's architecture back into /ideate: blind hunters, gap synthesis, basis contract, and capped batching as reusable skill machinery",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: fold the plugin-fleet ideation program's architecture back into saga:ideate",
+  "updated_at": "2026-07-04T08:14:58.958404+00:00",
+  "wave": "wave-3"
+}

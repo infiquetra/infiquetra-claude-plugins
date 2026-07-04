@@ -1,0 +1,92 @@
+{
+  "absorbed_ids": [
+    "T3-F2-3",
+    "T3-F4-3",
+    "T3-F4-6",
+    "T3-F3-3",
+    "T3-F1-3",
+    "T3-F1-4",
+    "T3-F5-5",
+    "T3-F1-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:50:27.317081+00:00",
+  "created_issue_number": 363,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/363",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-effort-first-class.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical/deterministic schema-and-propagation work with a proven pattern to mirror (BUDGET_RIDER); high effort to get the three-layer cascade and chaperone-exclusion interaction right. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make tier+effort a first-class priced resolvable lever",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make tier+effort a first-class priced resolvable lever",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-effort-first-class.json",
+  "source_artifact": {
+    "branch": null,
+    "id": "pf-effort-first-class",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation",
+    "path": "ideation/issue-map/issue-map-final.json",
+    "ref": "pf-effort-first-class",
+    "title": "Effort becomes a real, authored, injected, and honored field fleet-wide",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: effort becomes a real, authored, injected, and honored field fleet-wide",
+  "updated_at": "2026-07-04T07:50:32.207542+00:00",
+  "wave": "wave-1"
+}

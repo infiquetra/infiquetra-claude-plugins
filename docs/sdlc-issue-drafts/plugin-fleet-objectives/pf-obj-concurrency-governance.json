@@ -1,0 +1,41 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet-objectives/pf-obj-concurrency-governance.md",
+  "handoff_maturity": "deferred-context",
+  "issue_type": "objective",
+  "labels": [
+    "objective",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "improve-claude-plugins",
+    "Status": "Idea"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "operations",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet-objectives/pf-obj-concurrency-governance.json",
+  "slug": "pf-obj-concurrency-governance",
+  "source_context": {
+    "inferred_maturity": "deferred-context",
+    "kind": "ideation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map-final.json",
+    "ref": "issue-map-final.json objective 'Govern fleet concurrency and reclaim leaked resources'",
+    "title": "objective: Govern fleet concurrency and reclaim leaked resources",
+    "url": null
+  },
+  "state": "ready",
+  "status": "Idea",
+  "team": "jeff",
+  "title": "objective: Govern fleet concurrency and reclaim leaked resources",
+  "wave": "wave-1",
+  "updated_at": "2026-07-04T00:00:00.000000+00:00"
+}

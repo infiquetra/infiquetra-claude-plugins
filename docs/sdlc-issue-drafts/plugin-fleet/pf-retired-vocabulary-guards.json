@@ -1,0 +1,101 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "docs/engineering-journal/ARCHIVE.md:9 names the retired tokens explicitly (infiquetra-lifecycle->saga, sdlc-manager->mission-control, infiquetra-deploy->deploy, and blueprint-reviewer was folded into saga) and already carves out a historical-naming exception, evidencing both the retired set and the allowlist need.",
+      "id": "T14-F4-8",
+      "role": "primary",
+      "title": "Retired-vocabulary reverse guard (cheap durable residue of every rename)"
+    },
+    {
+      "basis": "plugins/mission-control/config/sdlc-schema.json: teams.olympus status 'retired_historical' with board null; retired_patterns list at line 218; cross_team_transfer_rule line 205 states 'Mount Olympus is retired historical context and is not an active target' as prose with no test enforcing active surfaces exclude the retired set.",
+      "id": "T14-F1-7",
+      "role": "facet",
+      "title": "Executable retired-vocabulary invariant: make the migration_note a test"
+    }
+  ],
+  "absorbed_ids": [
+    "T14-F4-8",
+    "T14-F1-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:24:52.452642+00:00",
+  "created_issue_number": 456,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/456",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-retired-vocabulary-guards.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical, well-scoped work following existing repo conventions (tools/stale_main_guard.py scan-script shape, check_issue_contract_parity.py CI-step-naming convention); no architectural judgment or adversarial review needed.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan",
+    "quick-win"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Establish single-source-of-truth for shared primitives",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-retired-vocabulary-guards.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Both are cheap durable residue of past renames: a retired-token CI guard with historical allowlist, and schema-derived tests that no active surface routes through a retired term.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+    "ref": "issue-map-final.json#pf-retired-vocabulary-guards",
+    "title": "Retired-vocabulary guards: reverse CI guard + executable retirement invariants",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "quick-win",
+  "title": "enhancement: retired-vocabulary guards \u2014 reverse CI guard + executable retirement invariants",
+  "updated_at": "2026-07-04T08:24:59.826404+00:00",
+  "wave": "wave-2"
+}

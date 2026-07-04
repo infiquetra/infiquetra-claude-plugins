@@ -1,0 +1,141 @@
+{
+  "absorbed": [
+    {
+      "basis": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+      "id": "G-hybrids-6",
+      "role": "primary"
+    },
+    {
+      "basis": "check_issue_contract_parity.py:40-43 (hard-coded VENDORED_ARTIFACTS tuple)",
+      "id": "T14-F4-1",
+      "role": "facet"
+    },
+    {
+      "basis": "plugins/mission-control/scripts/sdlc_manager.py:291-320 (_resolve_sdlc_schema, no SHA256 pin)",
+      "id": "T14-F1-2",
+      "role": "facet"
+    },
+    {
+      "basis": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+      "id": "T14-F1-8",
+      "role": "facet"
+    },
+    {
+      "basis": "check_issue_contract_parity.py:64 (raw-byte hashlib.sha256); issue_contract_shim.py:89-100 (__all__ tuples/dicts)",
+      "id": "T14-F1-6",
+      "role": "facet"
+    },
+    {
+      "basis": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json (external basis_type)",
+      "id": "T14-F5-1",
+      "role": "facet"
+    },
+    {
+      "basis": "infiquetra-context-library/llms.txt (1463 bytes, unvendored)",
+      "id": "T9-F4-2",
+      "role": "facet"
+    }
+  ],
+  "absorbed_ids": [
+    "G-hybrids-6",
+    "T14-F4-1",
+    "T14-F1-2",
+    "T14-F1-8",
+    "T14-F1-6",
+    "T14-F5-1",
+    "T9-F4-2"
+  ],
+  "approval_state": null,
+  "binding_decisions_engaged": [],
+  "consolidation_rationale": "The hybrid names the machine all six instances share: a registry of (source ref, vendored path, sha, provenance) rows with one parametrized gate; sdlc-schema.json joins the umbrella, llms.txt vendors onto it, plus cosmetic-vs-semantic classification and half-life freshness stamps.",
+  "created_at": "2026-07-04T08:08:13.472001+00:00",
+  "created_issue_number": 421,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/421",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-vendored-parity-registry.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical-but-structural generalization of an existing, well-understood gate (registry-driven refactor + two new rows + a classifier + a freshness stamp) with a clear done-state and no open-ended design surface; does not warrant opus-tier judgment or external-engine involvement. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "grounding_brief_refs": [
+    "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md#section-3-consumer-side-signal",
+    "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md#section-4-standards-adr-enforcement"
+  ],
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Establish single-source-of-truth for shared primitives",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/mission-control/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/mission-control/CHANGELOG.md",
+    "tests/test_release_triad.py"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-vendored-parity-registry.json",
+  "slug": "pf-vendored-parity-registry",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "The hybrid names the machine all six instances share: a registry of (source ref, vendored path, sha, provenance) rows with one parametrized gate; sdlc-schema.json and llms.txt join the umbrella, plus cosmetic-vs-semantic classification and half-life freshness stamps.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-consolidation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+    "ref": "issue-map-final.json#pf-vendored-parity-registry",
+    "title": "One vendored-artifact parity registry: contracts, standards index, provenance sidecars, drift classifier, freshness stamps",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: one vendored-artifact parity registry \u2014 contracts, provenance sidecars, drift classifier, freshness stamps",
+  "updated_at": "2026-07-04T08:08:20.448528+00:00",
+  "wave": "wave-2"
+}

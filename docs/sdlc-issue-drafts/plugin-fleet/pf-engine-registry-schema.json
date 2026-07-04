@@ -1,0 +1,93 @@
+{
+  "absorbed_ids": [
+    "T2-F3-3",
+    "T2-F6-5",
+    "H-F4-9",
+    "T2-F2-4",
+    "T2-F3-8",
+    "T1-F2-6",
+    "T1-F4-2"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:22:19.872549+00:00",
+  "created_issue_number": 452,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/452",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-engine-registry-schema.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Schema-and-loader extension plus CI wiring against an already-implemented, already-tested loader (Registry.validate() and Registry.stale() both exist today and only need new call sites and fields); no architectural ambiguity, vocabulary/inheritance/dispatch-CI split already specified by absorbed dod_sketches. No case for opus or an external engine.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-engine-registry-schema.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Capability vocabulary covers what local models are actually for (T2-F3-3). A model variant onboards via family inheritance, not 7 hand-authored cells (T2-F6-5). Registry rows carry cost/latency metadata so routing changes reprice the fleet (H-F4-9). CI runs Registry.validate on engine-registry.yaml (T2-F2-4). Stale entries warn at dispatch and fail in CI (T2-F3-8 + T1-F2-6, one mechanism). Offer/routing policy expressible as registry data, not resolver branches (T1-F4-2).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json#T2-F3-3,T2-F6-5,H-F4-9,T2-F2-4,T2-F3-8;docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json#T1-F2-6,T1-F4-2",
+    "title": "Engine-registry schema currency: capability vocabulary, profile inheritance, cost metadata, CI validation and staleness gates",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: engine-registry schema currency \u2014 capability vocabulary, profile inheritance, cost metadata, CI validation and staleness gates",
+  "updated_at": "2026-07-04T08:22:27.382493+00:00",
+  "wave": "wave-1"
+}

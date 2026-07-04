@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T7-F5-4"
+  ],
+  "approval_state": null,
+  "consolidation_rationale": "Standalone moonshot: unifies the board-writer extraction into Kubernetes-style convergence with idempotency keys. Deliberately kept behind pf-board-progression-shared-writer, which it generalizes.",
+  "created_at": "2026-07-04T08:17:37.181879+00:00",
+  "created_issue_number": 450,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/450",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-reconcile-controller.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "xhigh",
+    "external_llm": "none",
+    "justification": "Mechanical-but-hazardous refactor unifying two already-correct modules (outcome_board_sync, outcome_reconcile) behind one shared interface, then rewiring /work and /loop; sonnet is the right tier per fleet model/effort tiering guidance, xhigh effort because the race-condition and outside-drift test surface is where subtle concurrency bugs hide and because the hard sequencing dependency on pf-board-progression-shared-writer requires careful plan-time verification before work starts; no external-LLM role to delegate.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "Sequenced strictly behind pf-board-progression-shared-writer (ideation id T7-F4-2) \u2014 plan-time verification of that capability's landed state is required before /work starts."
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-reconcile-controller.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "One reconcile controller for /work, /loop, /outcome \u2014 Kubernetes-style level-triggered convergence. Standalone moonshot: unifies the board-writer extraction into Kubernetes-style convergence with idempotency keys. Deliberately kept behind pf-board-progression-shared-writer, which it generalizes.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json",
+    "ref": "T7-F5-4",
+    "title": "One reconcile controller for /work, /loop, /outcome",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "moonshot",
+  "title": "capability: one level-triggered reconcile controller for /work, /loop, /outcome",
+  "updated_at": "2026-07-04T08:17:44.267794+00:00",
+  "wave": "wave-3"
+}

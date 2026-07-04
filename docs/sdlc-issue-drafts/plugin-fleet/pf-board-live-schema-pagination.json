@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T9-F2-6",
+    "T9-F1-7",
+    "T9-F4-5",
+    "T14-F6-4",
+    "T14-F5-3"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:09:03.474518+00:00",
+  "created_issue_number": 424,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/424",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-board-live-schema-pagination.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "mechanical-but-multi-site work (shared pagination helper, lint, census script, third parity leg) with a clear testable spec per facet; no architectural judgment or adversarial review beyond team-execution's consensus review is required. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "high",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-board-live-schema-pagination.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "mission-control live-schema resolution and pagination exhaustion: no hardcoded board vocabulary, no silent truncation. Absorbs T9-F2-6 (primary), T9-F1-7, T9-F4-5, T14-F6-4, T14-F5-3.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json",
+    "title": "mission-control live-schema resolution and pagination exhaustion: no hardcoded board vocabulary, no silent truncation",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "defect: mission-control live-schema resolution and pagination exhaustion \u2014 no hardcoded board vocabulary, no silent truncation",
+  "updated_at": "2026-07-04T08:09:10.358673+00:00"
+}

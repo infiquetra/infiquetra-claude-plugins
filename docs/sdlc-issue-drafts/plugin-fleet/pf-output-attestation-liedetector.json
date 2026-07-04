@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T15-F5-2",
+    "T15-F4-7",
+    "T15-F6-7",
+    "X-codex-5",
+    "T15-F4-2"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:57:41.314921+00:00",
+  "created_issue_number": 388,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/388",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-output-attestation-liedetector.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanism fully specified by the five absorbed ideas' acceptance sketches (attestation check, ledger wiring, liveness check, signature registry, adversarial fixtures); no open design ambiguity requiring opus-tier judgment, and gating-authority/team-residency decisions are explicitly untouched.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-output-attestation-liedetector.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T15-F5-2 is the dedup keeper for the proof-of-execution/liveness half of theme T15; server-authoritative output attestation, external-token accounting as a fail-loud discriminator, producer+consumer liveness, a bridge-signature registry with a HALT gate, and adversarial lie-detector tests are five facets of the same 'prove the bridge actually ran' contract, sharing the engine_dispatch.py/manifest seam.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json (ids: T15-F5-2 (primary), T15-F4-7, T15-F6-7, X-codex-5, T15-F4-2 (facets))",
+    "title": "Output must prove its origin: server-authoritative attestation, external-token accounting, producer+consumer liveness, bridge lie-detector tests",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: output must prove its origin \u2014 server-authoritative attestation, external-token accounting, producer+consumer liveness, bridge lie-detector tests",
+  "updated_at": "2026-07-04T08:23:13.587367+00:00",
+  "wave": "wave-1"
+}

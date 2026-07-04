@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T8-F1-1",
+    "T8-F2-2",
+    "T8-F4-7",
+    "S-23"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:53:39.631867+00:00",
+  "created_issue_number": 375,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/375",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-from-objective-ingestion.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Well-bounded but coordinated multi-file wiring (GraphQL query extension, a pure edge-inference mapper, a new CLI flag, and stamping an already-declared open pass-through field) plus cycle-safety and label-to-kind mapping judgment calls warrant high effort at sonnet over medium; no architectural or policy judgment beyond the already-declared Node/OutcomeSpec schema, so opus is not warranted.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-from-objective-ingestion.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T8-F1-1 (primary): Wire existing sub-issue reader into /outcome start --from-objective. T8-F2-2 (facet): Auto-derive depends_on edges from GitHub blocked-by/tracked-by relationships. T8-F4-7 (facet): Ingestion provenance stamps that make reconcile and board-sync fire for free. S-23 (dedup-merged): /outcome ingests a parent issue with sub-issues.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T8.json",
+    "ref": "issue-map-final.json#pf-outcome-from-objective-ingestion",
+    "title": "/outcome start --from-objective: seed the DAG from a parent Objective with edge inference and provenance stamps",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: /outcome start --from-objective \u2014 seed the DAG from a parent Objective with edge inference and provenance stamps",
+  "updated_at": "2026-07-04T08:21:22.330748+00:00",
+  "wave": "wave-1"
+}

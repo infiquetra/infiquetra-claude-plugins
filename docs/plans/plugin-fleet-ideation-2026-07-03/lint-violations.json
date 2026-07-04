@@ -1,0 +1,787 @@
+[
+ {
+  "slug": "pf-abolish-contract-mirrors",
+  "problems": [
+   ".json has neither absorbed_ids nor absorbed_ideas",
+   "Missing 'Recommended executor profile' section (should include model, effort, backend, justification)",
+   "Missing executor-profile section",
+   "Missing section: Definition of Done",
+   "Missing section: Scope & Non-Goals"
+  ]
+ },
+ {
+  "slug": "pf-agent-file-ci-lint",
+  "problems": [
+   "Missing explicit 'Handoff maturity' section header in .md (value present in .json but not as labeled section)",
+   "Missing explicit 'Source context' section in .md (file ends at 'Suggested next action'; source metadata in .json but not as labeled .md subsection)",
+   "YAML frontmatter missing objective:",
+   "YAML frontmatter missing tier:",
+   "YAML frontmatter missing wave:"
+  ]
+ },
+ {
+  "slug": "pf-agent-prompt-audit",
+  "problems": [
+   ".json has neither absorbed_ids nor absorbed_ideas"
+  ]
+ },
+ {
+  "slug": "pf-board-live-schema-pagination",
+  "problems": [
+   "YAML frontmatter missing objective:",
+   "YAML frontmatter missing tier:",
+   "YAML frontmatter missing wave:"
+  ]
+ },
+ {
+  "slug": "pf-board-progression-shared-writer",
+  "problems": [
+   "Missing '## Definition of Done' section header",
+   "Missing '## Scope & Non-Goals' or '## Scope and Non-Goals' section header",
+   "Missing 'objective:' in YAML frontmatter",
+   "Missing 'tier:' in YAML frontmatter",
+   "Missing 'wave:' in YAML frontmatter",
+   "Missing Definition of Done section in .md",
+   "Missing tier marker (frontmatter or body section)",
+   "Missing wave marker (frontmatter or body section)"
+  ]
+ },
+ {
+  "slug": "pf-cache-prefix-stability",
+  "problems": [
+   "Missing '## Acceptance Criteria' section header",
+   "Missing '## Scope & Non-Goals' or '## Scope and Non-Goals' section header"
+  ]
+ },
+ {
+  "slug": "pf-chaperone-economics",
+  "problems": [
+   "Frontmatter missing 'objective:' field",
+   "Frontmatter missing 'tier:' field",
+   "Frontmatter missing 'wave:' field",
+   "Missing '## Acceptance Criteria' section header",
+   "Missing '## Definition of Done' section header",
+   "Missing '## Grounding References' section header",
+   "Missing '## Scope & Non-Goals' or '## Scope and Non-Goals' section header",
+   "Missing 'objective:' in YAML frontmatter",
+   "Missing 'tier:' in YAML frontmatter",
+   "Missing 'wave:' in YAML frontmatter",
+   "Missing executor-profile (neither in YAML frontmatter nor section header)"
+  ]
+ },
+ {
+  "slug": "pf-checkable-surface-census",
+  "problems": [
+   "Missing '## Acceptance Criteria' section header",
+   "Missing '## Definition of Done' section header",
+   "Missing '## Grounding References' section header",
+   "Missing '## Scope & Non-Goals' or '## Scope and Non-Goals' section header",
+   "Missing executor-profile (neither in YAML frontmatter nor section header)"
+  ]
+ },
+ {
+  "slug": "pf-ci-local-parity",
+  "problems": [
+   ".json has no non-null absorbed_ids or absorbed field"
+  ]
+ },
+ {
+  "slug": "pf-consensus-external-advisory-seat",
+  "problems": [
+   "Frontmatter missing 'objective:' field",
+   "Frontmatter missing 'tier:' field",
+   "Frontmatter missing 'wave:' field",
+   "Missing '## Acceptance Criteria' section header",
+   "Missing '## Definition of Done' section header",
+   "Missing '## Grounding References' section header",
+   "Missing '## Scope & Non-Goals' or '## Scope and Non-Goals' section header",
+   "Missing 'objective:' in YAML frontmatter",
+   "Missing 'tier:' in YAML frontmatter",
+   "Missing 'wave:' in YAML frontmatter",
+   "Missing executor-profile (neither in YAML frontmatter nor section header)"
+  ]
+ },
+ {
+  "slug": "pf-consensus-kernel",
+  "problems": [
+   "Missing '## Definition of Done' section header",
+   "Missing '## Scope & Non-Goals' or '## Scope and Non-Goals' section header"
+  ]
+ },
+ {
+  "slug": "pf-consensus-thresholds-convergence",
+  "problems": [
+   "Missing '## Acceptance Criteria' section header",
+   "Missing '## Definition of Done' section header",
+   "Missing '## Grounding References' section header",
+   "Missing '## Scope & Non-Goals' or '## Scope and Non-Goals' section header",
+   "Missing executor-profile (neither in YAML frontmatter nor section header)"
+  ]
+ },
+ {
+  "slug": "pf-contract-consumer-graph",
+  "problems": [
+   "Missing '## Acceptance Criteria' section header",
+   "Missing '## Definition of Done' section header",
+   "Missing '## Grounding References' section header",
+   "Missing '## Scope & Non-Goals' or '## Scope and Non-Goals' section header",
+   "Missing executor-profile (neither in YAML frontmatter nor section header)"
+  ]
+ },
+ {
+  "slug": "pf-contract-coupling-policy",
+  "problems": [
+   "Missing scope section header ('## Scope & Non-Goals' or '## Scope and Non-Goals')",
+   "Missing section header '## Acceptance Criteria'",
+   "Missing section header '## Definition of Done'",
+   "Missing section header '## Grounding References'"
+  ]
+ },
+ {
+  "slug": "pf-contract-reachability-parity",
+  "problems": [
+   "Body missing 'Definition of Done' section header",
+   "Missing section header '## Definition of Done'"
+  ]
+ },
+ {
+  "slug": "pf-crossleaf-resident-crew",
+  "problems": [
+   "Missing section header '## Acceptance Criteria' (found as '## Acceptance Criteria' but may be mislabeled)",
+   "json contains literal null values",
+   "md missing section: acceptance criteria"
+  ]
+ },
+ {
+  "slug": "pf-dark-plugin-parity",
+  "problems": [
+   "Missing 'Definition of Done' section (has 'Verification' but not DoD)",
+   "Missing explicit 'Scope' section (has only 'Non-goals' without corresponding 'In scope' boundaries)",
+   "Missing scope section header",
+   "Missing section header '## Acceptance Criteria'",
+   "Missing section header '## Definition of Done'",
+   "Missing section header '## Grounding References'"
+  ]
+ },
+ {
+  "slug": "pf-delegation-evidence-durability",
+  "problems": [
+   "Missing 'objective:' in YAML frontmatter (appears as '### Objective' in body)",
+   "Missing 'tier:' in YAML frontmatter (appears as '### Tier' in body)",
+   "Missing 'wave:' in YAML frontmatter (appears as '### Wave' in body)",
+   "Missing scope section header",
+   "Missing section header '## Acceptance Criteria'",
+   "Missing section header '## Definition of Done'",
+   "Missing section header '## Grounding References'",
+   "json contains literal null values",
+   "md frontmatter missing: objective",
+   "md frontmatter missing: tier",
+   "md frontmatter missing: wave"
+  ]
+ },
+ {
+  "slug": "pf-delegation-receipt-contract",
+  "problems": [
+   "Frontmatter missing 'objective:' field",
+   "Frontmatter missing 'tier:' field",
+   "Frontmatter missing 'wave:' field",
+   "Missing 'objective:' in YAML frontmatter (appears as '### Objective' in body)",
+   "Missing 'tier:' in YAML frontmatter (appears as '### Tier' in body)",
+   "Missing 'wave:' in YAML frontmatter (appears as '### Wave' in body)",
+   "Missing scope section header",
+   "Missing section header '## Acceptance Criteria'",
+   "Missing section header '## Definition of Done'",
+   "Missing section header '## Grounding References'"
+  ]
+ },
+ {
+  "slug": "pf-delegation-tripwires-audit",
+  "problems": [
+   "Missing scope section header",
+   "Missing section header '## Acceptance Criteria'",
+   "Missing section header '## Definition of Done'",
+   "Missing section header '## Grounding References'",
+   "Missing section: Definition of Done"
+  ]
+ },
+ {
+  "slug": "pf-deploy-canary-verify-revert",
+  "problems": [
+   "Missing 'Definition of Done' section (has 'Requirements' and 'Acceptance Criteria' but no DoD)",
+   "Missing 'objective:' in YAML frontmatter (appears as '### Objective' in body)",
+   "Missing 'tier:' in YAML frontmatter (appears as '### Tier' in body)",
+   "Missing 'wave:' in YAML frontmatter (appears as '### Wave' in body)",
+   "Missing frontmatter fields: 'tier', 'objective', 'wave' placed outside --- delimiters at lines 18, 15, 21 instead of in frontmatter",
+   "Missing scope section header",
+   "Missing section header '## Acceptance Criteria'",
+   "Missing section header '## Definition of Done'",
+   "Missing section header '## Grounding References'"
+  ]
+ },
+ {
+  "slug": "pf-dispatch-settlement",
+  "problems": [
+   "Frontmatter missing YAML 'tier:', 'wave:', 'objective:' fields (present only as body ### headers, non-standard)",
+   "Missing '## Definition of Done' section header (no equivalent found in document structure)",
+   "Missing '## Grounding References' section header (grounding info only in Source context, not as dedicated section)",
+   "Missing 'objective:' in YAML frontmatter (appears as '### Objective' in body)",
+   "Missing 'tier:' in YAML frontmatter (appears as '### Tier' in body)",
+   "Missing 'wave:' in YAML frontmatter (appears as '### Wave' in body)",
+   "Missing section header '## Definition of Done'",
+   "Missing section header '## Grounding References'"
+  ]
+ },
+ {
+  "slug": "pf-dispatch-tier-resolver",
+  "problems": [
+   "Missing Tier/Type/Wave markers: Tier, Wave",
+   "YAML frontmatter missing 'objective:' key",
+   "YAML frontmatter missing 'tier:' key",
+   "YAML frontmatter missing 'wave:' key"
+  ]
+ },
+ {
+  "slug": "pf-durable-gate-records",
+  "problems": [
+   "JSON 'absorbed_ids' is null",
+   "Missing tier marker (frontmatter or body section)",
+   "Missing wave marker (frontmatter or body section)",
+   "No absorbed_ids or absorbed ideas found in .json",
+   "Proposes plugin behavior changes but missing 'Release-surface checklist' section",
+   "YAML frontmatter missing 'objective:' key",
+   "YAML frontmatter missing 'tier:' key",
+   "YAML frontmatter missing 'wave:' key"
+  ]
+ },
+ {
+  "slug": "pf-effort-first-class",
+  "problems": [
+   "Missing 'Definition of Done' section",
+   "Missing required section: '## Definition of Done'",
+   "Missing required section: '## Scope & Non-Goals' (or '## Scope and Non-Goals')"
+  ]
+ },
+ {
+  "slug": "pf-engine-offer-helper",
+  "problems": [
+   "Missing required section: '## Definition of Done'",
+   "Missing required section: '## Grounding References'",
+   "Missing required section: '## Scope & Non-Goals' (or '## Scope and Non-Goals')",
+   "Missing section: Definition of Done",
+   "Missing section: Scope & Non-Goals"
+  ]
+ },
+ {
+  "slug": "pf-engine-output-trust-boundary",
+  "problems": [
+   "Frontmatter missing 'objective:' field",
+   "Frontmatter missing 'tier:' field",
+   "Frontmatter missing 'wave:' field",
+   "YAML frontmatter missing 'objective:' key",
+   "YAML frontmatter missing 'tier:' key",
+   "YAML frontmatter missing 'wave:' key"
+  ]
+ },
+ {
+  "slug": "pf-engine-registry-schema",
+  "problems": [
+   "Missing required section: '## Definition of Done'",
+   "Missing required section: '## Grounding References'",
+   "Missing required section: '## Scope & Non-Goals' (or '## Scope and Non-Goals')",
+   "Missing section: Definition of Done",
+   "Missing section: Scope & Non-Goals"
+  ]
+ },
+ {
+  "slug": "pf-engines-meta-command",
+  "problems": [
+   "Missing explicit 'Definition of Done' section (has 'Requirements' and 'Acceptance Examples' instead of contract-required DoD structure)",
+   "Missing required section: '## Definition of Done'",
+   "Missing required section: '## Grounding References'",
+   "Missing required section: '## Scope & Non-Goals' (or '## Scope and Non-Goals')"
+  ]
+ },
+ {
+  "slug": "pf-envelope-authorized-merge",
+  "problems": [
+   "Executor profile section missing 'Backend:' entry",
+   "Executor profile section missing 'Effort:' entry",
+   "Executor profile section missing 'Model:' entry",
+   "Missing Tier/Type/Wave markers: Tier, Wave",
+   "Missing executor profile fields: Model, Effort, Backend",
+   "YAML frontmatter missing 'objective:' key",
+   "YAML frontmatter missing 'tier:' key",
+   "YAML frontmatter missing 'wave:' key"
+  ]
+ },
+ {
+  "slug": "pf-escalation-on-failure",
+  "problems": [
+   "JSON 'absorbed_ids' is null",
+   "YAML frontmatter missing 'objective:' key",
+   "YAML frontmatter missing 'tier:' key",
+   "YAML frontmatter missing 'wave:' key"
+  ]
+ },
+ {
+  "slug": "pf-evidence-gated-closure",
+  "problems": [
+   "Missing section: ## Acceptance Criteria",
+   "Missing section: ## Definition of Done",
+   "Missing section: ## Grounding References",
+   "Missing section: one of ['## Scope & Non-Goals', '## Scope and Non-Goals']",
+   "md missing section: problem"
+  ]
+ },
+ {
+  "slug": "pf-evidence-immutability",
+  "problems": [
+   "JSON absorbed/absorbed_ids is empty",
+   "json contains literal null values"
+  ]
+ },
+ {
+  "slug": "pf-fake-adapter-integrity",
+  "problems": [
+   "Missing section: ## Acceptance Criteria",
+   "Missing section: ## Definition of Done",
+   "Missing section: ## Grounding References",
+   "Missing section: one of ['## Scope & Non-Goals', '## Scope and Non-Goals']"
+  ]
+ },
+ {
+  "slug": "pf-fleet-baseline-metrics",
+  "problems": [
+   "No absorbed IDs found in both .md and .json. MD IDs: set(), JSON: {'G-negative-space-10'}",
+   "json contains literal null values",
+   "no absorbed idea id found (T*-F*-*, S-*, H-*, G-*, X-*, R-*)"
+  ]
+ },
+ {
+  "slug": "pf-fleet-commons-decision",
+  "problems": [
+   "No absorbed IDs found in both .md and .json. MD IDs: {'T15-F4-1', 'T13-F4-1', 'T6-F4-1', 'T4-F4-1', 'T5-F6-1', 'T6-F4-3', 'T3-F4-1'}, JSON: {'G-negative-space-3'}"
+  ]
+ },
+ {
+  "slug": "pf-fleet-doctor",
+  "problems": [
+   "JSON absorbed/absorbed_ids is empty",
+   "Missing section: ## Acceptance Criteria",
+   "Missing section: ## Definition of Done",
+   "Missing section: ## Grounding References",
+   "Missing section: one of ['## Scope & Non-Goals', '## Scope and Non-Goals']"
+  ]
+ },
+ {
+  "slug": "pf-fleet-review-campaign",
+  "problems": [
+   "Body missing 'Definition of Done' section header",
+   "Body missing Problem/motivation section header",
+   "Frontmatter missing 'objective:'",
+   "Frontmatter missing 'tier:'",
+   "Frontmatter missing 'wave:'",
+   "Missing frontmatter keys: objective, tier, wave",
+   "Missing section: ## Acceptance Criteria",
+   "Missing section: ## Definition of Done",
+   "Missing section: ## Grounding References",
+   "Missing section: one of ['## Scope & Non-Goals', '## Scope and Non-Goals']"
+  ]
+ },
+ {
+  "slug": "pf-gate-divergence-telemetry",
+  "problems": [
+   "JSON absorbed/absorbed_ids is empty",
+   "Missing frontmatter keys: objective, tier, wave",
+   "Missing section: ## Acceptance Criteria",
+   "Missing section: ## Definition of Done",
+   "Missing section: ## Grounding References",
+   "Missing section: one of ['## Scope & Non-Goals', '## Scope and Non-Goals']",
+   "md frontmatter missing: objective",
+   "md frontmatter missing: tier",
+   "md frontmatter missing: wave"
+  ]
+ },
+ {
+  "slug": "pf-guard-mutation-canary",
+  "problems": [
+   "Body missing 'Definition of Done' section header",
+   "JSON absorbed/absorbed_ids is empty",
+   "Missing section: ## Definition of Done",
+   "Missing section: one of ['## Scope & Non-Goals', '## Scope and Non-Goals']"
+  ]
+ },
+ {
+  "slug": "pf-ideate-engine-lane",
+  "problems": [
+   "Missing explicit 'Definition of Done' section (has 'Success Criteria' instead)"
+  ]
+ },
+ {
+  "slug": "pf-ideate-program-foldback",
+  "problems": [
+   "Missing required section: Definition of done (has 'Files expected to change' and 'Tests to add or update' but no explicit Definition of done section)"
+  ]
+ },
+ {
+  "slug": "pf-learning-capture-nomination",
+  "problems": [
+   "Missing required section: Scope & non-goals (has inline 'Non-goals' within Acceptance Criteria but no proper section header)"
+  ]
+ },
+ {
+  "slug": "pf-lever-site-census",
+  "problems": [
+   "Body missing 'Definition of Done' section header"
+  ]
+ },
+ {
+  "slug": "pf-lifecycle-regression-harness",
+  "problems": [
+   "Body missing 'Definition of Done' section header",
+   "Frontmatter missing 'objective:'",
+   "Frontmatter missing 'tier:'",
+   "Frontmatter missing 'wave:'"
+  ]
+ },
+ {
+  "slug": "pf-liveness-tripwire-engine",
+  "problems": [
+   "Missing required section: Definition of done (has 'Files expected to change' and 'Tests to add or update' but no explicit Definition of done section)"
+  ]
+ },
+ {
+  "slug": "pf-midrun-adjustment-envelope",
+  "problems": [
+   "Missing tier marker (frontmatter or body section)",
+   "Missing wave marker (frontmatter or body section)"
+  ]
+ },
+ {
+  "slug": "pf-offload-economics-guards",
+  "problems": [
+   "Missing explicit 'Acceptance Criteria' section header (has 'Tests to add or update' section instead)",
+   "Missing explicit 'Definition of Done' section"
+  ]
+ },
+ {
+  "slug": "pf-optimize-concurrency-knob",
+  "problems": [
+   "Contains literal 'null' keyword in body text (line 71: 'default `null` (meaning serial...)') \u2014 acceptable in schema field descriptions but inconsistent with prose style; minor"
+  ]
+ },
+ {
+  "slug": "pf-outcome-ingest-reconcile-drift",
+  "problems": [
+   "Missing Definition of Done section in .md"
+  ]
+ },
+ {
+  "slug": "pf-outcome-intent-capture-ux",
+  "problems": [
+   "Missing tier marker (frontmatter or body section)",
+   "Missing wave marker (frontmatter or body section)"
+  ]
+ },
+ {
+  "slug": "pf-outcome-intent-renegotiation",
+  "problems": [
+   "Missing Tier/Type/Wave markers: Tier, Wave"
+  ]
+ },
+ {
+  "slug": "pf-outcome-step-profiles",
+  "problems": [
+   "Missing Definition of Done section in .md"
+  ]
+ },
+ {
+  "slug": "pf-provider-auth-preflight",
+  "problems": [
+   "JSON has no non-null absorbed_ids/absorbed/absorbed_ideas array"
+  ]
+ },
+ {
+  "slug": "pf-provider-onboarding-conformance",
+  "problems": [
+   "Missing explicit 'Definition of Done' section (has 'Requirements' and 'Acceptance Examples' instead)",
+   "Required section missing: 'Acceptance Criteria'",
+   "Required section missing: 'Definition of Done'",
+   "Required section missing: 'Grounding References'",
+   "Scope section missing ('## Scope & Non-Goals' or '## Scope and Non-Goals')"
+  ]
+ },
+ {
+  "slug": "pf-pulse-live-telemetry",
+  "problems": [
+   "JSON has no non-null absorbed_ids/absorbed/absorbed_ideas array",
+   "YAML frontmatter missing keys: objective, tier, wave"
+  ]
+ },
+ {
+  "slug": "pf-recon-memoization",
+  "problems": [
+   "Required section missing: 'Acceptance Criteria'",
+   "Scope section missing ('## Scope & Non-Goals' or '## Scope and Non-Goals')",
+   "json contains literal null values"
+  ]
+ },
+ {
+  "slug": "pf-reconcile-controller",
+  "problems": [
+   "Missing 'Definition of Done' section",
+   "Missing 'Grounding References' section",
+   "Missing Tier/Type/Wave markers: Tier, Wave",
+   "Required section missing: 'Definition of Done'",
+   "Required section missing: 'Grounding References'",
+   "Scope section missing ('## Scope & Non-Goals' or '## Scope and Non-Goals')",
+   "YAML frontmatter missing keys: objective, tier, wave"
+  ]
+ },
+ {
+  "slug": "pf-registry-calibration-loop",
+  "problems": [
+   "Required section missing: 'Acceptance Criteria'",
+   "Required section missing: 'Definition of Done'",
+   "Required section missing: 'Grounding References'",
+   "Scope section missing ('## Scope & Non-Goals' or '## Scope and Non-Goals')"
+  ]
+ },
+ {
+  "slug": "pf-release-surface-single-source",
+  "problems": [
+   "Required section missing: 'Acceptance Criteria'",
+   "Required section missing: 'Definition of Done'",
+   "Required section missing: 'Grounding References'",
+   "Scope section missing ('## Scope & Non-Goals' or '## Scope and Non-Goals')"
+  ]
+ },
+ {
+  "slug": "pf-remote-gate-approval",
+  "problems": [
+   "JSON has no non-null absorbed_ids/absorbed/absorbed_ideas array",
+   "Required section missing: 'Acceptance Criteria'",
+   "Required section missing: 'Definition of Done'",
+   "Required section missing: 'Grounding References'",
+   "Scope section missing ('## Scope & Non-Goals' or '## Scope and Non-Goals')"
+  ]
+ },
+ {
+  "slug": "pf-rename-campaign-executor",
+  "problems": [
+   "Required section missing: 'Acceptance Criteria'",
+   "Required section missing: 'Definition of Done'",
+   "Required section missing: 'Grounding References'",
+   "Scope section missing ('## Scope & Non-Goals' or '## Scope and Non-Goals')"
+  ]
+ },
+ {
+  "slug": "pf-residency-derived-scheduling",
+  "problems": [
+   "Required section missing: 'Acceptance Criteria'",
+   "Scope section missing ('## Scope & Non-Goals' or '## Scope and Non-Goals')",
+   "json contains literal null values"
+  ]
+ },
+ {
+  "slug": "pf-residency-evidence",
+  "problems": [
+   "json contains literal null values"
+  ]
+ },
+ {
+  "slug": "pf-retired-vocabulary-guards",
+  "problems": [
+   "Frontmatter missing key: objective:",
+   "Frontmatter missing key: tier:",
+   "Frontmatter missing key: wave:",
+   "JSON missing absorbed_ids or absorbed array"
+  ]
+ },
+ {
+  "slug": "pf-review-delta-packets",
+  "problems": [
+   "Missing sections: Definition of Done"
+  ]
+ },
+ {
+  "slug": "pf-review-ledger-incremental",
+  "problems": [
+   "Body missing 'Definition of Done' section header",
+   "Frontmatter missing 'objective:'",
+   "Frontmatter missing 'tier:'",
+   "Frontmatter missing 'wave:'",
+   "Frontmatter missing key: objective:",
+   "Frontmatter missing key: tier:",
+   "Frontmatter missing key: wave:",
+   "JSON missing absorbed_ids or absorbed array",
+   "Missing sections: Definition of Done"
+  ]
+ },
+ {
+  "slug": "pf-run-fact-ledger",
+  "problems": [
+   "Frontmatter missing key: objective:",
+   "Frontmatter missing key: tier:",
+   "Frontmatter missing key: wave:"
+  ]
+ },
+ {
+  "slug": "pf-runstart-intent-envelope",
+  "problems": [
+   "Frontmatter missing key: objective:",
+   "Frontmatter missing key: tier:",
+   "Frontmatter missing key: wave:"
+  ]
+ },
+ {
+  "slug": "pf-session-substrate-registry",
+  "problems": [
+   "JSON missing absorbed_ids or absorbed array"
+  ]
+ },
+ {
+  "slug": "pf-ship-ceremony-primitive",
+  "problems": [
+   "Frontmatter missing key: objective:",
+   "Frontmatter missing key: tier:",
+   "Frontmatter missing key: wave:",
+   "Missing sections: Definition of Done"
+  ]
+ },
+ {
+  "slug": "pf-ship-hazard-preflight-and-undo",
+  "problems": [
+   "Missing absorbed_ids array in JSON \u2014 MD file lists three absorbed facets (T7-F4-4, T7-F2-6, T7-F1-2) in grounding-references section (lines 149\u2013163), but JSON sidecar has absorbed_ids: null, making the machine-readable contract incomplete"
+  ]
+ },
+ {
+  "slug": "pf-ship-teardown-reconciliation",
+  "problems": [
+   "Missing required header(s): definition_of_done, scope",
+   "YAML frontmatter missing: objective",
+   "YAML frontmatter missing: tier",
+   "YAML frontmatter missing: wave"
+  ]
+ },
+ {
+  "slug": "pf-spend-gate-asymmetry",
+  "problems": [
+   "Mentions plugin behavior/schema changes but missing Release-Surface Checklist section",
+   "Missing executor profile fields: Model, Effort, Backend"
+  ]
+ },
+ {
+  "slug": "pf-spend-observability-reports",
+  "problems": [
+   "No absorbed_ideas, absorbed_ids, or absorbed in .json"
+  ]
+ },
+ {
+  "slug": "pf-stacked-pr-cascade-guard",
+  "problems": [
+   "Missing absorbed_ids array in JSON \u2014 MD file lists primary absorbed idea T7-F2-7 and dedup-merged idea S-14 in grounding-references section (lines 156\u2013171), but JSON sidecar has absorbed_ids: null, making the machine-readable contract incomplete"
+  ]
+ },
+ {
+  "slug": "pf-standards-index-machine-contract",
+  "problems": [
+   "Missing required header(s): definition_of_done, scope"
+  ]
+ },
+ {
+  "slug": "pf-standing-doc-provenance",
+  "problems": [
+   "## Acceptance Criteria missing (found \"## Acceptance criteria\"\u2014capitalization mismatch)",
+   "## Definition of Done missing (found \"## Definition of done\"\u2014capitalization mismatch)",
+   "## Grounding References missing (found \"## Grounding references\"\u2014capitalization mismatch)",
+   "## Scope & Non-Goals / Scope and Non-Goals missing (found \"## Scope & non-goals\")",
+   "Executor Profile section missing or improperly formatted"
+  ]
+ },
+ {
+  "slug": "pf-subagent-liveness-engine",
+  "problems": [
+   "## Acceptance Criteria missing",
+   "## Definition of Done missing",
+   "## Grounding References missing",
+   "## Scope & Non-Goals missing",
+   "Executor Profile section lacks clear Model/Effort/Backend naming",
+   "YAML frontmatter missing required keys: tier:, wave:, objective: (appear in body as ### headers instead)"
+  ]
+ },
+ {
+  "slug": "pf-task-provider-recommend",
+  "problems": [
+   "## Scope & Non-Goals or Scope and Non-Goals missing (found \"## Scope Boundaries (non-goals)\"\u2014exact match required)"
+  ]
+ },
+ {
+  "slug": "pf-team-engine-worker-slot",
+  "problems": [
+   "## Scope & Non-Goals or Scope and Non-Goals missing",
+   "YAML frontmatter missing required keys: tier:, wave:, objective:"
+  ]
+ },
+ {
+  "slug": "pf-team-park-resume",
+  "problems": [
+   "## Grounding References missing",
+   "Executor Profile section incomplete: missing clear Model/Effort/Backend specifications",
+   "Missing 'Grounding References' section (no section with references to absorbed ideas or binding decisions)"
+  ]
+ },
+ {
+  "slug": "pf-teardown-reclamation-contract",
+  "problems": [
+   "## Definition of Done missing",
+   "## Grounding References missing",
+   "## Scope & Non-Goals or Scope and Non-Goals missing",
+   "Executor Profile section missing",
+   "YAML frontmatter missing required keys: tier:, wave:, objective:"
+  ]
+ },
+ {
+  "slug": "pf-tier-defaults-persistence",
+  "problems": [
+   "Frontmatter missing 'objective:' field",
+   "Frontmatter missing 'tier:' field",
+   "Frontmatter missing 'wave:' field",
+   "YAML frontmatter missing required keys: tier:, wave:, objective:"
+  ]
+ },
+ {
+  "slug": "pf-tier-floors-halt-not-degrade",
+  "problems": [
+   "## Acceptance Criteria missing",
+   "## Definition of Done missing",
+   "## Grounding References missing",
+   "## Scope & Non-Goals or Scope and Non-Goals missing",
+   "Executor Profile section malformed",
+   "Frontmatter missing 'objective:' field",
+   "Frontmatter missing 'tier:' field",
+   "Frontmatter missing 'wave:' field",
+   "JSON file missing absorbed_ids array",
+   "Missing section: Definition of Done",
+   "YAML frontmatter missing required keys: tier:, wave:, objective:"
+  ]
+ },
+ {
+  "slug": "pf-typed-reconciliation",
+  "problems": [
+   "## Grounding References missing",
+   "## Scope & Non-Goals or Scope and Non-Goals missing",
+   "Frontmatter missing YAML 'tier:', 'wave:', 'objective:' fields (present only as body ### headers, non-standard)",
+   "Missing '## Grounding References' section header (grounding info only in Source context, not as dedicated section)",
+   "YAML frontmatter missing required keys: tier:, wave:, objective:"
+  ]
+ },
+ {
+  "slug": "pf-write-ownership-lanes-ci-lint",
+  "problems": [
+   "Frontmatter missing 'objective:'",
+   "Frontmatter missing 'tier:'",
+   "Frontmatter missing 'wave:'"
+  ]
+ }
+]

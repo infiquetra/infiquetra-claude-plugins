@@ -1,0 +1,125 @@
+{
+  "absorbed": [
+    {
+      "basis": "First-principles on the section-7 singleton (350-450k tokens, <20min recon fan-out): recon workers share a near-identical read-only prefix; N separate spawns each trigger a full cache_creation of that prefix, whereas one pre-assembled shared prefix under the 5-min TTL converts N-1 of them to cache_read - a linear-to-constant reduction in creation cost with no change to the fan-out decision or its outputs.",
+      "basis_type": "reasoned",
+      "id": "T4-F2-7",
+      "role": "primary",
+      "title": "Collapse the recon fan-out's N cold repo reads into one shared context pack"
+    },
+    {
+      "basis": "Grounding brief section 7 singleton ('350-450k tokens in <20 min for read-only recon fan-outs') combined with section 6 item 5 ('Derive-on-read over committed state - recurring rejected alternative'); the staleness rationale behind that rejection is explicitly engaged and defeated via content-addressed keying (any input change changes the key, forcing a miss). Orthogonal to {#worker-cache-scheduling}, which governs prompt-cache residency in workers, not artifact-level reuse across sessions where no worker survives.",
+      "basis_type": "direct",
+      "id": "H-F6-7",
+      "role": "facet",
+      "title": "Recon memoization: tree-hash-keyed committed survey artifacts so 400k-token recon fan-outs run once per tree state"
+    },
+    {
+      "basis": "Grounding brief section 7 singleton ('350-450k tokens in <20 min read-only recon fan-outs') plus intake section 5 ('Ollama -> $0 offload target'). Parents H-F6-7, T2-F6-4, T4-F2-7 attack cost frequency, unit price, and redundancy separately; combined, the recon bill approaches zero on unchanged trees and near-zero on changed ones. Advisory-only summarization respects {#external-engines-never-gatekeepers} - no gated decision consumes raw engine output.",
+      "basis_type": "direct",
+      "id": "G-hybrids-9",
+      "role": "facet",
+      "title": "Tree-hash recon memoization with $0 local-model cache-miss filling"
+    },
+    {
+      "basis": "Grounding brief section 7 singleton ('350-450k tokens in <20 min for read-only recon fan-outs') combined with section 4 ('the org convention is schema-validate-in-CI + self-describing index, not runtime-injected blobs'). Binding decision {#worker-cache-scheduling} is engaged but not contradicted: this idea removes demand upstream of the architecture that governs how residual agent work is scheduled.",
+      "basis_type": "direct",
+      "id": "H-F2-4",
+      "role": "facet",
+      "title": "Recon demand elimination: CI-maintained repo fact index makes read-only fan-outs a cache hit"
+    }
+  ],
+  "absorbed_ids": [
+    "T4-F2-7",
+    "H-F6-7",
+    "G-hybrids-9",
+    "H-F2-4"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:11:58.003376+00:00",
+  "created_issue_number": 432,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/432",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-recon-memoization.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "offload",
+    "justification": "Miss-filling is explicitly the $0 offload target per this repo's intake rule; the shared-prefix builder, cache-key helper, and CI fact-index generation are mechanical, parallelizable survey/infrastructure work suited to offload and team-execution rather than requiring Opus-level architectural judgment. High effort reflects the four-facet surface area (dispatch-path wiring, cache-key correctness, CI wiring, receipt-bearing external-engine interface), not judgment difficulty. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make cache economics an engineered, measured win",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make cache economics an engineered, measured win",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/saga/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/saga/CHANGELOG.md",
+    "release-surface / version-metadata drift-guard tests"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-recon-memoization.json",
+  "slug": "pf-recon-memoization",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "The 350-450k-tokens-in-<20min datum comes from read-only recon fan-outs where N agents each cold-read the same repo survey - pre-assemble the common repo-survey once into a shared context pack so the fleet pays one cache-creation and N-1 cache-reads instead of N creations.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json#T4-F2-7,H-F6-7,G-hybrids-9,H-F2-4",
+    "title": "Kill the 400k-token recon fan-out: shared context pack, tree-hash memoization with $0 local fill, and a CI-maintained fact index",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: kill the 400k-token recon fan-out \u2014 shared context pack, tree-hash memoization with $0 local fill, and a CI-maintained fact index",
+  "updated_at": "2026-07-04T08:12:05.315208+00:00",
+  "wave": "wave-2"
+}

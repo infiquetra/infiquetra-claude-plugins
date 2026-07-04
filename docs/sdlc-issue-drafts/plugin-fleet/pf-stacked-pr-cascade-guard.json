@@ -1,0 +1,115 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "No basis field on the survivor entry (thin seed on the dedup-merge side); intent reconstructed from grounding-brief citations (\u00a75 pattern 1, \u00a77 stacked-PR gaps, \u00a78 theme 7 / direct-to-candidate pool) and from the parallel S-14 seed it absorbed.",
+      "id": "T7-F2-7",
+      "role": "primary",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json",
+      "title": "Stacked-PR auto-close cascade guard with automatic child rebase-and-reopen"
+    },
+    {
+      "basis": "brief \u00a78 direct-to-candidate 'stacked-PR'; \u00a75 pattern 1 + \u00a77 stacked-PR gaps",
+      "id": "S-14",
+      "role": "dedup-merged",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json",
+      "title": "Stacked-PR support in ship ceremony"
+    }
+  ],
+  "absorbed_ids": [
+    "T7-F2-7",
+    "S-14"
+  ],
+  "approval_state": null,
+  "consolidation_rationale": "Dedup-map already folded seed S-14 (stacked-PR support) into T7-F2-7; the recovery machinery (stack topology in pr_refs + cascade handler) is a self-contained moonshot behind the hazard preflight.",
+  "created_at": "2026-07-04T08:12:32.812029+00:00",
+  "created_issue_number": 434,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/434",
+  "depends_on": [
+    {
+      "reason": "Its stacked-PR hazard detector (ceremony_hazards.py, criterion T7-F4-4) must clear a base merge as safe before this issue's cascade handler is permitted to fire.",
+      "slug": "pf-ship-hazard-preflight-and-undo"
+    },
+    {
+      "reason": "The cascade handler hooks into ship_ceremony.py's merge step and transition table, which that issue builds.",
+      "slug": "pf-ship-ceremony-primitive"
+    }
+  ],
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-stacked-pr-cascade-guard.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "xhigh",
+    "external_llm": "none",
+    "justification": "Moonshot-tier due to genuinely open edge-case space (nested rebase cascades, idempotent re-entry, sequencing behind a sibling-owned hazard gate) with no existing stack-topology schema to extend; xhigh reflects the combinatorial fixture space, not any need for consensus review or an external engine \u2014 deterministic git-graph logic well within sonnet's competence at higher effort.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Automate the ship ceremony end-to-end",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Automate the ship ceremony end-to-end",
+    "Technical Risk": "medium",
+    "Tier": "moonshot",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "plugin-fleet",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-stacked-pr-cascade-guard.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Stack-topology field in pr_refs + base-merge cascade handler that rebases, reopens, and CI-retriggers children when a stacked PR's base merges; behind the hazard preflight owned by pf-ship-hazard-preflight-and-undo.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/c23d3bf9-9081-4727-8e0d-140ebc73f63f/scratchpad/ideation/issue-map/issue-map-final.json",
+    "ref": "issue-map-final.json#pf-stacked-pr-cascade-guard",
+    "title": "Stacked-PR auto-close cascade guard with automatic child rebase-and-reopen",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "moonshot",
+  "title": "capability: stacked-PR auto-close cascade guard with automatic child rebase-and-reopen",
+  "updated_at": "2026-07-04T08:12:40.139894+00:00",
+  "wave": "wave-3"
+}

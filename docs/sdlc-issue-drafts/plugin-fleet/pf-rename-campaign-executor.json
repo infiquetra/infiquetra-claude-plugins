@@ -1,0 +1,115 @@
+{
+  "absorbed_ideas": [
+    {
+      "axis": "rename-campaign-tooling",
+      "id": "T14-F4-5",
+      "role": "primary",
+      "tier_tag": "structural"
+    },
+    {
+      "axis": "rename-campaign-tooling",
+      "id": "T14-F3-4",
+      "role": "facet",
+      "tier_tag": "structural"
+    },
+    {
+      "axis": "rename-campaign-tooling",
+      "id": "T14-F5-2",
+      "role": "facet",
+      "tier_tag": "structural"
+    },
+    {
+      "axis": "rename-campaign-tooling",
+      "id": "T14-F6-5",
+      "role": "facet",
+      "scope_note": "Only the manifest-driven-execution and operator-gated dry-run facets are absorbed; the autonomous multi-repo landing-coordinator ambition is explicitly out of scope for this issue.",
+      "tier_tag": "moonshot"
+    }
+  ],
+  "absorbed_ids": [
+    "T14-F4-5",
+    "T14-F3-4",
+    "T14-F5-2",
+    "T14-F6-5"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:06:32.999427+00:00",
+  "created_issue_number": 417,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/417",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-rename-campaign-executor.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Deterministic scaffolding/CLI-tool work with well-specified acceptance criteria; no design-ambiguity resolution requiring Opus. High effort given multiple interacting facets (executor + ledger + ack-gate + CI lint); team-execution backend recommended for consensus review given this repo's history of vendored/mirrored-artifact drift defects slipping past green suites. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-rename-campaign-executor.json",
+  "slug": "pf-rename-campaign-executor",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Guarded rename-campaign executor: manifest-driven, aliasable deprecation windows, positive consumer acknowledgment. Merges T14-F4-5 (primary executor + allowlist + leak assertion), T14-F3-4 (aliasable deprecation window ledger with alias-until/forbid-after semantics), T14-F5-2 (ATC-style positive per-consumer acknowledgment before decommission), and the manifest-driven/operator-gated facets of T14-F6-5 (autonomous multi-repo landing-coordinator excluded from scope).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+    "title": "Plugin-Fleet Ideation \u2014 Theme 14 (contract/vocabulary hygiene), rename-campaign-tooling axis",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: guarded rename-campaign executor with historical-journal allowlist, aliasable deprecation windows, and positive consumer acknowledgment",
+  "updated_at": "2026-07-04T08:06:39.574529+00:00"
+}

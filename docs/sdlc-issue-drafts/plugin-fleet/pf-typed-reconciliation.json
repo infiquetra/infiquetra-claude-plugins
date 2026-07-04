@@ -1,0 +1,93 @@
+{
+  "absorbed_ids": [
+    "T1-F2-4",
+    "T1-F4-3",
+    "T1-F3-2",
+    "T1-F1-4",
+    "T1-F6-6",
+    "T1-F4-4"
+  ],
+  "approval_state": null,
+  "consolidation_rationale": "Six facets on the same theme (T1, intent-semantics axis) converge on one module: a typed reconciliation object (primary, T1-F2-4) needs an intent-to-recipe registry to know which merge protocol applies (T1-F4-3), a third divergence intent to slot into that registry (T1-F3-2), a recapture path for chaperone-rejected offloads so rejection notes aren't silently lost from the same reconciliation surface (T1-F1-4), a cap-bounded panel-fan-out reconciliation shape for the moonshot advisory-jury facet (T1-F6-6), and a durable ledger closing the loop back to /retro (T1-F4-4). Building these as one capability avoids three separate PRs each re-deriving the same merge-protocol dispatch point.",
+  "created_at": "2026-07-04T07:59:23.829162+00:00",
+  "created_issue_number": 393,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/393",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-typed-reconciliation.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical-but-hazardous: a new typed schema, registry lookup, and cap-bounded fan-out path layered onto an already-shipped chaperone-dispatch contract. Sonnet is correct tier per fleet tiering guidance (mechanical/deterministic, not judgment-heavy design). High effort because the work spans two plugins (saga, team-execution), touches the gate-adjacent engine_dispatch.satisfy_gate path where a regression would silently weaken {#external-engines-never-gatekeepers}, and needs careful registry-parity and cap-boundary test coverage. team-execution backend recommended over inline because the six absorbed facets are independently testable units well suited to reviewer-consensus and validator-gated execution, and the gate-adjacent path benefits from the read-only-verifier review posture this repo already mandates for verify-class spawns. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "Touches the gate-adjacent engine_dispatch.satisfy_gate code path; regression risk against the {#external-engines-never-gatekeepers} (#283) structural enforcement must be explicitly regression-tested, not just asserted."
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-typed-reconciliation.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Typed second-opinion reconciliation object with per-item adjudicated flags; intent-to-recipe merge-protocol registry; a third divergence engine_intent where convergence is itself the failure signal; chaperone-rejected-offload rejection notes recaptured as second-opinion signal instead of silently discarded; a cap-bounded advisory-jury panel fan-out with mandatory Claude-foreman adjudication; and a durable reconcile/apply ledger that /retro can read to surface gated registry-update proposals.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json",
+    "ref": "T1-F2-4",
+    "title": "Typed second-opinion reconciliation \u2014 remove freeform prose reconciliation",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: typed second-opinion reconciliation \u2014 reconcile.py, intent\u2192recipe map, divergence intent, failure-signal recapture, durable ledger",
+  "updated_at": "2026-07-04T08:23:59.728776+00:00",
+  "wave": "wave-1"
+}

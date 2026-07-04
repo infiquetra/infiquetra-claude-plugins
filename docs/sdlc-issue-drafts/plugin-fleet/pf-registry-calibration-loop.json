@@ -1,0 +1,92 @@
+{
+  "absorbed_ids": [
+    "T1-F3-7",
+    "T2-F1-7",
+    "T2-F4-7",
+    "T2-F5-5",
+    "T2-F5-7",
+    "T2-F5-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:25:48.686084+00:00",
+  "created_issue_number": 459,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/459",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-registry-calibration-loop.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Five new reducer/harness modules plus a /retro skill extension composing around one non-negotiable invariant (no signal ever writes the registry); team-execution consensus review catches a missed direct-write path, sonnet/high suffices since every mechanism (hash-chained ledger, fixed-suite benchmark, SPC charts, Elo updates, staleness joins) is a well-specified, already-precedented pattern (outcome_costs.py leaf-produced-fact discipline, Registry.stale()) rather than a novel architecture call. No case for opus or an external engine. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Build the fleet telemetry and ledger substrate",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Build the fleet telemetry and ledger substrate",
+    "Technical Risk": "medium",
+    "Tier": "moonshot",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-registry-calibration-loop.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "A /retro sub-step aggregates reconciliation-ledger outcomes into per-cell rating-drift proposals against engine-registry.yaml, proposal-only, human-applied (T1-F3-7). An automated provider-benchmark harness proposes registry rating/cost updates from a fixed eval suite (T2-F1-7). A ledger-fed staleness report arms /retro to revalidate ratings from evidence (T2-F4-7). Capabilities are Elo-rated, learning from reconciliation outcomes (T2-F5-5). SPC control charts detect provider cost/latency drift and flag rows for re-validation (T2-F5-7). A flight-data-recorder cost ledger is append-only and tamper-evident (T2-F5-8).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json#T1-F3-7;docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json#T2-F1-7,T2-F4-7,T2-F5-5,T2-F5-7,T2-F5-8",
+    "title": "Earned ratings: dispatch/benchmark evidence drives retro-gated registry calibration (SPC drift, Elo, staleness report)",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "moonshot",
+  "title": "capability: earned ratings \u2014 dispatch/benchmark evidence drives retro-gated engine-registry calibration (SPC drift, Elo, staleness report)",
+  "updated_at": "2026-07-04T08:25:56.206683+00:00",
+  "wave": "wave-3"
+}

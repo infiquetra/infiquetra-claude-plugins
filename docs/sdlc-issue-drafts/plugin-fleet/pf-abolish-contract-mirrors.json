@@ -1,0 +1,120 @@
+{
+  "absorbed": [
+    {
+      "basis": "Grounding brief \u00a73 item 1: 'validate_card_body stale hand-copy [of the] real card_validator.py (343 clean cards failed [the] live contract, \u2192 #222), re-vendored sdlc-schema.json' \u2014 4 independent repos, top-ranked consumer-side pain. Named issue anchor: #222.",
+      "frame": "F1",
+      "id": "H-F1-8",
+      "role": "primary",
+      "theme": "T14"
+    },
+    {
+      "basis": "Grounding brief section 3 item 1 (same 343-card / #222 finding). Engages {#plugin-portfolio-groom-17-to-7}: no new plugin created; contract copies consolidate into existing installed plugins (mission-control).",
+      "frame": "F6",
+      "id": "H-F6-8",
+      "role": "facet",
+      "theme": "T14"
+    },
+    {
+      "basis": "plugins/mission-control/config/generated/check_issue_contract_parity.py:15-21 docstring: 'Design (deliberately NOT run sdlc generator)... match means vendored bytes [equal what the] source generator last produced pinned' \u2014 upstream advance undetectable. Origin pain: grounding brief section 3, card_validator.py 343 cards / #222 stale hand-mirror.",
+      "frame": "F3",
+      "id": "T14-F3-7",
+      "role": "facet",
+      "theme": "T14"
+    }
+  ],
+  "absorbed_ids": [
+    "H-F1-8",
+    "H-F6-8",
+    "T14-F3-7"
+  ],
+  "approval_state": null,
+  "binding_decisions_engaged": [
+    "{#plugin-portfolio-groom-17-to-7}"
+  ],
+  "created_at": "2026-07-04T08:04:32.367323+00:00",
+  "created_issue_number": 410,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/410",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-abolish-contract-mirrors.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical-but-structural refactor (remove hand-copy, wire a callable contract surface, add a lint and a corpus differential test) with a well-specified, testable done-state; no open-ended judgment call or adversarial design work that would justify opus. High effort because it touches a validator relied on fleet-wide and must not regress existing card-validation behavior. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Establish single-source-of-truth for shared primitives",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/mission-control/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/mission-control/CHANGELOG.md",
+    "version/metadata drift-guard tests"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-abolish-contract-mirrors.json",
+  "slug": "pf-abolish-contract-mirrors",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "The structural fix behind the 343-card disaster: abolish copies rather than police them -- versioned CLI/plugin contract surface, a lint banning local mirrors, and a real-card verdict corpus locking the validator's behavior, not just its bytes.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-consolidation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+    "ref": "issue-map-final.json#pf-abolish-contract-mirrors",
+    "title": "Forbid hand-copied validators: consumers exec the source-of-truth surface; behavior locked by a real-card corpus",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: forbid hand-copied validators \u2014 consumers exec the source-of-truth surface, behavior locked by a real-card corpus",
+  "updated_at": "2026-07-04T08:04:39.218721+00:00",
+  "wave": "wave-2"
+}

@@ -1,0 +1,105 @@
+{
+  "absorbed": [
+    {
+      "id": "T11-F1-4",
+      "role": "primary",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json"
+    },
+    {
+      "id": "T11-F1-5",
+      "role": "facet",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json"
+    },
+    {
+      "id": "T11-F6-7",
+      "role": "facet",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json"
+    }
+  ],
+  "absorbed_ids": [
+    "T11-F1-4",
+    "T11-F1-5",
+    "T11-F6-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:09:36.406188+00:00",
+  "created_issue_number": 426,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/426",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-contract-reachability-parity.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical, deterministic work: registry data structure, static-analysis script, fixture-based meta-tests. No architectural judgment required.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective_tag": "Gate fleet integrity (agent files, prompts, release surfaces)",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-contract-reachability-parity.json",
+  "slug": "pf-contract-reachability-parity",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "One contract-symbol registry serves all three: reachability audit (fable/xhigh, ENGINE_INTENTS gaps), paired-test requirement, and no-key-alive-on-one-end parity.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-synthesis",
+    "path": "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+    "title": "Declared-but-unwired seam audit + producer/consumer paired-test and parity guards",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: declared-but-unwired seam audit + producer/consumer contract-pairing and parity guards",
+  "updated_at": "2026-07-04T08:09:43.732989+00:00",
+  "wave": "wave-2"
+}

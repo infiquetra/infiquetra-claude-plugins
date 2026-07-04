@@ -1,0 +1,89 @@
+{
+  "absorbed_ids": [
+    "G-hybrids-1",
+    "G-negative-space-2",
+    "T4-F4-6",
+    "H-F4-4",
+    "T2-F4-6",
+    "T15-F2-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:01:57.949796+00:00",
+  "created_issue_number": 401,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/401",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-run-fact-ledger.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Bounded, fully-specified substrate-and-two-consumers build across the absorbed ideas' dod_sketches; no open design ambiguity requiring opus-tier judgment. team-execution backend recommended over inline because the DoD spans four coordinated pieces (schema module, two consumer wirings, a /plan step, documentation) that benefit from validator-gated sequencing. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Build the fleet telemetry and ledger substrate",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-run-fact-ledger.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "One leaf-produced run-fact ledger spine serving spend, cache, engine, and delegation telemetry -- generalizes the /outcome cost-ledger producer/consumer shape (leaf reports, coordinator only aggregates/materializes) to cache reuse, engine usage, and delegation evidence, closing the negative-space gap of 45 ledger-shaped and 19 receipt-shaped ideas with no shared substrate.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/c23d3bf9-9081-4727-8e0d-140ebc73f63f/scratchpad/ideation/issue-map/issue-map-final.json",
+    "ref": "issue-map-final.json (slug: pf-run-fact-ledger; absorbed ids: G-hybrids-1 (primary), G-negative-space-2, T4-F4-6, H-F4-4, T2-F4-6, T15-F2-8 (dedup-merged))",
+    "title": "One append-only leaf-produced run-fact ledger substrate for spend, cache, engine, and delegation telemetry",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: One append-only leaf-produced run-fact ledger substrate for spend, cache, engine, and delegation telemetry",
+  "updated_at": "2026-07-04T08:02:04.267780+00:00",
+  "wave": "wave-2"
+}

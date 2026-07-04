@@ -1,0 +1,118 @@
+{
+  "absorbed": [
+    {
+      "basis": "direct \u2014 grounding brief \u00a73 finding 1 (343-card/#222 stale-mirror incident, sdlc-schema.json re-vendoring pattern) has no hand-authored who-declares-dependence record anywhere today.",
+      "frame": "F4",
+      "id": "T14-F4-4",
+      "role": "primary",
+      "theme": "T14"
+    },
+    {
+      "basis": "direct \u2014 same grounding brief \u00a73 finding 1; a hand-authored manifest alone cannot be trusted to stay current, so consumption facts should be self-reported by the vendoring gates at run time.",
+      "frame": "F6",
+      "id": "T14-F6-7",
+      "role": "facet",
+      "theme": "T14"
+    },
+    {
+      "basis": "external \u2014 a schema diff alone says nothing about which consumers are actually exposed vs. merely adjacent; this facet ranks exposure severity rather than producing a flat unranked consumer list.",
+      "frame": "F5",
+      "id": "T14-F5-5",
+      "role": "facet",
+      "theme": "T14"
+    }
+  ],
+  "absorbed_ids": [
+    "T14-F4-4",
+    "T14-F6-7",
+    "T14-F5-5"
+  ],
+  "approval_state": null,
+  "binding_decisions_engaged": [],
+  "created_at": "2026-07-04T08:05:28.184737+00:00",
+  "created_issue_number": 413,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/413",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-contract-consumer-graph.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Matches the issue-map's own executor recommendation. Three coordinated CLI/data scripts (manifest reader, self-registration writer, ranking script) sharing one consumer-index module against an already-understood existing gate (check_issue_contract_parity.py) \u2014 mechanical scaffolding, not open-ended architectural judgment; all three views share one file/data boundary and do not require cross-subsystem reviewer consensus.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Establish single-source-of-truth for shared primitives",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/mission-control/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/mission-control/CHANGELOG.md",
+    "version/metadata drift-guard tests"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-contract-consumer-graph.json",
+  "slug": "pf-contract-consumer-graph",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Who-consumes-X is one dataset with three views: the hand-authored manifest with change-time checklists, gates self-registering their copies centrally, and field-level exposure ranking on a schema diff.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-consolidation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T14.json",
+    "ref": "issue-map-final.json#pf-contract-consumer-graph",
+    "title": "Contract-consumer manifest, self-registering consumer graph, and blast-radius ranking",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: contract-consumer manifest, self-registering consumer graph, and blast-radius ranking",
+  "updated_at": "2026-07-04T08:05:35.370214+00:00",
+  "wave": "wave-2"
+}

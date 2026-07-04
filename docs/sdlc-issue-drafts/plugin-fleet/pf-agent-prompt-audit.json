@@ -1,0 +1,88 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-agent-prompt-audit.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium",
+    "Wave": "wave-2",
+    "Tier": "structural"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-agent-prompt-audit.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Agent-prompt quality: scored rubric over all agents, prompt-contract auditor, scheduled advisory re-grade",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+    "ref": "issue-map-final.json#pf-agent-prompt-audit",
+    "title": "Agent-prompt quality: scored rubric over all agents, prompt-contract auditor, scheduled advisory re-grade",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "exploration: agent-prompt quality audit \u2014 scored rubric, prompt-contract auditor, scheduled advisory re-grade",
+  "slug": "pf-agent-prompt-audit",
+  "tier": "structural",
+  "type": "exploration",
+  "wave": "wave-2",
+  "objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+  "absorbed_ids": [
+    "T11-F4-2",
+    "S-37",
+    "T11-F5-2",
+    "X-codex-14"
+  ],
+  "absorbed": [
+    {
+      "id": "T11-F4-2",
+      "role": "primary",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json"
+    },
+    {
+      "id": "S-37",
+      "role": "dedup-merged",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json"
+    },
+    {
+      "id": "T11-F5-2",
+      "role": "facet",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json"
+    },
+    {
+      "id": "X-codex-14",
+      "role": "facet",
+      "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json"
+    }
+  ],
+  "executor_profile": {
+    "model": "opus",
+    "effort": "high",
+    "backend": "inline",
+    "external_llm": "second-opinion",
+    "justification": "Adversarial prompt-quality judgment across 34 agents; advisory external grade explicitly in scope and reconciled by Claude per {#external-engines-never-gatekeepers} and {#external-engine-chaperone-dispatch}."
+  },
+  "updated_at": "2026-07-04T00:00:00.000000+00:00",
+  "created_issue_number": 464,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/464"
+}

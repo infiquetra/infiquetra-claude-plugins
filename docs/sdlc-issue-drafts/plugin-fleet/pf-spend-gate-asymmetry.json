@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T12-F4-3",
+    "T12-F1-3",
+    "T12-F3-6",
+    "T12-F5-3"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:51:30.119606+00:00",
+  "created_issue_number": 367,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/367",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-gate-asymmetry.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical extension of an existing ordering primitive (execution_spec.py MODELS/EFFORTS + segment_units merge) following established loud-fail validate() patterns; no architectural judgment or adversarial review required.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make tier+effort a first-class priced resolvable lever",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-gate-asymmetry.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Slug pf-spend-gate-asymmetry consolidates four survivor facets from the 2026-07-03 plugin-fleet ideation round (theme T12, spend-approval-asymmetry / recommendation-quality / lever-placement axes): a shared spend_delta(old,new) classifier deriving silent-cheap/ask-expensive tier ordering (T12-F4-3, primary), a mandatory 'worth it, because...' + named cheaper-fallback field on every above-baseline tier row (T12-F1-3), a relative one-notch-cheaper/dearer override lever in place of an absolute tier re-pick (T12-F3-6), and an optional per-repo .saga/spend-authority.json delegation-of-authority matrix with a safe absent-matrix default (T12-F5-3). All four reuse the existing ordered MODELS/EFFORTS ladder in plugins/saga/scripts/execution_spec.py that segment_units() already trusts.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T12.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T12.json",
+    "title": "Spend-delta machinery: silent-cheap/ask-expensive classifier, worth-it receipts, relative lever, and spend authority",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: spend-delta machinery \u2014 silent-cheap/ask-expensive classifier, worth-it receipts, relative lever, and spend authority",
+  "updated_at": "2026-07-04T07:51:35.610194+00:00",
+  "wave": "wave-1"
+}

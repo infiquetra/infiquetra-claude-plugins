@@ -1,0 +1,89 @@
+{
+  "absorbed_ids": [
+    "T12-F4-5",
+    "T12-F5-8",
+    "T12-F2-8",
+    "T12-F1-8",
+    "H-F6-1",
+    "T12-F5-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:02:13.628887+00:00",
+  "created_issue_number": 402,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/402",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-observability-reports.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "offload",
+    "justification": "the report/aggregation facets here (estimate rendering, receipt counterfactual arithmetic, ledger aggregation, golden-fixture summaries) are mechanical work over a fixed, already-existing schema (`outcome_costs.py`'s rollup) \u2014 bounded transforms, not open-ended design judgment. The `/retro` tier-efficacy pass and shadow-audit report add a small amount of evidence-classification logic but stay within a fixed enum (sufficient/insufficient, downgrade/no-change), which keeps the whole issue at sonnet/high rather than requiring an opus tier. Per this repo's model-tiering guidance, offload to an external engine is permitted for this work-shape (mechanical, verify-apply-test chaperone pattern), consistent with `{#external-engine-chaperone-dispatch}`. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Build the fleet telemetry and ledger substrate",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-observability-reports.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Ideation issue-map slug pf-spend-observability-reports, absorbing T12-F4-5 (estimate-then-reconcile), T12-F5-8 (itemized receipt with cheap-fallback counterfactual), T12-F2-8 (spend retro over leaf-produced ledgers), T12-F1-8 (/retro tier-efficacy pass), T12-F5-7 (Kelly-sized tier recommender), and H-F6-1 (tier shadow audit via sampled counterfactual replay). Objective: build the fleet telemetry and ledger substrate, wave-2, tier structural.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T12.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T12.json#T12-F4-5,T12-F5-8,T12-F2-8,T12-F1-8,T12-F5-7 + docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T3.json#H-F6-1",
+    "title": "Spend observability on the ledger: estimate-reconcile, itemized receipts with counterfactuals, spend retro, tier-efficacy and shadow-audit evidence",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement: spend observability on the ledger \u2014 estimate-reconcile, itemized receipts, spend retro, tier-efficacy and shadow-audit evidence",
+  "updated_at": "2026-07-04T08:24:28.766819+00:00"
+}

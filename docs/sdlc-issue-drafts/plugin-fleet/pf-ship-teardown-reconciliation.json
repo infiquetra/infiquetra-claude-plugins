@@ -1,0 +1,98 @@
+{
+  "absorbed_ids": [
+    "G-hybrids-3",
+    "T7-F5-2",
+    "T7-F4-7",
+    "T7-F2-2"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:45:30.861649+00:00",
+  "created_issue_number": 347,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/347",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ship-teardown-reconciliation.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Well-bounded mechanical capability (registration hook, derived-on-read reconciliation count, immutable receipt writer/reader, reclaim subcommand reusing existing outcome_worktrees machinery) with no ambiguous design judgment beyond what /plan resolves; sonnet at high effort matches the fleet's tiering guidance for structural-but-mechanical work. No external-LLM involvement -- purely internal saga-script surface, no generator/advisory-reviewer role applicable.",
+    "model": "sonnet"
+  },
+  "grounding_references": [
+    "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:86-88",
+    "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json",
+    "plugins/saga/scripts/outcome_worktrees.py:141",
+    "plugins/saga/scripts/outcome_worktrees.py:254",
+    "plugins/saga/scripts/outcome_worktrees.py:297",
+    "plugins/team-execution/skills/team-execution/SKILL.md:403",
+    "docs/engineering-journal/DECISIONS.md:1950"
+  ],
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Automate the ship ceremony end-to-end",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "plugin-fleet",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ship-teardown-reconciliation.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Ship ends in teardown: opened-resource manifest registration hook (branch, worktree, background session, scratch, draft PR) + ship blocks on non-zero closing count + immutable ship receipt + a reclaim subcommand reusing outcome_worktrees teardown. Absorbs G-hybrids-3 (primary, teardown as the ceremony's terminal exit condition), T7-F5-2 (facet, closing-count reconciliation), T7-F4-7 (facet, immutable receipt), T7-F2-2 (facet, idle-triggered reclaim subcommand).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/c23d3bf9-9081-4727-8e0d-140ebc73f63f/scratchpad/ideation/issue-map/issue-map-final.json",
+    "ref": "issue-map-final.json#pf-ship-teardown-reconciliation",
+    "title": "Ship ends in teardown: opened-resource manifest, closing-count reconciliation, immutable ship receipt, idle worktree reclamation",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: ship ends in teardown \u2014 opened-resource manifest, closing-count reconciliation, immutable ship receipt, idle worktree reclamation",
+  "updated_at": "2026-07-04T08:20:02.310741+00:00",
+  "wave": "wave-1"
+}

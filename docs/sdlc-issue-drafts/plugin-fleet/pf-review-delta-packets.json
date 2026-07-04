@@ -1,0 +1,84 @@
+{
+  "absorbed_ids": [
+    "T4-F2-4"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:49:51.894397+00:00",
+  "created_issue_number": 361,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/361",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-review-delta-packets.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make cache economics an engineered, measured win",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make cache economics an engineered, measured win",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-review-delta-packets.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Stop re-reading the whole diff every review round -- hand reviewers a derived delta packet via typed artifact pointer. Round N>=2 reviewers receive a delta pointer, not the full diff; the delta artifact round-trips.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json",
+    "ref": "T4-F2-4",
+    "title": "Stop re-reading the whole diff every review round -- hand reviewers a derived delta packet via typed artifact pointer",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: review-round delta packets -- typed artifact pointer instead of cold-read",
+  "updated_at": "2026-07-04T07:49:57.014471+00:00",
+  "wave": "wave-1"
+}

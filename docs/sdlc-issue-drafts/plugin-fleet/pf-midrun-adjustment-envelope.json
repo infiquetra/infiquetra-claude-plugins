@@ -1,0 +1,92 @@
+{
+  "absorbed_ids": [
+    "T6-F4-6",
+    "T6-F2-4",
+    "T6-F3-3",
+    "T6-F5-8",
+    "S-31",
+    "H-F2-1"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:52:49.759521+00:00",
+  "created_issue_number": 372,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/372",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-midrun-adjustment-envelope.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "xhigh",
+    "external_llm": "none",
+    "justification": "Sonnet at xhigh effort suffices because the work is schema-and-wiring shaped against existing poll boundaries rather than open-ended judgment work; team-execution backend is warranted because the four writers span three subsystems (/outcome, /work, team-execution, mission-control) and benefit from reviewer consensus on the shared envelope schema before any writer is wired in. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-midrun-adjustment-envelope.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Mid-run operator control surface: one polled adjustment-envelope file carrying quiesce, plan-declared pause points, andon-cord halt, and act-log-notify for reversibles",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map/issue-map-final.json",
+    "ref": "slug: pf-midrun-adjustment-envelope",
+    "title": "Mid-run operator control surface: adjustment envelope",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: mid-run operator adjustment envelope (quiesce, pause points, andon-cord, act-log-notify)",
+  "updated_at": "2026-07-04T08:21:15.713567+00:00",
+  "wave": "wave-1"
+}

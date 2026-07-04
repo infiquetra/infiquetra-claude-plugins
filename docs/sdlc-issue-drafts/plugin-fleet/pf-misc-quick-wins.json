@@ -1,0 +1,94 @@
+{
+  "absorbed_ideas": [
+    "S-6",
+    "S-11",
+    "S-16"
+  ],
+  "absorbed_ids": [
+    "S-6",
+    "S-11",
+    "S-16"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:13:07.479751+00:00",
+  "created_issue_number": 436,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/436",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-misc-quick-wins.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "low",
+    "external_llm": "none",
+    "justification": "Three mechanical, bounded changes against existing documented contracts (ranking over already-extracted skeletons, a scaffold template addition, a decision-doc write-up); no architectural ambiguity requiring elevated model or effort.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Expand saga+deploy capability breadth (misc/quick-wins)",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Expand saga+deploy capability breadth (misc/quick-wins)",
+    "Technical Risk": "low",
+    "Tier": "quick-win",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-misc-quick-wins.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Misc quick wins: resume relevance ranking, scaffold gitignore for saga scratch, headless AWS SSO recommendation. Absorbed ideas S-6, S-11, S-16 (all verdict survive).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json#S-6,S-11,S-16",
+    "title": "Misc quick wins: resume relevance ranking, scaffold gitignore for saga scratch, headless AWS SSO recommendation",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "quick-win",
+  "title": "enhancement: misc quick wins \u2014 resume relevance ranking, scaffold gitignore, headless AWS SSO recommendation",
+  "updated_at": "2026-07-04T08:13:14.742678+00:00",
+  "wave": "wave-3"
+}

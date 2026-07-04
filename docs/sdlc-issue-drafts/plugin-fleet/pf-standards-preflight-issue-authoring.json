@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T9-F3-1",
+    "S-34",
+    "T9-F4-1"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:04:16.836146+00:00",
+  "created_issue_number": 409,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/409",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-standards-preflight-issue-authoring.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Bounded, mechanical injection-point wiring (new script, two call-site edits into existing skill flows, one validator extension, plus index-resolution/anchor-surfacing tests) over already-structured inputs (llms.txt, DECISIONS.md headings) rather than novel design or adversarial judgment; sonnet/high matches the fleet's own work-shape heuristic for bounded mechanical transforms with real cross-file correctness risk. No external-LLM chaperone dispatch warranted.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Enforce context-library standards at authoring time",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Enforce context-library standards at authoring time",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-standards-preflight-issue-authoring.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Merged mission-control standards_preflight.py + wire-in to issues/SKILL.md (+ saga:handoff) that whole-injects llms.txt and surfaces any binding DECISION whose revisit-when the draft trips.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json#T9-F3-1,T9-F4-1;docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json#S-34",
+    "title": "Standards preflight at issue-authoring time (mission-control:issue + saga:handoff)",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: standards preflight at issue-authoring time (mission-control:issue + saga:handoff)",
+  "updated_at": "2026-07-04T08:04:23.450405+00:00",
+  "wave": "wave-2"
+}

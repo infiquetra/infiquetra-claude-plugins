@@ -1,0 +1,64 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-zero-token-fire-drill.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-zero-token-fire-drill.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Zero-token fire drill: run one canonical lifecycle loop entirely on the $0 registry entry and publish the irreducibility map. Absorbed idea H-F6-3 (theme T2, frame F6, axis budget-zero, verdict survive).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json#H-F6-3",
+    "title": "Zero-token fire drill: run one canonical lifecycle loop entirely on the $0 registry entry and publish the irreducibility map",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "exploration: zero-token fire drill \u2014 canonical lifecycle loop on the $0 registry entry",
+  "updated_at": "2026-07-03T00:00:00.000000+00:00",
+  "absorbed_ideas": [
+    "H-F6-3"
+  ],
+  "wave": "wave-2",
+  "tier": "structural",
+  "objective": "Stand up the external-engine offload lane",
+  "executor_profile": {
+    "model": "sonnet",
+    "effort": "medium",
+    "backend": "inline",
+    "external_llm": "offload",
+    "justification": "Evidence-gathering fire drill against an existing, already-designed chaperone/registry contract, not novel architecture; no ambiguous design decision requiring opus/xhigh."
+  },
+  "absorbed_ids": [
+    "H-F6-3"
+  ],
+  "created_issue_number": 468,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/468"
+}

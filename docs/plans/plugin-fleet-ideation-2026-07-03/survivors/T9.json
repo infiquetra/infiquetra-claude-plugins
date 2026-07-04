@@ -1,0 +1,480 @@
+[
+  {
+    "id": "T9-F1-1",
+    "theme": "T9", "frame": "F1", "axis": "injection-points",
+    "title": "Standards preflight injected into mission-control:issue drafting",
+    "tier_guess": "quick-win",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-1, which is the richer injection-at-creation candidate (whole-injects llms.txt AND surfaces the binding-DECISION revisit-when the draft trips, with concrete file:line basis). F1-1 is the narrower issue-only subset.",
+    "kept_duplicate_of": "T9-F3-1",
+    "tier_tag": "quick-win"
+  },
+  {
+    "id": "T9-F1-2",
+    "theme": "T9", "frame": "F1", "axis": "injection-points",
+    "title": "Archetype-scoped standards lens in saga:plan",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate: the on-demand per-topic README load keyed off derived context is exactly the resolver kept as T9-F4-7, and the plan-injection surface is covered by T9-F3-1. No distinct artifact beyond those two.",
+    "kept_duplicate_of": "T9-F4-7",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F1-3",
+    "theme": "T9", "frame": "F1", "axis": "consumption-mechanics",
+    "title": "Fleet-local self-describing standards index (plugins-repo llms.txt)",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged /llms.txt (or standards-index.md) at plugins-repo root mapping each of 8 plugins to authority-tiered obligations + context-library anchors, plus a context_census-style CI --check; verified red-then-green by adding an unindexed plugin and watching the census fail."
+  },
+  {
+    "id": "T9-F1-5",
+    "theme": "T9", "frame": "F1", "axis": "checkable-split",
+    "title": "Three-way checkable classification field in the standards schema",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F4-3, which carries the same machine|judgment|advisory enum as a self-describing standards-manifest with an explicit locus pointer and two routing consumers (CI + review-lens menu). F1-5 is the same split bolted onto check_docs section-contracts; F4-3 is the stronger, self-extending form.",
+    "kept_duplicate_of": "T9-F4-3",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F1-6",
+    "theme": "T9", "frame": "F1", "axis": "enforcement-drift-guarding",
+    "title": "Make mermaid render a non-opt-in CI gate (close the 13-diagram blind spot)",
+    "tier_guess": "quick-win",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged check_docs.py fast static mermaid pre-parse wired always-on in CI (heavy mmdc render kept nightly) + a mirrored guard in plugins-repo CI; verified by a deliberately broken diagram failing the default CI path."
+  },
+  {
+    "id": "T9-F1-7",
+    "theme": "T9", "frame": "F1", "axis": "enforcement-drift-guarding",
+    "title": "Pagination-exhaustion assertion for mission-control list fetches",
+    "tier_guess": "quick-win",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged paginate-or-raise helper used across mission-control board/flow/metrics scripts that hard-errors when a page boundary is hit without hasNextPage==false; verified by a mocked >200-item response test asserting the raise instead of a silent 200-slice."
+  },
+  {
+    "id": "T9-F1-8",
+    "theme": "T9", "frame": "F1", "axis": "enforcement-drift-guarding",
+    "title": "Live-vs-assumed project field/option schema drift guard",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F2-6, which derives the board-schema snapshot from the live Projects API (board_census.py mirroring context_census) and diffs it in CI — a superset of F1-8's vendored-snapshot drift check, and it also folds the pagination fix.",
+    "kept_duplicate_of": "T9-F2-6",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F1-9",
+    "theme": "T9", "frame": "F1", "axis": "conflict-surfacing",
+    "title": "Authority-model stop-and-surface enforced inside saga/team-execution flows",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-8, the stop-and-surface conflict primitive — F3-8 has the stronger grounding (explicitly engages {#external-engines-never-gatekeepers} with reasoning about Claude-as-verifier) and is fed by the authority resolver (F3-4).",
+    "kept_duplicate_of": "T9-F3-8",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F2-1",
+    "theme": "T9", "frame": "F2", "axis": "injection-points",
+    "title": "Auto-inject llms.txt at issue and plan creation (remove the go-read-the-standards step)",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-1 — same whole-inject-index-at-creation move across issue+plan; F3-1 adds the revisit-when surfacing and concrete file:line basis.",
+    "kept_duplicate_of": "T9-F3-1",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F2-2",
+    "theme": "T9", "frame": "F2", "axis": "checkable-split",
+    "title": "Standards manifest that splits machine-checkable from judgment-checkable so CI automates the checkable subset",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F4-3 (standards-manifest.json with checkable tag + locus + CI/review routing). Same artifact.",
+    "kept_duplicate_of": "T9-F4-3",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F2-3",
+    "theme": "T9", "frame": "F2", "axis": "enforcement-drift-guarding",
+    "title": "Validator-coverage census: fail CI when a doc artifact type ships unchecked",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-7 (checkable-surface census enumerating embedded content classes and failing on an unvalidated class). Same meta-guard; F3-7 is better argued and explicitly distinguishes itself from the direct-to-candidate mermaid fix.",
+    "kept_duplicate_of": "T9-F3-7",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F2-4",
+    "theme": "T9", "frame": "F2", "axis": "consumption-mechanics",
+    "title": "Machine-readable authority-model priority block so plugins stop re-interpreting prose",
+    "tier_guess": "quick-win",
+    "verdict": "kill",
+    "kill_reason": "Subset of T9-F3-4, which turns the same machine-readable priority order into an executable authority_resolve primitive (block + generated resolver + parity). F2-4 is just the block half.",
+    "kept_duplicate_of": "T9-F3-4",
+    "tier_tag": "quick-win"
+  },
+  {
+    "id": "T9-F2-5",
+    "theme": "T9", "frame": "F2", "axis": "conflict-surfacing",
+    "title": "Automated stop-and-surface: plan/issue flows halt when a draft contradicts an injected standard",
+    "tier_guess": "moonshot",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-8 (stop-and-surface conflict primitive halting plan/issue flows). F3-8 has the stronger binding-decision engagement; F2-5's derive-on-read framing is subsumed.",
+    "kept_duplicate_of": "T9-F3-8",
+    "tier_tag": "moonshot"
+  },
+  {
+    "id": "T9-F2-6",
+    "theme": "T9", "frame": "F2", "axis": "enforcement-drift-guarding",
+    "title": "Live-derived board schema census: remove hand-maintained field maps and the 200-item truncation",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged board_census.py (mirrors context_census) deriving a committed board-schema.json from the live Projects API fully-paginated + CI diff step + the >200 pagination fix; verified by CI failing on a mutated snapshot and the census returning >200 items on a 375-item board."
+  },
+  {
+    "id": "T9-F2-7",
+    "theme": "T9", "frame": "F2", "axis": "injection-points",
+    "title": "Generate review lenses from the standards manifest so hand-authored checklists can't drift",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-2 (generate review lenses from the register with a manifest↔lens parity test). Same copy-drift-closing generator; F3-2 keys off the binding-decision register directly.",
+    "kept_duplicate_of": "T9-F3-2",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F2-8",
+    "theme": "T9", "frame": "F2", "axis": "consumption-mechanics",
+    "title": "Topic-keyed on-demand standards resolver: remove the which-doc-do-I-need decision",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F4-7 (standards_resolve.py: topic-key → per-topic README, backed by a topic-key field in llms.txt + census check). Same resolver.",
+    "kept_duplicate_of": "T9-F4-7",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F3-1",
+    "theme": "T9", "frame": "F3", "axis": "injection-points",
+    "title": "Standards preflight at issue-authoring time, not just library CI",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged mission-control standards_preflight.py + wire-in to issues/SKILL.md (+ saga:handoff) that whole-injects llms.txt and surfaces any binding DECISION whose revisit-when the draft trips; verified by a test asserting a draft mentioning 'new plugin' surfaces the {#plugin-portfolio-groom-17-to-7} anchor and its revisit-when."
+  },
+  {
+    "id": "T9-F3-2",
+    "theme": "T9", "frame": "F3", "axis": "injection-points",
+    "title": "Review lenses auto-derived from the binding-decision register",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged adr-lenses.md (generated from DECISIONS.md binding anchors) + generator + parity test asserting binding-register anchors == derived lenses; verified by adding a stub binding anchor and watching the parity test go red until the lens is regenerated."
+  },
+  {
+    "id": "T9-F3-3",
+    "theme": "T9", "frame": "F3", "axis": "consumption-mechanics",
+    "title": "llms.json sidecar: make the index a machine-readable consumption contract",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged context_census.py llms.json emission (topic→byte-size→authority-rank→load-policy) + a shared standards_index reader in this repo; verified by census --check failing when llms.json drifts from llms.txt and the reader's whole-inject set staying under a 2KB budget test."
+  },
+  {
+    "id": "T9-F3-4",
+    "theme": "T9", "frame": "F3", "axis": "consumption-mechanics",
+    "title": "Authority-order as an executable resolver, not trusted prose",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged authority_resolve.py generated from authority-model.md's order + a golden-case table (repo-override-wins, library-standard-wins, plan-wins) + a parity check that resolver order == doc order; verified by the golden table passing and parity catching a reordered doc."
+  },
+  {
+    "id": "T9-F3-5",
+    "theme": "T9", "frame": "F3", "axis": "checkable-split",
+    "title": "check_journal.py — schema-validate the ADRs themselves",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged check_journal.py + CI wiring + engineering-journal frontmatter schema linting anchor-uniqueness, cited-anchor existence, and required revisit-when/commit-hash; verified by breaking one cross-ref anchor and dropping one revisit-when and watching CI go red."
+  },
+  {
+    "id": "T9-F3-6",
+    "theme": "T9", "frame": "F3", "axis": "checkable-split",
+    "title": "Enforcement-coverage classifier: surface binding-but-unenforced decisions",
+    "tier_guess": "quick-win",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged machine-readable enforcement-registry.yaml (each binding-register anchor tagged with its enforcer: check-id | review-lens | operator-judgment) + check_enforcement_coverage.py; verified by deleting a referenced check id and observing the machine-checkable anchor fail CI as unenforced-drift. (Tier corrected quick-win→structural: one-time triage of 8 register decisions plus a new meta-check.)"
+  },
+  {
+    "id": "T9-F3-7",
+    "theme": "T9", "frame": "F3", "axis": "enforcement-drift-guarding",
+    "title": "Checkable-surface census — guard the blind spot, not just mermaid",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged checkable_surface_census.py + committed checkable-surface.json enumerating every embedded content class (mermaid, json/yaml fences, bash snippets, cross-repo anchor refs) as validated|unvalidated + CI wire; verified by introducing a novel fenced-block class and watching the census flag it unvalidated-drift until validated or waived."
+  },
+  {
+    "id": "T9-F3-8",
+    "theme": "T9", "frame": "F3", "axis": "conflict-surfacing",
+    "title": "Stop-and-surface as an invokable primitive inside plugin flows",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged standards_conflict_check.py (fed by the authority resolver) + wire-ins to saga:plan and mission-control:issue that HALT for operator adjudication on a material conflict; verified by a seeded plan-vs-CLAUDE.md conflict halting instead of the agent silently picking a side. Correctly keeps Claude/CI as arbiter per {#external-engines-never-gatekeepers}."
+  },
+  {
+    "id": "T9-F4-1",
+    "theme": "T9", "frame": "F4", "axis": "injection-points",
+    "title": "Library-index-backed validation of the issue 'Context library links' field",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged resolver step in issues/SKILL.md + sdlc_manager.py validate_card_body that resolves entered 'Context library links' against the vendored llms.txt index; verified by a red/green test where a body citing a non-index path fails validation and one citing a real llms.txt anchor passes."
+  },
+  {
+    "id": "T9-F4-2",
+    "theme": "T9", "frame": "F4", "axis": "consumption-mechanics",
+    "title": "Vendor the 1.4KB llms.txt as a SHA-pinned artifact on the existing parity registry",
+    "tier_guess": "quick-win",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged plugins/mission-control/config/generated/llms.txt + .sha256, one VENDORED_ARTIFACTS tuple entry in check_issue_contract_parity.py, and a CLAUDE.md step-6 sync note; verified by the existing CI parity job failing on a one-byte edit and passing on the pinned copy."
+  },
+  {
+    "id": "T9-F4-3",
+    "theme": "T9", "frame": "F4", "axis": "checkable-split",
+    "title": "standards-manifest.json: classify each convention machine/judgment/advisory and route it",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged standards-manifest.json (per-convention checkability + locus) + schema + check_standards_manifest.py asserting every machine-checkable row maps to a live check, plus code-review loading judgment rows as a lens menu; verified by CI failing when a machine row points at a missing check."
+  },
+  {
+    "id": "T9-F4-4",
+    "theme": "T9", "frame": "F4", "axis": "enforcement-drift-guarding",
+    "title": "Check-coverage meta-guard: fail CI when a registered validator check is never invoked",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged check_coverage.py that discovers every check_* function a validator module registers and asserts each is reachable from the CI invocation (closing the --mermaid-dark class) + a manifest of expected-invoked checks + CI step; verified by a seeded defined-but-uninvoked check failing until wired into the CI command line."
+  },
+  {
+    "id": "T9-F4-5",
+    "theme": "T9", "frame": "F4", "axis": "enforcement-drift-guarding",
+    "title": "Pagination-completeness lint over GitHub list-call sites",
+    "tier_guess": "quick-win",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged check_pagination.py scanning plugin scripts AND agent docs for gh list calls lacking a cursor loop or explicit --limit guard (distinct locus from the runtime python helper: catches the unguarded CLI/agent-doc path) + a call-site registry + CI lint; verified by the guard failing on an unguarded `gh project item-list` in an agent doc."
+  },
+  {
+    "id": "T9-F4-6",
+    "theme": "T9", "frame": "F4", "axis": "conflict-surfacing",
+    "title": "authority-conflict: a shared stop-and-surface primitive for plugin flows",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-8 (shared stop-and-surface conflict primitive with HALT-not-degrade). Same helper and wiring; F3-8 has the sharper binding-decision engagement.",
+    "kept_duplicate_of": "T9-F3-8",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F4-7",
+    "theme": "T9", "frame": "F4", "axis": "consumption-mechanics",
+    "title": "Per-topic on-demand standards loader keyed off the llms.txt index",
+    "tier_guess": "quick-win",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged standards_resolve.py (hosted beside existing skills, no new plugin per {#plugin-portfolio-groom-17-to-7}) mapping work context → correct per-topic README via the vendored llms.txt index + skill references + tests; verified by a sample context mapping to the expected doc and failing on an index miss."
+  },
+  {
+    "id": "T9-F4-8",
+    "theme": "T9", "frame": "F4", "axis": "injection-points",
+    "title": "ADR-to-code-pattern review lens on the saga /code-review lens registry",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged adr-patterns lens + adr_patterns.json registry consumed by saga /code-review, checking touched files against ADR-derived pattern assertions (advisory, not blocking) — distinct from F3-2 (which generates lenses from anchors; this asserts code patterns); verified by /code-review emitting an advisory finding on a journal-touching diff missing a dated entry and staying silent when present."
+  },
+  {
+    "id": "T9-F5-1",
+    "theme": "T9", "frame": "F5", "axis": "injection-points",
+    "title": "Poka-yoke standards fixture at issue/plan creation",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-1 — same inject-index-at-creation move (poka-yoke framing adds no distinct artifact beyond the injection + present-block assertion F3-1 already covers).",
+    "kept_duplicate_of": "T9-F3-1",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F5-2",
+    "theme": "T9", "frame": "F5", "axis": "consumption-mechanics",
+    "title": "Gene-expression resolver: transcribe only the topic READMEs the work needs",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F4-7 (topic-detection → load only matching per-topic READMEs). Same lazy loader; F4-7 additionally engages the plugin-portfolio binding decision.",
+    "kept_duplicate_of": "T9-F4-7",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F5-3",
+    "theme": "T9", "frame": "F5", "axis": "consumption-mechanics",
+    "title": "Schema-registry ETags: llms.txt as a staleness-detecting manifest with per-topic hashes",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged context_census.py per-topic content hashes in llms.txt + a consumer-side If-None-Match staleness guard that flags any cached/quoted standard whose recorded hash no longer matches live; verified by mutating a topic README and asserting the guard flags the now-stale recorded hash. Distinct from F3-3 (load-policy) — this is the freshness guarantee."
+  },
+  {
+    "id": "T9-F5-4",
+    "theme": "T9", "frame": "F5", "axis": "checkable-split",
+    "title": "Cockpit-checklist enforcement classes: do-verify vs challenge-response vs advisory",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F4-3 — the aviation taxonomy maps 1:1 onto the same machine|judgment|advisory manifest field with check_docs routing. No distinct artifact.",
+    "kept_duplicate_of": "T9-F4-3",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F5-5",
+    "theme": "T9", "frame": "F5", "axis": "enforcement-drift-guarding",
+    "title": "Known-good-die burn-in: actually compile-render mermaid, don't lint its text",
+    "tier_guess": "quick-win",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F1-6 (close the mermaid render blind spot in check_docs CI). F1-6 is the stronger form — it keeps the heavy mmdc render as nightly and adds a fast always-on static gate plus a plugins-repo mirror, avoiding the per-block headless-Chrome cost that made the check opt-in in the first place.",
+    "kept_duplicate_of": "T9-F1-6",
+    "tier_tag": "quick-win"
+  },
+  {
+    "id": "T9-F5-6",
+    "theme": "T9", "frame": "F5", "axis": "enforcement-drift-guarding",
+    "title": "Consumer-driven contract test for the live project-board field schema",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F2-6 (live board-schema census + CI diff). The first:30/first:20 field-count-cap concern is subsumed by deriving the field set from live truth.",
+    "kept_duplicate_of": "T9-F2-6",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F5-7",
+    "theme": "T9", "frame": "F5", "axis": "enforcement-drift-guarding",
+    "title": "Kafka consumer-offset completeness guard against silent 200-item truncation",
+    "tier_guess": "quick-win",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F1-7 (shared paginate-to-exhaustion / raise-on-partial helper across mission-control list paths). Same runtime guard.",
+    "kept_duplicate_of": "T9-F1-7",
+    "tier_tag": "quick-win"
+  },
+  {
+    "id": "T9-F5-8",
+    "theme": "T9", "frame": "F5", "axis": "conflict-surfacing",
+    "title": "TCAS resolution advisory: authority-model stop-and-surface as a plugin primitive",
+    "tier_guess": "moonshot",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-8 (stop-and-surface conflict primitive halting for operator, quoting both sources). TCAS framing adds no distinct artifact.",
+    "kept_duplicate_of": "T9-F3-8",
+    "tier_tag": "moonshot"
+  },
+  {
+    "id": "T9-F6-1",
+    "theme": "T9", "frame": "F6", "axis": "injection-points",
+    "title": "Required-and-checked context-library field at issue creation (flip optional link to hard gate)",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F4-1 (resolve+validate the 'Context library links' field via validate_card_body). F6-1's mined kernel is the same machine-checked field; its 'card blocked pending standard' extreme is explicitly conceded impractical.",
+    "kept_duplicate_of": "T9-F4-1",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F6-2",
+    "theme": "T9", "frame": "F6", "axis": "injection-points",
+    "title": "One review lens per ADR (flip single general lens to 100 auto-attached standards lenses)",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-2 (generate review lenses from the register, auto-attach by match, parity-check the set). The topic→glob manifest is the same generated-lens artifact.",
+    "kept_duplicate_of": "T9-F3-2",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F6-3",
+    "theme": "T9", "frame": "F6", "axis": "consumption-mechanics",
+    "title": "Authority-ordered token-budgeted library loader (flip to always-inject-everything, mine the budgeted kernel)",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate: the whole-inject-index + on-demand per-topic load is T9-F4-7, and the authority-order tie-break is T9-F3-4. No distinct artifact beyond those two.",
+    "kept_duplicate_of": "T9-F4-7",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F6-4",
+    "theme": "T9", "frame": "F6", "axis": "consumption-mechanics",
+    "title": "Vendored SHA-pinned llms.txt snapshot with census-parity gate (flip to $0/offline, nothing-cached)",
+    "tier_guess": "quick-win",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F4-2 (vendor SHA-pinned llms.txt onto the check_issue_contract_parity mechanism). Same artifact; F4-2 is more precise (names the VENDORED_ARTIFACTS tuple, measured 1463 bytes).",
+    "kept_duplicate_of": "T9-F4-2",
+    "tier_tag": "quick-win"
+  },
+  {
+    "id": "T9-F6-5",
+    "theme": "T9", "frame": "F6", "axis": "checkable-split",
+    "title": "Three-lane standards manifest (flip to every-rule-machine-checkable, mine the honest split)",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F4-3 (machine|judgment|advisory manifest with each machine row naming a live enforcer). Same three-lane split.",
+    "kept_duplicate_of": "T9-F4-3",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F6-6",
+    "theme": "T9", "frame": "F6", "axis": "enforcement-drift-guarding",
+    "title": "Checker coverage-ledger (flip to check_docs validates EVERYTHING, mine the self-describing gap map)",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate of T9-F3-7 (artifact-type→validated? coverage census that fails on a new unvalidated type). Same self-describing coverage ledger.",
+    "kept_duplicate_of": "T9-F3-7",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "T9-F6-7",
+    "theme": "T9", "frame": "F6", "axis": "enforcement-drift-guarding",
+    "title": "Live-field + pagination-completeness HALT guard before any board write (flip to nothing-assumed)",
+    "tier_guess": "quick-win",
+    "verdict": "kill",
+    "kill_reason": "Duplicate: the field-existence guard is T9-F2-6 (live board-schema census) and the pagination-completeness assertion is T9-F1-7. F6-7 bundles both without a distinct third artifact.",
+    "kept_duplicate_of": "T9-F2-6",
+    "tier_tag": "quick-win"
+  },
+  {
+    "id": "T9-F6-8",
+    "theme": "T9", "frame": "F6", "axis": "conflict-surfacing",
+    "title": "Machine-readable authority precedence with deterministic detect + mandatory surface (flip to fully-autonomous resolution)",
+    "tier_guess": "structural",
+    "verdict": "kill",
+    "kill_reason": "Duplicate: the machine-readable precedence table is T9-F3-4 and the mandatory stop-and-surface is T9-F3-8. F6-8's show-resolved-vs-overruled UX is a presentation detail of the same two artifacts.",
+    "kept_duplicate_of": "T9-F3-8",
+    "tier_tag": "structural"
+  },
+  {
+    "id": "H-F3-8",
+    "theme": "T9", "frame": "F3", "axis": "locus",
+    "title": "Enforcement-locus inversion: the context library's CI audits the fleet's vendored mirrors, not the other way around",
+    "tier_guess": "structural",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged (cross-repo): a mirror-site registry file in this repo + a census-job extension in infiquetra-context-library CI that walks registered consumer mirror sites (vendored sdlc-schema.json, validate_card_body, vocab tuples), diffs them against source of truth, and files drift issues via mission-control; verified by seeding a drifted mirror and watching the library CI open a drift issue. Distinct locus: enforcement fires where authority lives, zero prompt-token cost."
+  },
+  {
+    "id": "X-codex-11",
+    "theme": "T9", "frame": "external-codex", "axis": "versioned standards enforcement",
+    "title": "Standards Lockfile",
+    "tier_guess": "sonnet/medium",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged standards.lock generated from the context library + standards_resolver.py + plan/review checks that cite the exact standards version used and require explicit expiring waivers for violations; verified by a stale/missing standards-version in a plan failing the check and a waiver with expiry passing. (tier_guess corrected sonnet/medium→structural: the score here is a backlog tier, not a model tier.)"
+  }
+]

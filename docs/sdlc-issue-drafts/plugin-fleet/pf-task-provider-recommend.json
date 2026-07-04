@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T2-F1-4",
+    "T2-F3-6",
+    "T2-F4-4",
+    "T2-F3-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:58:48.118721+00:00",
+  "created_issue_number": 391,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/391",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-task-provider-recommend.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "New-module-plus-tests work extending the existing engine_resolver.py resolution/registry shapes; sonnet/high fits mechanical-but-nontrivial design-within-precedent work bounded by binding decisions #283 and #318. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-task-provider-recommend.json",
+  "slug": "pf-task-provider-recommend",
+  "source_artifact": {
+    "branch": null,
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-cluster",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json",
+    "ref": "issue-map-final.json#pf-task-provider-recommend",
+    "title": "recommend() -- ranked task->provider routing with cheapest-sufficient ladder, prompting protocol, and egress policy",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: recommend() -- ranked task->provider routing with cheapest-sufficient ladder, prompting protocol, and egress policy",
+  "updated_at": "2026-07-04T07:58:53.338809+00:00"
+}

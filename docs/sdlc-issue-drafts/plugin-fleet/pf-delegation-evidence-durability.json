@@ -1,0 +1,86 @@
+{
+  "absorbed_ids": [
+    "T15-F3-8",
+    "T15-F4-8",
+    "T15-F1-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:00:25.134010+00:00",
+  "created_issue_number": 396,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/396",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-evidence-durability.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Bounded plumbing change (new storage path, a write-once snapshot step, a reconciliation query) against fully-specified dod_sketches with no open design ambiguity requiring opus-tier judgment; the one real design choice (audit-store layout/schema) is already pinned by the sibling receipt-contract capability's shape once that lands.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Build the fleet telemetry and ledger substrate",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-evidence-durability.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Delegation evidence survives teardown: durable audit store, write-once draft snapshots, /delegation-audit query",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json (ids: T15-F3-8 (primary), T15-F4-8, T15-F1-7 (facets))",
+    "title": "Delegation evidence survives teardown: durable audit store, write-once draft snapshots, /delegation-audit query",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: delegation evidence survives teardown \u2014 durable audit store, write-once draft snapshots, /delegation-audit query",
+  "updated_at": "2026-07-04T08:24:13.017489+00:00",
+  "wave": "wave-2"
+}

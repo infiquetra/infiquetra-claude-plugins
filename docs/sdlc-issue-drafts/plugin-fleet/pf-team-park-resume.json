@@ -1,0 +1,86 @@
+{
+  "absorbed_ids": [
+    "T6-F1-6"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:13:59.920508+00:00",
+  "created_issue_number": 437,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/437",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-team-park-resume.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "xhigh",
+    "external_llm": "none",
+    "justification": "Structural cross-cutting state-machine work: serializing and faithfully rehydrating in-flight segment/consensus/lease state across a session boundary, with a hard no-silent-loss / no-orphaned-worktree correctness bar and a reuse constraint against the existing board-saga reconciliation pattern (#295). Warrants xhigh effort at sonnet per plugins/saga/skills/plan/SKILL.md:296-300 tier heuristic; no external LLM needed per {#external-engines-never-gatekeepers}. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Expand saga+deploy capability breadth (misc/quick-wins)",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Expand saga+deploy capability breadth (misc/quick-wins)",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-team-park-resume.json",
+  "slug": "pf-team-park-resume",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "A parked team serializes enough state (roster, segment position, ledgers, worktree leases) that a later session resumes it without re-spawning from scratch; reconciles with board/saga state on resume.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T6.json",
+    "ref": "issue-map-final.json#pf-team-park-resume",
+    "title": "Park & resume a running team across sessions",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: park & resume a running team across sessions",
+  "updated_at": "2026-07-04T08:14:07.717915+00:00",
+  "wave": "wave-3"
+}

@@ -1,0 +1,384 @@
+{
+  "generated": "2026-07-03",
+  "source": "ideation/survivors + dedup-map final_ids",
+  "total_survivors": 50,
+  "objective_count": 10,
+  "objectives": [
+    {
+      "title": "Ship the run-start intent envelope for lifecycle autonomy",
+      "mission": "Give every autonomous run one committed intent/posture envelope \u2014 captured once at start from issue-handoff shape and answered remotely \u2014 so spend and autonomy gates read a single settled contract instead of five parallel per-theme ones.",
+      "wave": "wave-1",
+      "members": [
+        {
+          "id": "G-negative-space-1",
+          "title": "One fleet intent envelope: merge the five parallel per-theme posture envelopes into a single shared schema and a single run-start interview",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-hybrids-4",
+          "title": "One committed IntentEnvelope from issue handoff to every spend and autonomy gate",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T8-F1-3",
+          "title": "Canonical `intent` envelope: capture the mandated start-time posture questions once",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-negative-space-6",
+          "title": "Remote gate approval over the fleet's own channel: gates delivered and answered through redis-channel/Discord",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ]
+    },
+    {
+      "title": "Make tier and effort a first-class, priced, resolvable lever",
+      "mission": "Turn model/effort from scattered literals into a dispatch-time resolver with a declared effort field, spendable escrow, and an itemized cheaper-fallback receipt so every premium choice is visible, defaulted-cheap, and auditable.",
+      "wave": "wave-1",
+      "members": [
+        {
+          "id": "G-hybrids-5",
+          "title": "Dispatch-time tier resolver: single palette source, effort field, because+fallback, priors from the ledger",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T3-F4-3",
+          "title": "Declare-and-validate effort: in agent frontmatter now, ahead of the spawn-path consumer",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "X-codex-15",
+          "title": "Effort Escrow",
+          "tier_tag": "moonshot",
+          "moonshot": true
+        },
+        {
+          "id": "T12-F5-8",
+          "title": "Itemized spend receipt with a cheap-fallback counterfactual",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ]
+    },
+    {
+      "title": "Stand up the external-engine offload lane",
+      "mission": "Make non-Claude providers a governed first-class delegation surface \u2014 codex/agy plugin, $0 Ollama offload, break-even and proof-of-execution guards, injection containment, and bridge lie-detector tests \u2014 so offloadable work leaves Claude only when it is genuinely cheaper and safe.",
+      "wave": "wave-1",
+      "members": [
+        {
+          "id": "S-2",
+          "title": "Delegate-agents plugin (codex/agy as first-class delegation surface)",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T2-F2-8",
+          "title": "Break-even guard that halts an external dispatch that isn't actually cheaper than Claude",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T15-F2-2",
+          "title": "Provider-registry receipt guard: no bridge enters the router without proof-of-execution wiring",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-negative-space-5",
+          "title": "External-engine output is untrusted input: injection containment on advisory text crossing into gated flows",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "X-codex-5",
+          "title": "Bridge Lie-Detector Tests",
+          "tier_tag": "quick-win",
+          "moonshot": false
+        },
+        {
+          "id": "G-hybrids-9",
+          "title": "Tree-hash recon memoization with $0 local-model cache-miss filling",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-negative-space-4",
+          "title": "Route around the rate limit: 429 pressure sheds offloadable work to the $0/external provider lane instead of queueing it",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ]
+    },
+    {
+      "title": "Govern fleet concurrency and reclaim leaked resources",
+      "mission": "Put one admission-control governor (AIMD cap, backoff, shed, lease broker) plus liveness detection and derived-on-read reclamation in front of every spawn site so the 3-agent cap, rate limits, and orphaned worktrees stop killing fan-outs.",
+      "wave": "wave-1",
+      "members": [
+        {
+          "id": "G-hybrids-8",
+          "title": "Ambient AIMD admission control with a requeue ledger \u2014 cap, backoff, and shed as one governor",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "X-codex-3",
+          "title": "Rate-Limit Air Traffic Control",
+          "tier_tag": "moonshot",
+          "moonshot": true
+        },
+        {
+          "id": "G-hybrids-2",
+          "title": "TTL-lease broker: concurrency slots, worktree reclamation, and orphan write-fencing are one primitive",
+          "tier_tag": "moonshot",
+          "moonshot": true
+        },
+        {
+          "id": "G-hybrids-7",
+          "title": "fleet doctor: one derived-on-read audit of leaked resources, dead wiring, and receiptless delegations",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-hybrids-3",
+          "title": "/ship ends in Step B8: the guarded ship verb whose final gate is verified reclamation",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T6-F5-3",
+          "title": "Phi-accrual failure detector for subagent liveness",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T4-F6-6",
+          "title": "Ship KTD5 context-GC for resident teammates",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ]
+    },
+    {
+      "title": "Build the fleet telemetry and ledger substrate",
+      "mission": "Land one append-only ledger substrate under the pool's scattered ledgers, a run-fact spine for spend/cache/engine/delegation, a frozen before-baseline, live pulse telemetry, and a control-surface census so 'the fleet got better' is measured, not vibed.",
+      "wave": "wave-2",
+      "members": [
+        {
+          "id": "G-negative-space-2",
+          "title": "One append-only ledger substrate under the pool's 45 ledgers and 19 receipts",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-hybrids-1",
+          "title": "One leaf-produced run-fact ledger spine serving spend, cache, engine, and delegation telemetry",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-negative-space-10",
+          "title": "Baseline before the wave: freeze today's pain metrics so 'the fleet got better' is a measurement, not a vibe",
+          "tier_tag": "incremental",
+          "moonshot": false
+        },
+        {
+          "id": "S-8",
+          "title": "Pulse live-telemetry component",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-negative-space-9",
+          "title": "The fleet control-surface census: one generated, always-current map of every operator lever, gate, and envelope across all plugins",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ]
+    },
+    {
+      "title": "Enforce context-library standards at authoring time",
+      "mission": "Wire llms.txt-indexed standards into validation \u2014 on-demand per-topic loaders, ETag staleness manifests, a standards lockfile, ADR-to-code review lens, and context-library link validation \u2014 so standards are checked where issues and code are written.",
+      "wave": "wave-2",
+      "members": [
+        {
+          "id": "T9-F4-1",
+          "title": "Library-index-backed validation of the issue 'Context library links' field",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T9-F4-7",
+          "title": "Per-topic on-demand standards loader keyed off the llms.txt index",
+          "tier_tag": "quick-win",
+          "moonshot": false
+        },
+        {
+          "id": "T9-F4-8",
+          "title": "ADR-to-code-pattern review lens on the saga /code-review lens registry",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T9-F5-3",
+          "title": "Schema-registry ETags: llms.txt as a staleness-detecting manifest with per-topic hashes",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "X-codex-11",
+          "title": "Standards Lockfile",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ]
+    },
+    {
+      "title": "Establish single-source-of-truth for shared primitives",
+      "mission": "Name where cross-plugin primitives live and how a plugin imports them, extract the consensus kernel once, forbid hand-copied contract mirrors, and vendor contracts/standards/release surfaces on one parity registry so drift is structurally impossible.",
+      "wave": "wave-2",
+      "members": [
+        {
+          "id": "G-negative-space-3",
+          "title": "Name the import mechanism: where cross-plugin shared primitives actually live and how a plugin gets them",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-hybrids-6",
+          "title": "One vendored-artifact parity registry covering contracts, the standards index, and release surfaces",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "H-F1-8",
+          "title": "Forbid contract mirrors: consumers exec the source-of-truth validator, and a lint bans hand-copies",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-hybrids-10",
+          "title": "Portable consensus kernel: typed gated/advisory bit, worthiness entry gate, and a non-scoring external seat",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ]
+    },
+    {
+      "title": "Gate fleet integrity: agent files, prompts, and release surfaces",
+      "mission": "Add CI that lints agent frontmatter/prompt contracts, guards diff-aware release-surface bumps, collapses CHANGELOG format drift, runs an end-to-end lifecycle regression harness, and renders an in-or-out verdict on the dark half of the fleet.",
+      "wave": "wave-2",
+      "members": [
+        {
+          "id": "T11-F4-6",
+          "title": "Diff-aware release-surface bump guard: touched a plugin's behavior, must bump its surfaces",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T14-F2-4",
+          "title": "Collapse the four-format CHANGELOG heading parser to one canonical format",
+          "tier_tag": "quick-win",
+          "moonshot": false
+        },
+        {
+          "id": "X-codex-14",
+          "title": "Prompt Contract Auditor",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-negative-space-7",
+          "title": "Execute the skills: an end-to-end lifecycle regression harness on a fixture repo",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-negative-space-11",
+          "title": "The dark half of the fleet: an explicit in-or-out verdict and primitive-parity pass for deploy, home-lab-ops, unifi, and redis-channel",
+          "tier_tag": "incremental",
+          "moonshot": false
+        },
+        {
+          "id": "G-hybrids-13",
+          "title": "One agent-file CI lint: frontmatter schema, tier/effort fields, prompt rubric, and cache-prefix stability",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ]
+    },
+    {
+      "title": "Make the backlog and lifecycle self-improving",
+      "mission": "Give durable knowledge its own plumbing \u2014 a journal plugin, a shared predicate engine for revisit-when tripwires and basis-decay, a throughput-paced backlog admission governor, PR-thread mining, and folding this ideation program back into /ideate.",
+      "wave": "wave-3",
+      "members": [
+        {
+          "id": "S-3",
+          "title": "Engineering-journal plugin (capture/curate LEARNINGS/DECISIONS)",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-hybrids-11",
+          "title": "Checkable liveness for decisions AND backlog: revisit-when tripwires and basis-decay share one predicate engine",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-negative-space-8",
+          "title": "Backlog admission governor: pace issue materialization against measured execution throughput, so wave tagging is machinery instead of hope",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "G-negative-space-12",
+          "title": "Fold this ideation program's architecture back into /ideate: blind hunters, gap synthesis, basis contract, and capped batching as reusable skill machinery",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "T10-F3-2",
+          "title": "Mine merged PR review threads as an already-durable, already-cross-repo substrate",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ]
+    },
+    {
+      "title": "Expand saga and deploy capability breadth (misc / quick-wins)",
+      "mission": "Loosely coupled capability expansions that share no mechanism: multi-repo outcome arcs, resume session relevance ranking, and a deploy canary/verify/revert loop.",
+      "wave": "wave-3",
+      "members": [
+        {
+          "id": "S-4",
+          "title": "Saga multi-repo arc (one outcome DAG spanning repos)",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "S-6",
+          "title": "Resume session relevance ranking",
+          "tier_tag": "structural",
+          "moonshot": false
+        },
+        {
+          "id": "S-7",
+          "title": "Infiquetra deploy canary + verify + revert",
+          "tier_tag": "structural",
+          "moonshot": false
+        }
+      ],
+      "note": "Orphan cluster \u2014 these three fit no shared-mechanism Objective and are grouped as the misc/quick-wins bucket."
+    }
+  ],
+  "orphans": [
+    "S-4",
+    "S-6",
+    "S-7"
+  ]
+}

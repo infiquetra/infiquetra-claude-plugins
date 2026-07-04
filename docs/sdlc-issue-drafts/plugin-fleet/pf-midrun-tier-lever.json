@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T12-F2-7",
+    "T12-F4-6",
+    "T6-F2-3"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:51:01.516642+00:00",
+  "created_issue_number": 365,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/365",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-midrun-tier-lever.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical, deterministic work: new CLI command, config-file schema, clamp arithmetic reusing an existing ordered-ladder comparison, and a spec-patch/re-validate/re-emit path riding an existing seam. Matches plugins/saga/skills/plan/SKILL.md:296-300 work-shape heuristic for sonnet/medium.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make tier+effort a first-class priced resolvable lever",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make tier+effort a first-class priced resolvable lever",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-midrun-tier-lever.json",
+  "slug": "pf-midrun-tier-lever",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Merged /tier command + session-override file schema + resolver clamp + spec re-emit path gated via spend_delta.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/",
+    "ref": "issue-map-final.json#pf-midrun-tier-lever",
+    "title": "/tier mid-run lever: session ceiling plus re-emit from the canonical spec, no restart",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: /tier mid-run lever \u2014 session ceiling plus re-emit from the canonical spec, no restart",
+  "updated_at": "2026-07-04T07:51:07.573572+00:00",
+  "wave": "wave-1"
+}

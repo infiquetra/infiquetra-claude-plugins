@@ -1,0 +1,107 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "Direct; theme T10 (gap-negative-space, axis: backlog flow control); dod_sketch: merged PR \u2014 materialization-budget check in the Gate-F/handoff path holding drafts beyond a flow-metrics-derived open-WIP budget (operator override) + policy note; verified by a dry run over this backlog's wave plan showing the computed admission schedule.",
+      "id": "G-negative-space-8",
+      "role": "primary",
+      "title": "Backlog admission governor: pace issue materialization against measured execution throughput, so wave tagging is machinery instead of hope"
+    }
+  ],
+  "absorbed_ids": [
+    "G-negative-space-8"
+  ],
+  "approval_state": null,
+  "binding_decisions": [
+    "{#plugin-portfolio-groom-17-to-7}: plugin sprawl is an active concern \u2014 this issue extends mission-control's existing issue-materialization path, it does not add a new plugin",
+    "Grounding brief \u00a77 recurring-pain finding 3 (mission-control board/field drift \u2014 nonexistent fields assumed, hardcoded aliases): the admission check must read live board_wip/metrics_cycle_time output, not a cached or hardcoded WIP assumption",
+    "Grounding brief \u00a73 finding 5 / \u00a77 item 7 (docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:72-73): 'Promote ledger: 0 learnings ever promoted... the cross-repo learning loop exists but has never fired' \u2014 the named evidence that machinery-without-feedback-loop recurs in this fleet, which this issue's self-improving-backlog objective directly answers at the intake end",
+    "saga:handoff boundary contract (plugins/saga/skills/handoff/SKILL.md:11-27): saga owns the envelope and phase inference; mission-control owns prepared-draft body, readiness checks, and board placement \u2014 the admission-budget check belongs on the mission-control side of that boundary"
+  ],
+  "created_at": "2026-07-04T08:14:34.554887+00:00",
+  "created_issue_number": 439,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/439",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-backlog-admission-governor.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Bounded, mechanical addition to an existing, well-understood module (sdlc_manager.py's prepare/create path) consuming metrics functions (metrics_cycle_time, board_wip) that already exist and are already tested. Not an architectural judgment call on the order of the runtime concurrency governor (pf-adaptive-admission-governor), which justifies opus/high plus a second opinion because a wrong control-loop decision there fails silently as starvation or oscillation. A held-vs-admit threshold check with an audit record is deterministic and unit-testable without an external second opinion.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make the backlog and lifecycle self-improving",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make the backlog and lifecycle self-improving",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/mission-control/.claude-plugin/plugin.json version bump",
+    ".claude-plugin/marketplace.json updated for the version bump",
+    "plugins/mission-control/CHANGELOG.md entry describing the admission-budget check, held-state marker, dry-run mode, and operator override",
+    "plugin-metadata/version drift-guard tests re-run green",
+    "plugins/mission-control/skills/board/SKILL.md updated with the derived-ceiling section alongside the existing static WIP Limits Reference table",
+    "docs/engineering-journal/DECISIONS.md entry recording the admission-governor design and a revisit-when condition"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-backlog-admission-governor.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Backlog admission governor: pace issue materialization against measured execution throughput, so wave tagging is machinery instead of hope. Materialization-budget check in the Gate-F/handoff path holding drafts beyond a flow-metrics-derived open-WIP budget, with operator override and policy note.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map/issue-map-final.json",
+    "ref": "pf-backlog-admission-governor",
+    "title": "Backlog admission governor: pace materialization against measured execution throughput",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: backlog admission governor \u2014 pace issue materialization against measured execution throughput",
+  "updated_at": "2026-07-04T08:14:42.030155+00:00",
+  "wave": "wave-3"
+}

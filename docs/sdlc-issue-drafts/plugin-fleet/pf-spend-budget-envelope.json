@@ -1,0 +1,122 @@
+{
+  "absorbed_ids": [
+    "T12-F3-3",
+    "T12-F6-6",
+    "T12-F4-8",
+    "T3-F5-7",
+    "X-codex-15"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:51:16.245799+00:00",
+  "created_issue_number": 366,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/366",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-budget-envelope.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "mechanical, well-scoped data-modeling and gate-logic work against an existing, well-precedented pattern (`VERIFY_N_CAP`) \u2014 no architectural ambiguity requiring opus-level judgment, but high effort is warranted given four facets to reconcile into one coherent schema and the emit-time HALT's correctness-criticality (a false-negative here silently lets an over-budget run proceed, violating HALT-not-degrade).",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_map": {
+    "absorbed": [
+      {
+        "id": "T12-F3-3",
+        "role": "primary"
+      },
+      {
+        "id": "T12-F6-6",
+        "role": "facet"
+      },
+      {
+        "id": "T12-F4-8",
+        "role": "facet"
+      },
+      {
+        "id": "T3-F5-7",
+        "role": "facet"
+      },
+      {
+        "id": "X-codex-15",
+        "role": "facet"
+      }
+    ],
+    "executor_profile": {
+      "backend": "inline",
+      "effort": "high",
+      "external_llm": "none",
+      "justification": "mechanical, well-scoped data-modeling and gate-logic work against an existing, well-precedented pattern (VERIFY_N_CAP) -- no architectural ambiguity requiring opus-level judgment, but high effort is warranted given four facets to reconcile into one coherent schema and the emit-time HALT's correctness-criticality",
+      "model": "sonnet"
+    },
+    "objective": "Make tier+effort a first-class priced resolvable lever",
+    "slug": "pf-spend-budget-envelope",
+    "tier": "structural",
+    "type": "enhancement",
+    "wave": "wave-1"
+  },
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make tier+effort a first-class priced resolvable lever",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-budget-envelope.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T12-F3-3 (primary): 'Budget envelope: replace per-decision yes/no with a once-set spend threshold' -- the operator sets a run-scoped budget envelope once, spend-increasing choices below the remaining envelope proceed silently, and only a choice that would cross it asks. Merged with T12-F6-6 (spec-level cost_budget HALT mirroring VERIFY_N_CAP), T12-F4-8 (shared ordinal cost_weights.json + to_spend() helper), T3-F5-7 (Kubernetes ResourceQuota/QoS-class framing for a run-level ceiling), and X-codex-15 (effort escrow: per-unit spendable budget with refund/escalation semantics).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-merge",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T12.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T12.json",
+    "title": "Run-scoped spend budgets: threshold envelope, emit-time cost HALT, cost-weight table, and effort escrow",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement: run-scoped spend budgets \u2014 threshold envelope, emit-time cost HALT, cost-weight table, effort escrow",
+  "updated_at": "2026-07-04T07:51:21.371869+00:00"
+}

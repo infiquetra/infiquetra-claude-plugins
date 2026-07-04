@@ -1,0 +1,41 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet-objectives/pf-obj-self-improving.md",
+  "handoff_maturity": "deferred-context",
+  "issue_type": "objective",
+  "labels": [
+    "objective",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "improve-claude-plugins",
+    "Status": "Idea"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "operations",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet-objectives/pf-obj-self-improving.json",
+  "slug": "pf-obj-self-improving",
+  "source_context": {
+    "inferred_maturity": "deferred-context",
+    "kind": "ideation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map-final.json",
+    "ref": "issue-map-final.json objective 'Make the backlog and lifecycle self-improving'",
+    "title": "objective: Make the backlog and lifecycle self-improving",
+    "url": null
+  },
+  "state": "ready",
+  "status": "Idea",
+  "team": "jeff",
+  "title": "objective: Make the backlog and lifecycle self-improving",
+  "wave": "wave-3",
+  "updated_at": "2026-07-04T00:00:00.000000+00:00"
+}

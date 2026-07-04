@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T14-F2-7",
+    "T14-F1-5",
+    "T14-F6-6",
+    "T14-F4-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:05:44.220411+00:00",
+  "created_issue_number": 414,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/414",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-contract-coupling-policy.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Four bounded, mechanically verifiable facets (coupling manifest, compat-block field, parity-gate extension, guard-coverage census) with concrete acceptance fixtures already sketched by ideation absorption; structural plumbing over existing, well-understood code, not open-ended design or judgment work.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-contract-coupling-policy.json",
+  "slug": "pf-contract-coupling-policy",
+  "source_artifact": {
+    "branch": null,
+    "inferred_maturity": "requirements-ready",
+    "kind": "grounding-brief",
+    "path": "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md",
+    "ref": "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md",
+    "title": "Grounding Brief \u2014 Plugin-Fleet Ideation (Gate B)",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: machine-checkable contract-coupling policy (pin-vs-float, additive auto-adopt, guard-coverage census)",
+  "updated_at": "2026-07-04T08:05:51.300702+00:00",
+  "wave": "wave-2"
+}

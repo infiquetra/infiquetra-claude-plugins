@@ -1,0 +1,85 @@
+{
+  "absorbed_ids": [
+    "H-F2-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:15:08.192337+00:00",
+  "created_issue_number": 441,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/441",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-journal-query-join.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Bounded engineering task \u2014 a new local index/query tool over two well-known markdown file shapes already walked by promote_scan.py, plus two documented SKILL.md edits wiring a cheap consult step and a status note. No adversarial judgment, no novel architecture, no cross-repo write surface; sonnet/medium matches the fleet's own work-shape heuristic for a structural-tier issue of this bounded scope; no external-LLM chaperone dispatch is warranted per {#external-engines-never-gatekeepers} (#283) and {#external-engine-chaperone-dispatch} (#318).",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make the backlog and lifecycle self-improving",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make the backlog and lifecycle self-improving",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-journal-query-join.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "The promote loop never fired once \u2014 treat evidence push-and-curate architecture dead weight, not evidence needs more discipline. Invert direction: leave learnings written, make consumption query-time join \u2014 cheap journal_query.py greps/indexes every workspace repo's LEARNINGS.md/DECISIONS.md, wired as mandatory low-cost step in /plan and /investigate ('has any repo already learned about X?'). 0-promotions ledger stops failure promotion stops mechanism; genuinely transcendent clusters, if they ever appear, surface as repeated query hits \u2014 an observable trigger \u2014 rather than requiring a curation ceremony nobody performs. /promote demoted to optional archival pass (not deleted outright), also pays the plugin-portfolio consolidation dividend.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json#H-F2-8",
+    "title": "Cross-repo learning consumption query-time join at /plan and /investigate",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: journal_query.py \u2014 cross-repo learning consumption via query-time join at /plan and /investigate",
+  "updated_at": "2026-07-04T08:15:16.622150+00:00",
+  "wave": "wave-3"
+}

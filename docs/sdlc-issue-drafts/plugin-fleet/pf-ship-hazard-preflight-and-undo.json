@@ -1,0 +1,115 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "theme T7 (ship ceremony), frame F4, axis ceremony-edge-cases; dod_sketch: merged ceremony_hazards.py (hazard registry + detect() returning ordered warnings) consumed by the ship preflight; test with stacked-PR and auto-merge+delete-branch fixtures asserts the ceremony refuses/reorders rather than deleting a base branch.",
+      "id": "T7-F4-4",
+      "role": "primary",
+      "title": "ceremony_hazards.py \u2014 one shared preflight detector the ship verb consults"
+    },
+    {
+      "basis": "theme T7, frame F2, axis ceremony-edge-cases; dod_sketch: merged merge-watcher that records merge expectations at PR-open and matches them at merge time + a retired-flags doc; test simulates a mid-poll check flip and asserts the watcher surfaces the divergence rather than merging.",
+      "id": "T7-F2-6",
+      "role": "facet",
+      "title": "Retire raw `gh pr merge --auto/--delete-branch` for a deterministic saga merge-watcher"
+    },
+    {
+      "basis": "theme T7, frame F1, axis ship-verb; dod_sketch: merged rollback-manifest schema + /ship --undo branch; test kills the ceremony after PR-open and asserts --undo closes the PR and deletes the branch, leaving a clean tree.",
+      "id": "T7-F1-2",
+      "role": "facet",
+      "title": "Ship-ceremony rollback manifest: /ship --undo for partial-failure recovery"
+    }
+  ],
+  "absorbed_ids": [
+    "T7-F4-4",
+    "T7-F2-6",
+    "T7-F1-2"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:45:09.621968+00:00",
+  "created_issue_number": 346,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/346",
+  "depends_on": [
+    {
+      "reason": "Hazard detector, merge-watcher, and rollback manifest all attach to ship_ceremony.py's transition table, which that issue builds.",
+      "slug": "pf-ship-ceremony-primitive"
+    }
+  ],
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ship-hazard-preflight-and-undo.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Well-scoped safety layer over an existing (sibling-issue) primitive \u2014 three cooperating modules with concrete fixture-driven acceptance criteria and no open architectural question; high effort reflects the number of gh-behavior edge cases to fixture correctly, not any need for consensus review or an external engine.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Automate the ship ceremony end-to-end",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Automate the ship ceremony end-to-end",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ship-hazard-preflight-and-undo.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "ceremony_hazards.py registry + detect() consumed by the ship preflight; merge-watcher matching PR-open expectations at merge time; a rollback manifest enabling ship --undo.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json",
+    "ref": "issue-map-final.json#pf-ship-hazard-preflight-and-undo",
+    "title": "Ceremony hazard preflight, deterministic merge-watcher, and ship --undo rollback",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: ceremony hazard preflight, deterministic merge-watcher, and ship --undo rollback",
+  "updated_at": "2026-07-04T08:19:55.453445+00:00",
+  "wave": "wave-1"
+}

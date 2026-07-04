@@ -1,0 +1,84 @@
+{
+  "absorbed_ids": [
+    "T11-F5-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:10:33.559066+00:00",
+  "created_issue_number": 427,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/427",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-guard-mutation-canary.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "mechanical harness construction (throwaway-checkout copy, subprocess invocation of existing pytest/script targets, structured logging) against a well-scoped, already-enumerated set of four target guards. No architectural ambiguity or adversarial judgment call above what sonnet/medium routinely handles; escalation to opus is not warranted per the model/effort tiering guidance (judgment / design / adversarial review \u2192 opus; mechanical or deterministic work \u2192 sonnet or haiku).",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium",
+    "Tier": "moonshot",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-guard-mutation-canary.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Chaos-monkey mutation canary proving drift guards have teeth: tools/wiring_canary.py mutates one guarded invariant in a throwaway checkout, runs the target guard, and asserts red; scheduled workflow + canary log; each registered guard reports RED-as-expected and a weakened guard is flagged toothless.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json#T11-F5-8",
+    "ref": "issue-map-final.json#pf-guard-mutation-canary",
+    "title": "Chaos Monkey for drift guards: nightly mutation canary proving the guards have teeth",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: mutation canary proving drift guards have teeth",
+  "updated_at": "2026-07-04T08:10:41.364429+00:00"
+}

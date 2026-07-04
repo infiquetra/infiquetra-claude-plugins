@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T9-F3-6",
+    "T9-F4-3",
+    "T9-F4-4",
+    "X-codex-11"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:03:28.012356+00:00",
+  "created_issue_number": 406,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/406",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-enforcement-coverage-gates.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Bounded but cross-cutting coverage-detection machinery spanning saga/team-execution/mission-control script trees; a false-negative in the coverage guards would defeat the issue's purpose and a green test suite alone would not catch it, so team-execution consensus review is warranted over plain inline execution. No external-LLM chaperone dispatch needed, consistent with {#external-engines-never-gatekeepers}. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Enforce context-library standards at authoring time",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Enforce context-library standards at authoring time",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-enforcement-coverage-gates.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "<<ccr:8f0d5c1e2a47,string,310B>>",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T9.json#T9-F3-6,T9-F4-3,T9-F4-4,X-codex-11",
+    "title": "Enforcement coverage: classify every convention, guard binding-but-unenforced decisions, fail never-invoked checks",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: enforcement-coverage gates \u2014 classify every standard, guard binding-but-unenforced decisions, fail never-invoked checks",
+  "updated_at": "2026-07-04T08:03:34.796890+00:00",
+  "wave": "wave-2"
+}

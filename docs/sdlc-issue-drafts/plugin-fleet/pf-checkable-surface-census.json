@@ -1,0 +1,86 @@
+{
+  "absorbed_ids": [
+    "T9-F3-7",
+    "T9-F1-6"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:03:05.620215+00:00",
+  "created_issue_number": 405,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/405",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-checkable-surface-census.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical, quick-win scoped work (new static-analysis script + committed JSON artifact + one CI wiring step) with no architectural ambiguity; matches fleet tiering guidance for deterministic work.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Enforce context-library standards at authoring time",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Enforce context-library standards at authoring time",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-checkable-surface-census.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Checkable-surface census + always-on mermaid CI gate: absorbs T9-F3-7 (primary, checkable-surface census enumerating mermaid/json/yaml/bash/anchor-refs as validated|unvalidated) and T9-F1-6 (facet, non-opt-in mermaid CI gate closing the 13-broken-diagram blind spot).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/c23d3bf9-9081-4727-8e0d-140ebc73f63f/scratchpad/ideation/issue-map/issue-map-final.json",
+    "ref": "pf-checkable-surface-census",
+    "title": "Checkable-surface census + always-on mermaid CI gate",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "quick-win",
+  "title": "enhancement: checkable-surface census + always-on mermaid CI gate",
+  "updated_at": "2026-07-04T08:24:35.376749+00:00",
+  "wave": "wave-2"
+}

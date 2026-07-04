@@ -1,0 +1,113 @@
+{
+  "absorbed_ideas": [
+    {
+      "frame": "gap-hybrids",
+      "id": "G-hybrids-13",
+      "role": "primary",
+      "theme": "T11"
+    },
+    {
+      "frame": "F4",
+      "id": "T11-F4-1",
+      "role": "facet",
+      "theme": "T11"
+    },
+    {
+      "frame": "F3",
+      "id": "T11-F3-2",
+      "role": "facet",
+      "theme": "T11"
+    },
+    {
+      "frame": "F1",
+      "id": "T11-F1-2",
+      "role": "facet",
+      "theme": "T11"
+    }
+  ],
+  "absorbed_ids": [
+    "G-hybrids-13",
+    "T11-F4-1",
+    "T11-F3-2",
+    "T11-F1-2"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:08:29.478849+00:00",
+  "created_issue_number": 422,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/422",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-agent-file-ci-lint.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": " Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-agent-file-ci-lint.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "One agent-file CI lint consolidating G-hybrids-13 (primary), T11-F4-1, T11-F3-2, T11-F1-2: shared frontmatter parser, effort-presence warn-then-block, model-vs-role-class tier audit, least-privilege tool-scope floor for review-class agents, wired into ci.yml.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+    "ref": "issue-map-final.json#pf-agent-file-ci-lint",
+    "title": "One agent-file CI lint: frontmatter schema, tier/effort fields, role-class tier audit, tool-scope floor, cache-prefix stability",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: one agent-file CI lint \u2014 frontmatter schema, role-class tier audit, tool-scope floor, cache-prefix stability",
+  "updated_at": "2026-07-04T08:08:36.746532+00:00",
+  "wave": "wave-2"
+}

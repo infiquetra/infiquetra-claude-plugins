@@ -25,6 +25,26 @@
 
 ---
 
+## 2026-07-04
+
+### GitHub `updateProjectV2Field` clears ALL option selections — byte-identical options do not survive  {#projectv2-option-update-clears-selections}
+
+**Context.** Phase G of the plugin-fleet program upgraded the Operations board's Status vocabulary to Asgard's (add Idea/Shaping/Ready/Active/Verify, retire Todo/In Progress/Blocked). The mutation resubmitted the existing four options byte-identical (same name/color/description) with five appended, expecting name-matched preservation.
+**Evidence.** Gate G ledger (`docs/plans/plugin-fleet-ideation-2026-07-03/gate-g-ledger.jsonl`, `U1-status-options-add` → `ID-DRIFT-HALT`): all four pre-existing option IDs rotated and 26 of 27 cards lost their Status selection. Pre-mutation per-item snapshot enabled full restore.
+**Mechanism.** `updateProjectV2Field(singleSelectOptions: [...])` replaces the entire option list — every option is recreated with a new ID and existing item selections are orphaned, regardless of name/color/description equality. The flow SKILL's "field option IDs rotate on rename/recreate" warning materially understates this: *any* option-list update clears selections.
+**Fix (or queued).** Recovery reordered the sequence: finish ALL option-list mutations first, then write item selections exactly once against the final option set. Post-migration census verified (10 Idea/open, 17 Done/closed). Standing procedure: snapshot per-item field values before any single-select option-list mutation; treat selection restore as part of the mutation, not a contingency.
+**Generalizable rule.** A GitHub Projects single-select option list is immutable-in-place: every "edit" is a destroy-and-recreate of all options plus silent loss of every selection. Schema mutations and data writes must be strictly phased — schema converges first, data is written once, last.
+**Refs.** `plugins/mission-control/skills/flow/SKILL.md` hard-rules section (understated warning); Gate F mutation plan rev 2 (`docs/plans/2026-07-04-plugin-fleet-gate-f-mutation-plan.md`).
+
+### Three independent schemas governed one issue-creation path — each discovered only by consulting its executable source  {#three-schema-drift-issue-creation}
+
+**Context.** Materializing 138 plugin-fleet issues (Phase G) tripped three separate contract mismatches: (1) draft sidecars' `project_fields` were authored against a CAMPPS-shaped board while the repo maps to Operations (fields like Wave/Tier/Initiative don't exist there); (2) sidecar `readiness.passed: true` had been written by drafting agents, not computed — the real card validator failed 126/126 drafts at create time; (3) the prepared pipeline's `_TEAM_CHOICES` (`sdlc_manager.py:2850`) structurally rejects objective/exploration/context-update types for every allowed team, forcing a fallback create path for 21 of 138 issues.
+**Evidence.** Live `flow field-options` output vs sidecar `project_fields`; pilot `issue create-prepared` failure listing 7 missing H3 sections; local run of `sdlc_manager.validate_card_body_for_context` over all 126 drafts (126/126 fail → deterministic transformer → 126/126 pass with zero GitHub round-trips); Gate G ledger fallback-path entries.
+**Mechanism.** The board schema, the card-body contract (vendored home-lab `card_validator` shim: 8 required H3 sections + 3 more at high risk, checklist-formatted executable acceptance criteria, fenced verification), and the prepared-pipeline team/type matrix are three separately-owned contracts with no shared source; drafting agents reproduced remembered shapes of each, and nothing validated any of them before create time.
+**Fix (or queued).** Fixed forward: fields re-expressed against the live board (Gate F rev 2 decision table), drafts transformed against the imported real validator, non-actionable types via the plan's sanctioned fallback. The durable fixes are exactly wave-2 issues shipped by this program (standards-enforcement at authoring time, single-source contracts, board-live-schema checks).
+**Generalizable rule.** Before bulk mutation against any gated pipeline, import and run the pipeline's own validator locally over the full corpus first — schema assumptions written at drafting time are stale by construction, and an executable gate consulted offline converts N create-time failures into one cheap local loop.
+**Refs.** [[#projectv2-option-update-clears-selections]]; grounding brief §9 (board/field pagination bug class); `pf-standards-preflight-issue-authoring`, `pf-board-live-schema-pagination`, `pf-single-vocab-source` (now live as issues).
+
 ## 2026-07-03
 
 ### A null-tolerant filter plus a fixed threshold silently converts member failure into member assent  {#uphold-bias-nullable-quorum-293}

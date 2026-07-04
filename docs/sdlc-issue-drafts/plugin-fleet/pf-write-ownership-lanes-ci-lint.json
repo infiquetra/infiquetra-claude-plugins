@@ -1,0 +1,99 @@
+{
+  "absorbed_ids": [
+    "T7-F4-5"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:11:41.325912+00:00",
+  "created_issue_number": 431,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/431",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-write-ownership-lanes-ci-lint.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "mechanical, deterministic scope \u2014 a manifest schema, a static-scan lint script, one new CI step, and fixture-driven tests. No architectural judgment call or adversarial review is required beyond what a sonnet-tier implementer + the repo's existing code-review gate already covers; no justification for opus is needed.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "plugin_fleet": {
+    "absorbed": [
+      {
+        "id": "T7-F4-5",
+        "role": "primary",
+        "source": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json"
+      }
+    ],
+    "consolidation_rationale": "Self-contained CI artifact: an ownership-lanes manifest plus a lint that fails on cross-lane mutations; naturally a fleet-integrity gate rather than a ship-ceremony PR.",
+    "executor_profile": {
+      "backend": "inline",
+      "effort": "medium",
+      "external_llm": "none",
+      "justification": "Mechanical, deterministic scope (manifest schema + static-scan lint + one CI step + fixture tests); no architectural judgment beyond the repo's existing code-review gate.",
+      "model": "sonnet"
+    },
+    "objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "slug": "pf-write-ownership-lanes-ci-lint",
+    "tier": "structural",
+    "wave": "wave-2"
+  },
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": 1.0,
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-write-ownership-lanes-ci-lint.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T7-F4-5: Write-ownership lane manifest + marketplace-CI lint that enforces it. dod_sketch: Merged ownership-lanes manifest + check_ownership_lanes.py wired into the marketplace CI job; lint fails on a seeded cross-lane mutation (deploy script calling `gh issue`) and passes on the current tree.",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json",
+    "type": "ideation-survivor"
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement: write-ownership lane manifest + marketplace-CI lint across saga / mission-control / deploy",
+  "updated_at": "2026-07-04T08:11:48.916654+00:00"
+}

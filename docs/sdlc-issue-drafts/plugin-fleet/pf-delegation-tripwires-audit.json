@@ -1,0 +1,94 @@
+{
+  "absorbed_ids": [
+    "T15-F2-3",
+    "T15-F3-2",
+    "T15-F1-2",
+    "T15-F6-2",
+    "T15-F5-4"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:56:31.445160+00:00",
+  "created_issue_number": 384,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/384",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-tripwires-audit.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical, well-scoped hook/auditor wiring against an already-existing, already-tested classification function (classify_transcript); no architectural judgment call large enough to warrant opus. High effort reflects five coordinated facets that must land together without breaking the existing release-gate proof flow. Team-execution backend because this spans plugins/agy/ and likely plugins/team-execution/ or a new codex-bridge module, benefiting from validator-gated review across the split. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "dod_sketch for absorbed ids T15-F3-2, T15-F1-2, T15-F6-2, T15-F5-4 expired from the ideation-session compression cache before drafting; reconstructed from title, axis, and the sibling T15-F2-3 dod_sketch. /plan should re-derive the exact mechanism contracts."
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-tripwires-audit.json",
+  "slug": "pf-delegation-tripwires-audit",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T15-F2-3 (primary): Real-time fail-loud tripwire: PreToolUse hook kills the manual verify-agy-ran step. dod_sketch: Merged PR adds a PreToolUse delegation_tripwire_hook.py + delegation-active state file; verified by test_delegation_tripwire.py where a zero-engine-call Write blocks and a genuine agy run (prompt.txt only) passes.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-set",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json#T15-F2-3,T15-F3-2,T15-F1-2,T15-F6-2,T15-F5-4",
+    "title": "Runtime delegation tripwires: PreToolUse hook, Stop-hook transcript audit, live agy audit, codex auditor parity, two-signal acceptance",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: runtime delegation tripwires \u2014 PreToolUse hook, Stop-hook transcript audit, live agy audit, codex auditor parity, two-signal acceptance",
+  "updated_at": "2026-07-04T07:56:36.652204+00:00",
+  "wave": "wave-1"
+}

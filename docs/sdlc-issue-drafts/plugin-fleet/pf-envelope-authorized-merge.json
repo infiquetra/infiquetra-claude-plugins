@@ -1,0 +1,90 @@
+{
+  "absorbed_ids": [
+    "T7-F6-2"
+  ],
+  "approval_state": null,
+  "consolidation_rationale": "Kept alone: it crosses the never-autonomous-merge posture via the intake \u00a73 revisit condition and must be schedulable (and rejectable) independently of everything else; default stays GATE.",
+  "created_at": "2026-07-04T08:17:21.686362+00:00",
+  "created_issue_number": 449,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/449",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-envelope-authorized-merge.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "second-opinion",
+    "justification": "Crosses a binding autonomy decision; adversarial design judgment warrants Opus plus an advisory second opinion. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "opus"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan",
+    "moonshot"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "Executor profile recommends opus/high + second-opinion external LLM \u2014 confirm mission-control dispatch honors this override before scheduling.",
+      "Deploy-authorization companion issue not yet filed; this issue is merge-only by design (see Scope & Non-Goals)."
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-envelope-authorized-merge.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Merged AUTONOMOUS_UNDER_ENVELOPE write class + envelope-token check in reversibility_certificate + board-sync ledger schema; certificate test asserts merge DENIED with no token, AUTHORIZED with a valid token + all gates green, and re-DENIED after revocation, each authorized merge carrying the authorizing envelope id. Crosses the never-autonomous binding via the intake \u00a73 revisit; default stays GATE.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json",
+    "ref": "T7-F6-2",
+    "title": "Envelope-authorized merge in the /outcome autonomous allowlist",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "moonshot",
+  "title": "capability: envelope-authorized merge \u2014 AUTONOMOUS_UNDER_ENVELOPE write class with token check, revocation, and ledger attribution",
+  "updated_at": "2026-07-04T08:17:28.519651+00:00",
+  "wave": "wave-3"
+}

@@ -1,0 +1,41 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet-objectives/pf-obj-capability-breadth.md",
+  "handoff_maturity": "deferred-context",
+  "issue_type": "objective",
+  "labels": [
+    "objective",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "improve-claude-plugins",
+    "Status": "Idea"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "operations",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet-objectives/pf-obj-capability-breadth.json",
+  "slug": "pf-obj-capability-breadth",
+  "source_context": {
+    "inferred_maturity": "deferred-context",
+    "kind": "ideation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map-final.json",
+    "ref": "issue-map-final.json objective 'Expand saga+deploy capability breadth (misc/quick-wins)'",
+    "title": "objective: Expand saga+deploy capability breadth (misc/quick-wins)",
+    "url": null
+  },
+  "state": "ready",
+  "status": "Idea",
+  "team": "jeff",
+  "title": "objective: Expand saga+deploy capability breadth (misc/quick-wins)",
+  "wave": "wave-3",
+  "updated_at": "2026-07-04T00:00:00.000000+00:00"
+}

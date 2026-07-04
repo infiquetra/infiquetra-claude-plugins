@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T15-F2-1",
+    "T15-F1-1",
+    "T15-F2-2"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:56:09.866740+00:00",
+  "created_issue_number": 383,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/383",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-receipt-contract.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Bounded, mechanically-scoped contract-and-guard change against fully-specified dod_sketches; no open design ambiguity requiring opus-tier judgment.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-receipt-contract.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T15-F2-1 is the dedup keeper for eight receipt-contract variants; the runner_receipt hard-proof fields (pid/argv/exit/bytes/wall) and the registry-side receipt_emitter registration guard are the two halves -- emission and enforcement -- of the same contract PR.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json (ids: T15-F2-1 (primary), T15-F1-1, T15-F2-2 (facets))",
+    "title": "bridge_receipt.v1: one proof-of-execution contract every bridge emits, enforced at registration",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: bridge_receipt.v1 \u2014 one proof-of-execution contract every external-engine bridge emits, enforced at registration",
+  "type": "capability",
+  "updated_at": "2026-07-04T08:21:54.757965+00:00",
+  "wave": "wave-1"
+}

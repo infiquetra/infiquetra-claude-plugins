@@ -1,0 +1,89 @@
+{
+  "absorbed_ids": [
+    "T1-F3-8",
+    "T1-F6-7",
+    "T1-F5-1",
+    "S-26"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:59:45.326252+00:00",
+  "created_issue_number": 394,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/394",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-work-review-second-opinion.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "second-opinion",
+    "justification": "Scoped SKILL.md wiring against an already-understood control-flow shape (round-N gate, finding pipeline); advisory-only/non-gating design is already settled by the binding-decision register, so no opus-level judgment work is required.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-work-review-second-opinion.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Second-opinion triggers inside /work and reviews: stuck-signal offer, round-N finding adjudication, per-finding point-out. Absorbed T1-F3-8 (primary), T1-F6-7, T1-F5-1 (facets), S-26 (dedup-merged).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json",
+    "title": "Second-opinion triggers inside /work and reviews",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: second-opinion triggers inside /work and reviews",
+  "type": "enhancement",
+  "updated_at": "2026-07-04T07:59:52.104567+00:00",
+  "wave": "wave-1"
+}

@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T7-F5-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:00:01.916779+00:00",
+  "created_issue_number": 395,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/395",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-positive-handoff-ack.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical, well-scoped extension of two existing modules (handoff_envelope.py schema addition + deploy-side doc/ack step) with a clear test surface; binding decisions it must honor (gate-or-auto posture, derive-on-read status) are already settled elsewhere, not decided by this issue.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Automate the ship ceremony end-to-end",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-positive-handoff-ack.json",
+  "slug": "pf-positive-handoff-ack",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Aviation challenge-response/positive-handoff pattern applied to the saga <-> mission-control <-> deploy ownership boundary: the releasing plugin does not drop ownership until the receiving plugin explicitly acknowledges the transfer via an ack token, with the gate-or-auto merge/deploy posture captured once at intent time riding along in the handoff payload rather than being re-decided at the boundary.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/pool-final.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json#T7-F5-8",
+    "title": "Positive handoff protocol at the saga <-> mission-control <-> deploy boundary \u2014 no dropped batons",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: positive handoff protocol at the saga <-> mission-control <-> deploy boundary",
+  "updated_at": "2026-07-04T08:24:05.940337+00:00",
+  "wave": "wave-2"
+}

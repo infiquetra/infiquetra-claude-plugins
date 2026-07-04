@@ -1,0 +1,111 @@
+{
+  "absorbed": [
+    {
+      "id": "T1-F2-5",
+      "role": "primary",
+      "status": "superseded-by-shipped-work"
+    },
+    {
+      "id": "S-2",
+      "role": "facet",
+      "status": "superseded-by-shipped-work"
+    },
+    {
+      "id": "S-18",
+      "role": "dedup-merged",
+      "status": "superseded-by-shipped-work"
+    },
+    {
+      "id": "T15-F3-4",
+      "role": "facet",
+      "status": "open-deliverable"
+    }
+  ],
+  "absorbed_ids": [
+    "T1-F2-5",
+    "S-2",
+    "S-18",
+    "T15-F3-4"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:59:02.035922+00:00",
+  "created_issue_number": 392,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/392",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-team-engine-worker-slot.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "offload",
+    "justification": "Scoped, mechanical schema-plus-gating-check addition on top of an already-shipped chaperone-dispatch protocol; no new architecture or cross-cutting design decision, so sonnet/high matches this repo's mechanical/deterministic-work tiering rather than escalating to opus. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-team-engine-worker-slot.json",
+  "slug": "pf-team-engine-worker-slot",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T1-F2-5 (primary): activate deferred team-execution engine-worker slot. S-2 / S-18 (dedup-merged): delegate-agents plugin / use codex-agy in teams dynamic workflows. T15-F3-4 (facet): give team-execution's external-engine workers the same fail-loud invocation-proof discriminator agy already has. Grounding check found T1-F2-5/S-2/S-18 already shipped via PR #318/#319 (880b94c, merged 2026-07-02); only T15-F3-4's invocation-proof + not-counted-in-consensus discriminator remains open and is this issue's actual deliverable.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json, docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json, docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "title": "Activate the team-execution external-engine worker slot as the fleet's delegation surface for codex/agy",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: team-execution external-engine worker \u2014 fail-loud invocation-proof discriminator",
+  "updated_at": "2026-07-04T08:23:52.875028+00:00",
+  "wave": "wave-1"
+}

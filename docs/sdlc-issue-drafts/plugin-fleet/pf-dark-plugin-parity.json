@@ -1,0 +1,81 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-dark-plugin-parity.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Expand saga+deploy capability breadth (misc/quick-wins)",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-dark-plugin-parity.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "The dark half of the fleet: an explicit in-or-out verdict and primitive-parity pass for deploy, home-lab-ops, unifi, and redis-channel.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/OTHER.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/OTHER.json#G-negative-space-11",
+    "title": "The dark half of the fleet: in-or-out verdict and primitive-parity pass for deploy, home-lab-ops, unifi, redis-channel",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "exploration: the dark half of the fleet \u2014 in-or-out verdict and primitive-parity pass for deploy, home-lab-ops, unifi, redis-channel",
+  "updated_at": "2026-07-04T00:00:00.000000+00:00",
+  "slug": "pf-dark-plugin-parity",
+  "tier": "structural",
+  "wave": "wave-3",
+  "objective": "Expand saga+deploy capability breadth (misc/quick-wins)",
+  "absorbed": [
+    {
+      "id": "G-negative-space-11",
+      "role": "primary",
+      "theme": "NEW:dark-plugin-parity",
+      "frame": "gap-negative-space",
+      "basis": "First-principles: the tier lever, ledger, and guard primitives defined for saga/team-execution have never been evaluated against the four dark plugins (deploy, home-lab-ops, unifi, redis-channel); the fleet's coverage story is currently an accident of which plugins ideation focused on, not a recorded decision."
+    }
+  ],
+  "absorbed_ids": [
+    "G-negative-space-11"
+  ],
+  "binding_decisions_engaged": [
+    "{#plugin-portfolio-groom-17-to-7}",
+    "{#external-engines-never-gatekeepers}"
+  ],
+  "executor_profile": {
+    "model": "sonnet",
+    "effort": "medium",
+    "backend": "inline",
+    "external_llm": "second-opinion",
+    "justification": "Survey-and-record exploration (grep four plugins' skills/agents dirs, cross-reference three defined primitives, write verdict table) rather than novel architectural design; second-opinion pass guards against a wrongly-recorded out verdict leaving a plugin non-compliant with this repo's own CLAUDE.md sandboxing rule."
+  },
+  "release_surface_checklist": [],
+  "dod_sketch": "Decision/recommendation doc with per-plugin in-or-out verdicts per fleet primitive and a follow-up issue list for the ins.",
+  "ac_sketch": [
+    "every dark plugin has an explicit verdict per primitive",
+    "opt-outs carry a stated rationale"
+  ],
+  "created_issue_number": 469,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/469"
+}

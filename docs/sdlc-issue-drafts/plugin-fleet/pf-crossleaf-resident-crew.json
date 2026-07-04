@@ -1,0 +1,138 @@
+{
+  "absorbed": [
+    {
+      "basis": "DECISIONS.md:1970-1971 revisit-when: 'Named-teammate residency proves insufficient (revisit warm-pool / crew-pairing)'; grounding brief \u00a71 corrections item (h): /outcome leaf dispatch is a real decomposition path where each leaf currently spawns independently; segment boundary = plugin directory (KTD2, DECISIONS.md:1962).",
+      "basis_type": "direct",
+      "id": "T4-F2-6",
+      "role": "primary",
+      "title": "Stop each /outcome leaf from spawning its plugin-segment worker cold \u2014 cross-leaf resident crew"
+    },
+    {
+      "basis": "DECISIONS.md:1970-1971 revisit-when names crew-pairing directly; plugins/team-execution/skills/team-execution/references/consensus-protocol.md:57 'RE-ENGAGE the same named reviewer via SendMessage' is the existing re-engagement seam this facet makes explicit and identity-paired, not a new mechanism.",
+      "basis_type": "direct",
+      "id": "T4-F5-3",
+      "role": "facet",
+      "title": "Crew-pairing: multi-leg re-briefing so review/remediation cycles reuse the same worker+reviewer crew"
+    },
+    {
+      "basis": "DECISIONS.md:1970-1971 revisit-when; KTD2 (DECISIONS.md:1962) grounds segment=plugin-directory on 'Single monorepo; VECU's repo-change proxy never fires'; the doc-review addendum's added Unit.files field is the overlap-computation substrate. Crosses KTD2 directly, so explicitly gated: ships only if T4-F3-6's A/B benchmark shows flat plugin-directory residency underperforming its potential reuse.",
+      "basis_type": "direct",
+      "id": "T4-F3-3",
+      "role": "facet",
+      "title": "Crew-pairing context-overlap: reframe residency scheduling around a context-overlap graph over Unit.files, gated on benchmark evidence"
+    },
+    {
+      "basis": "operator statement 'decomposition tuned to either maximize cache reads or maximize throughput, operator asked which with explanation + recommendation' (docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json, id S-21); folded into this issue's registry/crew-pairing tradeoff framing rather than a standalone decision doc.",
+      "basis_type": "direct",
+      "id": "S-21",
+      "role": "dedup-merged",
+      "title": "Decomposition tuned for cache-reads vs throughput (which?)"
+    },
+    {
+      "basis": "operator statement 'group agent activity into same worker to maximize cache reads', constrained by {#worker-cache-scheduling} (docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json, id S-30); this issue's cross-leaf registry is the DAG-scoped generalization of that single-run idea.",
+      "basis_type": "direct",
+      "id": "S-30",
+      "role": "dedup-merged",
+      "title": "Group agent activity into same worker to maximize cache reads"
+    }
+  ],
+  "absorbed_ids": [
+    "T4-F2-6",
+    "T4-F5-3",
+    "T4-F3-3",
+    "S-21",
+    "S-30"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:14:16.901373+00:00",
+  "created_issue_number": 438,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/438",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-crossleaf-resident-crew.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "second-opinion",
+    "justification": "Crosses a binding decision through its own named revisit-when clause, and its gated facet additionally conditionally crosses that decision's segment-boundary default (KTD2); architectural judgment about residency semantics across DAG leaves and the paired-identity convention warrants Opus over Sonnet, plus an advisory second opinion on the registry/crew-pairing design before landing, given moonshot tier and the risk of silently re-deriving a settled decision instead of engaging its revisit-when as written. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "opus"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make cache economics an engineered, measured win",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make cache economics an engineered, measured win",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "Facet T4-F3-3 is explicitly gated on T4-F3-6 benchmark evidence; /plan should confirm evidence exists before scoping that facet, otherwise ship facets 1-2 only."
+    ]
+  },
+  "release_surface_checklist": [
+    "plugins/saga/.claude-plugin/plugin.json",
+    "plugins/team-execution/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/saga/CHANGELOG.md",
+    "plugins/team-execution/CHANGELOG.md",
+    "release-surface / version-metadata drift-guard tests",
+    "docs/engineering-journal/DECISIONS.md addendum(s) to {#worker-cache-scheduling}"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-crossleaf-resident-crew.json",
+  "slug": "pf-crossleaf-resident-crew",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Merges three absorbed ideation facets (T4-F2-6 primary, T4-F5-3 facet, T4-F3-3 facet, gated) from theme T4 into one change set that fires worker-cache-scheduling's own named revisit-when clause: a cross-leaf resident-crew registry surviving across the /outcome DAG's ready frontier, a crew-pairing paired-agent-id convention for multi-leg re-briefing threaded through team_emitter.py and consensus-protocol.md, and an explicitly gated context-overlap crew-pairing mode that ships only if the T4-F3-6 A/B benchmark shows plugin-directory residency underperforming.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json#T4-F2-6,T4-F5-3,T4-F3-3",
+    "title": "Cross-leaf resident crew and crew-pairing: warm workers across the /outcome DAG, evidence-gated overlap pairing",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "moonshot",
+  "title": "capability: cross-leaf resident crew and crew-pairing \u2014 warm workers across the /outcome DAG, evidence-gated overlap pairing",
+  "updated_at": "2026-07-04T08:14:25.421749+00:00",
+  "wave": "wave-3"
+}

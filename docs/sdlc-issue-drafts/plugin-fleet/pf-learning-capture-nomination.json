@@ -1,0 +1,88 @@
+{
+  "absorbed_ids": [
+    "T10-F6-2",
+    "T10-F6-7",
+    "T10-F4-6",
+    "S-3"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:15:25.611922+00:00",
+  "created_issue_number": 442,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/442",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-learning-capture-nomination.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Three bounded, mostly-mechanical extensions to existing, well-understood scripts (journal_triggers.py detection surface, promote_scan.py CLI/watermark plumbing, check_docs.py existing lint pattern) plus scheduled-routine wiring \u2014 no novel architecture or adversarial judgment beyond already-settled binding decisions; matches fleet's quick-win/structural heuristic, no external-LLM chaperone dispatch warranted.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make the backlog and lifecycle self-improving",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make the backlog and lifecycle self-improving",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-learning-capture-nomination.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "journal_triggers.py stack-agnostic-without-marker check + capture rule; promote_scan --nominate-only watermarked nightly mode feeding PROMOTION-CANDIDATES.md; context-library check_docs.py backlink resolver.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json#T10-F6-2,T10-F6-7,T10-F4-6;seeds.json#S-3",
+    "title": "Capture-time transcendence marking, nightly nominate-only accumulation, promote-ledger backlink guard",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: capture-time transcendence marking, nightly nominate-only accumulation, promote-ledger backlink guard",
+  "updated_at": "2026-07-04T08:15:33.157992+00:00",
+  "wave": "wave-3"
+}

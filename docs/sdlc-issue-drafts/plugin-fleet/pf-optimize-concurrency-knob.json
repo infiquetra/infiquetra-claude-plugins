@@ -1,0 +1,89 @@
+{
+  "absorbed_ids": [
+    "T13-F1-5",
+    "T13-F2-6",
+    "T13-F4-5"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:47:39.593732+00:00",
+  "created_issue_number": 354,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/354",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-optimize-concurrency-knob.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Bounded schema-field addition plus a doc/registry update over an existing, well-documented shed decision and a dependency-provided validation pattern; not novel design or adversarial judgment. Sonnet/medium matches the fleet's mechanical, deterministic work-shape heuristic. No external-LLM chaperone dispatch warranted.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Govern fleet concurrency and reclaim leaked resources",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "Depends on {#pf-concurrency-policy-spec} (ConcurrencyPolicy primitive) landing first"
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-optimize-concurrency-knob.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "/optimize deliberately shed ce-optimize's max_concurrent fan-out as one item in a bundle (git-worktree-per-experiment isolation + parallel fan-out + auto-commit/auto-merge), all re-entering only via Phase-4 operator-choice escalation, today recorded narratively (plugins/saga/skills/optimize/SKILL.md:17-20). Re-add only a concurrency ceiling to the default path, sourced from the shared ConcurrencyPolicy primitive; turn the narrated Phase-4 escalation into a real, defaulted-off max_concurrent experiment-log schema field; give the shared concurrency registry a serial-by-design marker for /optimize's concurrency=1 default.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T13.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T13.json#T13-F1-5,T13-F2-6,T13-F4-5",
+    "title": "Re-add a rescoped, defaulted-off max_concurrent to /optimize that engages the original removal decision",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "quick-win",
+  "title": "enhancement: re-add a rescoped, defaulted-off max_concurrent to /optimize that engages the original removal decision",
+  "updated_at": "2026-07-04T07:47:44.238817+00:00",
+  "wave": "wave-1"
+}

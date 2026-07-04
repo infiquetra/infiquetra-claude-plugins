@@ -1,0 +1,93 @@
+{
+  "absorbed_ids": [
+    "T13-F1-2",
+    "T13-F1-1",
+    "T13-F4-7",
+    "T13-F6-6",
+    "T13-F3-3",
+    "T13-F2-7",
+    "T13-F3-8",
+    "T13-F6-7",
+    "T13-F1-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:46:26.337514+00:00",
+  "created_issue_number": 350,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/350",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-concurrency-policy-spec.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Bounded schema-plus-emitter extension over an existing, well-documented validation pattern (execution_spec.py:46-53) rather than novel design or adversarial judgment; sonnet/high matches the fleet's own work-shape heuristic for mechanical, deterministic, scripted transforms over a large bounded surface. No external-LLM chaperone dispatch warranted.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Govern fleet concurrency and reclaim leaked resources",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-concurrency-policy-spec.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Add a ConcurrencyPolicy block to ExecutionSpec with a spec-default -> env -> run-override resolution ladder (default cap 3); make the layer-wave emitter and verify-panel chunker both consume it; derive VERIFY_N_CAP from the block; let read-only waves lift to 4, tier-weighted admission and per-lane (engine-registry) max_concurrent modulate the cap; add an emit-time aggregate in-flight guard (widest layer x co-running verify panels); add a spawn-site conformance/drift-guard test mirroring sandbox-spawn-sites.md discipline.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T13.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T13.json#T13-F1-2,T13-F1-1,T13-F4-7,T13-F6-6,T13-F3-3,T13-F2-7,T13-F3-8,T13-F6-7,T13-F1-7",
+    "title": "Concurrency policy as a first-class ExecutionSpec block: wave-width cap, resolution ladder, tier/lane weighting, emit-time aggregate guard, spawn-site drift guard",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: concurrency policy as a first-class ExecutionSpec block (wave-width cap, resolution ladder, tier/lane weighting, emit-time aggregate guard, spawn-site drift guard)",
+  "updated_at": "2026-07-04T07:46:31.655984+00:00",
+  "wave": "wave-1"
+}

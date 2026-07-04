@@ -1,0 +1,106 @@
+{
+  "absorbed_ideas": [
+    {
+      "frame": "F3",
+      "id": "H-F3-3",
+      "role": "primary",
+      "theme": "T6",
+      "tier": "structural",
+      "verdict": "survive"
+    },
+    {
+      "frame": "F6",
+      "id": "H-F6-5",
+      "role": "facet",
+      "theme": "T6",
+      "tier": "structural",
+      "verdict": "survive"
+    }
+  ],
+  "absorbed_ids": [
+    "H-F3-3",
+    "H-F6-5"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:52:33.855679+00:00",
+  "created_issue_number": 371,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/371",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-durable-gate-records.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "xhigh",
+    "external_llm": "none",
+    "justification": "Mechanical-but-wide-blast-radius: a new shared gate-record primitive consumed by six existing gate sites plus a fleet-wide CI lint. xhigh effort matches the coordination cost of consistent multi-site migration and correct lint site-scan logic; team-execution's validator gates suit independently checking each migrated site over one self-certifying diff. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-durable-gate-records.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Gates as durable approval records with a linted operator-absence contract, decoupled from AskUserQuestion. Merges H-F3-3 (durable pending-approval gate-record contract with pluggable transports) and H-F6-5 (fleet-wide CI lint enforcing a declared machine-readable no-answer behavior on every gate).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T6.json",
+    "ref": "issue-map-final.json#pf-durable-gate-records",
+    "title": "Gates as durable approval records with a linted operator-absence contract, decoupled from AskUserQuestion",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: gates as durable approval records with a linted operator-absence contract",
+  "updated_at": "2026-07-04T07:52:40.923094+00:00",
+  "wave": "wave-1"
+}

@@ -1,0 +1,86 @@
+{
+  "absorbed_ids": [
+    "T5-F4-5",
+    "T5-F1-7"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:07:24.403059+00:00",
+  "created_issue_number": 418,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/418",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-reviewer-lens-registry.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Bounded consolidation of two already-structured markdown registries into one, plus two thin selection adapters and a panel-composition step ported from an existing, already-proven pattern in the same repo (saga's judgment-selection); mechanical but requires real cross-file correctness care since two independent consumer loci must both resolve correctly and no existing panel may silently lose a member in migration. No adversarial judgment or novel design required, so no external-LLM chaperone dispatch is warranted.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Establish single-source-of-truth for shared primitives",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Establish single-source-of-truth for shared primitives",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-reviewer-lens-registry.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "One shared lens/reviewer registry feeding both consensus loci (saga /code-review's judgment-selected lens catalog and team-execution's keyword-triggered reviewer registry), with two thin selection adapters over the same source, a ported judgment-selection + domain-coverage panel-composition step in consensus-protocol.md, and a 'when NOT to spawn' field so the selection rule is legible.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T5.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T5.json#T5-F4-5,T5-F1-7",
+    "title": "One shared lens/reviewer registry feeding both consensus loci, with judgment-selected diversity-aware panel composition",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: one shared lens/reviewer registry feeding both consensus loci, with judgment-selected diversity-aware panel composition",
+  "updated_at": "2026-07-04T08:07:31.554357+00:00",
+  "wave": "wave-2"
+}

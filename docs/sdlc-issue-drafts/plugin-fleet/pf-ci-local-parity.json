@@ -1,0 +1,124 @@
+{
+  "absorbed_ideas": [
+    {
+      "id": "T11-F4-4",
+      "role": "primary",
+      "title": "Single source-of-truth CI runner both GitHub Actions local invoke"
+    },
+    {
+      "id": "T11-F5-5",
+      "role": "facet",
+      "title": "Level-D simulator: hermetic locked-env pre-push run certified to match CI"
+    },
+    {
+      "id": "T11-F6-3",
+      "role": "facet",
+      "title": "CI-parity fingerprint doctor: autonomous red-vs-green environment diff"
+    },
+    {
+      "id": "T11-F2-2",
+      "role": "facet",
+      "title": "Kill uv-vs-python3 invocation split reproduces differently locally"
+    },
+    {
+      "id": "T11-F4-5",
+      "role": "facet",
+      "title": "Drift guard fails CLAUDE.md's documented checks diverge ci.yml"
+    },
+    {
+      "id": "S-15",
+      "role": "facet",
+      "title": "CI branch-trigger auto-close (check_docs.py)"
+    }
+  ],
+  "absorbed_ids": [
+    "T11-F4-4",
+    "T11-F5-5",
+    "T11-F6-3",
+    "T11-F2-2",
+    "T11-F4-5",
+    "S-15"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:09:19.478304+00:00",
+  "created_issue_number": 425,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/425",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ci-local-parity.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "mechanical, well-specified tooling work with no ambiguous design decisions left open; no case for above-Sonnet tier or external-engine involvement Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ci-local-parity.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Six absorbed ideas (T11-F4-4 primary, T11-F5-5, T11-F6-3, T11-F2-2, T11-F4-5, S-15) converge on the CI-red-local-green pattern: single source-of-truth runner, locked-env simulator, fingerprint doctor, uv-invocation normalization, doc/ci parity guard, branch-trigger auto-close.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+    "title": "Local-vs-CI parity: one data-defined runner, locked-env simulator, fingerprint doctor, doc drift guard",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: local-vs-CI parity \u2014 data-defined runner, locked-env simulator, fingerprint doctor, doc drift guard",
+  "updated_at": "2026-07-04T08:09:26.942424+00:00",
+  "wave": "wave-2"
+}

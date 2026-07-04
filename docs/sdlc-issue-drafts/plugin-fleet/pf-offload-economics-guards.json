@@ -1,0 +1,145 @@
+{
+  "absorbed_ideas": [
+    {
+      "axis": "cost-latency-telemetry",
+      "basis_type": "direct",
+      "id": "T2-F2-8",
+      "role": "primary",
+      "tier_tag": "structural",
+      "title": "Break-even guard that halts an external dispatch that isn't actually cheaper than Claude"
+    },
+    {
+      "axis": "chaperone-economics",
+      "id": "T1-F2-3",
+      "role": "dedup-merged",
+      "tier_tag": "structural",
+      "title": "Chaperone break-even guard \u2014 auto-collapse an uneconomic offload back to inline"
+    },
+    {
+      "axis": "cost-latency-telemetry",
+      "basis_type": "reasoned",
+      "id": "T2-F1-8",
+      "role": "facet",
+      "tier_tag": "structural",
+      "title": "Per-provider budget ceiling with halt-not-overspend"
+    },
+    {
+      "axis": "operator-ergonomics",
+      "id": "T1-F1-8",
+      "role": "facet",
+      "tier_tag": "quick-win",
+      "title": "Cost-delta preview on every engine-lane offer"
+    },
+    {
+      "axis": "chaperone-economics",
+      "id": "T1-F6-3",
+      "role": "facet",
+      "tier_tag": "quick-win",
+      "title": "Chaperone-overhead ledger: prove offload was actually net-positive"
+    },
+    {
+      "axis": "chaperone-economics",
+      "id": "T1-F6-5",
+      "role": "facet",
+      "tier_tag": "quick-win",
+      "title": "$0-engine cost class: zero-ledger offload accounting"
+    }
+  ],
+  "absorbed_ids": [
+    "T2-F2-8",
+    "T1-F2-3",
+    "T2-F1-8",
+    "T1-F1-8",
+    "T1-F6-3",
+    "T1-F6-5"
+  ],
+  "approval_state": null,
+  "binding_decisions": [
+    "{#external-engine-chaperone-dispatch}",
+    "{#external-engines-never-gatekeepers}",
+    "{#worker-cache-scheduling}"
+  ],
+  "created_at": "2026-07-04T07:57:05.413558+00:00",
+  "created_issue_number": 386,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/386",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-offload-economics-guards.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Registry/schema plumbing plus a dispatch-time comparison and manifest field addition inside existing modules (engine_dispatch.py, engine_registry.py, engine-registry.yaml) against a design already settled by ideation and binding decisions; mechanical/deterministic tier, not judgment/adversarial.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/saga/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/saga/CHANGELOG.md",
+    "version/metadata drift-guard tests in tests/"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-offload-economics-guards.json",
+  "source_artifact": {
+    "branch": null,
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json;docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json",
+    "title": "Offload economics: break-even halt, per-provider budget ceiling, cost-delta preview, net-savings accounting",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement: offload economics guards \u2014 break-even halt, budget ceiling, cost-delta preview, net-savings ledger",
+  "updated_at": "2026-07-04T08:23:06.899817+00:00"
+}

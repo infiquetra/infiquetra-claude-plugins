@@ -1,0 +1,89 @@
+{
+  "absorbed_ids": [
+    "T2-F1-5",
+    "T2-F4-3",
+    "T2-F5-4"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:23:29.821602+00:00",
+  "created_issue_number": 455,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/455",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-provider-onboarding-conformance.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "This is a scaffolder-plus-CI-test-plus-schema-field addition against an already-implemented, already-tested `EngineEntry`/`Registry` model \u2014 the shape of the scaffolder output, the conformance assertions, and the probation-field semantics are already specified by the absorbed `dod_sketch`es. There is no architectural ambiguity requiring opus-level judgment, and this is registry/schema/CI/scaffold work with no case for an external engine to generate or review it with an advantage.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Stand up the external-engine offload lane",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up external-engine offload lane",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-provider-onboarding-conformance.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Merged PR adding a provider-onboarding scaffolder (tools/add-engine.sh), a CI conformance suite that fails the PR (not the dispatch) when a row is dead-wired, and a shadow-mode standing field new rows start in (probation/trust_tier); verified by a fixture provider passing through the pipeline and a probation row halting on a panel role.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json#T2-F1-5,T2-F4-3,T2-F5-4",
+    "title": "Provider onboarding: scaffolder, CI conformance gate, and shadow-mode standing",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: provider onboarding \u2014 scaffolder, CI conformance gate, and shadow-mode standing",
+  "updated_at": "2026-07-04T08:23:38.308705+00:00",
+  "wave": "wave-1"
+}

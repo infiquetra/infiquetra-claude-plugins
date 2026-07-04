@@ -1,0 +1,63 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-lever-site-census.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "context-update",
+  "labels": [
+    "context-update",
+    "documentation",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "context-update",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-lever-site-census.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Lever-site census: inventory every tier/gate decision point, cite the tier-lever contract from judgment commands, generate the fleet control-surface map. Absorbs T12-F4-2 (primary, lever-site inventory registry mirroring sandbox-spawn-sites.md), G-negative-space-9 (facet, fleet control-surface census), T12-F6-5 (facet, ask-point inventory + effort: schema admission), T12-F1-1 (facet, tier-lever.md contract cited by every judgment command), and T3-F6-2 (facet, per-phase Tier vocabulary blocks in ideate/brainstorm/work).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/c23d3bf9-9081-4727-8e0d-140ebc73f63f/scratchpad/ideation/issue-map/issue-map-final.json",
+    "ref": "pf-lever-site-census",
+    "title": "Lever-site census: inventory every tier/gate decision point, cite the tier-lever contract from judgment commands, generate the fleet control-surface map",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "context-update: lever-site census \u2014 inventory every tier/gate decision point, cite the tier-lever contract from judgment commands",
+  "wave": "wave-2",
+  "tier": "structural",
+  "objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+  "absorbed_ids": [
+    "T12-F4-2",
+    "G-negative-space-9",
+    "T12-F6-5",
+    "T12-F1-1",
+    "T3-F6-2"
+  ],
+  "executor_profile": {
+    "model": "sonnet",
+    "effort": "medium",
+    "backend": "inline",
+    "external_llm": "none",
+    "justification": "Document-generation, doc-lint, and schema-admission work (census script, tier-lever.md contract, front-block insertions into three known judgment-command files, grep-based drift-guard tests) with no adversarial judgment or architectural ambiguity beyond what the five absorbed ideas already specify; matches fleet tiering guidance for mechanical, deterministic transforms."
+  },
+  "updated_at": "2026-07-04T00:00:00.000000+00:00",
+  "created_issue_number": 466,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/466"
+}

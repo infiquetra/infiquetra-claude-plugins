@@ -1,0 +1,110 @@
+{
+  "absorbed": [
+    {
+      "basis": "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:150-151 -- \"a probe script overwriting a FAIL evidence artifact with a later PASS (audit chain-of-custody)\"",
+      "basis_type": "direct",
+      "id": "T7-F4-3",
+      "role": "primary",
+      "title": "Closure-gate consumer that derives eligibility from an immutable supersession chain"
+    },
+    {
+      "basis": "plugins/saga/scripts/outcome_orchestrator.py:145-172 (harvest()/barrier_satisfied() writes a done completion event on contract satisfaction alone, with no SHA or required-check evidence consultation)",
+      "basis_type": "direct",
+      "id": "T7-F1-8",
+      "role": "facet",
+      "title": "Evidence-gated leaf closure: /outcome refuses to close on missing, stale-SHA evidence"
+    }
+  ],
+  "absorbed_ids": [
+    "T7-F4-3",
+    "T7-F1-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:00:47.061910+00:00",
+  "created_issue_number": 397,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/397",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-evidence-gated-closure.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Bounded, mechanically-testable wiring work (one new closure_gate.py module, one call-site wire-in at outcome_orchestrator.harvest(), one golden fixture) against an already-documented dod_sketch/ac_sketch pair with no open architectural ambiguity; this is a verifier-of-record closure decision so the gate logic must be authored and verified by Claude, not delegated to an external engine ({#external-engines-never-gatekeepers}).",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Build the fleet telemetry and ledger substrate",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Build the fleet telemetry and ledger substrate",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/saga/.claude-plugin/plugin.json -- version bump (harvest/close contract gains a new gating check)",
+    ".claude-plugin/marketplace.json -- update saga entry if version/description drift",
+    "plugins/saga/CHANGELOG.md -- entry for the new closure gate and its HALT reasons",
+    "release-surface / version-metadata drift-guard tests -- confirmed green, extended if warranted",
+    "explicit no-release-surface-change note in the PR if /plan determines none of the above applies"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-evidence-gated-closure.json",
+  "slug": "pf-evidence-gated-closure",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Closure gate: /outcome refuses to close a leaf on missing, stale-SHA, or unsuperseded-FAIL evidence -- absorbs T7-F4-3 (chain reader + supersession validator) and T7-F1-8 (stale-SHA/missing-evidence HALT).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json#T7-F4-3,T7-F1-8",
+    "title": "Closure gate: /outcome refuses to close a leaf on missing, stale-SHA, or unsuperseded-FAIL evidence",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: closure gate -- /outcome refuses to close a leaf on missing, stale-SHA, or unsuperseded-FAIL evidence",
+  "updated_at": "2026-07-04T08:24:19.780310+00:00",
+  "wave": "wave-2"
+}

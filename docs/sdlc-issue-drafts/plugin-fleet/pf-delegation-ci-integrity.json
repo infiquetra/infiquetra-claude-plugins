@@ -1,0 +1,100 @@
+{
+  "absorbed": [
+    {
+      "id": "T15-F4-6",
+      "role": "primary"
+    },
+    {
+      "id": "T15-F6-8",
+      "role": "facet"
+    }
+  ],
+  "absorbed_ids": [
+    "T15-F4-6",
+    "T15-F6-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:25:10.724866+00:00",
+  "created_issue_number": 457,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/457",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-ci-integrity.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Mechanical CI/script build against an already-specified proof taxonomy; no architectural ambiguity or adversarial judgment warranting escalation above sonnet/medium, and no external-LLM participation appropriate in a guard against unverified bridge delegation.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan",
+    "ci"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "plugin-fleet",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-delegation-ci-integrity.json",
+  "slug": "pf-delegation-ci-integrity",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Absorbed T15-F4-6 (primary) + T15-F6-8 (facet) from the plugin-fleet ideation survivor map: a marketplace-CI delegation-proof gate on bridge-carrying plugin version bumps, plus a fleet-wide continuous delegation-integrity monitor detecting silent no-ops, unrecorded fallbacks, untokened orphan writes, or broken proof chains.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json",
+    "ref": "issue-map-final.json#pf-delegation-ci-integrity",
+    "title": "CI-level delegation integrity: marketplace proof gate on bridge version bumps + continuous fleet delegation monitor",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: CI-level delegation integrity \u2014 marketplace proof gate on bridge version bumps + fleet delegation monitor",
+  "updated_at": "2026-07-04T08:25:18.585589+00:00",
+  "wave": "wave-2"
+}

@@ -1,0 +1,386 @@
+[
+  {
+    "id": "T1-F1-1",
+    "theme": "T1", "frame": "F1", "axis": "surface-points",
+    "title": "Second-opinion engine lane in /code-review and /doc-review",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same 'wire the advisory engine offer into judgment-stage SKILLs' move as the stronger, more concrete shared-helper candidate",
+    "kept_duplicate_of": "T1-F2-1"
+  },
+  {
+    "id": "T1-F1-2",
+    "theme": "T1", "frame": "F1", "axis": "surface-points",
+    "title": "Blind external-engine divergent-generator lane in /ideate",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR: /ideate divergent phase gains an engine-generator lane; verified by a run yielding engine-authored candidates tagged 'engine-generated' that pass convergence unprivileged (test asserts no gate/basis exemption)."
+  },
+  {
+    "id": "T1-F1-3",
+    "theme": "T1", "frame": "F1", "axis": "intent-semantics",
+    "title": "A codified reconciliation ladder for converged vs divergent engine findings",
+    "verdict": "kill",
+    "kill_reason": "duplicate — the typed per-claim reconciliation machinery is captured more completely by the reconcile.py candidate that gates verified_by_claude per item",
+    "kept_duplicate_of": "T1-F2-4"
+  },
+  {
+    "id": "T1-F1-4",
+    "theme": "T1", "frame": "F1", "axis": "intent-semantics",
+    "title": "Offload-review-failure recaptured as second-opinion signal instead of silently discarded",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding an offload-rejected disposition + rejection-note to the dispatch manifest and a LEARNINGS hook; verified by a test that a chaperone-rejected offload patch yields a manifest with the new disposition and non-empty rejection note."
+  },
+  {
+    "id": "T1-F1-5",
+    "theme": "T1", "frame": "F1", "axis": "chaperone-economics",
+    "title": "Evidence-size-adaptive chaperone tier escalation (surfaced, not silent)",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a post-dispatch evidence-size threshold + surfaced escalation to external-engine-workers.md §5 and engine_dispatch.py; verified by a test that oversized evidence yields an escalation recommendation and unattended mode records but does not auto-escalate."
+  },
+  {
+    "id": "T1-F1-6",
+    "theme": "T1", "frame": "F1", "axis": "chaperone-economics",
+    "title": "Batched single-context chaperoning of same-engine offload units",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a batched-chaperone context-package variant to external-engine-workers.md §1/§5; verified by a test that N same-engine offload units under one chaperone emit N distinct manifests each verified_by_claude=True from a single context load."
+  },
+  {
+    "id": "T1-F1-7",
+    "theme": "T1", "frame": "F1", "axis": "operator-ergonomics",
+    "title": "Per-repo engine-choice memory: recommended defaults, still confirmed",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same .saga/engine-prefs.json remembered-default-but-confirmed mechanism as the stronger candidate with the attended/unattended branch + DECISIONS entry",
+    "kept_duplicate_of": "T1-F2-2"
+  },
+  {
+    "id": "T1-F1-8",
+    "theme": "T1", "frame": "F1", "axis": "operator-ergonomics",
+    "title": "Cost-delta preview on every engine-lane offer",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged PR adding a cost-delta estimator that renders a saving/added-spend line + named cheaper fallback into the /plan tier rows and team-execution stage offer; verified by a test that each engine-lane offer renders a non-empty cost-delta with a named fallback."
+  },
+  {
+    "id": "T1-F2-1",
+    "theme": "T1", "frame": "F2", "axis": "surface-points",
+    "title": "Auto-injected per-stage engine offer — kill the /plan-only authoring bottleneck",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a pure, tested engine_offer.py helper plus one documented call site in each of ideate/brainstorm/work/doc-review/code-review SKILL.md + marketplace/CHANGELOG bump; verified by a unit test that the helper returns second-opinion/opus-high for judgment stages and offload/sonnet-medium for mechanical, and a drift-guard that each surface uses the shared helper."
+  },
+  {
+    "id": "T1-F2-2",
+    "theme": "T1", "frame": "F2", "axis": "operator-ergonomics",
+    "title": "Remembered per-stage engine choice — invert 'ask once per run' into 'ask once, ever'",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged PR adding .saga/engine-prefs.json read/write + attended-prompt/unattended-silent branch + schema; verified by tests covering silent-reuse-when-unattended, prompt-when-attended, 'none' round-trip, and a DECISIONS.md entry with revisit-when."
+  },
+  {
+    "id": "T1-F2-3",
+    "theme": "T1", "frame": "F2", "axis": "chaperone-economics",
+    "title": "Chaperone break-even guard — auto-collapse an uneconomic offload back to inline",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding chaperone_breakeven() that collapses a net-negative offload to the existing _fallback_resolution (engine_id='claude') with a downgrade_note; verified by a test where a small unit with large context estimate collapses+emits a note and a large-benefit unit still dispatches."
+  },
+  {
+    "id": "T1-F2-4",
+    "theme": "T1", "frame": "F2", "axis": "intent-semantics",
+    "title": "Typed second-opinion reconciliation — remove freeform prose reconciliation",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding reconcile.py emitting a typed {agreements, conflicts, net_new} object with per-item adjudicated flags, wired so verified_by_claude flips only when all items are adjudicated; verified by a test that a dropped net-new finding blocks verification."
+  },
+  {
+    "id": "T1-F2-5",
+    "theme": "T1", "frame": "F2", "axis": "surface-points",
+    "title": "Activate the deferred team-execution engine-worker slot — remove the 'dispatch is deferred' gap",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding the external-engine worker context-package to team-execution Step B1 + chaperone spawn wiring + worker-manifest disposition; verified by an end-to-end test that a capability-routed unit spawns a chaperone, produces AdvisoryEvidence, and its diff clears the reviewer-consensus gate; version bump + CHANGELOG."
+  },
+  {
+    "id": "T1-F2-6",
+    "theme": "T1", "frame": "F2", "axis": "operator-ergonomics",
+    "title": "Automated engine-registry staleness gate — remove the manual 'is this profile current?' check",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged PR adding a known-model-revisions data file + a stale-check preflight (warn at dispatch, fail in CI) wired to Registry.stale; verified by a test where a stale entry warns at dispatch and exits nonzero in CI while a current entry passes."
+  },
+  {
+    "id": "T1-F2-7",
+    "theme": "T1", "frame": "F2", "axis": "chaperone-economics",
+    "title": "Content-addressed payload cache — remove redundant re-assembly and re-reads on re-dispatch",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged PR adding a content-addressed cache behind _assemble_payload keyed on unit_id+protocol-hash+context-hash with hit/miss provenance; verified by tests asserting identical inputs hit, changed context misses, and byte-preservation holds on a cache hit."
+  },
+  {
+    "id": "T1-F2-8",
+    "theme": "T1", "frame": "F2", "axis": "intent-semantics",
+    "title": "Opt-out offload for mechanical units — invert the default so the machinery tags offload",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a mechanical-fingerprint classifier at /plan unit authoring that defaults engine_intent=offload/sonnet-medium on matching units with operator opt-out; verified by tests that a scaffold-shaped unit defaults to offload and a judgment-shaped unit does not; DECISIONS.md entry with revisit-when."
+  },
+  {
+    "id": "T1-F3-1",
+    "theme": "T1", "frame": "F3", "axis": "surface-points",
+    "title": "Second-opinion is a runtime judgment-skill offer, not a plan-authoring artifact",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same reframing/move as the shared engine-offer helper across judgment surfaces",
+    "kept_duplicate_of": "T1-F2-1"
+  },
+  {
+    "id": "T1-F3-2",
+    "theme": "T1", "frame": "F3", "axis": "intent-semantics",
+    "title": "A third intent where convergence is the failure signal (red-team / divergence-seeking)",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR extending ENGINE_INTENTS to a 3-tuple with 'divergence' placed in the ordered ladder (opus/high) + tier-table/reconciliation docs; verified by execution_spec.validate accepting a divergence unit, the ordering-resolution test covering the new max, and a dissent-weighted reconciliation example."
+  },
+  {
+    "id": "T1-F3-3",
+    "theme": "T1", "frame": "F3", "axis": "intent-semantics",
+    "title": "Reconciliation is an implicit act — make the adjudication a durable ledger artifact",
+    "verdict": "kill",
+    "kill_reason": "duplicate — the durable reconciliation-ledger substrate is captured by the candidate that also closes the /retro re-validation loop",
+    "kept_duplicate_of": "T1-F4-4"
+  },
+  {
+    "id": "T1-F3-4",
+    "theme": "T1", "frame": "F3", "axis": "chaperone-economics",
+    "title": "Chaperone tier should key off verifiability, not just intent",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a Unit.verifiability signal that recommends haiku/low ratify-only for test-gated offloads (vs sonnet/medium for opaque prose); verified by execution_spec.validate accepting the qualifier and a tier-table render dropping a test-gated offload to ratify-only citing the CI gate as verifier."
+  },
+  {
+    "id": "T1-F3-5",
+    "theme": "T1", "frame": "F3", "axis": "chaperone-economics",
+    "title": "One chaperone can verify a batch — amortize the tax across homogeneous engine outputs",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same batched-chaperone amortization move; the F1 candidate specifies per-unit manifest preservation and the cache-economics number more precisely",
+    "kept_duplicate_of": "T1-F1-6"
+  },
+  {
+    "id": "T1-F3-6",
+    "theme": "T1", "frame": "F3", "axis": "operator-ergonomics",
+    "title": "Remembered engine posture per repo/outcome",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same remembered-per-repo engine-preference-with-override mechanism",
+    "kept_duplicate_of": "T1-F2-2"
+  },
+  {
+    "id": "T1-F3-7",
+    "theme": "T1", "frame": "F3", "axis": "operator-ergonomics",
+    "title": "The registry calibrates itself from real reconciliation outcomes — retro-gated",
+    "verdict": "survive",
+    "tier_tag": "moonshot",
+    "dod_sketch": "Merged PR adding a /retro sub-step that aggregates reconciliation-ledger outcomes into per-cell rating-drift proposals against engine-registry.yaml (proposal-only, human-applied); verified by a /retro run over seeded ledger fragments emitting a rating-change proposal with last_validated bumps and a test it never writes the registry directly."
+  },
+  {
+    "id": "T1-F3-8",
+    "theme": "T1", "frame": "F3", "axis": "surface-points",
+    "title": "Adversarial second-opinion on the FINDING at the /work round-N review-failure boundary",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a review-failure second-opinion offer to work/SKILL.md's round-N gate (advisory dispatch on the finding's validity, reconciled to keep/downgrade/dismiss, logged to the ledger); verified by a /work transcript where a flagged finding gets an engine second opinion and Claude records its re-adjudication before the churn decision."
+  },
+  {
+    "id": "T1-F4-1",
+    "theme": "T1", "frame": "F4", "axis": "surface-points",
+    "title": "One shared engine-offer partial every lifecycle surface includes",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same single-shared-primitive + drift-guard move as the tested engine_offer helper candidate",
+    "kept_duplicate_of": "T1-F2-1"
+  },
+  {
+    "id": "T1-F4-2",
+    "theme": "T1", "frame": "F4", "axis": "surface-points",
+    "title": "Registry-driven surface×intent default matrix as a single retune lever",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a surface_intent_defaults data file beside the engine registry, consumed by the shared offer block; verified by a unit test that every named surface key resolves its documented default intent (policy-as-data, one-cell retune)."
+  },
+  {
+    "id": "T1-F4-3",
+    "theme": "T1", "frame": "F4", "axis": "intent-semantics",
+    "title": "Intent→reconciliation-recipe registry so the merge protocol is data, not prose",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a reconciliation-recipe registry (intent→merge-protocol map) referenced by the offer block + external-engine-workers.md §4; verified by a parity test that every ENGINE_INTENTS value has exactly one recipe."
+  },
+  {
+    "id": "T1-F4-4",
+    "theme": "T1", "frame": "F4", "axis": "intent-semantics",
+    "title": "Reconciliation ledger that closes the registry's /retro re-validation loop",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a reconciliation-ledger writer at reconcile/apply time + a /retro read hook emitting gated registry-update proposals; verified by an integration test that writes a ledger record and asserts /retro surfaces a proposal from it."
+  },
+  {
+    "id": "T1-F4-5",
+    "theme": "T1", "frame": "F4", "axis": "chaperone-economics",
+    "title": "Break-even estimator so offload is a checked economic decision",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same offload break-even predicate; the F2 candidate is stronger because it acts (collapses to the existing claude-fallback resolution) rather than only recommending",
+    "kept_duplicate_of": "T1-F2-3"
+  },
+  {
+    "id": "T1-F4-6",
+    "theme": "T1", "frame": "F4", "axis": "chaperone-economics",
+    "title": "Self-sharpening cost_speed_rank from captured dispatch telemetry",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same ledger-telemetry→/retro-gated→registry-proposal loop; the kept candidate covers the registry-calibration mechanism (this is the cost-field facet of the same machinery)",
+    "kept_duplicate_of": "T1-F3-7"
+  },
+  {
+    "id": "T1-F4-7",
+    "theme": "T1", "frame": "F4", "axis": "operator-ergonomics",
+    "title": "Once-per-outcome remembered engine posture instead of re-asking every stage",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same remembered-posture-recommends-not-assumes mechanism",
+    "kept_duplicate_of": "T1-F2-2"
+  },
+  {
+    "id": "T1-F4-8",
+    "theme": "T1", "frame": "F4", "axis": "operator-ergonomics",
+    "title": "/engines meta-command: one legible surface to inspect, pin, and deprecate engines",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding an /engines saga subcommand (no new plugin) that renders the registry, flags stale rows, and writes a per-repo pin/deprecate overlay honored by the resolver; verified by a test that a pinned variant wins resolution and a deprecated engine is skipped."
+  },
+  {
+    "id": "T1-F5-1",
+    "theme": "T1", "frame": "F5", "axis": "surface-points",
+    "title": "Engine point-out: per-finding second-opinion flag at judgment stages",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a granular per-finding 'point-out' step to code-review/doc-review SKILL.md that dispatches one finding (second-opinion/opus-high) and folds the advisory under that finding; verified by a fixture test asserting the opinion is stored as advisory evidence with verified_by_claude gating the verdict."
+  },
+  {
+    "id": "T1-F5-2",
+    "theme": "T1", "frame": "F5", "axis": "surface-points",
+    "title": "Andon-cord engine offer: one uniform primitive across every lifecycle surface",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same uniform-shared-offer-primitive-across-surfaces move (andon-cord framing of the same helper/map)",
+    "kept_duplicate_of": "T1-F2-1"
+  },
+  {
+    "id": "T1-F5-3",
+    "theme": "T1", "frame": "F5", "axis": "intent-semantics",
+    "title": "Maker-checker dissent record for second-opinion reconciliation",
+    "verdict": "kill",
+    "kill_reason": "duplicate — the typed dissent/disagreement capture is a facet of the typed per-claim reconciliation candidate",
+    "kept_duplicate_of": "T1-F2-4"
+  },
+  {
+    "id": "T1-F5-4",
+    "theme": "T1", "frame": "F5", "axis": "chaperone-economics",
+    "title": "Acceptance-sampling verification for offload output",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding an offload sampling-policy function keyed off the engine's capability rating (sample N hunks, escalate to full review on any defect) wired into the chaperone verify step; verified by unit tests mapping WEAK/MODERATE/STRONG to sample fractions and asserting an injected defect forces full-review escalation."
+  },
+  {
+    "id": "T1-F5-5",
+    "theme": "T1", "frame": "F5", "axis": "chaperone-economics",
+    "title": "Coase break-even gate: offload only when make-vs-buy pays",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same offload break-even economics (Coase framing); kept candidate is the acting version that collapses net-negative offloads",
+    "kept_duplicate_of": "T1-F2-3"
+  },
+  {
+    "id": "T1-F5-6",
+    "theme": "T1", "frame": "F5", "axis": "chaperone-economics",
+    "title": "Best-execution TCA ledger: realized chaperone cost corrects registry ratings",
+    "verdict": "kill",
+    "kill_reason": "duplicate — realized-cost telemetry feeding registry-rating correction; overlaps the retro-gated calibration loop and the manifest realized-cost measurement",
+    "kept_duplicate_of": "T1-F3-7"
+  },
+  {
+    "id": "T1-F5-7",
+    "theme": "T1", "frame": "F5", "axis": "operator-ergonomics",
+    "title": "AI-Director engine memory: adaptive per-repo intent recommendation",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same .saga/engine-prefs.json remembered-recommendation-still-confirmed mechanism (AI-Director framing)",
+    "kept_duplicate_of": "T1-F2-2"
+  },
+  {
+    "id": "T1-F5-8",
+    "theme": "T1", "frame": "F5", "axis": "operator-ergonomics",
+    "title": "Challenge-response run-start intent manifest",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged PR adding a run-start challenge-response intent-manifest capture to /outcome and /work that stores every intent answer once, with downstream surfaces reading it silently for reversible choices; verified by a test that downstream surfaces read stored intent and only re-prompt on an unauthorized spend escalation."
+  },
+  {
+    "id": "T1-F6-1",
+    "theme": "T1", "frame": "F6", "axis": "surface-points",
+    "title": "Engine-offer at every judgment surface, not just /plan",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same shared-reference + inline offer-block across surfaces move",
+    "kept_duplicate_of": "T1-F2-1"
+  },
+  {
+    "id": "T1-F6-2",
+    "theme": "T1", "frame": "F6", "axis": "intent-semantics",
+    "title": "Always-on blind second opinion with a typed reconciliation record",
+    "verdict": "kill",
+    "kill_reason": "duplicate — the mined kernel is the typed reconciliation-record schema, already the stronger reconcile.py candidate",
+    "kept_duplicate_of": "T1-F2-4"
+  },
+  {
+    "id": "T1-F6-3",
+    "theme": "T1", "frame": "F6", "axis": "chaperone-economics",
+    "title": "Chaperone-overhead ledger: prove offload was actually net-positive",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged PR adding chaperone_token_cost + net_savings (engine_tokens_avoided − chaperone_tokens_spent) to saga.manifest.v1 via build_dispatch_manifest; verified by a unit test that a net-negative offload yields a flagged manifest and the manifest schema drift-guard stays green."
+  },
+  {
+    "id": "T1-F6-4",
+    "theme": "T1", "frame": "F6", "axis": "operator-ergonomics",
+    "title": "Zero-question engine choice: remembered per-surface intent preference",
+    "verdict": "kill",
+    "kill_reason": "duplicate — same .saga/engine-prefs.json remembered-default-still-confirmed mechanism",
+    "kept_duplicate_of": "T1-F2-2"
+  },
+  {
+    "id": "T1-F6-5",
+    "theme": "T1", "frame": "F6", "axis": "chaperone-economics",
+    "title": "$0-engine cost class: zero-ledger offload accounting",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged PR adding a cost_class field (free/metered/premium) to engine-registry.yaml + resolver/ledger handling that zeroes free-class engine cost; verified by a test that a free-class offload contributes 0 to the cost ledger and the registry schema drift-guard passes."
+  },
+  {
+    "id": "T1-F6-6",
+    "theme": "T1", "frame": "F6", "axis": "intent-semantics",
+    "title": "External-engine advisory jury for the hardest calls (Claude foreman)",
+    "verdict": "survive",
+    "tier_tag": "moonshot",
+    "dod_sketch": "Merged PR wiring role_kind='panel' out of HALT into a cap-bounded advisory fan-out (VERIFY_N_CAP analog) with a reconciliation summary; verified by a test that N>cap halts and Claude adjudication is required before any panel output is recorded."
+  },
+  {
+    "id": "T1-F6-7",
+    "theme": "T1", "frame": "F6", "axis": "surface-points",
+    "title": "Auto-offer a second opinion when /work hits an uncertainty signal",
+    "verdict": "survive",
+    "tier_tag": "structural",
+    "dod_sketch": "Merged PR adding a stuck-signal detector (repeated failed test cycles / low-confidence / thrash) in work/SKILL.md's round-N loop that surfaces a one-line second-opinion offer at that moment; verified by a scripted /work fixture that trips a repeated-failure signal and asserts the offer surfaces without auto-dispatching in attended mode."
+  },
+  {
+    "id": "T1-F6-8",
+    "theme": "T1", "frame": "F6", "axis": "operator-ergonomics",
+    "title": "Mode→intent default matrix: unattended runs pick their own posture",
+    "verdict": "survive",
+    "tier_tag": "quick-win",
+    "dod_sketch": "Merged PR adding a machine-readable mode→intent default matrix (unattended→cache-tight offload silent; attended judgment→second-opinion recommendation confirmed) consulted at offer time; verified by a test that unattended resolves offload silently and attended judgment resolves a confirm-required second-opinion."
+  }
+]

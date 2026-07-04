@@ -1,0 +1,60 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-review-campaign.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Gate fleet integrity (agent files, prompts, release surfaces)",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fleet-review-campaign.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T11-F1-3 (\"One-time comprehensive fleet code-review campaign, concurrency-batched\"): Merged docs/plans campaign spec + tracking Objective with <=3-file sub-issue batches, each spawning saga:readonly-verifier under worktree isolation; verified spec enumerates every *.py path cross-checked against find. Absorbs S-36 (\"Full comprehensive code-review\", operator statement) and T11-F6-6 (\"Fleet code-review manifest: risk-tiered scope instead of uniform coverage\").",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-set",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json",
+    "title": "One-time comprehensive fleet code-review campaign, concurrency-batched",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "exploration: one-time comprehensive fleet code-review campaign with a risk-tiered scope manifest",
+  "tier": "structural",
+  "wave": "wave-2",
+  "absorbed_ids": [
+    "T11-F1-3",
+    "S-36",
+    "T11-F6-6"
+  ],
+  "executor_profile": {
+    "model": "sonnet",
+    "effort": "high",
+    "backend": "cc-workflows-ultracode",
+    "external_llm": "none",
+    "justification": "Planning/spec-authoring exploration (produce spec, manifest, tracking Objective; enumerate and cross-check file paths) \u2014 not a judgment-heavy architectural call or adversarial review; does not warrant opus."
+  },
+  "updated_at": "2026-07-04T00:00:00.000000+00:00",
+  "created_issue_number": 465,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/465"
+}

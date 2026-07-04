@@ -1,0 +1,787 @@
+{"phase": "S0", "op": "item-status-snapshot", "count": 27, "ts": "2026-07-04T07:30:30.373309+00:00"}
+{"phase": "S0", "op": "U1-status-options-add", "result": "ID-DRIFT-HALT", "drifted": {"Todo": ["7287c552", "ad03e3f4"], "In Progress": ["85b73c49", "27289d31"], "Blocked": ["c70c100d", "930094ca"], "Done": ["c4321d51", "c7a662d6"]}, "ts": "2026-07-04T07:30:30.788972+00:00"}
+{"phase": "S0", "op": "U3-final-status-vocabulary", "result": "ok", "options": {"Idea": "9239ec92", "Shaping": "370f1923", "Ready": "a53eca31", "Active": "c7334029", "Verify": "1aa600b2", "Done": "b94c96a2"}, "ts": "2026-07-04T07:31:42.631966+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-context-library", "number": 51, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:43.368650+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-ansible-collections", "number": 16, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:43.822141+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-ansible-collections", "number": 17, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:44.227449+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-ansible-collections", "number": 18, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:44.615380+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-ansible-collections", "number": 19, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:45.033682+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "home-lab", "number": 197, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:45.430283+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "home-lab", "number": 198, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:45.845714+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "home-lab", "number": 199, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:46.279748+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 275, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:46.727683+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 277, "was": "Done", "now": "Done", "ts": "2026-07-04T07:31:47.184602+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 278, "was": "Done", "now": "Done", "ts": "2026-07-04T07:31:47.605758+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 279, "was": "Done", "now": "Done", "ts": "2026-07-04T07:31:48.074438+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 280, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:48.456782+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 281, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:48.847697+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 283, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:49.290738+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 285, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:49.732422+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 287, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:50.111178+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 289, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:50.533477+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 291, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:51.109349+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 293, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:51.533757+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 295, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:51.923569+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 314, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:52.280829+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 318, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:52.665830+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 325, "was": null, "now": "Done", "ts": "2026-07-04T07:31:53.069817+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-claude-plugins", "number": 326, "was": "Todo", "now": "Done", "ts": "2026-07-04T07:31:53.473935+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-sdlc", "number": 47, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:53.875826+00:00"}
+{"phase": "S0", "op": "U2-status-migrate", "repo": "infiquetra-sdlc", "number": 48, "was": "Todo", "now": "Idea", "ts": "2026-07-04T07:31:54.298443+00:00"}
+{"phase": "S0", "op": "U2-verify", "result": "ok", "census": {"Idea/OPEN": 10, "Done/CLOSED": 17}, "ts": "2026-07-04T07:32:12.194204+00:00"}
+{"phase": "S0", "op": "U4-risk-field-create", "result": "ok", "field_id": "PVTSSF_lADODdfJoc4BZLMKzhXE5C8", "ts": "2026-07-04T07:32:12.926305+00:00"}
+{"phase": "S0", "op": "U5-milestone-create", "title": "wave-1", "number": 1, "ts": "2026-07-04T07:32:33.740676+00:00"}
+{"phase": "S0", "op": "U5-milestone-create", "title": "wave-2", "number": 2, "ts": "2026-07-04T07:32:34.104988+00:00"}
+{"phase": "S0", "op": "U5-milestone-create", "title": "wave-3", "number": 3, "ts": "2026-07-04T07:32:34.467760+00:00"}
+{"phase": "S0", "op": "U5-verify-label", "name": "tier-structural", "ts": "2026-07-04T07:32:35.287873+00:00"}
+{"phase": "S0", "op": "U5-verify-label", "name": "tier-quick-win", "ts": "2026-07-04T07:32:35.995508+00:00"}
+{"phase": "S0", "op": "U5-verify-label", "name": "tier-moonshot", "ts": "2026-07-04T07:32:36.742981+00:00"}
+{"phase": "S0", "op": "U5-verify-label", "name": "objective", "ts": "2026-07-04T07:32:37.131038+00:00"}
+{"phase": "S0", "op": "U5-verify-label", "name": "hermes-not-actionable", "ts": "2026-07-04T07:32:37.868534+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-intent-envelope", "number": 332, "url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/332", "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:34:33.380677+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-intent-envelope", "number": 332, "ts": "2026-07-04T07:34:35.108179+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-intent-envelope", "number": 332, "ts": "2026-07-04T07:34:38.172353+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-intent-envelope", "number": 332, "ts": "2026-07-04T07:34:41.404842+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-cache-economics", "number": 333, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:35:21.912473+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-cache-economics", "number": 333, "ts": "2026-07-04T07:35:23.469951+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-cache-economics", "number": 333, "ts": "2026-07-04T07:35:26.447553+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-cache-economics", "number": 333, "ts": "2026-07-04T07:35:29.674658+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-capability-breadth", "number": 334, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:35:31.884257+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-capability-breadth", "number": 334, "ts": "2026-07-04T07:35:33.449768+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-capability-breadth", "number": 334, "ts": "2026-07-04T07:36:11.503364+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-capability-breadth", "number": 334, "ts": "2026-07-04T07:36:14.864045+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-concurrency-governance", "number": 335, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:36:16.081933+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-concurrency-governance", "number": 335, "ts": "2026-07-04T07:36:17.671569+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-concurrency-governance", "number": 335, "ts": "2026-07-04T07:36:20.967043+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-concurrency-governance", "number": 335, "ts": "2026-07-04T07:36:24.227164+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-external-engine-lane", "number": 336, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:36:25.391072+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-external-engine-lane", "number": 336, "ts": "2026-07-04T07:36:27.037625+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-external-engine-lane", "number": 336, "attempts": 2, "ts": "2026-07-04T07:36:36.753924+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-external-engine-lane", "number": 336, "ts": "2026-07-04T07:36:39.901836+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-fleet-integrity", "number": 337, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:36:41.152648+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-fleet-integrity", "number": 337, "ts": "2026-07-04T07:36:42.880399+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-fleet-integrity", "number": 337, "attempts": 2, "ts": "2026-07-04T07:36:52.848511+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-fleet-integrity", "number": 337, "ts": "2026-07-04T07:36:55.972016+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-fleet-telemetry", "number": 338, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:36:57.318521+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-fleet-telemetry", "number": 338, "ts": "2026-07-04T07:36:58.845009+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-fleet-telemetry", "number": 338, "ts": "2026-07-04T07:37:01.861061+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-fleet-telemetry", "number": 338, "ts": "2026-07-04T07:37:04.893081+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-self-improving", "number": 339, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:37:06.133606+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-self-improving", "number": 339, "ts": "2026-07-04T07:37:08.074391+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-self-improving", "number": 339, "ts": "2026-07-04T07:37:11.518305+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-self-improving", "number": 339, "ts": "2026-07-04T07:37:14.907443+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-ship-ceremony", "number": 340, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:37:16.290456+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-ship-ceremony", "number": 340, "ts": "2026-07-04T07:37:17.977577+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-ship-ceremony", "number": 340, "attempts": 2, "ts": "2026-07-04T07:37:28.015950+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-ship-ceremony", "number": 340, "ts": "2026-07-04T07:37:31.211175+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-single-source", "number": 341, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:37:32.364950+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-single-source", "number": 341, "ts": "2026-07-04T07:37:33.975380+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-single-source", "number": 341, "attempts": 2, "ts": "2026-07-04T07:37:43.700093+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-single-source", "number": 341, "ts": "2026-07-04T07:37:46.956017+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-standards-enforcement", "number": 342, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:37:48.562846+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-standards-enforcement", "number": 342, "ts": "2026-07-04T07:37:50.097241+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-standards-enforcement", "number": 342, "ts": "2026-07-04T07:37:53.725439+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-standards-enforcement", "number": 342, "ts": "2026-07-04T07:37:57.053791+00:00"}
+{"phase": "S1", "op": "objective-create", "slug": "pf-obj-tier-effort-lever", "number": 343, "path": "fallback-gh-issue-create", "ts": "2026-07-04T07:37:58.161513+00:00"}
+{"phase": "S2", "op": "board-add", "slug": "pf-obj-tier-effort-lever", "number": 343, "ts": "2026-07-04T07:37:59.668068+00:00"}
+{"phase": "S2", "op": "set-status", "slug": "pf-obj-tier-effort-lever", "number": 343, "ts": "2026-07-04T07:38:36.772999+00:00"}
+{"phase": "S2", "op": "set-objective", "slug": "pf-obj-tier-effort-lever", "number": 343, "ts": "2026-07-04T07:38:39.835019+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-board-progression-shared-writer", "number": 344, "note": "pilot", "ts": "2026-07-04T07:44:40.607589+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-ship-ceremony-primitive", "number": 345, "recovered": true, "ts": "2026-07-04T07:45:00.850893+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-ship-hazard-preflight-and-undo", "number": 346, "recovered": true, "ts": "2026-07-04T07:45:21.589191+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-ship-teardown-reconciliation", "number": 347, "recovered": true, "ts": "2026-07-04T07:45:42.903338+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-429-retry-primitive", "number": 348, "recovered": true, "ts": "2026-07-04T07:46:03.104904+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-adaptive-admission-governor", "number": 349, "ts": "2026-07-04T07:46:17.601474+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-concurrency-policy-spec", "number": 350, "ts": "2026-07-04T07:46:31.664558+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-dispatch-settlement", "number": 351, "ts": "2026-07-04T07:46:45.721770+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-fanout-dispatch-economics", "number": 352, "recovered": true, "ts": "2026-07-04T07:47:17.091610+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-fleet-doctor", "number": 353, "ts": "2026-07-04T07:47:30.858162+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-optimize-concurrency-knob", "number": 354, "ts": "2026-07-04T07:47:44.248827+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-orphan-fencing-liveness", "number": 355, "recovered": true, "ts": "2026-07-04T07:48:04.798087+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-resource-lease-broker", "number": 356, "recovered": true, "ts": "2026-07-04T07:48:25.337269+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-subagent-liveness-engine", "number": 357, "ts": "2026-07-04T07:48:39.626527+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-teardown-reclamation-contract", "number": 358, "recovered": true, "ts": "2026-07-04T07:49:00.451587+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-cache-prefix-stability", "number": 359, "recovered": true, "ts": "2026-07-04T07:49:21.476076+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-residency-derived-scheduling", "number": 360, "recovered": true, "ts": "2026-07-04T07:49:42.965297+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-review-delta-packets", "number": 361, "ts": "2026-07-04T07:49:57.028261+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-dispatch-tier-resolver", "number": 362, "recovered": true, "ts": "2026-07-04T07:50:18.575791+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-effort-first-class", "number": 363, "ts": "2026-07-04T07:50:32.220361+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-escalation-on-failure", "number": 364, "recovered": true, "ts": "2026-07-04T07:50:52.872750+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-midrun-tier-lever", "number": 365, "ts": "2026-07-04T07:51:07.586778+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-spend-budget-envelope", "number": 366, "ts": "2026-07-04T07:51:21.380916+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-spend-gate-asymmetry", "number": 367, "ts": "2026-07-04T07:51:35.618662+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-tier-defaults-persistence", "number": 368, "ts": "2026-07-04T07:51:49.785501+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-tier-floors-halt-not-degrade", "number": 369, "ts": "2026-07-04T07:52:03.677798+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-tier-vocab-single-source", "number": 370, "recovered": true, "ts": "2026-07-04T07:52:25.063119+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-durable-gate-records", "number": 371, "ts": "2026-07-04T07:52:40.932066+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-midrun-adjustment-envelope", "number": 372, "recovered": true, "ts": "2026-07-04T07:53:01.851467+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-backend-spend-envelope", "number": 373, "ts": "2026-07-04T07:53:16.055294+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-draft-unstructured", "number": 374, "ts": "2026-07-04T07:53:30.307972+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-from-objective-ingestion", "number": 375, "recovered": true, "ts": "2026-07-04T07:53:52.006572+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-ingest-reconcile-drift", "number": 376, "recovered": true, "ts": "2026-07-04T07:54:13.789613+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-intent-capture-ux", "number": 377, "ts": "2026-07-04T07:54:28.510491+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-step-profiles", "number": 378, "recovered": true, "ts": "2026-07-04T07:54:50.120561+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-remote-gate-approval", "number": 379, "ts": "2026-07-04T07:55:03.920596+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-runstart-intent-envelope", "number": 380, "ts": "2026-07-04T07:55:18.008043+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-chaperone-economics", "number": 381, "recovered": true, "ts": "2026-07-04T07:55:40.072913+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-consensus-external-advisory-seat", "number": 382, "recovered": true, "ts": "2026-07-04T07:56:01.102027+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-delegation-receipt-contract", "number": 383, "recovered": true, "ts": "2026-07-04T07:56:22.179269+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-delegation-tripwires-audit", "number": 384, "ts": "2026-07-04T07:56:36.665832+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-engine-offer-helper", "error": "ERROR: Unknown team in prepared draft: saga\n", "ts": "2026-07-04T07:56:37.757342+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-engine-output-trust-boundary", "number": 385, "ts": "2026-07-04T07:56:52.976586+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-engine-registry-schema", "error": "ERROR: Unknown team in prepared draft: saga\n", "ts": "2026-07-04T07:56:54.081276+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-engines-meta-command", "error": "ERROR: Unknown team in prepared draft: saga\n", "ts": "2026-07-04T07:56:55.174280+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-ideate-engine-lane", "error": "ERROR: Unknown team in prepared draft: saga\n", "ts": "2026-07-04T07:56:56.272253+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-offload-economics-guards", "number": 386, "recovered": true, "ts": "2026-07-04T07:57:17.737393+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-openai-http-bridge", "number": 387, "ts": "2026-07-04T07:57:32.274114+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-output-attestation-liedetector", "number": 388, "recovered": true, "ts": "2026-07-04T07:57:54.386038+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-provider-auth-preflight", "number": 389, "recovered": true, "ts": "2026-07-04T07:58:16.794449+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-provider-onboarding-conformance", "error": "ERROR: Unknown team in prepared draft: saga\n", "ts": "2026-07-04T07:58:17.887776+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-silent-fallback-elimination", "number": 390, "recovered": true, "ts": "2026-07-04T07:58:39.294971+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-task-provider-recommend", "number": 391, "ts": "2026-07-04T07:58:53.352830+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-team-engine-worker-slot", "number": 392, "recovered": true, "ts": "2026-07-04T07:59:14.488807+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-typed-reconciliation", "number": 393, "recovered": true, "ts": "2026-07-04T07:59:36.308520+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-work-review-second-opinion", "number": 394, "ts": "2026-07-04T07:59:52.118461+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-positive-handoff-ack", "number": 395, "recovered": true, "ts": "2026-07-04T08:00:16.059894+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-delegation-evidence-durability", "number": 396, "recovered": true, "ts": "2026-07-04T08:00:38.122285+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-evidence-gated-closure", "number": 397, "recovered": true, "ts": "2026-07-04T08:00:59.832662+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-evidence-immutability", "number": 398, "ts": "2026-07-04T08:01:15.303082+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-fleet-baseline-metrics", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:01:16.412134+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-gate-divergence-telemetry", "number": 399, "ts": "2026-07-04T08:01:32.280156+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-panel-economics-exploration", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:01:33.381411+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-pulse-live-telemetry", "number": 400, "ts": "2026-07-04T08:01:48.792757+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-run-fact-ledger", "number": 401, "ts": "2026-07-04T08:02:04.276352+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-spend-observability-reports", "number": 402, "recovered": true, "ts": "2026-07-04T08:02:26.930506+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-adr-derived-review-lenses", "number": 403, "ts": "2026-07-04T08:02:41.888231+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-authority-resolver-stop-surface", "number": 404, "ts": "2026-07-04T08:02:56.764768+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-checkable-surface-census", "number": 405, "recovered": true, "ts": "2026-07-04T08:03:18.980058+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-enforcement-coverage-gates", "number": 406, "ts": "2026-07-04T08:03:34.810631+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-journal-schema-lint", "number": 407, "ts": "2026-07-04T08:03:51.358896+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-standards-index-machine-contract", "number": 408, "ts": "2026-07-04T08:04:07.682839+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-standards-preflight-issue-authoring", "number": 409, "ts": "2026-07-04T08:04:23.462838+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-abolish-contract-mirrors", "number": 410, "ts": "2026-07-04T08:04:39.232974+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-consensus-kernel", "number": 411, "recovered": true, "ts": "2026-07-04T08:05:02.965002+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-consensus-thresholds-convergence", "number": 412, "ts": "2026-07-04T08:05:19.175405+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-contract-consumer-graph", "number": 413, "ts": "2026-07-04T08:05:35.381958+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-contract-coupling-policy", "number": 414, "ts": "2026-07-04T08:05:51.309615+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-execution-substrate-decoupling", "number": 415, "ts": "2026-07-04T08:06:07.074101+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-fleet-commons-decision", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:06:08.179335+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-producer-push-propagation", "number": 416, "ts": "2026-07-04T08:06:23.721094+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-rename-campaign-executor", "number": 417, "ts": "2026-07-04T08:06:39.586369+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-retired-vocabulary-guards", "error": "ERROR: gh command failed: could not add label: 'quick-win' not found\n", "ts": "2026-07-04T08:07:15.446084+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-reviewer-lens-registry", "number": 418, "ts": "2026-07-04T08:07:31.562845+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-single-vocab-source", "number": 419, "ts": "2026-07-04T08:07:48.507685+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-upstream-drift-sweep", "number": 420, "ts": "2026-07-04T08:08:04.628226+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-vendored-parity-registry", "number": 421, "ts": "2026-07-04T08:08:20.457551+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-agent-file-ci-lint", "number": 422, "ts": "2026-07-04T08:08:36.755445+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-agent-prompt-audit", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:08:37.860142+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-authorship-provenance", "number": 423, "ts": "2026-07-04T08:08:54.544526+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-board-live-schema-pagination", "number": 424, "ts": "2026-07-04T08:09:10.369411+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-ci-local-parity", "number": 425, "ts": "2026-07-04T08:09:26.956179+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-contract-reachability-parity", "number": 426, "ts": "2026-07-04T08:09:43.746424+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-delegation-ci-integrity", "error": "ERROR: gh command failed: could not add label: 'ci' not found\n", "ts": "2026-07-04T08:10:21.763097+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-fake-adapter-integrity", "error": "ERROR: Unknown team in prepared draft: platform\n", "ts": "2026-07-04T08:10:22.878154+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-fleet-review-campaign", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:10:23.980342+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-guard-mutation-canary", "number": 427, "ts": "2026-07-04T08:10:41.373278+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-lever-site-census", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:10:42.469835+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-lifecycle-regression-harness", "number": 428, "ts": "2026-07-04T08:10:59.087272+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-release-surface-single-source", "number": 429, "ts": "2026-07-04T08:11:15.879894+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-review-ledger-incremental", "number": 430, "ts": "2026-07-04T08:11:32.357851+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-write-ownership-lanes-ci-lint", "number": 431, "ts": "2026-07-04T08:11:48.930388+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-recon-memoization", "number": 432, "ts": "2026-07-04T08:12:05.324118+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-residency-evidence", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:12:06.428900+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-intent-renegotiation", "number": 433, "ts": "2026-07-04T08:12:22.848003+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-zero-token-fire-drill", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:12:23.950273+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-stacked-pr-cascade-guard", "number": 434, "ts": "2026-07-04T08:12:40.148759+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-registry-calibration-loop", "error": "ERROR: Unknown team in prepared draft: saga\n", "ts": "2026-07-04T08:12:41.241671+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-dark-plugin-parity", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:12:42.341493+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-deploy-canary-verify-revert", "number": 435, "ts": "2026-07-04T08:12:58.539730+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-misc-quick-wins", "number": 436, "ts": "2026-07-04T08:13:14.751210+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-outcome-multi-repo-arc", "error": "ERROR: gh command failed: could not add label: 'saga' not found\n", "ts": "2026-07-04T08:13:50.804627+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-team-park-resume", "number": 437, "ts": "2026-07-04T08:14:07.727459+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-crossleaf-resident-crew", "number": 438, "ts": "2026-07-04T08:14:25.430500+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-backlog-admission-governor", "number": 439, "ts": "2026-07-04T08:14:42.043906+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-ideate-program-foldback", "number": 440, "ts": "2026-07-04T08:14:58.970658+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-journal-query-join", "number": 441, "ts": "2026-07-04T08:15:16.635792+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-learning-capture-nomination", "number": 442, "ts": "2026-07-04T08:15:33.171663+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-liveness-tripwire-engine", "number": 443, "ts": "2026-07-04T08:15:49.462826+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-mining-harvest-writeback", "number": 444, "ts": "2026-07-04T08:16:05.984214+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-mining-ledger-closed-loop", "number": 445, "ts": "2026-07-04T08:16:23.121474+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-promote-scan-recall-fixes", "number": 446, "ts": "2026-07-04T08:16:39.226259+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-session-substrate-registry", "number": 447, "ts": "2026-07-04T08:16:56.007272+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-standing-doc-provenance", "number": 448, "ts": "2026-07-04T08:17:12.774001+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-envelope-authorized-merge", "number": 449, "ts": "2026-07-04T08:17:28.534829+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-reconcile-controller", "number": 450, "ts": "2026-07-04T08:17:44.281657+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-ship-ceremony-primitive", "number": 345, "ts": "2026-07-04T08:19:48.631270+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-ship-hazard-preflight-and-undo", "number": 346, "ts": "2026-07-04T08:19:55.462324+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-ship-teardown-reconciliation", "number": 347, "ts": "2026-07-04T08:20:02.319385+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-429-retry-primitive", "number": 348, "ts": "2026-07-04T08:20:09.029944+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-fanout-dispatch-economics", "number": 352, "ts": "2026-07-04T08:20:15.737987+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-orphan-fencing-liveness", "number": 355, "ts": "2026-07-04T08:20:22.279593+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-resource-lease-broker", "number": 356, "ts": "2026-07-04T08:20:28.979901+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-teardown-reclamation-contract", "number": 358, "ts": "2026-07-04T08:20:35.672706+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-cache-prefix-stability", "number": 359, "ts": "2026-07-04T08:20:42.210215+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-residency-derived-scheduling", "number": 360, "ts": "2026-07-04T08:20:48.981016+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-dispatch-tier-resolver", "number": 362, "ts": "2026-07-04T08:20:55.537355+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-escalation-on-failure", "number": 364, "ts": "2026-07-04T08:21:02.036537+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-tier-vocab-single-source", "number": 370, "ts": "2026-07-04T08:21:08.819447+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-midrun-adjustment-envelope", "number": 372, "ts": "2026-07-04T08:21:15.722170+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-from-objective-ingestion", "number": 375, "ts": "2026-07-04T08:21:22.339116+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-ingest-reconcile-drift", "number": 376, "ts": "2026-07-04T08:21:28.950536+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-step-profiles", "number": 378, "ts": "2026-07-04T08:21:35.504370+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-chaperone-economics", "number": 381, "ts": "2026-07-04T08:21:41.870208+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-consensus-external-advisory-seat", "number": 382, "ts": "2026-07-04T08:21:48.336707+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-delegation-receipt-contract", "number": 383, "ts": "2026-07-04T08:21:54.766925+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-engine-offer-helper", "number": 451, "ts": "2026-07-04T08:22:10.784088+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-engine-registry-schema", "number": 452, "ts": "2026-07-04T08:22:27.396958+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-engines-meta-command", "number": 453, "ts": "2026-07-04T08:22:43.863247+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-ideate-engine-lane", "number": 454, "ts": "2026-07-04T08:22:59.959521+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-offload-economics-guards", "number": 386, "ts": "2026-07-04T08:23:06.910129+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-output-attestation-liedetector", "number": 388, "ts": "2026-07-04T08:23:13.598829+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-provider-auth-preflight", "number": 389, "ts": "2026-07-04T08:23:20.395382+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-provider-onboarding-conformance", "number": 455, "ts": "2026-07-04T08:23:38.322497+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-silent-fallback-elimination", "number": 390, "ts": "2026-07-04T08:23:45.066158+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-team-engine-worker-slot", "number": 392, "ts": "2026-07-04T08:23:52.883791+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-typed-reconciliation", "number": 393, "ts": "2026-07-04T08:23:59.737624+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-positive-handoff-ack", "number": 395, "ts": "2026-07-04T08:24:05.954546+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-delegation-evidence-durability", "number": 396, "ts": "2026-07-04T08:24:13.026367+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-evidence-gated-closure", "number": 397, "ts": "2026-07-04T08:24:19.788944+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-fleet-baseline-metrics", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:24:20.887708+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-panel-economics-exploration", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:24:21.986591+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-spend-observability-reports", "number": 402, "ts": "2026-07-04T08:24:28.776742+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-checkable-surface-census", "number": 405, "ts": "2026-07-04T08:24:35.385778+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-consensus-kernel", "number": 411, "ts": "2026-07-04T08:24:42.297387+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-fleet-commons-decision", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:24:43.395633+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-retired-vocabulary-guards", "number": 456, "ts": "2026-07-04T08:24:59.840096+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-agent-prompt-audit", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:25:00.940193+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-delegation-ci-integrity", "number": 457, "ts": "2026-07-04T08:25:18.599240+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-fake-adapter-integrity", "number": 458, "ts": "2026-07-04T08:25:35.407861+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-fleet-review-campaign", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:25:36.501462+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-lever-site-census", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:25:37.600050+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-residency-evidence", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:25:38.690663+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-zero-token-fire-drill", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:25:39.782039+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-registry-calibration-loop", "number": 459, "ts": "2026-07-04T08:25:56.216058+00:00"}
+{"phase": "S3", "op": "leaf-create-failed", "slug": "pf-dark-plugin-parity", "error": "ERROR: Prepared issue has blocking readiness gaps\n", "ts": "2026-07-04T08:25:57.303397+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-outcome-multi-repo-arc", "number": 460, "ts": "2026-07-04T08:26:13.945123+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-fleet-baseline-metrics", "number": 461, "path": "fallback-gh-issue-create", "ts": "2026-07-04T08:27:31.512443+00:00"}
+{"phase": "S3", "op": "leaf-place", "slug": "pf-fleet-baseline-metrics", "number": 461, "ts": "2026-07-04T08:27:40.474475+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-panel-economics-exploration", "number": 462, "path": "fallback-gh-issue-create", "ts": "2026-07-04T08:27:41.532340+00:00"}
+{"phase": "S3", "op": "leaf-place", "slug": "pf-panel-economics-exploration", "number": 462, "ts": "2026-07-04T08:27:50.737144+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-fleet-commons-decision", "number": 463, "path": "fallback-gh-issue-create", "ts": "2026-07-04T08:27:51.764069+00:00"}
+{"phase": "S3", "op": "leaf-place", "slug": "pf-fleet-commons-decision", "number": 463, "ts": "2026-07-04T08:28:00.523317+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-agent-prompt-audit", "number": 464, "path": "fallback-gh-issue-create", "ts": "2026-07-04T08:28:01.570320+00:00"}
+{"phase": "S3", "op": "leaf-place", "slug": "pf-agent-prompt-audit", "number": 464, "ts": "2026-07-04T08:28:10.641234+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-fleet-review-campaign", "number": 465, "path": "fallback-gh-issue-create", "ts": "2026-07-04T08:28:11.972572+00:00"}
+{"phase": "S3", "op": "leaf-place", "slug": "pf-fleet-review-campaign", "number": 465, "ts": "2026-07-04T08:28:21.568024+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-lever-site-census", "number": 466, "path": "fallback-gh-issue-create", "ts": "2026-07-04T08:28:22.632271+00:00"}
+{"phase": "S3", "op": "leaf-place", "slug": "pf-lever-site-census", "number": 466, "ts": "2026-07-04T08:28:32.127751+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-residency-evidence", "number": 467, "path": "fallback-gh-issue-create", "ts": "2026-07-04T08:28:33.206418+00:00"}
+{"phase": "S3", "op": "leaf-place", "slug": "pf-residency-evidence", "number": 467, "ts": "2026-07-04T08:28:42.841738+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-zero-token-fire-drill", "number": 468, "path": "fallback-gh-issue-create", "ts": "2026-07-04T08:28:43.904085+00:00"}
+{"phase": "S3", "op": "leaf-place", "slug": "pf-zero-token-fire-drill", "number": 468, "ts": "2026-07-04T08:28:53.442437+00:00"}
+{"phase": "S3", "op": "leaf-create", "slug": "pf-dark-plugin-parity", "number": 469, "path": "fallback-gh-issue-create", "ts": "2026-07-04T08:28:54.486624+00:00"}
+{"phase": "S3", "op": "leaf-place", "slug": "pf-dark-plugin-parity", "number": 469, "ts": "2026-07-04T08:29:03.888525+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-ship-ceremony-primitive", "number": 345, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:10.701828+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-ship-ceremony-primitive", "number": 345, "risk": "Medium", "ts": "2026-07-04T08:30:11.110752+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-ship-hazard-preflight-and-undo", "number": 346, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:11.531462+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-ship-hazard-preflight-and-undo", "number": 346, "risk": "Medium", "ts": "2026-07-04T08:30:11.977978+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-ship-teardown-reconciliation", "number": 347, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:12.493856+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-ship-teardown-reconciliation", "number": 347, "risk": "Medium", "ts": "2026-07-04T08:30:12.907814+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-429-retry-primitive", "number": 348, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:13.317383+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-429-retry-primitive", "number": 348, "risk": "Medium", "ts": "2026-07-04T08:30:13.742898+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-adaptive-admission-governor", "number": 349, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:14.217176+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-adaptive-admission-governor", "number": 349, "risk": "High", "ts": "2026-07-04T08:30:14.640774+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-concurrency-policy-spec", "number": 350, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:15.029868+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-concurrency-policy-spec", "number": 350, "risk": "Medium", "ts": "2026-07-04T08:30:15.490345+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-dispatch-settlement", "number": 351, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:15.985948+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-dispatch-settlement", "number": 351, "risk": "High", "ts": "2026-07-04T08:30:16.537180+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-fanout-dispatch-economics", "number": 352, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:16.992994+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-fanout-dispatch-economics", "number": 352, "risk": "Medium", "ts": "2026-07-04T08:30:17.516204+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-fleet-doctor", "number": 353, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:18.042463+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-fleet-doctor", "number": 353, "risk": "Low", "ts": "2026-07-04T08:30:18.470377+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-optimize-concurrency-knob", "number": 354, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:18.949174+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-optimize-concurrency-knob", "number": 354, "risk": "Low", "ts": "2026-07-04T08:30:19.384868+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-orphan-fencing-liveness", "number": 355, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:19.793314+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-orphan-fencing-liveness", "number": 355, "risk": "Medium", "ts": "2026-07-04T08:30:20.270747+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-resource-lease-broker", "number": 356, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:20.672834+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-resource-lease-broker", "number": 356, "risk": "High", "ts": "2026-07-04T08:30:21.411991+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-subagent-liveness-engine", "number": 357, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:21.901929+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-subagent-liveness-engine", "number": 357, "risk": "Medium", "ts": "2026-07-04T08:30:22.307938+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-teardown-reclamation-contract", "number": 358, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:22.707910+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-teardown-reclamation-contract", "number": 358, "risk": "Medium", "ts": "2026-07-04T08:30:23.155459+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-cache-prefix-stability", "number": 359, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:23.941474+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-cache-prefix-stability", "number": 359, "risk": "Medium", "ts": "2026-07-04T08:30:24.370963+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-residency-derived-scheduling", "number": 360, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:24.886776+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-residency-derived-scheduling", "number": 360, "risk": "Medium", "ts": "2026-07-04T08:30:25.293924+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-review-delta-packets", "number": 361, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:25.741610+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-review-delta-packets", "number": 361, "risk": "Low", "ts": "2026-07-04T08:30:26.213851+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-dispatch-tier-resolver", "number": 362, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:26.650750+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-dispatch-tier-resolver", "number": 362, "risk": "Medium", "ts": "2026-07-04T08:30:27.059589+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-effort-first-class", "number": 363, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:27.515999+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-effort-first-class", "number": 363, "risk": "Medium", "ts": "2026-07-04T08:30:27.995703+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-escalation-on-failure", "number": 364, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:28.702424+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-escalation-on-failure", "number": 364, "risk": "Medium", "ts": "2026-07-04T08:30:29.101335+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-midrun-tier-lever", "number": 365, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:29.556878+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-midrun-tier-lever", "number": 365, "risk": "Medium", "ts": "2026-07-04T08:30:30.020924+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-spend-budget-envelope", "number": 366, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:30.429527+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-spend-budget-envelope", "number": 366, "risk": "Medium", "ts": "2026-07-04T08:30:30.826681+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-spend-gate-asymmetry", "number": 367, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:31.204916+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-spend-gate-asymmetry", "number": 367, "risk": "Medium", "ts": "2026-07-04T08:30:31.592660+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-tier-defaults-persistence", "number": 368, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:32.009612+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-tier-defaults-persistence", "number": 368, "risk": "Medium", "ts": "2026-07-04T08:30:32.443106+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-tier-floors-halt-not-degrade", "number": 369, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:32.855939+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-tier-floors-halt-not-degrade", "number": 369, "risk": "Medium", "ts": "2026-07-04T08:30:33.242532+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-tier-vocab-single-source", "number": 370, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:33.664123+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-tier-vocab-single-source", "number": 370, "risk": "Medium", "ts": "2026-07-04T08:30:34.143824+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-board-progression-shared-writer", "number": 344, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:34.561850+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-board-progression-shared-writer", "number": 344, "risk": "Medium", "ts": "2026-07-04T08:30:34.973972+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-durable-gate-records", "number": 371, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:35.574876+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-durable-gate-records", "number": 371, "risk": "Medium", "ts": "2026-07-04T08:30:35.951129+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-midrun-adjustment-envelope", "number": 372, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:36.352026+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-midrun-adjustment-envelope", "number": 372, "risk": "Medium", "ts": "2026-07-04T08:30:36.790233+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-outcome-backend-spend-envelope", "number": 373, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:37.197744+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-outcome-backend-spend-envelope", "number": 373, "risk": "Medium", "ts": "2026-07-04T08:30:37.582180+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-outcome-draft-unstructured", "number": 374, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:38.004416+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-outcome-draft-unstructured", "number": 374, "risk": "Medium", "ts": "2026-07-04T08:30:38.466022+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-outcome-from-objective-ingestion", "number": 375, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:38.871426+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-outcome-from-objective-ingestion", "number": 375, "risk": "Medium", "ts": "2026-07-04T08:30:39.250767+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-outcome-ingest-reconcile-drift", "number": 376, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:39.670534+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-outcome-ingest-reconcile-drift", "number": 376, "risk": "Medium", "ts": "2026-07-04T08:30:40.058195+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-outcome-intent-capture-ux", "number": 377, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:40.503825+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-outcome-intent-capture-ux", "number": 377, "risk": "Medium", "ts": "2026-07-04T08:30:40.943460+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-outcome-step-profiles", "number": 378, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:41.352296+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-outcome-step-profiles", "number": 378, "risk": "Medium", "ts": "2026-07-04T08:30:41.794939+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-remote-gate-approval", "number": 379, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:42.409145+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-remote-gate-approval", "number": 379, "risk": "Medium", "ts": "2026-07-04T08:30:42.803970+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-runstart-intent-envelope", "number": 380, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:43.252173+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-runstart-intent-envelope", "number": 380, "risk": "High", "ts": "2026-07-04T08:30:43.640185+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-chaperone-economics", "number": 381, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:44.049835+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-chaperone-economics", "number": 381, "risk": "Medium", "ts": "2026-07-04T08:30:44.442989+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-consensus-external-advisory-seat", "number": 382, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:44.972696+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-consensus-external-advisory-seat", "number": 382, "risk": "Medium", "ts": "2026-07-04T08:30:45.384482+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-delegation-receipt-contract", "number": 383, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:45.860110+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-delegation-receipt-contract", "number": 383, "risk": "Medium", "ts": "2026-07-04T08:30:46.266980+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-delegation-tripwires-audit", "number": 384, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:46.777794+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-delegation-tripwires-audit", "number": 384, "risk": "Medium", "ts": "2026-07-04T08:30:47.186361+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-engine-offer-helper", "number": 451, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:47.651584+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-engine-offer-helper", "number": 451, "risk": "Medium", "ts": "2026-07-04T08:30:48.064055+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-engine-output-trust-boundary", "number": 385, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:48.449182+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-engine-output-trust-boundary", "number": 385, "risk": "Medium", "ts": "2026-07-04T08:30:48.890282+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-engine-registry-schema", "number": 452, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:49.393063+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-engine-registry-schema", "number": 452, "risk": "Medium", "ts": "2026-07-04T08:30:49.816260+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-engines-meta-command", "number": 453, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:50.294549+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-engines-meta-command", "number": 453, "risk": "Low", "ts": "2026-07-04T08:30:50.719177+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-ideate-engine-lane", "number": 454, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:51.186592+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-ideate-engine-lane", "number": 454, "risk": "Medium", "ts": "2026-07-04T08:30:51.662749+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-offload-economics-guards", "number": 386, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:52.053026+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-offload-economics-guards", "number": 386, "risk": "Medium", "ts": "2026-07-04T08:30:52.434067+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-openai-http-bridge", "number": 387, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:53.008169+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-openai-http-bridge", "number": 387, "risk": "Medium", "ts": "2026-07-04T08:30:53.417634+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-output-attestation-liedetector", "number": 388, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:53.796939+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-output-attestation-liedetector", "number": 388, "risk": "Medium", "ts": "2026-07-04T08:30:54.238029+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-provider-auth-preflight", "number": 389, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:54.790066+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-provider-auth-preflight", "number": 389, "risk": "Medium", "ts": "2026-07-04T08:30:55.169447+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-provider-onboarding-conformance", "number": 455, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:55.603838+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-provider-onboarding-conformance", "number": 455, "risk": "Medium", "ts": "2026-07-04T08:30:55.993787+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-silent-fallback-elimination", "number": 390, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:56.443783+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-silent-fallback-elimination", "number": 390, "risk": "Medium", "ts": "2026-07-04T08:30:56.831613+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-task-provider-recommend", "number": 391, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:57.249978+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-task-provider-recommend", "number": 391, "risk": "Medium", "ts": "2026-07-04T08:30:57.719895+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-team-engine-worker-slot", "number": 392, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:58.150416+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-team-engine-worker-slot", "number": 392, "risk": "Medium", "ts": "2026-07-04T08:30:58.636599+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-typed-reconciliation", "number": 393, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:30:59.034312+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-typed-reconciliation", "number": 393, "risk": "High", "ts": "2026-07-04T08:31:00.195140+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-work-review-second-opinion", "number": 394, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:00.601464+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-work-review-second-opinion", "number": 394, "risk": "Medium", "ts": "2026-07-04T08:31:01.038985+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-positive-handoff-ack", "number": 395, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:01.613807+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-positive-handoff-ack", "number": 395, "risk": "Medium", "ts": "2026-07-04T08:31:02.005434+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-delegation-evidence-durability", "number": 396, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:02.386678+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-delegation-evidence-durability", "number": 396, "risk": "Medium", "ts": "2026-07-04T08:31:02.863821+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-evidence-gated-closure", "number": 397, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:03.237349+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-evidence-gated-closure", "number": 397, "risk": "Medium", "ts": "2026-07-04T08:31:03.622897+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-evidence-immutability", "number": 398, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:04.011711+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-evidence-immutability", "number": 398, "risk": "Medium", "ts": "2026-07-04T08:31:04.445499+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-fleet-baseline-metrics", "number": 461, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:04.831183+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-fleet-baseline-metrics", "number": 461, "risk": "Low", "ts": "2026-07-04T08:31:05.449698+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-gate-divergence-telemetry", "number": 399, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:05.874734+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-gate-divergence-telemetry", "number": 399, "risk": "Low", "ts": "2026-07-04T08:31:06.253334+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-panel-economics-exploration", "number": 462, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:06.698582+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-panel-economics-exploration", "number": 462, "risk": "Medium", "ts": "2026-07-04T08:31:07.140679+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-pulse-live-telemetry", "number": 400, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:07.507971+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-pulse-live-telemetry", "number": 400, "risk": "Medium", "ts": "2026-07-04T08:31:07.899267+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-run-fact-ledger", "number": 401, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:08.369254+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-run-fact-ledger", "number": 401, "risk": "Medium", "ts": "2026-07-04T08:31:08.722772+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-spend-observability-reports", "number": 402, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:09.160215+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-spend-observability-reports", "number": 402, "risk": "Medium", "ts": "2026-07-04T08:31:09.559613+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-adr-derived-review-lenses", "number": 403, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:09.940951+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-adr-derived-review-lenses", "number": 403, "risk": "Medium", "ts": "2026-07-04T08:31:10.386179+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-authority-resolver-stop-surface", "number": 404, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:10.797907+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-authority-resolver-stop-surface", "number": 404, "risk": "Medium", "ts": "2026-07-04T08:31:11.209903+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-checkable-surface-census", "number": 405, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:11.657107+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-checkable-surface-census", "number": 405, "risk": "Low", "ts": "2026-07-04T08:31:12.041316+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-enforcement-coverage-gates", "number": 406, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:12.411565+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-enforcement-coverage-gates", "number": 406, "risk": "Medium", "ts": "2026-07-04T08:31:12.820661+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-journal-schema-lint", "number": 407, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:13.202728+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-journal-schema-lint", "number": 407, "risk": "Low", "ts": "2026-07-04T08:31:13.603495+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-standards-index-machine-contract", "number": 408, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:14.010091+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-standards-index-machine-contract", "number": 408, "risk": "Medium", "ts": "2026-07-04T08:31:14.385645+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-standards-preflight-issue-authoring", "number": 409, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:14.795206+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-standards-preflight-issue-authoring", "number": 409, "risk": "Medium", "ts": "2026-07-04T08:31:15.211534+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-abolish-contract-mirrors", "number": 410, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:15.585263+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-abolish-contract-mirrors", "number": 410, "risk": "High", "ts": "2026-07-04T08:31:15.997036+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-consensus-kernel", "number": 411, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:16.411314+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-consensus-kernel", "number": 411, "risk": "Medium", "ts": "2026-07-04T08:31:16.844104+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-consensus-thresholds-convergence", "number": 412, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:17.292736+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-consensus-thresholds-convergence", "number": 412, "risk": "Medium", "ts": "2026-07-04T08:31:17.666338+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-contract-consumer-graph", "number": 413, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:18.079616+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-contract-consumer-graph", "number": 413, "risk": "Medium", "ts": "2026-07-04T08:31:18.468625+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-contract-coupling-policy", "number": 414, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:18.885407+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-contract-coupling-policy", "number": 414, "risk": "Medium", "ts": "2026-07-04T08:31:19.254988+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-execution-substrate-decoupling", "number": 415, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:19.620467+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-execution-substrate-decoupling", "number": 415, "risk": "Medium", "ts": "2026-07-04T08:31:19.997137+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-fleet-commons-decision", "number": 463, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:20.431765+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-fleet-commons-decision", "number": 463, "risk": "High", "ts": "2026-07-04T08:31:20.979380+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-producer-push-propagation", "number": 416, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:21.402078+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-producer-push-propagation", "number": 416, "risk": "Medium", "ts": "2026-07-04T08:31:21.767313+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-rename-campaign-executor", "number": 417, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:22.144734+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-rename-campaign-executor", "number": 417, "risk": "Medium", "ts": "2026-07-04T08:31:22.495527+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-retired-vocabulary-guards", "number": 456, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:22.912476+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-retired-vocabulary-guards", "number": 456, "risk": "Low", "ts": "2026-07-04T08:31:23.304175+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-reviewer-lens-registry", "number": 418, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:23.656384+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-reviewer-lens-registry", "number": 418, "risk": "Medium", "ts": "2026-07-04T08:31:24.053206+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-single-vocab-source", "number": 419, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:24.503788+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-single-vocab-source", "number": 419, "risk": "Medium", "ts": "2026-07-04T08:31:24.885181+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-upstream-drift-sweep", "number": 420, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:25.296228+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-upstream-drift-sweep", "number": 420, "risk": "High", "ts": "2026-07-04T08:31:25.671179+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-vendored-parity-registry", "number": 421, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:26.049838+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-vendored-parity-registry", "number": 421, "risk": "Medium", "ts": "2026-07-04T08:31:26.424851+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-agent-file-ci-lint", "number": 422, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:26.818295+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-agent-file-ci-lint", "number": 422, "risk": "Medium", "ts": "2026-07-04T08:31:27.200164+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-agent-prompt-audit", "number": 464, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:27.683575+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-agent-prompt-audit", "number": 464, "risk": "Medium", "ts": "2026-07-04T08:31:28.060275+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-authorship-provenance", "number": 423, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:28.418178+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-authorship-provenance", "number": 423, "risk": "Medium", "ts": "2026-07-04T08:31:28.798064+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-board-live-schema-pagination", "number": 424, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:29.210395+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-board-live-schema-pagination", "number": 424, "risk": "High", "ts": "2026-07-04T08:31:29.591441+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-ci-local-parity", "number": 425, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:29.962493+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-ci-local-parity", "number": 425, "risk": "Medium", "ts": "2026-07-04T08:31:30.375971+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-contract-reachability-parity", "number": 426, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:30.769221+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-contract-reachability-parity", "number": 426, "risk": "Medium", "ts": "2026-07-04T08:31:31.129462+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-delegation-ci-integrity", "number": 457, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:31.502608+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-delegation-ci-integrity", "number": 457, "risk": "Medium", "ts": "2026-07-04T08:31:31.876682+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-fake-adapter-integrity", "number": 458, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:32.340574+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-fake-adapter-integrity", "number": 458, "risk": "Medium", "ts": "2026-07-04T08:31:32.726438+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-fleet-review-campaign", "number": 465, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:33.090702+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-fleet-review-campaign", "number": 465, "risk": "Medium", "ts": "2026-07-04T08:31:33.460687+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-guard-mutation-canary", "number": 427, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:33.863577+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-guard-mutation-canary", "number": 427, "risk": "Medium", "ts": "2026-07-04T08:31:34.245351+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-lever-site-census", "number": 466, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:34.701539+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-lever-site-census", "number": 466, "risk": "Medium", "ts": "2026-07-04T08:31:35.107578+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-lifecycle-regression-harness", "number": 428, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:35.504936+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-lifecycle-regression-harness", "number": 428, "risk": "Medium", "ts": "2026-07-04T08:31:35.885326+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-release-surface-single-source", "number": 429, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:36.269500+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-release-surface-single-source", "number": 429, "risk": "Medium", "ts": "2026-07-04T08:31:36.644441+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-review-ledger-incremental", "number": 430, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:37.031137+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-review-ledger-incremental", "number": 430, "risk": "Medium", "ts": "2026-07-04T08:31:37.399954+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-write-ownership-lanes-ci-lint", "number": 431, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:37.835355+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-write-ownership-lanes-ci-lint", "number": 431, "risk": "Medium", "ts": "2026-07-04T08:31:38.291220+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-recon-memoization", "number": 432, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:38.668367+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-recon-memoization", "number": 432, "risk": "Medium", "ts": "2026-07-04T08:31:39.014095+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-residency-evidence", "number": 467, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:39.626079+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-residency-evidence", "number": 467, "risk": "Medium", "ts": "2026-07-04T08:31:39.993634+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-outcome-intent-renegotiation", "number": 433, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:40.402514+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-outcome-intent-renegotiation", "number": 433, "risk": "Medium", "ts": "2026-07-04T08:31:40.788860+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-zero-token-fire-drill", "number": 468, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:41.161285+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-zero-token-fire-drill", "number": 468, "risk": "Medium", "ts": "2026-07-04T08:31:41.547769+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-stacked-pr-cascade-guard", "number": 434, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:41.894600+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-stacked-pr-cascade-guard", "number": 434, "risk": "Medium", "ts": "2026-07-04T08:31:42.278108+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-registry-calibration-loop", "number": 459, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:42.642426+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-registry-calibration-loop", "number": 459, "risk": "Medium", "ts": "2026-07-04T08:31:43.056618+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-dark-plugin-parity", "number": 469, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:43.460047+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-dark-plugin-parity", "number": 469, "risk": "Medium", "ts": "2026-07-04T08:31:43.828517+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-deploy-canary-verify-revert", "number": 435, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:44.203625+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-deploy-canary-verify-revert", "number": 435, "risk": "Medium", "ts": "2026-07-04T08:31:44.606147+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-misc-quick-wins", "number": 436, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:45.022701+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-misc-quick-wins", "number": 436, "risk": "Low", "ts": "2026-07-04T08:31:45.388015+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-outcome-multi-repo-arc", "number": 460, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:45.827748+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-outcome-multi-repo-arc", "number": 460, "risk": "Medium", "ts": "2026-07-04T08:31:46.258951+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-team-park-resume", "number": 437, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:46.725871+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-team-park-resume", "number": 437, "risk": "Medium", "ts": "2026-07-04T08:31:47.094574+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-crossleaf-resident-crew", "number": 438, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:47.562221+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-crossleaf-resident-crew", "number": 438, "risk": "High", "ts": "2026-07-04T08:31:48.066647+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-backlog-admission-governor", "number": 439, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:48.480640+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-backlog-admission-governor", "number": 439, "risk": "Medium", "ts": "2026-07-04T08:31:48.899495+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-ideate-program-foldback", "number": 440, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:49.347141+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-ideate-program-foldback", "number": 440, "risk": "Medium", "ts": "2026-07-04T08:31:49.740019+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-journal-query-join", "number": 441, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:50.196040+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-journal-query-join", "number": 441, "risk": "Medium", "ts": "2026-07-04T08:31:50.597425+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-learning-capture-nomination", "number": 442, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:50.988800+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-learning-capture-nomination", "number": 442, "risk": "Medium", "ts": "2026-07-04T08:31:51.357620+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-liveness-tripwire-engine", "number": 443, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:51.735272+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-liveness-tripwire-engine", "number": 443, "risk": "Medium", "ts": "2026-07-04T08:31:52.137640+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-mining-harvest-writeback", "number": 444, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:52.558218+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-mining-harvest-writeback", "number": 444, "risk": "Medium", "ts": "2026-07-04T08:31:53.089278+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-mining-ledger-closed-loop", "number": 445, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:53.493296+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-mining-ledger-closed-loop", "number": 445, "risk": "Medium", "ts": "2026-07-04T08:31:53.865017+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-promote-scan-recall-fixes", "number": 446, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:54.219226+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-promote-scan-recall-fixes", "number": 446, "risk": "Medium", "ts": "2026-07-04T08:31:54.595897+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-session-substrate-registry", "number": 447, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:55.007698+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-session-substrate-registry", "number": 447, "risk": "Medium", "ts": "2026-07-04T08:31:55.540908+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-standing-doc-provenance", "number": 448, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:55.977439+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-standing-doc-provenance", "number": 448, "risk": "Medium", "ts": "2026-07-04T08:31:56.417647+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-envelope-authorized-merge", "number": 449, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:56.901420+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-envelope-authorized-merge", "number": 449, "risk": "High", "ts": "2026-07-04T08:31:57.313457+00:00"}
+{"phase": "S4", "op": "set-objective", "slug": "pf-reconcile-controller", "number": 450, "mechanism": "direct-graphql-same-mutation-as-flow-set-field", "ts": "2026-07-04T08:31:57.730662+00:00"}
+{"phase": "S4", "op": "set-risk", "slug": "pf-reconcile-controller", "number": 450, "risk": "High", "ts": "2026-07-04T08:31:58.250212+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-ship-ceremony-primitive", "number": 345, "parent": 340, "ts": "2026-07-04T08:31:59.655050+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-ship-hazard-preflight-and-undo", "number": 346, "parent": 340, "ts": "2026-07-04T08:32:01.030927+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-ship-teardown-reconciliation", "number": 347, "parent": 340, "ts": "2026-07-04T08:32:02.480005+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-429-retry-primitive", "number": 348, "parent": 335, "ts": "2026-07-04T08:32:03.903093+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-adaptive-admission-governor", "number": 349, "parent": 335, "ts": "2026-07-04T08:32:05.312322+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-concurrency-policy-spec", "number": 350, "parent": 335, "ts": "2026-07-04T08:32:06.617582+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-dispatch-settlement", "number": 351, "parent": 335, "ts": "2026-07-04T08:32:07.952217+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-fanout-dispatch-economics", "number": 352, "parent": 335, "ts": "2026-07-04T08:32:09.377392+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-fleet-doctor", "number": 353, "parent": 335, "ts": "2026-07-04T08:32:10.874426+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-optimize-concurrency-knob", "number": 354, "parent": 335, "ts": "2026-07-04T08:32:12.262125+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-orphan-fencing-liveness", "number": 355, "parent": 335, "ts": "2026-07-04T08:32:13.715135+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-resource-lease-broker", "number": 356, "parent": 335, "ts": "2026-07-04T08:32:15.076182+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-subagent-liveness-engine", "number": 357, "parent": 335, "ts": "2026-07-04T08:32:16.353874+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-teardown-reclamation-contract", "number": 358, "parent": 335, "ts": "2026-07-04T08:32:17.679896+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-cache-prefix-stability", "number": 359, "parent": 333, "ts": "2026-07-04T08:32:18.978535+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-residency-derived-scheduling", "number": 360, "parent": 333, "ts": "2026-07-04T08:32:20.304222+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-review-delta-packets", "number": 361, "parent": 333, "ts": "2026-07-04T08:32:21.612496+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-dispatch-tier-resolver", "number": 362, "parent": 343, "ts": "2026-07-04T08:32:22.925172+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-effort-first-class", "number": 363, "parent": 343, "ts": "2026-07-04T08:32:24.260957+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-escalation-on-failure", "number": 364, "parent": 343, "ts": "2026-07-04T08:32:25.571586+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-midrun-tier-lever", "number": 365, "parent": 343, "ts": "2026-07-04T08:32:26.855012+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-spend-budget-envelope", "number": 366, "parent": 343, "ts": "2026-07-04T08:32:28.164620+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-spend-gate-asymmetry", "number": 367, "parent": 343, "ts": "2026-07-04T08:32:29.494480+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-tier-defaults-persistence", "number": 368, "parent": 343, "ts": "2026-07-04T08:32:30.767829+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-tier-floors-halt-not-degrade", "number": 369, "parent": 343, "ts": "2026-07-04T08:32:32.098103+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-tier-vocab-single-source", "number": 370, "parent": 343, "ts": "2026-07-04T08:32:33.468351+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-board-progression-shared-writer", "number": 344, "parent": 332, "ts": "2026-07-04T08:32:34.845057+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-durable-gate-records", "number": 371, "parent": 332, "ts": "2026-07-04T08:32:36.117958+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-midrun-adjustment-envelope", "number": 372, "parent": 332, "ts": "2026-07-04T08:32:37.375060+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-outcome-backend-spend-envelope", "number": 373, "parent": 332, "ts": "2026-07-04T08:32:38.612528+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-outcome-draft-unstructured", "number": 374, "parent": 332, "ts": "2026-07-04T08:32:39.957980+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-outcome-from-objective-ingestion", "number": 375, "parent": 332, "ts": "2026-07-04T08:32:41.278483+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-outcome-ingest-reconcile-drift", "number": 376, "parent": 332, "ts": "2026-07-04T08:32:42.582699+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-outcome-intent-capture-ux", "number": 377, "parent": 332, "ts": "2026-07-04T08:32:43.901930+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-outcome-step-profiles", "number": 378, "parent": 332, "ts": "2026-07-04T08:32:45.257948+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-remote-gate-approval", "number": 379, "parent": 332, "ts": "2026-07-04T08:32:46.611639+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-runstart-intent-envelope", "number": 380, "parent": 332, "ts": "2026-07-04T08:32:47.849314+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-chaperone-economics", "number": 381, "parent": 336, "ts": "2026-07-04T08:32:49.229627+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-consensus-external-advisory-seat", "number": 382, "parent": 336, "ts": "2026-07-04T08:32:50.468894+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-delegation-receipt-contract", "number": 383, "parent": 336, "ts": "2026-07-04T08:32:51.751076+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-delegation-tripwires-audit", "number": 384, "parent": 336, "ts": "2026-07-04T08:32:52.973444+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-engine-offer-helper", "number": 451, "parent": 336, "ts": "2026-07-04T08:32:54.383718+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-engine-output-trust-boundary", "number": 385, "parent": 336, "ts": "2026-07-04T08:32:55.671668+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-engine-registry-schema", "number": 452, "parent": 336, "ts": "2026-07-04T08:32:56.973602+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-engines-meta-command", "number": 453, "parent": 336, "ts": "2026-07-04T08:32:58.237816+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-ideate-engine-lane", "number": 454, "parent": 336, "ts": "2026-07-04T08:32:59.567464+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-offload-economics-guards", "number": 386, "parent": 336, "ts": "2026-07-04T08:33:00.852915+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-openai-http-bridge", "number": 387, "parent": 336, "ts": "2026-07-04T08:33:02.169467+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-output-attestation-liedetector", "number": 388, "parent": 336, "ts": "2026-07-04T08:33:03.432936+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-provider-auth-preflight", "number": 389, "parent": 336, "ts": "2026-07-04T08:33:04.770670+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-provider-onboarding-conformance", "number": 455, "parent": 336, "ts": "2026-07-04T08:33:06.056909+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-silent-fallback-elimination", "number": 390, "parent": 336, "ts": "2026-07-04T08:33:07.283111+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-task-provider-recommend", "number": 391, "parent": 336, "ts": "2026-07-04T08:33:08.582643+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-team-engine-worker-slot", "number": 392, "parent": 336, "ts": "2026-07-04T08:33:10.028961+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-typed-reconciliation", "number": 393, "parent": 336, "ts": "2026-07-04T08:33:11.479137+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-work-review-second-opinion", "number": 394, "parent": 336, "ts": "2026-07-04T08:33:12.818455+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-positive-handoff-ack", "number": 395, "parent": 340, "ts": "2026-07-04T08:33:14.243071+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-delegation-evidence-durability", "number": 396, "parent": 338, "ts": "2026-07-04T08:33:15.636506+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-evidence-gated-closure", "number": 397, "parent": 338, "ts": "2026-07-04T08:33:17.019931+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-evidence-immutability", "number": 398, "parent": 338, "ts": "2026-07-04T08:33:18.348792+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-fleet-baseline-metrics", "number": 461, "parent": 338, "ts": "2026-07-04T08:33:19.717902+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-gate-divergence-telemetry", "number": 399, "parent": 338, "ts": "2026-07-04T08:33:21.070783+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-panel-economics-exploration", "number": 462, "parent": 338, "ts": "2026-07-04T08:33:22.418983+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-pulse-live-telemetry", "number": 400, "parent": 338, "ts": "2026-07-04T08:33:23.709018+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-run-fact-ledger", "number": 401, "parent": 338, "ts": "2026-07-04T08:33:25.076481+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-spend-observability-reports", "number": 402, "parent": 338, "ts": "2026-07-04T08:33:26.419455+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-adr-derived-review-lenses", "number": 403, "parent": 342, "ts": "2026-07-04T08:33:27.742514+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-authority-resolver-stop-surface", "number": 404, "parent": 342, "ts": "2026-07-04T08:33:29.137457+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-checkable-surface-census", "number": 405, "parent": 342, "ts": "2026-07-04T08:33:30.446453+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-enforcement-coverage-gates", "number": 406, "parent": 342, "ts": "2026-07-04T08:33:31.700429+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-journal-schema-lint", "number": 407, "parent": 342, "ts": "2026-07-04T08:33:33.077726+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-standards-index-machine-contract", "number": 408, "parent": 342, "ts": "2026-07-04T08:33:34.431279+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-standards-preflight-issue-authoring", "number": 409, "parent": 342, "ts": "2026-07-04T08:33:35.786094+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-abolish-contract-mirrors", "number": 410, "parent": 341, "ts": "2026-07-04T08:33:37.078321+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-consensus-kernel", "number": 411, "parent": 341, "ts": "2026-07-04T08:33:38.412943+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-consensus-thresholds-convergence", "number": 412, "parent": 341, "ts": "2026-07-04T08:33:39.864615+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-contract-consumer-graph", "number": 413, "parent": 341, "ts": "2026-07-04T08:33:41.276290+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-contract-coupling-policy", "number": 414, "parent": 341, "ts": "2026-07-04T08:33:42.670529+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-execution-substrate-decoupling", "number": 415, "parent": 341, "ts": "2026-07-04T08:33:44.051881+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-fleet-commons-decision", "number": 463, "parent": 341, "ts": "2026-07-04T08:33:45.477615+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-producer-push-propagation", "number": 416, "parent": 341, "ts": "2026-07-04T08:33:46.894141+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-rename-campaign-executor", "number": 417, "parent": 341, "ts": "2026-07-04T08:33:48.359918+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-retired-vocabulary-guards", "number": 456, "parent": 341, "ts": "2026-07-04T08:33:49.625455+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-reviewer-lens-registry", "number": 418, "parent": 341, "ts": "2026-07-04T08:33:50.904861+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-single-vocab-source", "number": 419, "parent": 341, "ts": "2026-07-04T08:33:52.216021+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-upstream-drift-sweep", "number": 420, "parent": 341, "ts": "2026-07-04T08:33:53.545026+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-vendored-parity-registry", "number": 421, "parent": 341, "ts": "2026-07-04T08:33:54.816231+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-agent-file-ci-lint", "number": 422, "parent": 337, "ts": "2026-07-04T08:33:56.131284+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-agent-prompt-audit", "number": 464, "parent": 337, "ts": "2026-07-04T08:33:57.394449+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-authorship-provenance", "number": 423, "parent": 337, "ts": "2026-07-04T08:33:58.670067+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-board-live-schema-pagination", "number": 424, "parent": 337, "ts": "2026-07-04T08:33:59.984201+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-ci-local-parity", "number": 425, "parent": 337, "ts": "2026-07-04T08:34:01.312752+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-contract-reachability-parity", "number": 426, "parent": 337, "ts": "2026-07-04T08:34:02.611157+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-delegation-ci-integrity", "number": 457, "parent": 337, "ts": "2026-07-04T08:34:03.945263+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-fake-adapter-integrity", "number": 458, "parent": 337, "ts": "2026-07-04T08:34:05.236126+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-fleet-review-campaign", "number": 465, "parent": 337, "ts": "2026-07-04T08:34:06.583366+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-guard-mutation-canary", "number": 427, "parent": 337, "ts": "2026-07-04T08:34:07.834702+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-lever-site-census", "number": 466, "parent": 337, "ts": "2026-07-04T08:34:09.075447+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-lifecycle-regression-harness", "number": 428, "parent": 337, "ts": "2026-07-04T08:34:10.348874+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-release-surface-single-source", "number": 429, "parent": 337, "ts": "2026-07-04T08:34:11.663057+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-review-ledger-incremental", "number": 430, "parent": 337, "ts": "2026-07-04T08:34:12.930501+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-write-ownership-lanes-ci-lint", "number": 431, "parent": 337, "ts": "2026-07-04T08:34:14.175565+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-recon-memoization", "number": 432, "parent": 333, "ts": "2026-07-04T08:34:15.401096+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-residency-evidence", "number": 467, "parent": 333, "ts": "2026-07-04T08:34:16.690801+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-outcome-intent-renegotiation", "number": 433, "parent": 332, "ts": "2026-07-04T08:34:17.968015+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-zero-token-fire-drill", "number": 468, "parent": 336, "ts": "2026-07-04T08:34:19.237677+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-stacked-pr-cascade-guard", "number": 434, "parent": 340, "ts": "2026-07-04T08:34:20.553859+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-registry-calibration-loop", "number": 459, "parent": 338, "ts": "2026-07-04T08:34:21.908243+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-dark-plugin-parity", "number": 469, "parent": 334, "ts": "2026-07-04T08:34:23.220747+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-deploy-canary-verify-revert", "number": 435, "parent": 334, "ts": "2026-07-04T08:34:24.492740+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-misc-quick-wins", "number": 436, "parent": 334, "ts": "2026-07-04T08:34:25.779048+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-outcome-multi-repo-arc", "number": 460, "parent": 334, "ts": "2026-07-04T08:34:27.046191+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-team-park-resume", "number": 437, "parent": 334, "ts": "2026-07-04T08:34:28.325516+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-crossleaf-resident-crew", "number": 438, "parent": 333, "ts": "2026-07-04T08:34:29.830065+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-backlog-admission-governor", "number": 439, "parent": 339, "ts": "2026-07-04T08:34:31.132129+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-ideate-program-foldback", "number": 440, "parent": 339, "ts": "2026-07-04T08:34:32.438445+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-journal-query-join", "number": 441, "parent": 339, "ts": "2026-07-04T08:34:33.863020+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-learning-capture-nomination", "number": 442, "parent": 339, "ts": "2026-07-04T08:34:35.089142+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-liveness-tripwire-engine", "number": 443, "parent": 339, "ts": "2026-07-04T08:34:36.363661+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-mining-harvest-writeback", "number": 444, "parent": 339, "ts": "2026-07-04T08:34:37.659309+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-mining-ledger-closed-loop", "number": 445, "parent": 339, "ts": "2026-07-04T08:34:38.942326+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-promote-scan-recall-fixes", "number": 446, "parent": 339, "ts": "2026-07-04T08:34:40.215957+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-session-substrate-registry", "number": 447, "parent": 339, "ts": "2026-07-04T08:34:41.535765+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-standing-doc-provenance", "number": 448, "parent": 339, "ts": "2026-07-04T08:34:42.821442+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-envelope-authorized-merge", "number": 449, "parent": 332, "ts": "2026-07-04T08:34:44.175313+00:00"}
+{"phase": "S5", "op": "link-sub-issue", "slug": "pf-reconcile-controller", "number": 450, "parent": 332, "ts": "2026-07-04T08:34:45.500377+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-ship-ceremony-primitive", "number": 345, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:34:46.769756+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-ship-hazard-preflight-and-undo", "number": 346, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:34:48.768259+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-ship-teardown-reconciliation", "number": 347, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:34:50.401598+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-429-retry-primitive", "number": 348, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:34:52.059215+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-adaptive-admission-governor", "number": 349, "milestone": "wave-1", "label": "tier-moonshot", "ts": "2026-07-04T08:34:53.807008+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-concurrency-policy-spec", "number": 350, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:34:55.410218+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-dispatch-settlement", "number": 351, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:34:57.176132+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-fanout-dispatch-economics", "number": 352, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:34:58.778505+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-fleet-doctor", "number": 353, "milestone": "wave-1", "label": "tier-quick-win", "ts": "2026-07-04T08:35:00.443192+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-optimize-concurrency-knob", "number": 354, "milestone": "wave-1", "label": "tier-quick-win", "ts": "2026-07-04T08:35:02.080874+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-orphan-fencing-liveness", "number": 355, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:04.158852+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-resource-lease-broker", "number": 356, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:05.946434+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-subagent-liveness-engine", "number": 357, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:07.582169+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-teardown-reclamation-contract", "number": 358, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:09.317415+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-cache-prefix-stability", "number": 359, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:10.988579+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-residency-derived-scheduling", "number": 360, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:12.712775+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-review-delta-packets", "number": 361, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:14.357721+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-dispatch-tier-resolver", "number": 362, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:16.085809+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-effort-first-class", "number": 363, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:17.711952+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-escalation-on-failure", "number": 364, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:19.349170+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-midrun-tier-lever", "number": 365, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:20.980480+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-spend-budget-envelope", "number": 366, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:22.817057+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-spend-gate-asymmetry", "number": 367, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:24.375715+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-tier-defaults-persistence", "number": 368, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:25.931906+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-tier-floors-halt-not-degrade", "number": 369, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:27.526611+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-tier-vocab-single-source", "number": 370, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:29.255442+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-board-progression-shared-writer", "number": 344, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:30.938215+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-durable-gate-records", "number": 371, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:32.645181+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-midrun-adjustment-envelope", "number": 372, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:34.344128+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-outcome-backend-spend-envelope", "number": 373, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:36.013546+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-outcome-draft-unstructured", "number": 374, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:37.706144+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-outcome-from-objective-ingestion", "number": 375, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:39.478843+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-outcome-ingest-reconcile-drift", "number": 376, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:41.238965+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-outcome-intent-capture-ux", "number": 377, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:42.912249+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-outcome-step-profiles", "number": 378, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:44.804139+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-remote-gate-approval", "number": 379, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:46.494291+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-runstart-intent-envelope", "number": 380, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:48.166808+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-chaperone-economics", "number": 381, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:49.828914+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-consensus-external-advisory-seat", "number": 382, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:51.737077+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-delegation-receipt-contract", "number": 383, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:53.385647+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-delegation-tripwires-audit", "number": 384, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:55.173280+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-engine-offer-helper", "number": 451, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:56.832708+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-engine-output-trust-boundary", "number": 385, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:35:58.439801+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-engine-registry-schema", "number": 452, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:00.307967+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-engines-meta-command", "number": 453, "milestone": "wave-1", "label": "tier-quick-win", "ts": "2026-07-04T08:36:01.973288+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-ideate-engine-lane", "number": 454, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:03.687275+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-offload-economics-guards", "number": 386, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:05.308419+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-openai-http-bridge", "number": 387, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:07.168898+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-output-attestation-liedetector", "number": 388, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:08.819604+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-provider-auth-preflight", "number": 389, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:10.474690+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-provider-onboarding-conformance", "number": 455, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:12.117530+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-silent-fallback-elimination", "number": 390, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:13.840480+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-task-provider-recommend", "number": 391, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:15.707340+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-team-engine-worker-slot", "number": 392, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:17.877448+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-typed-reconciliation", "number": 393, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:19.690593+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-work-review-second-opinion", "number": 394, "milestone": "wave-1", "label": "tier-structural", "ts": "2026-07-04T08:36:21.443252+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-positive-handoff-ack", "number": 395, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:23.178870+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-delegation-evidence-durability", "number": 396, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:24.785048+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-evidence-gated-closure", "number": 397, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:26.527877+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-evidence-immutability", "number": 398, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:28.203246+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-fleet-baseline-metrics", "number": 461, "milestone": "wave-2", "label": "tier-quick-win", "ts": "2026-07-04T08:36:29.881648+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-gate-divergence-telemetry", "number": 399, "milestone": "wave-2", "label": "tier-quick-win", "ts": "2026-07-04T08:36:31.511201+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-panel-economics-exploration", "number": 462, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:33.150834+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-pulse-live-telemetry", "number": 400, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:34.759608+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-run-fact-ledger", "number": 401, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:36.343410+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-spend-observability-reports", "number": 402, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:37.942919+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-adr-derived-review-lenses", "number": 403, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:39.589428+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-authority-resolver-stop-surface", "number": 404, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:41.156029+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-checkable-surface-census", "number": 405, "milestone": "wave-2", "label": "tier-quick-win", "ts": "2026-07-04T08:36:42.943648+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-enforcement-coverage-gates", "number": 406, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:44.580912+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-journal-schema-lint", "number": 407, "milestone": "wave-2", "label": "tier-quick-win", "ts": "2026-07-04T08:36:46.633646+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-standards-index-machine-contract", "number": 408, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:48.260301+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-standards-preflight-issue-authoring", "number": 409, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:50.198576+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-abolish-contract-mirrors", "number": 410, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:51.999737+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-consensus-kernel", "number": 411, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:53.574275+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-consensus-thresholds-convergence", "number": 412, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:55.178135+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-contract-consumer-graph", "number": 413, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:56.760811+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-contract-coupling-policy", "number": 414, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:36:58.524174+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-execution-substrate-decoupling", "number": 415, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:00.226125+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-fleet-commons-decision", "number": 463, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:01.828843+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-producer-push-propagation", "number": 416, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:03.445569+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-rename-campaign-executor", "number": 417, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:05.035316+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-retired-vocabulary-guards", "number": 456, "milestone": "wave-2", "label": "tier-quick-win", "ts": "2026-07-04T08:37:06.617079+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-reviewer-lens-registry", "number": 418, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:08.231912+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-single-vocab-source", "number": 419, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:09.982863+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-upstream-drift-sweep", "number": 420, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:11.702684+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-vendored-parity-registry", "number": 421, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:13.397993+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-agent-file-ci-lint", "number": 422, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:15.017261+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-agent-prompt-audit", "number": 464, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:16.711803+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-authorship-provenance", "number": 423, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:18.630549+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-board-live-schema-pagination", "number": 424, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:20.510839+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-ci-local-parity", "number": 425, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:22.373295+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-contract-reachability-parity", "number": 426, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:23.985787+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-delegation-ci-integrity", "number": 457, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:25.642668+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-fake-adapter-integrity", "number": 458, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:27.384921+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-fleet-review-campaign", "number": 465, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:29.155435+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-guard-mutation-canary", "number": 427, "milestone": "wave-2", "label": "tier-moonshot", "ts": "2026-07-04T08:37:30.886788+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-lever-site-census", "number": 466, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:32.677821+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-lifecycle-regression-harness", "number": 428, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:34.419328+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-release-surface-single-source", "number": 429, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:36.266109+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-review-ledger-incremental", "number": 430, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:38.014639+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-write-ownership-lanes-ci-lint", "number": 431, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:39.690556+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-recon-memoization", "number": 432, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:41.425851+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-residency-evidence", "number": 467, "milestone": "wave-2", "label": "tier-quick-win", "ts": "2026-07-04T08:37:43.342075+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-outcome-intent-renegotiation", "number": 433, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:45.170763+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-zero-token-fire-drill", "number": 468, "milestone": "wave-2", "label": "tier-structural", "ts": "2026-07-04T08:37:46.861463+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-stacked-pr-cascade-guard", "number": 434, "milestone": "wave-3", "label": "tier-moonshot", "ts": "2026-07-04T08:37:49.048519+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-registry-calibration-loop", "number": 459, "milestone": "wave-3", "label": "tier-moonshot", "ts": "2026-07-04T08:37:51.188352+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-dark-plugin-parity", "number": 469, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:37:52.834597+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-deploy-canary-verify-revert", "number": 435, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:37:54.600512+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-misc-quick-wins", "number": 436, "milestone": "wave-3", "label": "tier-quick-win", "ts": "2026-07-04T08:37:56.316800+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-outcome-multi-repo-arc", "number": 460, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:37:57.984805+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-team-park-resume", "number": 437, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:37:59.857894+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-crossleaf-resident-crew", "number": 438, "milestone": "wave-3", "label": "tier-moonshot", "ts": "2026-07-04T08:38:01.527709+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-backlog-admission-governor", "number": 439, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:03.287269+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-ideate-program-foldback", "number": 440, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:05.091322+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-journal-query-join", "number": 441, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:06.784695+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-learning-capture-nomination", "number": 442, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:08.470967+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-liveness-tripwire-engine", "number": 443, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:10.258659+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-mining-harvest-writeback", "number": 444, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:11.946909+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-mining-ledger-closed-loop", "number": 445, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:13.655154+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-promote-scan-recall-fixes", "number": 446, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:15.371987+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-session-substrate-registry", "number": 447, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:17.140444+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-standing-doc-provenance", "number": 448, "milestone": "wave-3", "label": "tier-structural", "ts": "2026-07-04T08:38:18.836294+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-envelope-authorized-merge", "number": 449, "milestone": "wave-3", "label": "tier-moonshot", "ts": "2026-07-04T08:38:20.585212+00:00"}
+{"phase": "S6", "op": "milestone-tier", "slug": "pf-reconcile-controller", "number": 450, "milestone": "wave-3", "label": "tier-moonshot", "ts": "2026-07-04T08:38:22.327478+00:00"}

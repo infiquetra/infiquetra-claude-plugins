@@ -1,0 +1,93 @@
+{
+  "absorbed_ids": [
+    "G-hybrids-11",
+    "H-F1-9",
+    "H-F3-10",
+    "H-F1-4"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:15:42.106224+00:00",
+  "created_issue_number": 443,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/443",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-liveness-tripwire-engine.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Mechanical predicate-engine plumbing (registry, evaluator, digest, ledger append hooks) reusing an already-existing, already-tested ledger pattern (promotion-contract.md's drift-stable source-key ledger) -- no architectural judgment call large enough to warrant opus. High effort reflects landing three coordinated anchor types (decision revisit-when, issue basis, lifecycle firing-ledger) behind one shared engine without breaking saga:promote's or saga:retro's existing read-only/propose-diff-and-wait contracts. Team-execution backend because the change spans plugins/saga/skills/promote/, plugins/saga/skills/retro/, and docs/engineering-journal/, benefiting from validator-gated review across that split. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make the backlog and lifecycle self-improving",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make the backlog and lifecycle self-improving",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": [
+      "outcome_shape and dod_sketch bodies for G-hybrids-11, H-F3-10 were compression-cache placeholders (<<ccr:...>>) in the ideation survivor file; reconstructed from the issue-map's dod_sketch/ac_sketch fields and the sibling H-F1-9/H-F1-4 entries' full text, which shared the same merge. /plan should re-verify against the live ideation session if the compression cache is still resolvable."
+    ]
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-liveness-tripwire-engine.json",
+  "slug": "pf-liveness-tripwire-engine",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "G-hybrids-11 (primary): Checkable liveness for decisions AND backlog: revisit-when tripwires and basis-decay share one predicate engine. dod_sketch: Tripwire registry + read-only scheduled evaluator + digest, seeded with real revisit-whens and a basis-decay row; firing-ledger hooks in promote/retro/fallback paths feed a /retro sunset-or-fix audit.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-set",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json#G-hybrids-11,H-F1-4;docs/plans/plugin-fleet-ideation-2026-07-03/survivors/OTHER.json#H-F1-9,H-F3-10",
+    "title": "One predicate engine for revisit-when tripwires, basis decay, and never-fired machinery",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: one predicate engine for revisit-when tripwires, backlog basis-decay, and never-fired lifecycle machinery",
+  "updated_at": "2026-07-04T08:15:49.453275+00:00",
+  "wave": "wave-3"
+}

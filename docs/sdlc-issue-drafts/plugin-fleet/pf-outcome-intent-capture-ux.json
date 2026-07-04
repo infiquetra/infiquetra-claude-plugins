@@ -1,0 +1,90 @@
+{
+  "absorbed_ids": [
+    "T8-F1-4",
+    "T8-F3-2",
+    "T8-F2-8",
+    "T8-F2-4"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:54:22.912017+00:00",
+  "created_issue_number": 377,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/377",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-intent-capture-ux.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Sonnet at medium effort matches the issue-map's own executor recommendation for this slug. The work is UX/wiring shaped against one existing entry point (outcome.py's start subcommand) rather than open-ended architectural judgment; inline is sufficient because all four facets land in the same file/module boundary and do not require cross-subsystem reviewer consensus.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-intent-capture-ux.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Intent-capture ergonomics on /outcome start: no-write --preview reusing status_card, authorized-blast-radius render (not abstract yes/no), Objective-body-proposed posture/kinds defaults (operator-confirmed), and probe_host_capabilities()-suppressed forced questions with a recorded decision_trail reason",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map/issue-map-final.json",
+    "ref": "slug: pf-outcome-intent-capture-ux",
+    "title": "Intent-capture ergonomics: start --preview, blast-radius render, body-proposed defaults, suppressed forced questions",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "enhancement: /outcome start intent-capture ergonomics (--preview, blast-radius render, body-proposed defaults, suppressed forced questions)",
+  "updated_at": "2026-07-04T07:54:28.496478+00:00",
+  "wave": "wave-1"
+}

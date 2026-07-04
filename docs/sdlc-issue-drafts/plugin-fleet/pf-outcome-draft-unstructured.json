@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T8-F1-5",
+    "T8-F6-4",
+    "S-24"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:53:24.985350+00:00",
+  "created_issue_number": 374,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/374",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-draft-unstructured.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Both paths extend existing, well-documented seams \u2014 the start verb table and the OutcomeSpec/Node validation machinery \u2014 rather than inventing new architecture. The deterministic parser is mechanical pattern-matching over markdown structure; the draft verb's rubric-gating logic follows the already-settled verifier-of-record posture ({#external-engines-never-gatekeepers}) rather than deciding it.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Ship run-start intent envelope for lifecycle autonomy",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Ship run-start intent envelope for lifecycle autonomy",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-outcome-draft-unstructured.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "T8-F1-5 (primary): outcome draft refines a raw brain-dump into a clarity-checked objective + node skeleton, wiring the outcome_clarity rubric (Claude verifier-of-record) into the R20 review gate. T8-F6-4 (facet): a $0 deterministic parse_structured_input() turns markdown checklists/headings into node dicts, HALTing on ambiguous (prose) input, wired behind start --from-notes. S-24 (dedup-merged seed): /outcome structures small unstructured input into a minimal valid DAG/envelope.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T8.json",
+    "ref": "issue-map-final.json#pf-outcome-draft-unstructured",
+    "title": "outcome draft: refine raw text into a clarity-checked node skeleton, with a $0 deterministic parser for structured notes",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: outcome draft \u2014 refine raw text into a clarity-checked node skeleton, with a $0 deterministic parser for structured notes",
+  "updated_at": "2026-07-04T07:53:30.294373+00:00",
+  "wave": "wave-1"
+}

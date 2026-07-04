@@ -1,0 +1,113 @@
+{
+  "absorbed_ids": [
+    "T2-F1-2"
+  ],
+  "approval_state": null,
+  "consolidation": {
+    "absorbed": [
+      {
+        "id": "T2-F1-2",
+        "role": "primary"
+      }
+    ],
+    "issue_map_source": "docs/plans/plugin-fleet-ideation-2026-07-03 issue-map-final.json (scratchpad copy: /private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/c23d3bf9-9081-4727-8e0d-140ebc73f63f/scratchpad/ideation/issue-map/issue-map-final.json)",
+    "rationale": "Dedup already funneled five auth/preflight variants into T2-F1-2; it is one clean PR (per-row auth block, env-var-first resolver, redaction guard, halt-not-degrade preflight) and merging it into the bridge issue would make that PR omnibus.",
+    "slug": "pf-provider-auth-preflight"
+  },
+  "created_at": "2026-07-04T07:58:03.604532+00:00",
+  "created_issue_number": 389,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/389",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-provider-auth-preflight.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Well-scoped, mechanically testable schema/logic change (one dataclass field, one function rewire, four YAML rows, unit tests); no ambiguous design tradeoffs or cross-repo blast radius warranting opus or an external-engine second opinion.",
+    "model": "sonnet"
+  },
+  "grounding_files": [
+    "plugins/saga/scripts/engine_resolver.py:16-30",
+    "plugins/saga/scripts/engine_resolver.py:52-76",
+    "plugins/saga/scripts/engine_resolver.py:18-19",
+    "plugins/saga/scripts/engine_registry.py:164-180",
+    "plugins/saga/references/engine-registry.yaml:22,52,78,108",
+    "tests/test_saga_engine_resolver.py:312-345",
+    "docs/plans/2026-07-03-plugin-fleet-grounding-brief.md"
+  ],
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Stand up the external-engine offload lane",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": null,
+    "profile": "campps",
+    "warnings": [
+      "Not yet run through card_validator \u2014 run before board handoff to confirm each acceptance criterion still resolves to a runnable check and no placeholder sections remain."
+    ]
+  },
+  "release_surface_checklist": [
+    "plugins/saga/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/saga/CHANGELOG.md",
+    "version/metadata drift-guard tests in tests/"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-provider-auth-preflight.json",
+  "slug": "pf-provider-auth-preflight",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "dod_sketch: Merged PR (EngineEntry.auth block + resolve_credentials + preflight rewire off the hardcoded path map), verified by a test asserting missing DEEPSEEK_API_KEY yields available:False with a reason, plus a redaction grep asserting the key VALUE never appears in preflight/provenance output.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json",
+    "ref": "T2-F1-2",
+    "title": "Provider credential-resolution model (env/secret-ref) with secret redaction",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability: data-driven provider credential resolution (env/secret-ref) with redaction-safe preflight",
+  "updated_at": "2026-07-04T08:23:20.386692+00:00"
+}

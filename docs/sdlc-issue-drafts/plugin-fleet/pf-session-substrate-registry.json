@@ -1,0 +1,131 @@
+{
+  "absorbed_ideas": [
+    {
+      "basis": "brief theme-10 grounding: 219 codex sessions in-window with no mining substrate (docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:115); discover_sessions.py is Claude-only with no substrate seam.",
+      "id": "T10-F4-3",
+      "role": "primary",
+      "title": "Session-substrate registry \u2014 light up 219 dark codex sessions and every future engine with one seam"
+    },
+    {
+      "basis": "operator statement 'comprehensive scan of all claude/codex sessions in local repos for improvement patterns'; brief \u00a75 '219 codex sessions in-window with no mining substrate'.",
+      "id": "S-35",
+      "role": "dedup-merged",
+      "title": "Comprehensive scan of all claude/codex local sessions for improvement patterns"
+    },
+    {
+      "basis": "grounding brief \u00a77 (219 dark codex sessions); discover_sessions.py has no codex glob and extract_session_skeleton.py has no codex handler alongside handle_claude (plugins/saga/scripts/extract_session_skeleton.py:156).",
+      "id": "T10-F6-3",
+      "role": "facet",
+      "title": "Codex-session dark-substrate bridge into the existing skeleton pipeline"
+    },
+    {
+      "basis": "chaperone dispatch paths (codex/agy bridge) produce no minable artifact at delegation time; {#external-engine-chaperone-dispatch} (#318) constrains external-engine involvement to chaperone dispatch only (docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:41).",
+      "id": "H-F1-5",
+      "role": "facet",
+      "title": "Chaperone-emitted engine-agnostic session skeletons: fix mining darkness at the write side"
+    },
+    {
+      "basis": "grounding brief \u00a73.2 'team-execution consensus review catching defects green suites missed (2 independent repos, operator-praised)'; discover_sessions.py:35 MAX_CANDIDATES=5 recency-only cap shows the transcript substrate is lossy.",
+      "id": "T10-F3-2",
+      "role": "facet",
+      "title": "Mine merged PR review threads as an already-durable, already-cross-repo substrate"
+    },
+    {
+      "basis": "prior art: this repo's own session-mining synthesis already produced Claude+Codex independent syntheses converging 15/17, hand-reconciled (grounding brief theme-5 prior art); folded in as an optional gated capability, never a gating decision, per {#external-engines-never-gatekeepers} (#283).",
+      "id": "T10-F6-4",
+      "role": "facet",
+      "title": "Dual-engine adversarial session mining with Claude-reconciled diff"
+    }
+  ],
+  "absorbed_ids": [
+    "T10-F4-3",
+    "S-35",
+    "T10-F6-3",
+    "H-F1-5",
+    "T10-F3-2",
+    "T10-F6-4"
+  ],
+  "approval_state": null,
+  "consolidation_rationale": "All six absorbed ideas trace to one seam: /retro's mining core assumes exactly one substrate (Claude JSONL, read-side only). A registry with a Substrate interface plus claude/codex adapters closes the codex-session gap (T10-F4-3, S-35, T10-F6-3) and gives PR-review-thread mining (T10-F3-2) and chaperone write-side emission (H-F1-5) the same plug-in seam, instead of four bespoke scripts. The moonshot-tagged dual-engine reconciliation facet (T10-F6-4) is folded in as an optional, gated, advisory-only capability on the same registry rather than split into a separate issue, since it reuses the identical skeleton envelope the other five facets already produce.",
+  "created_at": "2026-07-04T08:16:48.528935+00:00",
+  "created_issue_number": 447,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/447",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-session-substrate-registry.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Touches four coupled surfaces (new registry abstraction, new adapter, new mining script, write-side emission in two existing chaperone dispatch paths) and must preserve byte-for-byte backward compatibility on the existing Claude-only path while introducing a genuinely new abstraction boundary a future engine must implement without touching /retro core \u2014 an architectural-seam judgment call, not a mechanical transform of an already-fixed target shape. team-execution gives reviewer consensus and validator gates across the four touched surfaces. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Make the backlog and lifecycle self-improving",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Make the backlog and lifecycle self-improving",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-3"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-session-substrate-registry.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Session-substrate registry: light up 219 dark codex sessions, PR review threads, and chaperone-emitted skeletons. session_substrates.py registry (claude + codex adapters) wired into /retro mining; chaperone bridges emit neutral skeletons at delegation time; mine_review_threads.py adds the PR substrate.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json",
+    "ref": "issue-map-final.json#pf-session-substrate-registry",
+    "title": "Session-substrate registry: light up 219 dark codex sessions, PR review threads, and chaperone-emitted skeletons",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: session-substrate registry \u2014 light up 219 dark codex sessions, PR review threads, and chaperone-emitted skeletons",
+  "updated_at": "2026-07-04T08:16:55.998626+00:00",
+  "wave": "wave-3"
+}

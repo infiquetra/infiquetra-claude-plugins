@@ -1,0 +1,89 @@
+{
+  "absorbed_ids": [
+    "T7-F4-1",
+    "H-F3-6",
+    "H-F2-3"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:44:49.175715+00:00",
+  "created_issue_number": 345,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/345",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ship-ceremony-primitive.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "Multi-file core primitive touching saga scripts plus skill docs; consensus-worthy via team-execution fan-out, but a mechanical state-machine build not requiring opus-tier judgment or an external-engine worker slot. Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Automate the ship ceremony end-to-end",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Automate the ship ceremony end-to-end",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-1"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "plugin-fleet",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-ship-ceremony-primitive.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "ship_ceremony.py \u2014 one composable, resumable guarded ship primitive replacing the 8-repo manual ritual; absorbs T7-F4-1 (primary), H-F3-6 (facet, git-surface ownership boundary), H-F2-3 (facet, front-loaded draft PR at work start).",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/c23d3bf9-9081-4727-8e0d-140ebc73f63f/scratchpad/ideation/issue-map/issue-map-final.json",
+    "ref": "issue-map-final.json#pf-ship-ceremony-primitive",
+    "title": "ship_ceremony.py \u2014 one composable, resumable guarded ship primitive replacing the 8-repo manual ritual",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: ship_ceremony.py \u2014 one composable, resumable guarded ship primitive replacing the 8-repo manual ritual",
+  "updated_at": "2026-07-04T08:19:48.622484+00:00",
+  "wave": "wave-1"
+}

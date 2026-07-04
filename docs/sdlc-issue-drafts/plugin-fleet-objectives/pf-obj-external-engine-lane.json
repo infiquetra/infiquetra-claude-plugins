@@ -1,0 +1,41 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet-objectives/pf-obj-external-engine-lane.md",
+  "handoff_maturity": "deferred-context",
+  "issue_type": "objective",
+  "labels": [
+    "objective",
+    "hermes-not-actionable"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "improve-claude-plugins",
+    "Status": "Idea"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "operations",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet-objectives/pf-obj-external-engine-lane.json",
+  "slug": "pf-obj-external-engine-lane",
+  "source_context": {
+    "inferred_maturity": "deferred-context",
+    "kind": "ideation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/issue-map-final.json",
+    "ref": "issue-map-final.json objective 'Stand up the external-engine offload lane'",
+    "title": "objective: Stand up the external-engine offload lane",
+    "url": null
+  },
+  "state": "ready",
+  "status": "Idea",
+  "team": "jeff",
+  "title": "objective: Stand up the external-engine offload lane",
+  "wave": "wave-1",
+  "updated_at": "2026-07-04T00:00:00.000000+00:00"
+}

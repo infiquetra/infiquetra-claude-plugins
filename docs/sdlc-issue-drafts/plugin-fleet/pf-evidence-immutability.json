@@ -1,0 +1,136 @@
+{
+  "absorbed_ideas": [
+    {
+      "id": "H-F1-6",
+      "role": "primary",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T11.json"
+    },
+    {
+      "id": "H-F5-3",
+      "role": "dedup-merged",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T10.json"
+    },
+    {
+      "id": "S-17",
+      "role": "dedup-merged",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/seeds.json"
+    },
+    {
+      "id": "T15-F1-6",
+      "role": "dedup-merged",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T15.json"
+    },
+    {
+      "id": "T7-F5-6",
+      "role": "dedup-merged",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json"
+    },
+    {
+      "id": "T7-F3-5",
+      "role": "primary",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json"
+    },
+    {
+      "id": "T7-F5-5",
+      "role": "facet",
+      "survivor_file": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T7.json"
+    }
+  ],
+  "absorbed_ids": [
+    "H-F1-6",
+    "H-F5-3",
+    "S-17",
+    "T15-F1-6",
+    "T7-F5-6",
+    "T7-F3-5",
+    "T7-F5-5"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T08:01:09.076868+00:00",
+  "created_issue_number": 398,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/398",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-evidence-immutability.md",
+  "executor_profile": {
+    "backend": "inline",
+    "effort": "medium",
+    "external_llm": "none",
+    "justification": "Self-contained mechanical library module plus two call-site rewires within one repo, with existing atomic-write primitives (outcome_store._write_once/_atomic_write, manifest_store.write_manifest) to reuse as pattern; no cross-repo reasoning or adversarial judgment needed.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "objective": "Build the fleet telemetry and ledger substrate",
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Build the fleet telemetry and ledger substrate",
+    "Technical Risk": "medium",
+    "Tier": "structural",
+    "Wave": "wave-2"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "release_surface_checklist": [
+    "plugins/saga/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/saga/CHANGELOG.md",
+    "version/metadata drift-guard tests in tests/"
+  ],
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-evidence-immutability.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Content-addressed append-only verification evidence: custody log, pre-registered pass criteria, FAIL never overwritten. evidence_ledger.py (content-addressed writes + append-only custody log) wired into saga /qa, /verify and /code-review artifact paths with gate-side hash verification.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-issue-map",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/",
+    "ref": "issue-map-final.json#pf-evidence-immutability",
+    "title": "Content-addressed append-only verification evidence: custody log, pre-registered pass criteria, FAIL never overwritten",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: content-addressed, append-only evidence ledger (FAIL is never overwritten)",
+  "updated_at": "2026-07-04T08:01:15.294306+00:00",
+  "wave": "wave-2"
+}

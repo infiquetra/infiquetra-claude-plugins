@@ -1,0 +1,87 @@
+{
+  "absorbed_ids": [
+    "T4-F1-7",
+    "T4-F2-5",
+    "T4-F6-5",
+    "T4-F1-8"
+  ],
+  "approval_state": null,
+  "created_at": "2026-07-04T07:46:54.316071+00:00",
+  "created_issue_number": 352,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/352",
+  "draft_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fanout-dispatch-economics.md",
+  "executor_profile": {
+    "backend": "team-execution",
+    "effort": "high",
+    "external_llm": "none",
+    "justification": "mechanical, well-scoped propagation of an existing pattern (stagger-warm, fork-cost lever) into four named sites, plus one bounded new scheduler subordinate to an existing frontier primitive; no architectural judgment call above what the binding decisions already settled Effort is target posture: not a live team-execution dispatch knob until pf-effort-first-class lands; teammates inherit session tier until then.",
+    "model": "sonnet"
+  },
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "deploy-templates",
+      "detail": "Deploy missing templates: objective.yml"
+    },
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "Govern fleet concurrency and reclaim leaked resources",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/plugin-fleet/pf-fanout-dispatch-economics.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Cache-aware fan-out dispatch: stagger-warm release, within-run wave queue, fork_is_cheap propagation, and the 1-hour-TTL escalation gate. Absorbs T4-F1-7 (primary), T4-F2-5, T4-F6-5, T4-F1-8.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "ideation-survivor-consolidation",
+    "path": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json",
+    "ref": "docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T4.json#T4-F1-7,T4-F2-5,T4-F6-5,T4-F1-8",
+    "title": "Cache-aware fan-out dispatch economics",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "tier": "structural",
+  "title": "capability: cache-aware fan-out dispatch economics",
+  "updated_at": "2026-07-04T08:20:15.729042+00:00",
+  "wave": "wave-1"
+}

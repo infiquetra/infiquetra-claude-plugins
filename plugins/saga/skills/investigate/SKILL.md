@@ -228,6 +228,10 @@ should have caught it. Then run the **fix-vs-diagnosis-vs-rethink gate** via `As
    or interface, wrong/incomplete requirements, or every fix is a workaround). Route to `/brainstorm`.
    Size alone never makes a bug a design problem.
 
+Gate-divergence telemetry (optional, issue #399): record via `gate_id`
+`investigate-fix-vs-diagnosis` per `plugins/saga/references/gate-divergence-instrumentation.md` —
+the offered default is whichever option the presented findings most directly recommend.
+
 ---
 
 ## Phase 3 — Fix (GATED, optional, trivial-scope, own verification)

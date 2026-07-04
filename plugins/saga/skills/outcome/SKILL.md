@@ -159,7 +159,9 @@ per drift.
 Drive `/outcome` for coordination; drop to native leaf verbs for hands-on work. When several leaves block
 at once, the attention consolidator (later unit) bubbles them into one ranked prompt rather than N pages.
 Use `AskUserQuestion` only for genuine coordinator-level decisions (a gate, an unsatisfiable barrier, a
-parent-close); in a channel session, inline the choices instead.
+parent-close); in a channel session, inline the choices instead. Gate-divergence telemetry (optional,
+issue #399): record such a decision via `gate_id` `outcome-coordinator-decision` per
+`plugins/saga/references/gate-divergence-instrumentation.md` when a recommended resolution is offered.
 
 ## What `/outcome` does NOT own
 

@@ -132,7 +132,9 @@ Run Step 0 (sub-steps detailed in `references/review-modes.md`):
   must be resolved before this becomes a plan?"
 - **0F. Mode selection** — present the 4 modes via `AskUserQuestion` (channel -> inline) with a
   context-default recommendation; state **"options differ in kind, not coverage — no completeness
-  score"**; once selected, **commit, no silent drift.**
+  score"**; once selected, **commit, no silent drift.** Gate-divergence telemetry (optional, issue
+  #399): record via `gate_id` `founder-review-mode-selection` per
+  `plugins/saga/references/gate-divergence-instrumentation.md`.
 
 ---
 
@@ -143,7 +145,9 @@ Run the branch for the committed mode (full ceremonies in `references/review-mod
 - **SCOPE EXPANSION** — 10x check + platonic ideal + delight opportunities, then the **opt-in
   ceremony**: each expansion as its own `AskUserQuestion`, recommended *enthusiastically*, framed
   **FLAT -> EXPANSIVE** (lead with the felt experience, close with effort + impact). Options:
-  **A) add / B) defer (-> journal/QUEUED) / C) skip**.
+  **A) add / B) defer (-> journal/QUEUED) / C) skip**. Gate-divergence telemetry (optional, issue
+  #399): record each expansion decision via `gate_id` `founder-review-expansion-optin` per
+  `plugins/saga/references/gate-divergence-instrumentation.md`.
 - **SELECTIVE EXPANSION** — run the HOLD analysis (complexity + minimum-change) as the bulletproof
   baseline, then the expansion scan, then the **cherry-pick ceremony** (same A/B/C, **neutral**
   posture).

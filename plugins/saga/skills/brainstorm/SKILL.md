@@ -43,6 +43,12 @@ These govern every turn of the dialogue.
 In a channel session (`redis-channel` active), do not call `AskUserQuestion`; inline the choices in
 your reply text instead ("Which? A) ... B) ... C) ...").
 
+**Gate-divergence telemetry (optional, issue #399).** When a single-select question offers a
+recommended or pre-selected option, record the interaction as `gate_id`
+`brainstorm-interrogation-choice` per `plugins/saga/references/gate-divergence-instrumentation.md`
+on the next `saga.py save` call. Open-ended questions with no offered default have nothing to
+record.
+
 ## Topic
 
 Take the topic from command arguments, a `/ideate` survivor reference (e.g. `dig deeper on #N` or a

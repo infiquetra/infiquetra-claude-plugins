@@ -22,6 +22,37 @@
 
 ---
 
+## 2026-07-04
+
+### Baseline-metrics citations re-verified at write-time, not copied from the issue (#461)  {#pf-baseline-citation-reverify-461}
+
+**Status.** Shipped as `docs/plans/2026-07-04-plugin-fleet-baseline-metrics.md` (Phase 0 item 1 of the
+`improve-claude-plugins` execution program, `docs/plans/2026-07-04-plugin-fleet-execution-order.md`).
+
+**Decision.** When drafting the baseline metrics doc, re-derived every `grounding-brief.md:N`
+citation directly from the file as it exists today, rather than trusting the line numbers issue
+#461 quoted (e.g. the issue cited `:112` for the ship-ceremony metric; the file today has it at
+`:119` — every one of the issue's 8 citations had drifted 3–10 lines from edits made to the brief
+after the issue was drafted).
+
+**Rejected alternatives.** Copying the issue's cited line numbers verbatim (faster, but would have
+shipped a "before" baseline with stale citations — failing AC2/AC9 on first re-derivation, and
+reproducing the exact "stale claim asserted as fact" failure mode the same grounding brief warns
+about, §6 item 2).
+
+**Rationale.** A citation into a *living* document (not a frozen commit or a quoted excerpt) is only
+as good as its last re-verification. This baseline doc's entire purpose is to be re-derivable cold —
+shipping unverified citations into it would undermine the artifact on day one.
+
+**Revisit when.** Any future issue-derived plan cites line numbers into a document that is still being
+actively edited; re-verify those citations at write-time rather than trusting the issue body, or cite
+a commit SHA + line instead of a bare path + line if the source needs to be pinned exactly.
+
+**Refs.** `docs/plans/2026-07-04-plugin-fleet-baseline-metrics-plan.md`,
+`docs/reviews/2026-07-04-plugin-fleet-baseline-metrics-plan-review.md`.
+
+---
+
 ## 2026-07-03
 
 ### Board-saga reconcile: reconstruct intent from the success-only ledger, trigger at the /outcome boundary (#295)  {#board-saga-reconcile-ktds-295}

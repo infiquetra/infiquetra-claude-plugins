@@ -24,6 +24,61 @@
 
 ## 2026-07-04
 
+### Gate-divergence entries stored as base64-wrapped JSON blobs, pipe-joined (#399)  {#pf-gate-divergence-json-encoding-399}
+
+**Status.** Planned in `docs/plans/2026-07-04-gate-divergence-telemetry-plan.md` (Phase 0 item
+2 of the `improve-claude-plugins` execution program).
+
+**Decision.** The new `Saga.gate_divergence` field encodes each entry as base64
+(`base64(json.dumps({"gate_id", "offered", "answer", "divergence", "latency_seconds"}))`)
+joined pipe-separated across entries via the existing `_split_list` helper
+(`saga.py:1177-1184`) — no change to `_split_list` itself.
+
+**Rejected alternatives.** (1) `gate_verdicts`'s `gate:state:ref` colon convention
+(`saga.py:1145-1168`): safe only because `state` is a closed 6-value enum
+(`saga.py:1140-1143`); `gate_divergence`'s `answer` field is arbitrary free text, so a
+positional-colon split would silently corrupt entries containing colons. (2) Raw (un-encoded)
+JSON blobs pipe-joined, matching `--artifact-pointers`'s help-text convention
+(`saga.py:1295-1298`): rejected after verifying during doc-review that nothing in the codebase
+actually `json.loads`s an `artifact_pointers` entry, and that `_split_list` is a raw
+`value.split("|")` with no escaping — a JSON blob whose `answer` field contains a literal `|`
+would silently corrupt the split and misalign every subsequent entry. Treating that help text as
+a working precedent without verifying a real consumer would have reproduced the "stale claim
+asserted as fact" failure mode #461's KTD1 already flags for this program.
+
+**Rationale.** Base64's alphabet (`A-Za-z0-9+/=`) contains no `|` by construction, so the
+existing raw pipe-split is safe regardless of entry content — zero changes to `_split_list`,
+zero new parsing primitives at the CLI layer.
+
+**Revisit when.** If a future gate-record primitive (`pf-durable-gate-records`) replaces this
+ad hoc field with a structured store, this encoding choice becomes moot and should be retired in
+favor of that primitive's native schema.
+
+**Refs.** Issue #399; `docs/plans/2026-07-04-gate-divergence-telemetry-plan.md` KTD1.
+
+### Gate-divergence latency captured by the instrumented skill, no separate write-helper process (#399)  {#pf-gate-divergence-latency-399}
+
+**Status.** Planned alongside the above.
+
+**Decision.** Latency between a gate's offer and the operator's answer is captured by the
+instrumented `SKILL.md`'s own inline `date +%s` calls bracketing the `AskUserQuestion` call,
+passed into the same `saga.py save --gate-divergence` call already made in that skill's flow.
+No new write-helper script or process boundary is introduced.
+
+**Rejected alternatives.** A separate Python write-helper module invoked as its own process:
+rejected because gate sites are prose instructions in skill files executed by the assistant
+in-session, not a long-running process that could hold a timer across the offer/answer gap —
+there is nothing for a helper module to wrap that the skill instructions don't already do via
+inline shell timestamps.
+
+**Rationale.** Zero new moving parts; rides the existing save-call plumbing exactly as
+`orchestration_operator_choice` already does.
+
+**Revisit when.** If `pf-durable-gate-records` introduces a real gate-firing event with its own
+process boundary, latency capture should move there instead of living in skill prose.
+
+**Refs.** Issue #399; `docs/plans/2026-07-04-gate-divergence-telemetry-plan.md` KTD2.
+
 ### Baseline-metrics citations re-verified at write-time, not copied from the issue (#461)  {#pf-baseline-citation-reverify-461}
 
 **Status.** Shipped as `docs/plans/2026-07-04-plugin-fleet-baseline-metrics.md` (Phase 0 item 1 of the

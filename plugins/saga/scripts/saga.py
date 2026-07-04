@@ -28,6 +28,7 @@ are injectable so offline tests are deterministic and never shell out.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import json
 import os
@@ -215,6 +216,7 @@ class Saga:
     open_questions: ListOrAbsent = ABSENT
     checks_run: ListOrAbsent = ABSENT
     gate_verdicts: ListOrAbsent = ABSENT
+    gate_divergence: ListOrAbsent = ABSENT
     source: str = ""
 
     # Body sections (free-form prose).
@@ -268,6 +270,7 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "open_questions",
     "checks_run",
     "gate_verdicts",
+    "gate_divergence",
     "source",
 )
 
@@ -285,6 +288,7 @@ _LIST_FIELDS = {
     "open_questions",
     "checks_run",
     "gate_verdicts",
+    "gate_divergence",
 }
 
 # List fields that render NO key at all when empty/absent (rather than the ``key: []`` the
@@ -1169,6 +1173,63 @@ def parse_gate_verdict(entry: str) -> tuple[str, str, str]:
     return gate, state, ref
 
 
+_GATE_DIVERGENCE_REQUIRED_KEYS = ("gate_id", "offered", "answer", "divergence")
+
+
+def encode_gate_divergence_entry(
+    gate_id: str,
+    offered: str,
+    answer: str,
+    divergence: bool,
+    latency_seconds: float | int | None = None,
+) -> str:
+    """Encode one gate-divergence interaction as a base64-wrapped JSON blob.
+
+    Base64 (KTD1, docs/plans/2026-07-04-gate-divergence-telemetry-plan.md) so the entry
+    survives the outer pipe-join (``_split_list``) regardless of what characters ``offered``
+    or ``answer`` contain — unlike ``gate_verdicts``' colon convention, these fields are
+    arbitrary ``AskUserQuestion`` free text with no closed vocabulary, so a raw pipe-joined
+    JSON blob could be corrupted by a literal ``|`` in an answer.
+    """
+    blob = json.dumps(
+        {
+            "gate_id": gate_id,
+            "offered": offered,
+            "answer": answer,
+            "divergence": divergence,
+            "latency_seconds": latency_seconds,
+        }
+    )
+    return base64.b64encode(blob.encode("utf-8")).decode("ascii")
+
+
+def parse_gate_divergence_entry(entry: str) -> dict[str, Any]:
+    """Decode and validate one base64-wrapped ``gate_divergence`` JSON entry.
+
+    Raises ``ValueError`` (echoing the offending entry) when the entry is not valid base64,
+    not valid JSON, or missing a required key.
+    """
+    try:
+        blob = base64.b64decode(entry.encode("ascii"), validate=True).decode("utf-8")
+    except Exception as exc:
+        raise ValueError(f"gate_divergence entry is not valid base64: {entry!r}") from exc
+    try:
+        parsed = json.loads(blob)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"gate_divergence entry decoded to invalid JSON: {entry!r}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"gate_divergence entry must decode to a JSON object: {entry!r}")
+    missing = [key for key in _GATE_DIVERGENCE_REQUIRED_KEYS if key not in parsed]
+    if missing:
+        raise ValueError(f"gate_divergence entry missing required key(s) {missing}: {entry!r}")
+    latency = parsed.get("latency_seconds")
+    if latency is not None and not isinstance(latency, (int, float)):
+        raise ValueError(
+            f"gate_divergence entry latency_seconds must be int, float, or null: {entry!r}"
+        )
+    return parsed
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1240,6 +1301,7 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         open_questions=_split_list(args.open_questions),
         checks_run=_split_list(args.checks_run),
         gate_verdicts=ABSENT if args.gate_verdict is None else list(args.gate_verdict),
+        gate_divergence=ABSENT if args.gate_divergence is None else list(args.gate_divergence),
         source=args.source,
         summary=args.summary,
         decisions=args.decisions,
@@ -1310,6 +1372,17 @@ def _add_save_parser(sub: Any) -> None:
         default=None,
         metavar="GATE:STATE:REF",
         help="repeatable; each value is 'gate:state:ref' (omit = carry forward)",
+    )
+    p.add_argument(
+        "--gate-divergence",
+        action="append",
+        default=None,
+        metavar="BASE64_JSON",
+        help=(
+            "repeatable; each value is a base64-wrapped JSON blob "
+            "{gate_id, offered, answer, divergence, latency_seconds} "
+            "(see encode_gate_divergence_entry; omit = carry forward)"
+        ),
     )
     p.add_argument("--blockers", default="")
     p.add_argument("--source", default="")

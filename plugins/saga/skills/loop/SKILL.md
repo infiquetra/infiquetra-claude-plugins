@@ -78,6 +78,10 @@ In a channel session (`redis-channel` active), `AskUserQuestion` cannot be calle
 in your reply text instead. Follow the canonical channel-inline convention in
 `saga/skills/brainstorm/SKILL.md` (do not duplicate its wording here).
 
+Gate-divergence telemetry (optional, issue #399): record the mode/destination choice via `gate_id`
+`loop-mode-destination` per `plugins/saga/references/gate-divergence-instrumentation.md` when a
+context-default mode or destination is offered.
+
 Use repo-relative paths in every generated document and every routing tick. Absolute paths break
 portability across machines and worktrees.
 

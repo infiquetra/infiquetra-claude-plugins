@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.52.0 - 2026-07-04
+
+### Feat: gate-divergence telemetry — rubber-stamp rate for operator gates (#399)
+- New `gate_divergence` full-snapshot list field on the `Saga` envelope, sibling to
+  `gate_verdicts` — each entry records a gate id, the offered default/recommendation, the
+  operator's actual answer, a divergence bit, and (when available) the offer-to-answer latency.
+  Entries are base64-wrapped JSON blobs, pipe-joined (KTD1): `gate_verdicts`' colon convention is
+  safe only because its `state` is a closed 6-value enum, but `gate_divergence`'s `answer` field
+  is arbitrary `AskUserQuestion` free text, so a raw pipe-joined blob could be corrupted by a
+  literal `|` in an answer — base64 makes the encoding safe against that regardless of content.
+- New `plugins/saga/scripts/gate_divergence_reader.py` (modeled on `override_rate_reader.py`'s
+  R12 house pattern) reports a per-gate-id rubber-stamp rate, interaction count, and mean
+  latency, with the same zero-data "no data yet" contract; read-only.
+- `/retro` Phase 1.6a runs the new reader read-only alongside the existing R12 override-rate
+  reader and includes its output in the evidence block.
+- Instrumentation notes added at the 5 `AskUserQuestion` gate sites currently offering a
+  recommendation or pre-selected default (`brainstorm`, `founder-review` — 2 distinct gates,
+  `investigate`, `loop`, `outcome`); see
+  `plugins/saga/references/gate-divergence-instrumentation.md` for the convention and `gate_id`
+  naming.
+- This is a measurement facet only: it does not change what any gate does, does not add new
+  gates, and does not itself widen any autonomous-progression allowlist.
+
 ## 0.51.0 - 2026-07-03
 
 ### Feat: board↔saga reconciliation on resume — detect drift over the /outcome board-sync ledger (#295)

@@ -207,6 +207,31 @@ the Phase-1 evidence block. A non-zero override rate or a skew toward over/under
 signal worth surfacing in Phase 2 interview and the Phase-3 retro doc, so any future default
 re-weighting is evidence-driven (R12's intent: measure before re-weighting).
 
+**1.6a Gate-divergence telemetry (read-only, issue #399).** Run the gate-divergence reader to
+surface per-gate rubber-stamp rates across all sagas, alongside the R12 reader above:
+
+```bash
+python3 plugins/saga/scripts/gate_divergence_reader.py --root . [--json]
+```
+
+This generalizes the R12 reader shape from one gate (orchestration-backend choice) to the
+fleet's other interactive decision gates (mode selection, fix-vs-diagnosis-vs-rethink,
+per-expansion opt-in, coordinator-level decisions — see
+`plugins/saga/references/gate-divergence-instrumentation.md` for the full list of instrumented
+`gate_id`s). For each `gate_id`, it reports the rubber-stamp rate (fraction of interactions
+where the operator's answer matched the offered default/recommendation), the interaction count,
+and mean latency.
+
+**Zero-data contract**: a `gate_id` (or the reader overall) with no recorded interactions
+reports "no data yet" rather than a fabricated rate. Do not fabricate a narrative from zero
+data; carry the "no data yet" state into the retro doc as-is and note that signal accrues over
+time as instrumented gates fire.
+
+This pass is **read-only** — the reader never writes to disk. Include the output verbatim in
+the Phase-1 evidence block. A gate with a high rubber-stamp rate over enough interactions is
+signal worth surfacing in Phase 2 interview as an auto-progression candidate — but this reader
+produces the evidence only; it never itself widens any allowlist (issue #399's own non-goal).
+
 **1.7 OutcomeOrchestrator realized economics (read-only, R24).** When the retro covers an **outcome**
 (a DAG of leaf sagas), read its per-outcome realized-cost rollup — the falsifiable proof of the
 cost-vs-operator-time thesis — from the materialized `spec.cost_rollup` (in `/outcome report`) or live

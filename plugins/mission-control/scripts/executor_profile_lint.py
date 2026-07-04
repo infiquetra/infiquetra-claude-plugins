@@ -35,14 +35,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
 
 _HEADING = re.compile(r"^#{2,6}\s*Recommended Executor Profile\s*$", re.IGNORECASE)
-# Field names are whitelisted so prose colons inside values don't spawn phantom fields. Bullets
-# in the real corpus come bolded (`- **Model:** opus`), plain (`- Model: sonnet`), backticked
-# (`- Model: \`opus\``), and packed several-to-a-line (`- **Model**: sonnet. **Effort**: high.`);
-# parse_profile() strips the markers and findall's the whitelist, so all four shapes parse.
+# Field names are whitelisted and matched ANCHORED at the start of a sentence segment, so prose
+# colons inside values can't spawn phantom fields. Bullets in the real corpus come bolded
+# (`- **Model:** opus`), plain (`- Model: sonnet`), backticked (`- Model: \`opus\``), and packed
+# several-to-a-line (`- **Model**: sonnet. **Effort**: high.`); parse_profile() strips the
+# markers, splits on sentence boundaries, and takes at most one field per segment.
 _FIELD = re.compile(
     r"(?P<name>model|effort|backend|external-llm posture|justification[^:]*)\s*:\s*(?P<value>\S*)",
     re.IGNORECASE,
 )
+
+# Fields whose value is prose: once one is seen, the rest of its bullet is that value — never
+# scanned for further field names (a justification legitimately containing "model: haiku" must
+# not override the authored Model bullet).
+_PROSE_FIELDS = ("justification", "external-llm")
 
 
 def extract_profile_block(body: str) -> list[str] | None:
@@ -67,8 +73,14 @@ def parse_profile(block: list[str]) -> dict[str, str]:
         if not stripped.startswith("-"):
             continue
         normalized = stripped.lstrip("- ").replace("*", "").replace("`", "")
-        for name, value in _FIELD.findall(normalized):
-            fields.setdefault(name.strip().lower(), value.strip().lower().rstrip(".,;"))
+        for segment in normalized.split(". "):
+            match = _FIELD.match(segment.strip())
+            if not match:
+                continue
+            name = match.group("name").strip().lower()
+            fields.setdefault(name, match.group("value").strip().lower().rstrip(".,;"))
+            if name.startswith(_PROSE_FIELDS):
+                break
     return fields
 
 

@@ -136,6 +136,23 @@ def test_packed_single_line_profile_parses(fresh_palette_cache: pytest.MonkeyPat
     assert fields["effort"] == "high"
 
 
+def test_prose_colons_inside_justification_do_not_spawn_phantom_fields(
+    fresh_palette_cache: pytest.MonkeyPatch,
+) -> None:
+    """Round-2 regression: 'model:'/'effort:' inside justification prose must not override."""
+    body = (
+        "### Recommended Executor Profile\n"
+        "- Justification: uses model: haiku internally for something. Effort: fake.\n"
+        "- Model: opus\n"
+        "- Effort: high\n"
+    )
+    fields = LINT.parse_profile(body.splitlines()[1:])
+    assert fields["model"] == "opus"
+    assert fields["effort"] == "high"
+    code, messages = LINT.lint_body(body)
+    assert code == 0, messages  # justification present, opus justified
+
+
 def test_missing_block_is_distinct_named_outcome(
     fresh_palette_cache: pytest.MonkeyPatch,
 ) -> None:

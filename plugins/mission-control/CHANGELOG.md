@@ -1,5 +1,15 @@
 # Changelog — mission-control
 
+## [2.5.0] — 2026-07-04
+
+### Executor-profile lint against the fleet tier palette (#463)
+- New standalone `scripts/executor_profile_lint.py`: parses a `Recommended Executor Profile`
+  block from `--body-file` or stdin, validates model/effort membership against the canonical
+  fleet-core tier palette (resolved through the new vendored `scripts/fleet_commons_shim.py`),
+  and enforces the above-sonnet-requires-justification rule via the palette's ordering.
+  Exit codes: 0 pass, 1 named findings, 2 no-profile-block. No gh calls — callers pipe the
+  issue body in (`gh issue view N --json body -q .body | ...`).
+
 ## [2.4.0] — 2026-06-29
 
 ### Issue-write verbs for autonomous `/outcome` board-sync (#279)

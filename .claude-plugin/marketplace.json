@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.52.0",
+      "version": "0.53.0",
       "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas.",
       "author": {
         "name": "Infiquetra",
@@ -132,7 +132,7 @@
     {
       "name": "mission-control",
       "source": "./plugins/mission-control",
-      "version": "2.4.0",
+      "version": "2.5.0",
       "description": "SDLC workflow manager for Infiquetra's Operations, Asgard, and CAMPPS boards. Adds prepared issue drafts, live schema sync, project fields, labels, metrics, milestones, and rollout helpers via Python CLI.",
       "author": {
         "name": "Infiquetra",
@@ -192,6 +192,25 @@
         "delegation",
         "teammate",
         "evidence"
+      ],
+      "category": "development"
+    },
+    {
+      "name": "fleet-core",
+      "source": "./plugins/fleet-core",
+      "version": "0.1.0",
+      "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only — no skills, commands, or agents.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "fleet-commons",
+        "shared-primitives",
+        "tier-palette",
+        "library"
       ],
       "category": "development"
     }

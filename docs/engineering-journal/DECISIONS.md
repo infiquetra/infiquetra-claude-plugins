@@ -24,6 +24,69 @@
 
 ## 2026-07-04
 
+### Fleet-commons distribution mechanism: fleet-core plugin + vendored resolution shim (#463)  {#fleet-commons-mechanism-463}
+
+**Decision.** Cross-plugin shared primitives live in a new scripts-only library plugin,
+`plugins/fleet-core/` (0.1.0), under `scripts/fleet_commons/` — one stdlib-only module per
+primitive, loaded by path, never an installed Python package. A consumer plugin vendors one
+byte-identical file, `scripts/fleet_commons_shim.py` (canonical copy in fleet-core; drift guarded
+by `tests/test_fleet_commons_resolution.py::test_vendored_shim_is_byte_identical_to_canonical`),
+which resolves the fleet-core root by a five-rung ladder with rung provenance in the return value:
+(1) `FLEET_COMMONS_ROOT` env override, (2) repo-checkout walk-up from `__file__`,
+(3) `~/.claude/plugins/installed_plugins.json` lookup by `fleet-core@` key prefix
+(marketplace-agnostic), (4) cache-sibling highest-semver scan, (5) fail loud with an actionable
+message. `FLEET_COMMONS_DEBUG=1` prints `fleet-commons: rung=<n> (<name>) root=<path>` to stderr.
+First-mover primitive: the tier palette (`MODELS`/`EFFORTS`/`CHEAP_MODELS`/`ENGINE_INTENTS` +
+rank helpers), consumed by saga (`execution_spec.py` re-export seam — its four intra-saga
+importers untouched) and mission-control (`executor_profile_lint.py`, which enforces the
+until-now-unenforced above-sonnet-requires-justification rule). Compatibility contract:
+additive-only change to commons primitives within fleet-core 0.x.
+
+**Rejected alternatives.** (a) *Hosting the commons inside saga* — avoids a ninth plugin but
+couples every consumer to the fleet's fastest-churning surface: 14 cached saga versions on this
+machine, and saga is the one plugin observed version-skewed right now (installed 0.49.0, repo
+0.52.0, verified 2026-07-04 against `installed_plugins.json`). (b) *A published Python package* —
+the marketplace install runs no pip/venv step (verified live: a plugin install is a bare
+per-plugin per-version file copy under `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`),
+so the dependency would be user-managed and adds a publish/index surface the fleet has no tooling
+for. (c) *The marketplace git clone as commons root* — `~/.claude/plugins/marketplaces/<mp>/` is a
+full repo clone tracking marketplace HEAD, not the versions the user actually has installed, so
+consumers would resolve code ahead of (or behind) everything else they run.
+
+**Rationale.** The install layout (verified live 2026-07-04, all three surfaces inspected) leaves
+no resolvable cross-plugin import path at install time — imports only work inside the monorepo
+because pytest puts repo paths on `sys.path`, which is exactly the trap the install-time test
+(`tests/test_fleet_commons_install_time.py`) closes by asserting rung-3 provenance, not import
+success. `installed_plugins.json` (schema `version: 2` observed; values are *lists* of install
+records with `installPath`) is the authoritative installed location and immune to cache-version
+skew, hence rung 3 over rung 4. Vendoring the shim is safe where `validate_card_body` was not
+(incident #222): that was an unguarded, growing hand-copy of active business logic; the shim is
+minimal, rarely-changing bootstrap code with a byte-identity CI guard — the accepted residual
+risk. Anti-sprawl (`{#plugin-portfolio-groom-17-to-7}` burden of proof): fleet-core is
+consolidation, not sprawl — every future primitive that lands there is a hand-copy that never
+gets made; the alternative is ~2 dozen independently drifting copies.
+
+**Census (AC5, adapted).** The issue's "at least 28 pool ideas" was not reproducible from any
+artifact (keyword censuses yielded 10–21 over `pool-final.json`, 19 over survivors; no artifact
+enumerates 28 ids — operator-acknowledged adaptation, 2026-07-04). Recorded deterministic query:
+case-insensitive regex
+`cross-plugin|shared primitive|fleet-commons|fleet commons|hand-cop|shared (module|library|constant|vocabulary)|canonical (module|tier|palette|home)|import.{0,40}(another|other|sibling) plugin`
+over `title`+`idea` of every record in
+`docs/plans/plugin-fleet-ideation-2026-07-03/survivors/*.json` (`seeds.json` excluded) → 22 ids,
+unioned with the 7 issue-named ids (6 not keyword-caught) → **28 ids**, enumerated in QUEUED
+[`{#fleet-commons-dependents}`](QUEUED.md#fleet-commons-dependents). Delta from the issue's
+figure: the count happens to coincide at 28; the enumerated list — not the number — is now the
+canonical census.
+
+**Revisit when.** A commons primitive needs its first breaking change (the additive-only 0.x
+contract can't absorb it); or `installed_plugins.json` departs from schema `version: 2` (rung 3
+already degrades to rung 4 on parse failure, but a durable schema change deserves a shim rev); or
+a primitive needs non-stdlib dependencies (the no-pip constraint binds the whole design).
+
+**Refs.** Plan `docs/plans/2026-07-04-fleet-commons-mechanism-plan.md` (KTD1–KTD6, grounding
+table); issue #463; LEARNINGS [[#marketplace-install-layout-no-import-path]]; incident #222
+(contract-mirror drift); `{#tier-vocab-ordering}`; `{#plugin-portfolio-groom-17-to-7}`.
+
 ### Gate-divergence entries stored as base64-wrapped JSON blobs, pipe-joined (#399)  {#pf-gate-divergence-json-encoding-399}
 
 **Status.** Planned in `docs/plans/2026-07-04-gate-divergence-telemetry-plan.md` (Phase 0 item

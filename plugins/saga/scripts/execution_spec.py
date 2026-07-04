@@ -43,29 +43,39 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Tier vocabulary (Epic 0 tier rule R1). The emitter does not invent tiers; it only
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
+
+# Tier vocabulary (Epic 0 tier rule R1) is now canonical in fleet-core's
+# ``fleet_commons/tier_palette.py`` (fleet-commons first mover, DECISIONS
+# ``{#fleet-commons-mechanism-463}``) and re-exported here under the existing names so
+# intra-saga importers and tests are untouched. The emitter does not invent tiers; it only
 # validates that authored tiers are drawn from these closed sets so a typo
 # ("opus-high", "med") fails emit rather than silently producing an un-runnable script.
 # ORDERING IS LOAD-BEARING: segment_units() merges tiers upgrade-only via
 # min(MODELS.index) / max(EFFORTS.index), so MODELS is strongest-first and
-# EFFORTS is weakest-first.
-MODELS = ("fable", "opus", "sonnet", "haiku")
-EFFORTS = ("low", "medium", "high", "xhigh")
+# EFFORTS is weakest-first (the contract is documented at the canonical home).
+_tier_palette = fleet_commons_shim.load("tier_palette")
+
+MODELS = _tier_palette.MODELS
+EFFORTS = _tier_palette.EFFORTS
 
 # Models cheap enough that the structuredoutput-budget lesson MUST be baked into the
 # generated agent prompt. An opus/high agent has budget headroom; a haiku or a
 # sonnet/low agent over a large surface is exactly the case the lesson guards
 # (workflow_structuredoutput_budget: brevity + mandatory emit + skim + batch).
-_CHEAP_MODELS = ("haiku",)
+_CHEAP_MODELS = _tier_palette.CHEAP_MODELS
 
 # refute-N pass rules (KTD3 / KTD5). A finding survives unless refuted per this rule:
 # majority => >= ceil(N/2) verifiers refute; unanimous => all N refute.
+# Deliberately NOT tier vocabulary — stays defined here, not in the fleet palette.
 PASS_RULES = ("majority", "unanimous")
 
 # Delegation-intent vocabulary for an engine/capability unit (KTD2, U12). ``offload``
 # wants a cheap chaperone (the delegation is net-negative otherwise); ``second-opinion``
 # wants an expensive one (adversarial verification IS the product).
-ENGINE_INTENTS = ("offload", "second-opinion")
+ENGINE_INTENTS = _tier_palette.ENGINE_INTENTS
 
 # Sandbox capability axes (issue #287 R1-R3) -- a delegated leaf's declared containment,
 # orthogonal to the model/effort tier. ``mutation_policy`` is enforced by tool-set omission at

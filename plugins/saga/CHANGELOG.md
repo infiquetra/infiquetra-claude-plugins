@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.53.0 - 2026-07-04
+
+### Refactor: tier palette re-exported from fleet-core through the vendored fleet-commons shim (#463)
+- `execution_spec.py` now loads `MODELS` / `EFFORTS` / `_CHEAP_MODELS` / `ENGINE_INTENTS` through
+  the vendored `scripts/fleet_commons_shim.py` (byte-identical to fleet-core's canonical copy,
+  drift-guarded in CI) and re-exports them under their existing names — intra-saga importers and
+  the existing suite are untouched. `PASS_RULES` stays saga-local (refute-N vocabulary, not tier
+  vocabulary). Vocabulary content and ordering are unchanged; the ordering contract is documented
+  at the canonical home (`fleet-core` 0.1.0, DECISIONS `{#fleet-commons-mechanism-463}`).
+
 ## 0.52.0 - 2026-07-04
 
 ### Feat: gate-divergence telemetry — rubber-stamp rate for operator gates (#399)

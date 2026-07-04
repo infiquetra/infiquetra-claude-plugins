@@ -27,6 +27,34 @@
 
 ## 2026-07-04
 
+### A marketplace plugin install is a bare file copy — cross-plugin imports have no path, and the registry, cache, and clone all disagree on version  {#marketplace-install-layout-no-import-path}
+
+**Context.** Issue #463 had to decide where cross-plugin shared primitives live. The grounding
+brief described the fleet abstractly; the decisive facts came only from inspecting the live
+install surfaces on this machine.
+**Evidence.** `~/.claude/plugins/marketplaces/infiquetra-plugins/` is a full repo git clone
+tracking marketplace HEAD; `~/.claude/plugins/cache/infiquetra-plugins/<plugin>/<version>/` is a
+bare per-plugin per-version subtree copy (no repo root, no siblings, no pip/venv step);
+`~/.claude/plugins/installed_plugins.json` (schema `version: 2`) maps `<plugin>@<marketplace>`
+keys to *lists* of install records carrying `installPath`. All three disagreed on saga's version
+at once: installed 0.49.0, cache holding through 0.51.0, repo at 0.52.0 (observed 2026-07-04).
+**Mechanism.** Install copies exactly one plugin subtree per version and never runs dependency
+tooling, so a sibling plugin is unreachable by construction at run time; monorepo imports only
+work because pytest puts repo paths on `sys.path`. The clone tracks HEAD while the registry pins
+what is actually enabled, so any resolution strategy keyed to the clone (or to "highest cached
+version") runs code the user does not have installed.
+**Fix (or queued).** The fleet-commons mechanism (DECISIONS
+[[#fleet-commons-mechanism-463]]): vendored resolution shim whose authoritative rung is the
+`installed_plugins.json` lookup, with `FLEET_COMMONS_DEBUG=1` rung provenance so tests assert the
+path taken. `tests/test_fleet_commons_install_time.py` rebuilds this exact layout under
+`tmp_path` and proves rung 3 wins even against a newer cache decoy.
+**Generalizable rule.** When code must find code across independently installed components,
+resolve through the installer's own registry of what is enabled — not through source checkouts or
+"newest on disk" — and make the resolver report *which* strategy succeeded so a test can fail on
+the right-answer-wrong-reason case.
+**Refs.** DECISIONS [[#fleet-commons-mechanism-463]]; plan
+`docs/plans/2026-07-04-fleet-commons-mechanism-plan.md` (grounding table).
+
 ### GitHub `updateProjectV2Field` clears ALL option selections — byte-identical options do not survive  {#projectv2-option-update-clears-selections}
 
 **Context.** Phase G of the plugin-fleet program upgraded the Operations board's Status vocabulary to Asgard's (add Idea/Shaping/Ready/Active/Verify, retire Todo/In Progress/Blocked). The mutation resubmitted the existing four options byte-identical (same name/color/description) with five appended, expecting name-matched preservation.

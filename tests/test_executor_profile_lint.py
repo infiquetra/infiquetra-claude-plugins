@@ -103,6 +103,39 @@ def test_fable_also_counts_as_above_sonnet(fresh_palette_cache: pytest.MonkeyPat
     assert any("missing-justification" in m for m in messages)
 
 
+def test_plain_unbolded_bullets_parse(fresh_palette_cache: pytest.MonkeyPatch) -> None:
+    """Real corpus shape (e.g. docs/sdlc-issue-drafts pf-single-vocab-source): no bold markers."""
+    body = (
+        "### Recommended Executor Profile\n- Model: sonnet\n- Effort: medium\n- Backend: inline\n"
+    )
+    code, messages = LINT.lint_body(body)
+    assert code == 0, messages
+
+
+def test_backticked_values_parse(fresh_palette_cache: pytest.MonkeyPatch) -> None:
+    body = (
+        "### Recommended Executor Profile\n"
+        "- Model: `opus`\n"
+        "- Effort: `medium`\n"
+        "- **Justification (required — profile is above sonnet):** architectural.\n"
+    )
+    code, messages = LINT.lint_body(body)
+    assert code == 0, messages
+
+
+def test_packed_single_line_profile_parses(fresh_palette_cache: pytest.MonkeyPatch) -> None:
+    """Real corpus shape (pf-team-engine-worker-slot): several fields on one bullet line."""
+    body = (
+        "### Recommended Executor Profile\n"
+        "- **Model**: sonnet. **Effort**: high. **Backend**: inline.\n"
+    )
+    code, messages = LINT.lint_body(body)
+    assert code == 0, messages
+    fields = LINT.parse_profile(["- **Model**: sonnet. **Effort**: high. **Backend**: inline."])
+    assert fields["model"] == "sonnet"
+    assert fields["effort"] == "high"
+
+
 def test_missing_block_is_distinct_named_outcome(
     fresh_palette_cache: pytest.MonkeyPatch,
 ) -> None:

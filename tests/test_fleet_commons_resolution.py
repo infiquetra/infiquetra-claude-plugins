@@ -170,6 +170,24 @@ def test_rung3_installed_plugins_lookup_is_marketplace_agnostic(
     assert outside_shim.resolve_root() == (root, 3)
 
 
+def test_rung3_malformed_record_does_not_poison_valid_sibling(
+    outside_shim: ModuleType, tmp_path: Path, clean_env: pytest.MonkeyPatch
+) -> None:
+    """Per-record tolerance: a non-dict record must be skipped, not abort the whole scan."""
+    root = _make_fleet_core_root(tmp_path / "install" / "fleet-core" / "0.1.0")
+    _write_registry(
+        tmp_path / "home",
+        {
+            "fleet-core@mp": [
+                "not-a-dict",
+                {"scope": "user"},  # well-formed dict missing installPath
+                {"installPath": str(root)},
+            ]
+        },
+    )
+    assert outside_shim.resolve_root() == (root, 3)
+
+
 def test_rung3_malformed_registry_falls_through_not_crash(
     outside_shim: ModuleType, tmp_path: Path, clean_env: pytest.MonkeyPatch
 ) -> None:
@@ -233,6 +251,21 @@ def test_load_returns_same_module_object_on_repeat(
     first = outside_shim.load("tier_palette")
     assert first.MARKER == "fake"
     assert outside_shim.load("tier_palette") is first
+
+
+def test_load_reresolves_when_root_changes_mid_process(
+    outside_shim: ModuleType, tmp_path: Path, clean_env: pytest.MonkeyPatch
+) -> None:
+    """Cache is keyed by (module, root): re-pointing FLEET_COMMONS_ROOT must not serve stale."""
+    first_root = _make_fleet_core_root(tmp_path / "root-a", marker="a")
+    clean_env.setenv("FLEET_COMMONS_ROOT", str(first_root))
+    first = outside_shim.load("tier_palette")
+    assert first.MARKER == "a"
+    second_root = _make_fleet_core_root(tmp_path / "root-b", marker="b")
+    clean_env.setenv("FLEET_COMMONS_ROOT", str(second_root))
+    second = outside_shim.load("tier_palette")
+    assert second is not first
+    assert second.MARKER == "b"
 
 
 def test_load_missing_module_names_it_and_the_resolved_root(

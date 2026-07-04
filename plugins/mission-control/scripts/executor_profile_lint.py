@@ -35,7 +35,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
 
 _HEADING = re.compile(r"^#{2,6}\s*Recommended Executor Profile\s*$", re.IGNORECASE)
-_FIELD = re.compile(r"^-\s*\*\*(?P<name>[^:*]+):?\*\*:?\s*(?P<value>\S*)", re.IGNORECASE)
+# Field names are whitelisted so prose colons inside values don't spawn phantom fields. Bullets
+# in the real corpus come bolded (`- **Model:** opus`), plain (`- Model: sonnet`), backticked
+# (`- Model: \`opus\``), and packed several-to-a-line (`- **Model**: sonnet. **Effort**: high.`);
+# parse_profile() strips the markers and findall's the whitelist, so all four shapes parse.
+_FIELD = re.compile(
+    r"(?P<name>model|effort|backend|external-llm posture|justification[^:]*)\s*:\s*(?P<value>\S*)",
+    re.IGNORECASE,
+)
 
 
 def extract_profile_block(body: str) -> list[str] | None:
@@ -53,13 +60,15 @@ def extract_profile_block(body: str) -> list[str] | None:
 
 
 def parse_profile(block: list[str]) -> dict[str, str]:
-    """Map of lowercased field name -> first-token value for the block's top-level bullets."""
+    """Map of lowercased field name -> first value seen, across the block's bullet lines."""
     fields: dict[str, str] = {}
     for line in block:
-        match = _FIELD.match(line.strip())
-        if match:
-            name = match.group("name").strip().lower()
-            fields[name] = match.group("value").strip().lower()
+        stripped = line.strip()
+        if not stripped.startswith("-"):
+            continue
+        normalized = stripped.lstrip("- ").replace("*", "").replace("`", "")
+        for name, value in _FIELD.findall(normalized):
+            fields.setdefault(name.strip().lower(), value.strip().lower().rstrip(".,;"))
     return fields
 
 

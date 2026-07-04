@@ -55,16 +55,24 @@ def _semver_key(name: str) -> tuple[int, ...] | None:
 def _rung_installed_plugins() -> Path | None:
     registry = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
     try:
-        plugins = json.loads(registry.read_text(encoding="utf-8"))["plugins"]
-        for key, records in plugins.items():
-            if not key.startswith("fleet-core@"):
-                continue
-            for record in records:
-                root = Path(record["installPath"])
-                if _is_valid_root(root):
-                    return root
+        entries = list(json.loads(registry.read_text(encoding="utf-8"))["plugins"].items())
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None  # undocumented internal registry: any shape surprise is a rung miss
+    for key, records in entries:
+        if not key.startswith("fleet-core@"):
+            continue
+        try:
+            candidates = list(records)
+        except TypeError:
+            continue
+        for record in candidates:
+            # Per-record tolerance: one malformed record must not poison the scan.
+            try:
+                root = Path(record["installPath"])
+            except (KeyError, TypeError):
+                continue
+            if _is_valid_root(root):
+                return root
     return None
 
 
@@ -131,12 +139,17 @@ def resolved_version() -> str:
 
 
 def load(module: str) -> ModuleType:
-    """Load ``<root>/scripts/fleet_commons/<module>.py``; repeated loads return the same object."""
-    cache_key = f"_fleet_commons_{module}"
+    """Load ``<root>/scripts/fleet_commons/<module>.py``.
+
+    Repeated loads against the same resolved root return the same module object; the cache is
+    keyed by ``(module, root)`` so a changed resolution input (e.g. ``FLEET_COMMONS_ROOT``
+    re-pointed mid-process, as tests do) re-loads instead of returning a stale module.
+    """
+    root, _ = resolve_root()
+    cache_key = f"_fleet_commons_{module}@{root}"
     cached = sys.modules.get(cache_key)
     if cached is not None:
         return cached
-    root, _ = resolve_root()
     module_path = root / "scripts" / "fleet_commons" / f"{module}.py"
     if not module_path.is_file():
         raise RuntimeError(

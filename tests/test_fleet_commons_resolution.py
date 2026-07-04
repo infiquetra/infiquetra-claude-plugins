@@ -261,3 +261,28 @@ def test_vendored_shim_is_byte_identical_to_canonical(vendored: Path) -> None:
         f"{vendored} has drifted from the canonical shim; "
         "re-copy plugins/fleet-core/scripts/fleet_commons_shim.py"
     )
+
+
+# --- consumer 1: saga re-export seam (U3) ---------------------------------------------------
+
+
+def test_saga_execution_spec_reexports_the_shim_loaded_palette_object() -> None:
+    """``execution_spec.MODELS is`` the shim-loaded module's — an import, not a copy."""
+    saga_scripts = ROOT / "plugins" / "saga" / "scripts"
+    if str(saga_scripts) not in sys.path:
+        sys.path.insert(0, str(saga_scripts))
+    spec = importlib.util.spec_from_file_location(
+        "execution_spec", saga_scripts / "execution_spec.py"
+    )
+    assert spec is not None and spec.loader is not None
+    execution_spec = importlib.util.module_from_spec(spec)
+    sys.modules["execution_spec"] = execution_spec
+    spec.loader.exec_module(execution_spec)
+
+    palette = _load_shim(saga_scripts / "fleet_commons_shim.py").load("tier_palette")
+    assert execution_spec.MODELS is palette.MODELS
+    assert execution_spec.EFFORTS is palette.EFFORTS
+    assert execution_spec._CHEAP_MODELS is palette.CHEAP_MODELS
+    assert execution_spec.ENGINE_INTENTS is palette.ENGINE_INTENTS
+    # PASS_RULES deliberately stays saga-local (refute-N vocabulary, not tier vocabulary).
+    assert execution_spec.PASS_RULES == ("majority", "unanimous")

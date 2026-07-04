@@ -138,7 +138,10 @@ def _read_interactions(root: Path) -> list[GateInteraction]:
             continue
         try:
             envelope = _saga_engine.parse_envelope(text)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- a corrupt/foreign envelope must not crash the
+            # reporting reader; skip it and let other envelopes still contribute (matches
+            # override_rate_reader.py's read_override_rate, which silently skips an OSError
+            # per-envelope for the same reason).
             continue
         entries = envelope.gate_divergence
         if isinstance(entries, _saga_engine._Absent):

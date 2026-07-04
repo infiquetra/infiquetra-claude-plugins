@@ -1185,11 +1185,16 @@ def encode_gate_divergence_entry(
 ) -> str:
     """Encode one gate-divergence interaction as a base64-wrapped JSON blob.
 
-    Base64 (KTD1, docs/plans/2026-07-04-gate-divergence-telemetry-plan.md) so the entry
-    survives the outer pipe-join (``_split_list``) regardless of what characters ``offered``
-    or ``answer`` contain — unlike ``gate_verdicts``' colon convention, these fields are
-    arbitrary ``AskUserQuestion`` free text with no closed vocabulary, so a raw pipe-joined
-    JSON blob could be corrupted by a literal ``|`` in an answer.
+    Base64 (KTD1, docs/plans/2026-07-04-gate-divergence-telemetry-plan.md) so the entry never
+    depends on ``_yaml_scalar``'s quoting/escaping being exercised correctly for arbitrary
+    ``offered``/``answer`` free text (embedded newlines, a leading ``-``, an embedded ``: ``,
+    etc.) — the field is a repeatable ``--gate-divergence`` CLI arg rendered as a plain YAML
+    list item (``_render_value``), not a pipe-joined value passed through ``_split_list`` (that
+    machinery is only used for single-flag multi-value fields like ``--artifact-pointers``).
+    ``_yaml_scalar`` already quotes/escapes these characters correctly today, so this is
+    defense-in-depth rather than a fix for a live corruption bug — but it means a future change
+    to ``_yaml_scalar``'s escaping logic cannot silently corrupt ``gate_divergence`` entries,
+    since base64's alphabet (``A-Za-z0-9+/=``) never needs the quoting path at all.
     """
     blob = json.dumps(
         {
@@ -1215,7 +1220,11 @@ def parse_gate_divergence_entry(entry: str) -> dict[str, Any]:
         raise ValueError(f"gate_divergence entry is not valid base64: {entry!r}") from exc
     try:
         parsed = json.loads(blob)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, RecursionError) as exc:
+        # RecursionError is caught alongside JSONDecodeError: a maliciously deep-nested JSON
+        # payload (e.g. thousands of nested ``[``) exhausts Python's recursion limit inside
+        # json.loads rather than raising JSONDecodeError, and an uncaught RecursionError would
+        # crash gate_divergence_reader.py's main() instead of skipping the malformed entry.
         raise ValueError(f"gate_divergence entry decoded to invalid JSON: {entry!r}") from exc
     if not isinstance(parsed, dict):
         raise ValueError(f"gate_divergence entry must decode to a JSON object: {entry!r}")

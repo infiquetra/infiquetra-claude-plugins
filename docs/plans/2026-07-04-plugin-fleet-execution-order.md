@@ -129,14 +129,24 @@ existing general quality-gate umbrella — not a new mechanism.
 Found so far, both while dogfooding `ship_ceremony.py` (#345) during #429's `/work` session, both
 filed as sub-issues of #340 (ship ceremony) and milestoned `wave-1` to match:
 
-- [ ] [#477](https://github.com/infiquetra/infiquetra-claude-plugins/issues/477) — `request_review`
+- [x] [#477](https://github.com/infiquetra/infiquetra-claude-plugins/issues/477) — `request_review`
   transition calls `gh pr edit --add-reviewer @me`, which the GraphQL mutation rejects; the
-  transition has never once succeeded.
+  transition has never once succeeded. **Fixed** (PR #479, `e7579ec`): the transition is now a
+  deliberate no-op — this repo has one maintainer and no one else to request review from.
 - [ ] [#478](https://github.com/infiquetra/infiquetra-claude-plugins/issues/478) — `open_pr`'s
   existing-PR (front-loaded-draft) branch flips the PR ready via `gh pr ready` but never pushes
   pending local commits, so CI can validate a stale HEAD while real work sits unpushed.
+- [ ] [#480](https://github.com/infiquetra/infiquetra-claude-plugins/issues/480) — found while
+  shipping #477's own fix: `saga.py`'s `branch`/`head_sha` fields only ever auto-derive from live
+  git state on a saga's very first-ever save (when the field starts empty); every later save's
+  scalar carry-forward preserves that first-captured value forever, even after checking out a real
+  work branch. A saga minted by `/plan` on `main` (before `/work` creates the branch — the common
+  case) carries a permanently wrong `branch` for its whole life. Caught live: `branch_delete`'s
+  safety guard correctly refused to delete `"main"` rather than trust the stale field — no
+  corruption occurred, but the same field is what `/code-review`'s branch-matching fallback relies
+  on, silently, for any saga minted this way.
 
-Both are small, well-scoped, `defect`-typed (not `needs-plan`-gated in spirit even though the
+All three are small, well-scoped, `defect`-typed (not `needs-plan`-gated in spirit even though the
 canonical template applies the label) — plausible next work before resuming the Phase 0 lanes.
 
 ## Shared kickoff contract (every per-issue prompt points here)

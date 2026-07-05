@@ -262,6 +262,73 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
 }"""
 
 
+# R3/KTD3: emitted-wave 429 retry. The .workflow.js runs as JS, so a parallel([...]) wave thunk
+# cannot import the Python `retry_backoff` primitive -- this is the emitted JS mirror of it
+# (shared-in-concept, dual-impl). Each wave/panel `agent()` call is wrapped in `__retry(...)` so a
+# rate-limited (429-shaped) agent re-queues with bounded exponential backoff instead of counting as
+# a wave failure; a genuine non-429 error still throws and HALTs the wave (no silent degrade).
+# Written with `function` declarations only (no arrow fns) so it perturbs no emitted-shape golden,
+# and backoff is deterministic (no Math.random, which the workflow runtime may forbid). Honors a
+# Retry-After hint on the 429 signal when present, mirroring the Python primitive's `retry_after`.
+_JS_RETRY_HELPER = r"""function __is429(x) {
+  if (x === null || x === undefined) return false;
+  if (typeof x === 'number') return x === 429;
+  if (typeof x === 'string') return /(^|[^0-9])429([^0-9]|$)/.test(x) || /rate[\s_-]?limit/i.test(x);
+  var status = x.status || x.statusCode || x.status_code || x.code;
+  if (status === 429 || status === '429') return true;
+  if (x.rateLimited === true || x.rate_limited === true) return true;
+  var msg = x.message || x.error || '';
+  return typeof msg === 'string' && (/(^|[^0-9])429([^0-9]|$)/.test(msg) || /rate[\s_-]?limit/i.test(msg));
+}
+
+function __retryAfterMs(signal) {
+  if (signal === null || typeof signal !== 'object') return null;
+  if (typeof signal.retryAfterMs === 'number') return signal.retryAfterMs;
+  if (typeof signal.retryAfter === 'number') return signal.retryAfter * 1000;
+  if (typeof signal.retry_after === 'number') return signal.retry_after * 1000;
+  return null;
+}
+
+function __retryBackoffMs(attempt, baseMs, maxMs, retryAfterMs) {
+  if (typeof retryAfterMs === 'number' && retryAfterMs > 0) {
+    return Math.min(retryAfterMs, maxMs);
+  }
+  return Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
+}
+
+async function __retry(thunk, opts) {
+  var o = opts || {};
+  var maxAttempts = o.maxAttempts || 3;
+  var baseMs = o.baseMs || 1000;
+  var maxMs = o.maxMs || 60000;
+  var sleep = o.sleep || function (ms) {
+    return new Promise(function (r) {
+      if (typeof setTimeout === 'function') { setTimeout(r, ms); } else { r(); }
+    });
+  };
+  var attempt = 0;
+  while (true) {
+    attempt++;
+    var result;
+    var threw = false;
+    var caught = null;
+    try {
+      result = await thunk();
+    } catch (err) {
+      threw = true;
+      caught = err;
+    }
+    var signal = threw ? caught : result;
+    if (__is429(signal) && attempt < maxAttempts) {
+      await sleep(__retryBackoffMs(attempt, baseMs, maxMs, __retryAfterMs(signal)));
+      continue;
+    }
+    if (threw) throw caught;
+    return result;
+  }
+}"""
+
+
 class SpecError(ValueError):
     """A spec that violates an authoring-time invariant (R3 / R10) or is malformed.
 
@@ -847,6 +914,30 @@ def _emit_gate_call(unit: Unit, var: str) -> str:
     return f"__gate({var}, {{ {opts_str} }})"
 
 
+# R3/KTD3: every emitted parallel-wave/panel ``agent()`` call is wrapped in the ``__retry``
+# helper. The open/close/opts fragments are single-sourced here so the four wrapped sites
+# (``_emit_thunk``'s three forms + the refute-N panel verifiers) cannot drift -- the same
+# dead-wiring risk ``_verifier_agent_opts`` exists to kill. Singleton ``await agent(`` calls are
+# deliberately NOT wrapped (R3 scopes retry to waves, where the concurrency-driven rate-limit
+# pressure lives; a singleton 429 still HALTs).
+_RETRY_MAX_ATTEMPTS = 3
+
+
+def _retry_opts_js(unit: Unit) -> str:
+    """Opts object for a ``__retry(...)`` wrapper around a wave/panel ``agent()`` call."""
+    return f"{{ unitId: {_js_string(unit.unit_id)}, maxAttempts: {_RETRY_MAX_ATTEMPTS} }}"
+
+
+def _retry_open() -> str:
+    """Open fragment: ``__retry(() => agent(`` -- the wave/panel 429-retry wrapper."""
+    return "__retry(() => agent("
+
+
+def _retry_close(unit: Unit) -> str:
+    """Close fragment: ``), <opts>`` -- balances the ``agent(`` and ``__retry(`` parens."""
+    return f"), {_retry_opts_js(unit)}"
+
+
 def _external_engine_selector(unit: Unit) -> tuple[str, str] | None:
     if unit.engine is not None:
         return ("engine", unit.engine)
@@ -952,10 +1043,10 @@ def _emit_panel_reconciliation(
 
     lines.append(f"{indent}const {verdicts_var} = await parallel([")
     for _ in range(n):
-        lines.append(f"{indent}  () => agent(")
+        lines.append(f"{indent}  () => {_retry_open()}")
         lines.append(f"{indent}    {_js_string(verifier_prompt)},")
         lines.append(f"{indent}    {{ " + ", ".join(verifier_opts) + f", input: {result_var} }},")
-        lines.append(f"{indent}  ),")
+        lines.append(f"{indent}  {_retry_close(unit)}),")
     lines.append(f"{indent}])")
     # R1/R5: record which verifiers reported vs. runtime-missing; R3: recompute the pass-rule
     # threshold over the reporters, not the declared n (plan KTD1/KTD3). A verdict that is
@@ -1039,10 +1130,10 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
         lines.append(f"    for (let iter = 1; iter <= {panel.max_iterations}; iter++) {{")
         if marker is not None:
             lines.append(f"      // external-engine dispatch: {marker}")
-        lines.append("      result = await agent(")
+        lines.append(f"      result = await {_retry_open()}")
         lines.append(f"        {_js_string(prompt)},")
         lines.append("        { " + ", ".join(opts) + " },")
-        lines.append("      )")
+        lines.append(f"      {_retry_close(unit)})")
         lines.append(f"      {_emit_gate_call(unit, 'result')}")
         _emit_panel_reconciliation(lines, unit, "result", "", "      ", direct_throw=False)
         lines.append("    }")
@@ -1055,17 +1146,17 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
         if marker is not None:
             lines.append("  () => {")
             lines.append(f"    // external-engine dispatch: {marker}")
-            lines.append("    return agent(")
+            lines.append(f"    return {_retry_open()}")
             lines.append(f"      {_js_string(prompt)},")
             lines.append("      { " + ", ".join(opts) + " },")
-            lines.append("    )")
+            lines.append(f"    {_retry_close(unit)})")
             lines.append("  },")
         else:
             lines.append("  () =>")
-            lines.append("    agent(")
+            lines.append(f"    {_retry_open()}")
             lines.append(f"      {_js_string(prompt)},")
             lines.append("      { " + ", ".join(opts) + " },")
-            lines.append("    ),")
+            lines.append(f"    {_retry_close(unit)}),")
 
 
 def _emit_verify_loop_singleton(
@@ -1183,6 +1274,8 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
         lines.append("")
 
     lines.append(_JS_GATE_HELPER)
+    lines.append("")
+    lines.append(_JS_RETRY_HELPER)
     lines.append("")
 
     # Topological waves (KTD4): each layer's units are mutually independent and run in a

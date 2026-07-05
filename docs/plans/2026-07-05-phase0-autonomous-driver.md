@@ -91,18 +91,30 @@ DECISIONS `{#shared-retry-backoff-primitive-348}` (KTD1-KTD4) + execution-order 
 Code-review CLEAN (0 findings, 4 adversarial readonly-verifiers). Two latent U1 lint issues fixed
 inline (SIM102, N818). Backend: inline. agy untouched (KTD2). Full gate green (2035 tests).
 
-## #379 — DECISION: OPTION A (operator-gated fork resolved 2026-07-05)
+## #379 — PLAN-READY (option A; grounding CORRECTED 2026-07-05)
 
-**Jeff chose option (a) 2026-07-05:** reframe AC4 to **defer access/authorization to the transport
-layer + record `answerer` and `transport` provenance on the gate verdict** — the only model
-consistent with redis-channel's router-agnosticism. redis-channel does NOT gain a sender allowlist;
-the plugin trusts the transport for sender-auth and records *who answered* + *over which transport*
-as durable provenance so the audit trail is complete without the plugin owning access policy. Build
-after #348 (full lifecycle: /plan → /doc-review → /work → merge, since #379 was deferred at the
-grounding stage before a plan existed). AC4 in the issue must be reframed in the plan (documented as
-a KTD with this rationale). **Original grounding + rejected options preserved below.**
+**Status: PLAN written, BUILD deferred to a fresh session.** Plan:
+`docs/plans/2026-07-05-remote-gate-approval-379-plan.md` (6 units, KTD1-KTD6). Next: `/doc-review`
+that plan (fix findings) → `/work` to MERGED. Backend inline (issue-recommended Sonnet/high; a
+mechanical two-plugin integration, not novel design). Merge durably approved (carry like #344/#375/#348).
 
-**Prior status (NOT shipped — awaited Jeff).** Grounding (Explore + direct grep, count 0) verified that
+**GROUNDING CORRECTION (important — my last-session conclusion was WRONG).** Last session I concluded
+"AC4 rests on a false premise → genuine operator fork." Re-grounding for the plan (full issue body +
+Discord `server.ts` + `access.json`) shows that was an error: the two transports have **different**
+access models. **Discord DOES enforce sender access** — `gate()` (`server.ts:236-294`) pre-filters
+inbound to `allowFrom`, so the session physically never sees a non-approved sender; **redis-channel**
+defers to its router (no in-plugin allowlist — that part was right). So AC4 ("reject non-allowlisted
+sender, per `redis-channel-configure` / `discord:access`") is **satisfiable, not false**: option A
+(*defer sender-auth to the transport + record provenance*) doesn't contradict AC4 — it **implements**
+it. Jeff's option-A choice was correct and is simply "build the issue as specified." There is no real
+security fork; the issue itself sizes this as Sonnet/high inline mechanical integration. Both transports
+already ship a `request_id`-scoped permission-reply pattern (Discord `PERMISSION_REPLY_RE`
+`server.ts:79/833`; redis `permission_request`/`permission_verdict` `protocol.py:113-138`) the
+gate-answer mirrors so a channel message can never forge/escalate an approval. Full design in the plan.
+
+**Original (last-session, now-superseded) grounding — kept as history.** Grounding (grep, count 0)
+verified **redis-channel has no sender allowlist** — router-agnostic
+([[feedback_redis_channel_router_agnostic]]); `Consumer._dispatch` (`redis_consumer.py:159-194`)
 **redis-channel has no sender allowlist/access-policy** — it is deliberately router-agnostic
 ([[feedback_redis_channel_router_agnostic]]); `Consumer._dispatch` (`redis_consumer.py:159-194`)
 delivers every inbound message with zero sender authorization, and `redis_channel_configure`

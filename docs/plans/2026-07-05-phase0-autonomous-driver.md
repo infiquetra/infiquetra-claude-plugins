@@ -98,9 +98,18 @@ dirs, registered in the drift-guard `VENDORED_SHIMS`. Plan + doc-review committe
   CHANGELOG; drift-guard version literals; DECISIONS `{#shared-retry-backoff-primitive-348}`;
   execution-order row 9 tick; work-session. NOT agy (KTD2).
 
-## #379 — DEFERRED (operator-gated, 2026-07-05)
+## #379 — DECISION: OPTION A (operator-gated fork resolved 2026-07-05)
 
-**Status: NOT shipped — awaiting Jeff.** Grounding (Explore + direct grep, count 0) verified that
+**Jeff chose option (a) 2026-07-05:** reframe AC4 to **defer access/authorization to the transport
+layer + record `answerer` and `transport` provenance on the gate verdict** — the only model
+consistent with redis-channel's router-agnosticism. redis-channel does NOT gain a sender allowlist;
+the plugin trusts the transport for sender-auth and records *who answered* + *over which transport*
+as durable provenance so the audit trail is complete without the plugin owning access policy. Build
+after #348 (full lifecycle: /plan → /doc-review → /work → merge, since #379 was deferred at the
+grounding stage before a plan existed). AC4 in the issue must be reframed in the plan (documented as
+a KTD with this rationale). **Original grounding + rejected options preserved below.**
+
+**Prior status (NOT shipped — awaited Jeff).** Grounding (Explore + direct grep, count 0) verified that
 **redis-channel has no sender allowlist/access-policy** — it is deliberately router-agnostic
 ([[feedback_redis_channel_router_agnostic]]); `Consumer._dispatch` (`redis_consumer.py:159-194`)
 delivers every inbound message with zero sender authorization, and `redis_channel_configure`

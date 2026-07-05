@@ -42,13 +42,8 @@ def test_agy_metadata_is_marketplace_registered() -> None:
     )
     assert marketplace_entry["source"] == "./plugins/agy"
     assert marketplace_entry["version"] == plugin_json["version"]
-    assert marketplace_entry["keywords"] == [
-        "antigravity",
-        "agy",
-        "delegation",
-        "teammate",
-        "evidence",
-    ]
+    # marketplace.json is generated from plugin.json (#429) — keyword order must match exactly.
+    assert marketplace_entry["keywords"] == plugin_json["keywords"]
 
 
 def test_agy_commands_skills_references_and_agents_are_packaged() -> None:

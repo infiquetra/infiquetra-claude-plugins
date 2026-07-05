@@ -25,6 +25,55 @@
 
 ---
 
+## 2026-07-05
+
+### Generated release surfaces catch drift a hand-maintained parity guard would only report after the fact  {#release-surface-single-source-generated}
+
+**Context.** #429 converted `.claude-plugin/marketplace.json` from a hand-maintained copy of each
+plugin's `plugin.json` into a generated mirror (`scripts/sync_marketplace.py`), backed by a
+tri-lock parity gate and a diff-aware bump guard — the fix `{#marketplace-drift}` (below) queued as
+a guard-class check, converted here into a generator instead.
+
+**Evidence.** Running the new generator's `--check` mode against the live 9-plugin fleet *before*
+any deliberate edit turned up real, pre-existing drift: `marketplace.json`'s `keywords` array
+order had independently diverged from `plugin.json`'s on 6 of 9 plugins (e.g. `agy`:
+`["antigravity","agy",...]` in `marketplace.json` vs `["agy","antigravity",...]` in `plugin.json`)
+— nobody had touched `plugin.json`'s keyword order since, someone had simply hand-reordered the
+`marketplace.json` copy at some point and nothing noticed. Separately, `check_release_surface_parity.py`
+and the new CHANGELOG heading lint (`scripts/changelog_heading_lint.py`) found two more
+non-canonical headings in `plugins/mission-control/CHANGELOG.md` beyond the four plugins the issue
+itself had already identified (`## 1.6.1 - 2026-05-31` missing brackets, `## Unreleased` missing
+brackets) — both several screens below the file's top, invisible to a human skimming the top of the
+file for its current version.
+
+**Mechanism.** A hand-maintained mirror only reveals drift when someone happens to compare both
+copies; a generator makes the drift visible the moment `--check` runs, because there is no second
+copy to independently mutate. The plugin count itself had also drifted from the issue's own
+"8-plugin fleet" framing — `fleet-core` (#463/PR #473) landed the day before #429 was filed — so
+every acceptance criterion and script in this issue's plan targets "the current plugin fleet"
+(directory scan at run time), never a hardcoded count.
+
+**Fix.** `scripts/sync_marketplace.py` (write mode) regenerated `marketplace.json` from the
+now-current `plugin.json` set (PR #475, branch `feat/pf-release-surface-429`); the 4
+non-canonical CHANGELOGs (`deploy`, `saga`, `team-execution`, `mission-control`) were reformatted to
+the canonical heading grammar (`docs/engineering-journal/DECISIONS.md#release-surface-single-source-429`)
+with a matching patch-version bump each, so the new tri-lock gate holds from the moment it lands
+rather than failing on its own first run.
+
+**Generalizable rule.** When a plan says "guard two hand-copies for parity," ask whether one side
+can be generated from the other instead — a generator can't drift from its own source by
+construction, whereas a guard only ever reports drift that already happened. And when a plan's
+problem statement cites a specific artifact count (plugin count, file count, format count) as
+grounding, re-verify that count directly against the current repo before writing the plan; stale
+counts from an earlier snapshot are a common source of an otherwise-correct plan going stale before
+it even executes.
+
+**Refs.** Plan `docs/plans/2026-07-05-release-surface-single-source-plan.md`; Decision
+[release-surface-single-source-429](DECISIONS.md#release-surface-single-source-429); this converts
+[#marketplace-drift](#marketplace-drift) below from a guard-class fix into a generator.
+
+---
+
 ## 2026-07-04
 
 ### A marketplace plugin install is a bare file copy — cross-plugin imports have no path, and the registry, cache, and clone all disagree on version  {#marketplace-install-layout-no-import-path}

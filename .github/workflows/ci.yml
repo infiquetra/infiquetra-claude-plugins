@@ -75,6 +75,49 @@ jobs:
       - name: Validate marketplace registry
         run: uv run python marketplace/validator/validate.py
 
+  release-surfaces:
+    name: Release Surface Parity
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      # #429: marketplace.json is generated from each plugin's own plugin.json — this
+      # is the baseline generator check, distinct from the pytest run so a baseline
+      # regression against the live fleet fails with its own named signal.
+      - name: marketplace.json matches plugin.json (generator --check)
+        run: uv run python scripts/sync_marketplace.py --check
+
+      - name: Tri-lock release-surface parity (plugin.json == marketplace == CHANGELOG)
+        run: uv run python scripts/check_release_surface_parity.py
+
+      - name: CHANGELOG heading grammar lint (fleet baseline)
+        run: uv run python -m pytest tests/test_changelog_heading_lint.py -k fleet_baseline -v
+
+      # PR-scoped: needs the PR's base ref, so it only runs on pull_request events —
+      # a direct push to main has no "PR base" for the diff-aware bump comparison (KTD4).
+      - name: Diff-aware release-surface bump guard
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch origin "$PR_BASE_SHA" --depth=1
+          uv run python tools/release_surface_diff_guard.py --base-ref "$PR_BASE_SHA"
+
   lint:
     name: Lint
     runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}

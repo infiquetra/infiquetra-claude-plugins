@@ -8,6 +8,7 @@ _SPEC = importlib.util.spec_from_file_location(
     "changelog_heading_lint",
     Path(__file__).parent.parent / "scripts" / "changelog_heading_lint.py",
 )
+assert _SPEC is not None and _SPEC.loader is not None
 CHL = importlib.util.module_from_spec(_SPEC)
 sys.modules["changelog_heading_lint"] = CHL
 _SPEC.loader.exec_module(CHL)

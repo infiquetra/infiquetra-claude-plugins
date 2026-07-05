@@ -10,6 +10,7 @@ import pytest
 _SPEC = importlib.util.spec_from_file_location(
     "sync_marketplace", Path(__file__).parent.parent / "scripts" / "sync_marketplace.py"
 )
+assert _SPEC is not None and _SPEC.loader is not None
 SM = importlib.util.module_from_spec(_SPEC)
 sys.modules["sync_marketplace"] = SM
 _SPEC.loader.exec_module(SM)

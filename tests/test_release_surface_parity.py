@@ -8,6 +8,7 @@ from pathlib import Path
 _SM_SPEC = importlib.util.spec_from_file_location(
     "sync_marketplace", Path(__file__).parent.parent / "scripts" / "sync_marketplace.py"
 )
+assert _SM_SPEC is not None and _SM_SPEC.loader is not None
 SM = importlib.util.module_from_spec(_SM_SPEC)
 sys.modules["sync_marketplace"] = SM
 _SM_SPEC.loader.exec_module(SM)
@@ -16,6 +17,7 @@ _CHL_SPEC = importlib.util.spec_from_file_location(
     "changelog_heading_lint",
     Path(__file__).parent.parent / "scripts" / "changelog_heading_lint.py",
 )
+assert _CHL_SPEC is not None and _CHL_SPEC.loader is not None
 CHL = importlib.util.module_from_spec(_CHL_SPEC)
 sys.modules["changelog_heading_lint"] = CHL
 _CHL_SPEC.loader.exec_module(CHL)
@@ -24,6 +26,7 @@ _PARITY_SPEC = importlib.util.spec_from_file_location(
     "check_release_surface_parity",
     Path(__file__).parent.parent / "scripts" / "check_release_surface_parity.py",
 )
+assert _PARITY_SPEC is not None and _PARITY_SPEC.loader is not None
 PARITY = importlib.util.module_from_spec(_PARITY_SPEC)
 sys.modules["check_release_surface_parity"] = PARITY
 _PARITY_SPEC.loader.exec_module(PARITY)

@@ -10,6 +10,7 @@ _SPEC = importlib.util.spec_from_file_location(
     "release_surface_diff_guard",
     Path(__file__).parent.parent / "tools" / "release_surface_diff_guard.py",
 )
+assert _SPEC is not None and _SPEC.loader is not None
 GUARD = importlib.util.module_from_spec(_SPEC)
 sys.modules["release_surface_diff_guard"] = GUARD
 _SPEC.loader.exec_module(GUARD)

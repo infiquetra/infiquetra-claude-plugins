@@ -758,8 +758,10 @@ def save(
     # empty ``git["branch"]`` read (detached HEAD / no git) never clobbers a stored value, and a
     # save made back on the default branch never overwrites an already-recorded real work branch
     # (else the ceremony's own ``checkout_main`` progress-save would erase what ``branch_delete``
-    # needs). ``head_sha``/``last_commit_sha`` keep first-save-only capture — same pattern, audited
-    # safe to refresh, but deferred to a follow-up per #480's scope.
+    # needs). ``head_sha``/``last_commit_sha`` refresh on every save too (they were the #480
+    # follow-up): SHAs have no default-branch downgrade concern, so a plain non-empty guard
+    # suffices, and the stored SHAs then track the current commit instead of freezing at the
+    # mint-time HEAD (``status_card`` renders ``head_sha`` as its CI reference).
     live_branch = git["branch"]
     downgrades_work_branch = (
         live_branch in _DEFAULT_BRANCHES
@@ -768,9 +770,9 @@ def save(
     )
     if live_branch and not downgrades_work_branch:
         merged = _replace(merged, branch=live_branch)
-    if not merged.head_sha and git["head"]:
+    if git["head"]:
         merged = _replace(merged, head_sha=git["head"])
-    if not merged.last_commit_sha and git["last_commit"]:
+    if git["last_commit"]:
         merged = _replace(merged, last_commit_sha=git["last_commit"])
 
     _assert_orchestration_provenance(saga, merged, prior)

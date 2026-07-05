@@ -448,6 +448,35 @@ def test_save_on_default_branch_preserves_stored_work_branch(
     assert saga.restore(tmp_path, "issue-42").branch == "feat/pf-throwaway-345"
 
 
+def test_save_refreshes_head_and_last_commit_on_later_save(
+    saga: ModuleType, tmp_path: Path
+) -> None:
+    """`head_sha`/`last_commit_sha` track the current commit on EVERY save, not just the first
+    (the #480 follow-up). Unlike `branch`, SHAs have no default-branch downgrade concern, so a
+    plain non-empty guard suffices."""
+
+    def git_at(short: str, full: str) -> Callable[..., SimpleNamespace]:
+        def fake_git(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+            if "--show-current" in args:
+                return SimpleNamespace(returncode=0, stdout="feat/work\n", stderr="")
+            if "--short" in args:
+                return SimpleNamespace(returncode=0, stdout=f"{short}\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout=f"{full}\n", stderr="")
+
+        return fake_git
+
+    saga.save(tmp_path, _make_saga(saga), now=FIXED_NOW, runner=git_at("aaa1111", "aaa1111ffff"))
+    first = saga.restore(tmp_path, "issue-42")
+    assert first.head_sha == "aaa1111"
+    assert first.last_commit_sha == "aaa1111ffff"
+
+    later = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    saga.save(tmp_path, _make_saga(saga), now=later, runner=git_at("bbb2222", "bbb2222ffff"))
+    second = saga.restore(tmp_path, "issue-42")
+    assert second.head_sha == "bbb2222"
+    assert second.last_commit_sha == "bbb2222ffff"
+
+
 # ===========================================================================
 # Engine: restore
 # ===========================================================================

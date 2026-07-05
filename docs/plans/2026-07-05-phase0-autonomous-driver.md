@@ -5,6 +5,10 @@
 - **Authorization:** Jeff, 2026-07-05 — "complete phase 0 without my intervention based on how
   we have completed the rest of phase 0." Opus / xhigh driver. Merge is durably authorized for all
   five named issues (same standing as #477/#478/#480 this session).
+- **Backend authority (added 2026-07-05, Jeff AFK):** "You are approved to use the backend you
+  recommend." The driver now CHOOSES the cheapest-correct backend per issue with no per-issue ask —
+  default inline, escalate only when a specific issue's work-shape warrants it, and state the choice
+  in the merge report. (#344 was decided inline by operator before this grant.)
 - **Companion:** [execution-order doc](2026-07-04-plugin-fleet-execution-order.md) (sequences),
   [issue plan](2026-07-04-plugin-fleet-issue-plan.md) (defines Gate E). This doc is the *driver
   contract* — it survives compaction so any continuation session resumes the run faithfully.
@@ -39,7 +43,9 @@ verify origin/main state  →  report to Jeff  →  next issue
 
 ## Pre-authorized — proceed silently ("in the flow")
 
-- **Backend = inline** (what every recent Phase 0 issue used).
+- **Backend = driver's cheapest-correct choice** (Jeff granted full backend authority 2026-07-05,
+  AFK). Default inline; escalate to team-execution / dynamic-workflows only when the work-shape
+  warrants. No per-issue backend ask; state the choice in the merge report.
 - **Squash-merge clean, green PRs** without asking (repo auto-merge rule; just-Jeff-and-Claude).
 - **Small defects found mid-execution → fix inline, no filing** (e.g. this session's `head_sha`
   refresh + `Fixes #N` autoclose + `--saga-id` resolution). Note them in the PR body / journal.
@@ -51,10 +57,11 @@ verify origin/main state  →  report to Jeff  →  next issue
 
 ## Stop and ask — genuine fork ("not in the flow")
 
-- **Backend fork:** an issue where inline is the *wrong* call. Watch **#348** and **#401** (cross-
-  plugin / new-substrate blast radius). Ask once, then proceed on the answer.
-- **Novel architectural KTD inside `/plan`** with no obvious default (a real design fork, not a
-  mechanical choice).
+- **Novel architectural KTD inside `/plan`** with no obvious default that I *cannot* resolve from
+  evidence (a real product-level fork, not a mechanical choice). A KTD resolvable from the code /
+  documented principles is resolved and recorded, not paused on. (Backend is no longer a pause
+  condition — see backend authority above. #348/#401 remain the likely escalation-*worthy* issues,
+  but I choose and proceed.)
 - **CI red that isn't a quick fix**, or a merge that won't go green.
 - **Destructive / irreversible op beyond the normal ship ceremony.**
 

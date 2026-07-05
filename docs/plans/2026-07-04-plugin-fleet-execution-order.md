@@ -107,7 +107,7 @@ profile (model/effort); the `.json` sidecar carries authoritative backend detail
 | 2 | #399 | pf-gate-divergence-telemetry | sonnet/low | none | [x] |
 | 3 | #463 | pf-fleet-commons-decision | opus/medium | none (blocks items 9–10) | [x] |
 | 4 | #345 | pf-ship-ceremony-primitive | sonnet/high | none | [x] |
-| 5 | #429 | pf-release-surface-single-source | sonnet/high | none | [ ] |
+| 5 | #429 | pf-release-surface-single-source | sonnet/high | none | [x] |
 | 6 | #344 | pf-board-progression-shared-writer | sonnet/high | none | [ ] |
 | 7 | #375 | pf-outcome-from-objective-ingestion | sonnet/high | none | [ ] |
 | 8 | #379 | pf-remote-gate-approval | sonnet/high | none | [ ] |

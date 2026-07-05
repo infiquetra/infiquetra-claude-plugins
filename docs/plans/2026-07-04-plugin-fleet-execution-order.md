@@ -160,6 +160,22 @@ canonical template applies the label). **#477, #478, and #480 are all shipped an
 fix ended the manual-cleanup tax that #477 and #478 both paid: its own ship ceremony was the first
 to `branch_delete` cleanly. The Phase 0 lanes are the next work.
 
+Found during the first `/outcome` run (outcome `tier-effort-first-class`, objective #343), filed as a
+`defect`-typed sub-issue of **#343** per the operator's interleaving preference — co-locate
+execution-discovered defects with the objective being run, so they can be picked up between that
+objective's leaves. This is a deliberate deviation from the affected-capability convention above: the
+defect is in `/outcome` (a saga coordinator that shipped pre-campaign, not one of the 12 Objectives), so
+the convention would otherwise route it to #334 (saga capability breadth) or the #337 fallback.
+
+- [ ] [#491](https://github.com/infiquetra/infiquetra-claude-plugins/issues/491) — `/outcome attend`
+  (and `report`) emit the raw dispatcher-minted `leaf_saga_id` (`/resume leaf-<outcome>-<subplot>`,
+  `outcome.py:384`) as a leaf's re-entry pointer, but a `needs-plan`, issue-backed leaf's real native
+  saga is `issue-<N>` (`saga.py:341`, exactly what `/plan` mints) — so the pointer dangles at a saga that
+  never exists. Completion harvest is unaffected (keyed off the leaf's GitHub ref, not the `leaf_saga_id`);
+  the impact is a misleading operator re-entry pointer. Caught live resuming leaf `sub-362` and worked
+  around by anchoring its saga as `issue-362`. **Open** — root-cause fix: the dispatcher mints `issue-<N>`
+  for issue-backed leaves; lighter alternative: `attend`/`report` resolve leaf → issue saga id at print.
+
 ## Shared kickoff contract (every per-issue prompt points here)
 
 A /plan session kicked off with one of the prompts below MUST:

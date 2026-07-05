@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.54.0 - 2026-07-05
+
+### Feat: ship_ceremony.py — resumable ship-ceremony transition primitive (#345)
+- New `scripts/ship_ceremony.py`: an explicit, ordered transition table
+  (`commit -> open_pr -> request_review -> merge -> checkout_main -> pull -> branch_delete`),
+  resumable across process restarts by re-reading the governing issue's saga tick each
+  invocation. Each transition records a local `CeremonyTier` reversibility tag
+  (`reversible` / `additive` / `always_operator`) — a small local registry, not a reuse of
+  `reversibility_certificate.py` (that module's own scope excludes repo-level git/merge ops).
+- `saga.py save` gains `--ceremony-transition` / `--ceremony-tier` (new `CEREMONY_TIERS`
+  constant); ceremony state rides the existing work-thread saga tick, no second store.
+- Two entry points share the implementation: `/work`'s PR-ready flow (section 5.4 no longer
+  hand-drives raw `gh pr create` / `gh pr merge` / cleanup commands) and a new local
+  (repo-scoped) `git ship` alias, installed/uninstalled by the primitive itself — never a
+  real git hook, so merge/PR-open/review-request stay explicitly operator-confirmed.
+- A front-loaded `ship_ceremony.py start` mode, offered right after `/work`'s Phase 1.4 saga
+  mint, pushes the branch and opens a draft PR carrying the plan link immediately; the later
+  `open_pr` transition detects it and flips it ready instead of opening a second PR.
+- Decision record: `docs/engineering-journal/DECISIONS.md#ship-ceremony-primitive-345`.
+
 ## 0.53.0 - 2026-07-04
 
 ### Refactor: tier palette re-exported from fleet-core through the vendored fleet-commons shim (#463)

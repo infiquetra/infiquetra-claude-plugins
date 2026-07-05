@@ -141,6 +141,8 @@ construct a `Saga` (no default); all others have the listed default.
 | `pr_refs` | list[str] | — | snapshot | Pointers to PRs. |
 | `adr_refs` | list[str] | — | snapshot | `ADR-NNNN` pointers into the journal. |
 | `journal_refs` | list[str] | — | snapshot | Pointers to journal entries. |
+| `ceremony_transition` | str | — | `""` | ship_ceremony.py (#345): last transition run (e.g. `open_pr`). Carry-forward scalar, not a snapshot list — one thread has one ceremony in flight. |
+| `ceremony_tier` | str | — | `""` | ship_ceremony.py (#345): reversibility tier of `ceremony_transition` (`reversible`/`additive`/`always_operator`). No index is stored; `ship_ceremony.py` derives it from the transition name against its own canonical order each read, so there is nothing to drift out of sync. |
 | `blockers` | str | — | `""` | Free-text blockers. |
 | `open_questions` | list[str] | — | snapshot | Outstanding questions (snapshot — see §6). |
 | `checks_run` | list[str] | — | snapshot | Tests / gates run (snapshot). |

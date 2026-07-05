@@ -70,6 +70,11 @@ PHASE_STATUSES = ("pending", "in_progress", "complete")
 STATUSES = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
 DESTINATIONS = ("plan-only", "pr", "merge", "nonprod-deploy")
 ORCHESTRATION_MODES = ("inline", "team-execution", "cc-workflows-ultracode")
+# ship_ceremony.py's reversibility-tier vocabulary (issue #345). saga.py only validates the
+# closed set here; the transition ORDER and index-derivation are ship_ceremony.py's own
+# domain (CeremonyTier), never saga.py's — keeps the generic engine decoupled from one
+# consumer's transition table.
+CEREMONY_TIERS = ("reversible", "additive", "always_operator")
 
 # Display-label map (R8 / KTD5).  Maps the stored enum string to the human-readable
 # label surfaced in every offer.  The enum values in ORCHESTRATION_MODES are the
@@ -211,6 +216,13 @@ class Saga:
     adr_refs: ListOrAbsent = ABSENT
     journal_refs: ListOrAbsent = ABSENT
 
+    # ship_ceremony.py state (issue #345, KTD2): the last transition it ran and that
+    # transition's reversibility tier. No index is stored — ship_ceremony.py derives the
+    # index from `ceremony_transition` against its own canonical TRANSITIONS order each
+    # time, so there is never a stored index to drift out of sync with the name.
+    ceremony_transition: str = ""
+    ceremony_tier: str = ""
+
     # Disposition detail.
     blockers: str = ""
     open_questions: ListOrAbsent = ABSENT
@@ -266,6 +278,8 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "pr_refs",
     "adr_refs",
     "journal_refs",
+    "ceremony_transition",
+    "ceremony_tier",
     "blockers",
     "open_questions",
     "checks_run",
@@ -800,6 +814,8 @@ def _tick_snapshot(saga: Saga) -> dict[str, Any]:
             "summary": saga.summary,
             "open_questions": _materialize(saga.open_questions),
             "rounds_seen": _materialize(saga.rounds_seen),
+            "ceremony_transition": saga.ceremony_transition,
+            "ceremony_tier": saga.ceremony_tier,
         }
     )
     return snapshot
@@ -1306,6 +1322,8 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         pr_refs=_split_list(args.pr_refs),
         adr_refs=_split_list(args.adr_refs),
         journal_refs=_split_list(args.journal_refs),
+        ceremony_transition=args.ceremony_transition,
+        ceremony_tier=args.ceremony_tier,
         blockers=args.blockers,
         open_questions=_split_list(args.open_questions),
         checks_run=_split_list(args.checks_run),
@@ -1373,6 +1391,17 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--pr-refs", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--adr-refs", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--journal-refs", default=None, help="pipe-separated; omit = carry forward")
+    p.add_argument(
+        "--ceremony-transition",
+        default="",
+        help="ship_ceremony.py: last transition run (e.g. 'open_pr'); omit = carry forward",
+    )
+    p.add_argument(
+        "--ceremony-tier",
+        default="",
+        choices=[*CEREMONY_TIERS, ""],
+        help="ship_ceremony.py: reversibility tier of that transition; omit = carry forward",
+    )
     p.add_argument("--open-questions", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--checks-run", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument(

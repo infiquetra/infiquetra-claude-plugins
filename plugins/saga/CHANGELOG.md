@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.54.0 - 2026-07-05
+## [0.54.1] - 2026-07-05
+
+- Reformat CHANGELOG version headings to the fleet's canonical grammar (bracketed version,
+  hyphen-minus date) as part of the release-surface single-source generator work (#429).
+
+## [0.54.0] - 2026-07-05
 
 ### Feat: ship_ceremony.py — resumable ship-ceremony transition primitive (#345)
 - New `scripts/ship_ceremony.py`: an explicit, ordered transition table
@@ -20,7 +25,7 @@
   `open_pr` transition detects it and flips it ready instead of opening a second PR.
 - Decision record: `docs/engineering-journal/DECISIONS.md#ship-ceremony-primitive-345`.
 
-## 0.53.0 - 2026-07-04
+## [0.53.0] - 2026-07-04
 
 ### Refactor: tier palette re-exported from fleet-core through the vendored fleet-commons shim (#463)
 - `execution_spec.py` now loads `MODELS` / `EFFORTS` / `_CHEAP_MODELS` / `ENGINE_INTENTS` through
@@ -30,7 +35,7 @@
   vocabulary). Vocabulary content and ordering are unchanged; the ordering contract is documented
   at the canonical home (`fleet-core` 0.1.0, DECISIONS `{#fleet-commons-mechanism-463}`).
 
-## 0.52.0 - 2026-07-04
+## [0.52.0] - 2026-07-04
 
 ### Feat: gate-divergence telemetry — rubber-stamp rate for operator gates (#399)
 - New `gate_divergence` full-snapshot list field on the `Saga` envelope, sibling to
@@ -53,7 +58,7 @@
 - This is a measurement facet only: it does not change what any gate does, does not add new
   gates, and does not itself widen any autonomous-progression allowlist.
 
-## 0.51.0 - 2026-07-03
+## [0.51.0] - 2026-07-03
 
 ### Feat: board↔saga reconciliation on resume — detect drift over the /outcome board-sync ledger (#295)
 - `/outcome` gains **reconcile-on-wake**, the companion to #279's autonomous board-sync writer.
@@ -85,7 +90,7 @@
 - `plugins/saga/references/outcome-spec.md` documents the reconcile-on-wake contract, the
   saga-owned field class, and the drift-hold semantics.
 
-## 0.50.0 - 2026-07-03
+## [0.50.0] - 2026-07-03
 
 ### Fix: verify-panel reconciliation recomputes over reporting verifiers, not declared n (#293)
 - A runtime-missing verifier (a `null` verdict slot from a skipped or terminally-errored
@@ -106,7 +111,7 @@
   the recompute table, the quorum floor, the static-vs-runtime two-kinds boundary, and the
   known no-verifier-timeout residue (workflow scripts have no timer primitive).
 
-## 0.49.2 - 2026-07-03
+## [0.49.2] - 2026-07-03
 
 ### Fix: documented fallback + registration drift guard for `saga:readonly-verifier` (#325)
 - `saga:readonly-verifier` is mandated by `CLAUDE.md` and `sandbox-spawn-sites.md` for every
@@ -126,7 +131,7 @@
   `saga:<name>` grep would false-positive on skill mentions like `/saga:work`, which share the
   same namespace.
 
-## 0.49.1 - 2026-07-03
+## [0.49.1] - 2026-07-03
 
 ### Fix: `/outcome` autonomous board-sync schema-resolves status instead of a hardcoded literal (#326)
 - `outcome_board_sync._candidate_ops` mapped every `ready`/`dispatched` leaf state to a hardcoded
@@ -147,7 +152,7 @@
 - `done` (`SUB_ISSUE_CLOSE`) and the deferred no-op terminals (`blocked`/`failed`/`rejected`/
   `stalled`) are unchanged.
 
-## 0.49.0 - 2026-07-02
+## [0.49.0] - 2026-07-02
 
 ### Artifact-pointers saga envelope field (#291)
 - New `artifact_pointers` field on the `Saga` dataclass and `FRONTMATTER_FIELDS`, beside the
@@ -162,7 +167,7 @@
   `POINTER_HASH_MISMATCH` / `POINTER_STALE`), closing the producer+consumer dead-wiring loop
   (LEARNINGS `{#dead-wiring-needs-producer-and-consumer}`). The field was producer-only before this.
 
-## 0.48.0 - 2026-07-02
+## [0.48.0] - 2026-07-02
 
 ### Team-spawn residency guard (#289)
 - New warn-only `PreToolUse` hook, `team_spawn_residency_hook.py`: when a team-execution
@@ -181,7 +186,7 @@
 - Registered as a third `PreToolUse` entry (matcher `Agent|Task`) alongside the existing
   `Edit|Write|MultiEdit` and `Bash` entries.
 
-## 0.47.0 - 2026-07-02
+## [0.47.0] - 2026-07-02
 
 ### Capability-scoped agent sandbox (#287)
 - `execution_spec.py` / `outcome_spec.py`: new optional two-axis `sandbox` envelope on `Unit`/`Node`
@@ -208,7 +213,7 @@
   `git checkout` clobber; the primary tree's uncommitted work survives), plus
   `tests/test_sandbox_spawn_sites.py` and sandbox coverage across the spec/emitter/dispatch suites.
 
-## 0.46.0 - 2026-07-02
+## [0.46.0] - 2026-07-02
 
 ### External-engine workers — plan-time tier recommendation + resolution preview (#318)
 - `execution_spec.py`: new optional `Unit.engine_intent` (`offload` / `second-opinion`, valid only
@@ -226,7 +231,7 @@
   team-execution chaperone's `substituted-engine` disposition compares the run-time resolution
   against.
 
-## 0.45.0 - 2026-07-01
+## [0.45.0] - 2026-07-01
 
 ### Evidence / provenance manifests — verified-vs-adjudicated record per delegated output (#285)
 - `provenance_manifest.py`: frozen-dataclass envelope (`schema: "saga.manifest.v1"`) with
@@ -258,7 +263,7 @@
 - Enabled `fable`/`xhigh` execution-spec tiers (#285 U0) so judgment-heavy units (schema, gate
   semantics) can run on Claude Fable 5 xhigh.
 
-## 0.44.0 - 2026-07-01
+## [0.44.0] - 2026-07-01
 
 ### External-engine capability routing — right engine, effort, protocol per task (#283)
 - New saga-owned registry + resolver + dispatch adapter mapping a logical capability or an explicit
@@ -278,7 +283,7 @@
 - `/doc-review` gains an opt-in cross-family external-reviewer panel. Records the binding
   "external engines are never gatekeepers" decision (DECISIONS.md).
 
-## 0.43.0 - 2026-06-30
+## [0.43.0] - 2026-06-30
 
 ### PreCompact spore — re-ground the continuing session on structured facts (#281)
 - New two-hook "spore" that guards the mid-run auto-compaction boundary: a `PreCompact` hook freezes the
@@ -297,7 +302,7 @@
 - Hooks registered in `hooks.json`: `PreCompact` (matcher `auto|manual`) + a sibling `SessionStart`
   (matcher `compact`, separate from the existing `startup|resume` entry).
 
-## 0.42.0 - 2026-06-29
+## [0.42.0] - 2026-06-29
 
 ### Reversibility/idempotency certificate + autonomous `/outcome` board-sync (#279)
 - New `reversibility_certificate.py` — one pure-data authority that declares each board op's
@@ -314,7 +319,7 @@
   `advance` performs no board writes; GATE'd ops surface to the operator, never silently skip.
 - Pairs with mission-control 2.4.0 (the new issue-write verbs the consumer drives).
 
-## 0.41.0 - 2026-06-29
+## [0.41.0] - 2026-06-29
 
 ### Operator gate-status card (#278)
 - New `status_card.py` — one shared, derived-on-read glyph-card renderer that is the single emitter of
@@ -335,7 +340,7 @@
 - Routed all five surfaces' status-summary emissions through the card while keeping per-finding
   evidence as drill-down detail; `/work` now writes `gate_verdicts` on its test gate (U5).
 
-## 0.40.0 - 2026-06-29
+## [0.40.0] - 2026-06-29
 
 ### Silent-omission completeness gate (#277)
 - New `completeness_gate.py` oracle — the single source of omission semantics: a `FailureClass`
@@ -350,7 +355,7 @@
   `log()`-and-proceed (R4), plus an opt-in bounded iterate-to-consensus override on `Verify`
   (`iterate_to_consensus` + `max_iterations`, `< 1` rejected at validate) (U3).
 
-## 0.39.0 - 2026-06-28
+## [0.39.0] - 2026-06-28
 
 ### Worker×model cache scheduling (#275)
 - Add a `files` field to `Unit` and a pure `segment_units()` that derives resident-worker
@@ -359,7 +364,7 @@
 - `team_emitter` now emits one worker row per resident-worker segment
   (`Agent | Units | Tier | Mode | Depends-on`) instead of one row per unit.
 
-## 0.38.0 - 2026-06-26
+## [0.38.0] - 2026-06-26
 
 ### OutcomeOrchestrator (outcome-orchestration feature — built across U1–U11, co-equal at release; the U11 feature-flip ships it)
 
@@ -572,7 +577,7 @@
   `/retro` adds a §1.7 read-only outcome-economics evidence pass. (U10 ships R7 + R24, and fills the U8
   report's "no data yet" cost slot + the U7 pruned-node cost reconcile.)
 
-## 0.37.0 - 2026-06-21
+## [0.37.0] - 2026-06-21
 
 - Document the parallel-layer + refute-N emitter constructs in `references/execution-spec.md`:
   topological-layer parallelism (KTD4) — independent units in the same dependency layer emit as a
@@ -590,7 +595,7 @@
   and the dogfooding fix (auto-derive must not fire on no-orchestration-args ticks).
 - Bump saga to **0.37.0** (feature: parallel + refute-N emitter, /plan + /work wiring, provenance guard).
 
-## 0.36.0 - 2026-06-21
+## [0.36.0] - 2026-06-21
 
 - Generalize the stale-main `SessionStart` hook to run in ANY git repo. The hook
   (`plugins/saga/hooks/stale_main_session_hook.py`) is now fully SELF-CONTAINED — it no longer
@@ -613,7 +618,7 @@
   (silent), behind-on-default-clean (auto-FF actually moves the branch), behind-on-feature-branch
   (warn only, branch not moved), and a `master`-default repo (detected + handled).
 
-## 0.35.0 - 2026-06-21
+## [0.35.0] - 2026-06-21
 
 - Install the stale-main guard as a `SessionStart` hook (`startup|resume`). New wrapper
   `plugins/saga/hooks/stale_main_session_hook.py` reads the SessionStart payload from stdin,
@@ -628,7 +633,7 @@
   end-to-end without any real `git fetch` — repo-without-guard (inert), not-a-git-repo (silent),
   guard-stale (warning reaches `additionalContext`), guard-silent (no output).
 
-## 0.34.0 - 2026-06-21
+## [0.34.0] - 2026-06-21
 
 - Wire the R12 producer path so override-rate telemetry is no longer inert. `saga.py save` gains
   `--orchestration-recommended` and `--orchestration-operator-choice` (both `choices=ORCHESTRATION_MODES`,
@@ -642,7 +647,7 @@
   then asserts `override_rate_reader` reports non-zero data; a MultiEdit invalid-JSON case for the
   marketplace validation hook.
 
-## 0.33.0 - 2026-06-21
+## [0.33.0] - 2026-06-21
 
 - Add R12 override-rate reader (`scripts/override_rate_reader.py`): scans saga envelopes and
   surfaces override-rate, over/under-tier direction, and budget-exhaustion (capability
@@ -653,7 +658,7 @@
 - Signal accrues post-merge as `/plan` records recommended vs operator-chosen backends (U3);
   this surface enables evidence-driven default re-weighting (R12's intent).
 
-## 0.32.0 - 2026-06-21
+## [0.32.0] - 2026-06-21
 
 - Capability-portable degradation (R11 / U12): every authored plan now carries a runnable
   inline/serial **baseline** alongside the dynamic-workflow script, so a plan executes on ANY
@@ -672,7 +677,7 @@
 - Document the degradation flow in `references/execution-spec.md` and the new field in
   `references/saga-spec.md`.
 
-## 0.31.0 - 2026-06-21
+## [0.31.0] - 2026-06-21
 
 - Add `scripts/execution_spec.py` (R9 keystone): the structured execution-spec schema and the
   Claude Code workflow-script emitter. `/plan` authors **one** spec (units with a per-unit
@@ -688,7 +693,7 @@
 - Add `references/execution-spec.md` documenting the spec shape, the R3/R10 invariants, and the CLI
   (`validate` / `emit`).
 
-## 0.30.0 - 2026-06-21
+## [0.30.0] - 2026-06-21
 
 - Add `plugins/saga/agents/mechanical-executor.md`: cheap-tier (haiku, Bash-only)
   op-discriminated executor agent for deterministic mechanical ops dispatched by saga
@@ -701,7 +706,7 @@
   scope, the op-discriminated rejection contract, and an example dispatch payload.  Wires the
   agent into the saga `/work` dispatch path without duplicating agent prose.
 
-## 0.29.0 - 2026-06-21
+## [0.29.0] - 2026-06-21
 
 - Add `tools/gate-manifest.json`: single-source declarative listing of the pre-push gate steps
   (`ruff format --check`, `ruff check`, `validate_plugins`, `validate marketplace`, `pytest`),
@@ -722,7 +727,7 @@
   steps listed, output echoed, hints included), and the single-source invariant (hook executes
   manifest-defined steps, not a hard-coded list).
 
-## 0.28.0 - 2026-06-21
+## [0.28.0] - 2026-06-21
 
 - Add `plugins/saga/hooks/journal_nudge_hook.py`: a non-blocking `PostToolUse` hook (exit 0 always)
   that fires on a `feat`/`fix` Bash commit touching code files with no `docs/engineering-journal/`
@@ -731,7 +736,7 @@
   Co-located with U7 in `hooks/hooks.json` under a new `PostToolUse` / `Bash` matcher.
   Addresses R14 (Epic 3 hook harness, U8).
 
-## 0.27.0 - 2026-06-21
+## [0.27.0] - 2026-06-21
 
 - Add `plugins/saga/hooks/hooks.json` and `hooks/validate_json_hook.py`: the repo's first hook.
   A `PreToolUse` hook that JSON-parses `marketplace.json` and `plugin.json` on every
@@ -739,7 +744,7 @@
   offending file path and line on failure.  Unrelated files pass through silently (exit 0).
   Addresses R13 (Epic 3 hook harness).
 
-## 0.26.0 - 2026-06-21
+## [0.26.0] - 2026-06-21
 
 - Split the recommender's `needs_consensus` signal on the **governance** axis (R7 keystone). A consensus
   signal is no longer an unconditional hard-force to `team-execution`: `recommend_execution_backend`
@@ -757,7 +762,7 @@
 - Cover AE1 (advisory → ultracode), AE2 (gated → team), the overlap case, the docs-gating case, and the
   CLI round-trip in `tests/test_saga_plugin.py`.
 
-## 0.25.0 - 2026-06-21
+## [0.25.0] - 2026-06-21
 
 - Rewrite the `/plan` (`skills/plan/SKILL.md`) and `/code-review` execution-backend offers to name
   **both** dynamic-workflow purposes from `operator-choice.md` §3.2 — **breadth / scale** fan-out **and**
@@ -770,7 +775,7 @@
   SUPERSET of the §3.2 purpose list (anchored on stable content markers, not line numbers), so a future
   rebuild cannot silently drop a purpose or reintroduce the "review depth" framing.
 
-## 0.24.0 - 2026-06-21
+## [0.24.0] - 2026-06-21
 
 - Add `orchestration_recommended` and `orchestration_operator_choice` fields to the saga envelope
   (R12 — choice-vs-recommendation recording). Enables override-rate computation in `/retro`+`/optimize`.
@@ -785,7 +790,7 @@
   in descriptions while the stored enum string `cc-workflows-ultracode` remains the frozen wire
   contract (carried in persisted sagas and `--orchestration-mode` CLI choices, byte-for-byte unchanged).
 
-## 0.23.0 - 2026-06-20
+## [0.23.0] - 2026-06-20
 
 - Add the `/promote` skill — the workspace tier of the engineering journal. It promotes the *select few*
   cross-repo "transcendent" learnings into `infiquetra-context-library`'s `LEARNINGS.md` as distilled,
@@ -803,7 +808,7 @@
 - Teach `/retro`'s Phase-4 curation to propose the `**Transcendent.**` marker on the select cross-repo
   learnings (the single-repo, propose-diff-and-wait declare feeder).
 
-## 0.22.1 - 2026-06-13
+## [0.22.1] - 2026-06-13
 
 - Tighten the `adversarial_confidence` guidance: `/work` sets `--adversarial-confidence` only on an explicit
   operator request for many-independent-attempt verification (refute-N / judge-panel / perspective-diverse),
@@ -811,7 +816,7 @@
   review flagged. The trigger stays categorical; a true magnitude gate remains a documented revisit-when.
 - Journal bookkeeping: record the 0.22.0 squash SHA (`331505a`).
 
-## 0.22.0 - 2026-06-13
+## [0.22.0] - 2026-06-13
 
 - Correct the execution-backend recommender (`recommend_execution_backend`) and the operator-choice contract
   so `cc-workflows-ultracode` (ultracode) is no longer framed as "fan-out, not review depth": ultracode
@@ -829,7 +834,7 @@
 - Reword operator-choice §3.1 (`PLUS` -> `OR`, matching the code's sufficient-on-its-own consensus) and §3.2
   (the corrected ultracode framing + the throwaway-signal-vs-standing-verdict mechanical boundary).
 
-## 0.21.0 - 2026-06-09
+## [0.21.0] - 2026-06-09
 
 - Add a comprehensive Saga documentation system: README atlas, manual pages under
   `plugins/saga/docs/`, curated source model, and generated SVG visual kit.
@@ -841,7 +846,7 @@
 - Add `tests/test_saga_docs_coverage.py` to guard command coverage, alias handling, derived
   readiness maturity, scenario coverage, manual links, source references, and visual inventory.
 
-## 0.20.0 - 2026-06-07
+## [0.20.0] - 2026-06-07
 
 - Add a shared formatting contract, `saga/references/formatting-style.md`, linked by all nine
   doc-writing skills (ideate, plan, brainstorm, spec, strategy, retro, doc-review, code-review,
@@ -855,12 +860,12 @@
 - Enforce it: `tests/test_saga_doc_formatting.py` fails CI on a stacked-bold-label collapse and on
   any doc-writing skill that does not link the contract.
 
-## 0.19.0 - 2026-06-05
+## [0.19.0] - 2026-06-05
 
 - Rename the engine plugin to `saga` (Scheme Y plugin-family rename) and fold `blueprint-reviewer`
   into it. Metadata/marketplace change; no command behavior change. (#199)
 
-## 0.18.0 - 2026-06-04
+## [0.18.0] - 2026-06-04
 
 - Rebuild `/optimize` from a 20-line stub into a **metric-driven optimization engine** — the
   **thirteenth and final command rebuild** of the engine-merge campaign (after `/office-hours`,
@@ -897,7 +902,7 @@
   the third firing of `#campaign-brief-merge-is-a-provenance-hypothesis`; consumed
   `#optimize-engine-merge` from QUEUED, added `#optimize-log-helper`.
 
-## 0.17.0 - 2026-06-04
+## [0.17.0] - 2026-06-04
 
 - Add `/spec` — the lifecycle's net-new **spec-interrogation engine** and the **twelfth command
   rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`,
@@ -946,7 +951,7 @@
   `#campaign-brief-merge-is-a-provenance-hypothesis`; consumed both `#spec-interrogation-engine` and
   `#brainstorm-spec-interrogation-seam` from QUEUED.
 
-## 0.16.0 - 2026-06-04
+## [0.16.0] - 2026-06-04
 
 - Add `/investigate` — the lifecycle's net-new **systematic-debugging engine** and the **eleventh
   command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`,
@@ -983,7 +988,7 @@
   `#investigate-systematic-debugging-engine-shipped`, LEARNINGS
   `#deferred-cross-engine-wiring-must-close-on-build`; consumed from QUEUED.
 
-## 0.15.0 - 2026-06-03
+## [0.15.0] - 2026-06-03
 
 - Rebuild `/retro` from a 19-line stub into the lifecycle's **meta-improvement engine** — the **tenth
   command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`,
@@ -1007,7 +1012,7 @@
   reuses existing helpers; the windowed mode keeps a stale-base guard scoped to that mode.
 - Version bumps: plugin `0.15.0`, marketplace entry `0.15.0`. keywords stay at 10 (unchanged).
 
-## 0.14.0 - 2026-06-03
+## [0.14.0] - 2026-06-03
 
 - Rebuild `/strategy` from a 21-line stub into the lifecycle's **interview-driven STRATEGY.md
   engine** — the **ninth command rebuild** of the engine-merge campaign (after `/office-hours`,
@@ -1031,7 +1036,7 @@
 - Version bumps: plugin `0.14.0`, marketplace entry `0.14.0`. keywords stay at 10 (`strategy` was
   already a keyword; unchanged).
 
-## 0.13.0 - 2026-06-03
+## [0.13.0] - 2026-06-03
 
 - Rebuild `/qa` from a 19-line stub into the lifecycle's **gate-only acceptance-evidence engine** — the
   **eighth command rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`,
@@ -1072,7 +1077,7 @@
   `/optimize` stub (one-line `/optimize` → `docs/optimize/`).
 - Version bumps: plugin `0.13.0`, marketplace entry `0.13.0`. keywords stay at 10.
 
-## 0.12.0 - 2026-06-03
+## [0.12.0] - 2026-06-03
 
 - Rebuild `/resume` from a 23-line "read committed docs first" doc into the lifecycle's **heavy
   forensic reconstruction engine** — the **seventh command rebuild** of the engine-merge campaign
@@ -1107,7 +1112,7 @@
   (QUEUED `#resume-session-relevance-ranking`).
 - Version bumps: plugin `0.12.0`, marketplace entry `0.12.0`. keywords stay at 10.
 
-## 0.11.0 - 2026-06-03
+## [0.11.0] - 2026-06-03
 
 - Rebuild `/loop` from a router stub into a native router engine — the **sixth command rebuild** of the
   engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`, `/work`) and the
@@ -1129,7 +1134,7 @@
   plan_path / branch picker fields so a resuming `/loop` (and `/code-review`) can match the right thread —
   closing the `#code-review-saga-scan-touchups` queued item.
 
-## 0.10.0 - 2026-06-03
+## [0.10.0] - 2026-06-03
 
 - Rebuild `/work` from a 39-line facilitator stub into a real execution-loop engine — the **fifth command
   rebuild** of the engine-merge campaign (after `/office-hours`, `/plan`, `/code-review`, `/founder-review`)
@@ -1184,7 +1189,7 @@
   deferred-helper notes now that the helper has shipped. Self-contained: merges the CE + gstack engines, no
   vendoring, no runtime dep.
 
-## 0.9.0 - 2026-06-03
+## [0.9.0] - 2026-06-03
 
 - Rebuild `/founder-review` (alias `/ceo-review`) from a 20-line stub into a real scope/ambition/direction
   review engine — the fourth command rebuild of the engine-merge campaign (after `/office-hours`, `/plan`,
@@ -1223,7 +1228,7 @@
   Thin `commands/founder-review.md` + `commands/ceo-review.md` (alias) launchers (review-only, no saga
   mention). Self-contained: ports the gstack engine, no gstack vendoring, no runtime dep on CE.
 
-## 0.8.0 - 2026-06-03
+## [0.8.0] - 2026-06-03
 
 - Rebuild `/code-review` from a 20-line stub into a real pre-PR code-quality review engine — the third
   command rebuild of the engine-merge campaign (after `/office-hours` and `/plan`). Merges CE's
@@ -1266,7 +1271,7 @@
   Thin `commands/code-review.md` launcher reflecting the engine (gate-only + saga append + the hard
   boundary). Self-contained: ports both source engines, no gstack vendoring, no runtime dep on CE.
 
-## 0.7.0 - 2026-06-02
+## [0.7.0] - 2026-06-02
 
 - Rebuild `/plan` from a 27-line stub into a real implementation-plan engine — the second command
   rebuild of the engine-merge campaign. Merges CE's `ce-plan` structured-artifact engine (the
@@ -1297,7 +1302,7 @@
   does NOT run the full review gauntlet (`/doc-review` owns that). Position: `/plan` answers
   "How should it be built?".
 
-## 0.6.0 - 2026-06-02
+## [0.6.0] - 2026-06-02
 
 - Rebuild `/office-hours` from a 23-line facilitative stub into a real two-mode thought-partner
   diagnostic ported from gstack and adapted to infiquetra — the Think-phase frame-finding front
@@ -1319,7 +1324,7 @@
   gbrain sync, learnings-search, telemetry, `~/.gstack` path conventions). No gstack vendoring, no
   runtime dependency on compound-engineering.
 
-## 0.5.0 - 2026-06-02
+## [0.5.0] - 2026-06-02
 
 - Add the operator-choice framework: a new contract document, `references/operator-choice.md`, that
   codifies the 3-way execution-backend choice — `inline` / `team-execution` / `cc-workflows-ultracode`
@@ -1333,7 +1338,7 @@
 - Doc-only foundation. No code or helper is added in this release — the CLI-backed
   orchestration-choice helper is deferred to the `/work` rebuild.
 
-## 0.4.0 - 2026-06-02
+## [0.4.0] - 2026-06-02
 
 - Add a unified saga engine (`scripts/saga.py`): one source of truth for durable, resumable
   work-state with a stable derived identity (`issue-<N>` / `task-<slug>`, sticky for the life of
@@ -1362,7 +1367,7 @@
   version only and then dropped — finish or re-save active loops so they migrate into the new
   `sagas/` layout.
 
-## 0.3.0 - 2026-06-01
+## [0.3.0] - 2026-06-01
 
 - Rebuild `/ideate` from a thin facilitative stub into a full divergent→convergent engine ported from
   compound-engineering and adapted to the infiquetra world: parallel frame agents generate many
@@ -1390,7 +1395,7 @@
   `/plan <issue>` and `/work <issue>` to consume handoff maturity and source context from prepared
   SDLC issues.
 
-## 0.2.0 - 2026-05-31
+## [0.2.0] - 2026-05-31
 
 - Rename the plugin from `infiquetra-loop` to `saga`; "loop" named only the `/loop`
   router command, not the whole idea-to-ship lifecycle the plugin covers. The `/loop` command name
@@ -1401,7 +1406,7 @@
 - Document the command set by lifecycle phase: Think, Plan & execute, Hand off, Review, and
   Improve & route.
 
-## 0.1.0 - 2026-05-29
+## [0.1.0] - 2026-05-29
 
 - Add the Infiquetra lifecycle command set from office-hours through resume.
 - Add `/doc-review` for plan, requirements, and formal SDLC implementation-readiness review.

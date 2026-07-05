@@ -144,7 +144,12 @@ def parse_gate_answer(
     if gid is None:  # no reply→pending-gate correlation: not accepted
         return None
 
-    verdict = _resolve_verdict(text)
+    # Resolve the verdict from the operator's *intent* words only, with every gate-id-shaped token
+    # stripped first. The gate id embeds the operator-chosen ``outcome_id``, so a name like
+    # ``no-op-migration`` would otherwise inject a spurious ``no`` (reject) token and read every reply
+    # as ambiguous — un-approvable over the channel. Stripping is fail-safe: it only removes tokens,
+    # so it can never manufacture an approve token that was not the operator's word.
+    verdict = _resolve_verdict(_GATE_ID_RE.sub(" ", text))
     if verdict is None:  # ambiguous -> never guess an approval
         return None
 

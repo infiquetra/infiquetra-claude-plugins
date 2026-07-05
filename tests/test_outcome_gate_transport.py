@@ -188,6 +188,19 @@ def test_ambiguous_verdict_never_defaults_to_approve() -> None:
     assert GT.parse_gate_answer(_inbound("ship-x@r2"), ["ship-x@r2"]) is None
 
 
+def test_gate_id_tokens_do_not_pollute_verdict() -> None:
+    # An outcome_id containing a verdict word (e.g. "no-op") embeds it in the gate id; the gate id is
+    # stripped before verdict resolution, so the reply is not falsely read as ambiguous.
+    assert GT.parse_gate_answer(
+        _inbound("y no-op-migration@r2"), ["no-op-migration@r2"]
+    ).verdict == ("approve")
+    assert GT.parse_gate_answer(
+        _inbound("n no-op-migration@r2"), ["no-op-migration@r2"]
+    ).verdict == ("reject")
+    # A single-letter-segment id (its own tokens would be both "a" and "b") is still answerable.
+    assert GT.parse_gate_answer(_inbound("y a-b-c@r1"), ["a-b-c@r1"]).verdict == "approve"
+
+
 def test_answerer_transport_come_from_inbound_fields_not_body() -> None:
     # The body claims a different answerer/transport; the record must ignore the body and use the
     # router-set fields (a prompt-injection cannot self-assert provenance).

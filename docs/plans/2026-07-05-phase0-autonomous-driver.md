@@ -79,24 +79,17 @@ verify origin/main state  →  report to Jeff  →  next issue
 - Release surfaces updated in the same PR every time (#429 single-source makes marketplace.json
   generated — bump plugin.json, regenerate, CHANGELOG grammar `## [X.Y.Z] - YYYY-MM-DD`).
 
-## #348 — IN PROGRESS (U1+U2 done, U3-U5 remain, 2026-07-05)
+## #348 — DONE ✅ (SHIPPED 2026-07-05, PR #487)
 
-Branch `feat/pf-429-retry-primitive-348` (pushed, no PR). **Done + committed + green (160 tests):**
-U1 — `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py` (`retry_with_backoff` + `bridge_call`
-+ `CircuitBreaker`, fault-injection tested); U2 — both unifi clients adopt `retry_with_backoff` on 429
-(existing tests green + retry-count assertions), vendored `fleet_commons_shim` into both unifi client
-dirs, registered in the drift-guard `VENDORED_SHIMS`. Plan + doc-review committed on the branch.
-**RESUME at U3** (checkpoint taken to avoid delicate emitted-JS surgery under an exhausted context):
-- **U3** — `execution_spec.py`: add `_JS_RETRY_HELPER` + wrap each `agent()` in the `parallel([...])`
-  wave thunks (`_emit_thunk` 3 forms). **Watch the existing golden tests** that pin the current
-  `agent(` emission shape — they will need updating. Compose with the existing `__gate` helper (retry
-  the agent() call, then gate the successful result). Tests: `retry_on_429` (structural), golden.
-- **U4** — `outcome.py advance()`/dispatch: a 429'd dispatch does NOT advance the leaf to `dispatched`;
-  it stays derived `ready` and is re-picked; `retriable-pending` is a result LABEL, not a NODE_STATE
-  (KTD4). Test: `retriable_pending`.
-- **U5** — release surfaces: bump fleet-core, saga 0.58.0->0.59.0, unifi; regen marketplace; per-plugin
-  CHANGELOG; drift-guard version literals; DECISIONS `{#shared-retry-backoff-primitive-348}`;
-  execution-order row 9 tick; work-session. NOT agy (KTD2).
+Merged as squash `54d1361` (PR #487, `Fixes #348` → issue CLOSED/COMPLETED). saga 0.59.0, fleet-core
+0.2.0, unifi 1.2.0. All 5 units shipped: U1 fleet-commons `retry_backoff` (retry + `CircuitBreaker` +
+`bridge_call`); U2 both unifi clients adopt it (vendored shim, drift-guarded); U3 emitted-wave
+`_JS_RETRY_HELPER` wrapping every `parallel([...])` thunk + panel verifier (singletons unwrapped by
+design); U4 `/outcome` dispatch classifies a 429 as derived-on-read `retriable-pending`
+(`AdvanceResult.retriable`, no committed NODE_STATE, no git/ledger mutation); U5 release surfaces +
+DECISIONS `{#shared-retry-backoff-primitive-348}` (KTD1-KTD4) + execution-order row 9 + work-session.
+Code-review CLEAN (0 findings, 4 adversarial readonly-verifiers). Two latent U1 lint issues fixed
+inline (SIM102, N818). Backend: inline. agy untouched (KTD2). Full gate green (2035 tests).
 
 ## #379 — DECISION: OPTION A (operator-gated fork resolved 2026-07-05)
 

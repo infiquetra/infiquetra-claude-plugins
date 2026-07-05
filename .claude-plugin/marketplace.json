@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.59.0",
+      "version": "0.60.0",
       "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas.",
       "author": {
         "name": "Infiquetra",
@@ -156,7 +156,7 @@
     {
       "name": "redis-channel",
       "source": "./plugins/redis-channel",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "description": "Claude Code channel that bridges sessions to external systems over Redis Streams. Router-agnostic: pair with any router implementation that speaks the protocol.",
       "author": {
         "name": "Infiquetra",

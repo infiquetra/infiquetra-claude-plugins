@@ -173,6 +173,48 @@ The offer renders differently depending on the surface, because not every surfac
   [`skills/brainstorm/SKILL.md`](../skills/brainstorm/SKILL.md) — **reference it; do not duplicate its
   wording here.** That doc is the single source for how channel-inline choices are phrased.
 
+### 5.1 Channel-transport gate delivery — the `/outcome` R20 approval gate (#379)
+
+The **same channel-inline shape** delivers the one durable-record operator gate — the `/outcome` R20
+frontier-approval gate — to a keyboard-less operator, so a gate that fires while the terminal is
+unattended can still be answered over redis-channel / Discord. This is a *transport for an existing
+gate*, never a new gate mechanism (`{#operator-choice-framework}`). It applies **only** to the
+`/outcome` gate (the only gate with a durable structured record, `approvals/r{rev}.json`); the
+per-skill `AskUserQuestion` gates (`/work` merge, `/plan`, …) inline their choices as in §5 but have no
+durable channel-answer record — a durable per-skill gate record is deferred follow-up, not this
+contract.
+
+**Notice (session → operator).** When an `/outcome` gate holds a frontier and a channel session is
+connected, the session renders the prompt with
+`outcome_gate_transport.compose_gate_notice(spec, spec_revision, gated_subplots)` and sends it over the
+**connected transport's** `reply()` (redis-channel `reply()` for a redis session; the Discord `reply()`
+MCP tool for Discord). The notice carries a **gate id** — `<outcome_id>@r<spec_revision>` — that the
+answer must quote.
+
+**Answer (operator → session).** The operator's reply arrives as an ordinary `<channel …>` inbound.
+The session recognizes a gate answer with the pure helper
+`outcome_gate_transport.parse_gate_answer(inbound, pending_gate_ids)` and, on an `approve` verdict, runs:
+
+```bash
+python3 plugins/saga/scripts/outcome.py approve <outcome_id> \
+  --answerer "<inbound username/user_id>" --transport "<inbound source>"
+```
+
+This is **doc-only + CLI-driven** (`{#operator-choice-framework}`): no background daemon parses the
+channel; the session recognizes the reply and invokes the CLI, exactly as it does for a channel-inline
+backend choice.
+
+**Access is the transport's, never a new allowlist (option A, KTD2).** Sender authorization is enforced
+**upstream of the session** by the transport's own access policy — Discord `gate()` pre-filters inbound
+to `allowFrom` before the session sees it; redis-channel defers to its router
+([[feedback_redis_channel_router_agnostic]]). `parse_gate_answer` therefore records the *already
+authorized* `answerer` / `transport` as **provenance** (read from the router-set inbound fields, never
+the message body) and accepts a reply **only** when it quotes a gate id that is in the current
+`pending_gate_ids` set. A reply that matches no pending gate, is unattributable, or is verdict-ambiguous
+is **not accepted** and is surfaced — the parser never defaults to *approve*. A channel message thus
+cannot forge or escalate an approval: authority derives from the upstream gate the sender already
+passed, exactly as the existing scoped permission-reply pattern does.
+
 ---
 
 ## 6. Recording the choice

@@ -110,7 +110,7 @@ profile (model/effort); the `.json` sidecar carries authoritative backend detail
 | 5 | #429 | pf-release-surface-single-source | sonnet/high | none | [x] |
 | 6 | #344 | pf-board-progression-shared-writer | sonnet/high | none | [x] |
 | 7 | #375 | pf-outcome-from-objective-ingestion | sonnet/high | none | [x] |
-| 8 | #379 | pf-remote-gate-approval | sonnet/high | none | [ ] |
+| 8 | #379 | pf-remote-gate-approval | sonnet/high | none | [x] |
 | 9 | #348 | pf-429-retry-primitive | sonnet/high | #463 merged | [x] |
 | 10 | #401 | pf-run-fact-ledger | sonnet/high | #463 merged | [ ] |
 

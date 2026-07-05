@@ -227,6 +227,14 @@ CC consumes via its `cc:<session_name>` group and emits `notifications/claude/ch
 
 This is implemented in MCP server middleware, not via agent-file coaching. Behavior is deterministic regardless of Claude's training.
 
+## Gate-approval notices (transport-agnostic convention)
+
+A connected session may deliver a durable approval gate (the saga `/outcome` R20 frontier-approval gate) over the channel so a keyboard-less operator can answer it. **This convention adds no new stream, verb, or message type to the protocol** — the gate semantics live entirely in the saga session, and redis-channel stays a generic bridge (it never learns about saga gates):
+
+- **Notice:** the session sends the gate prompt as an ordinary **Outbound** `reply` (§Outbound). Its text carries a **gate id** of the form `<outcome_id>@r<spec_revision>` plus lettered choices (`A) approve` / `B) hold`). To the router this is an ordinary reply message.
+- **Answer:** the operator's reply arrives as an ordinary **Inbound** (§Inbound). The session — not the router — correlates the reply to the pending gate id and applies the verdict via the saga CLI. The router delivers it like any other inbound.
+- **Authority / access:** unchanged and entirely the transport's. The sender was already authorized by the transport's access policy upstream of the session (permission relay §Permission relay documents the analogous already-gated trust for permission replies). The session records the router-set sender/source as gate provenance; it never re-authorizes a sender, and a reply that matches no pending gate is ignored. A router MUST NOT special-case gate notices — they are ordinary Outbound/Inbound messages.
+
 ## Lifecycle events (pub/sub)
 
 ```

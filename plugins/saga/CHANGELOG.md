@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.60.0] - 2026-07-05
+
+### Added — remote gate approval over the fleet's own channel (#379)
+
+Give the durable `/outcome` R20 frontier-approval gate a second, unattended delivery surface: the
+fleet's own redis-channel / Discord bridge. When a gate holds while the terminal is unattended, its
+prompt travels over the channel and the operator's reply becomes the durable approval — recording
+**who** answered and over **which transport** as provenance (option A, 2026-07-05).
+
+- **Provenance on the durable record** — `outcome_decompose.approve_frontier(...)` gains keyword-only
+  `answerer` / `transport`, written into `approvals/r{rev}.json` only when supplied (a terminal
+  approval stays byte-identical; `frontier_approved` is existence-only, so the extra keys are
+  backward-compatible). `outcome approve` gains `--answerer` / `--transport`.
+- **New `outcome_gate_transport.py`** (stdlib-only, decoupled from redis-channel) — transport-agnostic
+  `compose_gate_notice` (renders the gate id `<outcome_id>@r<rev>` + pending subplots + lettered
+  choices), `parse_gate_answer` (accepts a reply **only** when it quotes a gate id in the caller's
+  `pending_gate_ids`, reads `answerer` / `transport` from router-set inbound fields not the body, and
+  never defaults to *approve*), and a redis-only `emit_gate_notice` programmatic seam.
+- **Access deferred to the transport (option A / KTD2)** — sender authorization is enforced upstream
+  of the session by the transport's own access policy (Discord `gate()` pre-filters to `allowFrom`;
+  redis-channel defers to its router); the gate records provenance and correlates a pending gate, it
+  never re-authorizes a sender. A channel message cannot forge or escalate an approval.
+- **Documented contract** — `references/operator-choice.md` §5.1 (channel-transport gate delivery) and
+  `redis-channel/PROTOCOL.md` (transport-agnostic gate notice/answer convention; redis-channel stays
+  router-agnostic — docs-only there). Notice delivery is session-driven for both transports.
+
 ## [0.59.0] - 2026-07-05
 
 - Feat: fleet-wide 429 handling adopts the shared fleet-commons `retry_backoff` primitive (#348).

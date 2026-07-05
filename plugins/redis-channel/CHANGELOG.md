@@ -5,6 +5,18 @@ All notable changes to the `redis-channel` plugin will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
 the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-07-05
+
+### Documented — transport-agnostic gate-approval notice/answer convention (#379)
+
+`PROTOCOL.md` now documents how a connected session delivers a saga `/outcome` approval gate over the
+channel and captures the operator's answer. **No new stream, verb, or message type** — a gate notice
+is an ordinary Outbound `reply` (carrying a `<outcome_id>@r<rev>` gate id) and the answer is an
+ordinary Inbound; the gate semantics live entirely in the saga session, and redis-channel stays a
+generic router-agnostic bridge (a router MUST NOT special-case gate notices). Authority remains the
+transport's existing access policy; the session records provenance and never re-authorizes a sender.
+Docs-only change — no code behavior change.
+
 ## [0.5.0] - 2026-06-21
 
 ### Added — Phase 6 polish: configure command + auto-refresh symlink + ARCHITECTURE.md (v0.5.0)

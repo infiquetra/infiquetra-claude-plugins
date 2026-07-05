@@ -177,6 +177,12 @@ def _saga_cli(
 # --------------------------------------------------------------------------- #
 
 
+# Statuses a saga can never be a live ceremony target in — excluded from the by-branch
+# candidate filter so terminal sagas left on a branch (esp. the pile frozen on ``main``) don't
+# force a false ambiguous match. Mirrors saga.py's STATUSES terminal members.
+_TERMINAL_STATUSES = frozenset({"done", "abandoned"})
+
+
 def current_branch(repo_root: Path, *, runner: Callable[..., Any] | None = None) -> str:
     result = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root, runner=runner)
     return result.stdout.strip()
@@ -186,33 +192,46 @@ def resolve_saga(
     *,
     repo_root: Path,
     issue_ref: str | None = None,
+    saga_id: str | None = None,
     runner: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve the saga this ceremony run should act on.
 
-    When ``issue_ref`` is given (the ``/work``-driven path, which already knows its
-    saga), restore it directly. Otherwise (the terminal ``git ship`` path) resolve by
-    matching the current branch against ``saga.py scan``'s candidates — refusing to
-    guess if more than one candidate shares that branch (an ambiguous match, e.g. a
-    stale saga left over from a deleted-and-reused branch name).
+    Precedence: an explicit ``saga_id`` wins, then ``issue_ref``, then a by-branch match.
+    An explicit key is the ONLY thing that works across the whole ceremony for a task-kind
+    saga: ``checkout_main`` moves you onto ``main`` for the ``pull``/``branch_delete``
+    transitions, but the saga being shipped still records its feature branch, so a by-branch
+    match on ``main`` can never find it — and instead collides with every other saga left on
+    ``main``. ``/work``'s issue path passes ``issue_ref``; a task-kind ceremony must pass
+    ``saga_id`` (e.g. ``task-<slug>``).
+
+    The by-branch fallback (the terminal ``git ship`` path on the feature branch) ignores
+    terminal (``done``/``abandoned``) sagas — they are never a live ceremony target and would
+    otherwise pile up on a reused branch name and force an ambiguous match.
     """
-    if issue_ref is not None:
-        saga_id = f"issue-{issue_ref.rsplit('#', 1)[-1]}"
+    if saga_id is not None:
         return _saga_cli(["restore", "--saga-id", saga_id], repo_root=repo_root, runner=runner)
+    if issue_ref is not None:
+        derived = f"issue-{issue_ref.rsplit('#', 1)[-1]}"
+        return _saga_cli(["restore", "--saga-id", derived], repo_root=repo_root, runner=runner)
 
     branch = current_branch(repo_root, runner=runner)
     scanned = _saga_cli(["scan"], repo_root=repo_root, runner=runner)
-    candidates = [c for c in scanned.get("candidates", []) if c.get("branch") == branch]
+    candidates = [
+        c
+        for c in scanned.get("candidates", [])
+        if c.get("branch") == branch and c.get("status") not in _TERMINAL_STATUSES
+    ]
     if not candidates:
         raise NoSagaError(
-            f"no saga found for branch {branch!r}; pass --issue-ref explicitly "
-            "if this branch's saga was minted under a different branch name"
+            f"no live saga found for branch {branch!r}; pass --issue-ref or --saga-id explicitly "
+            "(a task-kind ceremony must pass --saga-id once checkout_main moves off the work branch)"
         )
     if len(candidates) > 1:
         ids = ", ".join(c["saga_id"] for c in candidates)
         raise AmbiguousSagaError(
-            f"multiple sagas match branch {branch!r} ({ids}); pass --issue-ref explicitly "
-            "rather than guessing"
+            f"multiple live sagas match branch {branch!r} ({ids}); pass --issue-ref or --saga-id "
+            "explicitly rather than guessing"
         )
     return _saga_cli(
         ["restore", "--saga-id", candidates[0]["saga_id"]], repo_root=repo_root, runner=runner
@@ -375,11 +394,12 @@ def run(
     *,
     repo_root: Path,
     issue_ref: str | None = None,
+    saga_id: str | None = None,
     runner: Callable[..., Any] | None = None,
 ) -> str:
     """Execute exactly the next unrun transition and record it. Returns a
     human-readable status line; raises on ambiguity or transition failure."""
-    saga = resolve_saga(repo_root=repo_root, issue_ref=issue_ref, runner=runner)
+    saga = resolve_saga(repo_root=repo_root, issue_ref=issue_ref, saga_id=saga_id, runner=runner)
     upcoming = next_transition(saga.get("ceremony_transition", ""))
     if upcoming is None:
         return "already shipped — all ceremony transitions complete"
@@ -524,6 +544,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="execute the next unrun ceremony transition")
     p_run.add_argument("--issue-ref", default=None, help="owner/repo#N; omit to resolve by branch")
+    p_run.add_argument(
+        "--saga-id",
+        default=None,
+        help="explicit saga id (e.g. task-<slug>); survives checkout_main, unlike by-branch resolution",
+    )
 
     p_start = sub.add_parser("start", help="front-loaded mode: push branch, open draft PR")
     p_start.add_argument("--issue-ref", required=True, help="owner/repo#N")
@@ -545,7 +570,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "run":
-            print(run(repo_root=repo_root, issue_ref=args.issue_ref))
+            print(run(repo_root=repo_root, issue_ref=args.issue_ref, saga_id=args.saga_id))
         elif args.command == "start":
             print(start(repo_root=repo_root, issue_ref=args.issue_ref))
         elif args.command == "install":

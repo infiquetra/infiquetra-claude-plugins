@@ -319,8 +319,51 @@ def test_ambiguous_branch_match_refuses_to_guess(ceremony_repo) -> None:
         capture_output=True,
         text=True,
     )
-    with pytest.raises(SC.AmbiguousSagaError, match="multiple sagas match branch"):
+    with pytest.raises(SC.AmbiguousSagaError, match="multiple live sagas match branch"):
         SC.resolve_saga(repo_root=repo, issue_ref=None, runner=fake_gh)
+
+
+def test_resolve_by_saga_id_ignores_current_branch(ceremony_repo) -> None:
+    """An explicit ``--saga-id`` resolves the saga regardless of the current branch — the fix that
+    lets a task-kind ceremony finish cleanup after ``checkout_main`` moves off the work branch,
+    where by-branch resolution can no longer find the saga (its recorded branch is the feature
+    branch, not ``main``)."""
+    repo, fake_gh = ceremony_repo
+    subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "checkout", "-b", "somewhere-else"],
+        check=True,
+        capture_output=True,
+    )
+    resolved = SC.resolve_saga(repo_root=repo, saga_id="issue-345", runner=fake_gh)
+    assert resolved["saga_id"] == "issue-345"
+
+
+def test_by_branch_fallback_ignores_terminal_sagas(ceremony_repo) -> None:
+    """A ``done``/``abandoned`` saga left on the branch is never a live ceremony target, so
+    by-branch resolution skips it instead of raising ambiguous — the pile of terminal sagas
+    frozen on ``main`` was what forced the manual cleanup on this campaign's ceremonies."""
+    repo, fake_gh = ceremony_repo
+    saga_py = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
+    subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(saga_py),
+            "save",
+            "--kind",
+            "task",
+            "--id",
+            "terminal-decoy",
+            "--status",
+            "done",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # The terminal decoy shares the branch but must not make resolution ambiguous.
+    resolved = SC.resolve_saga(repo_root=repo, issue_ref=None, runner=fake_gh)
+    assert resolved["saga_id"] == "issue-345"
 
 
 def test_front_loaded_draft_pr(ceremony_repo) -> None:
@@ -452,7 +495,7 @@ def test_no_saga_error_when_branch_has_no_match(ceremony_repo) -> None:
         check=True,
         capture_output=True,
     )
-    with pytest.raises(SC.NoSagaError, match="no saga found for branch"):
+    with pytest.raises(SC.NoSagaError, match="no live saga found for branch"):
         SC.resolve_saga(repo_root=repo, issue_ref=None)
 
 

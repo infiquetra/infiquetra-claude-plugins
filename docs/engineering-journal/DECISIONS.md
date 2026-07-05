@@ -2,6 +2,32 @@
 
 ## 2026-07-05
 
+### `ship_ceremony.py` resolves by explicit `--saga-id` (and skips terminal sagas by-branch) so task ceremonies finish on `main` (pending commit) {#ship-ceremony-saga-id-resolution}
+
+**Decision.** `resolve_saga` gains a `saga_id` parameter with top precedence (`saga_id` >
+`issue_ref` > by-branch), surfaced as `ship_ceremony run --saga-id <id>`. The by-branch fallback
+additionally excludes `done`/`abandoned` sagas.
+
+**Rationale.** A task-kind ceremony has no `issue_ref`, so it resolved by current branch — but after
+`checkout_main` the saga being shipped still records its *feature* branch, so a by-branch match on
+`main` can never find it and instead collides with every saga left on `main` (18 at the time, 14 of
+them terminal). An explicit stable key is the only thing that survives the branch change; it mirrors
+the existing `--issue-ref` path. Excluding terminal sagas is a correctness fix in its own right (a
+`done` saga is never a live ceremony target) and shrinks by-branch pollution, though it alone was
+insufficient — 4 non-terminal sagas remained on `main`.
+
+**Rejected alternatives.** (1) Exclude-terminal only — insufficient: the ceremony's saga isn't on
+`main` at all (feature branch), and 4 active sagas still collided. (2) Resolve by the ceremony's
+recorded branch instead of the current branch — fragile and implicit; an explicit key is clearer and
+matches `--issue-ref`. (3) File as a tracked issue — skipped as disproportionate overhead (operator's
+call), same as the two changes it follows.
+
+**Revisit when:** a single branch legitimately hosts multiple live sagas that must each be shippable
+without an explicit key (would need a richer disambiguator than status + branch).
+
+**Refs.** Fixes LEARNINGS `{#ship-ceremony-task-saga-resolve-on-main}`; follows
+`{#ship-ceremony-autoclose-fixes-line}`; ships in saga 0.56.0.
+
 ### `ship_ceremony.py` injects `Fixes #N` so merges auto-close the tracked issue (pending commit) {#ship-ceremony-autoclose-fixes-line}
 
 **Decision.** `_do_open_pr`'s fresh-create path adds a `Fixes #<N>` line (parsed from the saga's

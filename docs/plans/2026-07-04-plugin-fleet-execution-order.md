@@ -114,6 +114,31 @@ profile (model/effort); the `.json` sidecar carries authoritative backend detail
 | 9 | #348 | pf-429-retry-primitive | sonnet/high | #463 merged | [ ] |
 | 10 | #401 | pf-run-fact-ledger | sonnet/high | #463 merged | [ ] |
 
+## Defects found during execution (not part of the Phase 0 bootstrap set)
+
+The 10-row checklist above is a closed set — the Gate E bootstrap accelerators, each with its own
+provenance draft. It is not where incidental defects belong when Phase 0 work uncovers them.
+Convention (adopted 2026-07-05, during #429): a defect found while executing any Phase 0 or
+downstream issue is filed as a `defect`-typed sub-issue of whichever Objective (#332-#343) owns
+the affected capability — not collected under a new generic "defects" parent. Rationale: the
+Objective structure already gives every defect a real GitHub sub-issue parent and a natural
+lifecycle owner; a catch-all bucket would duplicate that and never close. Fallback only if a
+defect genuinely doesn't map to any of the 12 Objectives: file under #337 (fleet integrity), the
+existing general quality-gate umbrella — not a new mechanism.
+
+Found so far, both while dogfooding `ship_ceremony.py` (#345) during #429's `/work` session, both
+filed as sub-issues of #340 (ship ceremony) and milestoned `wave-1` to match:
+
+- [ ] [#477](https://github.com/infiquetra/infiquetra-claude-plugins/issues/477) — `request_review`
+  transition calls `gh pr edit --add-reviewer @me`, which the GraphQL mutation rejects; the
+  transition has never once succeeded.
+- [ ] [#478](https://github.com/infiquetra/infiquetra-claude-plugins/issues/478) — `open_pr`'s
+  existing-PR (front-loaded-draft) branch flips the PR ready via `gh pr ready` but never pushes
+  pending local commits, so CI can validate a stale HEAD while real work sits unpushed.
+
+Both are small, well-scoped, `defect`-typed (not `needs-plan`-gated in spirit even though the
+canonical template applies the label) — plausible next work before resuming the Phase 0 lanes.
+
 ## Shared kickoff contract (every per-issue prompt points here)
 
 A /plan session kicked off with one of the prompts below MUST:

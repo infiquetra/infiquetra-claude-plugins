@@ -161,9 +161,10 @@ have nothing to assert against). Add the prior as an additional, read-only, opti
 that function's computation/output (a missing/empty ledger leaves the existing recommendation
 unchanged). Read-only over the ledger; a **defined no-data fallback**.
 
-**Test scenarios** (`tests/test_lifecycle_state.py`, the existing home for `recommend_execution_backend`):
-with N prior facts, the recommendation surfaces the averaged prior; with **no ledger data**, it falls
-back cleanly (no crash, the backend recommendation is byte-identical to today's).
+**Test scenarios** (`tests/test_saga_execution_spec.py`, the existing home for
+`recommend_execution_backend` — there is no `tests/test_lifecycle_state.py`): with N prior facts, the
+recommendation surfaces the averaged prior; with **no ledger data**, it falls back cleanly (no crash,
+the backend recommendation is byte-identical to today's).
 
 ### U6. Schema doc + adoption note + DECISIONS
 

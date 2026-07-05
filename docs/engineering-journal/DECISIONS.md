@@ -24,6 +24,43 @@
 
 ## 2026-07-04
 
+### ship_ceremony.py: reversibility tiers stay local, ceremony state rides the work-thread saga, git-surface entry is an alias never a hook (#345, planning)  {#ship-ceremony-primitive-345}
+
+**Decision.** `ship_ceremony.py`'s transition table (commit → open_pr → request_review →
+merge → checkout_main → pull → branch_delete) gets its own local `Tier` registry
+(`reversible` / `additive` / `always_operator`) rather than reusing
+`reversibility_certificate.py`; its resumable state is written as new `ceremony_state` fields
+on the issue's existing work-thread saga tick (via new `saga.py save --ceremony-transition` /
+`--ceremony-tier` flags) rather than a dedicated side-channel store; its terminal-only entry
+point (R4b) is a local (`--local`, repo-scoped) git alias (`git ship`) installed/uninstalled
+by the primitive itself, never a real git hook (`pre-push`/`post-commit`).
+
+**Rejected alternatives.** (1) Reusing `reversibility_certificate.py` for ceremony
+transitions — rejected because that module's own docstring scopes its `OpKind` allowlist to
+mission-control board/issue verbs and explicitly excludes "merge, deploy, and repo-level
+mutations" (its R20); forcing git/gh ops through it would fight its closed-allowlist design.
+(2) A dedicated `.claude/saga/ship-ceremony/<branch>/` ledger mirroring `outcome_store.py` —
+rejected because every ceremony run already has a governing issue saga keyed by `branch`,
+and a second store means `/work` reconciling two state sources on resume. (3) A real git
+hook as the git-surface entry point — rejected because a hook auto-fires on a git event with
+no confirmation step, directly conflicting with the requirement that merge/PR-open/review-request
+stay explicitly operator-confirmed.
+
+**Rationale.** Each choice keeps the primitive's state and authority inside mechanisms that
+already exist and are already trusted (the work-thread saga, `/work`'s confirmation
+boundary) instead of adding a parallel one. The git-alias choice is genuinely novel ground —
+no git-alias-installer precedent existed in this repo before this issue.
+
+**Revisit when.** If a future primitive needs reversibility tiering for git/repo-level ops
+beyond ceremony (not just mission-control writes), consider promoting the local `Tier`
+vocabulary into a shared registry rather than each primitive re-declaring its own — evaluate
+once a second consumer appears (do not speculatively generalize now, per KTD1-adjacent
+scope discipline).
+
+**Refs.** Plan: `docs/plans/2026-07-04-ship-ceremony-primitive-plan.md`. Prior art excluding
+repo-level ops: `plugins/saga/scripts/reversibility_certificate.py`. Program sequencing:
+`docs/plans/2026-07-04-plugin-fleet-execution-order.md` (Phase 0 item 4).
+
 ### Fleet-commons distribution mechanism: fleet-core plugin + vendored resolution shim (#463)  {#fleet-commons-mechanism-463}
 
 **Decision.** Cross-plugin shared primitives live in a new scripts-only library plugin,

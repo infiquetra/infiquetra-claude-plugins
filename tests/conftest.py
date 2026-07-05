@@ -15,7 +15,7 @@ if str(_REDIS_BRIDGE_ROOT) not in sys.path:
 
 
 # --- #279 hard floor: GitHub-write test modules can never touch the live operations board ---
-_GH_WRITE_TEST_MODULES = {"test_mission_control", "test_outcome_board_sync"}
+_GH_WRITE_TEST_MODULES = {"test_mission_control", "test_outcome_board_sync", "test_ship_ceremony"}
 
 
 @pytest.fixture(autouse=True)

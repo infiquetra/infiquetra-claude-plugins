@@ -195,6 +195,12 @@ python3 plugins/saga/scripts/saga.py save \
   --rounds-seen "1"
 ```
 
+**Front-loaded ceremony start (R7, issue #345).** Immediately after this mint, when `issue_ref` is set,
+offer to run `ship_ceremony.py start --issue-ref <issue_ref>` — it pushes the working branch and opens a
+draft PR carrying the plan link, recording `pr_refs` on the saga right away. Reaching "ship" later then
+flips this same draft ready instead of opening a fresh PR. Skip this offer for `--kind task` work (no
+`issue_ref` to link) or when the operator declines.
+
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc `task` work pass
 `--kind task --id <slug>` and omit `--issue-ref` (then `--plan-path` + the on-branch save are the match
 keys). `save` mints unconditionally (correct here — `/work` is the minter), and when Phase 0.3 matched it
@@ -442,15 +448,20 @@ On a clean gate (or recorded override):
    fixed-position glyph card with an indexed footer pointing to the underlying evidence. The detailed
    work-session notes, code-review findings body, and test outputs remain as drill-down detail below
    the card — they are the evidence the card cells reference, not replaced by the card.
-2. **Offer to open the PR + request review** (`gh pr create` + reviewer request) — outward-facing,
-   **offered/confirmed, never auto-fired**. If the operator declines auto-open, hand them the prepared
-   PR body (links the plan, work-sessions, and the code-review artifact) + branch.
-3. **Record `pr_refs`** in the saga and set `next_step="await review on PR #N"`; comment the PR status to
-   the issue via the extended `issue_progress.py` CLI (`--pr-url`, `--review-status`).
+2. **Offer to open the PR + request review** by running `plugins/saga/scripts/ship_ceremony.py run`
+   through its `open_pr` and `request_review` transitions (issue #345) — outward-facing,
+   **offered/confirmed, never auto-fired**. If the operator declines, hand them the prepared PR body
+   (links the plan, work-sessions, and the code-review artifact) + branch and let them run
+   `ship_ceremony.py` themselves (or `git ship`, once installed).
+3. **Record `pr_refs`** — `ship_ceremony.py`'s `open_pr` transition writes this on the saga itself; set
+   `next_step="await review on PR #N"`; comment the PR status to the issue via the extended
+   `issue_progress.py` CLI (`--pr-url`, `--review-status`).
 4. **Present continuation routing** and pause. On re-entry, Phase 0.4 reads the live PR state and runs the
    transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
-   approved + clean + fresh, **offer `gh pr merge`** (explicitly confirmed) — merge is a git op `/work`
-   owns under confirmation. On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
+   approved + clean + fresh, **offer to run `ship_ceremony.py run`** through `merge` → `checkout_main` →
+   `pull` → `branch_delete` (explicitly confirmed) — merge is a git op `/work` owns under confirmation,
+   `ship_ceremony.py` is the mechanism, not a new authority. On merge, set `phase_status=complete` and
+   route to `/qa` **advisorily**.
 
 At thread completion set `status=done`.
 

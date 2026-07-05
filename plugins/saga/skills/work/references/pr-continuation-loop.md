@@ -49,10 +49,13 @@ and re-runs the test + review gates from scratch (re-verify, don't trust the pri
 ## Merge is a confirmed git op `/work` owns
 
 When `destination ⊇ merge` and the approved-fresh row fires, `/work` performs the merge itself — but only
-as an **explicitly operator-confirmed** `gh pr merge`, never silent. There is no separate "git/human"
-skill; merge is a git op `/work` owns under confirmation (saga-spec §1.1 keeps deploy as deploy's hard
-boundary, but merge is a git operation, not a deployment). Use the repo's merge method; respect branch
-protections (if the operator cannot merge, hand back the PR and stop).
+as an **explicitly operator-confirmed** run of `ship_ceremony.py run` through `merge` → `checkout_main` →
+`pull` → `branch_delete` (issue #345), never silent. There is no separate "git/human" skill; merge is a
+git op `/work` owns under confirmation (saga-spec §1.1 keeps deploy as deploy's hard boundary, but merge
+is a git operation, not a deployment) — `ship_ceremony.py` is the mechanism that carries out that
+confirmed op and records each transition's reversibility tier on the saga tick, not a new authority. Use
+the repo's merge method; respect branch protections (if the operator cannot merge, hand back the PR and
+stop, and `ship_ceremony.py`'s state stays at the last successful transition, ready to resume).
 
 ## Deploy / canary belong to deploy
 

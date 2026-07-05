@@ -11,6 +11,7 @@ description: |
   Primarily used for docs/specs plans and mixed plans with doc content.
 
   NOT for: copy editing or grammar (focuses on meaning and structure); code quality.
+role-tier: adversarial-review
 model: opus
 color: cyan
 ---

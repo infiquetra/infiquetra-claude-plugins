@@ -3,6 +3,7 @@ name: runtime-monitor
 description: |
   Monitor validator for team-execution. Checks runtime health using repository-appropriate
   observability after nonprod deploy or publish.
+role-tier: mechanical-scan
 model: haiku
 color: blue
 ---

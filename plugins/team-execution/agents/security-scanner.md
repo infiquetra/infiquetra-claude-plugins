@@ -5,6 +5,7 @@ description: |
   tools where available.
 
   Candidate tools: Semgrep, Bandit, Gitleaks, detect-secrets.
+role-tier: mechanical-scan
 model: haiku
 color: orange
 ---

@@ -5,6 +5,7 @@ description: |
   changes.
 
   Candidate tools: oasdiff, Schemathesis.
+role-tier: mechanical-scan
 model: haiku
 color: green
 ---

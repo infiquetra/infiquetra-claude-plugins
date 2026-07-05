@@ -5,6 +5,7 @@ description: |
   behavior, and generated client expectations.
 
   Candidate tools: Schemathesis, oasdiff.
+role-tier: contract-test
 model: sonnet
 color: green
 ---

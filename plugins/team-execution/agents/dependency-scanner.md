@@ -5,6 +5,7 @@ description: |
   inputs for vulnerable or risky supply-chain changes.
 
   Candidate tools: pip-audit, Trivy.
+role-tier: mechanical-scan
 model: haiku
 color: orange
 ---

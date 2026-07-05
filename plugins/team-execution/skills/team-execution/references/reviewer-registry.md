@@ -4,6 +4,11 @@ This file defines the base reviewers (always spawned) and optional reviewers (tr
 detection in the plan). Read this file during Phase A (Step A2) to determine which optional
 reviewers to suggest.
 
+**Tier note (#362, KTD5/KTD7):** every reviewer agent's frontmatter now carries `role-tier:
+adversarial-review`, which resolves through `fleet_commons/tier_policy.json` to `opus`/`high` — the
+same tier every reviewer already ran at. The frontmatter `model:` literal is kept as a documented
+last-resort fallback only; it is not the source of truth for dispatch tier.
+
 ---
 
 ## Base Reviewers (Always Spawned)

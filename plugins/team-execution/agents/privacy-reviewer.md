@@ -9,6 +9,7 @@ description: |
   anonymize, personal data, privacy.
 
   NOT for: general security concerns (security-reviewer); legal determinations (flags for legal review).
+role-tier: adversarial-review
 model: opus
 color: magenta
 ---

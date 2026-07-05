@@ -19,18 +19,27 @@ Each of these four skills spawns verify- or review-class sub-agents whose job is
 *build*. Each now names `subagent_type: saga:readonly-verifier` and `isolation: "worktree"` at its
 spawn site.
 
-| Skill | File | Spawn site |
-|---|---|---|
-| `code-review` | `plugins/saga/skills/code-review/SKILL.md` | Phase 3 lens fan-out (~line 164) |
-| `qa` | `plugins/saga/skills/qa/SKILL.md` | Phase 2 parallel verification (~lines 170-171) |
-| `investigate` | `plugins/saga/skills/investigate/SKILL.md` | Phase 2 parallel read-only sub-agents (~lines 211-216) |
-| `resume` | `plugins/saga/skills/resume/SKILL.md` | Phase 3b Tier-2 synthesis dispatch (~lines 232-233) |
+| Skill | File | Spawn site | Resolver work-shape (#362 U5) |
+|---|---|---|---|
+| `code-review` | `plugins/saga/skills/code-review/SKILL.md` | Phase 3 lens fan-out (~line 164) | `judgment` |
+| `qa` | `plugins/saga/skills/qa/SKILL.md` | Phase 2 parallel verification (~lines 170-171) | `judgment` |
+| `investigate` | `plugins/saga/skills/investigate/SKILL.md` | Phase 2 parallel read-only sub-agents (~lines 211-216) | `read-only-survey` |
+| `resume` | `plugins/saga/skills/resume/SKILL.md` | Phase 3b Tier-2 synthesis dispatch (~lines 232-233) | `judgment` |
 
 Also in-scope (already wired, U2, not this unit's edit): the three verifier-emitting sites inside
 `plugins/saga/scripts/execution_spec.py` — `_emit_verify_panel`, `_emit_verify_loop_singleton`, and
 the parallel-layer thunk's inlined iterate-to-consensus loop — each emits `agentType:
 'saga:readonly-verifier'` and `isolation: 'worktree'` in every verifier `agent()` call
-unconditionally (KTD6).
+unconditionally (KTD6). Resolver work-shape: `judgment` (verify/refute-class work — same shape as
+the four skill spawns above).
+
+**Resolver work-shape column (#362 U5, R7):** each row above names the `tier_policy.json` registry
+key (or `role-tier:` alias, KTD7) that `fleet_commons.tier_resolver.resolve()` would use to tier
+this spawn site — a routing pointer, not a claim that the site dispatches a model today (the four
+skill spawns above name a `subagent_type`, not a `{model, effort}` tier). Every entry here must be
+a real registry key or `role-tier:` alias — `tests/test_tier_resolver.py::
+test_spawn_site_enumeration_routes_through_resolver` fails the moment a new bare palette literal
+(e.g. a hardcoded `opus` / `haiku` string instead of a work-shape key) lands in this column.
 
 ## Out-of-scope (with rationale)
 

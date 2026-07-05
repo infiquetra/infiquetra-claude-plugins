@@ -3,6 +3,12 @@
 Validators provide post-review evidence. Select them by context; do not spawn every
 validator for every plan.
 
+**Tier note (#362, KTD5/KTD7):** tester validators carry `role-tier: contract-test` (resolves to
+`sonnet`/`medium`); scanner and monitor validators (plus `deploy-watcher`) carry `role-tier:
+mechanical-scan` (resolves to `haiku`/`low`) — both via `fleet_commons/tier_policy.json`, the same
+tiers these agents already ran at. The frontmatter `model:` literal is kept as a documented
+last-resort fallback only.
+
 ---
 
 ## Selection Inputs

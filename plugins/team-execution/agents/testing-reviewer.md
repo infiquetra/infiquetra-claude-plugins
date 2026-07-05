@@ -8,6 +8,7 @@ description: |
   unit test, e2e, test suite.
 
   NOT for: code quality concerns (code-quality-reviewer); infrastructure testing.
+role-tier: adversarial-review
 model: opus
 color: yellow
 ---

@@ -18,7 +18,6 @@ a live producer+consumer.  The entrypoint (``reconcile_board``) is called from t
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import time
@@ -91,18 +90,15 @@ def _parse_issue_ref(ref: str) -> tuple[str, int] | None:
 
 
 def _safe_ledger_name(key: str) -> str:
-    """Turn an idempotency key into a safe filename.
+    """Re-export of ``board_progression._safe_ledger_name`` (#344 helper-surface preservation).
 
-    Replaces the separators used by ``idempotency_key`` (``:``, ``#``, ``/``) with
-    underscores.  Falls back to a SHA-1 hex digest for keys that are too long or
-    contain other problematic characters after replacement.
+    The ledger-name logic moved to ``board_progression`` with the writer mechanism; this thin
+    delegate is kept so ``outcome_reconcile`` (`sync._safe_ledger_name`) and the existing test
+    suite (`SYNC_MOD._safe_ledger_name`) still resolve, single-sourced against the new owner.
     """
-    safe = key.replace(":", "_").replace("#", "_").replace("/", "_")
-    # SHA-1 fallback: 200-char limit covers all realistic keys; non-alnum guard is a
-    # belt-and-suspenders check for exotic values (e.g. a future label with spaces).
-    if len(safe) > 200 or not all(c.isalnum() or c in "_-." for c in safe):
-        safe = hashlib.sha1(key.encode()).hexdigest()
-    return safe + ".json"
+    import board_progression as _m  # noqa: PLC0415
+
+    return _m._safe_ledger_name(key)
 
 
 def _board_sync_dir(store: Any) -> Path:
@@ -192,45 +188,31 @@ def reconcile_board(
     1. Derives the node's current state via ``outcome_engine.derive_states``.
     2. Maps the state to candidate board ops (KTD6), resolving ``ready``/``dispatched`` target
        states from the schema for ``project`` (#326 KTD1/KTD2) — never a hardcoded literal.
-    3. For each candidate op, calls ``reversibility_certificate.authorize_write`` (R1).
-    4. GATE → appends a ``{status:"gated"}`` record; no write, no ledger, no silence (R17).
-    5. AUTHORIZED → checks the board-sync ledger for the idempotency key:
-       - Key present  → ``{status:"skipped"}`` (AE8 crash/retry safety).
-       - Key absent   → attempts ``board_writer`` with bounded retry (AE8); on success
-         writes the ledger key and appends ``{status:"written"}``; on all-attempt failure
-         appends ``{status:"failed"}`` WITHOUT writing the key so the next tick retries (R18).
-
-    Schema resolution for ``ready``/``dispatched`` statuses is attempted at most once per call,
-    and only when at least one leaf is actually in one of those states — a run touching only
-    ``done``/negative-terminal leaves never reads the schema file. A resolution failure (missing
-    schema, unknown ``project``) does not raise: the affected ``set-field-status`` op records
-    ``{status:"failed"}`` with no ledger key (retryable next tick, #326 R5), while the coalesced
-    ``ISSUE_PROGRESS_COMMENT`` for the same leaf still proceeds.
+    3. Delegates each candidate op's authorize/idempotency/retry/record to
+       ``board_progression.authorize_and_write`` (the shared mechanism extracted in #344) — the
+       ``/outcome``-specific policy (leaf-state derivation, schema resolution, drift-hold) stays here.
 
     The board-sync ledger lives under ``store.root / "board-sync"`` — NEVER in
-    ``events_dir`` (KTD4; that ledger requires terminal COMPLETION_STATES and feeds
-    ``derive_states``; a board-op key would crash ``validate`` or pollute the frontier).
+    ``events_dir`` (KTD4). ``write_once`` is injected as ``outcome_store._write_once`` so the sticky
+    ledger write keeps its exact atomicity and test-patchability (#344 R2 — zero behavior diff).
 
     Args:
         spec:         ``OutcomeSpec`` — the DAG of leaf nodes.
         store:        ``outcome_store.Store`` — the per-outcome store handle.
         board_writer: Injected callable ``(*, op_kind, repo, number, payload) -> None``.
-                      Drives the matching mission-control verb.  Never imported here.
         now:          Time source (injectable for tests).
         max_attempts: Retry cap per op (default 3 — bounded, not infinite).
-        project:      The target board's mission-control project slug — resolves the
-                      ``ready``/``dispatched`` status from that project's schema row.
-        schema_path:  Override for the SDLC schema location; defaults to the real
-                      mission-control config file (module-file-relative, #326 KTD3).
+        project:      The target board's mission-control project slug.
+        schema_path:  Override for the SDLC schema location (module-file-relative, #326 KTD3).
         hold_issues:  ``{(repo, number), ...}`` of issues with a detected board<->saga drift
-                      (#295 U5/KTD3). Every candidate op for a held issue is WITHHELD and recorded
-                      as ``{status: "drift-hold"}`` instead of driven — the write must not act on a
-                      board that moved underneath it until the operator resolves the drift. Other
-                      leaves' ops proceed normally (drift-hold, not gate-all).
+                      (#295 U5/KTD3) — every candidate op for a held issue is WITHHELD as
+                      ``{status:"drift-hold"}`` instead of driven.
 
     Returns:
-        A list of record dicts — one per candidate op — with the keys documented above.
+        A list of record dicts — one per candidate op.
     """
+    import board_progression as _bp  # noqa: PLC0415
+
     engine = _engine()
     store_module = _store_mod()
     cert = _cert()
@@ -312,131 +294,28 @@ def reconcile_board(
                 )
                 continue
 
-            # R1: the verdict MUST come from the certificate; never re-derived here.
-            verdict = cert.authorize_write(op_kind_str)
-
-            if verdict != cert.AUTHORIZED:
-                # R17: surface the gate — no silent write, no silent skip.
-                records.append(
-                    {
-                        "status": "gated",
-                        "subplot_id": node.subplot_id,
-                        "op_kind": op_kind_str,
-                        "repo": repo,
-                        "number": number,
-                        "target_state": target_state,
-                        "verdict": "GATE",
-                    }
-                )
-                continue
-
-            # repo is part of the key: two leaves with the same issue NUMBER in different repos
-            # (saga#5 vs mission-control#5 — the v1 two-plugin case) must not collide on one ledger
-            # entry, or one would silently skip the other's board write.
-            key = cert.idempotency_key(op_kind_str, repo, number, target_state)
-            ledger_file = ledger_dir / _safe_ledger_name(key)
-
-            # (i) Check key present → idempotent no-op (AE8 crash/retry safety, AE4 coalescing)
-            if ledger_file.exists():
-                records.append(
-                    {
-                        "status": "skipped",
-                        "subplot_id": node.subplot_id,
-                        "op_kind": op_kind_str,
-                        "repo": repo,
-                        "number": number,
-                        "target_state": target_state,
-                        "key": key,
-                    }
-                )
-                continue
-
-            # (ii) Attempt with bounded retry.  Board_writer raises → retry; key only
-            #      written on SUCCESS so a failed op is retryable on the next tick (R18).
+            # The coalesced additive comment payload is /outcome-specific; the mechanism is shared.
             payload: dict[str, Any] = {}
-            if target_state:
-                payload["target_state"] = target_state
             if op_kind_str == str(cert.OpKind.ISSUE_PROGRESS_COMMENT):
                 payload["body"] = (
                     f"saga /outcome board-sync: leaf `{node.subplot_id}` reached"
                     f" state `{target_state}`."
                 )
 
-            last_exc: Exception | None = None
-            attempts_made = 0
-            for _ in range(max_attempts):
-                attempts_made += 1
-                try:
-                    board_writer(
-                        op_kind=op_kind_str,
-                        repo=repo,
-                        number=number,
-                        payload=payload,
-                    )
-                    last_exc = None
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    last_exc = exc
-
-            if last_exc is None:
-                # (iii) SUCCESS → write ledger key now (sticky, write-once, KTD4). A fault HERE
-                #       (ledger I/O / clock) must NOT escape: the board write already committed, so
-                #       letting it propagate would wedge the whole tick, discard every record gathered
-                #       so far, AND leave a side effect with no recorded key (recovery would re-apply
-                #       it). Surface it loudly and keep going; the next tick re-attempts (idempotent
-                #       ops no-op; the additive comment is at-least-once).
-                try:
-                    record_json = json.dumps(
-                        {
-                            "key": key,
-                            "op_kind": op_kind_str,
-                            "repo": repo,
-                            "number": number,
-                            "target_state": target_state,
-                            "ts": now(),
-                        }
-                    )
-                    store_module._write_once(ledger_file, record_json)  # noqa: SLF001
-                    records.append(
-                        {
-                            "status": "written",
-                            "subplot_id": node.subplot_id,
-                            "op_kind": op_kind_str,
-                            "repo": repo,
-                            "number": number,
-                            "target_state": target_state,
-                            "key": key,
-                            "attempts": attempts_made,
-                        }
-                    )
-                except Exception as ledger_exc:  # noqa: BLE001
-                    records.append(
-                        {
-                            "status": "error",
-                            "subplot_id": node.subplot_id,
-                            "op_kind": op_kind_str,
-                            "repo": repo,
-                            "number": number,
-                            "target_state": target_state,
-                            "key": key,
-                            "error": f"board write committed but ledger record failed: {ledger_exc}",
-                            "may_reapply": True,
-                        }
-                    )
-            else:
-                # All attempts exhausted — surface, do NOT write ledger so next tick retries (R18).
-                records.append(
-                    {
-                        "status": "failed",
-                        "subplot_id": node.subplot_id,
-                        "op_kind": op_kind_str,
-                        "repo": repo,
-                        "number": number,
-                        "target_state": target_state,
-                        "key": key,
-                        "error": str(last_exc),
-                        "attempts": max_attempts,
-                    }
+            records.append(
+                _bp.authorize_and_write(
+                    op_kind_str,
+                    repo,
+                    number,
+                    target_state,
+                    board_writer=board_writer,
+                    ledger_dir=ledger_dir,
+                    now=now,
+                    max_attempts=max_attempts,
+                    payload=payload,
+                    extra={"subplot_id": node.subplot_id},
+                    write_once=store_module._write_once,  # noqa: SLF001
                 )
+            )
 
     return records

@@ -108,7 +108,7 @@ profile (model/effort); the `.json` sidecar carries authoritative backend detail
 | 3 | #463 | pf-fleet-commons-decision | opus/medium | none (blocks items 9–10) | [x] |
 | 4 | #345 | pf-ship-ceremony-primitive | sonnet/high | none | [x] |
 | 5 | #429 | pf-release-surface-single-source | sonnet/high | none | [x] |
-| 6 | #344 | pf-board-progression-shared-writer | sonnet/high | none | [ ] |
+| 6 | #344 | pf-board-progression-shared-writer | sonnet/high | none | [x] |
 | 7 | #375 | pf-outcome-from-objective-ingestion | sonnet/high | none | [ ] |
 | 8 | #379 | pf-remote-gate-approval | sonnet/high | none | [ ] |
 | 9 | #348 | pf-429-retry-primitive | sonnet/high | #463 merged | [ ] |

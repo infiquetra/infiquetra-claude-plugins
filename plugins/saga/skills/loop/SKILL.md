@@ -133,6 +133,22 @@ rename the directory (slug-instability guard, saga-spec §2.3 / §2.1).
 - **Resume** — the input is `resume`, or Phase 0.3 surfaced an in-flight saga that matches. Restore
   and re-enter (Phase 1).
 
+### 0.5 Render the idea->deploy arc (#344)
+
+Whenever `/loop` presents state — at Route, Drive, and Resume entry — render the derived lifecycle arc
+as the operator header via `project_arc` in `plugins/saga/scripts/status_card.py` (the same shared
+card renderer `/work`, `/resume`, `/qa`, and `/code-review` use). It is a **pure projection of durable
+saga fields** (`lifecycle_phase`, `phase_status`, `status`, `plan_path`, `review_paths`, `pr_refs`,
+`destination`) — it reads no writable board Status column, board cache, or `board_progression`
+write-record, so it renders what the saga asserts, never what the board says (KD4 derived-on-read).
+
+**Boundary (#344 KTD3): `/loop` renders and sequences; it does not write the board.** `/loop`'s first
+principle is route-and-sequence, not execute-phase-work — `mission-control` and the destination command
+own board writes. The autonomous, allowlisted board progression (Status → Done, sub-issue close) fires
+from **`/work`'s post-merge path** (which owns the merge), never from `/loop`. `/loop`'s board
+contribution is the arc render plus sequencing the destination command that performs the allowlisted
+write — the same end-to-end closure without `/loop` mutating the board itself.
+
 ---
 
 ## Phase 1 — Resume (lightweight restore + inline cold path)

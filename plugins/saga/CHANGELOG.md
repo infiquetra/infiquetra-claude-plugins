@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.57.0] - 2026-07-05
+
+- Feat: extracted `/outcome`'s certificate-gated autonomous board writer into a new plugin-agnostic
+  `board_progression.py` (#344). The per-op mechanism (authorize via `reversibility_certificate` →
+  idempotency-keyed ledger → bounded-retry write → fail-loud record) plus the production
+  `default_board_writer` (the `OpKind` → mission-control verb mapping, moved from `outcome.py`) now
+  live there behind a `write` CLI so the markdown skills can invoke it. `outcome_board_sync.reconcile_board`
+  delegates to it with zero behavior diff (`outcome_store._write_once` injected to preserve exact
+  atomicity + test-patchability); `_safe_ledger_name`/`_default_board_writer` are re-exported so
+  `outcome_reconcile` and `outcome.py`'s call sites are untouched.
+- Feat: `/work`'s post-merge phase now fires the allowlisted Status → Done and sub-issue-close moves
+  autonomously through `board_progression.py` (no operator prompt); merge/deploy and any
+  non-allowlisted op still return `GATE` and fall back to the operator-prompted `mission-control`
+  path — the autonomously-writable set cannot widen because the allowlist lives in the certificate.
+- Feat: `status_card.py` gains `project_arc`, a pure derived-on-read idea→deploy lifecycle arc
+  (gate-sequence over durable saga fields only), rendered by `/loop` at Route/Drive/Resume. `/loop`
+  renders and sequences but never writes the board itself (router first-principle preserved).
+
 ## [0.56.0] - 2026-07-05
 
 - Fix: `ship_ceremony.py` could not resolve a task-kind saga (no `issue_ref`) once `checkout_main`

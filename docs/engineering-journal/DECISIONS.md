@@ -2,6 +2,41 @@
 
 ## 2026-07-05
 
+### `board_progression.py` extracts the certificate-gated board writer as a shared mechanism; the allowlist stays in the certificate {#board-progression-shared-writer-344}
+
+**Decision.** Extract `/outcome`'s per-op board-write mechanism (authorize → idempotency ledger →
+bounded-retry write → fail-loud record) from `outcome_board_sync.reconcile_board` into a plugin-agnostic
+`board_progression.py` with a `write` CLI, and wire `/work` (post-merge) + `/loop` (render) onto it.
+Caller-specific *policy* (leaf-state derivation, schema resolution, drift-hold) stays with each caller;
+only the *mechanism* is shared (KTD1). `reconcile_board` delegates with zero behavior diff — proven by
+60 unchanged tests — injecting `outcome_store._write_once` as the ledger writer to preserve exact
+atomicity and the existing monkeypatch seam, and re-exporting `_safe_ledger_name`/`_default_board_writer`
+so `outcome_reconcile` and `outcome.py`'s call sites are untouched.
+
+**Rationale.** Widening *who* writes the board (from `/outcome` to `/work`/`/loop`) must not widen *what*
+may be written autonomously. Because `board_progression` routes every op through
+`reversibility_certificate.authorize_write` and re-derives no verdict, the autonomously-writable set is
+structurally fixed by the certificate registry: merge/deploy op-kinds are absent (default-GATE) and
+`PARENT_ISSUE_CLOSE` is `ALWAYS_OPERATOR` (KTD2). A new consumer cannot escalate autonomy without
+bypassing the certificate, which the single-writer design and R3 tests forbid — which is also why inline
+was the cheapest-correct backend despite the issue's team-execution recommendation.
+
+**KTD6 — the writer ships a CLI.** `/work`/`/loop` are markdown skills that invoke `python3 …/*.py`, not
+Python importers, so a library function alone is unbuildable by its consumers; the extraction moves
+`default_board_writer` (the `OpKind`→mission-control mapping) into the module and exposes
+`write --op … --repo … --number …`, printing a record JSON the skill branches on (`written` fired,
+`gated` → fall back to the operator-prompted `mission-control` path).
+
+**KTD3 — `/loop` renders, `/work` writes.** `/loop`'s first principle is route-and-sequence, not
+execute-phase-work. So `/loop`'s consumer role is the read-only `project_arc` render (a pure derived-on-read
+projection over durable saga fields, never a writable board column — KD4); the autonomous allowlisted write
+fires from `/work`'s post-merge path, which owns the merge. Rejected: wiring `/loop` to write the board —
+violates its router principle and duplicates `/work`'s authority.
+
+**Revisit when.** A consumer needs an op the certificate does not yet allow (that is a certificate change,
+reviewed on its own), or rollback execution is wanted (v1 records the write; it does not undo — the
+certificate declares inverses as data only).
+
 ### `ship_ceremony.py` resolves by explicit `--saga-id` (and skips terminal sagas by-branch) so task ceremonies finish on `main` (pending commit) {#ship-ceremony-saga-id-resolution}
 
 **Decision.** `resolve_saga` gains a `saga_id` parameter with top precedence (`saga_id` >

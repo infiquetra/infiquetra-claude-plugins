@@ -1115,3 +1115,88 @@ def test_ae5_done_glyph_consistent_across_work_and_qa() -> None:
     done_glyph = SC.GLYPH_MAP["done"]
     assert done_glyph in work_tests_card, "DONE glyph missing from project_work Tests row"
     assert done_glyph in qa_checks_card, "DONE glyph missing from project_qa Checks row"
+
+
+# ── project_arc (#344 U3): idea->deploy lifecycle arc ─────────────────────────────────────────────
+
+
+def _arc_saga(**kw: Any) -> object:
+    """A saga namespace carrying the durable fields project_arc reads (not covered by _mock_saga)."""
+    base: dict[str, Any] = {
+        "saga_id": "saga-arc-1",
+        "lifecycle_phase": "",
+        "phase_status": "",
+        "status": "active",
+        "plan_path": "",
+        "review_paths": [],
+        "pr_refs": [],
+        "destination": "plan-only",
+    }
+    base.update(kw)
+    return types.SimpleNamespace(**base)
+
+
+def test_project_arc_rows_and_archetype() -> None:
+    """project_arc is a gate-sequence with the fixed idea->deploy stage set (R3 constant height)."""
+    spec = SC.project_arc(
+        _arc_saga(lifecycle_phase="work", phase_status="in_progress", plan_path="docs/plans/x.md")
+    )
+    assert spec.archetype == "gate-sequence"
+    assert [r.label for r in spec.rows] == [
+        "Idea",
+        "Plan",
+        "Work",
+        "Review",
+        "Merge (HITL)",
+        "Deploy (HITL)",
+    ]
+
+
+def test_project_arc_is_pure_render_deterministic() -> None:
+    """AE5/KD4: identical saga-field input renders byte-identically — no board/external state read."""
+    saga = _arc_saga(
+        lifecycle_phase="work", phase_status="complete", plan_path="p.md", pr_refs=["owner/repo#5"]
+    )
+    assert SC.render(SC.project_arc(saga)) == SC.render(SC.project_arc(saga))
+
+
+def test_project_arc_work_complete_pr_open_merge_blocked() -> None:
+    spec = SC.project_arc(
+        _arc_saga(
+            lifecycle_phase="work",
+            phase_status="complete",
+            plan_path="p.md",
+            pr_refs=["owner/repo#5"],
+        )
+    )
+    by = {r.key: r.state for r in spec.rows}
+    assert by["plan"] == SC.CardState.DONE
+    assert by["work"] == SC.CardState.DONE
+    assert by["merge"] == SC.CardState.BLOCKED  # PR exists, thread not done → awaiting HITL merge
+    assert by["deploy"] == SC.CardState.NOT_REACHED  # destination is not a deploy
+
+
+def test_project_arc_done_thread_deploy_closes_out() -> None:
+    spec = SC.project_arc(
+        _arc_saga(
+            lifecycle_phase="qa",
+            phase_status="complete",
+            status="done",
+            plan_path="p.md",
+            review_paths=["docs/reviews/r.md"],
+            pr_refs=["owner/repo#5"],
+            destination="nonprod-deploy",
+        )
+    )
+    by = {r.key: r.state for r in spec.rows}
+    assert by["work"] == SC.CardState.DONE
+    assert by["review"] == SC.CardState.DONE
+    assert by["merge"] == SC.CardState.DONE
+    assert by["deploy"] == SC.CardState.DONE
+
+
+def test_project_arc_empty_saga_all_not_reached_constant_height() -> None:
+    """Safe degradation: a fully-empty object → all six stages NOT_REACHED, height unchanged."""
+    spec = SC.project_arc(types.SimpleNamespace())
+    assert len(spec.rows) == 6
+    assert all(r.state == SC.CardState.NOT_REACHED for r in spec.rows)

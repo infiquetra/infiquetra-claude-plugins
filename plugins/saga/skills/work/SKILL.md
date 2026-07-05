@@ -395,6 +395,26 @@ python3 plugins/saga/scripts/issue_progress.py \
 Record durable learnings/decisions in the engineering journal as they surface. `/work` **renders and
 hands** the comment to `mission-control`; it does not file or mutate the issue itself.
 
+### 4.4 Autonomous board progression (post-merge allowlisted moves, #344)
+
+After a merge, drive the **allowlisted** post-merge board moves autonomously through the shared
+certificate-gated writer instead of prompting — the same reversibility contract `/outcome` uses. For
+each move (Status → Done, then the sub-issue close):
+
+```bash
+python3 plugins/saga/scripts/board_progression.py write \
+  --op set-field-status --repo <owner/repo> --number <N> --target-state Done
+python3 plugins/saga/scripts/board_progression.py write \
+  --op sub-issue-close --repo <owner/repo> --number <N>
+```
+
+The CLI prints a record JSON. On `{"status":"written"}` (or `"skipped"`) the move fired with **no
+operator prompt**. On `{"status":"gated"}` — which merge/deploy and any non-allowlisted op **always**
+return, because the allowlist lives in `reversibility_certificate`, not in the writer — fall back to
+the existing operator-prompted `mission-control` path unchanged. A `gated` result is the certificate
+correctly withholding an op that needs a human, never a failure. `/work` still does **not** merge or
+deploy autonomously (permanently gated).
+
 ---
 
 ## Phase 5 — Code-review gate, PR-ready, continuation routing

@@ -348,6 +348,90 @@ def project_work(saga_obj: object) -> CardSpec:
     )
 
 
+def project_arc(saga_obj: object) -> CardSpec:
+    """Build a gate-sequence CardSpec projecting the idea->deploy lifecycle arc (#344 R7/KD4).
+
+    Rendered by ``/loop`` at Route/Drive/Resume. A pure function of durable saga fields (the same
+    category ``project_work`` reads): ``lifecycle_phase``, ``phase_status``, ``status``, ``plan_path``,
+    ``review_paths``, ``pr_refs``, ``destination``. Consults NO writable board Status column, board
+    cache, or ``board_progression`` write-record — the arc renders what the saga itself asserts, never
+    what the board says (KD4 derived-on-read). Merge/Deploy are HITL (never auto-advanced).
+
+    Row order (fixed — constant height regardless of state, R3):
+      Idea · Plan · Work · Review · Merge (HITL) · Deploy (HITL).
+    """
+    saga_id = getattr(saga_obj, "saga_id", "") or ""
+    lifecycle_phase = str(getattr(saga_obj, "lifecycle_phase", "") or "").lower()
+    phase_status = str(getattr(saga_obj, "phase_status", "") or "").lower()
+    status = str(getattr(saga_obj, "status", "") or "").lower()
+    plan_path = getattr(saga_obj, "plan_path", "") or ""
+    review_paths = _saga_list(getattr(saga_obj, "review_paths", None))
+    pr_refs = _saga_list(getattr(saga_obj, "pr_refs", None))
+    destination = str(getattr(saga_obj, "destination", "plan-only") or "plan-only")
+
+    phase_rank = {"plan": 1, "work": 2, "qa": 3}.get(lifecycle_phase, 0)
+    thread_done = status == "done"
+
+    # ── Idea ──────────────────────────────────────────────────────────────────────────────────────
+    # An existing saga implies a settled idea preceded planning; safe-degrade only for an empty object.
+    if plan_path or lifecycle_phase or saga_id:
+        idea_state: CardState = CardState.DONE
+        idea_ref: str | None = saga_id or None
+    else:
+        idea_state, idea_ref = CardState.NOT_REACHED, None
+
+    # ── Plan ──────────────────────────────────────────────────────────────────────────────────────
+    if plan_path:
+        plan_state, plan_ref = CardState.DONE, plan_path
+    else:
+        plan_state, plan_ref = CardState.NOT_REACHED, None
+
+    # ── Work ──────────────────────────────────────────────────────────────────────────────────────
+    if phase_rank > 2 or (phase_rank == 2 and (phase_status == "complete" or thread_done)):
+        work_state = CardState.DONE
+    elif phase_rank == 2:
+        work_state = CardState.IN_PROGRESS
+    else:
+        work_state = CardState.NOT_REACHED
+    work_ref: str | None = (saga_id or None) if work_state != CardState.NOT_REACHED else None
+
+    # ── Review ────────────────────────────────────────────────────────────────────────────────────
+    if review_paths:
+        review_state, review_ref = CardState.DONE, review_paths[0]
+    else:
+        review_state, review_ref = CardState.NOT_REACHED, None
+
+    # ── Merge (HITL) ──────────────────────────────────────────────────────────────────────────────
+    # Merged when the thread is done with a PR; otherwise blocked-awaiting once a PR exists.
+    if pr_refs and thread_done:
+        merge_state, merge_ref = CardState.DONE, pr_refs[0]
+    elif pr_refs:
+        merge_state, merge_ref = CardState.BLOCKED, pr_refs[0]
+    else:
+        merge_state, merge_ref = CardState.NOT_REACHED, None
+
+    # ── Deploy (HITL) ─────────────────────────────────────────────────────────────────────────────
+    # Only in the arc when the destination targets a deployment.
+    if destination == "nonprod-deploy":
+        deploy_state = CardState.DONE if thread_done else CardState.BLOCKED
+        deploy_ref: str | None = destination
+    else:
+        deploy_state, deploy_ref = CardState.NOT_REACHED, None
+
+    return CardSpec(
+        archetype="gate-sequence",
+        header=CardHeader(surface="/loop", id=saga_id or "unknown"),
+        rows=(
+            CardRow("idea", "Idea", idea_state, ref=idea_ref),
+            CardRow("plan", "Plan", plan_state, ref=plan_ref),
+            CardRow("work", "Work", work_state, ref=work_ref),
+            CardRow("review", "Review", review_state, ref=review_ref),
+            CardRow("merge", "Merge (HITL)", merge_state, ref=merge_ref),
+            CardRow("deploy", "Deploy (HITL)", deploy_state, ref=deploy_ref),
+        ),
+    )
+
+
 def _parse_verdict_state(text: str) -> CardState | None:
     """Parse a verdict token from *text*; return the matching CardState or None if absent."""
     m = re.search(r"\*\*Verdict[^*]*\*\*[:\s]*([^\n]+)", text, re.IGNORECASE)

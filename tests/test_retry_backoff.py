@@ -27,7 +27,7 @@ def _load() -> ModuleType:
 RB = _load()
 
 
-class Rate(Exception):
+class RateError(Exception):
     status_code = 429
 
 
@@ -53,7 +53,7 @@ def test_retry_then_success() -> None:
     def fn() -> str:
         calls["n"] += 1
         if calls["n"] == 1:
-            raise Rate("rate limited")
+            raise RateError("rate limited")
         return "ok"
 
     delays, sleep = _recorder()
@@ -84,12 +84,12 @@ def test_attempt_cap_honored() -> None:
 
     def fn() -> None:
         calls["n"] += 1
-        raise Rate("always")
+        raise RateError("always")
 
     delays, sleep = _recorder()
     import random
 
-    with pytest.raises(Rate):
+    with pytest.raises(RateError):
         RB.retry_with_backoff(fn, max_attempts=3, sleep=sleep, rng=random.Random(0))
     assert calls["n"] == 3
     assert len(delays) == 2  # backoff between attempts 1->2 and 2->3, none after the last
@@ -99,10 +99,10 @@ def test_jitter_within_bounds() -> None:
     import random
 
     def fn() -> None:
-        raise Rate("x")
+        raise RateError("x")
 
     delays, sleep = _recorder()
-    with pytest.raises(Rate):
+    with pytest.raises(RateError):
         RB.retry_with_backoff(fn, max_attempts=2, base_delay=1.0, sleep=sleep, rng=random.Random(0))
     assert len(delays) == 1
     assert 0.5 <= delays[0] <= 1.0  # attempt-1 delay = 1.0 * (0.5..1.0)
@@ -114,7 +114,7 @@ def test_retry_after_hint_overrides_backoff() -> None:
     def fn() -> str:
         calls["n"] += 1
         if calls["n"] == 1:
-            raise Rate("rate limited")
+            raise RateError("rate limited")
         return "ok"
 
     delays, sleep = _recorder()
@@ -130,11 +130,11 @@ def test_breaker_opens_short_circuits_then_half_opens_and_closes() -> None:
     breaker = RB.CircuitBreaker(fail_threshold=2, cooldown=10.0, clock=clock)
 
     def always_429() -> None:
-        raise Rate("429")
+        raise RateError("429")
 
     # Two failures (each bridge_call = one failure with max_attempts=1) -> OPEN.
     for _ in range(2):
-        with pytest.raises(Rate):
+        with pytest.raises(RateError):
             RB.bridge_call(always_429, breaker=breaker, max_attempts=1)
     assert breaker.state == "OPEN"
 

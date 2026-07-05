@@ -57,7 +57,9 @@ def retry_with_backoff(
     jitter, so concurrent callers do not re-collide). ``sleep``/``rng`` are injected for deterministic tests.
     """
     _rng = rng if rng is not None else random.Random()  # nosec B311 - jitter, not security
-    retryable = is_retryable if is_retryable is not None else (lambda exc: _status_of(exc) == on_status)
+    retryable = (
+        is_retryable if is_retryable is not None else (lambda exc: _status_of(exc) == on_status)
+    )
 
     attempt = 0
     while True:
@@ -100,9 +102,12 @@ class CircuitBreaker:
 
     @property
     def state(self) -> str:
-        if self._state == "OPEN" and self._opened_at is not None:
-            if self._clock() - self._opened_at >= self.cooldown:
-                self._state = "HALF_OPEN"
+        if (
+            self._state == "OPEN"
+            and self._opened_at is not None
+            and self._clock() - self._opened_at >= self.cooldown
+        ):
+            self._state = "HALF_OPEN"
         return self._state
 
     def on_success(self) -> None:
@@ -131,7 +136,9 @@ def bridge_call(
     failure that survives retry trips the breaker; any success closes it. Non-rate-limit errors propagate
     but do NOT trip the breaker (the breaker guards rate-limiting, not correctness bugs).
     """
-    retryable = is_retryable if is_retryable is not None else (lambda exc: _status_of(exc) == on_status)
+    retryable = (
+        is_retryable if is_retryable is not None else (lambda exc: _status_of(exc) == on_status)
+    )
 
     if breaker.state == "OPEN":
         raise CircuitOpenError("circuit breaker is OPEN; call short-circuited during cooldown")

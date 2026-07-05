@@ -98,6 +98,48 @@ class BackendHaltError(Exception):
         self.receipt = receipt
 
 
+@dataclass(frozen=True)
+class RateLimitReceipt:
+    """A visible record that a chosen backend was RATE-LIMITED (HTTP 429) during dispatch.
+
+    Unlike a :class:`HaltReceipt` (backend down -> operator attention), a rate-limit is TRANSIENT:
+    the coordinator re-picks the leaf on the next advance tick with no operator action (#348 KTD4).
+    ``retry_after`` carries the backend's Retry-After hint (seconds) when known, mirroring the
+    fleet-commons ``retry_backoff`` primitive's ``retry_after`` seam.
+    """
+
+    outcome_id: str
+    subplot_id: str
+    backend: str
+    reason: str
+    retry_after: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "rate_limited",
+            "outcome_id": self.outcome_id,
+            "subplot_id": self.subplot_id,
+            "backend": self.backend,
+            "reason": self.reason,
+            "retry_after": self.retry_after,
+        }
+
+
+class BackendRateLimitError(Exception):
+    """A backend 429 during dispatch (#348 KTD4): TRANSIENT, not a HALT. Carries the receipt.
+
+    Owned by this backend module (never run as ``__main__``) so ``outcome._reconcile_once``'s
+    per-leaf ``except`` catches the SAME class regardless of how the engine is launched -- the same
+    identity discipline as :class:`BackendHaltError`. A 429'd dispatch leaves NO commit record, so
+    the leaf's derived state stays ``ready`` and the ready frontier re-picks it; ``retriable-pending``
+    is a derived-on-read RESULT label, never a committed ``NODE_STATE``.
+    """
+
+    def __init__(self, receipt: RateLimitReceipt) -> None:
+        super().__init__(receipt.reason)
+        self.receipt = receipt
+
+
 def dispatch(req: Any, *, available: Sequence[str] = DEFAULT_AVAILABLE) -> dict[str, Any]:
     """Route a leaf to its backend. Returns a ``dispatched`` or a ``halt`` result dict.
 
@@ -160,6 +202,12 @@ def make_dispatcher(*, available: Sequence[str] = DEFAULT_AVAILABLE) -> Callable
         result = dispatch(req, available=available)
         if result["status"] == "halt":
             raise BackendHaltError(HaltReceipt(**_receipt_kwargs(result["receipt"])))
+        # #348 KTD4: a ``rate_limited`` dispatch result surfaces as a TRANSIENT 429, distinct from a
+        # HALT. No in-scope backend emits this status yet (agy/codex bridge adoption is deferred per
+        # KTD2 -- the fleet-commons primitive is import-ready); this translation makes the production
+        # dispatcher CAPABLE the instant a backend returns it, mirroring the halt branch.
+        if result["status"] == "rate_limited":
+            raise BackendRateLimitError(RateLimitReceipt(**_rate_limit_kwargs(result["receipt"])))
         return str(result["leaf_saga_id"])
 
     return _dispatch
@@ -172,6 +220,16 @@ def _receipt_kwargs(receipt: dict[str, Any]) -> dict[str, Any]:
         "backend": receipt["backend"],
         "reason": receipt["reason"],
         "available": tuple(receipt["available"]),
+    }
+
+
+def _rate_limit_kwargs(receipt: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "outcome_id": receipt["outcome_id"],
+        "subplot_id": receipt["subplot_id"],
+        "backend": receipt["backend"],
+        "reason": receipt["reason"],
+        "retry_after": receipt.get("retry_after"),
     }
 
 

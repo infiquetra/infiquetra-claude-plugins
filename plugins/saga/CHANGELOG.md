@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.54.2] - 2026-07-04
+
+- Fix: `ship_ceremony.py`'s `request_review` transition always failed (`gh pr edit --add-reviewer
+  @me` is not a valid login for the `requestReviewsByLogin` mutation). It is now a deliberate
+  no-op — this repository has exactly one human maintainer, who is also the sole author of every
+  ceremony PR, so there is no one else to request review from (#477).
+
 ## [0.54.1] - 2026-07-05
 
 - Reformat CHANGELOG version headings to the fleet's canonical grammar (bracketed version,

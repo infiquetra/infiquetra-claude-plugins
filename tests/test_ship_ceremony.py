@@ -380,6 +380,17 @@ def test_transition_failure_does_not_advance_state(ceremony_repo) -> None:
     assert "commit" in status
 
 
+def test_request_review_is_a_noop(ceremony_repo) -> None:
+    """Issue #477: request_review must complete without touching the network at all —
+    a runner that raises on any call proves no subprocess was attempted."""
+    repo, _fake_gh = ceremony_repo
+
+    def _raising_runner(cmd, **kwargs):  # noqa: ANN001
+        raise AssertionError(f"request_review must not shell out, but tried: {cmd!r}")
+
+    SC._do_request_review({}, repo_root=repo, runner=_raising_runner)
+
+
 def test_no_saga_error_when_branch_has_no_match(ceremony_repo) -> None:
     repo, _fake_gh = ceremony_repo
     subprocess.run(  # noqa: S607
@@ -391,10 +402,12 @@ def test_no_saga_error_when_branch_has_no_match(ceremony_repo) -> None:
         SC.resolve_saga(repo_root=repo, issue_ref=None)
 
 
-def test_request_review_before_open_pr_is_a_named_failure(ceremony_repo) -> None:
-    """_current_pr_number's guard: reaching request_review/merge with no pr_refs
-    recorded (open_pr was skipped or its save was lost) is a named failure, not a
-    crash or a silent no-op."""
+def test_merge_before_open_pr_is_a_named_failure(ceremony_repo) -> None:
+    """_current_pr_number's guard: reaching merge with no pr_refs recorded (open_pr
+    was skipped or its save was lost) is a named failure, not a crash or a silent
+    no-op. (request_review no longer exercises this guard — issue #477 made it a
+    deliberate no-op, since this repo has no second maintainer to request review
+    from; merge is the next GitHub-facing transition that still needs pr_refs.)"""
     repo, fake_gh = ceremony_repo
     saga_py = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
     subprocess.run(  # noqa: S603
@@ -407,7 +420,7 @@ def test_request_review_before_open_pr_is_a_named_failure(ceremony_repo) -> None
             "--id",
             "345",
             "--ceremony-transition",
-            "open_pr",
+            "request_review",
             "--ceremony-tier",
             "reversible",
         ],

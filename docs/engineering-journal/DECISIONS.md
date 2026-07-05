@@ -32,6 +32,44 @@ merge-time integrity check.
 **Refs.** Plan `docs/plans/2026-07-05-ship-ceremony-open-pr-push-478-plan.md`; follows
 [#ship-ceremony-request-review-noop-477] (the previous ship_ceremony defect fix).
 
+### `saga.py` refreshes `branch` from live git on every save, not just the first (pending commit) {#saga-branch-refresh-on-every-save-480}
+
+**Decision.** Fix issue #480 (`save()` locks `branch` at its first-ever value, so a saga minted
+on `main` by `/plan` before its work branch exists carries `branch="main"` forever) with a
+**protected live-git refresh**: `branch` refreshes from live git on every save
+(`if live_branch and not downgrades_work_branch:`), but a save made back on the default branch
+(`main`/`master`) never overwrites an already-stored real work branch. Scope the behavior change
+to `branch` alone; leave the sibling `head_sha`/`last_commit_sha` fields on first-save-only capture.
+
+**Rejected alternatives.** (1) *Pure* live-git-wins (drop the first-save-only guard outright,
+`if git["branch"]:`) — this was the plan's first draft and is **wrong**: `ship_ceremony.run`
+records progress via `saga.py save` after every transition, so the save after `checkout_main`
+resets `branch` to `main` right before `branch_delete`. `/work`'s test gate caught it with two
+`test_ship_ceremony.py` failures (green on `origin/main`, red under the draft fix). The downgrade
+guard is what makes auto-refresh ceremony-safe. (2) An explicit `--branch` CLI override instead of
+auto-refresh — rejected: `/work` already re-saves on the work branch (`work/SKILL.md:151`), so the
+refresh makes that instruction true with zero caller changes, whereas a flag requires every caller
+to remember it. (3) Fix `head_sha`/`last_commit_sha` in the same change — deferred per the issue's
+explicit branch-only scope (audit found refresh safe: `head_sha` → `status_card.py:307`
+display-only CI ref; `last_commit_sha` → no behavior-gating consumer).
+
+**Rationale.** The ceremony **does** re-save the saga (to record `ceremony_transition`), and
+`_do_branch_delete` reads the *stored* `branch` after `checkout_main` has already run — so the
+field must survive a save made on `main`. The protected refresh does exactly that: it tracks the
+work branch when `/work` saves on it, and refuses to downgrade that to `main` when the ceremony's
+own progress-save lands back on the default branch. `main`/`master` is not arbitrary —
+`_do_checkout_main` hard-codes `git checkout main`, so the guard mirrors the ceremony's constant.
+The guard that tripped on #477 and #478 stays intact; the fix removes the bad input, not the guard.
+
+**Revisit when:** a caller legitimately needs to record a branch different from the current
+checkout (would motivate a `--branch` override), the default branch is renamed away from
+`main`/`master` (widen `_DEFAULT_BRANCHES` or detect it dynamically), or the
+`head_sha`/`last_commit_sha` follow-up lands.
+
+**Refs.** Plan `docs/plans/2026-07-05-saga-branch-refresh-480-plan.md`; downstream of
+[#ship-ceremony-open-pr-push-478] and [#ship-ceremony-request-review-noop-477] (this is the third
+ship-ceremony-adjacent defect surfaced by the fleet-execution campaign).
+
 ## 2026-07-04
 
 ### `ship_ceremony.py` `request_review` becomes a no-op, not a resolved-login reviewer request (pending commit) {#ship-ceremony-request-review-noop-477}

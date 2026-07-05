@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.54.4] - 2026-07-05
+
+- Fix: `saga.py`'s `save()` only auto-derived the `branch` field from live git state on a saga's
+  first-ever save (`if not merged.branch`), so a saga minted by `/plan` on `main` — before its
+  work branch existed — carried `branch="main"` for its entire life, even after `/work` re-saved
+  it on the work branch. `branch` now refreshes from live git on every save whenever git reports a
+  definite (non-empty) branch, so `ship_ceremony.py`'s `branch_delete` guard and `/code-review`'s
+  branch-match see the real branch. The non-empty guard is retained so a detached-HEAD / no-git
+  read never clobbers a stored value; `head_sha`/`last_commit_sha` keep first-save-only capture
+  pending a follow-up (#480).
+
 ## [0.54.3] - 2026-07-05
 
 - Fix: `ship_ceremony.py`'s `open_pr` transition, on the front-loaded/existing-PR path, flipped

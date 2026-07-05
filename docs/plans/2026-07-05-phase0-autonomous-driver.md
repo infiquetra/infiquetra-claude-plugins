@@ -79,6 +79,25 @@ verify origin/main state  →  report to Jeff  →  next issue
 - Release surfaces updated in the same PR every time (#429 single-source makes marketplace.json
   generated — bump plugin.json, regenerate, CHANGELOG grammar `## [X.Y.Z] - YYYY-MM-DD`).
 
+## #379 — DEFERRED (operator-gated, 2026-07-05)
+
+**Status: NOT shipped — awaiting Jeff.** Grounding (Explore + direct grep, count 0) verified that
+**redis-channel has no sender allowlist/access-policy** — it is deliberately router-agnostic
+([[feedback_redis_channel_router_agnostic]]); `Consumer._dispatch` (`redis_consumer.py:159-194`)
+delivers every inbound message with zero sender authorization, and `redis_channel_configure`
+configures the router endpoint, not an allowlist. This makes **AC4** ("reject approval when not from
+an access-policy-approved sender") rest on a false premise. Every resolution collides with a binding
+constraint: adding allowlist code violates router-agnosticism; coupling to discord `access.json`
+couples the gate to one transport; reframing AC4 to "defer access to the transport + record answerer
+provenance" is correct but *contradicts the literal AC* and changes the security model. Because #379
+is a remote-**approval** security feature, the pre-mortem (ship a feature that doesn't enforce the
+sender-authorization it advertises → injection-driven approval + false sense of security) makes this a
+genuine operator fork, not a resolve-from-evidence KTD. **Decision options for Jeff:** (a) reframe AC4
+to defer-to-transport + record `answerer`/`transport` provenance (recommended — the only model
+consistent with router-agnosticism); (b) build the heavier `gate_request`/`gate_verdict` stream-pair
+mirroring the permission relay (`protocol.py:113/130`) AND decide where sender-auth lives; (c)
+re-scope #379 to Discord-only with `access.json` as the auth source. Driver proceeded to #348/#401.
+
 ## Phase closeout (after #401 merges)
 
 Final execution-order tick, a DECISIONS/LEARNINGS capture for the driver run itself, and a Phase 0

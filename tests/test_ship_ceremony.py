@@ -118,9 +118,10 @@ class FakeGh:
         if args[:2] == ["pr", "create"]:
             draft = "--draft" in args
             branch = args[args.index("--head") + 1]
+            body = args[args.index("--body") + 1] if "--body" in args else ""
             number = self._next_number
             self._next_number += 1
-            self._prs[branch] = {"number": number, "draft": draft}
+            self._prs[branch] = {"number": number, "draft": draft, "body": body}
             return _ok(str(number))
         if args[:2] == ["pr", "view"]:
             branch = args[2]
@@ -388,6 +389,18 @@ def test_open_pr_pushes_pending_commits_on_existing_pr_path(ceremony_repo) -> No
     assert _rev(f"origin/{branch}") == _rev("HEAD")
     assert len(fake_gh._prs) == 1  # noqa: SLF001
     assert fake_gh._prs[branch]["draft"] is False  # noqa: SLF001
+
+
+def test_open_pr_body_autocloses_issue_via_fixes_line(ceremony_repo) -> None:
+    """The fresh-create ``open_pr`` path injects ``Fixes #N`` (from the saga's ``issue_ref``) into
+    the PR body, so merging auto-closes the tracked issue instead of leaving the easy-to-forget
+    manual close (the #477 miss). The plan link is preserved alongside it."""
+    repo, fake_gh = ceremony_repo
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # open_pr
+    body = fake_gh._prs["feat/pf-throwaway-345"]["body"]  # noqa: SLF001
+    assert "Fixes #345" in body
+    assert "Plan: docs/plans/x-plan.md" in body
 
 
 class FailingRunner:

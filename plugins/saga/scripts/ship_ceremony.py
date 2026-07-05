@@ -266,8 +266,18 @@ def _do_open_pr(
         _run(["gh", "pr", "ready", pr_number], cwd=repo_root, runner=runner)
         return
     branch = current_branch(repo_root, runner=runner)
+    body_lines: list[str] = []
+    # Auto-close the tracked issue on merge via a ``Fixes #N`` line, so shipping never leaves a
+    # fixed issue open — the manual close step is easy to forget (it was, on #477). Only added
+    # when the saga names a real numeric issue (``owner/repo#N``); task-kind sagas have none.
+    issue_ref = saga.get("issue_ref") or ""
+    issue_num = issue_ref.rsplit("#", 1)[-1] if "#" in issue_ref else ""
+    if issue_num.isdigit():
+        body_lines.append(f"Fixes #{issue_num}")
     plan_path = saga.get("plan_path") or ""
-    body = f"Plan: {plan_path}" if plan_path else ""
+    if plan_path:
+        body_lines.append(f"Plan: {plan_path}")
+    body = "\n\n".join(body_lines)
     result = _run(
         ["gh", "pr", "create", "--head", branch, "--fill", "--body", body],
         cwd=repo_root,

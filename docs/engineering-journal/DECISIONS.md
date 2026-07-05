@@ -2,6 +2,31 @@
 
 ## 2026-07-05
 
+### `ship_ceremony.py` injects `Fixes #N` so merges auto-close the tracked issue (pending commit) {#ship-ceremony-autoclose-fixes-line}
+
+**Decision.** `_do_open_pr`'s fresh-create path adds a `Fixes #<N>` line (parsed from the saga's
+`issue_ref`, `owner/repo#N`) to the PR body, alongside the existing `Plan:` link — so merging
+auto-closes the tracked issue. Bundled with the #480 follow-up: `head_sha`/`last_commit_sha` now
+refresh on every save like `branch` (no default-branch guard needed — SHAs have no downgrade
+concern).
+
+**Rationale.** #477's fix shipped but its issue was left open because the manual `gh issue close`
+step was forgotten, and the plan-of-attack `[x]` tick gave a false "done" signal. A `Fixes #N` line
+makes closure a property of the merge rather than a separate step to remember — the structural fix
+for that whole miss class. Guarded on `issue_num.isdigit()` so task-kind sagas (no `issue_ref`) and
+malformed refs add no line.
+
+**Rejected alternatives.** (1) A post-merge `gh issue close` inside the ceremony's `merge`
+transition — rejected: more API surface and it races the merge; `Fixes #N` is declarative and
+GitHub-native. (2) File the two changes as tracked issues under #340 — skipped as disproportionate
+overhead for a solo repo (operator's explicit call); both are small, understood, and
+campaign-adjacent.
+
+**Revisit when:** a ceremony PR must reference an issue in a different repo than the PR (the bare
+`Fixes #N` form assumes same-repo), or a PR should link multiple issues.
+
+**Refs.** Follows [#ship-ceremony-open-pr-push-478] and the #477 close-miss; ships in saga 0.55.0.
+
 ### `ship_ceremony.py` pushes at `open_pr`, not `merge`, to close the front-loaded stale-HEAD gap (pending commit) {#ship-ceremony-open-pr-push-478}
 
 **Decision.** Fix issue #478 (`_do_open_pr`'s front-loaded/existing-PR branch flips the draft PR

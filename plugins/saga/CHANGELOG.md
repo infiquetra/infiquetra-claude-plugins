@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.55.0] - 2026-07-05
+
+- Feat: `ship_ceremony.py`'s `open_pr` transition now injects a `Fixes #N` line (parsed from the
+  saga's `issue_ref`) into the PR body it creates, so merging auto-closes the tracked issue instead
+  of leaving the manual close step to be forgotten. Only added when the saga names a numeric issue;
+  the `Plan:` link is preserved alongside it.
+- Fix: `saga.py`'s `save()` now also refreshes `head_sha`/`last_commit_sha` from live git on every
+  save (the #480 follow-up), so they track the current commit instead of freezing at the mint-time
+  HEAD (`status_card` renders `head_sha` as its CI reference). SHAs need no default-branch guard.
+
 ## [0.54.4] - 2026-07-05
 
 - Fix: `saga.py`'s `save()` only auto-derived the `branch` field from live git state on a saga's

@@ -27,6 +27,22 @@
 
 ## 2026-07-05
 
+### `ship_ceremony run` can't resolve a task saga once you're on `main` — legacy `main`-frozen sagas make by-branch resolution ambiguous  {#ship-ceremony-task-saga-resolve-on-main}
+
+**Context.** Driving a task-kind saga's ship ceremony (no `issue_ref`, so `run` resolves by the current branch) through cleanup. `commit`/`open_pr`/`merge` ran fine on the feature branch; `checkout_main` switched to `main`, then `pull` and `branch_delete` both aborted.
+
+**Evidence.** `ship_ceremony: multiple sagas match branch 'main' (issue-478, issue-477, issue-429, … 18 ids); pass --issue-ref explicitly` — shipping PR #483 (`cc674fe`), 2026-07-05. `resolve_saga` (`ship_ceremony.py:185`) filters `saga.py scan` candidates by `current_branch`; on `main` that matches every saga whose stored `branch == "main"`.
+
+**Mechanism.** Sagas minted before the #480 fix (`{#saga-branch-refresh-on-every-save-480}`) are permanently frozen at `branch="main"` (first-save-only capture, never re-saved) — 18 of them. Once `checkout_main` puts you on `main`, by-branch resolution matches all of them → `AmbiguousSagaError`. An issue-kind ceremony sidesteps this by passing `--issue-ref` throughout; a task saga has no such key, and `ship_ceremony run` exposes no `--id`/`--saga-id` flag.
+
+**Fix (or queued).** Worked around by finishing cleanup manually (`git branch -d` + `git push --delete`) and marking the task saga done via `saga.py save --id …` (which *does* take `--id`). QUEUED real fix: add `--saga-id` to `ship_ceremony run`, or have `resolve_saga` exclude `status in {done, abandoned}` sagas before the branch filter.
+
+**What surprised.** The #480 fix doesn't *cause* this — those sagas were already `main`-frozen — but it doesn't help either: new sagas now track their real branch, yet the pile of terminal `main`-frozen sagas will keep poisoning by-branch resolution on `main` indefinitely.
+
+**Generalizable rule.** Resolving a work item "by current branch" is only unambiguous while you're *on* that branch. Any step that changes the branch (checkout to `main`) invalidates by-branch identity — carry an explicit stable key (issue-ref or saga-id) through multi-step flows, or filter terminal records out of the candidate set.
+
+**Refs.** DECISIONS `{#ship-ceremony-autoclose-fixes-line}`, `{#saga-branch-refresh-on-every-save-480}`; the third ship_ceremony rough edge from the fleet campaign (after #477 request_review, #478 open_pr push).
+
 ### Generated release surfaces catch drift a hand-maintained parity guard would only report after the fact  {#release-surface-single-source-generated}
 
 **Context.** #429 converted `.claude-plugin/marketplace.json` from a hand-maintained copy of each

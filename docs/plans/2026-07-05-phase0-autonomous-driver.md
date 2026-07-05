@@ -145,8 +145,44 @@ consistent with router-agnosticism); (b) build the heavier `gate_request`/`gate_
 mirroring the permission relay (`protocol.py:113/130`) AND decide where sender-auth lives; (c)
 re-scope #379 to Discord-only with `access.json` as the auth source. Driver proceeded to #348/#401.
 
-## Phase closeout (after #401 merges)
+## #401 — DONE ✅ (SHIPPED 2026-07-05, PR #489)
 
-Final execution-order tick, a DECISIONS/LEARNINGS capture for the driver run itself, and a Phase 0
-completion report. **Phase 1 (`/outcome start --from-objective 343` shakedown) requires explicit
-new authorization — it is NOT auto-started by this driver.**
+Merged as squash `4ad193c` (PR #489, `Fixes #401` → issue CLOSED/COMPLETED; board Status→Done). saga
+0.61.0. All 7 units shipped: U1/U2 new saga-local stdlib-only `run_ledger.py` (`run_fact.v1` schema,
+hash-chained `append_fact`/`verify_chain`, derive-on-read `rollup`/`reuse_ratio`/`last_n_prior`); U3/U4
+`engine_dispatch.dispatch(ledger=…)` writes an `engine` fact on any advisory call + a `delegation` fact
+for an `agy.delegation.v1` call (telemetry only, no-op without a ledger, byte-identical returns); U5
+`lifecycle_state.recommend_execution_backend(ledger=…)` ledger prior (byte-identical with no
+ledger/data); U6 `references/run-fact-ledger.md` + DECISIONS `{#run-fact-ledger-401}` (KTD1-KTD7); U7
+release surfaces + execution-order row 10. Doc-review READY (5 fixes in-plan; pinned U5 to the real
+`recommend_execution_backend` surface + added the tamper-evidence-not-resistance bound). Code-review
+CLEAN (0 code findings, 3 adversarial readonly-verifiers all UPHELD; the custody verifier tampered a
+real on-disk ledger — mutation/reorder/middle-deletion all caught; one P3 plan-doc reference fixed).
+Backend inline. Full gate green (2079 tests). No genuine fork surfaced (KTD1 saga-local resolved from
+the manifest_store/outcome_store precedents — the "backend-fork candidate" flag did not fire).
+
+## Phase closeout — PHASE 0 COMPLETE ✅ (2026-07-05)
+
+**All 5 remaining Phase 0 items SHIPPED** — #344 (PR #485), #375 (PR #486), #348 (PR #487, `54d1361`),
+#379 (PR #488, `cc46675`), #401 (PR #489, `4ad193c`). Execution-order rows 6–10 all `[x]`. Every item
+carried the full contract: `/plan → /doc-review (fix all findings) → /work (inline) → programmatic
+/code-review adversarial gate → squash-merge → close → board Done → journal/tick/work-session
+writeback`, merge verified via authoritative `gh pr view`.
+
+**Driver-run learnings (durable):**
+- **The doc-review gate paid for itself every time.** Each issue's doc-review caught a real
+  readiness gap before `/work`: #379's Discord-emit P1 (session-driven vs redis-only), #401's U5
+  surface (un-testable prose tier-table → the real `recommend_execution_backend` function) + the
+  honest tamper-evidence bound. Grounding file:line anchors against the *current* tree (not the
+  issue's authoring-time snapshot) mattered — #348/#379 had shifted `outcome.py` lines.
+- **Adversarial code-review that runs real falsification beats a checklist.** The refute-N
+  readonly-verifier panels executed the emitted JS (#379) and tampered on-disk ledgers (#401), catching
+  a fail-closed correctness edge (#379 gate-id-token pollution) and confirming the #401 custody bound is
+  *honestly documented*, not over-claimed.
+- **The `Fixes #N` autoclose footgun** (a reference-only commit with a closing keyword) bit #379 once;
+  the fix is bare `#N` in reference commits, `Fixes #N` only in the PR body — held for #401.
+- **Commit-before-verify** held throughout (a verify agent's `git checkout` can clobber uncommitted work).
+
+**Phase 1 (`/outcome start --from-objective 343` shakedown) requires explicit new authorization — it is
+NOT auto-started by this driver.** The engine now has all its Phase 0 primitives (board writer, DAG
+seeding, remote gates, shared 429 retry, run-fact ledger) to run its own machinery.

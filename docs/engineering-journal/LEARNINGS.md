@@ -35,7 +35,7 @@
 
 **Mechanism.** Sagas minted before the #480 fix (`{#saga-branch-refresh-on-every-save-480}`) are permanently frozen at `branch="main"` (first-save-only capture, never re-saved) — 18 of them. Once `checkout_main` puts you on `main`, by-branch resolution matches all of them → `AmbiguousSagaError`. An issue-kind ceremony sidesteps this by passing `--issue-ref` throughout; a task saga has no such key, and `ship_ceremony run` exposes no `--id`/`--saga-id` flag.
 
-**Fix (or queued).** Worked around by finishing cleanup manually (`git branch -d` + `git push --delete`) and marking the task saga done via `saga.py save --id …` (which *does* take `--id`). QUEUED real fix: add `--saga-id` to `ship_ceremony run`, or have `resolve_saga` exclude `status in {done, abandoned}` sagas before the branch filter.
+**Fix.** Both landed in saga 0.56.0 (DECISIONS `{#ship-ceremony-saga-id-resolution}`): `run` now takes `--saga-id` (top precedence, survives the branch change) and the by-branch fallback excludes terminal (`done`/`abandoned`) sagas. The original one-time workaround was manual `git branch -d` + `git push --delete` and `saga.py save --id …`.
 
 **What surprised.** The #480 fix doesn't *cause* this — those sagas were already `main`-frozen — but it doesn't help either: new sagas now track their real branch, yet the pile of terminal `main`-frozen sagas will keep poisoning by-branch resolution on `main` indefinitely.
 

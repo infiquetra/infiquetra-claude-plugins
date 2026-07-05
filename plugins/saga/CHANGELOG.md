@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.56.0] - 2026-07-05
+
+- Fix: `ship_ceremony.py` could not resolve a task-kind saga (no `issue_ref`) once `checkout_main`
+  moved off the work branch — by-branch resolution on `main` matched every other saga left there
+  and raised `AmbiguousSagaError`, forcing manual `pull`/`branch_delete` cleanup. `run` now accepts
+  `--saga-id` (resolved directly, ahead of `issue_ref`, surviving any branch change), and the
+  by-branch fallback ignores terminal (`done`/`abandoned`) sagas so stale sagas left on a branch no
+  longer force a false ambiguous match.
+
 ## [0.55.0] - 2026-07-05
 
 - Feat: `ship_ceremony.py`'s `open_pr` transition now injects a `Fixes #N` line (parsed from the

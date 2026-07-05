@@ -491,3 +491,71 @@ def test_manifest_absent_sandbox_emits_no_key_and_round_trips() -> None:
     assert "sandbox" not in d["attribution"]  # absent-tolerant, no new key
     assert d["schema"] == PM.SCHEMA_VERSION  # no version bump
     assert PM.Manifest.from_dict(d).attribution.sandbox == ""  # round-trips clean
+
+
+# --------------------------------------------------------------------------- #401 run-fact telemetry
+
+RL = D.run_ledger  # reuse the exact run_ledger module engine_dispatch imported (file-based anyway)
+
+
+def _metric_runner(**metrics: Any):
+    def runner(_invocation: Any) -> dict[str, Any]:
+        return {"status": "ok", "output": "the diff", **metrics}
+
+    return runner
+
+
+def test_advisory_call_writes_one_engine_fact(tmp_path: Path) -> None:
+    ledger = RL.RunLedger(path=tmp_path / "run-facts.jsonl")
+    ev = D.dispatch(
+        _resolution(engine_id="codex"),
+        runner=_metric_runner(cost=0.02, latency_seconds=1.5, tokens=200),
+        ledger=ledger,
+        subplot_id="s1",
+        at="2026-07-05T00:00:00Z",
+    )
+    facts = RL.read_facts(ledger)
+    assert len(facts) == 1 and facts[0]["kind"] == "engine"
+    assert facts[0]["engine"] == "codex"
+    assert facts[0]["cost"] == 0.02 and facts[0]["latency_seconds"] == 1.5
+    assert facts[0]["tokens"] == 200.0
+    assert ev.evidence == "the diff"  # telemetry did not alter the returned evidence (KTD5)
+
+
+def test_dispatch_without_ledger_writes_no_fact_and_is_unchanged(tmp_path: Path) -> None:
+    # Telemetry is opt-in: no ledger -> no file, evidence byte-identical to before #401.
+    ledger_path = tmp_path / "run-facts.jsonl"
+    ev = D.dispatch(_resolution(engine_id="codex"), runner=_metric_runner(cost=0.02))
+    assert ev.evidence == "the diff"
+    assert not ledger_path.exists()
+
+
+def test_agy_delegation_writes_engine_and_delegation_facts(tmp_path: Path) -> None:
+    ledger = RL.RunLedger(path=tmp_path / "run-facts.jsonl")
+    D.dispatch(
+        _resolution(engine_id="agy", variant="gemini-3.1-pro-high"),
+        runner=_metric_runner(cost=0.05, tokens=500),
+        model="Gemini 3.1 Pro (High)",
+        ledger=ledger,
+        subplot_id="s1",
+        at="t",
+    )
+    facts = RL.read_facts(ledger)
+    assert [f["kind"] for f in facts] == ["engine", "delegation"]
+    assert facts[1]["evidence"].startswith("sha256:")  # a pointer, not inlined bytes
+    assert facts[1]["engine"] == "agy"
+    assert RL.verify_chain(ledger).ok  # the recorded facts form a valid chain
+
+
+def test_codex_advisory_writes_no_delegation_fact(tmp_path: Path) -> None:
+    ledger = RL.RunLedger(path=tmp_path / "run-facts.jsonl")
+    D.dispatch(
+        _resolution(engine_id="codex"),
+        runner=_metric_runner(),
+        ledger=ledger,
+        subplot_id="s1",
+        at="t",
+    )
+    assert [f["kind"] for f in RL.read_facts(ledger)] == [
+        "engine"
+    ]  # not a delegation -> engine only

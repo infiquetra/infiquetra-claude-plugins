@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.61.0] - 2026-07-05
+
+### Added — one append-only, hash-chained, leaf-produced run-fact ledger substrate (#401)
+
+The final Phase 0 item (objective #338). A single `run_fact.v1` ledger that spend / cache /
+engine-usage / delegation telemetry all append into — landed empty of most consumers so the ≥8 wave-1
+writers inherit one canonical format instead of N.
+
+- **`run_ledger.py`** (new, saga-local, stdlib-only) — `run_fact.v1` schema (`kind` ∈
+  spend|cache|engine|delegation, leaf-produced with `subplot_id`), a **hash-chained** `append_fact`
+  (`prev_hash`→`this_hash`, reusing `outcome_store`'s `resolve_common_dir` + `O_APPEND` + torn-tail
+  discipline in a **distinct** `run-facts.jsonl`, separate from the replay ledger), `read_facts`, and
+  `verify_chain` (fails on in-place mutation, reorder, or middle-deletion — tamper-*evidence*).
+- **Derive-on-read views** — `rollup`, `reuse_ratio` (defined-empty on no data), `last_n_prior`; no
+  committed summary field.
+- **Two consumers wired** — `engine_dispatch.dispatch(ledger=…, subplot_id=…, at=…)` records an
+  `engine` fact on any advisory call and a `delegation` fact for an `agy.delegation.v1` call (telemetry
+  only, never gates, no-op without a ledger); `lifecycle_state.recommend_execution_backend(ledger=…)`
+  surfaces a `last_n_prior` prior additively (byte-identical to today with no ledger/data).
+- **Docs** — `references/run-fact-ledger.md` (schema, chain custody + the tamper-evidence-not-resistance
+  threat-model bound, derive-on-read views, adoption note) + DECISIONS `{#run-fact-ledger-401}`.
+
 ## [0.60.0] - 2026-07-05
 
 ### Added — remote gate approval over the fleet's own channel (#379)

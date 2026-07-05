@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from typing import Any
 
 DESTINATION_ALIASES = {
     "plan": "plan-only",
@@ -110,6 +111,8 @@ def recommend_execution_backend(
     adversarial_confidence: bool = False,
     has_code_surface: bool = True,
     workflow_available: bool = True,
+    ledger: Any = None,
+    prior_n: int = 5,
 ) -> dict[str, object]:
     """Recommend an execution backend, mirroring operator-choice.md section 3.
 
@@ -200,12 +203,24 @@ def recommend_execution_backend(
         reachable.remove("cc-workflows-ultracode")
     alternatives = [backend for backend in reachable if backend != recommended]
 
-    return {
+    result: dict[str, object] = {
         "recommended": recommended,
         "rationale": rationale,
         "alternatives": alternatives,
         "omit_ultracode": not workflow_available,
     }
+    # #401 U5: surface a run-fact ledger prior ("last N runs averaged X tokens"). Read-only and
+    # additive — the ``prior`` key appears ONLY when a ledger is supplied AND has data, so the
+    # recommendation is byte-identical to today's for every existing caller (none pass a ledger) and
+    # for an empty ledger (the no-data fallback). A ledger implies ``run_ledger`` is already imported
+    # (the caller built the RunLedger from it), so this lazy import keeps ``lifecycle_state`` light.
+    if ledger is not None:
+        import run_ledger
+
+        avg_tokens = run_ledger.last_n_prior(ledger, "spend", "tokens", prior_n)
+        if avg_tokens is not None:
+            result["prior"] = {"metric": "spend.tokens", "n": prior_n, "avg_tokens": avg_tokens}
+    return result
 
 
 # Orchestration tiers, ordered from the most-capable (dynamic workflows, Claude Code

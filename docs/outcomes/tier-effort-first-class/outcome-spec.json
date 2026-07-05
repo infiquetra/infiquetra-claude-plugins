@@ -1,0 +1,358 @@
+{
+  "schema_version": 1,
+  "outcome_id": "tier-effort-first-class",
+  "spec_revision": 3,
+  "objective": "infiquetra/infiquetra-claude-plugins#343",
+  "nodes": [
+    {
+      "subplot_id": "sub-362",
+      "title": "\"capability: Dispatch-time tier resolver \u2014 one seam mapping (role-class, work-shape, overrides) to {model, effort} across the fleet\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "cc-workflows-ultracode",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#362",
+        "sub_issue": 362
+      },
+      "worktree": {},
+      "evidence": {
+        "executor_profile": {
+          "model": "sonnet",
+          "effort": "high",
+          "backend": "team-execution",
+          "external_llm": "none",
+          "slug": "pf-dispatch-tier-resolver",
+          "sidecar": "docs/sdlc-issue-drafts/plugin-fleet/pf-dispatch-tier-resolver.json",
+          "backend_override": {
+            "from": "team-execution",
+            "to": "cc-workflows-ultracode",
+            "by": "operator",
+            "at": "2026-07-05",
+            "reason": "Workflow agent() threads model+effort per call today; team-execution effort is inert until #363 itself lands (Gate E known finding). Operator call ahead of the A1 re-triage."
+          }
+        }
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-363",
+      "title": "\"capability: effort becomes a real, authored, injected, and honored field fleet-wide\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "cc-workflows-ultracode",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#363",
+        "sub_issue": 363
+      },
+      "worktree": {},
+      "evidence": {
+        "executor_profile": {
+          "model": "sonnet",
+          "effort": "high",
+          "backend": "team-execution",
+          "external_llm": "none",
+          "slug": "pf-effort-first-class",
+          "sidecar": "docs/sdlc-issue-drafts/plugin-fleet/pf-effort-first-class.json",
+          "backend_override": {
+            "from": "team-execution",
+            "to": "cc-workflows-ultracode",
+            "by": "operator",
+            "at": "2026-07-05",
+            "reason": "Workflow agent() threads model+effort per call today; team-execution effort is inert until #363 itself lands (Gate E known finding). Operator call ahead of the A1 re-triage."
+          }
+        }
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-364",
+      "title": "\"capability: runtime ladder climbing \u2014 gated one-rung escalation on failure signals\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-362",
+        "sub-370"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#364",
+        "sub_issue": 364
+      },
+      "worktree": {},
+      "evidence": {
+        "executor_profile": {
+          "model": "sonnet",
+          "effort": "high",
+          "backend": "inline",
+          "external_llm": "none",
+          "slug": "pf-escalation-on-failure",
+          "sidecar": "docs/sdlc-issue-drafts/plugin-fleet/pf-escalation-on-failure.json"
+        }
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-365",
+      "title": "\"capability: /tier mid-run lever \u2014 session ceiling plus re-emit from the canonical spec, no restart\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-362"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#365",
+        "sub_issue": 365
+      },
+      "worktree": {},
+      "evidence": {
+        "executor_profile": {
+          "model": "sonnet",
+          "effort": "medium",
+          "backend": "inline",
+          "external_llm": "none",
+          "slug": "pf-midrun-tier-lever",
+          "sidecar": "docs/sdlc-issue-drafts/plugin-fleet/pf-midrun-tier-lever.json"
+        }
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-366",
+      "title": "\"enhancement: run-scoped spend budgets \u2014 threshold envelope, emit-time cost HALT, cost-weight table, effort escrow\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-363",
+        "sub-370"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#366",
+        "sub_issue": 366
+      },
+      "worktree": {},
+      "evidence": {
+        "executor_profile": {
+          "model": "sonnet",
+          "effort": "high",
+          "backend": "inline",
+          "external_llm": "none",
+          "slug": "pf-spend-budget-envelope",
+          "sidecar": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-budget-envelope.json"
+        }
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-367",
+      "title": "\"enhancement: spend-delta machinery \u2014 silent-cheap/ask-expensive classifier, worth-it receipts, relative lever, and spend authority\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-370"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#367",
+        "sub_issue": 367
+      },
+      "worktree": {},
+      "evidence": {
+        "executor_profile": {
+          "model": "sonnet",
+          "effort": "medium",
+          "backend": "inline",
+          "external_llm": "none",
+          "slug": "pf-spend-gate-asymmetry",
+          "sidecar": "docs/sdlc-issue-drafts/plugin-fleet/pf-spend-gate-asymmetry.json"
+        }
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-368",
+      "title": "\"enhancement: persisted tier preferences \u2014 per-repo tier defaults with remembered overrides, plus issue-carried tier bands\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-362"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#368",
+        "sub_issue": 368
+      },
+      "worktree": {},
+      "evidence": {
+        "executor_profile": {
+          "model": "sonnet",
+          "effort": "medium",
+          "backend": "inline",
+          "external_llm": "none",
+          "slug": "pf-tier-defaults-persistence",
+          "sidecar": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-defaults-persistence.json"
+        }
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-369",
+      "title": "\"enhancement: tier floors and backend enforceability \u2014 halt, never silently degrade or under-tier\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-362",
+        "sub-363"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#369",
+        "sub_issue": 369
+      },
+      "worktree": {},
+      "evidence": {
+        "executor_profile": {
+          "model": "sonnet",
+          "effort": "medium",
+          "backend": "inline",
+          "external_llm": "none",
+          "slug": "pf-tier-floors-halt-not-degrade",
+          "sidecar": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-floors-halt-not-degrade.json"
+        }
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-370",
+      "title": "\"capability: single-source tier palette (tier_vocab module, models.json registry, ladder ops, drift-proofing)\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#370",
+        "sub_issue": 370
+      },
+      "worktree": {},
+      "evidence": {
+        "executor_profile": {
+          "model": "sonnet",
+          "effort": "high",
+          "backend": "inline",
+          "external_llm": "none",
+          "slug": "pf-tier-vocab-single-source",
+          "sidecar": "docs/sdlc-issue-drafts/plugin-fleet/pf-tier-vocab-single-source.json"
+        }
+      },
+      "cost": {}
+    }
+  ],
+  "decision_trail": [
+    {
+      "revision": 2,
+      "reason": "copy Gate E executor profiles into nodes at start (execution-order doc, model-posture rule 2 \u2014 manual stand-in for #362)",
+      "at": "2026-07-05"
+    },
+    {
+      "revision": 3,
+      "reason": "operator graph edit: semantic depends_on edges (substrate trio 362/363/370 first) + flip 362/363 backend to cc-workflows-ultracode (recorded override)",
+      "at": "2026-07-05"
+    }
+  ],
+  "cost_rollup": {},
+  "created_at": "",
+  "updated_at": ""
+}

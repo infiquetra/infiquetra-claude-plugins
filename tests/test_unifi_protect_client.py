@@ -189,12 +189,16 @@ class TestRequestHandling:
         mock_response.status_code = 429
         mock_response.headers = {"Retry-After": "30"}
         mock_request.return_value = mock_response
+        # #348: the shared primitive now retries a 429 before exiting; no real backoff sleep in tests.
+        monkeypatch.setattr("time.sleep", lambda *a, **k: None)
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
             client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
+        # The request was retried (bounded) before the exit surface — proves adoption of the primitive.
+        assert mock_request.call_count == 3
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert output["error"] is True

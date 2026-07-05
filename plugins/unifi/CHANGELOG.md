@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0] - 2026-07-05
+
+### Changed
+- Both `unifi-network` and `unifi-protect` clients adopt the shared fleet-commons `retry_backoff`
+  primitive (#348): a 429 response now retries with bounded exponential backoff (honoring
+  `Retry-After`) instead of hard-exiting, preserving the existing typed error surface on
+  exhaustion. Vendors the byte-identical `fleet_commons_shim.py` into each client dir (drift-guarded).
+
 ## [1.1.0] - 2026-06-21
 
 ### Changed

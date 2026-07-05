@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.59.0] - 2026-07-05
+
+- Feat: fleet-wide 429 handling adopts the shared fleet-commons `retry_backoff` primitive (#348).
+  The emitted `.workflow.js` wraps every `parallel([...])` wave thunk and refute-N panel verifier
+  `agent()` call in a `__retry` helper (bounded exponential backoff, `Retry-After` honored) so a
+  rate-limited agent re-queues instead of counting as a wave failure; a non-429 error still throws
+  and HALTs the wave (singleton `await agent()` calls are unwrapped by design). `/outcome` dispatch
+  now classifies a 429 (`BackendRateLimitError`) as `retriable-pending` — a derived-on-read RESULT
+  label (`AdvanceResult.retriable`), never a committed `NODE_STATE`: the 429'd leaf stays `ready`
+  and the ready frontier re-picks it on the next `advance()` tick with no operator action and no
+  git/ledger state change (a per-call `retriable_seen` guard de-hammers a loop=True run).
+
 ## [0.58.0] - 2026-07-05
 
 - Feat: `/outcome start --from-objective <owner>/<repo>#<N>` seeds the DAG from a GitHub Objective's

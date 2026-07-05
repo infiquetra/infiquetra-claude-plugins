@@ -139,7 +139,7 @@ filed as sub-issues of #340 (ship ceremony) and milestoned `wave-1` to match:
   (PR #481, `7ff694c`): shared `_push_branch` helper now pushes before `gh pr ready`; merge-time
   push deliberately rejected (KTD2 — `/work`'s round-N loop already re-pushes and a merge push
   would reset green CI before `gh pr merge --squash`).
-- [ ] [#480](https://github.com/infiquetra/infiquetra-claude-plugins/issues/480) — found while
+- [x] [#480](https://github.com/infiquetra/infiquetra-claude-plugins/issues/480) — found while
   shipping #477's own fix: `saga.py`'s `branch`/`head_sha` fields only ever auto-derive from live
   git state on a saga's very first-ever save (when the field starts empty); every later save's
   scalar carry-forward preserves that first-captured value forever, even after checking out a real
@@ -147,12 +147,18 @@ filed as sub-issues of #340 (ship ceremony) and milestoned `wave-1` to match:
   case) carries a permanently wrong `branch` for its whole life. Caught live: `branch_delete`'s
   safety guard correctly refused to delete `"main"` rather than trust the stale field — no
   corruption occurred, but the same field is what `/code-review`'s branch-matching fallback relies
-  on, silently, for any saga minted this way.
+  on, silently, for any saga minted this way. **Fixed** (PR #482, `3209b788`): `branch` now
+  refreshes from live git on every save, guarded so a save back on the default branch never
+  downgrades an already-recorded work branch. KTD1 was reversed mid-build — the `/work` test gate
+  caught that *pure* live-git-wins breaks the ceremony's own `checkout_main` progress-save (which
+  would re-wrong the branch); corrected to a protected refresh. Dogfooded on itself: #480's own
+  ceremony was the first of the three to `branch_delete` cleanly with no manual cleanup.
+  `head_sha`/`last_commit_sha` deferred (KTD2, `{#saga-branch-refresh-on-every-save-480}`).
 
 All three are small, well-scoped, `defect`-typed (not `needs-plan`-gated in spirit even though the
-canonical template applies the label). #477 and #478 are shipped; **#480 remains** — the standing
-`saga.py` `branch`/`head_sha` staleness defect that made both ceremonies' `branch_delete` correctly
-refuse (manual cleanup each time). #480 is the plausible next work before resuming the Phase 0 lanes.
+canonical template applies the label). **#477, #478, and #480 are all shipped and closed.** #480's
+fix ended the manual-cleanup tax that #477 and #478 both paid: its own ship ceremony was the first
+to `branch_delete` cleanly. The Phase 0 lanes are the next work.
 
 ## Shared kickoff contract (every per-issue prompt points here)
 

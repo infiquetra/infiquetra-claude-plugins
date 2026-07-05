@@ -30,7 +30,8 @@
         "monitoring",
         "grafana",
         "prometheus",
-        "vault"
+        "vault",
+        "team-scaffold"
       ],
       "category": "infrastructure"
     },
@@ -38,7 +39,7 @@
       "name": "unifi",
       "source": "./plugins/unifi",
       "version": "1.1.0",
-      "description": "UniFi Network and Protect CLI for managing UDM devices, clients, VLANs, firewall rules, traffic routes, cameras, PTZ control, and motion events \u2014 dry-run by default, API key auth, no MCP supply chain risk",
+      "description": "UniFi Network and Protect CLI for managing UDM devices, clients, VLANs, firewall rules, cameras, PTZ control, and motion events",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -54,15 +55,14 @@
         "home-lab",
         "udm",
         "firewall",
-        "vlan",
-        "ptz"
+        "vlan"
       ],
       "category": "infrastructure"
     },
     {
       "name": "deploy",
       "source": "./plugins/deploy",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "description": "tag-promotion deployment operations for Infiquetra repositories.",
       "author": {
         "name": "Infiquetra",
@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.54.0",
+      "version": "0.54.1",
       "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas.",
       "author": {
         "name": "Infiquetra",
@@ -108,7 +108,7 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.9.0",
+      "version": "2.9.1",
       "description": "Two-phase plan execution with reviewer consensus, validator gates, and guarded nonprod automation for Infiquetra repositories.",
       "author": {
         "name": "Infiquetra",
@@ -124,16 +124,15 @@
         "reviewers",
         "validators",
         "automation",
-        "nonprod",
-        "workflow"
+        "nonprod"
       ],
       "category": "saga"
     },
     {
       "name": "mission-control",
       "source": "./plugins/mission-control",
-      "version": "2.5.0",
-      "description": "SDLC workflow manager for Infiquetra's Operations, Asgard, and CAMPPS boards. Adds prepared issue drafts, live schema sync, project fields, labels, metrics, milestones, and rollout helpers via Python CLI.",
+      "version": "2.5.1",
+      "description": "SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema sync, board schemas, labels, project fields, metrics, and card validation.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -142,14 +141,15 @@
       "license": "MIT",
       "keywords": [
         "sdlc",
-        "kanban",
-        "project-management",
         "github-projects",
+        "kanban",
+        "issues",
+        "labels",
+        "metrics",
+        "sub-issues",
         "campps",
         "asgard",
-        "operations",
-        "project-fields",
-        "workflow"
+        "operations"
       ],
       "category": "saga"
     },
@@ -157,7 +157,7 @@
       "name": "redis-channel",
       "source": "./plugins/redis-channel",
       "version": "0.5.0",
-      "description": "Claude Code channel that bridges sessions to external systems over Redis Streams. Router-agnostic; pair with any router implementation that speaks the protocol.",
+      "description": "Claude Code channel that bridges sessions to external systems over Redis Streams. Router-agnostic: pair with any router implementation that speaks the protocol.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -169,7 +169,7 @@
         "mcp",
         "redis",
         "redis-streams",
-        "hermes",
+        "router-agnostic",
         "voice",
         "hands-free"
       ],
@@ -187,8 +187,8 @@
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
       "keywords": [
-        "antigravity",
         "agy",
+        "antigravity",
         "delegation",
         "teammate",
         "evidence"
@@ -199,7 +199,7 @@
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
       "version": "0.1.0",
-      "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only — no skills, commands, or agents.",
+      "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only \u2014 no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"

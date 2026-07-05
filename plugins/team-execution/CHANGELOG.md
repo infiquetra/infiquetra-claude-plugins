@@ -1,8 +1,14 @@
-# Changelog - team-execution
+# Changelog
 
 All notable changes to this plugin are documented here.
 
 ---
+
+## [2.9.1] - 2026-07-05
+
+### Reformat CHANGELOG title to canonical grammar (#429)
+- Drop the plugin-name suffix from the file title (was `# Changelog - team-execution`) as part of
+  the release-surface single-source generator work.
 
 ## [2.9.0] - 2026-07-03
 

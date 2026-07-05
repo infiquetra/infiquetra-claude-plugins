@@ -22,6 +22,45 @@
 
 ---
 
+## 2026-07-05
+
+### Release-surface single source: canonical CHANGELOG grammar + license/category stay marketplace-owned (#429, planning)  {#release-surface-single-source-429}
+
+**Decision.** Canonical `CHANGELOG.md` grammar (KTD1): file title exactly `# Changelog`, version
+headings `## [X.Y.Z] - YYYY-MM-DD` (bracketed version, hyphen-minus date separator), optional
+`## [Unreleased]`. Separately (KTD2), `sync_marketplace.py`'s generator treats `license` and
+`category` as marketplace-owned pass-through fields — preserved from the existing entry on
+regeneration, never sourced from `plugin.json` — because no plugin's `plugin.json` carries either
+field today and adding them is an out-of-scope schema change per the issue itself.
+
+**Rejected alternatives.** For CHANGELOG grammar: `deploy`'s/`saga`'s unbracketed
+`## X.Y.Z - date`; `team-execution`'s plugin-name-suffixed title; `mission-control`'s em-dash date
+separator — all three shapes are already live in the fleet and are exactly what the lint now
+rejects. For license/category: adding both fields to every `plugin.json` was considered and
+rejected as an unnecessary schema change the issue explicitly scopes out; a repo-wide default with
+no override was also rejected since `--category` differs meaningfully across the 9 plugins already
+(e.g. `infrastructure` vs no category on `mission-control`).
+
+**Rationale.** The chosen CHANGELOG grammar is the plurality shape already in the fleet (5 of 9
+plugins match it exactly, minimizing edit surface); its bracketed-version, hyphenated-date shape is
+also literally what Keep a Changelog recommends, so no plugin adopting Keep-a-Changelog conventions
+in its header prose needs to change anything but non-conforming heading lines. Treating
+license/category as marketplace-owned resolves a genuine contradiction in the issue's own DoD
+(which says the generator derives them "from `plugin.json`") without a schema change, and keeps the
+generator's `--check` mode meaningful (it only flags drift on fields that actually have a single
+source of truth).
+
+**Revisit when.** A 9th-plus new plugin's provenance needs a materially different CHANGELOG shape
+(e.g. auto-generated release notes from conventional commits); or the fleet decides `license`/
+`category` do need a real source of truth (auditable per-plugin, not marketplace-only) — at that
+point a small explicit source file (not a `plugin.json` schema change) is the likely next step.
+
+**Refs.** Plan `docs/plans/2026-07-05-release-surface-single-source-plan.md`. LEARNINGS
+`{#marketplace-drift}` (`docs/engineering-journal/LEARNINGS.md:1516-1533`) is the drift bug this
+issue converts from a guard-class fix into a generator.
+
+---
+
 ## 2026-07-04
 
 ### ship_ceremony.py: reversibility tiers stay local, ceremony state rides the work-thread saga, git-surface entry is an alias never a hook (#345, planning)  {#ship-ceremony-primitive-345}

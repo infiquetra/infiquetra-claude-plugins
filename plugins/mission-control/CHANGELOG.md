@@ -1,6 +1,12 @@
-# Changelog — mission-control
+# Changelog
 
-## [2.5.0] — 2026-07-04
+## [2.5.1] - 2026-07-05
+
+### Reformat CHANGELOG title and date separator to canonical grammar (#429)
+- Drop the plugin-name suffix from the file title and switch version-heading date separators from
+  em dash to hyphen-minus, as part of the release-surface single-source generator work.
+
+## [2.5.0] - 2026-07-04
 
 ### Executor-profile lint against the fleet tier palette (#463)
 - New standalone `scripts/executor_profile_lint.py`: parses a `Recommended Executor Profile`
@@ -10,7 +16,7 @@
   Exit codes: 0 pass, 1 named findings, 2 no-profile-block. No gh calls — callers pipe the
   issue body in (`gh issue view N --json body -q .body | ...`).
 
-## [2.4.0] — 2026-06-29
+## [2.4.0] - 2026-06-29
 
 ### Issue-write verbs for autonomous `/outcome` board-sync (#279)
 - New idempotent `issue` subcommands: `close` / `reopen` (PATCH `state`, naturally idempotent),
@@ -21,14 +27,14 @@
   `/outcome` board-sync consumer drives across the saga↔mission-control boundary. Pairs with saga
   0.42.0.
 
-## [2.3.1] — 2026-06-28
+## [2.3.1] - 2026-06-28
 
 ### Fixed
 - Fixed `issue create-prepared` post-create recovery by resolving issue/PR nodes with
   `issueOrPullRequest(number:)`, keeping GraphQL mutation failures strict, and recording
   resumable sidecar state when board-add or Status assignment fails after issue creation.
 
-## [2.3.0] — 2026-06-27
+## [2.3.0] - 2026-06-27
 
 ### Migration notes
 - GitHub Project #3 was renamed from **Jeff Intent** to **Operations**. The `--project` value is now
@@ -44,13 +50,13 @@
   canonical rename in `infiquetra-sdlc`. Dated provenance and migration notes preserve the former
   name as historical record.
 
-## [2.2.0] — 2026-06-21
+## [2.2.0] - 2026-06-21
 
 ### Changed
 - `sdlc-operator` agent: pin `model: sonnet` (was `inherit`). Orchestration work is
   structured/mechanical — Sonnet is the right cost-quality tier (R1/R2a tiering).
 
-## [2.1.0] — 2026-06-17
+## [2.1.0] - 2026-06-17
 
 ### Migration notes
 - Mission Control now treats Jeff Intent, Asgard, and CAMPPS as the active board surfaces.
@@ -69,14 +75,14 @@
   bodies.
 - Bumped plugin and marketplace metadata to `2.1.0`.
 
-## 1.6.1 - 2026-05-31
+## [1.6.1] - 2026-05-31
 
 ### Changed
 - Tracked the `infiquetra-loop` → `saga` rename: updated the ignored runtime-state
   path to `.claude/saga/` and refreshed plugin references in `/issue`, the
   `sdlc-operator` agent, and the `issues` skill.
 
-## Unreleased
+## [Unreleased]
 
 ### Added
 - Added `/issue` as the primary issue command surface, with `/issue` retained as a
@@ -89,7 +95,7 @@
   Asgard/Olympus model: sibling target boards with explicit cross-team transfer, not an
   implied Asgard-to-Olympus promotion path.
 
-## [1.6.0] — 2026-05-30
+## [1.6.0] - 2026-05-30
 
 ### Added
 - Added `issue prepare` to write team-aware Asgard or Mount Olympus issue drafts under
@@ -109,7 +115,7 @@
   drafts instead of bypassing readiness checks.
 - Bumped plugin and marketplace metadata to `1.6.0`.
 
-## [1.5.0] — 2026-05-30
+## [1.5.0] - 2026-05-30
 
 ### Migration notes
 - **No breaking CLI changes.** Existing commands continue to work. Operators should update
@@ -131,7 +137,7 @@
   stale actionable labels or initiative/objective labels as current practice.
 - Bumped plugin and marketplace metadata to `1.5.0`.
 
-## [1.4.0] — 2026-05-04
+## [1.4.0] - 2026-05-04
 
 ### Migration notes
 - **No breaking changes.** The `sdlc-operator` Claude Code subagent (`agents/sdlc-operator.md`) was rewritten to reflect 2026-05-04 reality (Phase C minimum-viable + foundation + interactive flow are all merged). Operators using the prior subagent will see the same trigger phrases but newer command examples.
@@ -147,7 +153,7 @@
 
 Plugin manifest: 1.3.0 → 1.4.0. **All deferred Phase C items are now closed.**
 
-## [1.3.0] — 2026-05-04
+## [1.3.0] - 2026-05-04
 
 ### Migration notes
 - **No breaking changes.** Existing `issue create --repo X --type Y` invocations work identically; new behavior is additive.
@@ -198,7 +204,7 @@ The 10-step flow:
   - `_PARENT_REF_RE`: realistic refs accepted; `#42`, `repo-only`, garbage rejected
 - Total: **92 / 92 passing**
 
-## [1.2.0] — 2026-05-04
+## [1.2.0] - 2026-05-04
 
 ### Migration notes
 - **No breaking changes.** Existing CLI invocations work identically.
@@ -234,7 +240,7 @@ The 10-step flow:
 - Updated 3 PR #114 tests in `test_flow_subcommands.py` to use typed exceptions instead of bare `RuntimeError` with string-matching (the old pattern was testing the old implementation; new tests test the new contract).
 - Total: **64 / 64 passing** locally.
 
-## [1.1.0] — 2026-05-04
+## [1.1.0] - 2026-05-04
 
 ### Fixed (during PR #114 review)
 - **`validate_card_body` header text**: was `"Out-of-scope or non-goals"` (with "or"); home-lab card_validator.py and ALL actionable issue templates use `"Out-of-scope / non-goals"` (with "/"). Every real card would have failed validation with a phantom missing-section error. Corrected to match home-lab exactly. Same iteration also corrects `_PATH_LINE_RE` (now accepts plain filenames + bullet-prefixed paths matching home-lab) and `_CHECKLIST_RE` (now requires `\S` after `[ ]` and accepts `*` bullets matching home-lab).
@@ -273,7 +279,7 @@ The 10-step flow:
 - Operators previously running `sdlc_manager.py beads <action>` will get an `argparse` error. There is no replacement — the underlying coordination has moved off Beads entirely. Use `gh` + the new `flow` commands for direct board operations.
 - The `flow set-field` command is the canonical mechanism for Initiative + Objective assignment per the 2026-05-03 DECISION (see `infiquetra-sdlc/docs/engineering-journal/DECISIONS.md`). The fields don't exist on the Olympus board today; create them via the operator runbook in `operational-reference.md` before using `flow set-field`.
 
-## [1.0.0] — 2026-03-29
+## [1.0.0] - 2026-03-29
 
 ### Added
 - Initial release of mission-control plugin for the Mount Olympus agent team

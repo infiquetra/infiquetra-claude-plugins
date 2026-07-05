@@ -376,6 +376,78 @@ def test_save_captures_git_state_from_runner(
     assert restored.head_sha == "abc1234"
 
 
+def test_save_refreshes_branch_on_later_save(saga: ModuleType, tmp_path: Path) -> None:
+    """``branch`` tracks the CURRENT git branch on EVERY save, not just the first (issue #480).
+
+    Mirrors the ``/plan`` mints-on-``main`` then ``/work`` re-saves-on-branch lifecycle: the
+    first save captures ``main``; a later save on the work branch must OVERWRITE it, not carry
+    ``main`` forward through scalar merge.
+    """
+
+    def git_on(branch: str) -> Callable[..., SimpleNamespace]:
+        def fake_git(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+            if "--show-current" in args:
+                return SimpleNamespace(returncode=0, stdout=f"{branch}\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="abc1234\n", stderr="")
+
+        return fake_git
+
+    saga.save(tmp_path, _make_saga(saga), now=FIXED_NOW, runner=git_on("main"))
+    assert saga.restore(tmp_path, "issue-42").branch == "main"
+
+    later = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    saga.save(tmp_path, _make_saga(saga), now=later, runner=git_on("fix/pf-work"))
+    assert saga.restore(tmp_path, "issue-42").branch == "fix/pf-work"
+
+
+def test_save_empty_branch_does_not_clobber_stored_branch(saga: ModuleType, tmp_path: Path) -> None:
+    """A detached-HEAD / no-git save (empty ``git branch --show-current``) must NOT wipe a
+    previously-stored branch — the ``git["branch"]`` non-empty guard preserves carry-forward
+    (issue #480, R2)."""
+
+    def fake_git_on_branch(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        if "--show-current" in args:
+            return SimpleNamespace(returncode=0, stdout="fix/pf-work\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="abc1234\n", stderr="")
+
+    def fake_git_detached(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        if "--show-current" in args:
+            return SimpleNamespace(returncode=0, stdout="\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="def5678\n", stderr="")
+
+    saga.save(tmp_path, _make_saga(saga), now=FIXED_NOW, runner=fake_git_on_branch)
+    assert saga.restore(tmp_path, "issue-42").branch == "fix/pf-work"
+
+    later = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    saga.save(tmp_path, _make_saga(saga), now=later, runner=fake_git_detached)
+    assert saga.restore(tmp_path, "issue-42").branch == "fix/pf-work"
+
+
+def test_save_on_default_branch_preserves_stored_work_branch(
+    saga: ModuleType, tmp_path: Path
+) -> None:
+    """Once a real work branch is recorded, a later save made back on ``main`` must NOT overwrite
+    it (issue #480). ship_ceremony's ``checkout_main`` progress-save runs on ``main`` right before
+    ``branch_delete`` — which still needs the work branch — so this mirrors that exact sequence and
+    guards against the refresh downgrading a real branch to the default one.
+    """
+
+    def git_on(branch: str) -> Callable[..., SimpleNamespace]:
+        def fake_git(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+            if "--show-current" in args:
+                return SimpleNamespace(returncode=0, stdout=f"{branch}\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="abc1234\n", stderr="")
+
+        return fake_git
+
+    saga.save(tmp_path, _make_saga(saga), now=FIXED_NOW, runner=git_on("feat/pf-throwaway-345"))
+    assert saga.restore(tmp_path, "issue-42").branch == "feat/pf-throwaway-345"
+
+    later = datetime(2026, 6, 2, 14, 12, 33, tzinfo=UTC)
+    saga.save(tmp_path, _make_saga(saga), now=later, runner=git_on("main"))
+    assert saga.restore(tmp_path, "issue-42").branch == "feat/pf-throwaway-345"
+
+
 # ===========================================================================
 # Engine: restore
 # ===========================================================================

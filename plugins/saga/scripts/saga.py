@@ -56,6 +56,13 @@ def _migrate_legacy_state_dir() -> None:
 SAGAS_DIR = STATE_DIR / "sagas"
 LEGACY_CHECKPOINT_DIR = STATE_DIR / "checkpoints"
 
+# Default branch names a saved ``branch`` field must not be silently overwritten with once a real
+# work branch is already recorded (issue #480). ``ship_ceremony.py``'s ``_do_checkout_main`` runs
+# ``git checkout main`` before ``branch_delete``, so a live-git refresh on that progress-save would
+# otherwise erase the very branch ``branch_delete`` still needs to delete. Mirrors the ceremony's
+# own hard-coded ``main`` checkout (``master`` included for older repos).
+_DEFAULT_BRANCHES = frozenset({"main", "master"})
+
 ENVELOPE_RE = re.compile(r"^(?P<ts>\d{8}-\d{6})(?:-(?P<seq>\d+))?\.md$")
 ROUND_RE = re.compile(r"round-(\d+)", re.IGNORECASE)
 LEGACY_CHECKPOINT_RE = re.compile(
@@ -744,8 +751,23 @@ def save(
     merged = _merge(prior, saga, moment)
 
     git = current_git_state(root, runner=runner)
-    if not merged.branch and git["branch"]:
-        merged = _replace(merged, branch=git["branch"])
+    # ``branch`` refreshes from live git on EVERY save (issue #480), not just the first, so a saga
+    # minted on ``main`` by ``/plan`` — before its work branch exists — starts tracking the real
+    # branch as soon as ``/work`` re-saves on it, and ship_ceremony's ``branch_delete`` guard then
+    # sees the actual branch instead of the mint-time ``main``. Two guards on the refresh: the
+    # empty ``git["branch"]`` read (detached HEAD / no git) never clobbers a stored value, and a
+    # save made back on the default branch never overwrites an already-recorded real work branch
+    # (else the ceremony's own ``checkout_main`` progress-save would erase what ``branch_delete``
+    # needs). ``head_sha``/``last_commit_sha`` keep first-save-only capture — same pattern, audited
+    # safe to refresh, but deferred to a follow-up per #480's scope.
+    live_branch = git["branch"]
+    downgrades_work_branch = (
+        live_branch in _DEFAULT_BRANCHES
+        and bool(merged.branch)
+        and merged.branch not in _DEFAULT_BRANCHES
+    )
+    if live_branch and not downgrades_work_branch:
+        merged = _replace(merged, branch=live_branch)
     if not merged.head_sha and git["head"]:
         merged = _replace(merged, head_sha=git["head"])
     if not merged.last_commit_sha and git["last_commit"]:

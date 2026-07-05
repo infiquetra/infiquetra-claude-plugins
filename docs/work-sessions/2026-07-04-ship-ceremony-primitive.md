@@ -52,7 +52,7 @@ date: 2026-07-04
 
 ## Test design
 
-`tests/test_ship_ceremony.py` (23 tests): pure-logic tests for `next_transition` /
+`tests/test_ship_ceremony.py` (28 tests): pure-logic tests for `next_transition` /
 tier declarations; a real throwaway git repo + real local bare "origin" for every
 git-only transition and the alias install/uninstall (no network, and the module is
 registered in `tests/conftest.py`'s `_GH_WRITE_TEST_MODULES` #279 hard floor as
@@ -60,6 +60,35 @@ defense in depth); a `FakeGh` for PR-facing transitions that pushes the branch's
 commit to the bare origin's `main` on a faked merge, so the downstream real
 `checkout_main`/`pull` transitions observe a genuinely changed repo rather than a
 no-op. Covers all seven ACs (AC1–AC7) named in the issue.
+
+## Code review (programmatic, 4 lenses)
+
+Correctness, security, testing, maintainability lenses ran against the committed diff
+(`e462101`). Maintainability and security surfaced nothing above the confidence-gate
+(one P3 each, both below anchor 75, suppressed per the confidence-gate rule and noted
+below as residual risk). Correctness and testing each surfaced a real P1:
+
+- **P1 (correctness, confidence 90):** `start()` had no guard against being invoked
+  against an already-progressed ceremony — would open a second PR and regress
+  `ceremony_transition` back to `'commit'`. Fixed: `start()` now refuses
+  (`ShipCeremonyError`) when `ceremony_transition` or `pr_refs` is already populated.
+  New test: `test_start_refuses_when_ceremony_already_progressed`.
+- **P1 (testing, confidence 90):** zero tests exercised any subprocess-failure path;
+  `TransitionFailedError`'s "state must not advance past a failed transition" contract
+  was unverified. Fixed: added `test_transition_failure_does_not_advance_state` (a
+  `FailingRunner` wrapper injects one failing command) plus coverage for
+  `NoSagaError`, the `_current_pr_number` pr_refs guard, the `_do_branch_delete`
+  branch-safety guard, and the CLI (`main`) dispatch/error-exit paths. Test count:
+  21 → 28.
+
+Residual (suppressed, confidence < 75, not blocking): `_do_branch_delete`'s guard
+special-cases only `"main"`, not other possible default-branch names
+(`master`/`production`); the remote branch-delete's `check=False` silently discards a
+genuine remote-delete failure while the transition is still recorded complete. Both
+worth a look if this primitive is ever pointed at a repo with a non-`main` default
+branch or if remote-delete failures turn out to matter in practice — not fixed here
+since neither is reachable under this repo's actual usage (default branch is `main`;
+GitHub's own merge-time branch auto-delete makes the remote delete usually a no-op).
 
 ## Checks run
 

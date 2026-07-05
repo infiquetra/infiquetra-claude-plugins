@@ -99,12 +99,17 @@ class FakeGh:
         self.bare_origin = bare_origin
         self._next_number = 1
         self._prs: dict[str, dict[str, object]] = {}  # branch -> {number, draft}
+        # Captured at construction time, NOT looked up as `subprocess.run` inside
+        # __call__ — a test that monkeypatches the global `subprocess.run` to this
+        # FakeGh instance (to exercise the CLI's real fallback path) would otherwise
+        # make this passthrough call itself recursively.
+        self._real_run = subprocess.run
 
     def __call__(self, cmd, *, cwd, capture_output, text, timeout):  # noqa: ANN001
         parts = list(cmd)
         if parts[0] == "gh":
             return self._handle_gh(parts[1:])
-        real = subprocess.run(  # nosec B603
+        real = self._real_run(  # nosec B603
             parts, cwd=cwd, capture_output=capture_output, text=text, timeout=timeout
         )
         return real
@@ -134,7 +139,7 @@ class FakeGh:
             # Simulate the merge landing on origin's main — pushes the branch's
             # commit(s) to the bare origin's main ref, exactly what the later real
             # `checkout_main` + `pull` transitions expect to observe.
-            subprocess.run(  # nosec B603
+            self._real_run(  # nosec B603
                 ["git", "push", str(self.bare_origin), f"{branch}:main"],
                 cwd=self.repo,
                 capture_output=True,
@@ -330,6 +335,126 @@ def test_front_loaded_draft_pr(ceremony_repo) -> None:
     SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # open_pr
     assert len(fake_gh._prs) == 1  # noqa: SLF001
     assert fake_gh._prs["feat/pf-throwaway-345"]["draft"] is False  # noqa: SLF001
+
+
+def test_start_refuses_when_ceremony_already_progressed(ceremony_repo) -> None:
+    """Code-review correctness finding: start() must not create a second PR or
+    regress ceremony_transition when the ceremony already has state."""
+    repo, fake_gh = ceremony_repo
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    with pytest.raises(SC.ShipCeremonyError, match="already in progress"):
+        SC.start(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
+    # State must be untouched by the refused call.
+    assert _restore(repo)["ceremony_transition"] == "commit"
+    assert fake_gh._prs == {}  # noqa: SLF001 - no PR was created
+
+
+class FailingRunner:
+    """Wraps a base runner and fails one specific command (matched by prefix),
+    passing everything else through unchanged."""
+
+    def __init__(self, base, *, fail_prefix: list[str]) -> None:
+        self.base = base
+        self.fail_prefix = fail_prefix
+
+    def __call__(self, cmd, **kwargs):
+        parts = list(cmd)
+        if parts[: len(self.fail_prefix)] == self.fail_prefix:
+            return subprocess.CompletedProcess(
+                args=parts, returncode=1, stdout="", stderr="simulated failure"
+            )
+        return self.base(cmd, **kwargs)
+
+
+def test_transition_failure_does_not_advance_state(ceremony_repo) -> None:
+    """A failing subprocess call (git push) must raise and leave ceremony_transition
+    untouched — the next invocation must retry the same transition, not skip it."""
+    repo, fake_gh = ceremony_repo
+    failing = FailingRunner(fake_gh, fail_prefix=["git", "push", "-u", "origin"])
+    with pytest.raises(SC.TransitionFailedError, match="simulated failure"):
+        SC.run(repo_root=repo, issue_ref="org/repo#345", runner=failing)
+    assert _restore(repo)["ceremony_transition"] == ""
+
+    # Retrying with a working runner picks up exactly where it left off.
+    status = SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
+    assert "commit" in status
+
+
+def test_no_saga_error_when_branch_has_no_match(ceremony_repo) -> None:
+    repo, _fake_gh = ceremony_repo
+    subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "checkout", "-b", "some-other-unrelated-branch"],
+        check=True,
+        capture_output=True,
+    )
+    with pytest.raises(SC.NoSagaError, match="no saga found for branch"):
+        SC.resolve_saga(repo_root=repo, issue_ref=None)
+
+
+def test_request_review_before_open_pr_is_a_named_failure(ceremony_repo) -> None:
+    """_current_pr_number's guard: reaching request_review/merge with no pr_refs
+    recorded (open_pr was skipped or its save was lost) is a named failure, not a
+    crash or a silent no-op."""
+    repo, fake_gh = ceremony_repo
+    saga_py = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
+    subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(saga_py),
+            "save",
+            "--kind",
+            "issue",
+            "--id",
+            "345",
+            "--ceremony-transition",
+            "open_pr",
+            "--ceremony-tier",
+            "reversible",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with pytest.raises(SC.TransitionFailedError, match="no pr_refs recorded"):
+        SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
+
+
+def test_branch_delete_refuses_when_branch_is_main(ceremony_repo) -> None:
+    """`branch` is only ever set once on a saga (saga.py's merge logic never
+    overwrites a populated field), so this guard is exercised directly against the
+    saga dict shape rather than through a full mint-on-main round trip."""
+    repo, fake_gh = ceremony_repo
+    with pytest.raises(SC.TransitionFailedError, match="refusing to delete branch"):
+        SC._do_branch_delete({"branch": "main"}, repo_root=repo, runner=fake_gh)  # noqa: SLF001
+    with pytest.raises(SC.TransitionFailedError, match="refusing to delete branch"):
+        SC._do_branch_delete({"branch": ""}, repo_root=repo, runner=fake_gh)  # noqa: SLF001
+
+
+def test_cli_main_run_dispatches(ceremony_repo, capsys: pytest.CaptureFixture[str]) -> None:
+    repo, fake_gh = ceremony_repo
+    original = SC.subprocess.run
+    SC.subprocess.run = fake_gh
+    try:
+        exit_code = SC.main(["--repo-root", str(repo), "run", "--issue-ref", "org/repo#345"])
+    finally:
+        SC.subprocess.run = original
+    assert exit_code == 0
+    assert "commit" in capsys.readouterr().out
+
+
+def test_cli_main_reports_error_and_exits_nonzero(
+    bare_repo_clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = SC.main(["--repo-root", str(bare_repo_clone), "uninstall"])
+    assert exit_code == 0  # uninstall with no alias is success, not an error path
+    subprocess.run(  # noqa: S607
+        ["git", "-C", str(bare_repo_clone), "config", "--local", "alias.ship", "!echo mine"],
+        check=True,
+    )
+    exit_code = SC.main(["--repo-root", str(bare_repo_clone), "install"])
+    assert exit_code == 1
+    assert "alias.ship already set" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------- #

@@ -385,8 +385,22 @@ def start(
     """Front-loaded mode (R7/KTD4): push the branch and open a draft PR carrying the
     plan link, immediately after ``/work``'s Phase 1.4 saga mint. Records the draft
     PR on ``pr_refs`` right away; the later ``open_pr`` transition detects it and
-    flips it ready instead of creating a second PR."""
+    flips it ready instead of creating a second PR.
+
+    Refuses to run if the ceremony has already progressed (``ceremony_transition``
+    set) or a PR already exists (``pr_refs`` populated) — code-review correctness
+    finding: an unconditional ``start()`` call on an already-progressed saga would
+    open a second PR AND regress ``ceremony_transition`` back to ``'commit'``,
+    causing the next ``run`` to re-execute already-completed transitions.
+    """
     saga = resolve_saga(repo_root=repo_root, issue_ref=issue_ref, runner=runner)
+    if saga.get("ceremony_transition") or saga.get("pr_refs"):
+        raise ShipCeremonyError(
+            "ceremony already in progress for this saga "
+            f"(ceremony_transition={saga.get('ceremony_transition')!r}, "
+            f"pr_refs={saga.get('pr_refs')!r}); 'start' is front-loaded-mode-only and "
+            "must not run against a saga that already has state — use 'run' to continue"
+        )
     branch = current_branch(repo_root, runner=runner)
     _run(["git", "push", "-u", "origin", branch], cwd=repo_root, runner=runner)
 

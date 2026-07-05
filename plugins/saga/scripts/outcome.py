@@ -455,88 +455,15 @@ def _default_board_writer(
     project: str = "operations",
     runner: Callable[..., Any] | None = None,
 ) -> Callable[..., None]:
-    """The production board_writer (U4/#279): drive a reversibility-authorized op via mission-control.
+    """Re-export of ``board_progression.default_board_writer`` (#344 KTD6).
 
-    Maps each enumerated ``OpKind`` to its ``sdlc_manager.py`` subcommand. ``advance(autonomous=True)``
-    uses this when no explicit ``board_writer`` is injected; tests inject a recording fake instead.
-    The nested ``gh`` call lives in the spawned child process, so this writer is exercised ONLY under
-    a real operator ``--autonomous`` campaign — never in the test suite (which is also why the
-    no-live-gh conftest guard, which patches *this* process's ``subprocess.run``, cannot see it).
-    A non-zero exit raises so the consumer's bounded-retry / fail-loud path engages.
+    The production board_writer (the ``OpKind`` → ``sdlc_manager.py`` verb mapping) moved to
+    ``board_progression`` so the skill consumers (`/work`, `/loop`) can reach it through the CLI.
+    Kept here so ``advance``'s call sites and any test references remain valid.
     """
-    import subprocess
+    import board_progression as _m  # noqa: PLC0415
 
-    sdlc = str(repo_root / "plugins" / "mission-control" / "scripts" / "sdlc_manager.py")
-    run = runner if runner is not None else subprocess.run
-
-    def _writer(*, op_kind: str, repo: str, number: int, payload: dict[str, Any]) -> None:
-        base = ["python3", sdlc]
-        n = str(number)
-        # The mission-control verbs prepend ORG to build ``repos/{ORG}/{repo}/...``, so they need the
-        # BARE repo name. The caller passes an owner-qualified repo ("infiquetra/saga") for the
-        # idempotency-key namespace; strip the owner here so the REST path is not doubled.
-        repo = repo.rsplit("/", 1)[-1]
-        if op_kind == "set-field-status":
-            cmd = base + [
-                "flow",
-                "set-field",
-                "--project",
-                project,
-                "--repo",
-                repo,
-                "--number",
-                n,
-                "--field",
-                "Status",
-                "--option",
-                str(payload.get("target_state", "")),
-            ]
-        elif op_kind == "sub-issue-close":
-            cmd = base + ["issue", "close", "--repo", repo, "--number", n]
-        elif op_kind == "sub-issue-reopen":
-            cmd = base + ["issue", "reopen", "--repo", repo, "--number", n]
-        elif op_kind == "issue-progress-comment":
-            cmd = base + [
-                "issue",
-                "comment",
-                "--repo",
-                repo,
-                "--number",
-                n,
-                "--body",
-                str(payload.get("body", "")),
-            ]
-        elif op_kind == "issue-label-add":
-            cmd = base + [
-                "issue",
-                "label-add",
-                "--repo",
-                repo,
-                "--number",
-                n,
-                "--label",
-                str(payload.get("label", "")),
-            ]
-        elif op_kind == "issue-label-remove":
-            cmd = base + [
-                "issue",
-                "label-remove",
-                "--repo",
-                repo,
-                "--number",
-                n,
-                "--label",
-                str(payload.get("label", "")),
-            ]
-        else:
-            raise ValueError(f"no mission-control verb mapping for op_kind {op_kind!r}")
-        result = run(cmd, capture_output=True, text=True, timeout=60)
-        if getattr(result, "returncode", 0) != 0:
-            raise RuntimeError(
-                f"board write {op_kind} on {repo}#{number} failed: {getattr(result, 'stderr', '')!r}"
-            )
-
-    return _writer
+    return _m.default_board_writer(repo_root, project=project, runner=runner)
 
 
 def advance(

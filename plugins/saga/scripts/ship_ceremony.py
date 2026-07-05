@@ -278,8 +278,12 @@ def _do_open_pr(
 def _do_request_review(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
 ) -> None:
-    pr_number = _current_pr_number(saga, repo_root=repo_root, runner=runner)
-    _run(["gh", "pr", "edit", pr_number, "--add-reviewer", "@me"], cwd=repo_root, runner=runner)
+    """Deliberate no-op (issue #477, dated 2026-07-04): this repository has exactly one
+    human maintainer, who is also the sole author of every ceremony PR — there is no one
+    else to request review from. The previous body shelled out to
+    ``gh pr edit --add-reviewer @me``, which always failed (``@me`` is not a valid login
+    for the ``requestReviewsByLogin`` mutation); resolving the real login instead would
+    still be a self-review request. Revisit only if a second human maintainer joins."""
 
 
 def _do_merge(

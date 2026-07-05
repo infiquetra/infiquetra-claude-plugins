@@ -2,6 +2,36 @@
 
 ## 2026-07-05
 
+### `/outcome start --from-objective` seeds the DAG from GitHub sub-issues; edge inference is best-effort over stable fields {#outcome-from-objective-ingestion-375}
+
+**Decision.** Wire `discover_subissues.py`'s GraphQL reader into `/outcome start --from-objective
+<owner>/<repo>#<N>`, producing one node per sub-issue with kind-from-label, an authored terminal
+`state` for closed sub-issues, a `github` provenance stamp, and inferred `depends_on` edges. Ingestion
+writes **structural spec state only** (nodes, `depends_on`, `github`, authored `state`) — never a
+committed status field or a completion event (KTD2). `Node.state` is authored structural spec state
+(validated against `NODE_STATES`), distinct from the mutable board status column the derived-on-read
+model replaces, so CLOSED+COMPLETED→`done` / CLOSED+NOT_PLANNED→`rejected` is permitted.
+
+**KTD1 — edge inference uses only stable GraphQL fields and degrades to no-edges.** The relationship
+source is `trackedIssues` (a tracker depends on what it tracks); we do not reference a speculative
+`blockedBy`/dependency field because an unknown field **400s the entire query** (all-or-nothing), which
+would break ingestion rather than degrade it. The relationship fetch is isolated so any error yields an
+empty `blocked_by`; `edges_from_relationships()` is a pure function fixture-tested independent of the
+live schema; node ingestion never fails on missing relationship data. Edge inference is therefore
+best-effort — the fixture tests validate the *mapper*, not GraphQL→`blocked_by` fidelity, which is
+heuristic. (Implementation narrowed the approved plan's `trackedIssues`+`timelineItems` to
+`trackedIssues` only — the timeline cross-ref path needs inline-fragment GraphQL for marginal yield; a
+clean follow-up.)
+
+**KTD3 — the produced spec always passes `validate()`.** `edges_from_relationships` keeps only edges
+whose both endpoints are ingested, and builds incrementally with a reachability guard that drops (and
+reports) any edge that would close a cycle of any length — so the `OutcomeSpec.validate()` declared-target
++ Kahn-acyclicity checks never fail on ingested output. Dangling and self edges are dropped and reported
+too, never silently discarded.
+
+**Revisit when.** Richer edge inference is wanted (add the `timelineItems`/issue-dependency source), or
+GitHub exposes a stable issue-dependency GraphQL field to replace the `trackedIssues` heuristic.
+
 ### `board_progression.py` extracts the certificate-gated board writer as a shared mechanism; the allowlist stays in the certificate {#board-progression-shared-writer-344}
 
 **Decision.** Extract `/outcome`'s per-op board-write mechanism (authorize → idempotency ledger →

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.58.0] - 2026-07-05
+
+- Feat: `/outcome start --from-objective <owner>/<repo>#<N>` seeds the DAG from a GitHub Objective's
+  sub-issues (#375). Wires the previously-unwired `discover_subissues.py` GraphQL reader (extended with
+  `stateReason` + `trackedIssues`) through a new library `fetch_objective`, builds one node per
+  sub-issue with `kind` from labels, an authored terminal `state` for closed sub-issues (COMPLETED→done,
+  NOT_PLANNED→rejected — structural spec state, never a committed status field), and a `github`
+  provenance stamp the reconcile/board-sync consumers read.
+- Feat: new `outcome_edges.py` — a pure, cycle-safe `edges_from_relationships()` that infers
+  `depends_on` edges among the ingested sub-issues, dropping and reporting dangling/cyclic edges so the
+  produced spec always passes `OutcomeSpec.validate()`. Edge inference is best-effort (uses only stable
+  GraphQL fields) and degrades to no-edges; the no-flag `start` default is unchanged.
+
 ## [0.57.0] - 2026-07-05
 
 - Feat: extracted `/outcome`'s certificate-gated autonomous board writer into a new plugin-agnostic

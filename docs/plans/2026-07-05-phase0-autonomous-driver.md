@@ -91,12 +91,26 @@ DECISIONS `{#shared-retry-backoff-primitive-348}` (KTD1-KTD4) + execution-order 
 Code-review CLEAN (0 findings, 4 adversarial readonly-verifiers). Two latent U1 lint issues fixed
 inline (SIM102, N818). Backend: inline. agy untouched (KTD2). Full gate green (2035 tests).
 
-## #379 — PLAN-READY (option A; grounding CORRECTED 2026-07-05)
+## #379 — DONE ✅ (SHIPPED 2026-07-05, PR #488)
 
-**Status: PLAN written, BUILD deferred to a fresh session.** Plan:
-`docs/plans/2026-07-05-remote-gate-approval-379-plan.md` (6 units, KTD1-KTD6). Next: `/doc-review`
-that plan (fix findings) → `/work` to MERGED. Backend inline (issue-recommended Sonnet/high; a
-mechanical two-plugin integration, not novel design). Merge durably approved (carry like #344/#375/#348).
+Merged as squash `cc46675` (PR #488, `Fixes #379` → issue CLOSED/COMPLETED; board Status→Done). saga
+0.60.0, redis-channel 0.5.1. All 6 units shipped: U1 `approve_frontier` gains keyword-only
+`answerer`/`transport` written into `approvals/r{rev}.json` only when supplied (terminal approval
+byte-identical) + `outcome approve --answerer/--transport`; U2/U3 new stdlib-only decoupled
+`outcome_gate_transport.py` (transport-agnostic `compose_gate_notice` + fail-closed `parse_gate_answer`
++ redis-only `emit_gate_notice` seam); U4 no-answer parity + disconnected fallback tests; U5 docs
+(`operator-choice.md` §5.1 + `redis-channel/PROTOCOL.md`, router-agnostic); U6 release surfaces +
+DECISIONS `{#remote-gate-approval-379}` (KTD1-KTD6) + execution-order row 8 + work-session.
+Doc-review READY (4 safe fixes applied in-plan; P1 = Discord emit is session-driven). Code-review
+CLEAN (0 findings, 4 adversarial readonly-verifiers; 1 fail-closed correctness edge — gate-id-token
+verdict pollution — caught + fixed inline `392fd20` + re-verified). Backend inline. Full gate green
+(2057 tests). Option A confirmed: sender-auth deferred to the transport (verified upstream-of-session
+on both transports), provenance not a new allowlist; redis-channel stays router-agnostic (docs-only).
+
+**Original (last-session) plan-ready note — kept as history.** Plan:
+`docs/plans/2026-07-05-remote-gate-approval-379-plan.md` (6 units, KTD1-KTD6). Backend inline
+(issue-recommended Sonnet/high; a mechanical two-plugin integration, not novel design). Merge durably
+approved (carry like #344/#375/#348).
 
 **GROUNDING CORRECTION (important — my last-session conclusion was WRONG).** Last session I concluded
 "AC4 rests on a false premise → genuine operator fork." Re-grounding for the plan (full issue body +

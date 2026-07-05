@@ -5,6 +5,20 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-05
+
+### Added
+- `scripts/fleet_commons/tier_resolver.py` — dispatch-time tier resolver (#362):
+  `resolve(work_shape, role_kind, envelope_ceiling, operator_override) -> {model, effort,
+  because, cheaper_fallback, needs_confirm}`, reading defaults from `tier_policy.json` and the
+  ladder ops from `tier_palette` (never re-declaring `MODELS`/`EFFORTS`). Consumed cross-plugin
+  via `fleet_commons_shim.load("tier_resolver")`; `fable`/`xhigh` reachable behind a
+  `needs_confirm` gate.
+- `scripts/fleet_commons/tier_policy.json` — machine-readable work-shape → tier registry
+  (6 keys incl. the `mechanical`/`purely-mechanical` split).
+- `scripts/fleet_commons/render_tier_table.py` — renders the `/plan` Step-1 tier table from the
+  registry, drift-guarded against `plan/SKILL.md`.
+
 ## [0.2.0] - 2026-07-05
 
 ### Added

@@ -51,7 +51,7 @@ KTD3: **`cheaper_fallback` = weaken model first, then effort.** Cheaper means a 
 
 KTD4: **The expensive-tier gate is a return flag, not a prompt.** `resolve()` sets `needs_confirm` when `model=="fable"` or `effort=="xhigh"`; the caller (`/plan` authoring, a future dispatch site) owns the pause. Rationale: the resolver stays pure/testable and `{#operator-choice-framework}` keeps operator choice doc/CLI-driven, not a runtime-injected prompt per spawn.
 
-KTD5: **`role-tier:` migration keeps `model:` as a fallback (backward-compatible).** Each of the 25 frontmatters gains a `role-tier:`; the pre-existing `model:` is demoted to a documented last-resort value used only if the registry can't be loaded. Nothing breaks if `fleet_commons` is briefly unavailable, and the migration is reviewable one file at a time.
+KTD5: **`role-tier:` migration is backward-compatible because `model:` stays the native field.** Each of the 25 frontmatters gains a `role-tier:`; the pre-existing `model:` is retained. `model:` is the field Claude Code reads *natively* at spawn — the resolver is a *parallel* lookup, not something `model:` falls back from. There is no resolver-level fallback path: if the registry is briefly unavailable the resolver raises (no silent degrade) while native `model:` keeps working by construction — a structural non-dependency, not a fallback mechanism. The migration is reviewable one file at a time.
 
 KTD6: **Effort is emitted, not honored (scope fence with #363).** The resolver returns `effort` and the plan/worker tables carry it, but #362 adds no dispatch-time honoring — the Agent tool has no effort knob, and that mechanism is #363's `EFFORT_RIDER`/cascade. The A7 worker-table schema #362 emits into must match what #363 parses; that alignment is called out in the #363 comment.
 
@@ -101,7 +101,7 @@ KTD7: **`role-tier` is a small agent-facing vocabulary mapping to work-shape reg
 
 **Depends on:** U2.
 
-**Test scenarios** (`tests/test_tier_resolver.py`): `role_tier_resolves_for_all_agents` (every agent's `role-tier` resolves through the registry to a `MODELS`/`EFFORTS` member); `model_fallback_when_registry_absent` (resolution falls back to `model:` when the registry can't load); `tier_preservation` (each of the 25 agents resolves to its pre-migration model — no silent re-tiering).
+**Test scenarios** (`tests/test_tier_resolver.py`): `role_tier_resolves_for_all_agents` (every agent's `role-tier` resolves through the registry to a `MODELS`/`EFFORTS` member); `model_field_is_native_and_resolver_independent` (native `model:` keeps working without the resolver; the resolver raises rather than silently falling back — a structural non-dependency); `tier_preservation` (each of the 25 agents resolves to its pre-migration model — no silent re-tiering).
 
 ### U5. Emit per-teammate effort + spawn-site routing drift-guard
 
@@ -140,6 +140,6 @@ Per-unit coverage: `uv run pytest tests/test_tier_resolver.py -v`. Full repo gat
 ## Risk Analysis
 
 - **Registry/resolver divergence from `tier_palette`.** Mitigated by importing the tuples/ranking (never copying) and the `role_tier_resolves` + `skill_registry_sync` guards.
-- **25-file frontmatter migration blast radius.** Mitigated by KTD5 (keep `model:` as fallback — no behavior change until a consumer reads `role-tier`) and per-file reviewability.
+- **25-file frontmatter migration blast radius.** Mitigated by KTD5 (`model:` stays the native field — no behavior change until a consumer reads `role-tier`) and per-file reviewability.
 - **Boundary drift with #370 (two ladder implementations).** Mitigated by KTD2 (use `tier_palette` primitives now, migrate onto #370's named ops later) and the filed #370 concern.
 - **A7 schema mismatch with #363.** Mitigated by the filed #363 concern requiring schema alignment at both plans.

@@ -461,10 +461,14 @@ def test_spawn_site_enumeration_routes_through_resolver() -> None:
         assert resolution.effort in EFFORTS
 
 
-def test_model_fallback_when_registry_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If `fleet_commons` (and its registry) is briefly unavailable, each agent's
-    `model:` frontmatter value is still a valid, usable fallback on its own —
-    KTD5's "nothing breaks if fleet_commons is briefly unavailable"."""
+def test_model_field_is_native_and_resolver_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`model:` is the field Claude Code reads NATIVELY at spawn; the resolver is a
+    PARALLEL lookup, not something `model:` falls back from. So there is no resolver-level
+    fallback: when the registry is unavailable the resolver RAISES (no silent degrade),
+    while the native `model:` value keeps working by construction — a structural
+    non-dependency (KTD5), not a fallback mechanism."""
 
     def _boom(*_args: object, **_kwargs: object) -> dict[str, dict[str, str]]:
         raise FileNotFoundError("fleet_commons unavailable (simulated)")
@@ -474,13 +478,14 @@ def test_model_fallback_when_registry_absent(monkeypatch: pytest.MonkeyPatch) ->
     for stem, pre_migration_model in _PRE_MIGRATION_MODEL_BY_STEM.items():
         path = TEAM_EXECUTION_AGENTS_DIR / f"{stem}.md"
         fields = _parse_frontmatter(path.read_text(encoding="utf-8"))
-        fallback_model = fields["model"]
+        native_model = fields["model"]
 
-        # The registry-backed resolver is unusable while load_policy is down...
+        # The registry-backed resolver RAISES when load_policy is down — it does NOT
+        # silently fall back to the frontmatter model (there is no such code path)...
         with pytest.raises(FileNotFoundError):
             tier_resolver.resolve(None, fields["role-tier"])
 
-        # ...but the last-resort `model:` literal is still a plain, directly
-        # usable value — no dependency on the resolver or the registry.
-        assert fallback_model == pre_migration_model
-        assert fallback_model in MODELS
+        # ...but the native `model:` value is a plain, directly usable literal that
+        # Claude Code reads without the resolver or the registry.
+        assert native_model == pre_migration_model
+        assert native_model in MODELS

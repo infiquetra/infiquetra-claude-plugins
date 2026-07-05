@@ -198,7 +198,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only \u2014 no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",
@@ -210,6 +210,7 @@
         "fleet-commons",
         "shared-primitives",
         "tier-palette",
+        "tier-resolver",
         "library"
       ],
       "category": "development"

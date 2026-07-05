@@ -2,6 +2,52 @@
 
 ## 2026-07-05
 
+### Remote gate approval defers sender-auth to the transport; saga carries the code, redis-channel stays router-agnostic {#remote-gate-approval-379}
+
+**Context.** Phase 0 item 8 (#379): give the durable `/outcome` R20 frontier-approval gate a second,
+unattended delivery surface — the fleet's own redis-channel / Discord channel — so a gate that fires
+while the terminal is unattended can be answered remotely. This is a remote-**approval** security
+feature; the trust boundary (a channel prompt-injection must not forge an approval) is the crux.
+Operator chose **option A** (2026-07-05): defer access to the transport, record provenance.
+
+- **KTD1 — v1 wires only the `/outcome` R20 gate; per-skill `AskUserQuestion` gates are contract-only.**
+  The R20 gate is the only operator gate with a durable structured record (`approvals/r{rev}.json`);
+  per-skill gates have no durable record and wiring one would be a *new* gate mechanism
+  `{#operator-choice-framework}` forbids. A durable per-skill gate record is deferred follow-up.
+- **KTD2 — defer sender-auth to the transport; never reimplement an allowlist (option A).** Verified
+  against real code: Discord `gate()` (`server.ts:236-294`) drops non-`allowFrom` senders before the
+  session ever sees them (`:813` returns on `drop`; the `:836` comment states the exact "already
+  gate()-approved … so we trust the reply" model); redis-channel `_dispatch` (`redis_consumer.py:159-194`)
+  delivers unconditionally and defers to its router. So AC4's "access-policy-approved sender" is
+  enforced *upstream of the session* on both transports. `parse_gate_answer` records the already
+  authorized `answerer`/`transport` as provenance and correlates only a pending gate id — it never
+  re-authorizes a sender. **Rejected:** an in-plugin allowlist (violates router-agnosticism); coupling
+  the gate to Discord `access.json` (couples to one transport).
+- **KTD3 — provenance extends the write-once `approvals/rN.json` dict, not a new schema.** `answerer`/
+  `transport` are added conditionally; `frontier_approved` is existence-only, so a terminal approval
+  stays byte-identical and the extra keys are backward-compatible. **Rejected:** a net-new dataclass
+  (over-engineering).
+- **KTD4/KTD6 — render via the existing `reply()` inline-choice shape + a gate-id correlation; answer
+  recognition is contract + a pure parse helper, not a background daemon.** No new Redis stream or
+  protocol verb. The gate id is `<outcome_id>@r<spec_revision>` (mirrors the approval key + pins the
+  revision, so a stale reply can't match the current frontier). `parse_gate_answer` is fail-closed:
+  ambiguous/unattributable/no-pending-match → `None`, never a default *approve*. The mirror to the
+  existing permission-reply pattern is **trust-model only** — that reply is router-intercepted
+  (`server.ts:837`); the gate answer is session-recognized as an ordinary `<channel>` inbound.
+- **KTD5 — the gate logic lives in `saga`; `redis-channel` stays router-agnostic.** New saga module
+  `outcome_gate_transport.py` (stdlib-only, imports neither `outcome_spec` nor redis-channel) holds
+  compose/parse; the only redis-channel change is a docs-only `PROTOCOL.md` note documenting the
+  transport-agnostic convention (a router MUST NOT special-case gate notices).
+
+**Delivery is session-driven for both transports** (doc-review P1 correction): the session holding the
+gate composes with `compose_gate_notice` and calls the connected transport's `reply()`. The Python
+`emit_gate_notice`/`publish_outbound` seam is redis-channel-only (Discord has no Python-callable
+producer; a bare `outcome advance` CLI has no Redis client/`chat_id`/`session_name`), retained for a
+future Python driver, not the v1 hot path.
+
+**Revisit when:** a transport supports button/`react()` answers (the Discord button handler
+`server.ts:744-800` is the future seam), or a durable per-skill `AskUserQuestion` gate record is built.
+
 ### One shared 429 retry/backoff primitive in fleet-commons; emitted-wave JS mirror + derived-on-read `/outcome` re-pick {#shared-retry-backoff-primitive-348}
 
 **Decision.** Consolidate the fleet's four disconnected 429 responses onto one hardened

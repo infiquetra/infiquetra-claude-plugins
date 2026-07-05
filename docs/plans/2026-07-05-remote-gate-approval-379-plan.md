@@ -26,9 +26,12 @@ binds this to *transport, not a new gate mechanism*).
 
 ## Requirements
 
-- **R1.** When an `/outcome` R20 approval gate holds a frontier AND a redis-channel session is
-  connected, the gate's prompt + lettered options are emitted over the channel (via the redis
-  producer / `reply()` path). Producing the outbound is asserted in the run's gate-notify path.
+- **R1.** When an `/outcome` R20 approval gate holds a frontier AND a channel session (redis-channel
+  **or** Discord) is connected, the gate's prompt + lettered options are emitted over the channel via
+  the connected transport's `reply()` (session-driven — the session holding the gate renders the text
+  with `compose_gate_notice` and calls the transport it is connected to; see U2/KTD6). The
+  transport-agnostic composer output + the redis-channel `emit_gate_notice` seam are what the run's
+  gate-notify tests assert.
 - **R2.** An operator's channel reply that answers a pending gate is captured as the gate's durable
   approval, with `answerer` and `transport` recorded on the gate record
   (`approvals/r{rev}.json`). The polling run observes the answer and proceeds.
@@ -69,7 +72,12 @@ answer-capture path records the (already-authorized) `answerer`/`transport` as p
 only a specific pending gate id — it does not, and cannot, re-authorize a sender. This mirrors the
 existing scoped permission-reply pattern (Discord `PERMISSION_REPLY_RE` `server.ts:79`; redis
 `permission_request`/`permission_verdict` `protocol.py:113-138`) where authority derives from the
-already-passed gate, never from a self-asserted field in the message body.
+already-passed gate, never from a self-asserted field in the message body — the `server.ts:836`
+comment states this exact model ("The sender is already gate()-approved at this point … so we trust
+the reply"). The mirror is at the **trust-model** level only: the Discord permission reply is
+*router*-intercepted (`server.ts:837`) into a structured `permission` notification that never reaches
+the session, whereas the gate answer is *session*-recognized as an ordinary `<channel>` inbound
+(KTD5/KTD6) — do **not** extend the router's permission intercept.
 
 **KTD3 — provenance extends the existing write-once `approvals/rN.json` dict, not a new schema.**
 Add `answerer` + `transport` keys to the dict `approve_frontier` already writes
@@ -101,10 +109,13 @@ This keeps operator-choice "doc-only, CLI-driven" per `{#operator-choice-framewo
 
 ### U1. Gate-answer provenance on the durable record
 
-Extend `approve_frontier(store, spec, at="", *, answerer=None, transport=None)`
-(`outcome_decompose.py`) to write `answerer`/`transport` into `approvals/r{rev}.json` when provided;
-`frontier_approved` unchanged (existence check). Thread `--answerer` / `--transport` through the
-`outcome approve` CLI subcommand (`outcome.py:1184-1187`).
+Extend `approve_frontier(store, spec, *, at="", answerer=None, transport=None)`
+(`outcome_decompose.py:337` — keep `at` **keyword-only** as it is today; add the two new keyword-only
+params after it) to write `answerer`/`transport` into `approvals/r{rev}.json` when provided;
+`frontier_approved` unchanged (existence check, `:353-355`). Thread `--answerer` / `--transport`
+through the `outcome approve` CLI subcommand: add the two `add_argument`s at the parser
+(`outcome.py:1184-1187`) **and** pass them at the call site (`outcome.py:1273`,
+`approve_frontier(store, spec)` today → forward `answerer=args.answerer, transport=args.transport`).
 
 **Test scenarios** (`tests/test_outcome_gate_transport.py`): approve with answerer/transport →
 record round-trips both fields; approve without them → record unchanged from today (backward-compat);
@@ -112,15 +123,32 @@ record round-trips both fields; approve without them → record unchanged from t
 
 ### U2. Channel gate-notify composer (saga)
 
-New saga module `plugins/saga/scripts/outcome_gate_transport.py`: a pure `compose_gate_notice(spec,
-spec_revision, gated_subplots) -> str` that renders the pending-approval prompt + inline lettered
-choices + the gate id, and a thin `emit_gate_notice(session_name, chat_id, text, *, producer=…)` that
-publishes it over redis-channel's generic transport (`publish_outbound` / the `reply` shape), injected
-for tests. Only emit when a channel session is connected (detected via the existing session registry);
-no-op otherwise (R5).
+New saga module `plugins/saga/scripts/outcome_gate_transport.py`: a **transport-agnostic** pure
+`compose_gate_notice(spec, spec_revision, gated_subplots) -> str` that renders the pending-approval
+prompt + inline lettered choices + the gate id. This composer is the shared core for **both**
+transports.
 
-**Test scenarios:** compose produces the gate id + lettered choices deterministically; emit calls the
-injected producer once when "connected"; emit is a no-op when disconnected.
+**Notice delivery is session-driven (per KTD6), for both transports.** The gate holds inside a
+session that is itself connected to the channel (the session is the thing holding the gate — R1's
+"unattended terminal" means the operator left the *keyboard*, not that the session died). That session
+has the channel MCP tools; a bare `outcome advance` CLI invocation does **not** (no Redis client, no
+`chat_id`, no `session_name` in the outcome-store context — verified against `publish_outbound`'s
+signature). So the operator-choice contract (U5) instructs the session to call the connected
+transport's `reply()` with `compose_gate_notice(...)`'s text: redis-channel `reply()` for a
+redis-channel session, the Discord `reply()` MCP tool for Discord. This keeps redis-channel
+router-agnostic (KTD5) and covers Discord, which has **no** Python-callable producer.
+
+`emit_gate_notice(client, session_name, chat_id, text, *, producer=…)` is retained as the
+**redis-channel-only programmatic seam** (wraps `redis_producer.publish_outbound` / the `Outbound`
+shape, `producer` injected for tests) for a future Python driver that already holds a Redis client
+(e.g. a cron-driven advance); it is **not** the v1 hot path and is a no-op for Discord. Connectedness
+is detected via `presence.list_live_sessions(client)` / `presence.is_live` (redis-channel) — name the
+concrete detector, do not invent one; emit is a no-op when no live session (R5).
+
+**Test scenarios:** `compose_gate_notice` produces the gate id + lettered choices deterministically
+(pure, transport-agnostic); `emit_gate_notice` calls the injected producer once when a live session is
+present and is a no-op when `list_live_sessions` is empty. (Discord notice delivery is session-driven
+per U5's contract — no Python unit under test; covered by the documented contract.)
 
 ### U3. Gate-answer parse + access deferral (saga)
 

@@ -1185,6 +1185,16 @@ def main(argv: list[str] | None = None) -> int:
         "approve", help="approve the current frontier so it may dispatch (R20)"
     )
     p_approve.add_argument("outcome_id")
+    p_approve.add_argument(
+        "--answerer",
+        default=None,
+        help="who answered the gate — provenance for a remote/channel approval (#379)",
+    )
+    p_approve.add_argument(
+        "--transport",
+        default=None,
+        help="transport the approval arrived over, e.g. redis-channel/discord — provenance (#379)",
+    )
 
     p_prune = sub.add_parser("prune", help="prune a node + reconcile its orphans (R33)")
     p_prune.add_argument("outcome_id")
@@ -1270,8 +1280,19 @@ def main(argv: list[str] | None = None) -> int:
 
             spec = load_spec(root, args.outcome_id)
             store = _store(root, args.outcome_id)
-            rev = outcome_decompose.approve_frontier(store, spec)
-            print(json.dumps({"approved_revision": rev, "outcome_id": spec.outcome_id}))
+            rev = outcome_decompose.approve_frontier(
+                store, spec, answerer=args.answerer, transport=args.transport
+            )
+            print(
+                json.dumps(
+                    {
+                        "approved_revision": rev,
+                        "outcome_id": spec.outcome_id,
+                        "answerer": args.answerer,
+                        "transport": args.transport,
+                    }
+                )
+            )
         elif args.command == "prune":
             import outcome_decompose
             import outcome_worktrees

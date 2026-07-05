@@ -334,19 +334,36 @@ def _approvals_dir(store: Any) -> Path:
     return store.root / "approvals"
 
 
-def approve_frontier(store: Any, spec: Any, *, at: str = "") -> int:
+def approve_frontier(
+    store: Any,
+    spec: Any,
+    *,
+    at: str = "",
+    answerer: str | None = None,
+    transport: str | None = None,
+) -> int:
     """Record the operator's approval of the current ``spec_revision``'s frontier (R20). Idempotent.
 
     Approval is keyed by revision, so it is **consumed** by the next structural edit (which bumps the
     revision) — re-approval is then required before the new frontier dispatches. Returns the approved
     revision.
+
+    ``answerer`` / ``transport`` (#379): when the approval arrives over a channel transport
+    (redis-channel / Discord) rather than the terminal, record **who** answered and over **which
+    transport** as durable provenance on the record. These are provenance, *not* authorization — the
+    transport's own access policy authorized the sender upstream of the session (option A). Both are
+    omitted for a terminal approval, keeping that record byte-identical to today's; ``frontier_approved``
+    is existence-only, so the extra keys are backward-compatible (KTD3).
     """
     rev = spec.spec_revision
     d = _approvals_dir(store)
     d.mkdir(parents=True, exist_ok=True)
-    outcome_store._write_once(
-        d / f"r{rev}.json", json.dumps({"spec_revision": rev, "at": at}) + "\n"
-    )
+    record: dict[str, Any] = {"spec_revision": rev, "at": at}
+    if answerer is not None:
+        record["answerer"] = answerer
+    if transport is not None:
+        record["transport"] = transport
+    outcome_store._write_once(d / f"r{rev}.json", json.dumps(record) + "\n")
     return rev
 
 

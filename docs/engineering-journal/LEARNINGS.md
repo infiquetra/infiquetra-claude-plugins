@@ -27,6 +27,18 @@
 
 ## 2026-07-05
 
+### A `ship_ceremony.py` CLI change can't be fully dogfooded through its own ceremony — `checkout_main` reverts the working-tree script to the pre-merge version  {#ship-ceremony-self-dogfood-checkout-main}
+
+**Context.** Shipping the `--saga-id` flag (PR #484) *through* the ceremony, driving every transition with `run --saga-id …`. `commit`→`checkout_main` worked; `pull` and `branch_delete` then died with `error: unrecognized arguments: --saga-id`.
+
+**Evidence.** PR #484 (`f2663fb`), 2026-07-05. `checkout_main` runs `git checkout main`, which swaps the entire working tree — including `plugins/saga/scripts/ship_ceremony.py` — to **local** `main`'s version. Local `main` was behind `origin/main` (the fix merged but wasn't pulled yet), so the on-disk script was the pre-`--saga-id` build and argparse rejected the flag.
+
+**Mechanism.** The ceremony invokes the working-tree copy of itself; `checkout_main` precedes `pull`, so between them you are running the *old* CLI surface against the *new* invocation. A change to ship_ceremony's own argument parsing therefore can't survive its own `checkout_main`→`pull` window. Resolved by `git pull` manually (bringing the new script) then continuing `pull`/`branch_delete` with `--saga-id`.
+
+**Generalizable rule.** A self-invoking tool that checks out a branch mid-run will run an older copy of itself after the checkout. When shipping a change to such a tool's *interface*, don't rely on the post-checkout steps using the new interface — pull first, or drive those steps with the interface that exists on the checked-out ref.
+
+**Refs.** Surfaced dogfooding the fix for `{#ship-ceremony-task-saga-resolve-on-main}`; DECISIONS `{#ship-ceremony-saga-id-resolution}`.
+
 ### `ship_ceremony run` can't resolve a task saga once you're on `main` — legacy `main`-frozen sagas make by-branch resolution ambiguous  {#ship-ceremony-task-saga-resolve-on-main}
 
 **Context.** Driving a task-kind saga's ship ceremony (no `issue_ref`, so `run` resolves by the current branch) through cleanup. `commit`/`open_pr`/`merge` ran fine on the feature branch; `checkout_main` switched to `main`, then `pull` and `branch_delete` both aborted.

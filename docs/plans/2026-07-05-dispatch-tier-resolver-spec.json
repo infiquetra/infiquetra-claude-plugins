@@ -1,0 +1,136 @@
+{
+  "name": "dispatch-tier-resolver",
+  "description": "Issue #362: fleet_commons tier_resolver + work-shape->tier registry, /plan table render + drift-guard, team-execution role-tier migration (25 agents), effort emission + spawn-site guard, release surfaces. Serialized (max concurrency 1) for API rate-limit safety and to avoid concurrent edits to the shared resolver test file. Effort-honoring deferred to #363; vocab source/ladder ops to #370.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "work-shape->tier registry",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U1: Create plugins/fleet-core/scripts/fleet_commons/tier_policy.json - one object per work-shape key mirroring plan/SKILL.md:298-304, each carrying {default_model, default_effort, rationale}; and the registry test cases in tests/test_tier_resolver.py (parses as JSON; every default_model in MODELS and default_effort in EFFORTS; all five SKILL.md rows present). Read the plan at docs/plans/2026-07-05-dispatch-tier-resolver-plan.md (U1, R2) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/tier_policy.json",
+        "tests/test_tier_resolver.py"
+      ]
+    },
+    {
+      "unit_id": "U2",
+      "label": "tier_resolver module",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: Create plugins/fleet-core/scripts/fleet_commons/tier_resolver.py - resolve(role_kind, work_shape, envelope_ceiling=None, operator_override=None) -> Resolution(model, effort, because, cheaper_fallback, needs_confirm), importing MODELS/EFFORTS/model_rank/effort_rank from tier_palette via fleet_commons_shim (never re-declaring the tuples); a `resolve` CLI subcommand; and the resolver tests (resolve_shapes, cheaper_fallback_one_rung with floor no-op, expensive_tier_confirm_gate, operator_override, envelope_ceiling). Read the plan at docs/plans/2026-07-05-dispatch-tier-resolver-plan.md (U2, R1/R3/R4, KTD2-KTD4) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/tier_resolver.py",
+        "tests/test_tier_resolver.py"
+      ]
+    },
+    {
+      "unit_id": "U3",
+      "label": "/plan table render + drift-guard",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U3: Refactor plugins/saga/skills/plan/SKILL.md Step-1 tier table to render from tier_policy.json, and add the skill_registry_sync drift-guard test to tests/test_tier_resolver.py (a seeded divergence between the SKILL.md table and the registry fails). Read the plan at docs/plans/2026-07-05-dispatch-tier-resolver-plan.md (U3, R6) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/saga/skills/plan/SKILL.md",
+        "tests/test_tier_resolver.py"
+      ]
+    },
+    {
+      "unit_id": "U4",
+      "label": "team-execution role-tier migration",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U4: Migrate all 25 plugins/team-execution/agents/*.md frontmatters from model: to role-tier: per the plan's KTD7 mapping (reviewers->adversarial-review, scanners->mechanical-scan, testers->contract-test, etc.), keeping each existing model: as a documented last-resort fallback; add role_tier_resolves_for_all_agents and model_fallback_when_registry_absent tests to tests/test_tier_resolver.py. Read the plan at docs/plans/2026-07-05-dispatch-tier-resolver-plan.md (U4, R5, KTD5/KTD7) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": [
+        "plugins/team-execution/agents",
+        "tests/test_tier_resolver.py"
+      ]
+    },
+    {
+      "unit_id": "U5",
+      "label": "effort emission + spawn-site guard",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U5: Emit per-teammate effort into /plan's unit tier table and team-execution's A7 worker table (EMISSION ONLY - honoring is #363; align the A7 column schema with #363's parser), reference the resolver at each enumerated site in plugins/saga/references/sandbox-spawn-sites.md, and add the effort_emitted_into_tables + spawn_site_enumeration drift-guard tests (each dispatch site routes its tier decision through the resolver; a new bare palette literal at an enumerated site fails). Read the plan at docs/plans/2026-07-05-dispatch-tier-resolver-plan.md (U5, R7, KTD6) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [
+        "plugins/saga/skills/plan/SKILL.md",
+        "plugins/team-execution/skills/team-execution/SKILL.md",
+        "plugins/saga/references/sandbox-spawn-sites.md",
+        "tests/test_tier_resolver.py"
+      ]
+    },
+    {
+      "unit_id": "U6",
+      "label": "release surfaces",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U6: Bump plugins/saga and plugins/team-execution plugin.json versions, mirror .claude-plugin/marketplace.json, add CHANGELOG entries for both, record KTD1-KTD7 in docs/engineering-journal/DECISIONS.md, and update the metadata drift-guard test so installed-plugin metadata matches the diff. Read the plan at docs/plans/2026-07-05-dispatch-tier-resolver-plan.md (U6, R8) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U5"
+      ],
+      "files": [
+        "plugins/saga/.claude-plugin/plugin.json",
+        "plugins/team-execution/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/saga/CHANGELOG.md",
+        "plugins/team-execution/CHANGELOG.md",
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    }
+  ]
+}

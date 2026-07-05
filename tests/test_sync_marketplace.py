@@ -182,6 +182,56 @@ def test_new_plugin_without_category_flag_fails_loudly(fixture_tree, capsys):
     assert "category" in capsys.readouterr().err
 
 
+def test_category_override_replaces_existing_category(fixture_tree):
+    """--category overrides an EXISTING plugin's category too, not just a new plugin's."""
+    plugins_dir, marketplace_path = fixture_tree
+    _write_plugin(plugins_dir, "alpha", "1.0.0", ["a"])
+    _write_marketplace(
+        marketplace_path,
+        [
+            {
+                "name": "alpha",
+                "source": "./plugins/alpha",
+                "version": "1.0.0",
+                "description": "alpha plugin",
+                "author": {"name": "Infiquetra", "email": "hello@infiquetra.com"},
+                "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+                "license": "MIT",
+                "keywords": ["a"],
+                "category": "infrastructure",
+            }
+        ],
+    )
+
+    marketplace = SM.load_json(marketplace_path)
+    entries = SM.build_target_plugins(marketplace, plugins_dir, category_override="tools")
+
+    assert entries[0]["category"] == "tools"
+
+
+def test_main_parses_check_and_category_flags(monkeypatch):
+    """main()'s argparse wiring dispatches --check and --category to run() correctly.
+
+    run()'s marketplace_path/plugins_dir are default-bound at function-definition time
+    (module load), so monkeypatching SM.MARKETPLACE_PATH after the fact can't redirect
+    main() at a fixture tree — this test verifies argv-to-run() dispatch instead, via a
+    captured call, rather than coupling to the live repo tree.
+    """
+    captured = {}
+
+    def fake_run(check, category_override, **kwargs):
+        captured["check"] = check
+        captured["category_override"] = category_override
+        return 0
+
+    monkeypatch.setattr(SM, "run", fake_run)
+
+    rc = SM.main(["--check", "--category", "tools"])
+
+    assert rc == 0
+    assert captured == {"check": True, "category_override": "tools"}
+
+
 def test_preserves_existing_entry_order(fixture_tree):
     plugins_dir, marketplace_path = fixture_tree
     _write_plugin(plugins_dir, "zeta", "1.0.0", ["z"])

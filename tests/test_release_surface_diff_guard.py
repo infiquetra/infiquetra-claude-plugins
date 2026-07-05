@@ -98,3 +98,32 @@ def test_changed_files_raises_on_nonzero_exit():
 
     with pytest.raises(GUARD.DiffGuardError):
         GUARD.changed_files("origin/main", runner=failing_runner)
+
+
+def test_main_parses_base_ref_flag(monkeypatch):
+    captured = {}
+
+    def fake_changed_files(base_ref, **kwargs):
+        captured["base_ref"] = base_ref
+        return []
+
+    monkeypatch.setattr(GUARD, "changed_files", fake_changed_files)
+
+    rc = GUARD.main(["--base-ref", "abc1234"])
+
+    assert rc == 0
+    assert captured == {"base_ref": "abc1234"}
+
+
+def test_main_defaults_base_ref_to_origin_main(monkeypatch):
+    captured = {}
+
+    def fake_changed_files(base_ref, **kwargs):
+        captured["base_ref"] = base_ref
+        return []
+
+    monkeypatch.setattr(GUARD, "changed_files", fake_changed_files)
+
+    GUARD.main([])
+
+    assert captured == {"base_ref": GUARD.DEFAULT_BASE_REF}

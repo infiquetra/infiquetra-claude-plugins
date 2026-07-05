@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import manifest_store  # noqa: E402
 import provenance_manifest as pm  # noqa: E402
+import run_ledger  # noqa: E402
 from engine_resolver import Resolution  # noqa: E402
 
 FAILURE_STATUSES = frozenset({"timeout", "no-output", "error", "malformed", "clone-failed"})
@@ -107,6 +109,9 @@ def dispatch(
     model: Any | None = None,
     sandbox: Any = None,
     write_set: list[str] | None = None,
+    ledger: run_ledger.RunLedger | None = None,
+    subplot_id: str = "",
+    at: str = "",
 ) -> AdvisoryEvidence:
     """Run an external engine adapter and return advisory evidence only.
 
@@ -114,6 +119,11 @@ def dispatch(
     to the envelope builders (#287 U5): a sandboxed-mutate agy unit lifts to patch-only; a
     sandboxed-mutate codex unit raises ``DispatchError`` (no write adapter). Default/read-only is
     byte-identical to before.
+
+    ``ledger``/``subplot_id``/``at`` (#401) are **telemetry only** — when all are supplied a real
+    advisory call records an ``engine`` run-fact (and a ``delegation`` fact for an ``agy.delegation.v1``
+    call). This never gates and never changes the returned evidence (KTD5); omitting them is a no-op, so
+    every existing caller is byte-identical.
     """
     if resolution.halt is not None:
         return AdvisoryEvidence(
@@ -139,25 +149,85 @@ def dispatch(
     }
 
     if status == "ok":
-        return AdvisoryEvidence(
+        evidence = AdvisoryEvidence(
             engine_id=resolution.engine_id,
             variant=resolution.variant,
             evidence=output,
             provenance=provenance,
         )
-
-    if status not in FAILURE_STATUSES:
+    elif status not in FAILURE_STATUSES:
         raise DispatchError(f"runner returned unsupported status {status!r}")
+    else:
+        note = downgrade_note(resolution.engine_id, _failure_reason(status, output))
+        provenance["note"] = note
+        evidence = AdvisoryEvidence(
+            engine_id=resolution.engine_id,
+            variant=resolution.variant,
+            evidence="",
+            provenance=provenance,
+            halt=note,
+        )
 
-    note = downgrade_note(resolution.engine_id, _failure_reason(status, output))
-    provenance["note"] = note
-    return AdvisoryEvidence(
-        engine_id=resolution.engine_id,
-        variant=resolution.variant,
-        evidence="",
-        provenance=provenance,
-        halt=note,
+    _record_advisory_facts(ledger, invocation, evidence, result, subplot_id=subplot_id, at=at)
+    return evidence
+
+
+def _num(value: Any) -> float:
+    """A numeric metric from a runner result, or ``0.0`` when absent/non-numeric (bool excluded)."""
+    if isinstance(value, bool):
+        return 0.0
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _evidence_pointer(evidence: AdvisoryEvidence) -> str:
+    """A content-addressed **reference** to a delegation's evidence — a pointer, never inlined bytes."""
+    body = evidence.evidence or ""
+    if not body:
+        return f"engine:{evidence.engine_id}:{evidence.provenance.get('status', '')}"
+    return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def _record_advisory_facts(
+    ledger: run_ledger.RunLedger | None,
+    invocation: Any,
+    evidence: AdvisoryEvidence,
+    result: dict[str, Any],
+    *,
+    subplot_id: str,
+    at: str,
+) -> None:
+    """Write run-fact telemetry for an advisory call. **Telemetry only (KTD5)** — never gates, and a
+    no-op unless ``ledger`` + ``subplot_id`` + ``at`` are all supplied (so dispatch is byte-identical
+    for every existing caller). U3 writes an ``engine`` fact on any real call; U4 adds a ``delegation``
+    fact only when the invocation is an ``agy.delegation.v1`` envelope.
+    """
+    if ledger is None or not subplot_id or not at:
+        return
+    run_ledger.append_fact(
+        ledger,
+        run_ledger.build_fact(
+            "engine",
+            subplot_id=subplot_id,
+            at=at,
+            engine=evidence.engine_id,
+            variant=evidence.variant,
+            status=str(evidence.provenance.get("status", "")),
+            cost=_num(result.get("cost")),
+            latency_seconds=_num(result.get("latency_seconds")),
+            tokens=_num(result.get("tokens")),
+        ),
     )
+    if isinstance(invocation, dict) and invocation.get("schema") == "agy.delegation.v1":
+        run_ledger.append_fact(
+            ledger,
+            run_ledger.build_fact(
+                "delegation",
+                subplot_id=subplot_id,
+                at=at,
+                evidence=_evidence_pointer(evidence),
+                engine=evidence.engine_id,
+            ),
+        )
 
 
 def build_dispatch_manifest(

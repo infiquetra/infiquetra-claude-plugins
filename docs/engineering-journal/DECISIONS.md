@@ -2,6 +2,39 @@
 
 ## 2026-07-05
 
+### One saga-local, hash-chained, leaf-produced run-fact ledger substrate; derive-on-read views {#run-fact-ledger-401}
+
+**Context.** Phase 0 item 10, final (#401, objective #338). A single `run_fact.v1` ledger that spend /
+cache / engine-usage / delegation telemetry all write into, landed empty of most consumers so the ≥8
+wave-1 writers inherit one format instead of N. `plugins/saga/scripts/run_ledger.py`.
+
+- **KTD1 — saga-local, not fleet-commons.** Every consumer (`engine_dispatch`,
+  `lifecycle_state.recommend_execution_backend`, `outcome`) is in saga; no cross-plugin consumer exists
+  (the #348 fleet-commons trigger). Precedents: `manifest_store.py`, `outcome_costs.py`. Fleet-wide
+  adoption + a fleet-commons move are documented follow-ups, not this issue.
+- **KTD2 — a distinct hash-chained `run-facts.jsonl`, separate from the replay ledger.**
+  `outcome_store`'s `ledger.jsonl` (`append_ledger`) is append-only but **un-chained** and serves
+  crash-replay; the run-fact ledger reuses its durable-append discipline (`resolve_common_dir`,
+  `O_APPEND`, `_heal_torn_tail`) and adds a `prev_hash`→`this_hash` chain. Not an overload.
+- **KTD3 — derive-on-read, no committed summary.** `rollup`/`reuse_ratio`/`last_n_prior` computed from
+  the stream each read (mirrors `outcome_costs.rollup`). Binding: `#outcome-economics-stance`.
+- **KTD4 — leaf-produced facts; the coordinator only aggregates** (each fact carries its `subplot_id`).
+- **KTD5 — the `engine` fact is telemetry, never a gate.** The `engine_dispatch.dispatch(ledger=…)`
+  wiring writes facts without touching `satisfy_gate`/dispatch behavior; omitting the ledger is a no-op.
+  Binding: `#external-engines-never-gatekeepers`.
+- **KTD6 — `run_fact.v1` + `kind` discriminator, forward-tolerant readers** (unknown kinds/fields and a
+  torn trailing line never crash a reader).
+- **KTD7 — no `outcome_costs.py` migration (non-goal).** Coexists; porting it + adopting the wave-1
+  writers are follow-up.
+
+**Tamper-evidence, not tamper-resistance.** `verify_chain` catches in-place mutation / reorder /
+middle-deletion (a fact can't be silently altered or buried) but not a full-access rewrite or trailing
+truncation — acceptable because the store is machine-local and never committed. Documented in
+`references/run-fact-ledger.md` so no consumer over-claims.
+
+**Revisit when:** a non-saga plugin needs to write facts (fleet-commons move), or the wave-1 writers /
+`outcome_costs` migration land.
+
 ### Remote gate approval defers sender-auth to the transport; saga carries the code, redis-channel stays router-agnostic {#remote-gate-approval-379}
 
 **Context.** Phase 0 item 8 (#379): give the durable `/outcome` R20 frontier-approval gate a second,

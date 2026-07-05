@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.60.0"  # remote gate approval over the channel (#379)
+    assert plugin_json["version"] == "0.61.0"  # run-fact ledger substrate (#401)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

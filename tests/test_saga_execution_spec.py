@@ -163,6 +163,39 @@ def test_advisory_consensus_routes_to_ultracode_backend() -> None:
     assert result["recommended"] == "cc-workflows-ultracode"
 
 
+def test_recommend_backend_no_ledger_has_no_prior_key() -> None:
+    # #401 U5: byte-identical to today when no ledger is passed (the common path).
+    from lifecycle_state import recommend_execution_backend
+
+    result = recommend_execution_backend(needs_consensus=True, consensus_is_gated=False)
+    assert "prior" not in result
+
+
+def test_recommend_backend_empty_ledger_is_the_no_data_fallback(tmp_path: Path) -> None:
+    import run_ledger
+    from lifecycle_state import recommend_execution_backend
+
+    ledger = run_ledger.RunLedger(path=tmp_path / "run-facts.jsonl")
+    result = recommend_execution_backend(ledger=ledger)
+    assert "prior" not in result  # no data -> no prior key (recommendation unchanged)
+
+
+def test_recommend_backend_surfaces_ledger_prior(tmp_path: Path) -> None:
+    import run_ledger
+    from lifecycle_state import recommend_execution_backend
+
+    ledger = run_ledger.RunLedger(path=tmp_path / "run-facts.jsonl")
+    for tok in (100, 300):
+        run_ledger.append_fact(
+            ledger,
+            run_ledger.build_fact(
+                "spend", subplot_id="s", at="t", tokens=tok, tokens_cached=0, tokens_fresh=tok
+            ),
+        )
+    result = recommend_execution_backend(ledger=ledger, prior_n=5)
+    assert result["prior"] == {"metric": "spend.tokens", "n": 5, "avg_tokens": 200.0}
+
+
 # --------------------------------------------------------------------------- sandbox (U1)
 # The two-axis capability envelope (#287 R1-R3): mutation_policy x workspace_isolation, with
 # named profile shorthand. Absent => ambient x read-write (today's behavior, no new key).

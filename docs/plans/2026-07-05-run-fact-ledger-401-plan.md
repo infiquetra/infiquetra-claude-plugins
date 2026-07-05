@@ -33,9 +33,15 @@ per derive-on-read, there is **no committed status/summary field**.
   `prev_hash`→`this_hash` chain link, using the same durable-append discipline as the existing replay
   ledger (`resolve_common_dir()` git-common-dir carrier, `O_APPEND`, torn-trailing-line tolerant). A
   distinct file from `outcome_store`'s replay `ledger.jsonl` (different purpose).
-- **R3.** `verify_chain(store) -> bool|report` recomputes the chain and **fails on any mutation,
-  reorder, or deletion** of a prior record — a passed record cannot be silently altered and a failed
-  fact cannot be buried by rewriting history (tamper-evidence).
+- **R3.** `verify_chain(store) -> bool|report` recomputes the chain and **fails on any in-place
+  mutation, reorder, or truncation/deletion** of a prior record — a passed record cannot be silently
+  altered and a failed fact cannot be buried by an in-place edit (**tamper-evidence**, the issue's
+  "pass cannot be buried" requirement). Explicit threat-model bound: chaining is tamper-*evidence*, not
+  tamper-*resistance* — a writer with full file access could recompute a fresh internally-consistent
+  chain. That is out of scope and acceptable: the store lives in the machine-local, never-committed
+  git-common-dir cache (same trust boundary as the rest of `outcome_store`), so the real threat is
+  accidental corruption + a silent in-place bury, both of which `verify_chain` catches. The schema doc
+  (U6) states this bound so no consumer over-claims the property.
 - **R4.** Derive-on-read views over the fact stream (no committed summary): `rollup` (per-field
   aggregate), `reuse_ratio` (cached vs fresh, with a defined empty result when there is no data), and
   `last_n_prior(kind, field, n)` ("last N runs averaged X").
@@ -100,8 +106,10 @@ import or mirror it).
 **Test scenarios** (`tests/test_run_ledger.py`): a fact of each of the 4 kinds round-trips through
 append→read with all its fields (schema-covers-all-kinds); a second append chains onto the first
 (`prev_hash` == the first's `this_hash`); `verify_chain` returns pass on an untouched ledger; **custody
-chain: a mutated or deleted prior record makes `verify_chain` FAIL** (a pass cannot be buried, a fail
-cannot be rewritten away); a torn trailing line is tolerated (read/verify do not crash).
+chain: an in-place mutation of a prior record's fields makes `verify_chain` FAIL** (a pass cannot be
+buried); **deleting or reordering a middle record makes `verify_chain` FAIL** (the broken `prev_hash`
+link is detected — a fail cannot be silently dropped); a torn trailing line is tolerated (read/verify
+do not crash — the trailing torn line is not a chain break).
 
 ### U2. Derive-on-read views
 
@@ -116,38 +124,55 @@ with **no data** returns the defined empty (e.g. `None`/`0.0` per the schema doc
 
 ### U3. Consumer 1 — engine-usage fact from `engine_dispatch`
 
-Wire an `engine` `run_fact` write from `engine_dispatch.py`'s `AdvisoryEvidence` (`:28`) path (advisory
-engine id + cost + latency + tokens → `append_fact`). **Telemetry only** — no change to
-`satisfy_gate`/dispatch behavior (KTD5). Inject the ledger store so the write is unit-testable and a
-missing/None store is a no-op (never breaks dispatch).
+Wire an `engine` `run_fact` write from `engine_dispatch.dispatch()` (`engine_dispatch.py:103`), which
+returns an `AdvisoryEvidence` (`:28`, fields incl. `evidence`, cost/latency/provenance) — write the
+engine id + cost + latency + tokens as an `engine` fact via `append_fact`. **Telemetry only** — no
+change to `satisfy_gate` (`:281`) / dispatch behavior (KTD5). Inject the ledger store so the write is
+unit-testable and a missing/None store is a **no-op** (never breaks dispatch).
 
 **Test scenarios:** an advisory call writes exactly one `engine` fact with the engine id/cost/latency;
 dispatch/gate behavior is unchanged whether or not a store is present (telemetry-not-gate).
 
 ### U4. Consumer 2 — delegation-evidence fact
 
-Write a `delegation` `run_fact` carrying the evidence pointer at the `engine_dispatch` delegation/evidence
-point (the concrete in-saga delegation surface; the team-execution evidence path is a documented
-alternative home, not required for v1). Evidence pointer is a reference, not inlined bytes.
+Write a `delegation` `run_fact` carrying the evidence pointer for a delegation call. The concrete
+in-saga surface is `engine_dispatch`'s delegation path — `build_agy_delegation_envelope`
+(`engine_dispatch.py:68`, `schema: "agy.delegation.v1"`) + the resulting `AdvisoryEvidence.evidence`
+(`:33`). The evidence pointer is a **reference**, not inlined bytes. (The team-execution validator
+evidence path the issue floated is a documented alternative home, not required for v1.)
 
-**Test scenarios:** a delegation records a `delegation` fact whose evidence pointer resolves to the
-delegated run's evidence; absence of a store is a no-op.
+**Relationship to U3:** both consumers derive from the same `engine_dispatch.dispatch()` →
+`AdvisoryEvidence`; U3 writes an `engine` fact on **any** advisory call, U4 writes a `delegation` fact
+**only** when the call is a delegation (the `agy.delegation.v1` envelope is present). They may share the
+call site, writing two distinct fact kinds; keep the two `append_fact` writes independent so either can
+be a no-op without affecting the other.
+
+**Test scenarios:** a delegation call records a `delegation` fact whose evidence pointer resolves to the
+delegated run's evidence; a non-delegation advisory call writes **no** `delegation` fact (only U3's
+`engine` fact); absence of a store is a no-op.
 
 ### U5. `/plan` tier-table ledger prior
 
-Surface a `last_n_prior`-derived prior ("last N runs averaged ~X tokens") in the `/plan` tier
-recommendation surface (the `recommend_execution_backend` / tiering path). Read-only over the ledger;
-a **defined no-data fallback** (the tier recommendation still works with an empty ledger).
+Surface a `last_n_prior`-derived prior ("last N runs averaged ~X tokens") through the **concrete,
+unit-testable code surface** `lifecycle_state.recommend_execution_backend` (`lifecycle_state.py:99`,
+already consumed by `outcome_dispatcher.py:411` and threaded via `saga.py:1386`) — **not** the prose
+tier-table in `plan/SKILL.md` (which is not unit-testable, so the `tier-table-prior` scenario would
+have nothing to assert against). Add the prior as an additional, read-only, optional-input field on
+that function's computation/output (a missing/empty ledger leaves the existing recommendation
+unchanged). Read-only over the ledger; a **defined no-data fallback**.
 
-**Test scenarios:** with N prior facts, the tier surface reports the averaged prior; with **no ledger
-data**, it falls back cleanly (no crash, tier recommendation unchanged).
+**Test scenarios** (`tests/test_saga_execution_spec.py`, the existing home for
+`recommend_execution_backend` — there is no `tests/test_lifecycle_state.py`): with N prior facts, the
+recommendation surfaces the averaged prior; with **no ledger data**, it falls back cleanly (no crash,
+the backend recommendation is byte-identical to today's).
 
 ### U6. Schema doc + adoption note + DECISIONS
 
 `plugins/saga/references/run-fact-ledger.md` — the `run_fact.v1` schema (all 4 kinds), the hash-chain +
-`verify_chain` contract, the derive-on-read views, and an **adoption note** (how a future wave-1 writer
-emits a fact). DECISIONS `{#run-fact-ledger-401}` (KTD1-KTD7). **Test expectation: none** (docs; covered
-by the drift-guard + U1-U5 tests).
+`verify_chain` contract **including the tamper-evidence-not-tamper-resistance threat-model bound (R3)**,
+the derive-on-read views, and an **adoption note** (how a future wave-1 writer emits a fact). DECISIONS
+`{#run-fact-ledger-401}` (KTD1-KTD7). **Test expectation: none** (docs; covered by the drift-guard +
+U1-U5 tests).
 
 ### U7. Release surfaces + writeback
 

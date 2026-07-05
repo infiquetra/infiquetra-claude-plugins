@@ -1,5 +1,25 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-04
+
+### `ship_ceremony.py` `request_review` becomes a no-op, not a resolved-login reviewer request (pending commit) {#ship-ceremony-request-review-noop-477}
+
+**Decision.** Fix issue #477 (`_do_request_review` always fails: `gh pr edit --add-reviewer @me` is
+not a valid login for the `requestReviewsByLogin` mutation) by making the transition's body a no-op,
+rather than resolving the real authenticated login via `gh api user -q .login` and requesting that.
+
+**Rejected alternatives.** Resolving the real login and passing it to `--add-reviewer` — rejected
+because this repository has exactly one human maintainer, who is also the sole author of every
+ceremony PR; requesting review from yourself has no one to add value regardless of whether the
+call would technically succeed. (GitHub's reviewer-request path is widely understood to also
+reject self-review requests, which would make that path trade one known-fail call for a
+plausibly-still-fail call — offered as context, not verified, and not needed to justify this
+decision on its own.) A configurable-reviewer flag was also rejected as unwarranted surface for a
+single-maintainer repo with no near-term second reviewer.
+
+**Revisit when:** a second human maintainer joins this repository — at that point
+`request_review` should resolve and request that person's real login instead of staying a no-op.
+
 > **ADR-style records of plugin-pattern / convention / tooling choices.** When you commit a chosen path over alternatives — pick A over B, flip a flag, change a threshold, choose a category, adopt a tool — capture rationale + tradeoff + revisit-when condition + commit hash.
 >
 > The point is to make **revisit conditions explicit** so a future Claude (or human) reading "why did we pick X?" gets the answer cold, including when it would be right to reconsider.

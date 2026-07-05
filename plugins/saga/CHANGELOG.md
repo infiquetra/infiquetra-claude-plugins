@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.54.3] - 2026-07-05
+
+- Fix: `ship_ceremony.py`'s `open_pr` transition, on the front-loaded/existing-PR path, flipped
+  the draft PR ready (`gh pr ready`) without pushing the commits accumulated since `start()` opened
+  it — so CI could validate a stale HEAD while real work sat unpushed. It now pushes the branch
+  first, via a shared `_push_branch` helper also used by the `commit` transition (#478).
+
 ## [0.54.2] - 2026-07-04
 
 - Fix: `ship_ceremony.py`'s `request_review` transition always failed (`gh pr edit --add-reviewer

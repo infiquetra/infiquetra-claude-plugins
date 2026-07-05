@@ -349,6 +349,47 @@ def test_start_refuses_when_ceremony_already_progressed(ceremony_repo) -> None:
     assert fake_gh._prs == {}  # noqa: SLF001 - no PR was created
 
 
+def test_open_pr_pushes_pending_commits_on_existing_pr_path(ceremony_repo) -> None:
+    """Issue #478: on the front-loaded/existing-PR path, open_pr must push the commits
+    accumulated since start() before flipping the draft ready — otherwise CI validates a
+    stale HEAD. start() pre-records ceremony_transition="commit", so _do_commit (the only
+    other push site) is skipped; the push has to happen in open_pr itself."""
+    repo, fake_gh = ceremony_repo
+    branch = "feat/pf-throwaway-345"
+
+    # Front-loaded start: pushes the scaffold, opens draft #1, records commit + pr_refs.
+    SC.start(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
+
+    # Simulate implementation work landing locally *after* the draft PR was opened.
+    (repo / "impl.txt").write_text("real work done after start()\n")
+    subprocess.run(["git", "-C", str(repo), "add", "impl.txt"], check=True)  # noqa: S607
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "impl after start"],
+        check=True,
+        capture_output=True,
+    )  # noqa: S607
+
+    def _rev(ref: str) -> str:
+        return subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo), "rev-parse", ref],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    # Pre-fix bug state: the tracked remote ref is behind local HEAD.
+    assert _rev(f"origin/{branch}") != _rev("HEAD")
+
+    # The ceremony run reaching open_pr (next after start's recorded "commit").
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
+
+    # After the fix the remote ref matches local HEAD (the accumulated commit is pushed),
+    # and the draft was still flipped ready rather than a second PR being opened.
+    assert _rev(f"origin/{branch}") == _rev("HEAD")
+    assert len(fake_gh._prs) == 1  # noqa: SLF001
+    assert fake_gh._prs[branch]["draft"] is False  # noqa: SLF001
+
+
 class FailingRunner:
     """Wraps a base runner and fails one specific command (matched by prefix),
     passing everything else through unchanged."""

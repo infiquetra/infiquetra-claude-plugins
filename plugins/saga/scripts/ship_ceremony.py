@@ -231,14 +231,22 @@ def _saga_short_id(saga: Mapping[str, Any]) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _push_branch(repo_root: Path, *, runner: Callable[..., Any] | None) -> None:
+    """Push the current branch to its ``origin`` tracking ref. Idempotent — a no-op
+    ("Everything up-to-date") when the remote already matches local HEAD. Shared by
+    ``_do_commit`` and ``_do_open_pr``'s existing-PR path so both emit the same push
+    argv (issue #478)."""
+    branch = current_branch(repo_root, runner=runner)
+    _run(["git", "push", "-u", "origin", branch], cwd=repo_root, runner=runner)
+
+
 def _do_commit(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
 ) -> None:
     """Push the current branch. The scaffold commit itself already exists — from
     ``/work``'s Phase 1.4 mint (KTD4) or from the operator's own commits — this
     transition's job is making sure it is on the remote."""
-    branch = current_branch(repo_root, runner=runner)
-    _run(["git", "push", "-u", "origin", branch], cwd=repo_root, runner=runner)
+    _push_branch(repo_root, runner=runner)
 
 
 def _do_open_pr(
@@ -248,6 +256,12 @@ def _do_open_pr(
     (R7) — flip that existing draft ready instead of opening a second one."""
     existing = saga.get("pr_refs") or []
     if existing:
+        # Front-loaded path: ``start`` opened the draft and pre-recorded
+        # ``ceremony_transition="commit"``, so ``_do_commit`` (the only other push
+        # site) never runs. Push the commits accumulated since ``start`` BEFORE
+        # flipping ready, so CI validates the current HEAD, not the ``start``-time
+        # HEAD (issue #478).
+        _push_branch(repo_root, runner=runner)
         pr_number = _pr_number(existing[-1])
         _run(["gh", "pr", "ready", pr_number], cwd=repo_root, runner=runner)
         return

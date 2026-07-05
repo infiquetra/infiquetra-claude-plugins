@@ -1,5 +1,37 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-05
+
+### `ship_ceremony.py` pushes at `open_pr`, not `merge`, to close the front-loaded stale-HEAD gap (pending commit) {#ship-ceremony-open-pr-push-478}
+
+**Decision.** Fix issue #478 (`_do_open_pr`'s front-loaded/existing-PR branch flips the draft PR
+ready without pushing the commits accumulated since `start()`) by pushing the branch in that
+branch — before `gh pr ready` — via a new shared `_push_branch` helper also called from
+`_do_commit`. The `merge` transition is deliberately left unchanged.
+
+**Rejected alternatives.** (1) Pushing at `merge` too, as issue #478's body hinted ("ideally
+merge/request_review") — rejected: `/work`'s round-N PR continuation loop already re-pushes
+post-`open_pr` commits (`work/references/pr-continuation-loop.md:33,35`), so the only unpushed
+window is `start()`→`open_pr`; and a merge-time push would reset required CI checks to pending,
+after which `_do_merge`'s `gh pr merge --squash` (no `--auto`) fails — or on a non-gated repo
+merges unvalidated code, the exact bug class. (2) A merge-time read-only "refuse if local ahead
+of remote" guard — rejected as redundant with `/work`'s staleness gate
+(`pr-continuation-loop.md:36`) and as a new failure mode that could block legitimate autonomous
+completion. (3) Inlining a second `git push` rather than extracting `_push_branch` — rejected to
+avoid argv drift between the two push sites (and to keep `_do_commit`'s argv identical so the
+existing `fail_prefix` test still matches).
+
+**Rationale.** Remote-vs-local integrity *at merge* is `/work`'s responsibility (round-N re-push
++ staleness gate); the ceremony's only gap is the front-loaded accumulation window, which the
+`open_pr` push closes exactly. Pushing before flipping ready means CI validates the real HEAD.
+
+**Revisit when:** `/work` stops owning the round-N re-push, or `ship_ceremony.py` gains a
+post-`open_pr` transition that itself accumulates commits — either would reopen the question of a
+merge-time integrity check.
+
+**Refs.** Plan `docs/plans/2026-07-05-ship-ceremony-open-pr-push-478-plan.md`; follows
+[#ship-ceremony-request-review-noop-477] (the previous ship_ceremony defect fix).
+
 ## 2026-07-04
 
 ### `ship_ceremony.py` `request_review` becomes a no-op, not a resolved-login reviewer request (pending commit) {#ship-ceremony-request-review-noop-477}

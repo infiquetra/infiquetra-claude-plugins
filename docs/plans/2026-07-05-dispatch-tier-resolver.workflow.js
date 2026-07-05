@@ -44,7 +44,22 @@ function __gate(result, opts) {
         try {
           return JSON.parse(s);
         } catch (e) {
-          // ignore
+          // fall through to embedded-JSON extraction
+        }
+      }
+      // Extract an embedded JSON value when the agent prepends conversational prose
+      // before the object (sonnet/opus routinely add a "looks good, tests pass" preamble
+      // ahead of the return object). Try object first, then array.
+      const pairs = [['{', '}'], ['[', ']']];
+      for (let i = 0; i < pairs.length; i++) {
+        const start = s.indexOf(pairs[i][0]);
+        const end = s.lastIndexOf(pairs[i][1]);
+        if (start !== -1 && end > start) {
+          try {
+            return JSON.parse(s.slice(start, end + 1));
+          } catch (e) {
+            // try the next delimiter pair
+          }
         }
       }
     }

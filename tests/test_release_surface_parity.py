@@ -5,14 +5,6 @@ import json
 import sys
 from pathlib import Path
 
-_SM_SPEC = importlib.util.spec_from_file_location(
-    "sync_marketplace", Path(__file__).parent.parent / "scripts" / "sync_marketplace.py"
-)
-assert _SM_SPEC is not None and _SM_SPEC.loader is not None
-SM = importlib.util.module_from_spec(_SM_SPEC)
-sys.modules["sync_marketplace"] = SM
-_SM_SPEC.loader.exec_module(SM)
-
 _CHL_SPEC = importlib.util.spec_from_file_location(
     "changelog_heading_lint",
     Path(__file__).parent.parent / "scripts" / "changelog_heading_lint.py",
@@ -109,3 +101,35 @@ def test_tri_lock_passes_on_agreement(tmp_path):
     drifted = PARITY.check_parity(marketplace_path, plugins_dir)
 
     assert drifted == []
+
+
+def test_tri_lock_catches_stale_committed_marketplace_version(tmp_path):
+    """Regression: the marketplace leg must read the ACTUALLY COMMITTED entry, not a
+    regenerated one — a regenerated entry's version always equals plugin.json's by
+    construction, which would make this leg a tautology (caught in code review)."""
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    marketplace_path = tmp_path / "marketplace.json"
+
+    _write_plugin(plugins_dir, "alpha", "1.0.0", "1.0.0")
+    # plugin.json and CHANGELOG agree at 1.0.0; the committed marketplace.json entry is stale.
+    _write_marketplace(marketplace_path, [_entry("alpha", "0.9.0")])
+
+    drifted = PARITY.check_parity(marketplace_path, plugins_dir)
+
+    assert drifted == ["alpha"]
+
+
+def test_tri_lock_catches_missing_dated_heading(tmp_path):
+    """A CHANGELOG with no dated heading (only `[Unreleased]`) is flagged, not crashed on."""
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    marketplace_path = tmp_path / "marketplace.json"
+
+    _write_plugin(plugins_dir, "alpha", "1.0.0", "1.0.0")
+    (plugins_dir / "alpha" / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n")
+    _write_marketplace(marketplace_path, [_entry("alpha", "1.0.0")])
+
+    drifted = PARITY.check_parity(marketplace_path, plugins_dir)
+
+    assert drifted == ["alpha"]

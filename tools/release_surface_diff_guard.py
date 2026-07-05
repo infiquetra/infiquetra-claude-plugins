@@ -18,18 +18,21 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
+from collections.abc import Callable
+from typing import Any
 
 DEFAULT_BASE_REF = "origin/main"
 
 PLUGIN_PATH_RE = re.compile(r"^plugins/([^/]+)/(.*)$")
-DOC_EXEMPT_SUFFIXES = ("README.md",)
+DOC_EXEMPT_BASENAME = "README.md"
+DOC_EXEMPT_PREFIX = "docs/"
 
 
 class DiffGuardError(Exception):
     pass
 
 
-def changed_files(base_ref: str, runner=None) -> list[str]:
+def changed_files(base_ref: str, *, runner: Callable[..., Any] | None = None) -> list[str]:
     run = runner if runner is not None else subprocess.run
     result = run(
         ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
@@ -44,9 +47,15 @@ def changed_files(base_ref: str, runner=None) -> list[str]:
 
 def is_bump_required_path(plugin_relative_path: str) -> bool:
     """Non-doc, non-test path within a plugin's directory requires a bump."""
-    if plugin_relative_path in DOC_EXEMPT_SUFFIXES:
+    if plugin_relative_path == DOC_EXEMPT_BASENAME or plugin_relative_path.endswith(
+        f"/{DOC_EXEMPT_BASENAME}"
+    ):
         return False
     if plugin_relative_path == "CHANGELOG.md":
+        return False
+    if plugin_relative_path.startswith(DOC_EXEMPT_PREFIX) or f"/{DOC_EXEMPT_PREFIX}" in (
+        plugin_relative_path
+    ):
         return False
     return not (plugin_relative_path.startswith("tests/") or "/tests/" in plugin_relative_path)
 

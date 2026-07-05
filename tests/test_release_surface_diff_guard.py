@@ -38,6 +38,9 @@ def test_skill_edit_with_bump_passes():
     "path",
     [
         "plugins/foo/README.md",
+        "plugins/foo/skills/x/README.md",
+        "plugins/foo/docs/architecture.md",
+        "plugins/foo/docs/guide/deep.md",
         "plugins/foo/tests/test_x.py",
         "plugins/foo/scripts/tests/test_y.py",
     ],
@@ -76,6 +79,12 @@ def test_changed_files_parses_runner_output():
         "plugins/foo/skills/x/SKILL.md",
         "plugins/foo/.claude-plugin/plugin.json",
     ]
+
+
+def test_changed_files_runner_is_keyword_only():
+    """runner must be keyword-only (house convention) — a positional call is a TypeError."""
+    with pytest.raises(TypeError):
+        GUARD.changed_files("origin/main", lambda cmd, **kwargs: None)
 
 
 def test_changed_files_raises_on_nonzero_exit():

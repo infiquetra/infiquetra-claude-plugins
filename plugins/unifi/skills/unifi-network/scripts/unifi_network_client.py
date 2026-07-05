@@ -21,6 +21,8 @@ import argparse
 import json
 import os
 import sys
+import time
+from pathlib import Path
 from typing import Any, cast
 
 import urllib3
@@ -40,6 +42,22 @@ except ImportError:
         )
     )
     sys.exit(1)
+
+
+# Shared 429 retry/backoff primitive via fleet-commons (#348 / DECISIONS {#fleet-commons-mechanism-463}).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
+
+_retry_backoff = fleet_commons_shim.load("retry_backoff")
+
+
+class _RateLimited(Exception):  # noqa: N818 - a sentinel, not an error surface
+    """A 429 raised inside the retry wrapper so ``retry_with_backoff`` backs off + retries (#348)."""
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(f"rate limited; retry after {retry_after}s")
+        self.status_code = 429
+        self.retry_after = retry_after
 
 
 class UnifiNetworkClient:
@@ -126,8 +144,8 @@ class UnifiNetworkClient:
             self._dry_run(method, url, data)
             sys.exit(0)
 
-        try:
-            response = requests.request(
+        def _do_request() -> Any:
+            resp = requests.request(
                 method=method,
                 url=url,
                 headers=self.headers,
@@ -136,6 +154,27 @@ class UnifiNetworkClient:
                 timeout=30,
                 verify=self.verify_ssl,
             )
+            # A 429 is raised so the shared primitive backs off + retries (#348); a Retry-After hint
+            # is honored. All other statuses flow through unchanged to the handling below.
+            if resp.status_code == 429:
+                raise _RateLimited(int(resp.headers.get("Retry-After", 60)))
+            return resp
+
+        try:
+            try:
+                response = _retry_backoff.retry_with_backoff(
+                    _do_request,
+                    retry_after=lambda exc: getattr(exc, "retry_after", None),
+                    sleep=time.sleep,
+                )
+            except _RateLimited as exc:
+                # Retries exhausted — preserve the existing typed-error + exit surface.
+                self._error(
+                    f"Rate limited. Retry after {exc.retry_after} seconds",
+                    status_code=429,
+                    retry_after=exc.retry_after,
+                )
+                sys.exit(1)
 
             if response.status_code == 401:
                 self._error("API key invalid or expired", status_code=401)
@@ -147,15 +186,6 @@ class UnifiNetworkClient:
 
             if response.status_code == 404:
                 self._error("Resource not found. Verify ID/MAC.", status_code=404)
-                sys.exit(1)
-
-            if response.status_code == 429:
-                retry_after = int(response.headers.get("Retry-After", 60))
-                self._error(
-                    f"Rate limited. Retry after {retry_after} seconds",
-                    status_code=429,
-                    retry_after=retry_after,
-                )
                 sys.exit(1)
 
             if response.status_code >= 500:

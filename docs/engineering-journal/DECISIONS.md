@@ -2,6 +2,54 @@
 
 ## 2026-07-05
 
+### One shared 429 retry/backoff primitive in fleet-commons; emitted-wave JS mirror + derived-on-read `/outcome` re-pick {#shared-retry-backoff-primitive-348}
+
+**Decision.** Consolidate the fleet's four disconnected 429 responses onto one hardened
+`retry_backoff` primitive in **fleet-commons** (`plugins/fleet-core/scripts/fleet_commons/`,
+stdlib-only), adopted by the two unifi clients, mirrored as an emitted-JS `__retry` helper in every
+`.workflow.js` parallel wave, and consumed by `/outcome` dispatch as a derived-on-read
+`retriable-pending` classification (#348).
+
+**KTD1 — primitive lives in fleet-commons; consumers vendor the shim.** Per the #463 commons
+decision, `retry_backoff.py` goes under `plugins/fleet-core/scripts/fleet_commons/` (not saga), so
+consumers couple to the stable commons, not saga's churn. Each consumer vendors the byte-identical
+`fleet_commons_shim.py` and calls `fleet_commons_shim.load("retry_backoff")`; the shim copies are
+drift-guarded by `tests/test_fleet_commons_resolution.py`.
+
+**KTD2 — `agy_delegate` is scoped OUT.** `agy_delegate.py` has no HTTP 429 surface (its rate-limit
+manifests as a subprocess timeout, not a 429 status); wiring auto-relaunch retry there would invent
+speculative subprocess-relaunch semantics and risk double-spending tokens on a genuinely
+non-transient failure. Safer, not merely easier: the primitive (incl. the fault-injection-tested
+`CircuitBreaker`) is **import-ready** for agy/codex adoption when an engine bridge exposes a real
+rate-limit signal. Consequence: no agy release bump, no `test_agy_delegate.py` change.
+
+**KTD3 — emitted-wave retry is a dual-impl JS mirror, not a shared import.** A `.workflow.js` runs
+as JS and cannot import the Python primitive, so `execution_spec.py` emits a `_JS_RETRY_HELPER`
+(`__retry`/`__is429`/`__retryBackoffMs`, `function`-only so it perturbs no emitted-shape golden,
+deterministic backoff with no `Math.random`) and wraps each `parallel([...])` wave thunk (all three
+`_emit_thunk` forms) and refute-N panel verifier `agent()` call. Retry is scoped to **waves** (the
+concurrency-driven rate-limit hotspot); singleton `await agent()` calls stay unwrapped, which also
+preserves the singleton emission goldens. Rejected: wrapping every `agent()` call (scope creep + a
+larger golden blast radius for no wave-level benefit).
+
+**KTD4 — `retriable-pending` is a derived-on-read RESULT label, never a committed `NODE_STATE`.**
+`NODE_STATES` deliberately excludes `retriable-pending`; adding it would be a committed status-field
+change the derived-on-read model forbids. Instead a 429'd dispatch (`BackendRateLimitError`) writes
+**no commit** — the leaf's derived state stays `ready`, so the ready frontier re-picks it on the next
+`advance()` call with no operator action and no git/ledger mutation. A per-call `retriable_seen` set
+de-hammers a `loop=True` run. This is distinct from a HALT (backend down → operator attention): a 429
+is transient and self-clearing. Every non-429 failure keeps HALTing exactly as before.
+
+**Rejected alternatives.** (a) saga-hosted commons — couples consumers to saga's churn (#463 already
+rejected this). (b) A committed `retriable-pending` node state — violates derived-on-read and would
+need a persisted status write on a transient condition. (c) Executing the emitted JS in tests to
+prove retry — there is no JS runtime in the suite, so retry semantics are asserted structurally on
+the emitted string, consistent with every other emitter test.
+
+**Revisit when** an engine bridge (agy/codex) exposes a real rate-limit signal — wire the
+import-ready primitive + `CircuitBreaker` into the bridge and add the `rate_limited` dispatch-result
+producer (the `make_dispatcher` translation is already in place, awaiting that producer).
+
 ### `/outcome start --from-objective` seeds the DAG from GitHub sub-issues; edge inference is best-effort over stable fields {#outcome-from-objective-ingestion-375}
 
 **Decision.** Wire `discover_subissues.py`'s GraphQL reader into `/outcome start --from-objective

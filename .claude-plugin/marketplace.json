@@ -38,7 +38,7 @@
     {
       "name": "unifi",
       "source": "./plugins/unifi",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "description": "UniFi Network and Protect CLI for managing UDM devices, clients, VLANs, firewall rules, cameras, PTZ control, and motion events",
       "author": {
         "name": "Infiquetra",
@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.58.0",
+      "version": "0.59.0",
       "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas.",
       "author": {
         "name": "Infiquetra",
@@ -198,7 +198,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only \u2014 no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",

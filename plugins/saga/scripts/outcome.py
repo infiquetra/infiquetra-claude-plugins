@@ -479,6 +479,9 @@ class AdvanceResult:
     gated: list[str] = field(
         default_factory=list
     )  # ready leaves held back by the approval gate (U7/R20)
+    retriable: list[str] = field(
+        default_factory=list
+    )  # leaves whose dispatch hit a 429 -> retriable-pending, left ready to re-pick (#348/R4/KTD4)
     degraded: list[dict[str, Any]] = field(
         default_factory=list
     )  # leaves degraded one rung autonomous+away (U9/R23)
@@ -502,6 +505,7 @@ class AdvanceResult:
             "liveness": self.liveness,
             "costs": self.costs,
             "gated": self.gated,
+            "retriable": self.retriable,
             "degraded": self.degraded,
             "board_synced": self.board_synced,
             "drift": self.drift,
@@ -586,6 +590,11 @@ def advance(
     all_halted: list[dict[str, Any]] = []
     all_harvested: list[str] = []
     all_gated: list[str] = []
+    all_retriable: list[str] = []
+    # #348/KTD4: sids that hit a 429 this advance() CALL are skipped for the rest of the call so a
+    # loop=True run never hammers a rate-limited backend. Per-call (never persisted): a fresh advance
+    # re-derives the leaf as `ready` and re-attempts it -- the derived-on-read re-pick.
+    retriable_seen: set[str] = set()
     all_degraded: list[dict[str, Any]] = []
     all_board_synced: list[dict[str, Any]] = []
     all_drift: list[dict[str, Any]] = []
@@ -613,22 +622,26 @@ def advance(
                 # Reclaim any hung dispatched leaf as `stalled` (R31) BEFORE the frontier read so its
                 # downstream cascade is reflected this tick (R22).
                 liveness_runs.append(liveness_processor(spec, store))
-            tick_dispatched, tick_halted, tick_gated, tick_degraded = _reconcile_once(
-                repo_root,
-                spec,
-                store,
-                dispatch,
-                holder,
-                lease_ttl,
-                now,
-                dispatch_gate=dispatch_gate,
-                available=available,
-                attending=attending,
+            tick_dispatched, tick_halted, tick_gated, tick_degraded, tick_retriable = (
+                _reconcile_once(
+                    repo_root,
+                    spec,
+                    store,
+                    dispatch,
+                    holder,
+                    lease_ttl,
+                    now,
+                    dispatch_gate=dispatch_gate,
+                    available=available,
+                    attending=attending,
+                    retriable_seen=retriable_seen,
+                )
             )
             all_dispatched.extend(tick_dispatched)
             all_halted.extend(tick_halted)
             all_gated.extend(tick_gated)
             all_degraded.extend(tick_degraded)
+            all_retriable.extend(tick_retriable)
             if cost_processor is not None:
                 # Materialize the realized-cost rollup into spec.cost_rollup AFTER dispatch/harvest so it
                 # reflects this tick's completions (U10/R24). The U8 report renders spec.cost_rollup.
@@ -697,6 +710,7 @@ def advance(
         liveness=liveness_runs,
         costs=cost_runs,
         gated=sorted(set(all_gated)),
+        retriable=sorted(set(all_retriable)),
         degraded=all_degraded,
         board_synced=all_board_synced,
         drift=all_drift,
@@ -717,10 +731,12 @@ def _reconcile_once(
     dispatch_gate: Callable[[str], bool] | None = None,
     available: Sequence[str] | None = None,
     attending: bool = True,
-) -> tuple[list[str], list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    retriable_seen: set[str] | None = None,
+) -> tuple[list[str], list[dict[str, Any]], list[str], list[dict[str, Any]], list[str]]:
     """One level-triggered pass: dispatch every ready, not-yet-settled leaf exactly once.
 
-    Returns ``(dispatched, halted, gated, degraded)``. Each dispatch is recorded **intent -> effect ->
+    Returns ``(dispatched, halted, gated, degraded, retriable)``. Each dispatch is recorded
+    **intent -> effect ->
     commit** (the store's replay protocol): the intent is written BEFORE the backend is invoked, so a
     crash/append-failure after the effect leaves a durable dangling intent that ``replay_pending``
     surfaces and the next reconcile re-drives. The ``commit`` is the durable dedup marker (and carries an
@@ -739,6 +755,12 @@ def _reconcile_once(
     A backend HALT is recorded in the ledger (durable + visible) and reconcile CONTINUES to other
     runnable leaves — one unavailable backend never starves the frontier, and a HALT/degrade is never a
     silent substitution.
+
+    A backend 429 (``BackendRateLimitError``) is classified **retriable-pending** (#348/R4/KTD4): it
+    writes NO commit, so the leaf's derived state stays ``ready`` and the frontier re-picks it on the
+    next advance() call — a derived-on-read RESULT label, never a committed ``NODE_STATE``. The optional
+    ``retriable_seen`` set is the per-call de-hammer guard: a sid that 429'd earlier in the SAME
+    advance() call is skipped for the rest of the call (a fresh call re-derives + re-attempts it).
     """
     success = outcome_store.completed_subplots(store)  # success-only -> the frontier input
     settled = set(_dispatch_records(store))  # subplots with a COMMIT dispatch record
@@ -746,9 +768,12 @@ def _reconcile_once(
     halted: list[dict[str, Any]] = []
     gated: list[str] = []
     degraded: list[dict[str, Any]] = []
+    retriable: list[str] = []
     for sid in outcome_spec.ready_frontier(spec, success):
         if sid in settled:
             continue  # settled dispatch record exists -> idempotent skip (no double-dispatch)
+        if retriable_seen is not None and sid in retriable_seen:
+            continue  # already 429'd this advance() call -> don't hammer; re-picked on the next call
         if dispatch_gate is not None and not dispatch_gate(sid):
             gated.append(sid)  # R20: frontier not approved at the current revision -> hold back
             continue
@@ -814,6 +839,18 @@ def _reconcile_once(
                     sandbox=node.sandbox,
                 )
             )
+        except outcome_dispatcher.BackendRateLimitError:
+            # #348/R4/KTD4: a 429 during dispatch is TRANSIENT, not a HALT. Release the lock and write
+            # NO commit -> the leaf's derived state stays `ready`, so the ready frontier re-picks it on
+            # the next advance() call. `retriable-pending` is a derived-on-read RESULT label, never a
+            # committed NODE_STATE, and this path mutates no git/ledger state (the dangling intent at
+            # `key` is re-driven exactly like the HALT path). Skip it for the rest of THIS call so a
+            # loop=True run never hammers the rate-limited backend. Non-429 failures HALT as before.
+            outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+            retriable.append(sid)
+            if retriable_seen is not None:
+                retriable_seen.add(sid)
+            continue
         except outcome_dispatcher.BackendHaltError as halt:
             # A dispatcher-raised HALT (legacy / a restricted injected dispatcher). Release the lock so a
             # later tick re-attempts + re-surfaces it; record the receipt durably; never abort the tick.
@@ -843,7 +880,7 @@ def _reconcile_once(
             },
         )
         dispatched.append(sid)
-    return dispatched, halted, gated, degraded
+    return dispatched, halted, gated, degraded, retriable
 
 
 # ---------------------------------------------------------------------------

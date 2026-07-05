@@ -734,8 +734,9 @@ def test_independent_units_emit_a_parallel_wave() -> None:
     # A and B are independent -> one parallel([...]) wave, destructured into both vars.
     assert "await parallel([" in script
     assert "const [A, B] = await parallel([" in script
-    # Two thunks in the wave, one per independent unit.
-    assert script.count("() =>") == 2
+    # Two thunks in the wave, one per independent unit -- each wraps its agent() call in the
+    # bounded 429-retry helper (R3/KTD3).
+    assert script.count("__retry(() => agent(") == 2
     # The dependent unit C sits in a later layer, behind an await barrier (singleton).
     assert "const C = await agent(" in script
     # The parallel wave appears BEFORE C's awaited agent() (topological order).
@@ -845,7 +846,10 @@ def test_layered_spec_with_verify_panel_full_emission() -> None:
     assert "await parallel([" in script
     # N=3 verifier agent() calls for C's panel.
     assert "C_verdicts = await parallel([" in script
-    assert script.count("() => agent(") == 3
+    # Every wave/panel agent() is retry-wrapped (R3/KTD3): 2 A/B wave thunks + 3 C verifiers.
+    assert script.count("__retry(() => agent(") == 5
+    # Exactly 3 verifier agents in C's panel (verifiers are the only agents with an agentType).
+    assert script.count("agentType:") == 3
     assert "C_threshold = Math.max(1, Math.ceil(C_reported.length / 2))" in script
     assert "C_refuted = C_refute_count >= C_threshold" in script
     # Every unit's model/effort tier is present.
@@ -1798,7 +1802,8 @@ def test_parallel_iterate_to_consensus_emits_loop_in_thunk() -> None:
     assert "async () => {" in script
     assert "for (let iter = 1; iter <= 2; iter++)" in script
     assert "iter === 2" in script
-    assert "result = await agent(" in script
+    # The iterate-to-consensus agent() call is retry-wrapped inside the wave thunk (R3/KTD3).
+    assert "result = await __retry(() => agent(" in script
     assert "__gate(result, {" in script
     # The verifier panel should run within the thunk too
     assert "const verdicts = await parallel([" in script
@@ -1867,3 +1872,56 @@ def test_verify_fields_round_trip() -> None:
     assert serialized["pass_rule"] == "majority"
     assert serialized["iterate_to_consensus"] is True
     assert serialized["max_iterations"] == 10
+
+
+# ---------------------------------------------------------------------------
+# #348 R3/KTD3: emitted-wave 429 retry -- every parallel-wave/panel agent() call is
+# wrapped in the __retry helper so a rate-limited agent re-queues (bounded) instead of
+# counting as a wave failure; a genuine non-429 error still throws and HALTs the wave.
+# ---------------------------------------------------------------------------
+
+
+def test_emitted_js_contains_retry_wrapper() -> None:
+    """R3 golden: the retry helper is emitted once and wraps every wave + panel agent()."""
+    mod = _load()
+    data = _layered_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    third = units[2]
+    assert isinstance(third, dict)
+    third["verify"] = {"n": 3, "pass_rule": "majority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    # The helper is emitted exactly once, alongside the gate helper.
+    assert script.count("async function __retry(thunk, opts)") == 1
+    assert "function __is429(" in script
+    assert "function __retryBackoffMs(" in script
+    # Every wave thunk (A, B) and every panel verifier (3 over C) wraps its agent() call:
+    # 2 wave thunks + 3 verifiers = 5 wrapped agents.
+    assert script.count("__retry(() => agent(") == 5
+    # Singletons are deliberately NOT wrapped (R3 scopes retry to waves); C is a singleton
+    # so its own agent() stays a bare `await agent(`.
+    assert "const C = await agent(" in script
+
+
+def test_retry_on_429_bounds_and_propagates_non_429() -> None:
+    """R3 structural: the emitted helper retries a 429-shaped signal with a bounded attempt
+    cap + backoff, and rethrows any non-429 error so the wave still HALTs (no silent degrade).
+
+    The emitter tests are pure-Python string assertions (there is no JS runtime in this suite),
+    so this asserts the retry SEMANTICS are present in the emitted helper rather than executing
+    it -- consistent with every other assertion in this file.
+    """
+    mod = _load()
+    spec = mod.ExecutionSpec.from_dict(_layered_spec_dict())
+    script = mod.emit_workflow_script(spec)
+
+    # A 429-shaped signal (a result OR a thrown error) is detected and retried...
+    assert "if (__is429(signal) && attempt < maxAttempts) {" in script
+    assert "await sleep(__retryBackoffMs(attempt, baseMs, maxMs, __retryAfterMs(signal)))" in script
+    # ...bounded by maxAttempts (defaulting to the Python primitive's 3), baked per wrapped call...
+    assert "maxAttempts = o.maxAttempts || 3" in script
+    assert "maxAttempts: 3" in script
+    # ...and a non-429 error is re-thrown so the wave HALTs (never silently degraded).
+    assert "if (threw) throw caught;" in script

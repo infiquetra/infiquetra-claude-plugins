@@ -158,3 +158,15 @@ def test_parse_tier_band_fence_and_duplicate_hardening() -> None:
     dup = "### Recommended Tier Band\nopus/high\n\n### Recommended Tier Band\nsonnet/low\n"
     with pytest.raises(TD.TierDefaultsError, match="expected one"):
         TD.parse_tier_band(dup)
+
+
+def test_parse_tier_band_after_stamped_unclosed_fence() -> None:
+    """Verifier P2 roundtrip: a band stamped after an unclosed fence is parseable."""
+    if str(MC_SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(MC_SCRIPT_DIR))
+    sdlc_manager = _load("sdlc_manager_for_fence_roundtrip", MC_SCRIPT_DIR / "sdlc_manager.py")
+    body = "### Objective\nfoo\n```\nsome code without closing fence\n"
+    stamped = sdlc_manager._source_to_issue_body(
+        body, "defect", "campps", "infiquetra/widgets", None, None
+    )
+    assert TD.parse_tier_band(stamped) == {"model": "opus", "effort": "high"}

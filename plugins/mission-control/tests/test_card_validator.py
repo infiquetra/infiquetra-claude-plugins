@@ -358,3 +358,18 @@ def test_tier_band_stamp_not_suppressed_by_mention() -> None:
     # A REAL existing section still suppresses (idempotence intact).
     real = prose + "\n### Recommended Tier Band\nsonnet/low\n"
     assert sdlc_manager._append_tier_band(real, "defect") == real
+
+
+def test_tier_band_stamp_after_unclosed_fence_roundtrips() -> None:
+    """Verifier P2: an unclosed fence must not swallow the stamped band into code text."""
+    body = "### Objective\nfoo\n```\nsome code without closing fence\n"
+    stamped = sdlc_manager._append_tier_band(body, "defect")
+    # The open fence was closed (render-neutral) before the band was appended...
+    assert "```\n\n### Recommended Tier Band\nopus/high" in stamped
+    # ...so the stamper's own guard now sees a real section (idempotent on re-stamp).
+    assert sdlc_manager._has_tier_band_section(stamped)
+    assert sdlc_manager._append_tier_band(stamped, "defect") == stamped
+    # ~~~ fences close with the matching flavor.
+    tilde = "### Objective\nfoo\n~~~\nunclosed tilde fence\n"
+    stamped_tilde = sdlc_manager._append_tier_band(tilde, "defect")
+    assert "~~~\n\n### Recommended Tier Band\nopus/high" in stamped_tilde

@@ -3486,17 +3486,39 @@ def _has_tier_band_section(body: str) -> bool:
     return False
 
 
+def _open_fence_closer(body: str) -> str | None:
+    """The marker that closes a fence still open at end-of-body, or None.
+
+    An unclosed fence runs to end-of-document (CommonMark), so a section
+    appended after it would render — and parse — as code text. Returns the
+    opening marker's own prefix (``` or ~~~) so the closer matches the flavor.
+    """
+    open_marker: str | None = None
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            open_marker = None if open_marker else stripped[:3]
+    return open_marker
+
+
 def _append_tier_band(body: str, issue_type: str) -> str:
     """Stamp the derived band as an auto-populated H3 section (idempotent).
 
     Mirrors the Lifecycle Origin discipline: auto-populated at compile time,
     never author-required. The card validator only checks *required* sections,
-    so the extra section is accepted as-is.
+    so the extra section is accepted as-is. A fence left open at end-of-body is
+    closed first — render-neutral for the author's content (the fence ran to
+    end-of-document anyway), and it keeps the stamped band a real section
+    instead of code text the saga-side parser can never see.
     """
     band = derive_tier_band(issue_type)
     if band is None or _has_tier_band_section(body):
         return body
-    return body.rstrip() + f"\n\n### {_TIER_BAND_HEADER}\n{band['model']}/{band['effort']}\n"
+    base = body.rstrip()
+    closer = _open_fence_closer(base)
+    if closer is not None:
+        base += f"\n{closer}"
+    return base + f"\n\n### {_TIER_BAND_HEADER}\n{band['model']}/{band['effort']}\n"
 
 
 def _source_to_issue_body(

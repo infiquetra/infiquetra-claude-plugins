@@ -26,7 +26,6 @@ sys.path.insert(0, str(FLEET_CORE_SCRIPTS))
 from fleet_commons import tier_palette  # noqa: E402
 from fleet_commons.tier_palette import TierPaletteError  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # U1 (AC2) — MODELS/EFFORTS derive from models.json's explicit rank/rung.
 # ---------------------------------------------------------------------------
@@ -41,8 +40,8 @@ def test_registry_rank_order() -> None:
     efforts_by_rung = tuple(
         name for name, _ in sorted(registry["efforts"].items(), key=lambda kv: kv[1]["rung"])
     )
-    assert tier_palette.MODELS == models_by_rank
-    assert tier_palette.EFFORTS == efforts_by_rung
+    assert models_by_rank == tier_palette.MODELS
+    assert efforts_by_rung == tier_palette.EFFORTS
     # The public vocabulary must not have drifted from the historical order either.
     assert tier_palette.MODELS == ("fable", "opus", "sonnet", "haiku")
     assert tier_palette.EFFORTS == ("low", "medium", "high", "xhigh")
@@ -206,7 +205,10 @@ def test_unit_validate_halts_claude_but_not_engine_owned() -> None:
 
 @pytest.mark.parametrize(
     "stronger,weaker",
-    [(tier_palette.MODELS[i], tier_palette.MODELS[i + 1]) for i in range(len(tier_palette.MODELS) - 1)],
+    [
+        (tier_palette.MODELS[i], tier_palette.MODELS[i + 1])
+        for i in range(len(tier_palette.MODELS) - 1)
+    ],
 )
 def test_model_ladder_monotonicity(stronger: str, weaker: str) -> None:
     """AC7: for every adjacent MODELS pair, the merge picks the stronger member."""
@@ -216,7 +218,10 @@ def test_model_ladder_monotonicity(stronger: str, weaker: str) -> None:
 
 @pytest.mark.parametrize(
     "weaker,stronger",
-    [(tier_palette.EFFORTS[i], tier_palette.EFFORTS[i + 1]) for i in range(len(tier_palette.EFFORTS) - 1)],
+    [
+        (tier_palette.EFFORTS[i], tier_palette.EFFORTS[i + 1])
+        for i in range(len(tier_palette.EFFORTS) - 1)
+    ],
 )
 def test_effort_ladder_monotonicity(weaker: str, stronger: str) -> None:
     """AC7: for every adjacent EFFORTS pair, the merge picks the stronger (higher) member."""
@@ -253,7 +258,9 @@ def _vocabulary_redefinitions(source: str, path_label: str) -> list[tuple[int, s
         if not isinstance(value, (ast.Tuple, ast.List)):
             continue
         strings = [
-            elt.value for elt in value.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+            elt.value
+            for elt in value.elts
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
         ]
         if len(strings) < 2 or len(strings) != len(value.elts):
             continue  # a (model, effort) PAIR or a mixed tuple is a tier value, not a vocab
@@ -277,11 +284,11 @@ def test_no_bare_model_literals_outside_module() -> None:
     """AC1: no production module outside tier_palette.py re-declares the vocabulary."""
     offenders: list[str] = []
     for path in _production_py_files():
-        for lineno, kind in _vocabulary_redefinitions(
-            path.read_text(encoding="utf-8"), str(path)
-        ):
+        for lineno, kind in _vocabulary_redefinitions(path.read_text(encoding="utf-8"), str(path)):
             offenders.append(f"{path.relative_to(REPO_ROOT)}:{lineno} ({kind} vocab re-declared)")
-    assert offenders == [], "vocabulary re-declared outside tier_palette.py:\n" + "\n".join(offenders)
+    assert offenders == [], "vocabulary re-declared outside tier_palette.py:\n" + "\n".join(
+        offenders
+    )
 
 
 def test_guard_reds_when_vocab_reintroduced() -> None:
@@ -306,9 +313,7 @@ def test_guard_reds_when_vocab_reintroduced() -> None:
 # ---------------------------------------------------------------------------
 
 PLAN_SKILL_MD = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
-TEAM_SKILL_MD = (
-    REPO_ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "SKILL.md"
-)
+TEAM_SKILL_MD = REPO_ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "SKILL.md"
 TIER_PALETTE_RUNBOOK = REPO_ROOT / "plugins" / "fleet-core" / "references" / "tier-palette.md"
 
 _TIER_TOKEN = re.compile(r"\b([a-z0-9-]+)/([a-z0-9-]+)\b")
@@ -337,7 +342,9 @@ def test_tier_catalog_check(skill_md: pathlib.Path) -> None:
 
 def test_tier_catalog_check_reds_on_drift() -> None:
     """The forcing function: a stale/typo tier token is flagged."""
-    assert _tier_token_drift("worker uses opus/superhigh here") == ["opus/superhigh (invalid effort)"]
+    assert _tier_token_drift("worker uses opus/superhigh here") == [
+        "opus/superhigh (invalid effort)"
+    ]
     assert _tier_token_drift("gpt4/high teammate") == ["gpt4/high (invalid model)"]
     assert _tier_token_drift("plain and/or prose") == []  # non-vocab slash is ignored
 

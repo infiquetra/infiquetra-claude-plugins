@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.64.0] - 2026-07-06
+
+### Changed — execution_spec consumes the single-source tier palette (#370)
+
+- `segment_units()` now merges member tiers via `tier_palette.strongest()` instead of inlining
+  `min(MODELS.index)` / `max(EFFORTS.index)` — the named ladder op reasons in strength, closing the
+  `{#tier-vocab-ordering}` two-contracts footgun.
+- `Tier.validate()` now HALTs (raises `SpecError`) when a Claude teammate's effort exceeds the
+  model's `effort_ceiling` (e.g. `haiku`/`xhigh`) rather than silently running an un-runnable tier;
+  engine-owned chaperone-dispatch units (`{#external-engine-chaperone-dispatch}`, #318) are excluded
+  from the per-teammate ceiling check.
+
 ## [0.63.0] - 2026-07-05
 
 ### Changed — `team_emitter.py` validates and cascade-resolves per-teammate effort (#363)

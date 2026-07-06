@@ -1755,3 +1755,17 @@ Always validate immediately: `python3 -m json.tool .claude-plugin/marketplace.js
 **Refs.** Same lesson cached in `~/.claude/projects/.../memory/marketplace_editing_guard.md` for runtime convenience; this file is the durable project record.
 
 ---
+
+### A new module under `fleet-core/` needs fleet-core's OWN version bump, not just the consumer's  {#fleet-core-release-surface-own-bump}
+
+**Context.** #366 added `cost_weights.json` + `cost_weights.py` to `plugins/fleet-core/scripts/fleet_commons/` (consumed by saga's cost HALT). The saga release surface was bumped (0.68.0 → 0.69.0), and every local gate — pytest, ruff, mypy, `sync_marketplace.py --check`, `check_release_surface_parity.py` — passed. CI still failed the **Release Surface Parity** job.
+
+**Evidence.** PR #510, CI job "Release Surface Parity" → step `tools/release_surface_diff_guard.py --base-ref <merge-base>`: `non-doc files changed without a matching plugin.json + CHANGELOG.md bump for: fleet-core`. Fixed by bumping fleet-core 0.5.0 → 0.6.0 (`plugins/fleet-core/.claude-plugin/plugin.json` + CHANGELOG entry + marketplace sync), commit `689339f`.
+
+**Mechanism.** The parity steps check different things. `sync_marketplace.py --check` and `check_release_surface_parity.py` verify *internal consistency* (plugin.json == marketplace == CHANGELOG) — they pass as long as each plugin's three surfaces agree, even if none moved. Only the **diff-aware** guard (`release_surface_diff_guard.py`) enforces the actual rule: *for every plugin with non-doc changes in this diff, that plugin's own plugin.json AND CHANGELOG must have moved*. It reads committed `base..HEAD`, not the working tree. So a change that lands files in **plugin A** (fleet-core) but only bumps **plugin B** (saga) satisfies the consistency checks and the whole pytest suite, and is caught **only** by the diff-aware guard, **only** in CI (it is not a pytest test).
+
+**Fix.** When a change touches non-doc files under `plugins/<X>/`, bump `<X>`'s own release surface — even when `<X>` is a library plugin whose behavior only matters through a consumer. Run the guard locally before pushing, but note it reads **committed** state, so commit the bump first: `uv run python tools/release_surface_diff_guard.py --base-ref $(git merge-base origin/main HEAD)`.
+
+**Generalizable rule.** "Release surface synced" means *per touched plugin*, not *per feature*. A cross-plugin change (module in a library plugin, behavior in its consumer) needs a version bump on **every** plugin whose files changed. The internal-consistency checks won't catch a missing bump; only the diff-aware guard does, and only against committed state — so run it (committed) in the pre-push gate whenever a diff spans more than one `plugins/<X>/` tree.
+
+---

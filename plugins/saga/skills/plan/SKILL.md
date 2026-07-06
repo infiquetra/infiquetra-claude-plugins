@@ -295,16 +295,26 @@ the saga tick**. This is the canonical artifact `/work` re-emits from; the spec 
 **Step 1 — Derive per-unit tiers.** For each Implementation Unit in the plan, assign a `{model, effort}`
 tier from the work-shape heuristic (R10). Surface the tier table for operator override before locking:
 
+<!-- BEGIN GENERATED TIER TABLE (rendered from tier_policy.json via render_tier_table.py — do not hand-edit; a seeded divergence fails tests/test_tier_resolver.py::test_skill_registry_sync) -->
 | Work shape | Default tier | Rationale |
 |---|---|---|
-| Judgment, design, adversarial review, architectural decisions | `opus / high` | Deep reasoning needed; cost-justified |
-| Mechanical, deterministic, scripted transforms, scaffolding | `sonnet / medium` (or `haiku / low` for purely mechanical) | Bounded output, predictable steps |
-| Read-only survey, search, grep, sampling, census | `sonnet / low` | Low-effort read, no write risk |
-| External-engine delegation, `intent=offload` (unit carries `engine`/`capability`, U12) | `sonnet / medium` | Chaperone is mechanical verify-apply-test; a heavier chaperone erases the token savings that motivated the delegation (KTD2) |
-| External-engine delegation, `intent=second-opinion` (U12) | `opus / high` | Adversarial verification IS the product; extra spend assumed; `fable/xhigh` available as a per-unit override, never a default (KTD2) |
+| Judgment, design, adversarial review, architectural decisions | `opus / high` | Judgment, design, adversarial review, architectural decisions — deep reasoning needed; cost-justified. |
+| Mechanical, deterministic, scripted transforms, scaffolding | `sonnet / medium` (or `haiku / low` for purely mechanical) | Mechanical, deterministic, scripted transforms, scaffolding — bounded output, predictable steps.; Purely mechanical work within the mechanical work-shape — cheapest tier still safe for bounded, predictable steps. |
+| Read-only survey, search, grep, sampling, census | `sonnet / low` | Read-only survey, search, grep, sampling, census — low-effort read, no write risk. |
+| External-engine delegation, `intent=offload` (unit carries `engine`/`capability`, U12) | `sonnet / medium` | External-engine delegation, intent=offload — chaperone is mechanical verify-apply-test; a heavier chaperone erases the token savings that motivated the delegation (KTD2). |
+| External-engine delegation, `intent=second-opinion` (U12) | `opus / high` | External-engine delegation, intent=second-opinion — adversarial verification IS the product; extra spend assumed; fable/xhigh available as a per-unit override, never a default (KTD2). |
+<!-- END GENERATED TIER TABLE -->
 
 Apply the heuristic per unit, then present the full tier table (U-ID, label, proposed tier, rationale)
 and ask the operator to confirm or override before proceeding. Do not lock tiers silently.
+
+<!-- EFFORT-EMISSION MARKER (#362 U5, R7, KTD6): the per-unit "proposed tier" cell is a
+`<model>/<effort>` pair — both fields sourced verbatim from `tier_resolver.resolve(...).model`
+and `.effort`, never a bare model literal with effort omitted. This is emission only: /plan
+surfaces the resolver's effort so the operator can see and override it before locking, but no
+dispatch mechanism honors it yet (that's #363's `EFFORT_RIDER`/cascade). Team-execution's own
+A7 worker table (`plugins/team-execution/skills/team-execution/SKILL.md`) carries the same
+`<model>/<effort>` cell shape for the identical reason — see its Tier column note. -->
 
 For a unit carrying `engine`/`capability` (U12 chaperone-worker units), the recommendation row also
 carries the unit's `intent` and a **plan-time resolution preview**: for a capability-routed unit, call

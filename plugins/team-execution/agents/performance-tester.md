@@ -5,6 +5,7 @@ description: |
   claims when performance risk is in scope.
 
   Candidate tool: k6.
+role-tier: contract-test
 model: sonnet
 color: magenta
 ---

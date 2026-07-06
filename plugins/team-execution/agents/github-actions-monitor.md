@@ -3,6 +3,7 @@ name: github-actions-monitor
 description: |
   Monitor validator for team-execution. Checks GitHub Actions status and relevant logs for
   PR, CI, merge, and nonprod workflow gates.
+role-tier: mechanical-scan
 model: haiku
 color: blue
 ---

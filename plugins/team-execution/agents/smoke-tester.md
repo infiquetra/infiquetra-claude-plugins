@@ -3,6 +3,7 @@ name: smoke-tester
 description: |
   Tester validator for team-execution. Runs the narrowest meaningful smoke tests for services,
   CLIs, health endpoints, or configured smoke targets.
+role-tier: contract-test
 model: sonnet
 color: yellow
 ---

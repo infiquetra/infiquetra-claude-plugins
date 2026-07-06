@@ -4,6 +4,21 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.10.0] - 2026-07-05
+
+### Migrate all 25 agent frontmatters to `role-tier:`, resolved through the shared tier registry (#362)
+- Each of the 25 `plugins/team-execution/agents/*.md` frontmatters now declares a `role-tier:` value
+  (`adversarial-review` for reviewers, `contract-test` for testers, `mechanical-scan` for
+  scanners/monitors/`deploy-watcher`), resolved at dispatch time through
+  `fleet_commons/tier_resolver.py` + `tier_policy.json`'s work-shape registry instead of a bare
+  hardcoded `model:` literal per agent.
+- `model:` is kept in every frontmatter as a documented fallback only — no agent's effective model
+  changes; a tier-preservation test asserts each migrated agent still resolves to its pre-migration
+  model. Intentional re-tiering is out of scope for this change.
+- `skills/team-execution/SKILL.md`, `references/reviewer-registry.md`, and
+  `references/validator-registry.md` updated to describe the `role-tier:` migration and point at the
+  resolver as the tier-resolution source of truth.
+
 ## [2.9.1] - 2026-07-05
 
 ### Reformat CHANGELOG title to canonical grammar (#429)

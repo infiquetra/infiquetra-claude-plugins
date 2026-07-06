@@ -8,6 +8,7 @@ description: |
   Always spawned — present for every plan execution regardless of plan type.
 
   NOT for: code quality concerns; architecture patterns; test coverage.
+role-tier: adversarial-review
 model: opus
 color: orange
 ---

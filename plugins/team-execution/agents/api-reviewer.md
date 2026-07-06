@@ -8,6 +8,7 @@ description: |
   SDK, contract, breaking change.
 
   NOT for: implementation security (security-reviewer's job); infrastructure concerns.
+role-tier: adversarial-review
 model: opus
 color: green
 ---

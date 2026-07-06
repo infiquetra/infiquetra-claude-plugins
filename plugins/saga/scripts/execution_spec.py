@@ -132,8 +132,9 @@ VERIFY_N_WARN = 5
 BUDGET_RIDER = (
     "BUDGET DISCIPLINE (cheap-tier): you run on a small output budget. "
     "(1) CAP OUTPUT -- be terse; no human-facing prose, no recaps of files you read. "
-    "(2) MANDATORY EMIT -- your FINAL action MUST be the StructuredOutput call; never end "
-    "the turn without it, even if the work is partial (return what you have + a note). "
+    "(2) MANDATORY EMIT -- your FINAL message MUST be the JSON return object (see the RETURN "
+    "CONTRACT); never end the turn without it, even if the work is partial (return what you have "
+    "+ a note). "
     "(3) SKIM, don't read -- open only the exact lines you need, never whole large files. "
     "(4) BATCH -- issue independent tool calls in one parallel block, not serially."
 )
@@ -170,7 +171,22 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
         try {
           return JSON.parse(s);
         } catch (e) {
-          // ignore
+          // fall through to embedded-JSON extraction
+        }
+      }
+      // Extract an embedded JSON value when the agent prepends conversational prose
+      // before the object (sonnet/opus routinely add a "looks good, tests pass" preamble
+      // ahead of the return object). Try object first, then array.
+      const pairs = [['{', '}'], ['[', ']']];
+      for (let i = 0; i < pairs.length; i++) {
+        const start = s.indexOf(pairs[i][0]);
+        const end = s.lastIndexOf(pairs[i][1]);
+        if (start !== -1 && end > start) {
+          try {
+            return JSON.parse(s.slice(start, end + 1));
+          } catch (e) {
+            // try the next delimiter pair
+          }
         }
       }
     }
@@ -1238,7 +1254,14 @@ def _agent_prompt(spec: ExecutionSpec, unit: Unit) -> str:
             f"(R10 -- a missing target is a reported gap, never silently dropped)."
         )
     if unit.returns:
-        parts.append("Return a structured result with keys: " + ", ".join(unit.returns) + ".")
+        parts.append(
+            "RETURN CONTRACT (all tiers): your FINAL message MUST be ONLY a single JSON object "
+            "with the keys " + ", ".join(unit.returns) + " -- no prose, no markdown code fences, "
+            "no YAML, and nothing before or after the JSON. The workflow gate parses this final "
+            "message as JSON and FAILS the unit if it is not a JSON object carrying these keys. "
+            "Emit it as your last action even if the work is only partial (fill each key with what "
+            "you have plus a short note)."
+        )
     return "\n\n".join(p for p in parts if p)
 
 

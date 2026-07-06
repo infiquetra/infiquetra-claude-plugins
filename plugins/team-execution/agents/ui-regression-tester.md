@@ -5,6 +5,7 @@ description: |
   workflows and visible behavior.
 
   Candidate tool: Playwright.
+role-tier: contract-test
 model: sonnet
 color: cyan
 ---

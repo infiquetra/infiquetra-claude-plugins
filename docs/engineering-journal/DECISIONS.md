@@ -2611,3 +2611,48 @@ external-engine worker context-package slot" revisit trigger recorded in
   Readiness record: `docs/reviews/2026-07-02-team-execution-external-engine-workers-plan-readiness.md`.
 
 ---
+
+## Dispatch-time tier resolver: one seam mapping (role-class, work-shape, overrides) to {model, effort} {#dispatch-time-tier-resolver}
+
+**Date.** 2026-07-05. **Plan.** `docs/plans/2026-07-05-dispatch-tier-resolver-plan.md` (#362, half of
+the effort/tier vocabulary work alongside #363 and #370).
+
+- **KTD1 — resolver + registry live in `fleet_commons`, not `saga/scripts`.** The vocabulary this
+  work builds on (`tier_palette.py`) already lives in `fleet-core`, and the resolver is consumed
+  cross-plugin (saga, team-execution, the workflow emitter) — `executor_profile_lint.py:89` already
+  proves the `fleet_commons_shim.load(...)` consumption pattern works. This overrides an earlier
+  Gate E draft that proposed `plugins/saga/scripts/tier_resolver.py`.
+- **KTD2 — build on `tier_palette.py`, do not create a competing vocabulary.** `cheaper_fallback`'s
+  ladder math uses the already-shipped `model_rank`/`effort_rank` (#463); #362 does not block on
+  #370's `escalate`/`downgrade`/`clamp` named operations. When #370 lands them, the resolver migrates
+  its inline rank math onto them as a later, mechanical swap.
+- **KTD3 — `cheaper_fallback` = weaken model first, then effort.** "Cheaper" means stepping down one
+  `MODELS` rung (strongest-first) before lowering effort, matching operator intuition ("drop to the
+  next cheaper model before turning down reasoning depth"). At the ladder floor (weakest model,
+  lowest effort) the fallback equals the resolved tier — a no-op floor, never an error.
+- **KTD4 — the expensive-tier gate is pure/testable, `/plan` doc/CLI-driven, runtime-injected.**
+  `fable`/`xhigh` tiers are gated behind an operator-confirm flag per the operator-choice framework;
+  the gate function itself stays pure and unit-testable, with the confirm prompt injected by the
+  caller (`/plan`), not baked into the resolver.
+- **KTD5 — `role-tier:` is backward-compatible.** All 25 team-execution agent frontmatters gain a
+  `role-tier:` value; the pre-existing bare `model:` literal is kept as a last-resort fallback, never
+  removed.
+- **KTD6 — dispatch-time resolution is this issue's scope; effort-as-first-class-citizen in the
+  plan/worker table schema is #363's.** #362 emits into a table shape that #363 parses; schema
+  alignment between the two is called out as a live comment on #363, not solved here.
+- **KTD7 — `role-tier` is a small agent-facing vocabulary mapping cleanly onto work-shape registry
+  keys, and the team-execution migration is tier-preserving by construction.** Verified against the
+  current fleet: all 10 `*-reviewer` agents were `opus`, all 8 `*-tester` agents were `sonnet`, and
+  all 7 `*-scanner`/`*-monitor`/`deploy-watcher` agents were `haiku`. Three `role-tier` values
+  preserve each group's existing tier — `adversarial-review` → opus/high (reviewers),
+  `contract-test` → sonnet/medium (testers), `mechanical-scan` → haiku/low
+  (scanners/monitors/deploy-watcher) — resolving through the registry's `judgment`, `mechanical`,
+  and `purely-mechanical` work-shape rows respectively (the sonnet-vs-haiku split already named at
+  `plugins/saga/skills/plan/SKILL.md:301`). The migration changes no agent's effective model; a
+  tier-preservation test asserts each of the 25 agents still resolves to its pre-migration model.
+  Intentional re-tiering is explicitly out of scope for #362.
+- **Revisit when.** #370 lands `escalate`/`downgrade`/`clamp` as named ladder operations (KTD2's
+  planned migration point), or #363 lands the effort-first-class plan/worker table schema and needs
+  the emission shape reconciled with what #362 renders (KTD6).
+
+---

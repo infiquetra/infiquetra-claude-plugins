@@ -3,6 +3,7 @@ name: concurrency-tester
 description: |
   Tester validator for team-execution. Tests concurrent execution, locks, retries,
   idempotency, races, and worker coordination.
+role-tier: contract-test
 model: sonnet
 color: purple
 ---

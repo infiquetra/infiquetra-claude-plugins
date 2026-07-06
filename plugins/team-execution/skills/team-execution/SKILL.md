@@ -233,6 +233,16 @@ Append a plan section like this:
 route, and `Intent` as `offload` or `second-opinion` — see
 `team-execution/skills/team-execution/references/external-engine-workers.md`.
 
+<!-- EFFORT-EMISSION MARKER (#362 U5, R7, KTD6): the `Tier` column is a `<model>/<effort>` pair
+sourced verbatim from `fleet_commons.tier_resolver.resolve(...).model` and `.effort` (via the
+worker's `role-tier:` alias or work-shape), never a bare model literal with effort omitted. This
+is emission only — #362 adds no dispatch-time honoring of the `effort` half; the Agent tool has
+no effort knob yet (#363's `EFFORT_RIDER`/cascade). #363's A7 parser splits this cell on `/` into
+`(model, effort)`, matching `/plan`'s per-unit tier table cell shape (same marker, `plugins/saga/
+skills/plan/SKILL.md`). -->
+
+
+
 ### Reviewers
 | Agent | Role | Required | Selection Reason |
 |-------|------|----------|------------------|

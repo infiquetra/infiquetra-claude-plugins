@@ -5,6 +5,7 @@ description: |
   and cost-risk signals.
 
   Candidate tools: Checkov, Trivy.
+role-tier: mechanical-scan
 model: haiku
 color: blue
 ---

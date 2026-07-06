@@ -9,6 +9,7 @@ description: |
   multi-region, infrastructure, AWS.
 
   NOT for: application-level security (security-reviewer's job); API design concerns.
+role-tier: adversarial-review
 model: opus
 color: blue
 ---

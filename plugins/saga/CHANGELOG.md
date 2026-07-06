@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.62.0] - 2026-07-05
+
+### Changed — `/plan`'s Step-1 tier table now renders from the shared work-shape→tier registry (#362)
+
+Part of the dispatch-time tier resolver work (`fleet_commons/tier_resolver.py`, `tier_policy.json`)
+that maps `(role_kind, work_shape, envelope_ceiling, operator_override)` to `{model, effort, because,
+cheaper_fallback}`. `plugins/saga/skills/plan/SKILL.md`'s heuristic tier table is now a
+registry-sourced block instead of prose, drift-guarded against `tier_policy.json` so the two can never
+silently diverge. `plugins/saga/references/sandbox-spawn-sites.md` gained the tier-resolver dispatch
+site alongside the existing readonly-verifier spawn-site inventory.
+
 ## [0.61.0] - 2026-07-05
 
 ### Added — one append-only, hash-chained, leaf-produced run-fact ledger substrate (#401)

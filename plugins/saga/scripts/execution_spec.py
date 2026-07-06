@@ -39,7 +39,8 @@ import argparse
 import importlib.util
 import json
 import sys
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -639,6 +640,20 @@ def unenforceable_tier(backend: str, tier: Tier) -> tuple[str, str] | None:
     if tier.model not in enforceable:
         return ("model", tier.model)
     return None
+
+
+def clamp_tier_to_ceiling(tier: Tier, ceiling: Tier) -> Tier:
+    """Return ``tier`` clamped DOWN to ``ceiling`` on both axes (a ceiling never raises a tier).
+
+    #365 U2: the session-ceiling primitive. Reuses the palette's 2-axis ladder ``clamp``
+    (``{#tier-vocab-ordering}`` -- "no stronger than" is defined by strength, never raw index), so a
+    ceiling weaker than the tier pulls each axis down and a ceiling already at-or-above the tier is a
+    no-op. Both emitters (workflow + team) apply this before rendering a unit/segment tier (#365 U3).
+    """
+    return Tier(
+        model=_tier_palette.clamp("model", tier.model, ceiling=ceiling.model),
+        effort=_tier_palette.clamp("effort", tier.effort, ceiling=ceiling.effort),
+    )
 
 
 @dataclass
@@ -1331,7 +1346,47 @@ def _agent_prompt(spec: ExecutionSpec, unit: Unit) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
-def emit_workflow_script(spec: ExecutionSpec) -> str:
+def is_escalation(old: Tier, new: Tier) -> bool:
+    """True iff ``new`` is stronger than ``old`` on either axis -- an up-ladder move (#365 R6).
+
+    Uses the palette's direction-agnostic ``stronger`` so "stronger" is defined by the ladder, never
+    raw index. A cheapen-or-lateral move (``new`` no stronger on either axis) returns False and, per
+    R6, proceeds without a confirmation prompt.
+    """
+    model_up = (
+        new.model != old.model
+        and _tier_palette.stronger("model", new.model, old.model) == new.model
+    )
+    effort_up = (
+        new.effort != old.effort
+        and _tier_palette.stronger("effort", new.effort, old.effort) == new.effort
+    )
+    return model_up or effort_up
+
+
+def patch_spec_tiers(
+    spec: ExecutionSpec,
+    unit_overrides: dict[str, Tier],
+    already_run_ids: Iterable[str],
+) -> ExecutionSpec:
+    """Return a copy of ``spec`` with each NOT-yet-run named unit's tier replaced (#365 U4, R4).
+
+    A unit is patched iff its id is in ``unit_overrides`` and NOT in ``already_run_ids`` -- an
+    already-run unit's recorded tier is never edited. Unknown ids in ``unit_overrides`` are ignored
+    (the operator may name a unit that does not exist; the caller warns). The returned spec must be
+    re-``validate``d before emit (R5) -- this function does not validate, it only rewrites tiers.
+    """
+    run = set(already_run_ids)
+    patched = [
+        replace(u, tier=unit_overrides[u.unit_id])
+        if (u.unit_id in unit_overrides and u.unit_id not in run)
+        else u
+        for u in spec.units
+    ]
+    return replace(spec, units=patched)
+
+
+def emit_workflow_script(spec: ExecutionSpec, session_ceiling: Tier | None = None) -> str:
     """Emit a runnable Claude Code workflow script (.workflow.js) from the spec.
 
     Validates first (fail emit on R3 / R10), then renders a control-flow-only harness:
@@ -1344,6 +1399,22 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
     """
     spec.validate()
 
+    # #365 U3: a session tier ceiling clamps every unit DOWN before rendering (the operator's live
+    # cap is the final word and never raises a tier). Clamping the spec's units means spec.unit_by_id
+    # -- which every render site below reads -- returns clamped tiers, so this is the one injection point.
+    ceiling_notes: list[str] = []
+    if session_ceiling is not None:
+        clamped_units = []
+        for _u in spec.units:
+            _eff = clamp_tier_to_ceiling(_u.tier, session_ceiling)
+            if _eff != _u.tier:
+                ceiling_notes.append(
+                    f"//   {_u.unit_id}: {_u.tier.model}/{_u.tier.effort}"
+                    f" -> {_eff.model}/{_eff.effort}"
+                )
+            clamped_units.append(replace(_u, tier=_eff))
+        spec = replace(spec, units=clamped_units)
+
     lines: list[str] = []
     lines.append("// ===========================================================================")
     lines.append(f"// {spec.name} -- emitted Claude Code workflow harness.")
@@ -1352,6 +1423,12 @@ def emit_workflow_script(spec: ExecutionSpec) -> str:
     lines.append("// Per-unit {model, effort} tiers (R2(b)); R3 pilot/fan-out same-tier +")
     lines.append("// R10 enumerated-target reconciliation enforced at emit time.")
     lines.append("// ===========================================================================")
+    if ceiling_notes and session_ceiling is not None:
+        lines.append(
+            f"// SESSION TIER CEILING {session_ceiling.model}/{session_ceiling.effort}"
+            f" applied (#365) -- clamped:"
+        )
+        lines.extend(ceiling_notes)
     lines.append("")
     lines.append("export const meta = {")
     lines.append(f"  name: {_js_string(spec.name)},")
@@ -1733,6 +1810,19 @@ def _load_spec(path: Path) -> ExecutionSpec:
     return ExecutionSpec.from_dict(json.loads(path.read_text()))
 
 
+def _read_session_ceiling(root: Path | None = None) -> Tier | None:
+    """Read the #365 session-override ceiling, or None when absent.
+
+    Lazy import keeps this module's "no I/O at import" property intact.
+    """
+    import tier_session
+
+    ceiling = tier_session.read_session_override(root).get("ceiling")
+    if ceiling is None:
+        return None
+    return Tier(model=str(ceiling["model"]), effort=str(ceiling["effort"]))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Execution-spec validator + workflow emitter.")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1750,6 +1840,18 @@ def main(argv: list[str] | None = None) -> int:
     p_base.add_argument("spec", type=Path)
     p_base.add_argument("-o", "--out", type=Path, help="write the baseline here (default: stdout)")
 
+    p_patch = sub.add_parser(
+        "patch",
+        help="apply session-override unit tiers to NOT-yet-run units, then re-validate (#365)",
+    )
+    p_patch.add_argument("spec", type=Path)
+    p_patch.add_argument(
+        "--already-run", default="", help="comma-separated unit ids already run (never patched)"
+    )
+    p_patch.add_argument(
+        "-o", "--out", type=Path, help="write the patched spec here (default: stdout)"
+    )
+
     args = parser.parse_args(argv)
     try:
         spec = _load_spec(args.spec)
@@ -1757,10 +1859,42 @@ def main(argv: list[str] | None = None) -> int:
             spec.validate()
             print(f"OK: {spec.name} ({len(spec.units)} units) is a valid execution-spec.")
             return 0
+        if args.cmd == "patch":
+            import tier_session
+
+            overrides = {
+                uid: Tier(model=str(t["model"]), effort=str(t["effort"]))
+                for uid, t in tier_session.read_session_override().get("unit_overrides", {}).items()
+            }
+            already = [x for x in args.already_run.split(",") if x]
+            run = set(already)
+            # R6: surface up-ladder escalations so the /tier command can gate them (the CLI cannot
+            # prompt); a cheapen/lateral move is silent.
+            escalations = [
+                u.unit_id
+                for u in spec.units
+                if u.unit_id in overrides
+                and u.unit_id not in run
+                and is_escalation(u.tier, overrides[u.unit_id])
+            ]
+            patched = patch_spec_tiers(spec, overrides, already)
+            patched.validate()  # R5 hard gate: never emit an invalid spec
+            if escalations:
+                print(
+                    f"NOTE: up-ladder escalation(s) need operator confirmation: {escalations}",
+                    file=sys.stderr,
+                )
+            out_json = json.dumps(patched.to_dict(), indent=2)
+            if args.out:
+                args.out.write_text(out_json + "\n")
+                print(f"wrote {args.out}")
+            else:
+                print(out_json)
+            return 0
         if args.cmd == "baseline":
             script = emit_inline_baseline(spec)
         else:
-            script = emit_workflow_script(spec)
+            script = emit_workflow_script(spec, session_ceiling=_read_session_ceiling())
     except SpecError as exc:
         print(f"SPEC ERROR: {exc}", file=sys.stderr)
         return 2

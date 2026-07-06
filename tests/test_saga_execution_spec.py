@@ -532,3 +532,100 @@ def test_absent_min_tier_round_trips_byte_identical() -> None:
     assert all("min_tier" not in u for u in first["units"])
     again = ES.ExecutionSpec.from_dict(first).to_dict()
     assert first == again
+
+
+# ---------------------------------------------------------- session tier ceiling (#365 U2/U3)
+
+
+def test_tier_ceiling_clamp() -> None:
+    # A sonnet/medium ceiling clamps an opus/high tier DOWN on both axes.
+    clamped = ES.clamp_tier_to_ceiling(ES.Tier("opus", "high"), ES.Tier("sonnet", "medium"))
+    assert clamped == ES.Tier("sonnet", "medium")
+
+
+def test_tier_ceiling_never_escalates() -> None:
+    # A ceiling at or above the tier is a no-op -- a ceiling never RAISES a tier.
+    weak = ES.Tier("haiku", "low")
+    assert ES.clamp_tier_to_ceiling(weak, ES.Tier("opus", "high")) == weak
+    # Mixed: ceiling above on model, below on effort -> only effort clamps down.
+    assert ES.clamp_tier_to_ceiling(
+        ES.Tier("sonnet", "xhigh"), ES.Tier("opus", "medium")
+    ) == ES.Tier("sonnet", "medium")
+
+
+def test_workflow_emit_honors_session_ceiling() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(tier={"model": "opus", "effort": "high"}))
+    # No ceiling -> the authored tier is rendered verbatim.
+    plain = ES.emit_workflow_script(spec)
+    assert 'model: "opus"' in plain and 'effort: "high"' in plain
+    # A sonnet/medium ceiling clamps the emitted tier and logs the downgrade.
+    clamped = ES.emit_workflow_script(spec, session_ceiling=ES.Tier("sonnet", "medium"))
+    assert 'model: "sonnet"' in clamped and 'effort: "medium"' in clamped
+    assert 'model: "opus"' not in clamped
+    assert "SESSION TIER CEILING" in clamped and "U1" in clamped
+
+
+# ---------------------------------------------------------- mid-run patch (#365 U4)
+
+
+def _two_unit_spec() -> dict[str, object]:
+    return {
+        "name": "patch-demo",
+        "description": "d",
+        "repo": "/tmp/r",
+        "units": [
+            {
+                "unit_id": "A",
+                "label": "a",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "p",
+            },
+            {
+                "unit_id": "B",
+                "label": "b",
+                "tier": {"model": "haiku", "effort": "low"},
+                "prompt": "p",
+            },
+        ],
+    }
+
+
+def test_tier_patch_unrun_only() -> None:
+    spec = ES.ExecutionSpec.from_dict(_two_unit_spec())
+    overrides = {"A": ES.Tier("opus", "high"), "B": ES.Tier("opus", "high")}
+    patched = ES.patch_spec_tiers(spec, overrides, already_run_ids=["A"])
+    by_id = {u.unit_id: u.tier for u in patched.units}
+    assert by_id["A"] == ES.Tier("haiku", "low")  # already-run -> untouched
+    assert by_id["B"] == ES.Tier("opus", "high")  # not-yet-run -> patched
+
+
+def test_tier_patch_validate_gate() -> None:
+    # A patch producing an unrunnable tier (haiku/xhigh) fails validation before any emit (R5).
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+    patched = ES.patch_spec_tiers(spec, {"U1": ES.Tier("haiku", "xhigh")}, already_run_ids=[])
+    with pytest.raises(ES.SpecError):
+        patched.validate()
+
+
+def test_tier_patch_reemit() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(tier={"model": "haiku", "effort": "low"}))
+    patched = ES.patch_spec_tiers(spec, {"U1": ES.Tier("opus", "high")}, already_run_ids=[])
+    patched.validate()
+    script = ES.emit_workflow_script(patched)
+    assert 'model: "opus"' in script and 'effort: "high"' in script
+
+
+def test_tier_patch_spend_delta_gate() -> None:
+    # Up-ladder on either axis is an escalation (confirm required); cheapen/lateral is not.
+    assert (
+        ES.is_escalation(ES.Tier("sonnet", "medium"), ES.Tier("opus", "medium")) is True
+    )  # model up
+    assert (
+        ES.is_escalation(ES.Tier("sonnet", "medium"), ES.Tier("sonnet", "high")) is True
+    )  # effort up
+    assert (
+        ES.is_escalation(ES.Tier("opus", "high"), ES.Tier("sonnet", "medium")) is False
+    )  # cheapen
+    assert (
+        ES.is_escalation(ES.Tier("sonnet", "medium"), ES.Tier("sonnet", "medium")) is False
+    )  # lateral

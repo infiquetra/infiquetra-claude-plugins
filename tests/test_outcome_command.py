@@ -447,3 +447,65 @@ def test_reconcile_cli_resolve_requires_action(repo: Path) -> None:
     M.start(repo, "o", "obj", nodes=_issue_leaves())
     rc = M.main(["--repo-root", str(repo), "reconcile", "o", "--resolve", "abc123"])
     assert rc != 0  # OutcomeError surfaced as a non-zero exit
+
+
+# --------------------------------------------------------------------------- link-pr (#495 U2)
+
+_PR = "https://github.com/infiquetra/infiquetra-claude-plugins/pull/500"
+
+
+def _code_nodes() -> list[dict[str, Any]]:
+    return [
+        {"subplot_id": "build", "title": "B", "kind": "code", "github": {"issue": "o/r#7"}},
+        {"subplot_id": "docs", "title": "D", "kind": "non-code", "github": {"issue": "o/r#8"}},
+    ]
+
+
+def test_link_pr_writes_ref_and_leaves_others_untouched(repo: Path) -> None:
+    M.start(repo, "o", "obj", nodes=_code_nodes())
+    res = M.link_pr(repo, "o", "build", _PR)
+    assert res["pr"] == _PR and res["changed"] is True
+    spec = M.load_spec(repo, "o")
+    assert spec.node_by_id("build").github["pr"] == _PR
+    assert "pr" not in spec.node_by_id("docs").github  # only the target node mutated
+
+
+def test_link_pr_is_idempotent(repo: Path) -> None:
+    M.start(repo, "o", "obj", nodes=_code_nodes())
+    M.link_pr(repo, "o", "build", _PR)
+    again = M.link_pr(repo, "o", "build", _PR)
+    assert again["changed"] is False  # re-linking the same URL is a no-op flag
+    assert M.load_spec(repo, "o").node_by_id("build").github["pr"] == _PR
+
+
+def test_link_pr_unknown_subplot_errors(repo: Path) -> None:
+    M.start(repo, "o", "obj", nodes=_code_nodes())
+    with pytest.raises(M.OutcomeError, match="no subplot"):
+        M.link_pr(repo, "o", "nope", _PR)
+
+
+def test_link_pr_rejects_non_code_node(repo: Path) -> None:
+    M.start(repo, "o", "obj", nodes=_code_nodes())
+    with pytest.raises(M.OutcomeError, match="not 'code'"):
+        M.link_pr(repo, "o", "docs", _PR)
+
+
+def test_link_pr_rejects_non_pr_url(repo: Path) -> None:
+    M.start(repo, "o", "obj", nodes=_code_nodes())
+    with pytest.raises(M.OutcomeError, match="pull-request URL"):
+        M.link_pr(repo, "o", "build", "o/r#500")  # a bare ref is NOT accepted — URL required
+
+
+def test_cli_link_pr_happy_path(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    M.start(repo, "o", "obj", nodes=_code_nodes())
+    assert M.main(["--repo-root", str(repo), "link-pr", "o", "build", _PR]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["subplot_id"] == "build" and out["pr"] == _PR and out["changed"] is True
+
+
+def test_cli_link_pr_bad_url_nonzero(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    M.start(repo, "o", "obj", nodes=_code_nodes())
+    rc = M.main(["--repo-root", str(repo), "link-pr", "o", "build", "not-a-url"])
+    assert rc == 1
+    err = json.loads(capsys.readouterr().err)
+    assert err["ok"] is False

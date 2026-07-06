@@ -294,6 +294,77 @@ def test_commit_spec_persists_the_spec_to_the_outcome_branch_for_cross_machine_r
     assert [n.subplot_id for n in reconstructed.nodes] == ["a"]
 
 
+# --------------------------------------------------------------------------- #495 U3: harvest writeback
+
+
+def _harvest_gh(*, pr_merged: bool = True, issue_closed: bool = True) -> Any:
+    """A stateless fake gh: a PR reads merged, an issue reads closed (the harvest-satisfying states)."""
+
+    def runner(args: list[str], **_kw: Any) -> SimpleNamespace:
+        a = list(args)
+        if a and a[0] == "gh":
+            a = a[1:]
+        if a[:2] == ["pr", "view"]:
+            body = {
+                "state": "MERGED" if pr_merged else "OPEN",
+                "mergedAt": "x" if pr_merged else None,
+            }
+            return SimpleNamespace(returncode=0, stdout=json.dumps(body), stderr="")
+        if a[:2] == ["issue", "view"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"state": "CLOSED" if issue_closed else "OPEN"}),
+                stderr="",
+            )
+        return SimpleNamespace(returncode=1, stdout="", stderr="unhandled")
+
+    return runner
+
+
+def test_link_pr_closes_the_harvest_loop(tmp_path: Path) -> None:
+    # #495 end-to-end: a code leaf with NO github.pr never harvests; once link-pr attaches a merged PR,
+    # the next harvest completes it -> the outcome derives done + complete. This is the producer (link-pr)
+    # closing the exact edge both the harvester barrier and the auto-merge queue were starved on.
+    repo = _repo(tmp_path)
+    ENG.start(repo, "o", "obj", nodes=[{"subplot_id": "build", "title": "B", "kind": "code"}])
+    store = ENG._store(repo, "o")
+    harvester = ENG.production_harvester(repo, github_runner=_harvest_gh())
+
+    # No PR ref -> the barrier reads "no PR ref yet" -> nothing harvests, nothing derives done.
+    assert harvester(ENG.load_spec(repo, "o"), store) == []
+    assert ENG.status(repo, "o")["complete"] is False
+
+    # The attended producer supplies the missing ref; the same harvester then completes it.
+    ENG.link_pr(repo, "o", "build", "https://github.com/o/r/pull/42")
+    assert harvester(ENG.load_spec(repo, "o"), store) == ["build"]
+    st = ENG.status(repo, "o")
+    assert st["states"]["build"] == "done" and st["complete"] is True
+
+
+def test_owner_repo_num_issue_ref_resolves_after_normalization(tmp_path: Path) -> None:
+    # #495 gap-2 end-to-end: a non-code leaf whose issue ref is stored as `owner/repo#N` (the tier-effort
+    # format) now harvests. Pre-U1, gh rejected "owner/repo#N" as an invalid issue format -> unknown ->
+    # the leaf never completed; U1 normalization makes the stored ref gh-consumable.
+    repo = _repo(tmp_path)
+    ENG.start(
+        repo,
+        "o",
+        "obj",
+        nodes=[
+            {
+                "subplot_id": "design",
+                "title": "D",
+                "kind": "non-code",
+                "github": {"issue": "infiquetra/infiquetra-claude-plugins#5"},
+            }
+        ],
+    )
+    store = ENG._store(repo, "o")
+    harvester = ENG.production_harvester(repo, github_runner=_harvest_gh(issue_closed=True))
+    assert harvester(ENG.load_spec(repo, "o"), store) == ["design"]
+    assert ENG.status(repo, "o")["complete"] is True
+
+
 def test_advance_persist_commits_the_spec_on_the_outcome_branch(tmp_path: Path) -> None:
     # The autonomous-run durability path: `/outcome advance --persist` commits the spec each run, so an
     # unattended loop keeps the outcome branch current (R26/R27).

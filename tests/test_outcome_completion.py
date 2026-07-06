@@ -470,3 +470,92 @@ def test_issue_close_info_bare_ref_has_no_author() -> None:
     )
     assert info["state"] == "closed"
     assert info["closed_by"] == ""
+
+
+# ---------------------------------------------------------------------------
+# #495 U1 — gh-consumable ref normalization (owner/repo#N | full URL | bare N)
+# ---------------------------------------------------------------------------
+
+
+def _capture(state: str, *, kind: str) -> Any:
+    """A fake gh that RECORDS the ref token argv it receives, so a test can assert gh-consumability."""
+    seen: dict[str, Any] = {}
+
+    def runner(args: list[str], **_kw: Any) -> SimpleNamespace:
+        seen["ref"] = args[3]
+        if kind == "pr":
+            body: dict[str, Any] = {
+                "state": state,
+                "mergedAt": "2026-06-26T00:00:00Z" if state == "MERGED" else None,
+            }
+        else:
+            body = {"state": state}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(body), stderr="")
+
+    runner.seen = seen  # type: ignore[attr-defined]
+    return runner
+
+
+def test_parse_ref_all_formats() -> None:
+    assert GH._parse_ref("infiquetra/plugins#362") == ("infiquetra", "plugins", "362")
+    assert GH._parse_ref("https://github.com/o/r/pull/493") == ("o", "r", "493")
+    assert GH._parse_ref("https://github.com/o/r/issues/7") == ("o", "r", "7")
+    assert GH._parse_ref("42") is None  # bare number — no owner/repo
+    assert GH._parse_ref("garbage") is None
+
+
+def test_pr_state_normalizes_owner_repo_num_to_url() -> None:
+    # The #495 gap-2 core: an `owner/repo#N` ref must reach gh as a consumable URL, never raw.
+    runner = _capture("MERGED", kind="pr")
+    assert GH.pr_state("o/r#493", runner=runner) == "merged"
+    assert runner.seen["ref"] == "https://github.com/o/r/pull/493"
+    assert "#" not in runner.seen["ref"]  # no raw owner/repo#N token reaches gh
+
+
+def test_issue_state_normalizes_owner_repo_num_to_url() -> None:
+    runner = _capture("CLOSED", kind="issue")
+    assert GH.issue_state("o/r#7", runner=runner) == "closed"
+    assert runner.seen["ref"] == "https://github.com/o/r/issues/7"
+
+
+def test_pr_state_passes_full_url_through_unchanged() -> None:
+    url = "https://github.com/o/r/pull/9"
+    runner = _capture("MERGED", kind="pr")
+    assert GH.pr_state(url, runner=runner) == "merged"
+    assert runner.seen["ref"] == url  # byte-for-byte passthrough
+
+
+def test_closed_by_resolves_full_url_coupling_guard() -> None:
+    # The doc-review coupling guard: normalizing the view-ref to a URL must NOT starve _closed_by's
+    # events path — _closed_by now parses a URL into owner/repo/N too, so the actor still resolves.
+    view = {"state": "CLOSED", "stateReason": "COMPLETED"}
+    events = [{"event": "closed", "actor": {"login": "namredips"}}]
+    info = GH.issue_close_info(
+        "https://github.com/o/r/issues/5", runner=_gh_reads(view=view, events=events)
+    )
+    assert info["closed_by"] == "namredips"
+
+
+# ---------------------------------------------------------------------------
+# #495 U4 — code:pr-merged contract regression guard (a closed issue is NOT enough)
+# ---------------------------------------------------------------------------
+
+
+def test_code_leaf_closed_issue_without_merged_pr_never_satisfies(tmp_path: Path) -> None:
+    # The false-positive #495 warns against: a code leaf must require a MERGED github.pr. Even with a
+    # CLOSED tracking issue, absent a merged PR the barrier must stay unsatisfied (never "close is enough").
+    store = _store(tmp_path)
+    node = _node("build", kind="code", github={"issue": "7"})  # closed issue, NO pr
+    v = ORCH.barrier_satisfied(node, store=store, github_runner=_gh(issue={"7": "CLOSED"}))
+    assert not v.satisfied
+    assert v.contract == ORCH.CONTRACT_CODE  # judged on the code contract, not the non-code one
+    # And harvest must not materialize it from the closed issue alone.
+    spec = _spec([{"subplot_id": "build", "title": "b", "kind": "code", "github": {"issue": "7"}}])
+    assert ORCH.harvest(spec, store=store, github_runner=_gh(issue={"7": "CLOSED"})) == []
+
+
+def test_code_leaf_harvests_once_pr_merged(tmp_path: Path) -> None:
+    # The producer→consumer close: attach a merged PR (what link-pr writes) and the leaf harvests.
+    store = _store(tmp_path)
+    spec = _spec([{"subplot_id": "build", "title": "b", "kind": "code", "github": {"pr": "42"}}])
+    assert ORCH.harvest(spec, store=store, github_runner=_gh(pr={"42": "MERGED"})) == ["build"]

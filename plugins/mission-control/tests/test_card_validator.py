@@ -305,3 +305,71 @@ def test_context_aware_validator_rejects_empty_high_risk_section() -> None:
 
     assert not is_valid
     assert any("Inputs inventory" in err and "empty" in err for err in errors)
+
+
+# --- Recommended tier band (#368 AC5) --------------------------------------
+
+
+def test_recommended_tier_band_field() -> None:
+    """AC5: the validator accepts a card carrying the band, and the type map holds."""
+    body = VALID_BODY + "\n\n### Recommended Tier Band\nopus/high\n"
+    is_valid, errors = sdlc_manager.validate_card_body(body)
+    assert is_valid, f"Expected valid with the band section; got errors: {errors}"
+
+    assert sdlc_manager.derive_tier_band("defect") == {"model": "opus", "effort": "high"}
+    assert sdlc_manager.derive_tier_band("context-update") == {
+        "model": "sonnet",
+        "effort": "medium",
+    }
+    assert sdlc_manager.derive_tier_band("exploration") == {"model": "sonnet", "effort": "low"}
+    # Parent tracking cards carry no execution tier of their own.
+    assert sdlc_manager.derive_tier_band("objective") is None
+    assert sdlc_manager.derive_tier_band("nonsense-type") is None
+
+
+def test_tier_band_stamped_on_compiled_body() -> None:
+    """AC5: the compile path stamps the band as an auto-populated section, idempotently."""
+    body = sdlc_manager._source_to_issue_body(
+        "Add a widget", "defect", "campps", "infiquetra/widgets", None, None
+    )
+    assert "### Recommended Tier Band\nopus/high" in body
+    # Idempotent: re-compiling a body that already carries the band does not double-stamp.
+    restamped = sdlc_manager._append_tier_band(body, "defect")
+    assert restamped.count("### Recommended Tier Band") == 1
+
+    # No band for objective (parent card).
+    obj_body = sdlc_manager._source_to_issue_body(
+        "Track the initiative", "objective", "campps", "infiquetra/widgets", None, None
+    )
+    assert "### Recommended Tier Band" not in obj_body
+
+
+def test_tier_band_stamp_not_suppressed_by_mention() -> None:
+    """Verifier P1: a prose or code-fence MENTION of the header must not suppress the stamp."""
+    prose = (
+        "### Objective\nDocument the ### Recommended Tier Band feature.\n\n"
+        "### Acceptance criteria\n- [ ] done\n"
+    )
+    stamped = sdlc_manager._append_tier_band(prose, "defect")
+    assert "\n### Recommended Tier Band\nopus/high" in stamped
+    fenced = "### Verification\n```\n### Recommended Tier Band\nopus/high\n```\n"
+    stamped_fenced = sdlc_manager._append_tier_band(fenced, "defect")
+    assert stamped_fenced.rstrip().endswith("### Recommended Tier Band\nopus/high")
+    # A REAL existing section still suppresses (idempotence intact).
+    real = prose + "\n### Recommended Tier Band\nsonnet/low\n"
+    assert sdlc_manager._append_tier_band(real, "defect") == real
+
+
+def test_tier_band_stamp_after_unclosed_fence_roundtrips() -> None:
+    """Verifier P2: an unclosed fence must not swallow the stamped band into code text."""
+    body = "### Objective\nfoo\n```\nsome code without closing fence\n"
+    stamped = sdlc_manager._append_tier_band(body, "defect")
+    # The open fence was closed (render-neutral) before the band was appended...
+    assert "```\n\n### Recommended Tier Band\nopus/high" in stamped
+    # ...so the stamper's own guard now sees a real section (idempotent on re-stamp).
+    assert sdlc_manager._has_tier_band_section(stamped)
+    assert sdlc_manager._append_tier_band(stamped, "defect") == stamped
+    # ~~~ fences close with the matching flavor.
+    tilde = "### Objective\nfoo\n~~~\nunclosed tilde fence\n"
+    stamped_tilde = sdlc_manager._append_tier_band(tilde, "defect")
+    assert "~~~\n\n### Recommended Tier Band\nopus/high" in stamped_tilde

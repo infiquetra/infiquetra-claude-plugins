@@ -315,6 +315,25 @@ patch of a not-yet-run unit's tier that re-validates and re-emits the spec. The 
 starting point; `/tier` is the live adjustment. A ceiling only ever clamps down, and an up-ladder
 mid-run change is gated (asks) before it re-emits.
 
+**Persisted tier preferences (#368).** Before deriving cold from the registry table above, resolve
+each work-shape through `scripts/tier_defaults.py` — precedence is **repo overlay > issue band >
+shared registry**:
+
+1. **Repo overlay** — a committed `.saga/tier-defaults.json` (`{"<work-shape>": {"model", "effort"}}`)
+   pins repo-tuned defaults. `resolve_tier_with_overlay(work_shape)` returns the pinned tier when
+   present. Missing file → clean registry fallback; malformed (bad JSON, unknown shape, off-palette or
+   unrunnable tier) → `TierDefaultsError`, halt and surface (never degrade silently).
+2. **Issue band** — when the driving issue carries a `### Recommended Tier Band` section
+   (auto-stamped by `mission-control:issue` at creation), parse it with `parse_tier_band(body)` and
+   pass it to `resolve_tier_for_plan(work_shape, issue_band=band)`. The band seeds the proposed tier
+   only where no repo override exists; an absent band is normal (`None`), a present-but-invalid one
+   fails loud.
+3. **Write-back** — when the operator confirms a tier override in the Step 1 table, persist it with
+   `write_tier_default(work_shape, model, effort)` so the next `/plan` proposes the accreted
+   preference. Read-merge-write: never clobbers other keys. The file is **tracked** — commit the
+   dirtied overlay with the run's changes (the repo accretes tier judgment). Every persisted override
+   originates from an explicit operator confirmation; never auto-promote silently.
+
 <!-- EFFORT-EMISSION MARKER (#362 U5, R7, KTD6): the per-unit "proposed tier" cell is a
 `<model>/<effort>` pair — both fields sourced verbatim from `tier_resolver.resolve(...).model`
 and `.effort`, never a bare model literal with effort omitted. This is emission only: /plan

@@ -1,6 +1,6 @@
 # Outcome: infiquetra/infiquetra-claude-plugins#343
 
-**Outcome ID:** `tier-effort-first-class` · **Revision:** 3 · **Progress:** 3/9 (33%)
+**Outcome ID:** `tier-effort-first-class` · **Revision:** 3 · **Progress:** 4/9 (44%)
 
 ## Topology
 
@@ -13,7 +13,7 @@ flowchart TD
     sub-366["sub-366: dispatched"]
     sub-367["sub-367: dispatched"]
     sub-368["sub-368: dispatched"]
-    sub-369["sub-369: dispatched"]
+    sub-369["sub-369: done"]
     sub-370["sub-370: done"]
     sub-362 --> sub-364
     sub-370 --> sub-364
@@ -41,7 +41,7 @@ flowchart TD
 | `sub-366` | dispatched | issue infiquetra/infiquetra-claude-plugins#366 | no data yet |
 | `sub-367` | dispatched | issue infiquetra/infiquetra-claude-plugins#367 | no data yet |
 | `sub-368` | dispatched | issue infiquetra/infiquetra-claude-plugins#368 | no data yet |
-| `sub-369` | dispatched | issue infiquetra/infiquetra-claude-plugins#369 | no data yet |
+| `sub-369` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/500, issue infiquetra/infiquetra-claude-plugins#369 | no data yet |
 | `sub-370` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/499, issue infiquetra/infiquetra-claude-plugins#370 | no data yet |
 
 ## Cost rollup

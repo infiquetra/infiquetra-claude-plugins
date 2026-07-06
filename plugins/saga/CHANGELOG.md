@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.70.0] - 2026-07-06
+
+### Added — spend-delta machinery: the silent-cheap/ask-expensive levers (#367)
+
+- `spend_delta(old, new) -> {cheapen | escalate | lateral}` in `execution_spec.py`: the three-way
+  direction classifier, built on per-axis ordering (a shared `_axis_deltas` helper via the palette
+  `stronger` op, never raw `.index()`). `is_escalation` now shares that helper but keeps its exact
+  two-way semantics — `lateral` (a sideways axis trade) is deliberately distinct from `escalate`.
+  Built on ordering, not `to_spend` magnitude: the cost table is injective, so a magnitude reading
+  could never produce `lateral`.
+- `adjacent_tier(tier, "cheaper"|"dearer")`: the relative one-notch lever. `cheaper` reuses
+  `tier_resolver.cheaper_fallback` (#362); `dearer` is the symmetric one-rung-up. Boundary calls
+  **raise** rather than clamp or wrap.
+- `Unit.worth_it_because` + `Unit.cheaper_fallback` (both optional, byte-identical round-trip absent) +
+  a **premium-tier worth-it hard-block**: `validate(require_receipts=True)` fails a premium tier
+  (opus/fable model or xhigh effort, above the `sonnet/high` baseline) that lacks a justification or a
+  strictly-cheaper named fallback. Gated on `require_receipts` — enforced at `/plan` authoring, never on
+  the unconditional `validate()` that emit and existing specs run (no retroactive break).
+  `execution_spec.py validate --require-receipts` is the authoring gate. Engine-owned units are exempt.
+- `spend_authority.py` + `.saga/spend-authority.json`: a per-repo `silent_ceiling` matrix resolving each
+  unit `silent`/`ask` (premium → `ask`). Absent file → safe default `sonnet/high`; malformed → loud
+  `SpendAuthorityError`. Same `is_escalation` predicate as the worth-it block (pinned by an exhaustive
+  grid guard test), so the two levers agree on what "premium" means.
+- `/plan` §5.2a Step 1c documents the relative override, worth-it receipts, and spend-authority stamp.
+
+### Notes
+
+- Saga-only (no fleet-core change): `spend_delta`/`adjacent_tier` are `Tier`-typed and live in
+  `execution_spec.py`; `tier_resolver.cheaper_fallback` is reused, not modified.
+- Completes the `tier-effort-first-class` outcome (9/9): #366's `cost_budget`/`spend_envelope` answered
+  "how much?"; #367's `spend_delta` answers "which way?".
+
 ## [0.69.0] - 2026-07-06
 
 ### Added — run-scoped spend budgets: price the tier lever (#366)

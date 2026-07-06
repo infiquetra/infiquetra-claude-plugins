@@ -371,6 +371,25 @@ record it in the saga tick / emitted plan alongside the tier so it survives to `
 
 Weights are ordinal/relative, not dollar prices — the cost-weighted spend-*delta* classifier is #367.
 
+**Step 1c — Spend-delta levers: relative override, worth-it receipts, spend authority (#367).**
+
+- **Relative override** — when the operator wants to adjust a proposed tier, offer the three-way
+  **relative** choice `cheaper` / `as-proposed` / `dearer` (computed by `execution_spec.adjacent_tier`)
+  instead of forcing an absolute re-pick from the full `MODELS × EFFORTS` enum. `cheaper`/`dearer` step
+  exactly one rung; at a ladder boundary the lever raises (no silent clamp). `spend_delta(old, new)`
+  classifies any change as `cheapen` / `escalate` / `lateral` — a `lateral` (sideways axis trade) or a
+  `cheapen` proceeds quietly; an `escalate` is the one that asks.
+- **Worth-it receipts** — a **premium** tier (opus/fable model or xhigh effort — above the `sonnet/high`
+  baseline) must carry a one-line `worth_it_because` and a named `cheaper_fallback` (an adjacent
+  strictly-cheaper tier, default `adjacent_tier(tier, "cheaper")`). Enforce it at authoring by validating
+  with receipts required:
+  `python3 plugins/saga/scripts/execution_spec.py validate <spec.json> --require-receipts`. Plain
+  `validate`/`emit` do NOT require receipts, so existing specs are never retroactively broken.
+- **Spend authority** — resolve each unit's silent/ask disposition via
+  `spend_authority.resolve_spend_authority(tier)`: a `.saga/spend-authority.json` `silent_ceiling`
+  (absent → `sonnet/high`) makes any premium tier `ask` and everything at/below `silent` — the
+  configurable home for the cheap-silent/expensive-asks rule.
+
 **Step 2 — Author thin per-unit prompts (KTD2).** Each unit's prompt is a **thin pointer**, not a prose
 transcription of the plan:
 

@@ -42,7 +42,7 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -68,6 +68,10 @@ EFFORTS = _tier_palette.EFFORTS
 # single agent call; the multiplicity-aware ``ExecutionSpec.spec_spend()`` sums a whole run.
 _cost_weights = fleet_commons_shim.load("cost_weights")
 to_spend = _cost_weights.to_spend
+
+# Tier resolver (#362), reused for the #367 one-rung-cheaper lever so adjacent_tier's "cheaper"
+# direction cannot drift from the shipped cheaper_fallback convention (weaken model first, then effort).
+_tier_resolver = fleet_commons_shim.load("tier_resolver")
 
 # Models cheap enough that the structuredoutput-budget lesson MUST be baked into the
 # generated agent prompt. An opus/high agent has budget headroom; a haiku or a
@@ -737,8 +741,16 @@ class Unit:
     # False => today's behavior (refute throws); an absent field emits no new key so existing specs
     # round-trip byte-identical. v1 composition exclusions live in validate().
     escalate_on_signal: bool = False
+    # #367 U3: an above-sonnet/medium-baseline tier must justify itself. ``worth_it_because`` is a
+    # one-line rationale; ``cheaper_fallback`` names an adjacent strictly-cheaper Tier the operator
+    # could pick instead. validate() requires BOTH only when the tier is above baseline (below that,
+    # absent is fine). Absent fields emit no key (byte-identical round-trip, R5). NB: this
+    # ``cheaper_fallback`` FIELD (an author-declared Tier) is distinct from
+    # ``tier_resolver.cheaper_fallback`` the FUNCTION (which computes the one-rung-down default).
+    worth_it_because: str = ""
+    cheaper_fallback: Tier | None = None
 
-    def validate(self, where: str) -> None:
+    def validate(self, where: str, *, require_receipts: bool = False) -> None:
         if not self.unit_id:
             raise SpecError(f"{where}: a unit needs a non-empty unit_id")
         # Engine/capability-routed units are engine-owned (chaperone-dispatch); they are
@@ -765,6 +777,33 @@ class Unit:
             # on-palette-but-unrunnable floor (e.g. haiku/xhigh) also halts via Tier.validate's ceiling
             # check -- a floor you cannot run is nonsense.
             self.min_tier.validate(f"unit {self.unit_id} min_tier")
+        # #367 U3: a premium tier must justify itself (worth_it_because) and name a strictly cheaper
+        # adjacent fallback, so premium spend is self-documenting and one downgrade away (KTD5). This
+        # is gated on ``require_receipts`` -- enforced at the /plan AUTHORING boundary, NOT on the
+        # unconditional validate() every emit and every existing spec re-runs (the issue's non-goal
+        # forbids retroactively invalidating specs authored before the rule -- KTD8). Engine-owned
+        # units are exempt: their tier is pinned by the chaperone-dispatch intent, not an operator
+        # choice that needs a justification.
+        is_engine_owned = self.engine is not None or self.capability is not None
+        if require_receipts and not is_engine_owned and is_escalation(SPEND_BASELINE, self.tier):
+            if not self.worth_it_because:
+                raise SpecError(
+                    f"unit {self.unit_id}: tier {self.tier.model}/{self.tier.effort} is a premium tier "
+                    f"(above sonnet/high -- opus/fable model or xhigh effort) but carries no "
+                    f"worth_it_because justification (#367)"
+                )
+            if self.cheaper_fallback is None:
+                raise SpecError(
+                    f"unit {self.unit_id}: premium tier {self.tier.model}/{self.tier.effort} names no "
+                    f"cheaper_fallback (#367 -- premium spend must be one downgrade away)"
+                )
+            self.cheaper_fallback.validate(f"unit {self.unit_id} cheaper_fallback")
+            if spend_delta(self.tier, self.cheaper_fallback) != "cheapen":
+                raise SpecError(
+                    f"unit {self.unit_id}: cheaper_fallback "
+                    f"{self.cheaper_fallback.model}/{self.cheaper_fallback.effort} is not strictly "
+                    f"cheaper than tier {self.tier.model}/{self.tier.effort} (#367)"
+                )
         if "pull_cord" in self.returns:
             # #364 (verifier P2): pull_cord is the reserved worker-initiated escalation
             # disposition -- a legitimate return field with that name would be silently
@@ -843,6 +882,12 @@ class Unit:
             sandbox=sandbox,
             min_tier=min_tier,
             escalate_on_signal=bool(data.get("escalate_on_signal", False)),
+            worth_it_because=str(data.get("worth_it_because", "")),
+            cheaper_fallback=(
+                Tier.from_dict(data["cheaper_fallback"], where)
+                if data.get("cheaper_fallback")
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -880,6 +925,11 @@ class Unit:
         # False/absent escalate_on_signal emits no key (byte-identical round-trip, #364).
         if self.escalate_on_signal:
             out["escalate_on_signal"] = True
+        # #367 U3: absent worth_it_because / cheaper_fallback emit no key (byte-identical, R5).
+        if self.worth_it_because:
+            out["worth_it_because"] = self.worth_it_because
+        if self.cheaper_fallback is not None:
+            out["cheaper_fallback"] = self.cheaper_fallback.to_dict()
         return out
 
 
@@ -987,13 +1037,17 @@ class ExecutionSpec:
         """The multiplicity-aware summed ordinal spend across every unit (#366 KTD8)."""
         return sum(unit_spend(u) for u in self.units)
 
-    def validate(self) -> None:
+    def validate(self, *, require_receipts: bool = False) -> None:
         """Validate the whole spec, enforcing the R3 + R10 authoring invariants.
 
         Raises ``SpecError`` on the first violation found (fail emit). Checks, in order:
         non-empty name + units; unique unit ids; per-unit validity (incl. R10 fan-out
         targets); every ``depends_on`` / ``pilot`` resolves to a real unit; and R3 --
         a pilot is at the SAME tier as the fan-out it gates.
+
+        ``require_receipts`` (#367) additionally enforces the premium-tier worth-it hard-block
+        (worth_it_because + cheaper_fallback). It is OFF by default so emit and existing specs are
+        unaffected; ``/plan`` passes it True at the authoring boundary (KTD8).
         """
         if not self.name:
             raise SpecError("spec needs a non-empty name")
@@ -1003,7 +1057,7 @@ class ExecutionSpec:
         seen: set[str] = set()
         var_owner: dict[str, str] = {}
         for unit in self.units:
-            unit.validate(f"spec {self.name}")
+            unit.validate(f"spec {self.name}", require_receipts=require_receipts)
             if unit.unit_id in seen:
                 raise SpecError(f"duplicate unit_id {unit.unit_id!r}")
             seen.add(unit.unit_id)
@@ -1706,16 +1760,97 @@ def is_escalation(old: Tier, new: Tier) -> bool:
     Uses the palette's direction-agnostic ``stronger`` so "stronger" is defined by the ladder, never
     raw index. A cheapen-or-lateral move (``new`` no stronger on either axis) returns False and, per
     R6, proceeds without a confirmation prompt.
+
+    NOTE (#367): this is deliberately NOT ``spend_delta(old, new) == "escalate"``. A *mixed* move
+    (stronger on one axis, weaker on the other) is an escalation here (returns True -- it raises spend
+    on at least one axis, so the /tier gate must ask) while ``spend_delta`` classifies it ``lateral``.
+    Both share ``_axis_deltas`` but keep distinct predicates.
     """
-    model_up = (
-        new.model != old.model
-        and _tier_palette.stronger("model", new.model, old.model) == new.model
+    dm, de = _axis_deltas(old, new)
+    return dm > 0 or de > 0
+
+
+# Baseline above which a tier is "premium" and must justify itself (#367 KTD5). A tier is premium iff
+# ``is_escalation(SPEND_BASELINE, tier)`` -- stronger than sonnet/high on either axis, i.e. an opus/fable
+# model OR xhigh effort (exactly the issue's "opus, fable, xhigh in either axis"). Baseline is sonnet/HIGH
+# (not sonnet/medium) so a common sonnet/high unit is NOT retroactively flagged -- the issue's parenthetical
+# premium set, not the misleading "sonnet/medium" phrasing, is authoritative (the ACs test opus/high and
+# fable/xhigh). The worth-it hard-block and the spend-authority default share this predicate so the two
+# levers cannot disagree about what "expensive" means.
+SPEND_BASELINE = Tier(model="sonnet", effort="high")
+
+
+def _axis_deltas(old: Tier, new: Tier) -> tuple[int, int]:
+    """Per-axis strength direction ``(dm, de)`` from ``old`` to ``new``, each in ``{-1, 0, +1}``.
+
+    ``+1`` = ``new`` is stronger on that axis, ``-1`` = weaker, ``0`` = same. Direction is defined by
+    the palette's ``stronger`` op (never raw ``.index()``), so ``is_escalation`` (two-way) and
+    ``spend_delta`` (three-way) reason about the exact same ladder (#367 KTD2).
+    """
+
+    def _direction(kind: str, a: str, b: str) -> int:
+        if a == b:
+            return 0
+        return 1 if _tier_palette.stronger(kind, b, a) == b else -1
+
+    return _direction("model", old.model, new.model), _direction("effort", old.effort, new.effort)
+
+
+def spend_delta(old: Tier, new: Tier) -> Literal["cheapen", "escalate", "lateral"]:
+    """Classify a tier change's direction (#367 R1 / KTD1).
+
+    ``escalate`` = stronger on >=1 axis and weaker on none; ``cheapen`` = weaker on >=1 axis and
+    stronger on none; ``lateral`` = a sideways trade (stronger on one axis, weaker on the other) or an
+    identical tier. Built on per-axis ordering (``_axis_deltas``), NOT on ``to_spend`` magnitude: the
+    cost-weight table is injective, so a magnitude reading could never produce ``lateral`` (KTD1).
+    ``to_spend`` answers "how much?"; ``spend_delta`` answers "which way?".
+    """
+    dm, de = _axis_deltas(old, new)
+    if dm >= 0 and de >= 0 and (dm > 0 or de > 0):
+        return "escalate"
+    if dm <= 0 and de <= 0 and (dm < 0 or de < 0):
+        return "cheapen"
+    return "lateral"
+
+
+def adjacent_tier(tier: Tier, direction: Literal["cheaper", "dearer"]) -> Tier:
+    """Return ``tier`` moved exactly one rung ``cheaper`` or ``dearer`` (#367 R3 / KTD3-KTD4).
+
+    ``cheaper`` reuses ``tier_resolver.cheaper_fallback`` (weaken model first, then effort) so it
+    cannot drift from #362's convention; ``dearer`` is the symmetric one-rung-up via the palette
+    ``escalate`` op (strengthen model first, then effort). A boundary call -- cheapening the cheapest
+    tier or dearer-ing the dearest -- RAISES ``SpecError`` rather than clamping or wrapping (KTD4).
+
+    NOTE: ``cheaper`` and ``dearer`` are each "one sensible rung" but are NOT mutual inverses at the
+    MODEL boundaries. Both prefer the model axis, so when one is forced onto the effort axis (``dearer``
+    from ``fable`` with the model maxed, or ``cheaper`` from ``haiku`` with the model at the floor) the
+    other undoes it via the model axis and lands elsewhere -- e.g. ``dearer(fable/low)`` = ``fable/medium``
+    but ``cheaper(fable/medium)`` = ``opus/medium``. The round-trip holds only when the model axis is free
+    to move both ways (the mid-ladder models). This is intended: reusing ``cheaper_fallback`` (a fixed
+    #362 convention) is worth more than forcing an artificial inverse.
+    """
+    if direction == "cheaper":
+        model, effort = _tier_resolver.cheaper_fallback(tier.model, tier.effort)
+        if (model, effort) == (tier.model, tier.effort):
+            raise SpecError(
+                f"adjacent_tier: {tier.model}/{tier.effort} is already the cheapest tier -- "
+                f"cannot go cheaper (#367 -- boundary raises, never clamps)"
+            )
+        return Tier(model=model, effort=effort)
+    if direction == "dearer":
+        stronger_model = _tier_palette.escalate("model", tier.model)
+        if stronger_model != tier.model:
+            return Tier(model=stronger_model, effort=tier.effort)
+        stronger_effort = _tier_palette.escalate("effort", tier.effort)
+        if stronger_effort != tier.effort:
+            return Tier(model=tier.model, effort=stronger_effort)
+        raise SpecError(
+            f"adjacent_tier: {tier.model}/{tier.effort} is already the dearest tier -- "
+            f"cannot go dearer (#367 -- boundary raises, never clamps)"
+        )
+    raise SpecError(
+        f"adjacent_tier: unknown direction {direction!r} (expected 'cheaper' or 'dearer')"
     )
-    effort_up = (
-        new.effort != old.effort
-        and _tier_palette.stronger("effort", new.effort, old.effort) == new.effort
-    )
-    return model_up or effort_up
 
 
 def patch_spec_tiers(
@@ -2243,6 +2378,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_val = sub.add_parser("validate", help="validate a spec JSON (R3/R10 invariants)")
     p_val.add_argument("spec", type=Path)
+    p_val.add_argument(
+        "--require-receipts",
+        action="store_true",
+        help="also enforce the #367 premium-tier worth-it hard-block (the /plan authoring gate)",
+    )
 
     p_emit = sub.add_parser("emit", help="emit a workflow script from a spec JSON")
     p_emit.add_argument("spec", type=Path)
@@ -2282,7 +2422,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         spec = _load_spec(args.spec)
         if args.cmd == "validate":
-            spec.validate()
+            spec.validate(require_receipts=bool(getattr(args, "require_receipts", False)))
             print(f"OK: {spec.name} ({len(spec.units)} units) is a valid execution-spec.")
             return 0
         if args.cmd == "patch":

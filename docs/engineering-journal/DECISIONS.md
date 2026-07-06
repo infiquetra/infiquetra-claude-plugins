@@ -2,6 +2,51 @@
 
 ## 2026-07-05
 
+### Effort becomes a first-class, validated, pluggably-honored field fleet-wide {#effort-first-class-363}
+
+**Context.** `docs/plans/2026-07-05-effort-first-class-plan.md` (#363, companion to #362's
+dispatch-time tier resolver). `model:` was already a real per-agent frontmatter field fleet-wide;
+`effort` existed only as emitted A7 `Tier`-cell metadata and a real parameter on two of three
+dispatch paths, never honored on the native Agent-tool teammate spawn team-execution uses. Closes
+the standing `{#team-execution-per-teammate-effort}` queue item (`QUEUED.md`).
+
+- **KTD1 — Honoring mechanism = first-class value + pluggable `inject_effort()` seam (Option C).**
+  Honor the real knob where the path has it (Workflow `agent({effort})`, external-engine offload —
+  already live); use a labeled `EFFORT_RIDER` proxy only on the native Agent-tool path; both behind
+  one seam so a future native subagent-effort knob is a one-function swap. *Rejected:* (A)
+  `EFFORT_RIDER` on every path — downgrades the two paths that already honor real effort to a prose
+  proxy and hides the real-vs-faked split; (B) route team-execution onto the Workflow engine —
+  dissolves its persistent named-teammate model (its reason to exist) and blurs the
+  team(gated)/workflow(advisory) governance seam. Operator-confirmed.
+- **KTD2 — `EFFORT_RIDER` is a `dict[str, str]` (`{effort → directive}`)**, structurally a
+  prompt-preamble rider like `BUDGET_RIDER` (`execution_spec.py:132`) but keyed by effort rather
+  than a single cheap-tier string. Injected via the same `parts.append(...)` +
+  `"\n\n".join(parts)` pattern the two `BUDGET_RIDER` sites use.
+- **KTD3 — Vocabulary source is `tier_palette.EFFORTS`/`MODELS`** (`fleet-core`, canonical since
+  #463). Never re-declare the tuples; never cite the stale `execution_spec.py:52-53` (they
+  re-export via the shim). Resolves a stale-citation concern flagged during #363 review.
+- **KTD4 — The cascade wraps #362's `tier_resolver.resolve()`** — #363 is its first real consumer.
+  `resolve()` has no "team-default" parameter, so the cascade is not one call: `resolve()` supplies
+  the base layer (agent-frontmatter default via work-shape registry), with the team default and the
+  plan-authored per-unit tier applied above it, most-specific wins. The provenance line records
+  which of the three layers supplied the winning value.
+- **KTD5 — Chaperone exclusion preserves the intent-driven default; it does not override.** The
+  offload (`sonnet/medium`) and second-opinion (`opus/high`) rows are intent-driven
+  recommendations, so the cascade skips chaperone workers entirely rather than resolving then
+  restoring — keeping the two intents pulling in opposite directions as designed.
+- **KTD6 — The R2 lint is a new glob+membership shape**, distinct from the existing hardcoded
+  `PINNED_AGENTS` value-pinning test. It reuses `_parse_frontmatter`, globs
+  `plugins/*/agents/*.md`, asserts membership in `EFFORTS`/`MODELS`, and honors a
+  `tiering_exempt` escape hatch.
+- **KTD7 — Reconcile is honest per path.** "Actual effort" means the effort passed to
+  `agent()`/the engine on real-knob paths, but only "the rider text reached the prompt" on the
+  Agent-tool path — the seam cannot observe harness reasoning spend there. The drift line names
+  the path and the compared quantity so it never overclaims.
+- **Revisit when.** Claude Code ships a real native subagent-effort knob (KTD1/KTD2's one-function
+  swap point), or #370 lands ladder operations the cascade could adopt.
+
+---
+
 ### One saga-local, hash-chained, leaf-produced run-fact ledger substrate; derive-on-read views {#run-fact-ledger-401}
 
 **Context.** Phase 0 item 10, final (#401, objective #338). A single `run_fact.v1` ledger that spend /

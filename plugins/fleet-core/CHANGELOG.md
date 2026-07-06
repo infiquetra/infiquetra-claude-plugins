@@ -5,6 +5,21 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-05
+
+### Added
+- `scripts/fleet_commons/effort_rider.py` (#363): `inject_effort(prompt, effort, spawn_kind)` —
+  the one swappable seam honoring a resolved `effort` value on every dispatch path. On the
+  `workflow`/`external-engine` spawn kinds (which already accept effort as a real per-call knob)
+  it is a guarded no-op pass-through; on the `agent` spawn kind — the native Agent-tool teammate
+  path with no real per-call effort knob — it prepends a labeled `EFFORT_RIDER[effort]` proxy
+  directive to the prompt. Also ships `reconcile_effort(resolved_effort, spawn_kind, ...)`,
+  emitting a named `tiering-drift[<spawn_kind>]` line when a post-run actual (manifest-recorded
+  effort, or rider text on the `agent` path) disagrees with the resolved value.
+- References: `plugins/fleet-core/references/` gained the effort-convention documentation
+  consumed by team-execution's `SKILL.md` (R8) — the single fleet-wide place `effort:`
+  frontmatter's meaning and cascade precedence are documented once, not re-declared per plugin.
+
 ## [0.3.0] - 2026-07-05
 
 ### Added

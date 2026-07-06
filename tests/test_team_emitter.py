@@ -550,3 +550,233 @@ def test_default_sandbox_unit_emits_unchanged() -> None:
         _spec_with_sandbox({"mutation_policy": "read-write", "workspace_isolation": "ambient"})
     )
     assert "## Team Structure" in te_mod.emit_team_structure(spec2)
+
+
+# ---------------------------------------------------------------------------
+# U3: A7 tier effort validation, three-layer cascade, chaperone exclusion
+# (R4/R5/R6, KTD4/KTD5).
+# ---------------------------------------------------------------------------
+
+
+def _fake_seg(model: str, effort: str | None, *, engine=None, capability=None, intent=None):
+    """A minimal duck-typed segment for cascade unit tests."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        resident_id="worker",
+        unit_ids=["U1"],
+        tier=SimpleNamespace(model=model, effort=effort),
+        depends_on=[],
+        engine=engine,
+        capability=capability,
+        engine_intent=intent,
+    )
+
+
+def test_validate_effort_raises_on_off_palette() -> None:
+    """R4: an off-palette effort in the A7 Tier cell raises at compose time."""
+    te_mod = _load_team_emitter()
+    with pytest.raises(ValueError, match="off-palette effort"):
+        te_mod._validate_effort("extreme", "worker w tier")
+
+
+def test_validate_effort_passes_on_palette() -> None:
+    """R4: every canonical EFFORTS value passes validation."""
+    te_mod = _load_team_emitter()
+    for eff in te_mod.EFFORTS:
+        te_mod._validate_effort(eff, "worker w tier")  # no raise
+
+
+def test_cascade_plan_unit_layer_wins() -> None:
+    """R5/KTD4: the plan-authored per-unit tier is the most-specific layer and wins."""
+    te_mod = _load_team_emitter()
+    seg = _fake_seg("opus", "xhigh")
+    effort, layer = te_mod.resolve_teammate_effort(seg, None)
+    assert effort == "xhigh"
+    assert layer == "plan-unit"
+
+
+def test_cascade_team_default_layer_when_plan_effort_absent() -> None:
+    """R5: with no plan-unit effort, the team-level default supplies the winner."""
+    te_mod = _load_team_emitter()
+    seg = _fake_seg("opus", None)
+    effort, layer = te_mod.resolve_teammate_effort(seg, "low")
+    assert effort == "low"
+    assert layer == "team-default"
+
+
+def test_cascade_agent_frontmatter_base_when_no_higher_layer() -> None:
+    """R5/KTD4: with neither plan-unit nor team-default, resolve() supplies the base layer."""
+    te_mod = _load_team_emitter()
+    # opus -> work_shape 'judgment' -> registry default_effort 'high'.
+    seg = _fake_seg("opus", None)
+    effort, layer = te_mod.resolve_teammate_effort(seg, None)
+    assert effort == "high"
+    assert layer == "agent-frontmatter"
+
+
+def test_cascade_off_palette_override_raises_through_resolver() -> None:
+    """R4/R5: an off-palette effort threaded into the cascade fails via the resolver."""
+    te_mod = _load_team_emitter()
+    seg = _fake_seg("opus", "extreme")
+    with pytest.raises(ValueError, match="not in"):
+        te_mod.resolve_teammate_effort(seg, None)
+
+
+def test_emit_records_effort_provenance_line_naming_layer() -> None:
+    """R5/AC4: each teammate gets a provenance line naming the resolving cascade layer."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    spec = es_mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    result = te_mod.emit_team_structure(spec)
+    assert "effort-provenance worker=`worker`" in result
+    assert "resolved-by=plan-unit" in result
+
+
+def test_emit_provenance_names_team_default_layer_value() -> None:
+    """R5: the provenance line surfaces the team-default layer value when supplied."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    spec = es_mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    result = te_mod.emit_team_structure(spec, team_default_effort="medium")
+    assert "team-default=medium" in result
+
+
+def test_team_default_effort_off_palette_raises() -> None:
+    """R4: an off-palette team-default effort raises before any row is emitted."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    spec = es_mod.ExecutionSpec.from_dict(_valid_spec_dict())
+    with pytest.raises(ValueError, match="off-palette effort"):
+        te_mod.emit_team_structure(spec, team_default_effort="extreme")
+
+
+def test_offload_chaperone_excluded_from_cascade_keeps_intent_default() -> None:
+    """R6/KTD5: an offload chaperone keeps sonnet/medium; the cascade never overrides it."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = _valid_spec_dict()
+    data["units"] = [
+        {
+            "unit_id": "U1",
+            "label": "external draft",
+            "tier": {"model": "sonnet", "effort": "medium"},
+            "prompt": "draft a bounded diff",
+            "returns": ["diff"],
+            "engine": "agy/gemini-3.5-flash-high",
+            "engine_intent": "offload",
+        },
+    ]
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    result = te_mod.emit_team_structure(spec)
+    # Tier cell keeps the intent-driven effort (medium), not a cascade-resolved value.
+    assert "| `worker-agy` | U1 | sonnet/medium |" in result
+    assert "resolved-by=chaperone-intent:offload" in result
+
+
+def test_second_opinion_chaperone_excluded_keeps_opus_high() -> None:
+    """R6/KTD5: a second-opinion chaperone keeps opus/high, cascade skipped."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = _valid_spec_dict()
+    data["units"] = [
+        {
+            "unit_id": "U1",
+            "label": "external second opinion",
+            "tier": {"model": "opus", "effort": "high"},
+            "prompt": "review the diff",
+            "returns": ["verdict"],
+            "capability": "code-generation",
+            "engine_intent": "second-opinion",
+        },
+    ]
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    result = te_mod.emit_team_structure(spec)
+    assert "| `worker-code-generation` | U1 | opus/high |" in result
+    assert "resolved-by=chaperone-intent:second-opinion" in result
+
+
+# --- U5 (R9, KTD7): post-run reconciliation against the emitted worker-manifest effort ---
+#
+# The emitter renders each worker's tier cell as ``<model>/<effort>`` (e.g. ``sonnet/medium``,
+# as asserted above). The worker manifest (worker-manifest.md:48,54) records that same
+# ``<model>/<effort>`` string as the teammate's ``Attribution.effort``. Reconciliation
+# (``fleet_commons.effort_rider.reconcile_effort``) compares the cascade-resolved effort against
+# the effort segment of that manifest string, honest per path (KTD7).
+
+
+def _load_effort_rider() -> Any:
+    fleet_core_scripts = ROOT / "plugins" / "fleet-core" / "scripts"
+    if str(fleet_core_scripts) not in sys.path:
+        sys.path.insert(0, str(fleet_core_scripts))
+    from fleet_commons import effort_rider  # noqa: PLC0415
+
+    return effort_rider
+
+
+def test_reconcile_effort_matches_emitted_tier_cell_effort_segment() -> None:
+    """A worker manifest recording the same effort the emitter rendered emits no drift line."""
+    effort_rider = _load_effort_rider()
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = _valid_spec_dict()
+    data["units"] = [
+        {
+            "unit_id": "U1",
+            "label": "add a field",
+            "tier": {"model": "sonnet", "effort": "high"},
+            "prompt": "do it",
+            "returns": ["diff"],
+            "capability": "code-generation",
+        },
+    ]
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    result = te_mod.emit_team_structure(spec)
+    assert "| `worker-code-generation` | U1 | sonnet/high |" in result
+
+    manifest_effort_segment = ["sonnet", "high"][1]
+    assert (
+        effort_rider.reconcile_effort("high", "workflow", manifest_effort=manifest_effort_segment)
+        is None
+    )
+
+
+def test_reconcile_effort_mismatch_against_emitted_tier_cell_names_both_efforts() -> None:
+    """A manifest recording a different effort than the emitted (resolved) one drifts."""
+    effort_rider = _load_effort_rider()
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = _valid_spec_dict()
+    data["units"] = [
+        {
+            "unit_id": "U1",
+            "label": "add a field",
+            "tier": {"model": "sonnet", "effort": "high"},
+            "prompt": "do it",
+            "returns": ["diff"],
+            "capability": "code-generation",
+        },
+    ]
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    result = te_mod.emit_team_structure(spec)
+    assert "| `worker-code-generation` | U1 | sonnet/high |" in result
+
+    # Manifest recorded a downgraded/clamped effort (e.g. a model-level clamp) — drift.
+    line = effort_rider.reconcile_effort("high", "external-engine", manifest_effort="medium")
+    assert line is not None
+    assert "tiering-drift" in line
+    assert "high" in line
+    assert "medium" in line
+
+
+def test_reconcile_effort_agent_path_uses_rider_text_not_manifest_string() -> None:
+    """KTD7: the Agent-tool path never reconciles against a manifest string as if it observed
+    reasoning spend — it only confirms EFFORT_RIDER text reached the constructed prompt."""
+    effort_rider = _load_effort_rider()
+    spawn_prompt = effort_rider.inject_effort("do the unit", "high", "agent")
+    assert effort_rider.reconcile_effort("high", "agent", spawn_prompt=spawn_prompt) is None
+
+    drifted_prompt = "do the unit"  # rider never prepended
+    line = effort_rider.reconcile_effort("high", "agent", spawn_prompt=drifted_prompt)
+    assert line is not None
+    assert "rider-text" in line

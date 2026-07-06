@@ -315,7 +315,7 @@ here in Phase B preflight.
 Workers execute approved tasks. Coordinate dependencies, keep work scoped to the plan, and run execution waves using the resident-worker residency protocol:
 
 - **Wave Scheduling & Reactive Unblocking (R8, R10):** A resident worker with unmet segment-level `Depends-on` must not be spawned (avoiding premature creation costs) until its upstream segments complete. Segments with no dependencies can start in parallel. This within-run segment frontier is strictly subordinate to saga's coordinator-level `ready_frontier`.
-- **Persistent Resident Workers (R3):** Spawn exactly one named, persistent teammate per resident worker (segment) using an Agent with a specific `name` (the resident id) and `run_in_background` enabled, rather than spawning anonymous workers per unit.
+- **Persistent Resident Workers (R3):** Spawn exactly one named, persistent teammate per resident worker (segment) using an Agent with a specific `name` (the resident id) and `run_in_background` enabled, rather than spawning anonymous workers per unit. Before that Agent-tool spawn, run the segment's cascade-resolved `effort` (R5 cascade result; falls back to the worker's agent-frontmatter `effort:` default when no plan-unit or team-level override applies) through `fleet_commons.effort_rider.inject_effort(prompt, resolved_effort, "agent")` (load via `fleet_commons_shim.load("effort_rider")`) and spawn with the returned prompt — this is the only dispatch path with no real per-call effort knob (KTD1/KTD2), so `EFFORT_RIDER[resolved_effort]` is prepended as a labeled proxy directive. The `workflow` and `external-engine` spawn kinds already pass `effort` as a real knob (`agent({effort})` / `effort=resolution.effort`) and should route through the same seam with their own `spawn_kind` so it passes through unchanged instead of double-injecting.
 - **Worker Reuse (R3):** Reuse the resident worker across all units in its segment via `SendMessage`. Never re-spawn the worker per unit; reusing the persistent teammate preserves its warm context/cache across all units it owns.
 - **Cross-Segment Summary-Handoff (R4):** When a dependent segment requires the result of a prior segment, seed the dependent segment's fresh worker with a short summary of the upstream segment's output via `SendMessage` instead of forwarding the upstream worker's entire context.
 - **Context Shedding (R11):** Shed a resident worker at its segment boundary, or when a block of time is expected to exceed the prompt cache TTL horizon (~5 minutes). Teammate reuse is for temporally-tight loops, not indefinite warmth.
@@ -332,6 +332,17 @@ for contract-bearing units, output_completeness; evidence-only, grants no privil
 worker's manifest additionally carries `kind=external-engine` attribution and the honest
 disposition (`ran-as-requested` / `fell-back-to-claude` / `substituted-engine`) per
 `external-engine-workers.md`.
+
+- **Post-Run Reconciliation (R9, KTD7):** After manifests are written, compare each teammate's
+  cascade-resolved `effort` against the effort the worker manifest recorded
+  (`worker-manifest.md:48,54`) via `fleet_commons.effort_rider.reconcile_effort(resolved_effort,
+  spawn_kind, manifest_effort=..., spawn_prompt=...)`. On the `workflow`/`external-engine`
+  (real-knob) paths, pass `manifest_effort` — the value the manifest recorded as actually passed
+  to `agent()`/the engine — and a mismatch emits a named `tiering-drift[<spawn_kind>]` line naming
+  both efforts. On the `agent` path, pass `spawn_prompt` — the constructed spawn prompt — because
+  there is no real knob to observe; a mismatch there names `rider-text` (not "reasoning spend") as
+  the compared quantity, since the seam can only confirm the `EFFORT_RIDER` directive reached the
+  prompt, never actual harness reasoning spend. A match emits nothing.
 
 When all worker tasks are complete, run `artifact_pointer.py snapshot --run <run-id> --epoch
 <epoch>` once per review epoch (`team-execution/skills/team-execution/scripts/artifact_pointer.py`,

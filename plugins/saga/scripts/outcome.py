@@ -937,6 +937,23 @@ def _reconcile_once(
 # ---------------------------------------------------------------------------
 
 
+def _positive_int_str(value: object) -> str:
+    """The decimal string of ``value`` iff it is a **positive** integer, else ``""``.
+
+    A GitHub issue number is always ``>= 1``, so a zero/negative/garbage value is never a valid
+    ``issue-<N>`` saga id — coerce it to ``""`` so the caller falls back to the raw handoff rather than
+    emitting a dead pointer like ``issue-0`` (the very class of bug #491 fixes). ``bool`` is excluded
+    though it is an ``int`` subclass.
+    """
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int) and value > 0:
+        return str(value)
+    if isinstance(value, str) and value.strip().isdigit() and int(value.strip()) > 0:
+        return str(int(value.strip()))
+    return ""
+
+
 def _leaf_handoff_id(node: Any, leaf_saga_id: str) -> str:
     """The operator-facing native saga id for a dispatched leaf's re-entry handoff (#491).
 
@@ -944,21 +961,19 @@ def _leaf_handoff_id(node: Any, leaf_saga_id: str) -> str:
     ``saga.derive_saga_id("issue", N)`` (``saga.py:333``) — not the dispatcher's record-keeping
     ``leaf-<outcome>-<subplot>`` id. Prefer the node's bare ``sub_issue`` number; else parse an
     ``owner/repo#N`` ``issue`` ref (reusing ``outcome_github._parse_ref``, #495). A leaf with no
-    resolvable issue (a task/ad-hoc leaf) keeps the raw ``leaf_saga_id`` — unchanged behavior.
+    resolvable **positive** issue number (a task/ad-hoc leaf, or a malformed ref) keeps the raw
+    ``leaf_saga_id`` — never raises, never emits a non-positive ``issue-<N>`` (R3).
     """
     if node is None:
         return leaf_saga_id
     import outcome_github  # noqa: PLC0415 — lazy, matching this module's outcome_github import sites
 
-    github = getattr(node, "github", {}) or {}
-    sub = github.get("sub_issue")
-    number = ""
-    if isinstance(sub, int) or (isinstance(sub, str) and sub.strip().isdigit()):
-        number = str(sub).strip()
-    else:
+    github = node.github if isinstance(getattr(node, "github", None), dict) else {}
+    number = _positive_int_str(github.get("sub_issue"))
+    if not number:
         parsed = outcome_github._parse_ref(str(github.get("issue", "")))
         if parsed is not None:
-            number = parsed[2]
+            number = _positive_int_str(parsed[2])
     # ``issue-<N>`` mirrors ``saga.derive_saga_id("issue", N)`` (saga.py:333) — inlined to avoid pulling
     # the heavy ``saga`` module into ``outcome.py`` for a one-line format (KTD2).
     return f"issue-{number}" if number else leaf_saga_id

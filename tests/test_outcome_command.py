@@ -530,6 +530,20 @@ def test_leaf_handoff_id_falls_back_when_no_issue() -> None:
     assert M._leaf_handoff_id(None, "leaf-o-x") == "leaf-o-x"  # node miss -> raw id
 
 
+def test_leaf_handoff_id_hardening_non_positive_and_non_dict() -> None:
+    # #491 adversarial-gate hardening: a non-positive/garbage issue number is a DEAD pointer -> fall back
+    # to the raw id (never emit issue-0 / issue--5); a corrupt non-dict github must not raise (R3).
+    assert M._leaf_handoff_id(_node(sub_issue=0), "leaf-o-x") == "leaf-o-x"
+    assert M._leaf_handoff_id(_node(sub_issue=-5), "leaf-o-x") == "leaf-o-x"
+    assert (
+        M._leaf_handoff_id(_node(sub_issue=True), "leaf-o-x") == "leaf-o-x"
+    )  # bool is not an issue no.
+    assert M._leaf_handoff_id(_node(issue="o/r#0"), "leaf-o-x") == "leaf-o-x"
+    corrupt = SPEC.Node(subplot_id="x", title="X")
+    corrupt.github = ["not", "a", "dict"]  # type: ignore[assignment]
+    assert M._leaf_handoff_id(corrupt, "leaf-o-x") == "leaf-o-x"
+
+
 def _dispatch_one(repo: Path, sid: str, **github: Any) -> None:
     M.start(
         repo,

@@ -2973,3 +2973,25 @@ flow never *produced* it. Backend inline; saga-only.
   store full-URL refs at the source.
 
 ---
+
+### /outcome attend — resolve the leaf's real issue-backed saga id at the handoff seam  {#outcome-attend-issue-backed-handoff-491}
+
+Issue #491 (last execution-discovered defect of the `tier-effort-first-class` dogfood, objective #343):
+`/outcome attend` printed the dispatcher's raw `leaf_saga_id` (`leaf-<outcome>-<subplot>`), a dead
+`/resume` pointer — an issue-backed leaf's real native saga is `issue-<N>`. Backend inline; saga-only.
+
+- **KTD1 — Resolve `issue-<N>` from the node, prefer bare `sub_issue`.** A node's `github` carries both
+  `sub_issue` (bare int) and `issue` (`owner/repo#N`); prefer the digit `sub_issue`, else parse `issue`
+  via `outcome_github._parse_ref` (landed in #495 — the two dogfood defects share one primitive).
+- **KTD2 — Inline `f"issue-{N}"`, don't import `saga`.** Mirrors `saga.derive_saga_id` (`saga.py:333`);
+  `outcome.py` deliberately imports only its `outcome_*` siblings, so a one-line format doesn't justify
+  pulling in the heavy `saga` module. Cited in a comment so drift is catchable.
+- **KTD3 — `attend` loads the spec.** It read only the dispatch ledger before; it now `load_spec` +
+  `node_by_id` to reach `node.github`, with a node-miss / no-issue fallback to the raw id (never raises).
+- **KTD4 — Scope is `attend` only.** `outcome_report.py` was verified to never emit the leaf handoff
+  (`AttentionItem` carries only `subplot_id`; it never calls `attend`); the issue title's "attend/report"
+  over-scoped. Corrected here so a reader doesn't think the report was missed.
+- **Revisit when.** A non-issue-backed (task/ad-hoc) leaf needs a resolvable native id beyond the raw
+  `leaf_saga_id` fallback — then extend the resolver for the `task-<slug>` case.
+
+---

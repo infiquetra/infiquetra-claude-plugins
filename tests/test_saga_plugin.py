@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.71.0"
-    )  # /outcome link-pr producer + gh-consumable ref normalization — harvest writeback fix (#495)
+        plugin_json["version"] == "0.72.0"
+    )  # /outcome attend emits the leaf's issue-backed saga id — dead /resume handoff fix (#491)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

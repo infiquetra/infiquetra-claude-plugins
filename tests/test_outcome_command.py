@@ -509,3 +509,68 @@ def test_cli_link_pr_bad_url_nonzero(repo: Path, capsys: pytest.CaptureFixture[s
     assert rc == 1
     err = json.loads(capsys.readouterr().err)
     assert err["ok"] is False
+
+
+# --------------------------------------------------------------------------- attend handoff (#491 U1)
+
+
+def _node(**github: Any) -> Any:
+    return SPEC.Node(subplot_id="x", title="X", github=github)
+
+
+def test_leaf_handoff_id_resolves_issue_backed() -> None:
+    assert M._leaf_handoff_id(_node(sub_issue=491), "leaf-o-x") == "issue-491"
+    assert M._leaf_handoff_id(_node(sub_issue="491"), "leaf-o-x") == "issue-491"
+    assert M._leaf_handoff_id(_node(issue="infiquetra/plugins#362"), "leaf-o-x") == "issue-362"
+
+
+def test_leaf_handoff_id_falls_back_when_no_issue() -> None:
+    assert M._leaf_handoff_id(_node(pr="https://github.com/o/r/pull/1"), "leaf-o-x") == "leaf-o-x"
+    assert M._leaf_handoff_id(_node(), "leaf-o-x") == "leaf-o-x"
+    assert M._leaf_handoff_id(None, "leaf-o-x") == "leaf-o-x"  # node miss -> raw id
+
+
+def test_leaf_handoff_id_hardening_non_positive_and_non_dict() -> None:
+    # #491 adversarial-gate hardening: a non-positive/garbage issue number is a DEAD pointer -> fall back
+    # to the raw id (never emit issue-0 / issue--5); a corrupt non-dict github must not raise (R3).
+    assert M._leaf_handoff_id(_node(sub_issue=0), "leaf-o-x") == "leaf-o-x"
+    assert M._leaf_handoff_id(_node(sub_issue=-5), "leaf-o-x") == "leaf-o-x"
+    assert (
+        M._leaf_handoff_id(_node(sub_issue=True), "leaf-o-x") == "leaf-o-x"
+    )  # bool is not an issue no.
+    assert M._leaf_handoff_id(_node(issue="o/r#0"), "leaf-o-x") == "leaf-o-x"
+    corrupt = SPEC.Node(subplot_id="x", title="X")
+    corrupt.github = ["not", "a", "dict"]  # type: ignore[assignment]
+    assert M._leaf_handoff_id(corrupt, "leaf-o-x") == "leaf-o-x"
+
+
+def _dispatch_one(repo: Path, sid: str, **github: Any) -> None:
+    M.start(
+        repo,
+        "o",
+        "obj",
+        nodes=[{"subplot_id": sid, "title": "B", "kind": "code", "github": github}],
+    )
+    dispatcher, _ = _recorder()
+    M.advance(repo, "o", dispatcher=dispatcher)
+
+
+def test_attend_emits_issue_backed_saga_id_from_sub_issue(repo: Path) -> None:
+    _dispatch_one(repo, "build", sub_issue=491)
+    assert M.attend(repo, "o", "build") == "/resume issue-491"
+
+
+def test_attend_emits_issue_saga_from_owner_repo_num(repo: Path) -> None:
+    _dispatch_one(repo, "build", issue="infiquetra/infiquetra-claude-plugins#362")
+    assert M.attend(repo, "o", "build") == "/resume issue-362"
+
+
+def test_attend_falls_back_to_raw_leaf_when_no_issue(repo: Path) -> None:
+    _dispatch_one(repo, "build")  # a task/ad-hoc leaf with no issue on its node
+    assert M.attend(repo, "o", "build") == "/resume leaf-build"
+
+
+def test_attend_not_dispatched_still_raises(repo: Path) -> None:
+    M.start(repo, "o", "obj", nodes=[{"subplot_id": "build", "title": "B", "kind": "code"}])
+    with pytest.raises(M.OutcomeError, match="not dispatched"):
+        M.attend(repo, "o", "build")

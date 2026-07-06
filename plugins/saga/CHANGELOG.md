@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.72.0] - 2026-07-06
+
+### Fixed — /outcome attend emits the leaf's real issue-backed saga id (#491)
+
+- `/outcome attend <id> <subplot>` printed the dispatcher's raw `leaf_saga_id`
+  (`leaf-<outcome>-<subplot>`), but an issue-backed leaf's actual native saga is `issue-<N>` (what
+  `/plan` and `/work` mint via `saga.derive_saga_id`) — so the `/resume` handoff pointed at a saga id
+  that does not exist. `attend` now resolves the real id: `_leaf_handoff_id` reads the node's
+  `github.sub_issue` (bare number) or parses `owner/repo#N` from `github.issue` (reusing
+  `outcome_github._parse_ref`, #495) and emits `/resume issue-<N>`; a non-issue-backed (task/ad-hoc) leaf
+  keeps the raw id.
+- Scope is `attend` only: `outcome_report.py` never emitted the leaf handoff (`AttentionItem` carries
+  only `subplot_id`), so it is unchanged.
+
+### Notes
+
+- Saga-only; last execution-discovered defect from the `tier-effort-first-class` `/outcome` dogfood.
+
 ## [0.71.0] - 2026-07-06
 
 ### Fixed — /outcome code-leaf completion harvest silently never fired (#495)

@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.70.0"
-    )  # spend-delta machinery: spend_delta + adjacent_tier + worth-it receipts + spend authority (#367)
+        plugin_json["version"] == "0.71.0"
+    )  # /outcome link-pr producer + gh-consumable ref normalization — harvest writeback fix (#495)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

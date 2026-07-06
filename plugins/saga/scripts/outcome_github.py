@@ -50,13 +50,54 @@ def _run_gh(args: list[str], *, runner: Callable[..., Any] | None = None) -> tup
     return 0, (result.stdout or "").strip(), stderr
 
 
+# Ref normalization (#495 U1) — make every stored ref format gh-consumable.
+# Decompose/ingestion stores refs as ``owner/repo#N``, but ``gh issue view "owner/repo#N"`` errors
+# (invalid issue format) and ``gh pr view "owner/repo#N"`` misreads it as a branch. A full URL and a
+# bare number both work, so normalize ``owner/repo#N`` -> a full URL and pass the other two through.
+_OWNER_REPO_NUM = re.compile(r"^(?P<owner>[^/\s#]+)/(?P<repo>[^/\s#]+)#(?P<number>\d+)$")
+_GITHUB_URL = re.compile(
+    r"^https?://github\.com/(?P<owner>[^/\s]+)/(?P<repo>[^/\s]+)/(?:pull|issues)/(?P<number>\d+)"
+    r"(?:[/?#].*)?$"
+)
+
+
+def _parse_ref(ref: str) -> tuple[str, str, str] | None:
+    """``(owner, repo, number)`` from an ``owner/repo#N`` ref or a full github ``pull``/``issues`` URL.
+
+    Returns ``None`` for a bare number or anything unparseable, so a caller that needs owner/repo (the
+    REST events path in ``_closed_by``) degrades safely rather than fabricating one.
+    """
+    s = str(ref).strip()
+    for rx in (_OWNER_REPO_NUM, _GITHUB_URL):
+        m = rx.match(s)
+        if m:
+            return m["owner"], m["repo"], m["number"]
+    return None
+
+
+def _gh_ref(ref: str, kind: str) -> str:
+    """A gh-consumable token for ``ref``. ``owner/repo#N`` -> a full URL (cwd-independent); a full URL or
+    a bare number passes through unchanged. ``kind`` is the URL path segment: ``pull`` (PRs), ``issues``.
+    """
+    s = str(ref).strip()
+    if s.lower().startswith(("http://", "https://")):
+        return s  # already a full URL — pass through byte-for-byte
+    parsed = _parse_ref(s)
+    if parsed is None:
+        return s  # bare number or unparseable — hand to gh as-is (resolved in the repo cwd)
+    owner, repo, number = parsed
+    return f"https://github.com/{owner}/{repo}/{kind}/{number}"
+
+
 def pr_state(pr_ref: str, *, runner: Callable[..., Any] | None = None) -> str:
     """Canonical state of a PR: ``merged`` / ``closed`` / ``open`` / ``unknown``.
 
     ``merged`` requires a real merge (``mergedAt`` set), so a PR that is CLOSED-unmerged reads
     ``closed`` (a NEGATIVE terminal, R32), never ``merged``. Any read failure -> ``unknown``.
     """
-    rc, out, _err = _run_gh(["pr", "view", str(pr_ref), "--json", "state,mergedAt"], runner=runner)
+    rc, out, _err = _run_gh(
+        ["pr", "view", _gh_ref(pr_ref, "pull"), "--json", "state,mergedAt"], runner=runner
+    )
     if rc != 0 or not out:
         return "unknown"
     try:
@@ -79,7 +120,9 @@ def pr_state(pr_ref: str, *, runner: Callable[..., Any] | None = None) -> str:
 
 def issue_state(issue_ref: str, *, runner: Callable[..., Any] | None = None) -> str:
     """Canonical state of an issue: ``closed`` / ``open`` / ``unknown`` (any read failure -> unknown)."""
-    rc, out, _err = _run_gh(["issue", "view", str(issue_ref), "--json", "state"], runner=runner)
+    rc, out, _err = _run_gh(
+        ["issue", "view", _gh_ref(issue_ref, "issues"), "--json", "state"], runner=runner
+    )
     if rc != 0 or not out:
         return "unknown"
     try:
@@ -104,7 +147,7 @@ def board_status(issue_ref: str, *, project: str, runner: Callable[..., Any] | N
     class (#295 U1); it adds no GraphQL and no mission-control surface.
     """
     rc, out, _err = _run_gh(
-        ["issue", "view", str(issue_ref), "--json", "projectItems"], runner=runner
+        ["issue", "view", _gh_ref(issue_ref, "issues"), "--json", "projectItems"], runner=runner
     )
     if rc != 0 or not out:
         return ""
@@ -145,10 +188,11 @@ def _closed_by(issue_ref: str, *, runner: Callable[..., Any] | None = None) -> s
     events would otherwise drop the close), and the LAST ``closed`` event is selected AFTER the
     concatenation (never per-page). Any failure → "".
     """
-    m = re.fullmatch(r"(?P<owner>[^/]+)/(?P<repo>[^#/]+)#(?P<number>\d+)", str(issue_ref).strip())
-    if not m:
-        return ""
-    path = f"repos/{m['owner']}/{m['repo']}/issues/{m['number']}/events"
+    parsed = _parse_ref(issue_ref)
+    if parsed is None:
+        return ""  # a bare/unqualified ref yields no owner/repo — the REST events path needs one
+    owner, repo, number = parsed
+    path = f"repos/{owner}/{repo}/issues/{number}/events"
     rc, out, _err = _run_gh(["api", path, "--paginate"], runner=runner)
     if rc != 0 or not out:
         return ""
@@ -178,7 +222,8 @@ def issue_close_info(issue_ref: str, *, runner: Callable[..., Any] | None = None
     open/closed semantics.
     """
     rc, out, _err = _run_gh(
-        ["issue", "view", str(issue_ref), "--json", "state,stateReason"], runner=runner
+        ["issue", "view", _gh_ref(issue_ref, "issues"), "--json", "state,stateReason"],
+        runner=runner,
     )
     state = "unknown"
     reason = "unknown"

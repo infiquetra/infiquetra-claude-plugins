@@ -233,6 +233,55 @@ def commit_spec(
     return {"committed": True, "branch": branch, "pushed": pushed}
 
 
+# A github pull-request URL — the gh-consumable, cwd-independent form the harvester barrier re-verifies
+# (#495 U2). link-pr requires this exact shape so the stored ref is unambiguous across machines.
+_PR_URL_RE = re.compile(r"^https?://github\.com/[^/\s]+/[^/\s]+/pull/\d+(?:[/?#].*)?$")
+
+
+def link_pr(
+    repo_root: Path, outcome_id: str, subplot_id: str, pr_url: str, *, push: bool = False
+) -> dict[str, Any]:
+    """Attach a code leaf's merged PR to its coordinator node — the attended gap-1 producer (#495 U2).
+
+    The record-only dispatch -> native ``/work`` -> squash-merge flow never writes a leaf's merged PR
+    back onto the coordinator node, so the ``code:pr-merged`` barrier reads "no PR ref yet" forever
+    (``outcome_orchestrator.py:102-103``). This verb writes ``node.github["pr"]`` so the next ``advance``
+    harvests the leaf. It is the single missing *producer* both consumers wait on — the harvester barrier
+    and the auto-merge queue's ``_is_mergeable_kind``. It attaches a POINTER only: the barrier still
+    re-verifies ``merged`` on GitHub, so a wrong or not-yet-merged URL never falsely completes a node.
+    Idempotent. With ``push`` it commits the spec to the outcome's own branch (run it on that branch).
+    """
+    pr = str(pr_url).strip()
+    if not _PR_URL_RE.match(pr):
+        raise OutcomeError(
+            f"link-pr: {pr_url!r} is not a github pull-request URL "
+            f"(https://github.com/<owner>/<repo>/pull/<N>)"
+        )
+    spec = load_spec(repo_root, outcome_id)
+    node = spec.node_by_id(subplot_id)
+    if node is None:
+        raise OutcomeError(f"link-pr: no subplot {subplot_id!r} in outcome {outcome_id!r}")
+    if node.kind != "code":
+        raise OutcomeError(
+            f"link-pr: subplot {subplot_id!r} is kind={node.kind!r}, not 'code' — only a code leaf's "
+            f"completion is gated on a merged PR"
+        )
+    already = str(node.github.get("pr", ""))
+    changed = already != pr
+    node.github["pr"] = pr
+    spec.validate()
+    save_spec(repo_root, spec)
+    result: dict[str, Any] = {
+        "outcome_id": outcome_id,
+        "subplot_id": subplot_id,
+        "pr": pr,
+        "changed": changed,
+    }
+    if push:
+        result["persisted"] = commit_spec(repo_root, outcome_id, push=True)
+    return result
+
+
 def _store(repo_root: Path, outcome_id: str, *, runner: Callable[..., Any] | None = None) -> Any:
     return outcome_store.Store.for_outcome(outcome_id, Path(repo_root), runner=runner).ensure()
 
@@ -1205,6 +1254,20 @@ def main(argv: list[str] | None = None) -> int:
     p_promote.add_argument("subplot_id")
     p_promote.add_argument("child_spec_ref")
 
+    p_link_pr = sub.add_parser(
+        "link-pr", help="attach a code leaf's merged PR to its node so harvest fires (#495)"
+    )
+    p_link_pr.add_argument("outcome_id")
+    p_link_pr.add_argument("subplot_id")
+    p_link_pr.add_argument(
+        "pr_url", help="the leaf's PR URL (https://github.com/<owner>/<repo>/pull/<N>)"
+    )
+    p_link_pr.add_argument(
+        "--push",
+        action="store_true",
+        help="commit the spec to the outcome branch (run on that branch)",
+    )
+
     p_reconcile = sub.add_parser(
         "reconcile",
         help="detect board<->saga drift for this outcome (#295); --resolve to apply a decision",
@@ -1318,6 +1381,12 @@ def main(argv: list[str] | None = None) -> int:
             rev = outcome_decompose.promote(spec, args.subplot_id, args.child_spec_ref)
             save_spec(root, spec)
             print(json.dumps({"promoted": args.subplot_id, "spec_revision": rev}))
+        elif args.command == "link-pr":
+            print(
+                json.dumps(
+                    link_pr(root, args.outcome_id, args.subplot_id, args.pr_url, push=args.push)
+                )
+            )
         elif args.command == "resume":
             print(json.dumps(resume(root, args.outcome_id)))
         elif args.command == "status":

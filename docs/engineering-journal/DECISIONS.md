@@ -2995,3 +2995,17 @@ Issue #491 (last execution-discovered defect of the `tier-effort-first-class` do
   `leaf_saga_id` fallback — then extend the resolver for the `task-<slug>` case.
 
 ---
+
+### Decompose a stale multi-issue objective into an `/outcome` DAG: re-triage first, seed flat, edge only what is genuinely hard, correct on the issue  {#outcome-dag-decompose-stale-objective-336}
+
+Standing up objective #336 ("external-engine offload lane", 20 children) as the `external-engine-offload` `/outcome` DAG so the operator works it hands-on. The children's drafts were authored at Gate E (2026-07-03/04) and had drifted against substrate that shipped since (#401 ledger, #343 tier/effort, the 2026-07-05 first-party-codex decision).
+
+- **KTD1 — Seed via `outcome start --from-objective`, accept a flat DAG.** Edge inference reads each sub-issue's GitHub `blocked_by` list (`outcome_edges.edges_from_relationships`); the 21 siblings had none, so the seed is a flat 21-node frontier. That is *honest*, not a gap: the lane's substrate (registry/resolver/dispatch/gates/manifests from #283/#285/#318, ledger from #401) already shipped, so the children are independent extensions. Do NOT invent dependency edges to express priority.
+- **KTD2 — Value-ordering is operator frontier choice + `approve`-gating, never fake edges.** HTTP-cloud-first is a *priority*, not a hard dependency; overloading `depends_on` with priority lies about the graph and blocks legitimate parallelism. The operator sequences the ready frontier; `advance` only dispatches an `approve`d frontier (R20).
+- **KTD3 — Encode only genuinely-hard edges.** Exactly one added by hand: `sub-384 -> {sub-383, sub-476}` — the tripwires audit cannot audit a receipt schema (#383) or a codex bridge (#476) that does not exist. It flipped `sub-384` `ready -> blocked`, confirming the reconcile loop honors it. Hand-edit the spec JSON `depends_on`, then `load_spec` (which `validate()`s declared-target + Kahn acyclicity) before commit.
+- **KTD4 — Re-triage before decompose; fold what is already shipped.** A read-only triage of all 21 children against current HEAD found 5 stale "verified absent" draft claims and one fold: #392 -> #390 (3 of its 4 facets already shipped via #318/#319; the surviving invocation-proof discriminator is #390's fail-loud concern). Pruned `sub-392` (R33), closed #392 not-planned, grew #390.
+- **KTD5 — Persist corrections onto the artifact the planner reads (the issue), not a side doc.** `/plan` Phase 0.1 reads the issue thread, so 7 scope-note comments (#387/#386/#390/#393/#381/#383/#384) make each stale draft self-correct at plan time — the operator need not remember. Same R17/derived-truth principle one level down: durable state belongs where it is consumed.
+- **Durability.** Spec lives on branch `outcome/external-engine-offload` (R26, never main), committed via `outcome commit` (path-limited to the spec file, refuses on main) + pushed; a new machine reconstructs by pulling the branch and re-harvesting from GitHub (R27).
+- **Revisit when.** A future `--from-objective` seed where GitHub `blocked_by` IS populated on the children — then edges auto-infer and KTD3's manual step is redundant; consider setting `blocked_by` on GitHub as the durable, re-derivable home for a hard edge instead of a spec-local edit.
+
+---

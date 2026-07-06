@@ -1816,3 +1816,13 @@ merge (commit `5a92695`). The two dogfood defects shared one primitive — #495'
 `outcome_github._parse_ref` extracts the `N` that #491's handoff resolver needs.
 
 ---
+
+### A days-old plan draft's "verified absent" claim is its most perishable line — re-grep against HEAD before you decompose  {#draft-grounding-rots-reverify-at-decompose}
+
+**Evidence.** Re-triaging objective #336's 21 children (drafts dated 2026-07-03/04) against HEAD on 2026-07-06 found 5 stale absence claims: #387 "no `engine_dispatch` adapter table exists, grep confirms" (false — it ships codex/agy builders + `engine-registry.yaml` rows); #386 "nothing computes cost" (false — `run_ledger.py`/#401 records it at `engine_dispatch.py:215-217`); #390 "no `SUBSTITUTED` disposition" (false — enum at `provenance_manifest.py:59`); #393 assumes no durable ledger (#401 shipped 2026-07-05, the day *after* the draft); #392's own JSON already marked 3/4 facets superseded by shipped #318/#319.
+
+**Mechanism.** A Gate-E draft's grounding is a point-in-time snapshot. Between authoring and execution the substrate moved (multiple ships in 3 days). The single most perishable claim in any draft is "X is absent / grep confirms none" — because the thing that was absent is frequently exactly what someone ships next. Planning from the stale claim produces greenfield work that reimplements shipped substrate, or a scope that fights an existing primitive.
+
+**Generalizable rule.** Before `/plan`-ing or decomposing a multi-issue objective authored more than a day ago, re-verify each draft's *absence* claims against current HEAD (re-grep, do not trust the draft's grep), and persist the correction onto the artifact the planner consumes (the issue), so the stale draft self-corrects at plan time. "Verified absent (2026-07-03)" is a timestamp, not a fact.
+
+**Refs.** Discipline recorded in `{#outcome-dag-decompose-stale-objective-336}`. Same "durable state belongs where it is consumed" thread as `{#outcome-derived-truth-vs-missing-producer}` — the fix was scope-note comments on the issues, not a side doc, because `/plan` reads the issue.

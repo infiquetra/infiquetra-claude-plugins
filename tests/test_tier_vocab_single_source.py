@@ -157,3 +157,66 @@ def test_segment_units_refactor_uses_ladder_ops() -> None:
     # A haiku/high segment merged with a sonnet/medium sibling -> sonnet/high.
     assert tp.strongest("model", ["haiku", "sonnet"]) == "sonnet"
     assert tp.strongest("effort", ["high", "medium"]) == "high"
+
+
+# ---------------------------------------------------------------------------
+# U3 (AC6/AC7) — unsupported-combo HALT (engine-owned excluded) + ladder
+# monotonicity invariant over every adjacent pair.
+# ---------------------------------------------------------------------------
+
+sys.path.insert(0, str(REPO_ROOT / "plugins" / "saga" / "scripts"))
+
+import execution_spec as es  # noqa: E402
+
+
+def test_unsupported_combo_halts_for_claude_teammate() -> None:
+    """AC6: a Claude haiku/xhigh tier HALTs at validate() — a typed error, not a clamp."""
+    with pytest.raises(es.SpecError, match="ceiling"):
+        es.Tier(model="haiku", effort="xhigh").validate("unit u1")
+    # within-ceiling combos pass untouched
+    es.Tier(model="haiku", effort="high").validate("unit u1")
+    es.Tier(model="opus", effort="xhigh").validate("unit u1")
+
+
+def test_engine_owned_tier_excluded_from_ceiling_halt() -> None:
+    """is_engine_owned=True skips the ceiling check (chaperone-dispatch stays pinned)."""
+    es.Tier(model="haiku", effort="xhigh").validate("unit u1", is_engine_owned=True)
+
+
+def test_unit_validate_halts_claude_but_not_engine_owned() -> None:
+    """The Unit.validate wiring: a Claude unit HALTs; an engine-owned unit does not."""
+    claude = es.Unit(
+        unit_id="u1", label="l", tier=es.Tier(model="haiku", effort="xhigh"), prompt="p"
+    )
+    with pytest.raises(es.SpecError, match="ceiling"):
+        claude.validate("spec")
+
+    engine_owned = es.Unit(
+        unit_id="u2",
+        label="l",
+        tier=es.Tier(model="haiku", effort="xhigh"),
+        prompt="p",
+        capability="code-generation",
+        engine_intent="offload",
+    )
+    engine_owned.validate("spec")  # excluded from the ceiling HALT — must not raise
+
+
+@pytest.mark.parametrize(
+    "stronger,weaker",
+    [(tier_palette.MODELS[i], tier_palette.MODELS[i + 1]) for i in range(len(tier_palette.MODELS) - 1)],
+)
+def test_model_ladder_monotonicity(stronger: str, weaker: str) -> None:
+    """AC7: for every adjacent MODELS pair, the merge picks the stronger member."""
+    assert tier_palette.stronger("model", stronger, weaker) == stronger
+    assert tier_palette.strongest("model", [weaker, stronger]) == stronger
+
+
+@pytest.mark.parametrize(
+    "weaker,stronger",
+    [(tier_palette.EFFORTS[i], tier_palette.EFFORTS[i + 1]) for i in range(len(tier_palette.EFFORTS) - 1)],
+)
+def test_effort_ladder_monotonicity(weaker: str, stronger: str) -> None:
+    """AC7: for every adjacent EFFORTS pair, the merge picks the stronger (higher) member."""
+    assert tier_palette.stronger("effort", weaker, stronger) == stronger
+    assert tier_palette.strongest("effort", [weaker, stronger]) == stronger

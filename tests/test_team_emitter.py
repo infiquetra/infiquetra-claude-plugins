@@ -585,6 +585,41 @@ def test_fable_xhigh_unit_halts_on_non_enforcing_backend() -> None:
     assert "## Team Structure" in te_mod.emit_team_structure(ok)
 
 
+def test_min_tier_floor_cannot_bypass_the_team_execution_tier_halt() -> None:
+    # Regression (#369 gate P0): the tier-enforceability halt must run on the POST-MERGE segment
+    # tier. A unit whose OWN tier is reachable can still carry a min_tier floor that pushes the
+    # shared segment to a model team-execution cannot spawn -- dragging a clean sibling up with it.
+    # If the halt only checked pre-merge unit.tier this would emit a cosmetic fable/xhigh row.
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = _valid_spec_dict()
+    data["units"] = [
+        {
+            "unit_id": "U1",
+            "label": "clean",
+            "tier": {"model": "sonnet", "effort": "medium"},
+            "prompt": "p",
+            "files": ["plugins/saga/scripts/execution_spec.py"],
+        },
+        {
+            "unit_id": "U2",
+            "label": "floored",
+            "tier": {"model": "sonnet", "effort": "medium"},
+            "prompt": "p",
+            "files": ["plugins/saga/scripts/team_emitter.py"],
+            "min_tier": {"model": "fable", "effort": "xhigh"},
+        },
+    ]
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    # Each unit's OWN tier is reachable -- the pre-merge check would have passed both.
+    assert es_mod.unenforceable_tier("team-execution", spec.units[0].tier) is None
+    assert es_mod.unenforceable_tier("team-execution", spec.units[1].tier) is None
+    # But the merged segment is fable/xhigh -> must HALT, naming both units.
+    with pytest.raises(es_mod.SpecError, match="fable") as exc:
+        te_mod.emit_team_structure(spec)
+    assert "U1" in str(exc.value) and "U2" in str(exc.value)
+
+
 # ---------------------------------------------------------------------------
 # U3: A7 tier effort validation, three-layer cascade, chaperone exclusion
 # (R4/R5/R6, KTD4/KTD5).

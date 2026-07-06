@@ -1820,6 +1820,14 @@ def adjacent_tier(tier: Tier, direction: Literal["cheaper", "dearer"]) -> Tier:
     cannot drift from #362's convention; ``dearer`` is the symmetric one-rung-up via the palette
     ``escalate`` op (strengthen model first, then effort). A boundary call -- cheapening the cheapest
     tier or dearer-ing the dearest -- RAISES ``SpecError`` rather than clamping or wrapping (KTD4).
+
+    NOTE: ``cheaper`` and ``dearer`` are each "one sensible rung" but are NOT mutual inverses at the
+    MODEL boundaries. Both prefer the model axis, so when one is forced onto the effort axis (``dearer``
+    from ``fable`` with the model maxed, or ``cheaper`` from ``haiku`` with the model at the floor) the
+    other undoes it via the model axis and lands elsewhere -- e.g. ``dearer(fable/low)`` = ``fable/medium``
+    but ``cheaper(fable/medium)`` = ``opus/medium``. The round-trip holds only when the model axis is free
+    to move both ways (the mid-ladder models). This is intended: reusing ``cheaper_fallback`` (a fixed
+    #362 convention) is worth more than forcing an artificial inverse.
     """
     if direction == "cheaper":
         model, effort = _tier_resolver.cheaper_fallback(tier.model, tier.effort)

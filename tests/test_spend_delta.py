@@ -104,6 +104,15 @@ def test_adjacent_tier_cheaper_matches_cheaper_fallback() -> None:
     assert (result.model, result.effort) == (m, e)
 
 
-def test_adjacent_tier_dearer_inverts_cheaper() -> None:
-    t = _t("sonnet", "high")
-    assert ES.adjacent_tier(ES.adjacent_tier(t, "dearer"), "cheaper") == t
+def test_adjacent_tier_inverse_holds_mid_ladder_only() -> None:
+    # Mid-ladder (the model axis is free to move both ways) -> dearer then cheaper returns to start.
+    mid = _t("sonnet", "high")
+    assert ES.adjacent_tier(ES.adjacent_tier(mid, "dearer"), "cheaper") == mid
+    # But at the MODEL boundary the two are deliberately NOT inverses (both prefer the model axis):
+    # dearer from fable is forced onto effort, cheaper undoes it via the model axis. This is intended
+    # (reusing #362's cheaper_fallback convention over an artificial inverse).
+    assert ES.adjacent_tier(_t("fable", "low"), "dearer") == _t("fable", "medium")
+    assert ES.adjacent_tier(_t("fable", "medium"), "cheaper") == _t("opus", "medium")
+    assert ES.adjacent_tier(ES.adjacent_tier(_t("fable", "low"), "dearer"), "cheaper") != _t(
+        "fable", "low"
+    )

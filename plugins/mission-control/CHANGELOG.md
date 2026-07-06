@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.6.0] - 2026-07-06
+
+### Added — auto-stamped `Recommended Tier Band` on created issues (#368 AC5)
+
+- `derive_tier_band(issue_type)`: type→band map mirroring the shared tier registry's
+  work-shape bands — defect/capability → `opus/high`, enhancement/context-update →
+  `sonnet/medium`, exploration → `sonnet/low`; `objective` (parent tracking card) carries none.
+- The compile path (`_source_to_issue_body`) stamps the derived band as an auto-populated
+  `### Recommended Tier Band` body section (mirroring the Lifecycle Origin discipline:
+  compile-time, never author-required). Idempotent — a body already carrying the band is not
+  double-stamped, so prepare/compile round-trips are safe.
+- The card validator needs no change: it checks required H3 sections only, so the extra
+  auto-populated section is accepted as-is. Saga's `tier_defaults.parse_tier_band` is the
+  consumer (format contract covered by a cross-plugin roundtrip test).
+
 ## [2.5.1] - 2026-07-05
 
 ### Reformat CHANGELOG title and date separator to canonical grammar (#429)

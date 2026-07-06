@@ -2,6 +2,44 @@
 
 ## 2026-07-06
 
+### Persisted tier preferences: repo overlay > issue band > registry, and the band stamps at compile {#tier-defaults-368}
+
+**Context.** `docs/plans/2026-07-06-persisted-tier-preferences-plan.md` (#368). Tier judgment was
+evaporating at the end of every run — run N re-derived the same table cold as run 1. Two persistence
+mechanisms (repo overlay, issue-carried band), one precedence rule.
+
+- **KTD1 — `.saga/tier-defaults.json` is a committed per-repo file** (`.saga/` is not git-ignored —
+  verified), schema `{"<work-shape>": {"model", "effort"}}`, owned by saga's new `tier_defaults.py`.
+  Write-back dirties a *tracked* file by design: the repo accretes tier judgment, committed like any
+  change. *Rejected:* the git-ignored `.claude/saga/` cache — that's machine-local session state
+  (#365's ceiling lives there); a repo preference must travel with the repo.
+- **KTD2 — the overlay is saga-side; `fleet_commons` is untouched** (additive-only 0.x contract not
+  even exercised). The shared resolver keeps a single registry contract; per-repo layering is a saga
+  concern.
+- **KTD3 — write-back is read-merge-write, confirmed-override-only.** `write_tier_default` sets one
+  key, never clobbers others; every persisted entry originates from an explicit operator confirmation
+  in `/plan` (non-goal: silent auto-promotion). Loading re-validates existing entries, so a bad file
+  can't be extended — it fails loud first.
+- **KTD4 — asymmetric strictness on the two inputs.** The overlay (repo-authored config) and a
+  *present* issue band both fail loud on malformation (`TierDefaultsError`, halt-not-degrade); an
+  *absent* band is `None` and normal. The split: absence is the common legitimate case, malformation
+  is a claim that something stamped wrongly and must surface.
+- **KTD5 — one precedence function is the tested contract:** `resolve_tier_for_plan` = repo overlay >
+  issue band > shared registry. The repo override is closest to execution, so it wins the coarser
+  issue-time band; the band seeds only where no override exists.
+- **KTD6 — mission-control stamps the band as an auto-populated body section, not a template/contract
+  field.** `derive_tier_band(issue_type)` (defect/capability→`opus/high`,
+  enhancement/context-update→`sonnet/medium`, exploration→`sonnet/low`, objective→none) + an
+  idempotent `_append_tier_band` on the `_source_to_issue_body` *wrapper* — so every compiled body
+  carries it and a future call site can't miss the stamp (the #369 post-merge-halt lesson). The card
+  validator needs no change (it checks required H3 sections only), the sha256/parity-pinned generated
+  contract is untouched, and the cross-repo canonical templates are untouched — the exact rabbit hole
+  the doc-review flagged, avoided by riding the Lifecycle Origin auto-populate discipline. A
+  cross-plugin roundtrip test (stamp with `sdlc_manager`, parse with `tier_defaults.parse_tier_band`)
+  pins the format contract. **Revisit when.** The band needs to become author-visible in the canonical
+  templates (then it enters the generated contract properly), or an org-level tier store supersedes
+  per-repo v1.
+
 ### Tier floors & backend enforceability ship in two parts; the agent-frontmatter floor is deferred {#tier-floors-enforceability-369}
 
 **Context.** `docs/plans/2026-07-06-tier-floors-enforceability-plan.md` (#369). The issue bundled three

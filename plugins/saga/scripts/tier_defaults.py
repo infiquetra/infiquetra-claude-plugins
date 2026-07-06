@@ -14,6 +14,7 @@ auto-promotion).
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -28,6 +29,10 @@ EFFORTS: tuple[str, ...] = _tier_palette.EFFORTS
 
 # Committed, per-repo (sibling of the repo's .github/, NOT the git-ignored .claude/saga cache).
 DEFAULTS_PATH = Path(".saga/tier-defaults.json")
+
+# The issue-carried band section mission-control stamps at issue-create time (#368 AC5).
+# Format contract with sdlc_manager._append_tier_band: an H3 header followed by "model/effort".
+TIER_BAND_HEADER = "Recommended Tier Band"
 
 Tier = dict[str, str]
 
@@ -107,6 +112,39 @@ def resolve_tier_for_plan(
     if issue_band is not None:
         return {"model": str(issue_band["model"]), "effort": str(issue_band["effort"])}
     return _registry_default(work_shape)
+
+
+def parse_tier_band(body: str) -> Tier | None:
+    """Extract the issue-carried ``### Recommended Tier Band`` from an issue body (AC6).
+
+    Absence is tolerant (an issue without a band is normal — returns None, callers fall through to
+    the registry). A band that is *present but invalid* (unparseable value, off-palette or unrunnable
+    tier) fails loud with ``TierDefaultsError`` — it claims to be a band, so a silent fall-through
+    would quietly discard a bad stamp instead of surfacing it (halt-not-degrade).
+    """
+    match = re.search(rf"^###\s+{re.escape(TIER_BAND_HEADER)}\s*$", body, flags=re.MULTILINE)
+    if match is None:
+        return None
+    # First non-empty line after the header, up to the next H3 (or end of body).
+    tail = body[match.end() :]
+    section = re.split(r"^###\s", tail, maxsplit=1, flags=re.MULTILINE)[0]
+    value = next((line.strip() for line in section.splitlines() if line.strip()), "")
+    parts = value.split("/")
+    if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+        raise TierDefaultsError(
+            f"issue band: expected 'model/effort' under '### {TIER_BAND_HEADER}', got {value!r}"
+        )
+    model, effort = parts[0].strip(), parts[1].strip()
+    if model not in MODELS:
+        raise TierDefaultsError(f"issue band: model {model!r} not in {MODELS}")
+    if effort not in EFFORTS:
+        raise TierDefaultsError(f"issue band: effort {effort!r} not in {EFFORTS}")
+    if not _tier_palette.supports_effort(model, effort):
+        raise TierDefaultsError(
+            f"issue band: {model}/{effort} is unrunnable ({model}'s ceiling is "
+            f"{_tier_palette.effort_ceiling(model)!r})"
+        )
+    return {"model": model, "effort": effort}
 
 
 def write_tier_default(work_shape: str, model: str, effort: str, root: Path | None = None) -> Path:

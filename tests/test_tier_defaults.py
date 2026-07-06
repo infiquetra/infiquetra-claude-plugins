@@ -102,3 +102,42 @@ def test_tier_defaults_vs_issue_band_precedence(tmp_path: Path) -> None:  # AC7
         "model": "haiku",
         "effort": "low",
     }
+
+
+# --- Issue-carried band parsing (#368 AC5/AC6 producer→consumer) ------------
+
+MC_SCRIPT_DIR = ROOT / "plugins" / "mission-control" / "scripts"
+
+
+def test_parse_tier_band_roundtrip(tmp_path: Path) -> None:
+    """The band mission-control stamps is the band saga parses (format contract)."""
+    if str(MC_SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(MC_SCRIPT_DIR))
+    sdlc_manager = _load("sdlc_manager_for_band_roundtrip", MC_SCRIPT_DIR / "sdlc_manager.py")
+    body = sdlc_manager._source_to_issue_body(
+        "Fix the flaky retry loop", "defect", "campps", "infiquetra/widgets", None, None
+    )
+    band = TD.parse_tier_band(body)
+    assert band == {"model": "opus", "effort": "high"}
+    # And the parsed band feeds the precedence resolver (no overlay -> band wins).
+    assert TD.resolve_tier_for_plan("mechanical", issue_band=band, root=tmp_path) == band
+
+
+def test_parse_tier_band_absent() -> None:
+    assert TD.parse_tier_band("### Objective\nDo the thing\n") is None
+    assert TD.parse_tier_band("") is None
+
+
+def test_parse_tier_band_invalid() -> None:
+    # Present but unparseable value -> loud.
+    with pytest.raises(TD.TierDefaultsError, match="model/effort"):
+        TD.parse_tier_band("### Recommended Tier Band\nwhatever\n")
+    # Off-palette model -> loud.
+    with pytest.raises(TD.TierDefaultsError, match="not in"):
+        TD.parse_tier_band("### Recommended Tier Band\ngpt/high\n")
+    # On-palette but unrunnable pair -> loud.
+    with pytest.raises(TD.TierDefaultsError, match="unrunnable"):
+        TD.parse_tier_band("### Recommended Tier Band\nhaiku/xhigh\n")
+    # Empty section (header present, no value) -> loud, it claims to be a band.
+    with pytest.raises(TD.TierDefaultsError):
+        TD.parse_tier_band("### Recommended Tier Band\n\n### Next Section\nx\n")

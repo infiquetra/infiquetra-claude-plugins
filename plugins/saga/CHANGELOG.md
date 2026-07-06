@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.67.0] - 2026-07-06
+
+### Added — persisted tier preferences: repo overlay + issue band + one precedence rule (#368)
+
+- New `scripts/tier_defaults.py`: committed per-repo `.saga/tier-defaults.json` overlay
+  (`{"<work-shape>": {"model", "effort"}}`) pinning repo-tuned tier defaults over the shared
+  `tier_policy.json` registry. `load_tier_defaults` (missing → `{}`, malformed → loud
+  `TierDefaultsError`), `resolve_tier_with_overlay` (repo overlay > registry),
+  `write_tier_default` (read-merge-write confirmed overrides, never clobbers other keys).
+- `resolve_tier_for_plan(work_shape, issue_band)` — the one tested precedence contract:
+  **repo overlay > issue-carried band > shared registry** (the repo override is closest to
+  execution, so it wins the coarser issue-time band).
+- `parse_tier_band(body)` — reads the `### Recommended Tier Band` section mission-control
+  stamps at issue creation. Absent → `None` (normal); present-but-invalid (unparseable,
+  off-palette, or unrunnable tier) → loud `TierDefaultsError` (halt-not-degrade).
+- `/plan` SKILL Step 1 documents the resolve → confirm → write-back loop; every persisted
+  override originates from an explicit operator confirmation (never silent auto-promotion),
+  and the dirtied tracked overlay is committed with the run's changes.
+
 ## [0.66.0] - 2026-07-06
 
 ### Added — `/tier` mid-run lever: session ceiling + mid-run spec patch (#365)

@@ -3439,7 +3439,70 @@ def _contract_scaffold_body(
     return "\n\n".join(sections)
 
 
+# Issue-carried recommended tier band (#368 AC5): a coarse issue-time seed for
+# /plan's per-unit tier table (saga's tier_defaults.resolve_tier_for_plan reads
+# it; precedence there is repo overlay > this band > shared registry). The map
+# mirrors tier_policy.json's work-shape bands: judgment→opus/high,
+# mechanical→sonnet/medium, read-only-survey→sonnet/low. `objective` is a
+# parent tracking card with no execution tier of its own — no band stamped.
+_TIER_BAND_HEADER = "Recommended Tier Band"
+_ISSUE_TYPE_TIER_BANDS: dict[str, tuple[str, str] | None] = {
+    "capability": ("opus", "high"),
+    "enhancement": ("sonnet", "medium"),
+    "defect": ("opus", "high"),
+    "exploration": ("sonnet", "low"),
+    "context-update": ("sonnet", "medium"),
+    "objective": None,
+}
+
+
+def derive_tier_band(issue_type: str) -> dict[str, str] | None:
+    """Type→band mapping for the stamped `### Recommended Tier Band` field (AC5).
+
+    Returns ``{"model", "effort"}`` or None (unknown type / objective — no band).
+    """
+    band = _ISSUE_TYPE_TIER_BANDS.get(issue_type)
+    if band is None:
+        return None
+    return {"model": band[0], "effort": band[1]}
+
+
+def _append_tier_band(body: str, issue_type: str) -> str:
+    """Stamp the derived band as an auto-populated H3 section (idempotent).
+
+    Mirrors the Lifecycle Origin discipline: auto-populated at compile time,
+    never author-required. The card validator only checks *required* sections,
+    so the extra section is accepted as-is.
+    """
+    band = derive_tier_band(issue_type)
+    if band is None or f"### {_TIER_BAND_HEADER}" in body:
+        return body
+    return body.rstrip() + f"\n\n### {_TIER_BAND_HEADER}\n{band['model']}/{band['effort']}\n"
+
+
 def _source_to_issue_body(
+    source: str,
+    issue_type: str,
+    team: str,
+    repo: str,
+    risk: str | None,
+    mode: str | None,
+    handoff_maturity: str | None = None,
+    source_artifact: SourceArtifact | None = None,
+) -> str:
+    """Assemble the issue body, then stamp the recommended tier band (AC5).
+
+    The stamp lives on this wrapper (not the single current call site) so every
+    body the compile path emits carries the band — a future call site cannot
+    silently miss it.
+    """
+    body = _source_to_issue_body_unstamped(
+        source, issue_type, team, repo, risk, mode, handoff_maturity, source_artifact
+    )
+    return _append_tier_band(body, issue_type)
+
+
+def _source_to_issue_body_unstamped(
     source: str,
     issue_type: str,
     team: str,

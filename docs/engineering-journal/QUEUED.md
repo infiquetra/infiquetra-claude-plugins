@@ -454,7 +454,7 @@ scrolls the real tag off the page and reports "no deployment found".
 - Fix options when triggered: paginate until a tag-ref is found or N pages exhausted, or use the
   `environment` filter combined with a larger page. See [LEARNINGS.md#gh-api-f-defaults-post](LEARNINGS.md#gh-api-f-defaults-post).
 
-### ~~Plan-dictated per-teammate effort levels for `/work` + team-execution~~ — SHIPPED (#363)  {#team-execution-per-teammate-effort}
+### ~~Plan-dictated per-teammate effort levels for `/work` + team-execution~~ — RESOLVED via `inject_effort()` seam (#363)  {#team-execution-per-teammate-effort}
 
 **Resolved 2026-07-05** via the `inject_effort()` seam (#363, saga 0.63.0 / team-execution
 2.11.0 / fleet-core 0.4.0), **not** the re-architect-onto-Workflow path this entry originally

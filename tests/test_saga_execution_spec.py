@@ -444,3 +444,91 @@ def test_unlisted_backend_is_never_permissive() -> None:
     # A future/unknown backend enforces nothing => any restrictive sandbox halts (R4).
     sb = ES.Sandbox.from_dict("read-only-verify", "w")
     assert ES.unenforceable_sandbox_axis("some-future-backend", sb) is not None
+
+
+# ---------------------------------------------------------- tier enforceability (#369 U1)
+# unenforceable_tier(backend, tier) -> the (axis, value) a backend cannot spawn, or None. v1 checks
+# the MODEL axis: team-execution spawns by agentType (models {opus,sonnet,haiku}, no fable); unlisted
+# backends enforce nothing (R3).
+
+
+def test_unenforceable_tier_halts_fable_on_team_execution() -> None:
+    # fable is unreachable outside saga plan vocabulary; team-execution cannot spawn it -> HALT.
+    assert ES.unenforceable_tier("team-execution", ES.Tier("fable", "xhigh")) == ("model", "fable")
+    # A reachable model on team-execution is fine (existing specs stay green).
+    assert ES.unenforceable_tier("team-execution", ES.Tier("opus", "high")) is None
+
+
+def test_unenforceable_tier_passes_reachable_model() -> None:
+    # The enforcing-backend branch of the issue AC: inline / cc-workflows set the per-call tier and
+    # reach the whole palette, so the same fable/xhigh unit passes there.
+    for backend in ("inline", "cc-workflows-ultracode"):
+        assert ES.unenforceable_tier(backend, ES.Tier("fable", "xhigh")) is None
+
+
+def test_unenforceable_tier_unknown_backend_never_permissive() -> None:
+    # A backend absent from TIER_ENFORCEABLE_BY_BACKEND enforces nothing => any model halts (R3).
+    assert ES.unenforceable_tier("some-future-backend", ES.Tier("opus", "high")) == (
+        "model",
+        "opus",
+    )
+
+
+# ---------------------------------------------------------- Unit.min_tier floor (#369 U2)
+
+
+def test_min_tier_pulls_cheap_segment_up() -> None:
+    # Two units share the plugins/saga segment; the floored one drags the whole resident up to its
+    # floor via the same upgrade-only ladder op as the base merge.
+    spec = ES.ExecutionSpec.from_dict(
+        {
+            "name": "floor-demo",
+            "description": "d",
+            "repo": "/tmp/r",
+            "units": [
+                {
+                    "unit_id": "A",
+                    "label": "floored",
+                    "tier": {"model": "haiku", "effort": "low"},
+                    "prompt": "p",
+                    "files": ["plugins/saga/scripts/execution_spec.py"],
+                    "min_tier": {"model": "opus", "effort": "high"},
+                },
+                {
+                    "unit_id": "B",
+                    "label": "cheap",
+                    "tier": {"model": "haiku", "effort": "low"},
+                    "prompt": "p",
+                    "files": ["plugins/saga/scripts/team_emitter.py"],
+                },
+            ],
+        }
+    )
+    spec.validate()
+    segments = ES.segment_units(spec)
+    assert len(segments) == 1
+    assert segments[0].tier == ES.Tier(model="opus", effort="high")
+
+
+def test_off_palette_min_tier_fails_emit() -> None:
+    # A floor drawn off the MODELS/EFFORTS palette fails validation with a named error (R5).
+    unit = ES.Unit.from_dict(
+        {
+            "unit_id": "A",
+            "label": "a",
+            "tier": {"model": "sonnet", "effort": "high"},
+            "prompt": "p",
+            "min_tier": {"model": "gpt-5", "effort": "high"},
+        }
+    )
+    with pytest.raises(ES.SpecError, match="not in"):
+        unit.validate("unit A")
+
+
+def test_absent_min_tier_round_trips_byte_identical() -> None:
+    # A spec with no floor emits no min_tier key and round-trips through to_dict/from_dict unchanged.
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+    first = spec.to_dict()
+    assert all("min_tier" not in u for u in first["units"])
+    again = ES.ExecutionSpec.from_dict(first).to_dict()
+    assert first == again

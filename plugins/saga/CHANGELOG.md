@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.65.0] - 2026-07-06
+
+### Added — tier floors & backend enforceability (#369)
+
+- `TIER_ENFORCEABLE_BY_BACKEND` matrix + `unenforceable_tier()` helper (`execution_spec.py`), the
+  tier-axis sibling of `SANDBOX_ENFORCEABLE_BY_BACKEND`: each backend maps to the models it can spawn
+  (`inline` / `cc-workflows-ultracode` reach the whole palette; `team-execution` = `{opus, sonnet,
+  haiku}`, no `fable`). A backend absent from the matrix enforces nothing — unknown is never permissive.
+- `team_emitter.emit_team_structure()` now HALTs (`SpecError`) when a unit's model is unreachable by
+  `team-execution` (e.g. `fable`/`xhigh`) instead of rendering a cosmetic Tier cell the runtime will
+  not obey — the tier-axis sibling of the existing unenforceable-sandbox halt.
+- Optional `Unit.min_tier` floor: `segment_units()` clamps a merged segment tier UP to the strongest
+  member floor via the palette ladder ops (never bare index math). An absent `min_tier` emits no key
+  and round-trips byte-identical; an off-palette or unrunnable floor fails validation loudly.
+
+### Deferred
+
+- Agent-owned `tier-floor:` frontmatter (issue #369 mechanism 3) is deferred to a follow-up that
+  lands it together with the per-teammate tier-override lever (`{#team-execution-per-teammate-effort}`)
+  so the field ships with a real producer and consumer.
+
 ## [0.64.0] - 2026-07-06
 
 ### Changed — execution_spec consumes the single-source tier palette (#370)

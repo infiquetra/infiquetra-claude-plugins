@@ -225,6 +225,27 @@ def emit_team_structure(spec: Any, team_default_effort: str | None = None) -> st
             )
     segments = mod.segment_units(spec)
 
+    # #369 U3: the tier-axis sibling of the sandbox halt above -- but run on the POST-MERGE segment
+    # tier, NOT the pre-merge unit tier. A member unit's min_tier floor can push the merged segment
+    # above what team-execution can spawn even when every individual unit.tier was reachable (the
+    # floor clamp in segment_units() happens AFTER any per-unit check would run). Checking seg.tier
+    # subsumes the per-unit case -- seg.tier is the strongest of all member tiers + floors -- and so
+    # closes that bypass. team-execution spawns by agentType and inherits its agent-frontmatter model,
+    # so a segment whose merged model it cannot spawn (e.g. fable) HALTs rather than rendering a
+    # cosmetic Tier cell it will not obey (halt-not-downgrade, R3).
+    for seg in segments:
+        tier_offending = mod.unenforceable_tier("team-execution", seg.tier)
+        if tier_offending is not None:
+            axis_name, axis_value = tier_offending
+            raise mod.SpecError(
+                f"segment {seg.resident_id} (units {', '.join(seg.unit_ids)}): tier "
+                f"{axis_name}={axis_value!r} cannot be spawned by backend 'team-execution' (#369 -- "
+                f"residents spawn by agentType and inherit their agent-frontmatter model; "
+                f"{axis_value!r} is not in its reachable set -- a unit's min_tier floor may have "
+                f"pushed the merged segment here). Route these units to inline or cc-workflows, or "
+                f"lower the tier/floor. Halt-not-downgrade (R3)."
+            )
+
     # Per-teammate effort provenance lines (R5): one HTML comment naming the layer that
     # supplied each teammate's resolved effort. Collected here and emitted as a commented
     # block after the table so they never disturb the parsed worker rows.

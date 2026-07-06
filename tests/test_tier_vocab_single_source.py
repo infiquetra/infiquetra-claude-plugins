@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 import sys
 
 import pytest
@@ -292,3 +293,65 @@ def test_guard_reds_when_vocab_reintroduced() -> None:
     )
     findings = _vocabulary_redefinitions(scratch, "scratch.py")
     assert sorted(kind for _, kind in findings) == ["effort", "model"]
+
+
+# ---------------------------------------------------------------------------
+# U5 (AC8) — operator-table tier-token drift guard + (AC4) onboarding runbook.
+#
+# The /plan tier table is already render-guarded (test_tier_resolver.py::
+# test_skill_registry_sync). The team-execution worker table is an illustrative
+# template, so the meaningful check is vocabulary VALIDITY: every `model/effort`
+# tier token it displays must draw from the canonical MODELS/EFFORTS — a hand-edit
+# that drifts (opus/superhigh, gpt4/high) is caught. See doc-review finding B.
+# ---------------------------------------------------------------------------
+
+PLAN_SKILL_MD = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
+TEAM_SKILL_MD = (
+    REPO_ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "SKILL.md"
+)
+TIER_PALETTE_RUNBOOK = REPO_ROOT / "plugins" / "fleet-core" / "references" / "tier-palette.md"
+
+_TIER_TOKEN = re.compile(r"\b([a-z0-9-]+)/([a-z0-9-]+)\b")
+
+
+def _tier_token_drift(text: str) -> list[str]:
+    """Return `model/effort` tokens whose one recognized half implies an invalid other half."""
+    models, efforts = set(tier_palette.MODELS), set(tier_palette.EFFORTS)
+    bad: list[str] = []
+    for match in _TIER_TOKEN.finditer(text):
+        left, right = match.group(1), match.group(2)
+        left_is_model, right_is_effort = left in models, right in efforts
+        if left_is_model and not right_is_effort:
+            bad.append(f"{left}/{right} (invalid effort)")
+        elif right_is_effort and not left_is_model:
+            bad.append(f"{left}/{right} (invalid model)")
+    return bad
+
+
+@pytest.mark.parametrize("skill_md", [PLAN_SKILL_MD, TEAM_SKILL_MD])
+def test_tier_catalog_check(skill_md: pathlib.Path) -> None:
+    """AC8: no `model/effort` tier token in an operator table drifts from the vocabulary."""
+    drift = sorted(set(_tier_token_drift(skill_md.read_text(encoding="utf-8"))))
+    assert drift == [], f"{skill_md.name}: tier tokens drift from the palette: {drift}"
+
+
+def test_tier_catalog_check_reds_on_drift() -> None:
+    """The forcing function: a stale/typo tier token is flagged."""
+    assert _tier_token_drift("worker uses opus/superhigh here") == ["opus/superhigh (invalid effort)"]
+    assert _tier_token_drift("gpt4/high teammate") == ["gpt4/high (invalid model)"]
+    assert _tier_token_drift("plain and/or prose") == []  # non-vocab slash is ignored
+
+
+def test_onboarding_guard() -> None:
+    """AC4: the onboarding runbook exists and encodes the {#tier-vocab-ordering} rule; a
+    mis-inserted model at the wrong rank is caught by the import-time ordering guard."""
+    assert TIER_PALETTE_RUNBOOK.exists()
+    runbook = TIER_PALETTE_RUNBOOK.read_text(encoding="utf-8")
+    assert ".index(" in runbook and "{#tier-vocab-ordering}" in runbook
+    assert "models.json" in runbook
+    # a correct prepend derives a clean order; a mis-ranked insertion is rejected.
+    good = {"m0": {"rank": 0}, "fable": {"rank": 1}, "opus": {"rank": 2}}
+    assert tier_palette._derive_ordered(good, "rank", "model") == ("m0", "fable", "opus")
+    mis_inserted = {"m0": {"rank": 0}, "fable": {"rank": 0}, "opus": {"rank": 2}}
+    with pytest.raises(TierPaletteError):
+        tier_palette._derive_ordered(mis_inserted, "rank", "model")

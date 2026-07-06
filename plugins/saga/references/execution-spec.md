@@ -118,6 +118,26 @@ allocation to a run pool, and surfaces an escalation-request before a unit execu
 via the `allocate`/`record`/`escalate`/`report` CLI verbs. The cost-weighted spend-*delta* classifier
 is the separate #367.
 
+### Spend-delta machinery (#367): direction classifier, relative lever, worth-it receipts, spend authority
+
+Where #366 priced *magnitude* ("how much?"), #367 classifies *direction* ("which way?"). `spend_delta(old,
+new)` returns `cheapen` / `escalate` / `lateral` — built on per-axis ordering (a shared `_axis_deltas`
+helper over the palette `stronger` op, never raw `.index()`), so a sideways axis trade (stronger model,
+weaker effort) is `lateral`. It is NOT built on `to_spend`: the cost table is injective, so a magnitude
+reading could never yield `lateral`. `is_escalation` shares the helper but keeps its exact two-way
+semantics (up on either axis) — deliberately distinct from `spend_delta == "escalate"` on mixed moves.
+
+`adjacent_tier(tier, "cheaper"|"dearer")` is the relative one-notch lever: `cheaper` reuses
+`tier_resolver.cheaper_fallback` (#362), `dearer` is the symmetric one-rung-up, and a boundary call raises
+rather than clamping. Two optional `Unit` fields — `worth_it_because` and `cheaper_fallback` — back the
+**premium-tier worth-it hard-block**: `validate(require_receipts=True)` fails a premium tier (opus/fable
+model or xhigh effort, above the `sonnet/high` baseline) missing a justification or a strictly-cheaper
+named fallback. The check is `require_receipts`-gated (the `/plan` authoring boundary via
+`execution_spec.py validate --require-receipts`), never on the unconditional `validate()` emit runs, so
+existing specs are never retroactively broken; engine-owned units are exempt. `spend_authority.py` +
+`.saga/spend-authority.json` resolve each unit `silent`/`ask` against a `silent_ceiling` (absent →
+`sonnet/high`), using the same `is_escalation` predicate as the hard-block so the two levers agree.
+
 ### Missing verdicts — runtime failure vs. static non-applicability (R1–R5, KTD7–KTD10)
 
 A verifier that dies before emitting resolves to a `null` verdict slot (harness contract: terminal

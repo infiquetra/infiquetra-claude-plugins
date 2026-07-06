@@ -2881,3 +2881,51 @@ ledger. Operator chose the **full DoD** (escrow ledger in the same PR, not defer
   unit needs reconciling with its `spend_delta`/`adjacent_tier` ordering math.
 
 ---
+
+### Spend-delta machinery — one three-way direction primitive built on the existing ordering (commit pending)  {#spend-delta-machinery-367}
+
+Issue #367 gives `/plan` and `/work` one shared primitive for tier-spend *direction*: a
+`spend_delta(old, new) -> {cheapen | escalate | lateral}` classifier, a `worth_it_because` +
+`cheaper_fallback` validate hard-block, a relative `adjacent_tier` lever, and a
+`.saga/spend-authority.json` silent/ask matrix. The **final leaf** `sub-367` of `tier-effort-first-class`
+— merging it completes the outcome (9/9). Backend inline; saga-only.
+
+- **KTD1 — `spend_delta` is per-axis ordering (three-way), not `to_spend` magnitude.** The `lateral`
+  bucket is for sideways axis trades (stronger model + weaker effort). `to_spend` (#366) is a total order
+  and injective over the 16 distinct cost cells, so a magnitude classifier could never yield `lateral`.
+  `to_spend` answers "how much?"; `spend_delta` answers "which way?" — different primitives.
+- **KTD2 — `spend_delta` generalizes `is_escalation`; the latter becomes `spend_delta(...)=="escalate"`.**
+  One primitive, no parallel two-way/three-way vocabulary. A grid guard test proves equivalence so #365's
+  `/tier` gate is behavior-preserved.
+- **KTD3 — `spend_delta` + `adjacent_tier` live in `execution_spec.py`, not fleet_commons.** They are
+  `Tier`-typed (the dataclass lives in saga) and sit beside `is_escalation`. `adjacent_tier("cheaper")`
+  reuses `tier_resolver.cheaper_fallback` (#362, via the shim) so the down-rung logic is not duplicated;
+  `dearer` uses `tier_palette.escalate`. This keeps #367 saga-only — no fleet-core bump (reuse, not
+  modify).
+- **KTD4 — `adjacent_tier` raises at ladder boundaries.** `cheaper_fallback`'s floor no-op (returns the
+  same tier) is converted to a raise; `dearer` raises at the ceiling. The issue's explicit "boundary
+  calls raise rather than silently clamping/wrapping."
+- **KTD5 — one shared `sonnet/high` baseline for both the worth-it hard-block and the spend-authority
+  default.** Both trigger on `is_escalation(SPEND_BASELINE, tier)` with `SPEND_BASELINE = sonnet/high`, so
+  the two levers cannot disagree about what "premium" means.
+- **KTD6 — `.saga/spend-authority.json` is a `silent_ceiling` tier, not a 16-cell map.** Modeled on a
+  signature-authority limit ("authorized silently up to tier X"); the resolver compares via
+  `is_escalation` (re-expressed on dict tiers, pinned to `is_escalation` by an exhaustive grid test).
+  Absent → `sonnet/high`; malformed → loud `SpendAuthorityError` (the #368 `tier_defaults.py` precedent).
+- **KTD7 — test placement:** `spend_delta`/`adjacent_tier` → new `tests/test_spend_delta.py`; the
+  worth-it hard-block → existing `tests/test_saga_execution_spec.py`; spend-authority →
+  `tests/test_spend_authority.py`. The issue's `tests/test_execution_spec.py` does not exist.
+- **KTD8 — the worth-it hard-block is `require_receipts`-gated, not unconditional (implementation-forced).**
+  The AC says "fails `validate()`", but the non-goal ("no retroactive backfill — new specs going forward")
+  forbids an unconditional check: `validate()` runs on every emit and every existing spec (75 emitter
+  tests break). Resolution: a `validate(require_receipts=True)` gate `/plan` sets at authoring; `emit()`
+  and existing specs use the default `validate()` unchanged. Interaction: `/tier`-patching (#365) up to a
+  premium tier is subject to the same authoring gate — a deliberate extension.
+- **KTD9 — `SPEND_BASELINE = sonnet/high`, not sonnet/medium.** The issue's premium set "(opus, fable,
+  xhigh in either axis)" — which omits `high` — is authoritative over the "sonnet/medium baseline"
+  phrasing; `is_escalation(sonnet/high, tier)` yields exactly that set and avoids retroactively flagging
+  common `sonnet/high` units.
+- **Revisit when.** The `ask` path needs an actual operator-prompt surface (single vs batched), or a
+  cross-repo authority registry is wanted beyond the single per-repo `.saga/spend-authority.json`.
+
+---

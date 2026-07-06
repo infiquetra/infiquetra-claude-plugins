@@ -963,3 +963,116 @@ def test_spend_cli_reports_overage(tmp_path: Path, capsys: pytest.CaptureFixture
     assert rc == 0  # a report never HALTs
     assert "total spend: 32" in out
     assert "OVER by 22" in out
+
+
+# --- #367 U3: worth_it_because + cheaper_fallback validate hard-block ----------------------
+
+
+def test_worth_it_fallback_required_above_baseline() -> None:
+    # opus/high is a premium tier -> under require_receipts it needs worth_it_because AND
+    # cheaper_fallback. The hard-block is authoring-gated (require_receipts), not on plain validate().
+    bare = ES.ExecutionSpec.from_dict(_budget_spec([_unit("U1", "opus", "high")]))
+    bare.validate()  # plain validate() does NOT enforce receipts (no retroactive break)
+    with pytest.raises(ES.SpecError, match="worth_it_because"):
+        bare.validate(require_receipts=True)
+    # justification present but no fallback:
+    no_fb = ES.ExecutionSpec.from_dict(
+        _budget_spec([_unit("U1", "opus", "high", worth_it_because="deep judgment")])
+    )
+    with pytest.raises(ES.SpecError, match="cheaper_fallback"):
+        no_fb.validate(require_receipts=True)
+    # both present with a genuinely cheaper named fallback -> passes.
+    ok = ES.ExecutionSpec.from_dict(
+        _budget_spec(
+            [
+                _unit(
+                    "U1",
+                    "opus",
+                    "high",
+                    worth_it_because="deep judgment",
+                    cheaper_fallback={"model": "sonnet", "effort": "high"},
+                )
+            ]
+        )
+    )
+    ok.validate(require_receipts=True)  # no raise
+
+
+def test_worth_it_fallback_not_required_at_baseline() -> None:
+    # Non-premium tiers (sonnet/high and below, any cheap-model tier) need no justification even
+    # under require_receipts.
+    for model, effort in (
+        ("sonnet", "medium"),
+        ("sonnet", "high"),
+        ("haiku", "high"),
+        ("haiku", "low"),
+    ):
+        ES.ExecutionSpec.from_dict(_budget_spec([_unit("U1", model, effort)])).validate(
+            require_receipts=True
+        )
+
+
+def test_worth_it_fields_absent_roundtrip() -> None:
+    spec = ES.ExecutionSpec.from_dict(_budget_spec([_unit("U1", "sonnet", "medium")]))
+    unit_dict = spec.units[0].to_dict()
+    assert "worth_it_because" not in unit_dict
+    assert "cheaper_fallback" not in unit_dict
+    assert ES.ExecutionSpec.from_dict(spec.to_dict()).to_dict() == spec.to_dict()
+
+
+def test_cheaper_fallback_not_actually_cheaper_fails() -> None:
+    # opus/xhigh is DEARER than opus/high -> spend_delta != "cheapen" -> validate fails.
+    spec = ES.ExecutionSpec.from_dict(
+        _budget_spec(
+            [
+                _unit(
+                    "U1",
+                    "opus",
+                    "high",
+                    worth_it_because="x",
+                    cheaper_fallback={"model": "opus", "effort": "xhigh"},
+                )
+            ]
+        )
+    )
+    with pytest.raises(ES.SpecError, match="not strictly cheaper"):
+        spec.validate(require_receipts=True)
+
+
+def test_engine_owned_unit_exempt_from_worth_it() -> None:
+    # A capability-routed second-opinion unit pins to opus/high by intent, not operator choice -> exempt.
+    spec = ES.ExecutionSpec.from_dict(
+        _budget_spec(
+            [
+                _unit(
+                    "U1",
+                    "opus",
+                    "high",
+                    capability="code-generation",
+                    engine_intent="second-opinion",
+                )
+            ]
+        )
+    )
+    spec.validate(require_receipts=True)  # no raise even under the authoring gate
+
+
+def test_worth_it_cheaper_fallback_roundtrips_when_present() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _budget_spec(
+            [
+                _unit(
+                    "U1",
+                    "fable",
+                    "xhigh",
+                    worth_it_because="frontier reasoning",
+                    cheaper_fallback={"model": "opus", "effort": "xhigh"},
+                )
+            ]
+        )
+    )
+    unit_dict = spec.units[0].to_dict()
+    assert unit_dict["worth_it_because"] == "frontier reasoning"
+    assert unit_dict["cheaper_fallback"] == {"model": "opus", "effort": "xhigh"}
+    assert ES.ExecutionSpec.from_dict(spec.to_dict()).to_dict() == spec.to_dict()
+    spec.validate(require_receipts=True)  # fable/xhigh with a strictly-cheaper opus/xhigh fallback

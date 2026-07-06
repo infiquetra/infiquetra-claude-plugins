@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-05
+
+### Added
+
+- `agy-coder` agent: add validated `effort: medium` frontmatter field, consuming the fleet
+  effort convention (#363) — proves the first-class effort vocabulary applies fleet-wide, not
+  saga-only.
+
 ## [0.1.0] - 2026-06-30
 
 ### Added

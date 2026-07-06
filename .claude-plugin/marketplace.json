@@ -62,7 +62,7 @@
     {
       "name": "deploy",
       "source": "./plugins/deploy",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "description": "tag-promotion deployment operations for Infiquetra repositories.",
       "author": {
         "name": "Infiquetra",
@@ -178,7 +178,7 @@
     {
       "name": "agy",
       "source": "./plugins/agy",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Antigravity-backed coder and reviewer bridge agents with guarded evidence bundles and patch import.",
       "author": {
         "name": "Infiquetra",

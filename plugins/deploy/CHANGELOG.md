@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.4] - 2026-07-05
+
+- `release-orchestrator` agent: add validated `effort: high` frontmatter field, consuming the
+  fleet effort convention (#363) — release coordination warrants deliberate reasoning; proves
+  the effort vocabulary applies fleet-wide.
+
 ## [0.1.3] - 2026-07-05
 
 - Reformat CHANGELOG headings to the fleet's canonical grammar (bracketed version, hyphen-minus

@@ -10,6 +10,7 @@ Done requires.
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import sys
 
@@ -220,3 +221,74 @@ def test_effort_ladder_monotonicity(weaker: str, stronger: str) -> None:
     """AC7: for every adjacent EFFORTS pair, the merge picks the stronger (higher) member."""
     assert tier_palette.stronger("effort", weaker, stronger) == stronger
     assert tier_palette.strongest("effort", [weaker, stronger]) == stronger
+
+
+# ---------------------------------------------------------------------------
+# U4 (AC1) — repo-wide bare-literal drift guard.
+#
+# AC1's literal wording ("zero bare model-literal strings outside the module") is not
+# achievable: ~205 legitimate model-name occurrences exist in production Python (model
+# names as work-shape dict KEYS in team_emitter.py, tier data, etc.) plus 33 deferred
+# agent-frontmatter .md literals (an explicit non-goal). The meaningful, achievable
+# guard is AC1's INTENT: no second SOURCE of the ordered vocabulary. We flag any
+# tuple/list assignment of >=2 same-vocabulary tokens (a MODELS/EFFORTS re-declaration)
+# in PRODUCTION Python outside the canonical home. See doc-review finding A.
+# ---------------------------------------------------------------------------
+
+_PRODUCTION_ROOTS = (REPO_ROOT / "plugins", REPO_ROOT / "scripts")
+_CANONICAL_HOME_BASENAMES = {"tier_palette.py"}
+
+
+def _vocabulary_redefinitions(source: str, path_label: str) -> list[tuple[int, str]]:
+    """Return [(lineno, 'model'|'effort')] for tuple/list assignments that re-declare the
+    closed model or effort vocabulary (>=2 elements, all from one vocabulary)."""
+    findings: list[tuple[int, str]] = []
+    tree = ast.parse(source, filename=path_label)
+    model_set, effort_set = set(tier_palette.MODELS), set(tier_palette.EFFORTS)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        value = node.value
+        if not isinstance(value, (ast.Tuple, ast.List)):
+            continue
+        strings = [
+            elt.value for elt in value.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+        ]
+        if len(strings) < 2 or len(strings) != len(value.elts):
+            continue  # a (model, effort) PAIR or a mixed tuple is a tier value, not a vocab
+        if all(s in model_set for s in strings):
+            findings.append((node.lineno, "model"))
+        elif all(s in effort_set for s in strings):
+            findings.append((node.lineno, "effort"))
+    return findings
+
+
+def _production_py_files() -> list[pathlib.Path]:
+    files: list[pathlib.Path] = []
+    for root in _PRODUCTION_ROOTS:
+        for path in root.rglob("*.py"):
+            if path.name not in _CANONICAL_HOME_BASENAMES:
+                files.append(path)
+    return files
+
+
+def test_no_bare_model_literals_outside_module() -> None:
+    """AC1: no production module outside tier_palette.py re-declares the vocabulary."""
+    offenders: list[str] = []
+    for path in _production_py_files():
+        for lineno, kind in _vocabulary_redefinitions(
+            path.read_text(encoding="utf-8"), str(path)
+        ):
+            offenders.append(f"{path.relative_to(REPO_ROOT)}:{lineno} ({kind} vocab re-declared)")
+    assert offenders == [], "vocabulary re-declared outside tier_palette.py:\n" + "\n".join(offenders)
+
+
+def test_guard_reds_when_vocab_reintroduced() -> None:
+    """AC1 forcing function: reintroducing the tuple into a module reds the guard."""
+    scratch = (
+        'MODELS = ("fable", "opus", "sonnet", "haiku")\n'
+        'EFFORTS = ("low", "medium", "high", "xhigh")\n'
+        'a_tier = ("sonnet", "high")\n'  # a (model, effort) pair must NOT trip the guard
+    )
+    findings = _vocabulary_redefinitions(scratch, "scratch.py")
+    assert sorted(kind for _, kind in findings) == ["effort", "model"]

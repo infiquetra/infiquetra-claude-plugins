@@ -62,7 +62,7 @@
     {
       "name": "deploy",
       "source": "./plugins/deploy",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "description": "tag-promotion deployment operations for Infiquetra repositories.",
       "author": {
         "name": "Infiquetra",
@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.62.0",
+      "version": "0.63.0",
       "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas.",
       "author": {
         "name": "Infiquetra",
@@ -108,7 +108,7 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.10.0",
+      "version": "2.11.0",
       "description": "Two-phase plan execution with reviewer consensus, validator gates, and guarded nonprod automation for Infiquetra repositories.",
       "author": {
         "name": "Infiquetra",
@@ -178,7 +178,7 @@
     {
       "name": "agy",
       "source": "./plugins/agy",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Antigravity-backed coder and reviewer bridge agents with guarded evidence bundles and patch import.",
       "author": {
         "name": "Infiquetra",
@@ -198,7 +198,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only \u2014 no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",

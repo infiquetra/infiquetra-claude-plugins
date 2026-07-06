@@ -32,6 +32,30 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
+
+# Canonical effort vocabulary + the #362 dispatch-time tier resolver, loaded through the
+# fleet-commons shim (never re-declared here -- KTD3). ``EFFORTS`` is the single source of
+# truth the A7 ``Tier`` cell's effort half is validated against (R4); ``resolve()`` supplies
+# the base agent-frontmatter layer the three-layer cascade wraps (R5, KTD4).
+_tier_palette = fleet_commons_shim.load("tier_palette")
+EFFORTS: tuple[str, ...] = _tier_palette.EFFORTS
+_tier_resolver = fleet_commons_shim.load("tier_resolver")
+
+# Reverse map from a segment's resolved model to a canonical work-shape registry key, used
+# only to give ``resolve()`` a valid base layer (the agent-frontmatter default). Because the
+# plan-authored per-unit tier is the most-specific layer and always present when the emitter
+# runs, this base is never the cascade winner in practice -- it is recorded in provenance as
+# the layer that *would* have supplied the value had no more-specific layer existed.
+_MODEL_TO_WORK_SHAPE: dict[str, str] = {
+    "fable": "judgment",
+    "opus": "judgment",
+    "sonnet": "mechanical",
+    "haiku": "purely-mechanical",
+}
+
 # The base reviewer set the team-execution protocol always requires.
 # These are the three mandatory base reviewers from the SKILL.md template.
 _BASE_REVIEWERS: list[tuple[str, str]] = [
@@ -67,7 +91,69 @@ _EXECUTION_GATES: list[str] = [
 ]
 
 
-def emit_team_structure(spec: Any) -> str:
+def _validate_effort(effort: str, where: str) -> None:
+    """Raise on an off-palette effort (R4) -- the same failure as an R1/R2 frontmatter typo.
+
+    ``spec.validate()`` already checks each unit's tier, but the emitter re-asserts at compose
+    time so an off-palette effort reaching the A7 ``Tier`` cell fails loudly here rather than
+    being silently rendered into an un-runnable team-structure table.
+    """
+    if effort not in EFFORTS:
+        raise ValueError(f"{where}: effort {effort!r} not in {EFFORTS} (R4 off-palette effort)")
+
+
+def resolve_teammate_effort(
+    seg: Any,
+    team_default_effort: str | None,
+    *,
+    resolve: Any = None,
+) -> tuple[str, str]:
+    """Resolve one teammate's effort through the three-layer cascade (R5, KTD4).
+
+    Precedence, most-specific wins:
+
+    1. **plan-unit** -- the plan-authored per-unit tier (``seg.tier.effort``). Always present
+       when the emitter runs, so it is the winner in the ordinary case.
+    2. **team-default** -- an optional team-wide effort default (usually ``None`` today).
+    3. **agent-frontmatter** -- the base layer ``resolve()`` supplies from the segment's
+       work-shape registry row (``default_effort``).
+
+    The cascade *wraps* ``tier_resolver.resolve()``: ``resolve()`` computes the base layer, and
+    the winning layer's value is threaded back through ``operator_override={"effort": ...}`` so
+    the resolver validates it. Returns ``(effort, resolving_layer)``.
+
+    Chaperone workers are excluded upstream (see ``emit_team_structure``); this function is
+    never called for them (R6, KTD5).
+    """
+    resolve_fn = resolve if resolve is not None else _tier_resolver.resolve
+    work_shape = _MODEL_TO_WORK_SHAPE.get(seg.tier.model, "mechanical")
+
+    plan_effort = getattr(seg.tier, "effort", None)
+    if plan_effort is not None:
+        override = {"effort": plan_effort}
+        layer = "plan-unit"
+    elif team_default_effort is not None:
+        override = {"effort": team_default_effort}
+        layer = "team-default"
+    else:
+        override = None
+        layer = "agent-frontmatter"
+
+    resolution = resolve_fn(role_kind=None, work_shape=work_shape, operator_override=override)
+    return resolution.effort, layer
+
+
+def _is_chaperone(seg: Any) -> bool:
+    """A chaperone segment routes to an external engine/capability (KTD5).
+
+    Its effort is intent-driven (offload -> sonnet/medium, second-opinion -> opus/high) and
+    must NOT be overridden by the cascade -- the two intents pull in opposite directions by
+    design, so the cascade skips these workers entirely (R6, KTD5).
+    """
+    return seg.engine is not None or seg.capability is not None
+
+
+def emit_team_structure(spec: Any, team_default_effort: str | None = None) -> str:
     """Emit the ``## Team Structure`` markdown section from an ``ExecutionSpec``.
 
     The spec is the same object ``execution_spec.py`` builds — validated by the caller
@@ -82,8 +168,14 @@ def emit_team_structure(spec: Any) -> str:
     spec:
         A validated ``ExecutionSpec`` (from ``execution_spec.ExecutionSpec.from_dict``).
         The units become worker rows; the base reviewer / validator sets are fixed.
+    team_default_effort:
+        The optional team-wide effort default (R5 middle cascade layer). Usually ``None``
+        (no such config today), in which case the cascade falls through to the plan-unit
+        tier / agent-frontmatter base. Validated against ``EFFORTS`` when provided.
     """
     spec.validate()
+    if team_default_effort is not None:
+        _validate_effort(team_default_effort, "team-default effort")
 
     lines: list[str] = []
 
@@ -133,10 +225,26 @@ def emit_team_structure(spec: Any) -> str:
             )
     segments = mod.segment_units(spec)
 
+    # Per-teammate effort provenance lines (R5): one HTML comment naming the layer that
+    # supplied each teammate's resolved effort. Collected here and emitted as a commented
+    # block after the table so they never disturb the parsed worker rows.
+    provenance: list[str] = []
+
     for seg in segments:
         agent = f"`{seg.resident_id}`"
         units = ", ".join(seg.unit_ids)
-        tier = f"{seg.tier.model}/{seg.tier.effort}"
+        # R4: the A7 Tier cell's effort half must be drawn from the canonical EFFORTS palette;
+        # an off-palette value raises here (same failure class as an R1/R2 frontmatter typo).
+        _validate_effort(seg.tier.effort, f"worker {seg.resident_id} tier")
+
+        if _is_chaperone(seg):
+            # KTD5: chaperone effort is intent-driven and left untouched by the cascade.
+            resolved_effort = seg.tier.effort
+            resolving_layer = f"chaperone-intent:{seg.engine_intent or 'offload'}"
+        else:
+            resolved_effort, resolving_layer = resolve_teammate_effort(seg, team_default_effort)
+
+        tier = f"{seg.tier.model}/{resolved_effort}"
         deps = ", ".join(seg.depends_on) if seg.depends_on else "—"
         if seg.engine is not None:
             engine = seg.engine
@@ -148,6 +256,14 @@ def emit_team_structure(spec: Any) -> str:
         lines.append(
             f"| {agent} | {units} | {tier} | bypassPermissions | {deps} | {engine} | {intent} |"
         )
+        provenance.append(
+            f"<!-- effort-provenance worker={agent} effort={resolved_effort} "
+            f"resolved-by={resolving_layer} "
+            f"(layers: plan-unit={seg.tier.effort} "
+            f"team-default={team_default_effort or '—'}) -->"
+        )
+    lines.append("")
+    lines.extend(provenance)
     lines.append("")
 
     # ---- Reviewers ---- always the base set

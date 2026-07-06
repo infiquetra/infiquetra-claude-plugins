@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.63.0] - 2026-07-05
+
+### Changed — `team_emitter.py` validates and cascade-resolves per-teammate effort (#363)
+
+`emit_team_structure()` now validates the A7 `Tier` cell's effort half against the canonical
+`EFFORTS` vocabulary (`fleet_commons.tier_palette`, R4) — an off-palette value raises at compose
+time instead of rendering an un-runnable team-structure table. A new `resolve_teammate_effort()`
+resolves each non-chaperone teammate's effort through the three-layer cascade (plan-unit →
+team-default → agent-frontmatter base, R5, KTD4), wrapping `tier_resolver.resolve()` and recording
+which layer won as a provenance line. Chaperone workers (`offload`/`second-opinion` engine or
+capability segments) are excluded from the cascade entirely — their effort is intent-driven and
+must not be overridden (R6, KTD5). Closes the standing `{#team-execution-per-teammate-effort}`
+queue item via the `inject_effort()` seam (see team-execution 2.11.0), not the rejected
+route-onto-Workflow re-architecture.
+
 ## [0.62.0] - 2026-07-05
 
 ### Changed — `/plan`'s Step-1 tier table now renders from the shared work-shape→tier registry (#362)

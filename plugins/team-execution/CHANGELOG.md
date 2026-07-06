@@ -4,6 +4,31 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.11.0] - 2026-07-05
+
+### Wire `inject_effort()` seam into the Agent-tool teammate spawn + cross-plugin convention (#363)
+- `SKILL.md`'s persistent-resident-worker spawn step now runs each segment's cascade-resolved
+  effort (`team_emitter.resolve_teammate_effort`, saga 0.63.0) through
+  `fleet_commons.effort_rider.inject_effort(prompt, resolved_effort, "agent")` before the
+  Agent-tool spawn — the only dispatch path with no real per-call effort knob (KTD1/KTD2), so a
+  labeled `EFFORT_RIDER[resolved_effort]` proxy directive is prepended to the spawn prompt. The
+  `workflow` and `external-engine` spawn kinds already honor effort as a real knob and route
+  through the same seam as guarded no-ops so a mistaken call never double-injects the rider.
+- Added a post-run reconciliation step (R9, KTD7): compares each teammate's cascade-resolved
+  effort against the worker manifest's recorded effort via
+  `fleet_commons.effort_rider.reconcile_effort(...)`, emitting a named `tiering-drift[<spawn_kind>]`
+  line on mismatch (comparing `manifest_effort` on real-knob paths, `spawn_prompt` rider text on
+  the Agent-tool path) and nothing on a match.
+- `plugins/agy/agents/agy-coder.md` and `plugins/deploy/agents/release-orchestrator.md` each gained
+  a validated `effort:` frontmatter field as the first cross-plugin adopters of the convention
+  (R8).
+- This closes the standing `{#team-execution-per-teammate-effort}` queue item via the
+  `inject_effort()` seam — effort is now a first-class value honored by the real knob on the two
+  paths that have one and proxied honestly on the one that doesn't — **not** the rejected
+  route-team-execution-onto-Workflow re-architecture (KTD1). A native subagent-effort knob remains
+  a tracked residual follow-up: swapping the proxy for a real call is a one-function change behind
+  the same seam.
+
 ## [2.10.0] - 2026-07-05
 
 ### Migrate all 25 agent frontmatters to `role-tier:`, resolved through the shared tier registry (#362)

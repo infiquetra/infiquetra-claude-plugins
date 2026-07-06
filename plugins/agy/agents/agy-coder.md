@@ -3,6 +3,7 @@ name: agy-coder
 description: Delegate a bounded coding task to Antigravity through the guarded agy wrapper
 tools: Bash
 model: sonnet
+effort: medium
 ---
 
 # Agy Coder

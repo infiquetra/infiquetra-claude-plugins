@@ -454,12 +454,20 @@ scrolls the real tag off the page and reports "no deployment found".
 - Fix options when triggered: paginate until a tag-ref is found or N pages exhausted, or use the
   `environment` filter combined with a larger page. See [LEARNINGS.md#gh-api-f-defaults-post](LEARNINGS.md#gh-api-f-defaults-post).
 
-### Plan-dictated per-teammate effort levels for `/work` + team-execution  {#team-execution-per-teammate-effort}
+### ~~Plan-dictated per-teammate effort levels for `/work` + team-execution~~ — RESOLVED via `inject_effort()` seam (#363)  {#team-execution-per-teammate-effort}
 
-**Priority.** P3 (→ P2 if Claude Code ships an `effort:` agent-frontmatter field).
-**Effort.** Multi-day — re-architect team-execution's spawn onto the Workflow engine (where `agent()` accepts `effort`), then teach `/work` to parse and pass per-teammate effort.
-**Worth it when.** Uniform session effort proves too coarse — you want deep reasoning concentrated on specific reviewers (e.g. security, architecture) without paying it across the mechanical scanners — or Claude Code adds an `effort:` agent-frontmatter field (at which point most of this collapses to a cheap frontmatter edit mirroring the model tiers).
-**Context.** Companion to the v2.1.0 per-teammate **model** tiers (reviewers Opus / testers Sonnet / scanners+monitors Haiku). Model is settable per agent because it is frontmatter; **effort is not** — per-agent effort only exists inside a Workflow script (`agent(..., {effort})`), and team-execution spawns subagents by type, so all teammates inherit one session-global effort. Target design (Jeff, 2026-06-20): the plan carries an effort level per teammate (e.g. a `validator → effort` table) and `/work` ingests it during the work phase to set each teammate's effort at spawn. Feasibility hinges on the spawn path exposing effort — today that means routing team-execution through the Workflow engine. Note Haiku may clamp the top effort tiers; verify per-model effort support when built.
+**Resolved 2026-07-05** via the `inject_effort()` seam (#363, saga 0.63.0 / team-execution
+2.11.0 / fleet-core 0.4.0), **not** the re-architect-onto-Workflow path this entry originally
+assumed. `effort:` is now a real first-class frontmatter value (validated against
+`fleet_commons.tier_palette.EFFORTS`, R1/R2), resolved through a three-layer cascade
+(`team_emitter.resolve_teammate_effort`, R5, KTD4) and honored two ways: a **real** per-call knob
+on the paths that already had one (Workflow/ultracode `agent({effort})`, external-engine offload —
+unchanged, out of scope here) and a **labeled proxy** (`EFFORT_RIDER`, `fleet_commons.effort_rider`)
+on the native Agent-tool teammate path, which has no real per-call effort knob (KTD1/KTD2). A
+native subagent-effort knob remains a tracked residual follow-up — swapping the proxy for a real
+call is a one-function change behind the same seam, not a re-architecture. See `plugins/saga`,
+`plugins/team-execution`, and `plugins/fleet-core` CHANGELOGs (2026-07-05) and DECISIONS.md
+KTD1–KTD7 for the full record.
 
 ### `/outcome graph` — render the DAG as an Artifact (visual board), not only Mermaid text  {#outcome-graph-artifact-render}
 

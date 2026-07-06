@@ -176,6 +176,21 @@ the convention would otherwise route it to #334 (saga capability breadth) or the
   around by anchoring its saga as `issue-362`. **Open** — root-cause fix: the dispatcher mints `issue-<N>`
   for issue-backed leaves; lighter alternative: `attend`/`report` resolve leaf → issue saga id at print.
 
+- [ ] [#495](https://github.com/infiquetra/infiquetra-claude-plugins/issues/495) — code-leaf completion
+  harvest never fires. A code leaf's contract is `code:pr-merged` (`outcome_orchestrator.py:100-103`): the
+  node is `done` only when `node.github["pr"]` reads **merged** on GitHub — but the record-only dispatch →
+  native `/work` → merge flow never writes the leaf's merged PR back onto the node, and there is no verb to
+  attach it. So the first post-merge `advance` harvested nothing and left `sub-362` `dispatched` despite
+  #362 CLOSED + PR #493 MERGED. A **second, latent** gap: the decompose flow stores refs as `owner/repo#N`,
+  which `gh pr view` / `gh issue view` reject (read as a branch / "invalid issue format") — so
+  `pr_state`/`issue_state` read `unknown`; only a bare number or full URL works (latent here because all 9
+  nodes are `kind=code`, but it breaks non-code harvest and `advance --autonomous` board-sync). This is the
+  completion-path counterpart to #491 — which correctly noted harvest keys off the GitHub ref, not the
+  `leaf_saga_id`; #495 is that the GitHub ref itself was **absent and malformed**. Worked around by
+  attaching `github.pr = <PR #493 URL>` to `sub-362` and re-`advance` (→ `sub-362 done`, `sub-365`/`sub-368`
+  flowed through), committed to the outcome branch (`c5549d5`). **Open** — fix: plumb the merged PR onto the
+  node at merge time (or an `/outcome link-pr` verb) + store/normalize refs to a gh-consumable URL.
+
 ## Shared kickoff contract (every per-issue prompt points here)
 
 A /plan session kicked off with one of the prompts below MUST:

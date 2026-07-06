@@ -795,3 +795,38 @@ def test_pull_cord_not_complete_batched() -> None:  # R8
     assert "throw new Error(`pull-cord (#364)" in script
     # Each cord entry carries its one-rung proposal computed at emit time.
     assert 'cordProposal: "haiku/low -> haiku/medium (+1 effort rung)"' in script
+
+
+def test_pull_cord_reserved_returns_key() -> None:  # verifier P2
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(returns=["diff", "pull_cord"]))
+    with pytest.raises(ES.SpecError, match="reserved return-disposition key"):
+        spec.validate()
+
+
+def test_cord_proposal_respects_session_ceiling() -> None:  # verifier P1
+    # A unit AT the session ceiling has zero climb room: the cord entry must carry NO
+    # proposal (the ceiling is the final word), rendering the no-legal-climb HALT branch.
+    spec = ES.ExecutionSpec.from_dict(
+        {
+            "name": "d",
+            "description": "d",
+            "repo": "/tmp/r",
+            "units": [
+                {
+                    "unit_id": "U1",
+                    "label": "l",
+                    "prompt": "p",
+                    "tier": {"model": "haiku", "effort": "high"},
+                    "returns": ["result"],
+                }
+            ],
+        }
+    )
+    spec.validate()
+    ceiling = ES.Tier(model="haiku", effort="high")
+    script = str(ES.emit_workflow_script(spec, session_ceiling=ceiling))
+    assert 'cordProposal: "' not in script  # no proposal above the operator's own cap
+    assert "no legal climb: top of ladder or session ceiling" in script
+    # Without the ceiling the same unit proposes its one-rung climb.
+    unlimited = str(ES.emit_workflow_script(spec))
+    assert 'cordProposal: "haiku/high -> sonnet/high (+1 model rung)"' in unlimited

@@ -753,6 +753,14 @@ class Unit:
             # on-palette-but-unrunnable floor (e.g. haiku/xhigh) also halts via Tier.validate's ceiling
             # check -- a floor you cannot run is nonsense.
             self.min_tier.validate(f"unit {self.unit_id} min_tier")
+        if "pull_cord" in self.returns:
+            # #364 (verifier P2): pull_cord is the reserved worker-initiated escalation
+            # disposition -- a legitimate return field with that name would be silently
+            # swallowed as a cord by the gate. Reject at authoring time.
+            raise SpecError(
+                f"unit {self.unit_id}: 'pull_cord' is a reserved return-disposition key "
+                f"(#364) -- rename the return field"
+            )
         if self.escalate_on_signal:
             # #364 v1 composition exclusions (doc-review P1s): both would compound the one-rung
             # climb into unbounded spend -- the exact failure the issue forbids.
@@ -1044,7 +1052,7 @@ def _js_var(unit_id: str) -> str:
     return unit_id.replace("-", "_").replace(".", "_")
 
 
-def _emit_gate_call(unit: Unit, var: str) -> str:
+def _emit_gate_call(unit: Unit, var: str, session_ceiling: Tier | None = None) -> str:
     """Emit the __gate call for a unit."""
     opts: list[str] = [f"unitId: {_js_string(unit.unit_id)}"]
     expects_output = bool(unit.returns) or (unit.fanout and bool(unit.targets))
@@ -1055,8 +1063,10 @@ def _emit_gate_call(unit: Unit, var: str) -> str:
         ret_strs = ", ".join(_js_string(r) for r in unit.returns)
         opts.append(f"returns: [{ret_strs}]")
         # #364 R8: the one-rung proposal a pulled cord carries into the batched escalation
-        # entry -- computed at emit time (escalate_tier is pure); null at the top of the ladder.
-        cord_climb = escalate_tier(unit.tier)
+        # entry -- computed at emit time (escalate_tier is pure); null at the top of the ladder
+        # OR when the #365 session ceiling blocks the climb (the ceiling is the final word -- a
+        # cord must never propose a tier the operator's own cap forbids; verifier P1).
+        cord_climb = escalate_tier(unit.tier, ceiling=session_ceiling)
         if cord_climb is not None:
             cord_axis = "effort" if cord_climb.model == unit.tier.model else "model"
             opts.append(
@@ -1282,7 +1292,9 @@ def _emit_panel_reconciliation(
         lines.append(f"{indent}}}")
 
 
-def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
+def _emit_thunk(
+    lines: list[str], spec: ExecutionSpec, unit: Unit, session_ceiling: Tier | None = None
+) -> None:
     """Append one thunk entry for ``unit`` inside a ``parallel([...])``.
 
     Every thunk carries the unit's per-unit ``{model, effort}`` tier (R2(b)) and the same
@@ -1303,7 +1315,7 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
         lines.append(f"        {_js_string(prompt)},")
         lines.append("        { " + ", ".join(opts) + " },")
         lines.append(f"      {_retry_close(unit)})")
-        lines.append(f"      {_emit_gate_call(unit, 'result')}")
+        lines.append(f"      {_emit_gate_call(unit, 'result', session_ceiling)}")
         _emit_panel_reconciliation(lines, unit, "result", "", "      ", direct_throw=False)
         lines.append("    }")
         lines.append("    return result")
@@ -1329,7 +1341,11 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
 
 
 def _emit_verify_loop_singleton(
-    lines: list[str], spec: ExecutionSpec, unit: Unit, var: str
+    lines: list[str],
+    spec: ExecutionSpec,
+    unit: Unit,
+    var: str,
+    session_ceiling: Tier | None = None,
 ) -> None:
     """Emit the iterate-to-consensus loop for a singleton unit."""
     panel = unit.verify
@@ -1351,7 +1367,7 @@ def _emit_verify_loop_singleton(
     lines.append(f"    {_js_string(prompt)},")
     lines.append("    { " + ", ".join(opts) + " },")
     lines.append("  )")
-    lines.append(f"  {_emit_gate_call(unit, var)}")
+    lines.append(f"  {_emit_gate_call(unit, var, session_ceiling)}")
     _emit_panel_reconciliation(lines, unit, var, "", "  ", direct_throw=False)
     lines.append("}")
     lines.append("")
@@ -1470,7 +1486,7 @@ def _emit_verify_panel(
     lines.append(f"    {_js_string(_agent_prompt(spec, retry_unit))},")
     lines.append(f"    {{ {', '.join(_agent_opts(retry_unit))} }},")
     lines.append("  )")
-    lines.append(f"  {_emit_gate_call(retry_unit, var)}")
+    lines.append(f"  {_emit_gate_call(retry_unit, var, session_ceiling)}")
     _emit_panel_reconciliation(
         lines,
         retry_unit,
@@ -1688,7 +1704,7 @@ def emit_workflow_script(
             _emit_unit_header(unit)
             var = _var(unit.unit_id)
             if unit.verify is not None and unit.verify.iterate_to_consensus:
-                _emit_verify_loop_singleton(lines, spec, unit, var)
+                _emit_verify_loop_singleton(lines, spec, unit, var, session_ceiling)
             else:
                 prompt = _agent_prompt(spec, unit)
                 opts = _agent_opts(unit)
@@ -1704,7 +1720,7 @@ def emit_workflow_script(
                 lines.append(f"  {_js_string(prompt)},")
                 lines.append("  { " + ", ".join(opts) + " },")
                 lines.append(")")
-                lines.append(_emit_gate_call(unit, var))
+                lines.append(_emit_gate_call(unit, var, session_ceiling))
                 lines.append("")
                 if unit.verify is not None:
                     _emit_verify_panel(
@@ -1735,11 +1751,11 @@ def emit_workflow_script(
         lines.append(f"{wave_decl} [{', '.join(layer_vars)}] = await parallel([")
         for unit in layer_units:
             assert unit is not None
-            _emit_thunk(lines, spec, unit)
+            _emit_thunk(lines, spec, unit, session_ceiling)
         lines.append("])")
         for unit in layer_units:
             assert unit is not None
-            lines.append(_emit_gate_call(unit, _var(unit.unit_id)))
+            lines.append(_emit_gate_call(unit, _var(unit.unit_id), session_ceiling))
         lines.append("")
         for unit in layer_units:
             assert unit is not None
@@ -1763,7 +1779,7 @@ def emit_workflow_script(
     )
     lines.append(
         "    __pulledCords.map((c) => `${c.unit}: ${c.reason}` + "
-        "(c.proposal ? ` (propose ${c.proposal})` : ' (at top of ladder -- HALT)'))"
+        "(c.proposal ? ` (propose ${c.proposal})` : ' (no legal climb: top of ladder or session ceiling -- HALT)'))"
         ".join('; ') +"
     )
     lines.append(

@@ -308,6 +308,13 @@ tier from the work-shape heuristic (R10). Surface the tier table for operator ov
 Apply the heuristic per unit, then present the full tier table (U-ID, label, proposed tier, rationale)
 and ask the operator to confirm or override before proceeding. Do not lock tiers silently.
 
+**The `/plan`-authored tier table is not the only lever (#365).** The operator can adjust tier
+**mid-run** without aborting and re-planning via `/tier`: a run-scoped ceiling
+(`.claude/saga/tier-session-override.json`) that the emitters clamp every unit down to, or a mid-run
+patch of a not-yet-run unit's tier that re-validates and re-emits the spec. The authored table is the
+starting point; `/tier` is the live adjustment. A ceiling only ever clamps down, and an up-ladder
+mid-run change is gated (asks) before it re-emits.
+
 <!-- EFFORT-EMISSION MARKER (#362 U5, R7, KTD6): the per-unit "proposed tier" cell is a
 `<model>/<effort>` pair — both fields sourced verbatim from `tier_resolver.resolve(...).model`
 and `.effort`, never a bare model literal with effort omitted. This is emission only: /plan

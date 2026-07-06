@@ -621,6 +621,68 @@ def test_min_tier_floor_cannot_bypass_the_team_execution_tier_halt() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Session tier ceiling at emit (#365 U3): a run-scoped ceiling clamps every
+# emitted worker row DOWN, before the enforceability halt, logged.
+# ---------------------------------------------------------------------------
+
+
+def test_team_emit_honors_session_ceiling() -> None:
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    spec = es_mod.ExecutionSpec.from_dict(_spec_with_tier({"model": "opus", "effort": "high"}))
+    out = te_mod.emit_team_structure(spec, session_ceiling=es_mod.Tier("sonnet", "medium"))
+    # The worker Tier cell reflects the clamp; a provenance comment logs the downgrade.
+    assert "sonnet/medium" in out
+    assert "opus/high" not in out.split("session tier ceiling")[0]  # not in a rendered row
+    assert "session tier ceiling" in out
+
+
+def test_session_ceiling_makes_fable_unit_spawnable_on_team_execution() -> None:
+    # The ceiling runs BEFORE the enforceability halt: a fable/xhigh unit that would otherwise HALT
+    # on team-execution is clamped to sonnet/medium and emits cleanly (the ceiling is the final word).
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    spec = es_mod.ExecutionSpec.from_dict(_spec_with_tier({"model": "fable", "effort": "xhigh"}))
+    out = te_mod.emit_team_structure(spec, session_ceiling=es_mod.Tier("sonnet", "medium"))
+    assert "## Team Structure" in out
+    assert "sonnet/medium" in out
+
+
+def test_segment_boundary_tier_override() -> None:
+    # R7 isolation: a mid-run patch touches only NOT-yet-run units, so a re-emit reflects the new tier
+    # for the not-yet-shed segment while an already-shed (run) segment keeps its recorded tier.
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = _valid_spec_dict()
+    data["units"] = [
+        {
+            "unit_id": "SHED",
+            "label": "already-shed",
+            "tier": {"model": "haiku", "effort": "low"},
+            "prompt": "p",
+            "files": ["plugins/saga/scripts/a.py"],
+        },
+        {
+            "unit_id": "NEXT",
+            "label": "not-yet-shed",
+            "tier": {"model": "haiku", "effort": "low"},
+            "prompt": "p",
+            "files": ["plugins/team-execution/x.py"],
+        },
+    ]
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    # The operator patches BOTH to opus/high, but SHED already ran -> only NEXT is patched.
+    patched = es_mod.patch_spec_tiers(
+        spec,
+        {"SHED": es_mod.Tier("opus", "high"), "NEXT": es_mod.Tier("opus", "high")},
+        already_run_ids=["SHED"],
+    )
+    out = te_mod.emit_team_structure(patched)
+    assert "opus/high" in out  # the not-yet-shed segment reflects the new tier
+    assert "haiku/low" in out  # the already-shed segment kept its recorded tier
+
+
+# ---------------------------------------------------------------------------
 # U3: A7 tier effort validation, three-layer cascade, chaperone exclusion
 # (R4/R5/R6, KTD4/KTD5).
 # ---------------------------------------------------------------------------

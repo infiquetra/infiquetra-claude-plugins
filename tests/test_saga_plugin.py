@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.65.0"
-    )  # tier floors & backend enforceability: Unit.min_tier + TIER_ENFORCEABLE_BY_BACKEND (#369)
+        plugin_json["version"] == "0.66.0"
+    )  # /tier mid-run lever: session ceiling + mid-run spec patch (#365)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

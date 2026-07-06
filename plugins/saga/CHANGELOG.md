@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.66.0] - 2026-07-06
+
+### Added — `/tier` mid-run lever: session ceiling + mid-run spec patch (#365)
+
+- New `/tier` command (`commands/tier.md`) + `tier_session.py` module: a session-local, git-ignored
+  override (`.claude/saga/tier-session-override.json`) recording a run-scoped tier **ceiling** and
+  per-unit **overrides**. Off-palette values fail loud on read and write.
+- `clamp_tier_to_ceiling()` — a pure, 2-axis, downward-only ceiling clamp (via `tier_palette.clamp`).
+- Both emitters (`emit_workflow_script`, `team_emitter.emit_team_structure`) accept a `session_ceiling`
+  and clamp each unit/segment tier down before rendering — the single enforcement point, applied
+  **before** the #369 enforceability halt (so a ceiling can make an otherwise-unspawnable `fable` unit
+  runnable on team-execution). Downgrades are logged; the `inline` backend honors the ceiling
+  advisorily. The ceiling is the final word — it can clamp below a `min_tier` floor (the live override
+  wins).
+- `patch_spec_tiers()` (not-yet-run units only) + `is_escalation()` + an `execution_spec.py patch`
+  subcommand: apply the session override's per-unit tiers, re-validate (hard gate), re-emit; an
+  up-ladder escalation is surfaced for operator confirmation. The `emit` CLI now honors the ceiling.
+
 ## [0.65.0] - 2026-07-06
 
 ### Added — tier floors & backend enforceability (#369)

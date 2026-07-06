@@ -4,6 +4,19 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.12.0] - 2026-07-06
+
+### Added — segment-boundary session tier override read (#365)
+
+- The emitted Team Structure now honors a run-scoped tier ceiling / mid-run patch written via `/tier`
+  (`.claude/saga/tier-session-override.json`): `team_emitter` clamps each segment's worker tier down to
+  the ceiling at emit, before the #369 enforceability halt. Because a mid-run patch touches only
+  not-yet-run units, a tier change written between segments affects only the next (not-yet-shed)
+  segment's worker spec; an already-shed segment keeps its recorded tier. Documented in SKILL.md
+  (Context Shedding / R11). No spawn-path behavior change beyond honoring the override at emit.
+
+---
+
 ## [2.11.0] - 2026-07-05
 
 ### Wire `inject_effort()` seam into the Agent-tool teammate spawn + cross-plugin convention (#363)

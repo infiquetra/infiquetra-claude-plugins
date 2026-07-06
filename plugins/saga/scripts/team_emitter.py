@@ -27,6 +27,7 @@ no I/O at import.  The ``emit_team_structure`` function is the single testable s
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -153,7 +154,9 @@ def _is_chaperone(seg: Any) -> bool:
     return seg.engine is not None or seg.capability is not None
 
 
-def emit_team_structure(spec: Any, team_default_effort: str | None = None) -> str:
+def emit_team_structure(
+    spec: Any, team_default_effort: str | None = None, session_ceiling: Any | None = None
+) -> str:
     """Emit the ``## Team Structure`` markdown section from an ``ExecutionSpec``.
 
     The spec is the same object ``execution_spec.py`` builds — validated by the caller
@@ -178,6 +181,7 @@ def emit_team_structure(spec: Any, team_default_effort: str | None = None) -> st
         _validate_effort(team_default_effort, "team-default effort")
 
     lines: list[str] = []
+    ceiling_notes: list[str] = []
 
     # ---- Header ----
     lines.append("## Team Structure")
@@ -224,6 +228,25 @@ def emit_team_structure(spec: Any, team_default_effort: str | None = None) -> st
                 f"the restrictive sandbox. Halt-not-downgrade (R4)."
             )
     segments = mod.segment_units(spec)
+
+    # #365 U3: a session tier ceiling clamps each POST-MERGE segment tier DOWN, BEFORE the #369
+    # enforceability halt and before rendering. Order is deliberate: a ceiling that caps e.g.
+    # fable -> sonnet makes the segment spawnable by team-execution, so the halt should judge the
+    # CLAMPED tier. The ceiling is the operator's live cap and never raises a tier; it is the final
+    # word (it can clamp a segment below a #369 min_tier floor -- the live override wins, and the
+    # downgrade is logged below).
+    if session_ceiling is not None:
+        clamped_segments = []
+        for seg in segments:
+            eff = mod.clamp_tier_to_ceiling(seg.tier, session_ceiling)
+            if eff != seg.tier:
+                ceiling_notes.append(
+                    f"<!-- session tier ceiling {session_ceiling.model}/{session_ceiling.effort}"
+                    f" (#365): {seg.resident_id} {seg.tier.model}/{seg.tier.effort}"
+                    f" -> {eff.model}/{eff.effort} -->"
+                )
+            clamped_segments.append(dataclasses.replace(seg, tier=eff))
+        segments = clamped_segments
 
     # #369 U3: the tier-axis sibling of the sandbox halt above -- but run on the POST-MERGE segment
     # tier, NOT the pre-merge unit tier. A member unit's min_tier floor can push the merged segment
@@ -316,6 +339,10 @@ def emit_team_structure(spec: Any, team_default_effort: str | None = None) -> st
     for ref in _REFERENCE_FILES:
         lines.append(f"- `{ref}`")
     lines.append("")
+
+    if ceiling_notes:
+        lines.append("")
+        lines.extend(ceiling_notes)
 
     return "\n".join(lines)
 

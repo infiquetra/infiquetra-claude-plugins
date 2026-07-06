@@ -937,12 +937,40 @@ def _reconcile_once(
 # ---------------------------------------------------------------------------
 
 
+def _leaf_handoff_id(node: Any, leaf_saga_id: str) -> str:
+    """The operator-facing native saga id for a dispatched leaf's re-entry handoff (#491).
+
+    An issue-backed leaf's REAL native saga is ``issue-<N>`` — what ``/plan``/``/work`` mint via
+    ``saga.derive_saga_id("issue", N)`` (``saga.py:333``) — not the dispatcher's record-keeping
+    ``leaf-<outcome>-<subplot>`` id. Prefer the node's bare ``sub_issue`` number; else parse an
+    ``owner/repo#N`` ``issue`` ref (reusing ``outcome_github._parse_ref``, #495). A leaf with no
+    resolvable issue (a task/ad-hoc leaf) keeps the raw ``leaf_saga_id`` — unchanged behavior.
+    """
+    if node is None:
+        return leaf_saga_id
+    import outcome_github  # noqa: PLC0415 — lazy, matching this module's outcome_github import sites
+
+    github = getattr(node, "github", {}) or {}
+    sub = github.get("sub_issue")
+    number = ""
+    if isinstance(sub, int) or (isinstance(sub, str) and sub.strip().isdigit()):
+        number = str(sub).strip()
+    else:
+        parsed = outcome_github._parse_ref(str(github.get("issue", "")))
+        if parsed is not None:
+            number = parsed[2]
+    # ``issue-<N>`` mirrors ``saga.derive_saga_id("issue", N)`` (saga.py:333) — inlined to avoid pulling
+    # the heavy ``saga`` module into ``outcome.py`` for a one-line format (KTD2).
+    return f"issue-{number}" if number else leaf_saga_id
+
+
 def attend(repo_root: Path, outcome_id: str, subplot_id: str) -> str:
-    """Return the native ``/resume <leaf-saga-id>`` handoff for a dispatched leaf.
+    """Return the native ``/resume <saga-id>`` handoff for a dispatched leaf.
 
     The coordinator does not run the leaf — it hands the operator the exact native command to drop
     into that leaf's own saga (R16). Leaf verbs (`/work`, `/code-review`, `/qa`) are reused, never
-    shadowed by an `/outcome work`.
+    shadowed by an `/outcome work`. For an issue-backed leaf the handoff is the real ``issue-<N>`` saga
+    (#491), resolved from the node; a non-issue-backed leaf keeps the raw dispatcher id.
     """
     store = _store(repo_root, outcome_id)
     records = _dispatch_records(store)
@@ -952,7 +980,8 @@ def attend(repo_root: Path, outcome_id: str, subplot_id: str) -> str:
             f"subplot {subplot_id!r} is not dispatched yet — nothing to attend "
             f"(dispatched: {sorted(records)})"
         )
-    return f"/resume {leaf}"
+    node = load_spec(repo_root, outcome_id).node_by_id(subplot_id)
+    return f"/resume {_leaf_handoff_id(node, leaf)}"
 
 
 # ---------------------------------------------------------------------------

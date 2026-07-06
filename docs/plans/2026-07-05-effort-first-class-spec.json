@@ -1,0 +1,140 @@
+{
+  "name": "effort-first-class",
+  "description": "Issue #363: make effort a first-class validated value fleet-wide, honored by the real knob where the path has it (Workflow/external-engine) and a labeled EFFORT_RIDER proxy only on the native Agent-tool path, behind one inject_effort() seam (KTD1). Frontmatter field + CI lint, EFFORT_RIDER+seam in fleet_commons, A7 tier validation + 3-layer cascade via tier_resolver.resolve() + chaperone exclusion, dispatch wiring + cross-plugin convention, reconciliation, release surfaces. Serialized (max concurrency 1) for API rate-limit safety and to avoid concurrent edits to shared test files (tests/test_team_emitter.py, tests/test_agent_tier_lint.py).",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "effort vocab + frontmatter field + CI lint",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U1: Establish `effort:` as a recognized agent-frontmatter field sourced from tier_palette.EFFORTS, and build the glob+membership lint as a pytest test (tests/test_agent_tier_lint.py) that runs in the EXISTING CI pytest step (no new CI step needed), plus an optional thin scripts/lint_agent_tiers.py wrapper for manual runs. It parses every plugins/*/agents/*.md frontmatter and asserts effort in EFFORTS and model in MODELS, honoring a `tiering_exempt: true` escape hatch. Reuse _parse_frontmatter from tests/test_agent_tiering.py. Note: all 33 existing model: values are already in-palette (verified at plan time), so the lint will not red-CI. Read the plan at docs/plans/2026-07-05-effort-first-class-plan.md (U1, R1/R2/R3, KTD3/KTD6) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "scripts/lint_agent_tiers.py",
+        "tests/test_agent_tier_lint.py",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "unit_id": "U2",
+      "label": "EFFORT_RIDER + inject_effort() seam in fleet_commons",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "U2: Add EFFORT_RIDER (a dict[str,str] mapping each EFFORTS value to a short prompt-preamble directive) and inject_effort(prompt, effort, spawn_kind) to a new plugins/fleet-core/scripts/fleet_commons/effort_rider.py, consumed cross-plugin via fleet_commons_shim.load. The seam pass-throughs spawn_kind 'workflow' and 'external-engine' (effort already rides in agent({effort}) opts per execution_spec.py:982 - do NOT double-inject) and prepends EFFORT_RIDER[effort] for spawn_kind 'agent'; an unknown spawn_kind raises. Mirror the BUDGET_RIDER prepend pattern (execution_spec.py:132, injected :1000/:1247). Add tests/test_effort_rider.py. Read the plan at docs/plans/2026-07-05-effort-first-class-plan.md (U2, R7/R8, KTD1/KTD2) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/effort_rider.py",
+        "tests/test_effort_rider.py"
+      ]
+    },
+    {
+      "unit_id": "U3",
+      "label": "A7 tier validation + 3-layer cascade + chaperone exclusion",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "U3: In plugins/saga/scripts/team_emitter.py, validate the A7 Tier cell's effort half against EFFORTS (raise on off-palette, R4); implement the three-layer effort cascade (plan-unit tier -> team default -> agent-frontmatter default) that WRAPS tier_resolver.resolve() - resolve() supplies the base agent-default layer, team/plan layers apply above it, most-specific wins (KTD4); record a per-teammate provenance line naming the resolving layer (R5); EXCLUDE chaperone workers (offload -> sonnet/medium, second-opinion -> opus/high) from the cascade, preserving their intent default (R6, KTD5). Add tests to tests/test_team_emitter.py. Read the plan at docs/plans/2026-07-05-effort-first-class-plan.md (U3, R4/R5/R6, KTD4/KTD5) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/saga/scripts/team_emitter.py",
+        "tests/test_team_emitter.py"
+      ]
+    },
+    {
+      "unit_id": "U4",
+      "label": "wire seam into dispatch + cross-plugin convention",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U4: Wire inject_effort(prompt, resolved_effort, 'agent') into team-execution's dispatch path before the Agent-tool spawn (plugins/team-execution/skills/team-execution/SKILL.md:318). Write the single fleet effort-convention reference doc (once, not per-plugin). Add a validated `effort:` frontmatter field consuming the convention to at least one plugins/agy/agents/*.md and one plugins/deploy/agents/*.md agent (both must pass the U1 lint). Add/extend tests asserting the rider text appears in a teammate's constructed spawn prompt. Read the plan at docs/plans/2026-07-05-effort-first-class-plan.md (U4, R7/R8, KTD1) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": [
+        "plugins/team-execution/skills/team-execution/SKILL.md",
+        "plugins/agy/agents",
+        "plugins/deploy/agents",
+        "tests/test_effort_rider.py"
+      ]
+    },
+    {
+      "unit_id": "U5",
+      "label": "post-run reconciliation (tiering-drift)",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U5: Add the post-run reconciliation that compares each teammate's cascade-resolved effort against the effort recorded for it in the worker manifest (references/worker-manifest.md:48,54, which already records the resolved effort) and emits a named tiering-drift line on mismatch (nothing on match), honest per path (KTD7): on a real-knob path the manifest effort is the value passed to agent()/the engine; on the Agent-tool path confirm only that the EFFORT_RIDER text for the resolved level reached the constructed prompt - the drift line names the path and the compared quantity, never claiming to observe harness reasoning spend. Add tests to tests/test_team_emitter.py. Read the plan at docs/plans/2026-07-05-effort-first-class-plan.md (U5, R9, KTD7) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [
+        "plugins/saga/scripts/team_emitter.py",
+        "tests/test_team_emitter.py"
+      ]
+    },
+    {
+      "unit_id": "U6",
+      "label": "release surfaces",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U6: Bump plugins/saga, plugins/team-execution, and plugins/fleet-core plugin.json versions; mirror .claude-plugin/marketplace.json; add CHANGELOG entries for all three; flip the QUEUED.md {#team-execution-per-teammate-effort} entry to shipped (noting the honoring-seam resolution, NOT route-onto-Workflow); record KTD1-KTD7 in docs/engineering-journal/DECISIONS.md; update the metadata drift-guard test so installed-plugin metadata matches the diff. Read the plan at docs/plans/2026-07-05-effort-first-class-plan.md (U6, Definition of Done) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U5"
+      ],
+      "files": [
+        "plugins/saga/.claude-plugin/plugin.json",
+        "plugins/team-execution/.claude-plugin/plugin.json",
+        "plugins/fleet-core/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/saga/CHANGELOG.md",
+        "plugins/team-execution/CHANGELOG.md",
+        "plugins/fleet-core/CHANGELOG.md",
+        "docs/engineering-journal/QUEUED.md",
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    }
+  ]
+}

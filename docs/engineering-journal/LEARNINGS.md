@@ -27,6 +27,26 @@
 
 ## 2026-07-06
 
+### 4/4 tier-mechanics leaves: the adversarial execution gate caught a real compositional finding on EVERY leaf that a fully-green suite missed {#adversarial-gate-4-for-4}
+
+**Evidence.** The tier-mechanics batch (#369 PR #500, #365 PR #504, #368 PR #508, #364 PR #509 —
+each merged only after a `saga:readonly-verifier` worktree pass by *execution*): #369 P0 min_tier
+floor bypassed the pre-merge tier halt; #365 P0 unrunnable session ceiling (`haiku/xhigh`) leaked
+through emit un-halted; #368 P1 naive header matching let a code-fence mention parse as an
+authoritative tier band AND suppress the stamp; #364 P1 cord proposals ignored the session
+ceiling (+ P2 reserved-key collision). Every suite was green before each gate ran.
+
+**Mechanism.** All four were the same failure *shape*: two individually-correct components whose
+implicit shared contract broke on composition (floor × halt ordering, ceiling × emit clamp,
+stamp × parse header semantics, cord proposal × ceiling). Unit tests validate components against
+their own contracts; only executing the composed artifact (emitting the JS and probing it, running
+the stamped body through the parser) exposes the seam. Reading the diff found one of the five;
+execution found the rest.
+
+**Generalizable rule.** For any two-sided contract (emitter/parser, producer/consumer,
+clamp/halt), the review gate must *execute the composition adversarially* — a green suite plus a
+plausible diff-read is not evidence the seam holds.
+
 ### When the deliverable IS a drift guard, adversarially verify the guard REDS on the drift it claims to catch — a matcher-blind guard is vacuously green  {#verify-the-guard-reds}
 
 **Context.** #370 shipped several drift guards (AC1 "no second vocabulary source", AC8 "no tier-token drift in operator tables"). All were green on the first build, all tests passed, coverage looked complete. The pre-PR code-review gate (a `saga:readonly-verifier` lens tasked specifically with "is this guard real or trivially-green?") found two that passed *because their matcher was blind*, not because there was no drift.

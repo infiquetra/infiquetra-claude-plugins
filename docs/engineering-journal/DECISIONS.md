@@ -1,5 +1,37 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-06
+
+### Tier floors & backend enforceability ship in two parts; the agent-frontmatter floor is deferred {#tier-floors-enforceability-369}
+
+**Context.** `docs/plans/2026-07-06-tier-floors-enforceability-plan.md` (#369). The issue bundled three
+mechanisms to stop a unit/teammate silently running below its intended tier. Grounding against the
+post-#370 code showed two are clean and live; the third has no live producer today.
+
+- **KTD1 — `TIER_ENFORCEABLE_BY_BACKEND` + `unenforceable_tier()` live in `execution_spec.py`, beside
+  `SANDBOX_ENFORCEABLE_BY_BACKEND`.** Both are backend-keyed (a backend is an execution/outcome-spec
+  concept, not a vocabulary one), and the sandbox matrix is deliberately kept out of the palette so the
+  module needn't import `outcome_spec`. The vocabulary palette stays vocabulary-only. *Rejected:* putting
+  the matrix in `tier_palette.py` beside `MODELS`/`EFFORTS` — mixes backend routing into the vocab.
+- **KTD2 — v1 enforces the MODEL axis only.** `team-execution` maps to `{opus, sonnet, haiku}` (its
+  agent-frontmatter set; no `fable`), so `fable/xhigh` HALTs there and passes on `inline`/`cc-workflows`.
+  The EFFORT axis (`xhigh`) enforceability is entangled with per-teammate effort (the QUEUED
+  `{#team-execution-per-teammate-effort}` lever), so it rides with the deferred mechanism 3 rather than
+  half-shipping. Unknown backend → `frozenset()` (never permissive), mirroring the sandbox matrix.
+- **KTD3 — `Unit.min_tier: Tier | None` reuses the `Tier` type + the `sandbox`/`verify` optional-field
+  round-trip pattern** (parse only when present, emit only when non-None → byte-identical when absent).
+  The floor validates as a normal (non-engine) tier, so an off-palette or unrunnable floor fails loud.
+- **KTD4 — the floor clamp reuses the palette's `strongest()`/`stronger()` ladder ops (#370),** never
+  re-derived index arithmetic — the `{#tier-vocab-ordering}` invariant. A segment collapses to one
+  resident spawn, so any member unit's floor raises the whole merged segment tier.
+- **KTD5 — mechanism 3 (agent-owned `tier-floor:` frontmatter) is deferred** to a follow-up issue that
+  lands it with the per-teammate tier-override lever, so the field ships with a real producer *and*
+  consumer. *Rationale:* the floor-bearing entities (named team-execution agents) are not the entities
+  `team_emitter` tiers (synthetic `worker-<dir>` segments), and the override that would ever assign a
+  sub-floor tier is itself unbuilt — shipping the field now would be a field consumed only by its test
+  (the recurring dead-wiring failure). Operator-confirmed 2026-07-06. **Revisit when.** The
+  `{#team-execution-per-teammate-effort}` override lever is built.
+
 ## 2026-07-05
 
 ### Effort becomes a first-class, validated, pluggably-honored field fleet-wide {#effort-first-class-363}

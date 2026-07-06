@@ -1678,7 +1678,9 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
         floors = [u.min_tier for u in units if u.min_tier is not None]
         if floors:
             seg_tier = Tier(
-                model=_tier_palette.strongest("model", [seg_tier.model, *(f.model for f in floors)]),
+                model=_tier_palette.strongest(
+                    "model", [seg_tier.model, *(f.model for f in floors)]
+                ),
                 effort=_tier_palette.strongest(
                     "effort", [seg_tier.effort, *(f.effort for f in floors)]
                 ),

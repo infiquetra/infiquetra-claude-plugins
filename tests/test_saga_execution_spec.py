@@ -468,7 +468,10 @@ def test_unenforceable_tier_passes_reachable_model() -> None:
 
 def test_unenforceable_tier_unknown_backend_never_permissive() -> None:
     # A backend absent from TIER_ENFORCEABLE_BY_BACKEND enforces nothing => any model halts (R3).
-    assert ES.unenforceable_tier("some-future-backend", ES.Tier("opus", "high")) == ("model", "opus")
+    assert ES.unenforceable_tier("some-future-backend", ES.Tier("opus", "high")) == (
+        "model",
+        "opus",
+    )
 
 
 # ---------------------------------------------------------- Unit.min_tier floor (#369 U2)

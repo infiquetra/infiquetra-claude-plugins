@@ -32,6 +32,33 @@ post-#370 code showed two are clean and live; the third has no live producer tod
   (the recurring dead-wiring failure). Operator-confirmed 2026-07-06. **Revisit when.** The
   `{#team-execution-per-teammate-effort}` override lever is built.
 
+### `/tier` mid-run lever enforces at emit, and the live ceiling is the final word {#tier-mid-run-lever-365}
+
+**Context.** `docs/plans/2026-07-06-tier-mid-run-lever-plan.md` (#365). A run-scoped `/tier` ceiling +
+mid-run spec patch, so an operator can steer tier without aborting and re-planning.
+
+- **KTD1 — session override is a git-ignored, machine-local single file** (`.claude/saga/tier-session-override.json`),
+  schema `{ceiling, unit_overrides}`, owned by `tier_session.py`, off-palette fails loud. Per-session
+  isolation is out of scope for v1 (single-operator).
+- **KTD2 — enforcement is at EMIT, not in the resolver.** Both emitters clamp the final unit/segment
+  tier to the ceiling before rendering; `inline` honors it advisorily. The shared-`fleet_commons`
+  `tier_resolver.envelope_ceiling` is deliberately **not** touched — it is additive-only 0.x, has no
+  live caller, and is #366's; extending it would be redundant with the emit clamp and a contract risk.
+- **KTD3 — the ceiling runs BEFORE the #369 enforceability halt.** A ceiling that caps `fable -> sonnet`
+  makes a segment spawnable by team-execution, so the halt judges the clamped tier. The clamp is
+  downward-only (`tier_palette.clamp`, `{#tier-vocab-ordering}`), and the live ceiling is the **final
+  word** — it can clamp below a `min_tier` floor (the operator's live override wins over the
+  plan-authored floor; the downgrade is logged). *Rejected:* floor-wins — a live, deliberate operator
+  cap should not be silently overridden by a plan-time default.
+- **KTD4 — mid-run patch is a pure `patch_spec_tiers()` (not-yet-run units only) + a CLI re-emit.** The
+  `/tier` command derives already-run ids from live run-state and is conservative when unavailable;
+  patch -> validate (hard gate) -> emit rides the existing CLI seam.
+- **KTD5 — R6 escalation gate is the minimal ask-rule, not a spend-delta classifier.** An up-ladder
+  move (`is_escalation`) asks; cheapen/lateral is silent. The cost-weighted classifier is #367's.
+- **KTD6 — R7 built in full (operator decision 2026-07-06):** `team_emitter` honors the override at
+  emit; the segment-boundary isolation is the not-yet-run filter. Unlike #369 mechanism 3, R7 has a
+  real segment-shed boundary and an emit-time consumer, so it was not deferred.
+
 ## 2026-07-05
 
 ### Effort becomes a first-class, validated, pluggably-honored field fleet-wide {#effort-first-class-363}

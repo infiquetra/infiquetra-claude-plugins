@@ -1,6 +1,6 @@
 # Saga Command Selection
 
-Saga has 20 command files and 19 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
+Saga has 21 command files and 20 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
 
 ![Command Matrix](assets/command-matrix.svg)
 
@@ -378,6 +378,23 @@ Lifecycle router and lightweight resume substrate.
 | Boundary | Owns routing and handoff envelope, not phase work, backend choice, issue filing, deploy, or heavy forensics. |
 | Common mistakes | Asking it to implement; routing normal team handoff through it. |
 | Example | `/loop docs/plans/2026-06-09-example-plan.md` |
+
+### /tier
+
+| Field | Value |
+|-------|-------|
+| Purpose | Set a run-scoped tier ceiling or patch a not-yet-run unit's tier mid-run, without aborting and re-planning. |
+| Use when | The operator wants to cap model/effort for the rest of a run, or change a not-yet-run unit's tier without re-planning. |
+| Do not use when | The tier should be set once up front (use `/plan`'s tier table), or the unit has already run. |
+| Inputs | A model/effort ceiling, a unit id plus a new tier, or `show`/`clear`. |
+| Outputs | A session-override file write, or a patched + re-validated + re-emitted spec. |
+| Saga state | Writes the git-ignored session override (`.claude/saga/tier-session-override.json`); does not tick a saga. |
+| Routes in | `/plan`, `/work`. |
+| Routes out | `/work`. |
+| Gates | An up-ladder mid-run escalation requires operator confirmation before re-emit; a ceiling only ever clamps down. |
+| Boundary | Writes the override and drives patch/validate/emit; does not run leaf work, merge, or deploy. |
+| Common mistakes | Expecting a ceiling to raise a tier; patching a unit that already ran. |
+| Example | `/tier sonnet/medium` |
 
 ### /outcome
 

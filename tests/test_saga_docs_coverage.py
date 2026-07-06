@@ -116,8 +116,8 @@ def test_docs_model_matches_command_surface() -> None:
     commands = set(model["commands"])
     aliases = set(model["aliases"])
 
-    assert model["command_surface"]["command_files"] == 20
-    assert model["command_surface"]["routable_commands"] == 19
+    assert model["command_surface"]["command_files"] == 21
+    assert model["command_surface"]["routable_commands"] == 20
     assert wrappers == commands | aliases
     assert aliases == {"ceo-review"}
     assert model["aliases"]["ceo-review"]["aliases"] == "/founder-review"

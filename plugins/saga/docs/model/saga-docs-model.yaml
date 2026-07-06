@@ -2,8 +2,8 @@ schema_version: 1
 model_name: saga-comprehensive-documentation
 source_of_truth: Claude Saga in this repository
 command_surface:
-  command_files: 20
-  routable_commands: 19
+  command_files: 21
+  routable_commands: 20
   alias_count: 1
   alias_note: /ceo-review is an alias for /founder-review, not a separate lifecycle node.
 
@@ -611,6 +611,33 @@ commands:
       - Asking /loop to implement code.
       - Routing normal team handoff through /loop.
     example_invocation: /loop docs/plans/2026-06-09-example-plan.md
+  tier:
+    command: /tier
+    phase: utility
+    lifecycle_role: mid-run model/effort tier lever
+    source_refs:
+      - plugins/saga/commands/tier.md
+      - plugins/saga/scripts/tier_session.py
+      - plugins/saga/scripts/execution_spec.py
+    purpose: Set a run-scoped tier ceiling or patch a not-yet-run unit's tier mid-run, without aborting and re-planning.
+    use_when:
+      - The operator wants to cap model/effort for the rest of a run.
+      - The operator wants to change a not-yet-run unit's tier without re-planning.
+    do_not_use_when:
+      - The tier should be set once up front (use /plan's tier table).
+      - The unit has already run (its recorded tier is never edited).
+    inputs: A model/effort ceiling, or a unit id plus a new tier; or show/clear.
+    outputs: A session-override file write, or a patched + re-validated + re-emitted spec.
+    durable_artifacts: []
+    saga_state_behavior: Writes the git-ignored session override (.claude/saga/tier-session-override.json); does not tick a saga.
+    routes_in: [/plan, /work]
+    routes_out: [/work]
+    gates: An up-ladder mid-run escalation requires operator confirmation before re-emit; a ceiling only ever clamps down.
+    ownership_boundary: Writes the override and drives patch/validate/emit; does not run leaf work, merge, or deploy.
+    common_mistakes:
+      - Expecting a ceiling to raise a tier (it only clamps down).
+      - Patching a unit that already ran (only not-yet-run units are edited).
+    example_invocation: /tier sonnet/medium
   outcome:
     command: /outcome
     phase: orchestrate

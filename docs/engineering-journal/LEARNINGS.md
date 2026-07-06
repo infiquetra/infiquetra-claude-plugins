@@ -1783,3 +1783,36 @@ Always validate immediately: `python3 -m json.tool .claude-plugin/marketplace.js
 **Refs.** Same lifecycle-quality thread as `{#adversarial-gate-4-for-4}` — here the *test blast radius during `/work`*, not the adversarial gate, surfaced the design bug. Both the `sonnet/high` baseline (25 failures) and this `require_receipts` gating (75 failures) in #367 were caught by running the full suite, not by the plan reading cleanly.
 
 ---
+
+### In a derived-on-read system, a stale-looking durable artifact is not a bug — and a stage that "never fires" is a starved consumer, not broken logic  {#outcome-derived-truth-vs-missing-producer}
+
+**Evidence.** Closing the `tier-effort-first-class` `/outcome` (objective #343). The committed
+`outcome-spec.json` read `node.state: pending` / `complete: None` for all 9 nodes, yet `outcome.py status`
+and `report.md` both derived **9/9 complete**. Initially misread the raw JSON as "stale/incomplete." It
+wasn't: `outcome.py:361` states `Node.state` is authoring-time-only and `derive_states` (`:398`) never
+reads it. Two real defects hid behind the same reconcile loop: **#495** (PR #514) — code-leaf harvest
+*silently never fired*; **#491** (PR #515) — `attend` emitted a dead `/resume` handoff.
+
+**Mechanism.** R17 makes GitHub the single source of truth: the committed spec stores *pointers* (PR/issue
+refs) and status is recomputed on every read by asking GitHub, so it can't drift. Consequence: the raw
+`node.state` scalar is vestigial and always reads its authored value; the truth lives only in the derived
+reads. For **#495**, `advance` harvesting nothing looked like broken harvest logic — but the barrier
+(`outcome_orchestrator.py:100-112`) and the auto-merge queue (`outcome_merge.py:170`) both correctly
+*require* `node.github["pr"]`; they are **consumers**. The bug was the absent **producer** — the
+record-only dispatch → native `/work` → squash-merge flow never wrote the merged PR back onto the
+coordinator node. Fixing the consumer (e.g. "a closed issue is good enough") would have reintroduced the
+exact false-positive the barrier exists to reject; the fix was to add the missing producer (`link-pr`).
+
+**Generalizable rule.** (1) In a derive-on-read system, verify the **derived read** (`status`/`report`),
+never a stored scalar the code tells you it ignores — "the JSON looks stale" and "the system is wrong" are
+different claims, and persisting the derived value back (to make the artifact self-describing) reintroduces
+the drift the design removed. (2) When a pipeline stage "never fires," first ask whether it's a
+**consumer starved of an input** (missing producer) before touching the stage's own logic — a HALT-on-
+missing-input that degrades safe is *invisible*, so silence reads as "works" when it means "never ran."
+
+**Refs.** Same adversarial-gate-earns-its-keep pattern as `{#adversarial-gate-4-for-4}`: on #491 the
+panel refuted 4 P2/P3 resolver edge cases (`sub_issue=0` → `issue-0` etc.), all fixed + re-verified before
+merge (commit `5a92695`). The two dogfood defects shared one primitive — #495's
+`outcome_github._parse_ref` extracts the `N` that #491's handoff resolver needs.
+
+---

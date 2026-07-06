@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.68.0"
-    )  # runtime ladder climbing: escalate_tier + escalate_on_signal + pull_cord (#364)
+        plugin_json["version"] == "0.69.0"
+    )  # run-scoped spend budgets: cost_weights + cost_budget HALT + spend_envelope + effort escrow (#366)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

@@ -352,6 +352,25 @@ unavailable). This preview is the baseline the chaperone's `substituted-engine` 
 the run-time resolution against (KTD4, `references/external-engine-workers.md` §4 in team-execution) —
 record it in the saga tick / emitted plan alongside the tier so it survives to `/work`.
 
+**Step 1b — Price the plan and set the spend guards (#366).** Once tiers are locked the plan has a
+*price*: surface it and set the run-scoped guards before authoring prompts.
+
+- Run `python3 plugins/saga/scripts/execution_spec.py spend <spec.json>` to print per-unit spend, the
+  multiplicity-aware total (fan-out targets and verify panels counted, not one weight per unit), any
+  `cost_budget` headroom, and the `spend_envelope`. Show the operator the priced plan.
+- Set an optional `cost_budget` on the spec when the operator wants a hard ceiling — `validate`/`emit`
+  HALT (never a silent over-spend, per HALT-not-degrade) if the summed spend exceeds it, mirroring
+  `VERIFY_N_CAP`.
+- Set an optional `spend_envelope` when the operator wants "ask once, at the crossing" rather than a
+  prompt per expensive choice; `/work`'s #364 between-rounds escalation consults it before proposing a
+  climb (`SpendEnvelope.consider`).
+- Author per-unit effort allocations with
+  `python3 plugins/saga/scripts/effort_ledger.py allocate --unit <U-ID> --amount <to_spend>` (ordinal
+  spend units, so escrow and the budget speak one currency). `/work` records actuals and refunds unused
+  budget; a unit that would exceed its allocation surfaces an escalation-request **before** it runs.
+
+Weights are ordinal/relative, not dollar prices — the cost-weighted spend-*delta* classifier is #367.
+
 **Step 2 — Author thin per-unit prompts (KTD2).** Each unit's prompt is a **thin pointer**, not a prose
 transcription of the plan:
 

@@ -93,6 +93,31 @@ worker judges itself out of depth. The gate recognizes the cord (distinct from s
 missing/malformed throws), the unit is never marked complete, and every cord batches into **one**
 end-of-run coordinator escalation entry carrying its one-rung proposal — never one ask per cord.
 
+### Run-scoped spend budgets (#366): `cost_budget`, `spend_envelope`, effort escrow
+
+The tier lever is *ordered* but not *priced*; `#366` gives it magnitude. `to_spend(model, effort)`
+(`fleet_commons/cost_weights.py`, a 16-cell ordinal table validated against the palette ordering at
+import) prices one agent call. Two optional `ExecutionSpec` fields turn that into a run budget, both
+absent-by-default (byte-identical round-trip):
+
+- **`cost_budget`** — a hard ceiling. `validate()`/`emit` HALT with a `SpecError` naming total vs
+  ceiling when the summed spend exceeds it (mirrors `VERIFY_N_CAP`; a soft warn band fires near the
+  ceiling). The sum is **multiplicity-aware** (`spec_spend()` / `unit_spend()`): a fan-out unit counts
+  `to_spend(tier) × len(targets)` and a verify panel adds `n × to_spend(tier) × iterations`, so the
+  HALT cannot false-negative on the expensive fan-out/panel plans (HALT-not-degrade). A `pilot` is a
+  separate declared unit, counted on its own row, never re-added.
+- **`spend_envelope`** — the "ask once, at the crossing" threshold. The pure `SpendEnvelope` accumulator
+  folds a sequence of spend-increasing choices; `consider(delta)` returns `True` only on the choice that
+  crosses the envelope. It is a CLI-set field + primitive surfaced to the operator, **not** an
+  autonomous runtime gate.
+
+`execution_spec.py spend <spec.json>` reports per-unit spend, total, `cost_budget` headroom, and the
+`spend_envelope` — the surface `/plan` §5.2a invokes before locking a plan. The effort-escrow ledger
+(`effort_ledger.py` + `effort-policy.yaml`) records per-unit actual-vs-planned spend, refunds unused
+allocation to a run pool, and surfaces an escalation-request before a unit executes; `/work` drives it
+via the `allocate`/`record`/`escalate`/`report` CLI verbs. The cost-weighted spend-*delta* classifier
+is the separate #367.
+
 ### Missing verdicts — runtime failure vs. static non-applicability (R1–R5, KTD7–KTD10)
 
 A verifier that dies before emitting resolves to a `null` verdict slot (harness contract: terminal
@@ -274,4 +299,8 @@ uv run python plugins/saga/scripts/execution_spec.py emit spec.json --unattended
 
 # Emit the runnable inline/serial baseline (R11 floor — runs on any host).
 uv run python plugins/saga/scripts/execution_spec.py baseline spec.json -o baseline.md
+
+# Report the priced plan (#366): per-unit spend, multiplicity-aware total, cost_budget
+# headroom, and spend_envelope. Reports even an over-budget spec (never HALTs).
+uv run python plugins/saga/scripts/execution_spec.py spend spec.json
 ```

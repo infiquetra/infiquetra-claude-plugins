@@ -5,6 +5,19 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-07-06
+
+### Added — ordinal cost-weight table beside the tier palette (#366)
+
+- `scripts/fleet_commons/cost_weights.json` + `cost_weights.py` — a 16-cell ordinal weight grid and
+  `to_spend(model, effort)`, co-located with `models.json` (the ordering it prices). Validated against
+  the live `tier_palette` MODELS/EFFORTS ordering at import: completeness, per-axis strict monotonicity,
+  and off-palette rejection all raise `CostWeightsError`, so a drifted table fails loud rather than
+  silently mis-pricing a run (closes the `{#tier-vocab-ordering}` two-contracts gap for the cost axis).
+- Weights are ordinal/relative, not dollar prices — hand-authored non-linear so premium tiers
+  (opus/fable, xhigh) cost disproportionately more. Consumed by saga's `#366` `cost_budget` HALT and
+  `spend_envelope`; additive-only, no change to existing fleet_commons modules.
+
 ## [0.5.0] - 2026-07-06
 
 ### Added — single-source tier palette: models.json registry + ladder ops (#370)

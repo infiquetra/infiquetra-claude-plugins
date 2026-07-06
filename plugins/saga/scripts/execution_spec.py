@@ -62,6 +62,13 @@ _tier_palette = fleet_commons_shim.load("tier_palette")
 MODELS = _tier_palette.MODELS
 EFFORTS = _tier_palette.EFFORTS
 
+# Ordinal cost-weight table (#366). Loaded the same way as the tier palette, from
+# fleet_commons/cost_weights.json, and validated against the palette ordering at its own
+# import (a drifted table fails loud there, not here). ``to_spend(model, effort)`` prices a
+# single agent call; the multiplicity-aware ``ExecutionSpec.spec_spend()`` sums a whole run.
+_cost_weights = fleet_commons_shim.load("cost_weights")
+to_spend = _cost_weights.to_spend
+
 # Models cheap enough that the structuredoutput-budget lesson MUST be baked into the
 # generated agent prompt. An opus/high agent has budget headroom; a haiku or a
 # sonnet/low agent over a large surface is exactly the case the lesson guards
@@ -145,6 +152,11 @@ VERIFY_N_CAP = 7
 # Soft threshold: a panel size in (WARN, CAP] validates but emits a stderr warning -- big
 # panels are legal but smell like the overcorrection, so they are surfaced, not silently run.
 VERIFY_N_WARN = 5
+
+# Soft threshold for the #366 cost_budget: a run whose summed spend lands in
+# (WARN_FRACTION * budget, budget] validates but emits a stderr warning -- it is legal but
+# close to the ceiling, so it is surfaced, not silently run (mirrors VERIFY_N_WARN).
+COST_BUDGET_WARN_FRACTION = 0.9
 
 # The verbatim budget-discipline rider baked into cheap-tier generated agents. This is
 # the workflow_structuredoutput_budget lesson as an instruction the emitted agent reads.
@@ -871,6 +883,74 @@ class Unit:
         return out
 
 
+def _optional_int_field(data: dict[str, Any], key: str) -> int | None:
+    """Parse an optional int spec field (#366), rejecting bool and non-int loudly.
+
+    Absent => None (byte-identical round-trip). ``bool`` is an int subclass, so ``true`` would
+    silently coerce to 1 -- reject it explicitly.
+    """
+    raw = data.get(key)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        raise SpecError(f"spec {key} {raw!r} must be an integer, not a bool")
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise SpecError(f"spec {key} {raw!r} is not an integer") from exc
+
+
+def unit_spend(unit: Unit) -> int:
+    """Ordinal spend for one unit's full call footprint (#366 KTD8).
+
+    A unit is not always one agent call: a *fan-out* runs its op once per enumerated target,
+    and a *verify* panel adds ``n`` verifier calls at the unit's tier (times ``max_iterations``
+    when it iterates to consensus). A ``pilot`` is a SEPARATE declared unit, counted on its own
+    row, so it is deliberately NOT re-added here -- that would double-count. A one-weight-per-unit
+    sum would undercount exactly the expensive fan-out/panel plans and silently false-negative
+    the cost HALT (the HALT-not-degrade violation U2 exists to prevent).
+    """
+    base = to_spend(unit.tier.model, unit.tier.effort)
+    calls = len(unit.targets) if (unit.fanout and unit.targets) else 1
+    total = base * calls
+    if unit.verify is not None:
+        iterations = unit.verify.max_iterations if unit.verify.iterate_to_consensus else 1
+        total += unit.verify.n * base * iterations
+    return total
+
+
+@dataclass
+class SpendEnvelope:
+    """Run-scoped spend accumulator (#366 U3) -- 'ask once, at the crossing'.
+
+    ``consider(delta)`` returns ``True`` (surface a prompt) ONLY on the choice that crosses the
+    envelope: cumulative spend was at or under the envelope and this delta pushes it over. Choices
+    that stay under are silent; once crossed, cumulative is already over the envelope so later
+    choices never re-prompt -- a sequence with a single crossing prompts exactly once. The
+    accumulator is pure: it decides prompt-or-silent, it never actually prompts (that surface is
+    /plan / /work, not this primitive).
+    """
+
+    envelope: int
+    _cumulative: int = 0
+
+    def consider(self, delta: int) -> bool:
+        """Fold one spend-increasing choice in; return True iff this choice crosses the envelope."""
+        crosses = self._cumulative <= self.envelope < self._cumulative + delta
+        self._cumulative += delta
+        return crosses
+
+    @property
+    def cumulative(self) -> int:
+        """Total spend folded in so far."""
+        return self._cumulative
+
+    @property
+    def remaining(self) -> int:
+        """Envelope headroom left (negative once the envelope has been crossed)."""
+        return self.envelope - self._cumulative
+
+
 @dataclass
 class ExecutionSpec:
     """The structured execution-spec `/plan` authors and the emitters consume.
@@ -885,12 +965,27 @@ class ExecutionSpec:
     units: list[Unit]
     # The repo the emitted workflow operates on (the harness `REPO` constant).
     repo: str = ""
+    # Run-scoped spend ceiling (#366 U2). When set, validate()/emit HALT if the
+    # multiplicity-aware summed spend (spec_spend()) exceeds it -- the emit-time cost HALT,
+    # mirroring VERIFY_N_CAP. Absent (None) => no ceiling check; an absent field emits no key
+    # so existing specs round-trip byte-identical (R10).
+    cost_budget: int | None = None
+    # Run-scoped spend envelope (#366 U3). The threshold that collapses "ask before every
+    # expensive choice" into "ask once, at the crossing" -- consumed by the `spend` CLI verb
+    # /plan surfaces and by /work's #364 between-rounds escalation (consult before proposing a
+    # climb). It is a CLI-set field + accumulator primitive (SpendEnvelope), NOT an autonomous
+    # runtime gate. Absent (None) emits no key (byte-identical round-trip, R10).
+    spend_envelope: int | None = None
 
     def unit_by_id(self, unit_id: str) -> Unit | None:
         for unit in self.units:
             if unit.unit_id == unit_id:
                 return unit
         return None
+
+    def spec_spend(self) -> int:
+        """The multiplicity-aware summed ordinal spend across every unit (#366 KTD8)."""
+        return sum(unit_spend(u) for u in self.units)
 
     def validate(self) -> None:
         """Validate the whole spec, enforcing the R3 + R10 authoring invariants.
@@ -955,6 +1050,34 @@ class ExecutionSpec:
         # that every depends_on / pilot id resolves to a declared unit.
         dependency_layers(self)
 
+        # #366 U2: the emit-time cost HALT. When a cost_budget is declared, the summed
+        # multiplicity-aware spend must not exceed it -- fail loud naming BOTH sides (exactly
+        # like VERIFY_N_CAP), because a silent over-budget run violates the /outcome campaign's
+        # HALT-not-degrade rule. A soft warn band surfaces a run that is legal but near the ceiling.
+        if self.cost_budget is not None:
+            if self.cost_budget < 1:
+                raise SpecError(
+                    f"spec {self.name}: cost_budget {self.cost_budget} must be >= 1 "
+                    f"(a budget below the cheapest call rejects every run)"
+                )
+            total = self.spec_spend()
+            if total > self.cost_budget:
+                raise SpecError(
+                    f"spec {self.name}: total spend {total} exceeds cost_budget "
+                    f"{self.cost_budget} (#366 -- HALT, not silent over-spend)"
+                )
+            if total > COST_BUDGET_WARN_FRACTION * self.cost_budget:
+                headroom_pct = int(round((1 - COST_BUDGET_WARN_FRACTION) * 100))
+                print(
+                    f"WARN spec {self.name}: total spend {total} is within {headroom_pct}% of "
+                    f"cost_budget {self.cost_budget} -- close to the ceiling.",
+                    file=sys.stderr,
+                )
+
+        # #366 U3: a spend_envelope is a positive threshold; a zero/negative envelope is nonsense.
+        if self.spend_envelope is not None and self.spend_envelope < 1:
+            raise SpecError(f"spec {self.name}: spend_envelope {self.spend_envelope} must be >= 1")
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExecutionSpec:
         if "units" not in data or not isinstance(data["units"], list):
@@ -964,15 +1087,23 @@ class ExecutionSpec:
             description=str(data.get("description", "")),
             units=[Unit.from_dict(u) for u in data["units"]],
             repo=str(data.get("repo", "")),
+            cost_budget=_optional_int_field(data, "cost_budget"),
+            spend_envelope=_optional_int_field(data, "spend_envelope"),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "repo": self.repo,
             "units": [u.to_dict() for u in self.units],
         }
+        # Absent budget/envelope emit no key so existing specs round-trip byte-identical (R10).
+        if self.cost_budget is not None:
+            out["cost_budget"] = self.cost_budget
+        if self.spend_envelope is not None:
+            out["spend_envelope"] = self.spend_envelope
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -2141,6 +2272,12 @@ def main(argv: list[str] | None = None) -> int:
         "-o", "--out", type=Path, help="write the patched spec here (default: stdout)"
     )
 
+    p_spend = sub.add_parser(
+        "spend",
+        help="report per-unit spend, total, cost_budget headroom, and spend_envelope (#366)",
+    )
+    p_spend.add_argument("spec", type=Path)
+
     args = parser.parse_args(argv)
     try:
         spec = _load_spec(args.spec)
@@ -2180,6 +2317,33 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(out_json)
             return 0
+        if args.cmd == "spend":
+            # Report the priced plan for /plan to surface (R6). Deliberately does NOT run
+            # validate() -- it reports even an over-budget spec (showing the overage) rather
+            # than HALTing, so the operator sees the numbers before deciding.
+            total = spec.spec_spend()
+            print(f"spend report: {spec.name} ({len(spec.units)} units)")
+            for u in spec.units:
+                extras: list[str] = []
+                if u.fanout and u.targets:
+                    extras.append(f"x{len(u.targets)} targets")
+                if u.verify is not None:
+                    extras.append(f"verify n={u.verify.n}")
+                suffix = f" ({', '.join(extras)})" if extras else ""
+                print(f"  {u.unit_id}  {u.tier.model}/{u.tier.effort}{suffix} = {unit_spend(u)}")
+            print(f"total spend: {total}")
+            if spec.cost_budget is not None:
+                delta = spec.cost_budget - total
+                headroom = f"headroom {delta}" if delta >= 0 else f"OVER by {-delta}"
+                print(f"cost_budget: {spec.cost_budget}  ({headroom})")
+            else:
+                print("cost_budget: unset")
+            print(
+                f"spend_envelope: {spec.spend_envelope}"
+                if spec.spend_envelope is not None
+                else "spend_envelope: unset"
+            )
+            return 0
         if args.cmd == "baseline":
             script = emit_inline_baseline(spec)
         else:
@@ -2188,7 +2352,7 @@ def main(argv: list[str] | None = None) -> int:
                 session_ceiling=_read_session_ceiling(),
                 unattended=bool(getattr(args, "unattended", False)),
             )
-    except SpecError as exc:
+    except (SpecError, _cost_weights.CostWeightsError) as exc:
         print(f"SPEC ERROR: {exc}", file=sys.stderr)
         return 2
 

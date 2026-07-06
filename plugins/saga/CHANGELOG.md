@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.69.0] - 2026-07-06
+
+### Added — run-scoped spend budgets: price the tier lever (#366)
+
+- `cost_weights.json` + `cost_weights.py` (in `fleet_commons`, beside `models.json`): an ordinal
+  16-cell weight table and `to_spend(model, effort)`. Validated at import against the live
+  `tier_palette` ordering — completeness, per-axis strict monotonicity, and off-palette rejection all
+  raise `CostWeightsError` (a drifted table fails loud, closing the `{#tier-vocab-ordering}` gap).
+  Weights are ordinal/relative, not dollar prices.
+- `ExecutionSpec.cost_budget` + the emit-time cost HALT: `validate()`/`emit` raise a `SpecError` naming
+  total vs ceiling when the multiplicity-aware summed spend exceeds the budget (mirrors `VERIFY_N_CAP`,
+  with a soft warn band). The sum counts call multiplicity — fan-out target count and verify-panel `n`
+  × iterations — so it cannot false-negative on the expensive fan-out/panel plans (HALT-not-degrade).
+  `spec_spend()` and the module-level `unit_spend()` expose the arithmetic.
+- `ExecutionSpec.spend_envelope` + the `SpendEnvelope` accumulator: collapses "ask before every
+  expensive choice" into "ask once, at the crossing" (`consider(delta)` prompts only on the crossing
+  choice). A CLI-set field + primitive, not an autonomous gate.
+- `execution_spec.py spend <spec.json>` CLI verb: reports per-unit spend, total, `cost_budget` headroom,
+  and `spend_envelope` — the surface `/plan` invokes to price a plan before locking it.
+- `effort_ledger.py` + `effort-policy.yaml`: an effort-escrow ledger recording per-unit actual-vs-planned
+  spend, refunding an under-spending unit's unused allocation to a run pool, and surfacing an
+  escalation-request **before** a unit executes when it would exceed its allocation. CLI verbs
+  `allocate` / `record` / `escalate` / `report`; an absent policy file resolves to the safe default.
+- `/plan` §5.2a Step 1b (price the plan, set the guards) and `/work` execution-strategy effort-escrow
+  accounting document the producer/consumer wiring.
+
+### Notes
+
+- All new `ExecutionSpec` fields round-trip byte-identical when absent — existing specs and
+  `team_emitter` are untouched.
+- The cost-weighted spend-*delta* classifier (silent-cheap/ask-expensive, relative lever, spend
+  authority) is the separate #367.
+
 ## [0.68.0] - 2026-07-06
 
 ### Added — runtime ladder climbing: gated one-rung escalation on failure signals (#364)

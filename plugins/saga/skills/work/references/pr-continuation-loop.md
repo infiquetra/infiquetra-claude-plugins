@@ -71,6 +71,11 @@ Rules (all load-bearing):
   a defect-shaped problem, not a depth-shaped one") and propose nothing.
 - **The cost delta is ordinal** (`<old> → <new> (+1 <axis> rung)`) — the cost-weighted spend-delta
   classifier is #367's; this mirrors the same deferral recorded in `commands/tier.md`.
+- **Consult the run's `spend_envelope` first (#366).** When the spec carries a `spend_envelope`, fold
+  the climb's added spend through `SpendEnvelope.consider(delta)` (`delta = to_spend(new) - to_spend(old)`)
+  before surfacing the proposal. If the climb *crosses* the envelope, that crossing IS the "ask once"
+  trigger — surface it as the run's one spend-approval, not a silent bump; if it stays under, note the
+  proposal is within the run's envelope. The envelope is a surfaced field, never an autonomous gate.
 - A de-escalation (round succeeded trivially at an expensive tier) may be *mentioned* but is never
   auto-applied — cheapening is the operator's call at the next `/plan` (the #368 write-back is the
   durable home for that judgment).

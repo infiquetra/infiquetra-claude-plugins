@@ -1,6 +1,6 @@
 # Outcome: infiquetra/infiquetra-claude-plugins#343
 
-**Outcome ID:** `tier-effort-first-class` · **Revision:** 3 · **Progress:** 7/9 (78%)
+**Outcome ID:** `tier-effort-first-class` · **Revision:** 3 · **Progress:** 8/9 (89%)
 
 ## Topology
 
@@ -10,7 +10,7 @@ flowchart TD
     sub-363["sub-363: done"]
     sub-364["sub-364: done"]
     sub-365["sub-365: done"]
-    sub-366["sub-366: dispatched"]
+    sub-366["sub-366: done"]
     sub-367["sub-367: dispatched"]
     sub-368["sub-368: done"]
     sub-369["sub-369: done"]
@@ -38,7 +38,7 @@ flowchart TD
 | `sub-363` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/498, issue infiquetra/infiquetra-claude-plugins#363 | no data yet |
 | `sub-364` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/509, issue infiquetra/infiquetra-claude-plugins#364 | no data yet |
 | `sub-365` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/504, issue infiquetra/infiquetra-claude-plugins#365 | no data yet |
-| `sub-366` | dispatched | issue infiquetra/infiquetra-claude-plugins#366 | no data yet |
+| `sub-366` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/510, issue infiquetra/infiquetra-claude-plugins#366 | no data yet |
 | `sub-367` | dispatched | issue infiquetra/infiquetra-claude-plugins#367 | no data yet |
 | `sub-368` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/508, issue infiquetra/infiquetra-claude-plugins#368 | no data yet |
 | `sub-369` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/500, issue infiquetra/infiquetra-claude-plugins#369 | no data yet |

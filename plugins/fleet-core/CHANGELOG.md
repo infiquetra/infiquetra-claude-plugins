@@ -5,6 +5,21 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-06
+
+### Added — single-source tier palette: models.json registry + ladder ops (#370)
+
+- `scripts/fleet_commons/models.json` — canonical model/effort registry with explicit per-model
+  `rank`, per-effort `rung`, and per-model `effort_ceiling`. `tier_palette.py` now derives the
+  ordered `MODELS`/`EFFORTS` tuples from these indices at import instead of hand-ordering them;
+  import-time validation rejects duplicate/gapped rank and a missing/unknown `effort_ceiling`.
+- `tier_palette.py` — `escalate` / `downgrade` / `clamp` / `stronger` / `strongest` ladder ops that
+  reason in *strength* (so the opposite-direction MODELS strongest-first / EFFORTS weakest-first
+  tuples can't be confused), plus `effort_ceiling` / `supports_effort` / `clamp_effort_to_model`
+  (the AC5 surfaced-note clamp).
+- `references/tier-palette.md` — onboarding runbook for adding a model/effort, encoding the
+  `{#tier-vocab-ordering}` "grep `.index(` before extending a closed vocabulary" rule.
+
 ## [0.4.0] - 2026-07-05
 
 ### Added

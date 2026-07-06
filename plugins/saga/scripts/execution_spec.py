@@ -406,11 +406,21 @@ class Tier:
     model: str
     effort: str
 
-    def validate(self, where: str) -> None:
+    def validate(self, where: str, *, is_engine_owned: bool = False) -> None:
         if self.model not in MODELS:
             raise SpecError(f"{where}: model {self.model!r} not in {MODELS}")
         if self.effort not in EFFORTS:
             raise SpecError(f"{where}: effort {self.effort!r} not in {EFFORTS}")
+        # AC6 (#370): a Claude teammate must not be assigned an effort above the model's
+        # ceiling (e.g. haiku/xhigh) -- HALT loudly, never silently clamp or run an
+        # un-runnable tier. Engine-owned chaperone-dispatch units are excluded: they stay
+        # pinned to their chaperone tiers ({#external-engine-chaperone-dispatch}, #318).
+        if not is_engine_owned and not _tier_palette.supports_effort(self.model, self.effort):
+            ceiling = _tier_palette.effort_ceiling(self.model)
+            raise SpecError(
+                f"{where}: effort {self.effort!r} exceeds model {self.model!r} ceiling "
+                f"{ceiling!r} -- unsupported {{model, effort}} combination (HALT, not clamp)"
+            )
 
     @property
     def is_cheap(self) -> bool:
@@ -642,7 +652,12 @@ class Unit:
     def validate(self, where: str) -> None:
         if not self.unit_id:
             raise SpecError(f"{where}: a unit needs a non-empty unit_id")
-        self.tier.validate(f"unit {self.unit_id}")
+        # Engine/capability-routed units are engine-owned (chaperone-dispatch); they are
+        # excluded from the per-teammate effort-ceiling HALT (#370 AC6, #318).
+        self.tier.validate(
+            f"unit {self.unit_id}",
+            is_engine_owned=self.engine is not None or self.capability is not None,
+        )
         _validate_external_engine_selector(f"unit {self.unit_id}", self.engine, self.capability)
         if self.engine_intent is not None:
             if self.engine is None and self.capability is None:
@@ -1596,10 +1611,13 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
         units = seg["units"]
         unit_ids = [u.unit_id for u in units]
 
-        # Calculate max tier: upgrade-only max of its members' tiers
-        best_model_idx = min(MODELS.index(u.tier.model) for u in units)
-        best_effort_idx = max(EFFORTS.index(u.tier.effort) for u in units)
-        seg_tier = Tier(model=MODELS[best_model_idx], effort=EFFORTS[best_effort_idx])
+        # Calculate max tier: upgrade-only merge of its members' tiers via the named
+        # ladder op (#370 U2) — never inline MODELS.index()/EFFORTS.index() arithmetic,
+        # which silently mis-tiers if the two opposite-direction tuples are confused.
+        seg_tier = Tier(
+            model=_tier_palette.strongest("model", (u.tier.model for u in units)),
+            effort=_tier_palette.strongest("effort", (u.tier.effort for u in units)),
+        )
 
         # Resolve engine_intent the same way: upgrade-only max ("second-opinion" beats
         # "offload") when a same-engine segment's members disagree, rather than silently

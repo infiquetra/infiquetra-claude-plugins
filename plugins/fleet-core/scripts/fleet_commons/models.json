@@ -1,0 +1,15 @@
+{
+  "_comment": "Canonical model/effort registry (#370). tier_palette.py derives the ordered MODELS/EFFORTS tuples from these explicit rank/rung indices at import — this file is the single source of vocabulary ordering. ORDERING IS LOAD-BEARING: rank 0 is the strongest model, rung 0 is the weakest effort. effort_ceiling is the strongest effort a model actually runs (haiku clamps below xhigh). Grow the vocabulary here, never with a second bare literal elsewhere — see plugins/fleet-core/references/tier-palette.md.",
+  "models": {
+    "fable": { "rank": 0, "effort_ceiling": "xhigh" },
+    "opus": { "rank": 1, "effort_ceiling": "xhigh" },
+    "sonnet": { "rank": 2, "effort_ceiling": "xhigh" },
+    "haiku": { "rank": 3, "effort_ceiling": "high" }
+  },
+  "efforts": {
+    "low": { "rung": 0 },
+    "medium": { "rung": 1 },
+    "high": { "rung": 2 },
+    "xhigh": { "rung": 3 }
+  }
+}

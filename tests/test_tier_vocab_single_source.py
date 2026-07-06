@@ -84,3 +84,76 @@ def test_effort_ceiling_values_anchor_on_haiku() -> None:
         assert tier_palette.effort_ceiling(model) == "xhigh"
     with pytest.raises(ValueError, match="unknown model"):
         tier_palette.effort_ceiling("gpt-9")
+
+
+# ---------------------------------------------------------------------------
+# U2 (AC3/AC5) — named ladder ops honoring the opposite-direction contract,
+# plus the effort-ceiling clamp.
+# ---------------------------------------------------------------------------
+
+
+def test_ladder_ops_escalate_downgrade_by_strength() -> None:
+    # MODELS strongest-first: escalate = stronger model (lower rank).
+    assert tier_palette.escalate("model", "sonnet") == "opus"
+    assert tier_palette.escalate("model", "haiku", 2) == "opus"
+    assert tier_palette.downgrade("model", "opus") == "sonnet"
+    # EFFORTS weakest-first: escalate = higher effort (higher rung).
+    assert tier_palette.escalate("effort", "medium") == "high"
+    assert tier_palette.downgrade("effort", "high") == "medium"
+
+
+def test_ladder_ops_past_the_end_are_no_ops() -> None:
+    """Escalate past the strongest / downgrade past the weakest is a no-op, not an error."""
+    assert tier_palette.escalate("model", "fable", 5) == "fable"
+    assert tier_palette.downgrade("model", "haiku", 5) == "haiku"
+    assert tier_palette.escalate("effort", "xhigh", 5) == "xhigh"
+    assert tier_palette.downgrade("effort", "low", 5) == "low"
+
+
+def test_clamp_and_stronger_bounds() -> None:
+    assert tier_palette.clamp("effort", "xhigh", ceiling="high") == "high"
+    assert tier_palette.clamp("effort", "low", floor="medium") == "medium"
+    assert tier_palette.clamp("model", "haiku", floor="sonnet") == "sonnet"
+    assert tier_palette.stronger("model", "haiku", "opus") == "opus"
+    assert tier_palette.stronger("effort", "low", "xhigh") == "xhigh"
+    assert tier_palette.strongest("model", ["haiku", "fable", "sonnet"]) == "fable"
+    assert tier_palette.strongest("effort", ["low", "high", "medium"]) == "high"
+
+
+def test_ladder_ops_reject_unknown_kind_and_value() -> None:
+    with pytest.raises(ValueError, match="unknown ladder"):
+        tier_palette.escalate("temperature", "opus")
+    with pytest.raises(ValueError, match="unknown effort"):
+        tier_palette.clamp("effort", "ludicrous")
+
+
+def test_effort_ceiling_clamp_surfaces_a_note() -> None:
+    """AC5: escalating a haiku unit toward xhigh resolves to haiku's ceiling with a note."""
+    clamped, note = tier_palette.clamp_effort_to_model("haiku", "xhigh")
+    assert clamped == "high"
+    assert note is not None and "haiku" in note and "clamped" in note
+    # escalate with the model's ceiling stops at the ceiling, never overshoots.
+    assert (
+        tier_palette.escalate("effort", "high", 3, ceiling=tier_palette.effort_ceiling("haiku"))
+        == "high"
+    )
+    # A within-ceiling tier is returned untouched, no note.
+    ok, no_note = tier_palette.clamp_effort_to_model("opus", "xhigh")
+    assert ok == "xhigh" and no_note is None
+
+
+def test_supports_effort_matrix() -> None:
+    assert tier_palette.supports_effort("opus", "xhigh") is True
+    assert tier_palette.supports_effort("haiku", "high") is True
+    assert tier_palette.supports_effort("haiku", "xhigh") is False
+
+
+def test_segment_units_refactor_uses_ladder_ops() -> None:
+    """The refactored segment_units() merge must equal the old strongest-model/highest-effort."""
+    sys.path.insert(0, str(REPO_ROOT / "plugins" / "saga" / "scripts"))
+    import fleet_commons_shim
+
+    tp = fleet_commons_shim.load("tier_palette")
+    # A haiku/high segment merged with a sonnet/medium sibling -> sonnet/high.
+    assert tp.strongest("model", ["haiku", "sonnet"]) == "sonnet"
+    assert tp.strongest("effort", ["high", "medium"]) == "high"

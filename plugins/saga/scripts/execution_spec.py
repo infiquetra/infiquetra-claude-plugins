@@ -1596,10 +1596,13 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
         units = seg["units"]
         unit_ids = [u.unit_id for u in units]
 
-        # Calculate max tier: upgrade-only max of its members' tiers
-        best_model_idx = min(MODELS.index(u.tier.model) for u in units)
-        best_effort_idx = max(EFFORTS.index(u.tier.effort) for u in units)
-        seg_tier = Tier(model=MODELS[best_model_idx], effort=EFFORTS[best_effort_idx])
+        # Calculate max tier: upgrade-only merge of its members' tiers via the named
+        # ladder op (#370 U2) — never inline MODELS.index()/EFFORTS.index() arithmetic,
+        # which silently mis-tiers if the two opposite-direction tuples are confused.
+        seg_tier = Tier(
+            model=_tier_palette.strongest("model", (u.tier.model for u in units)),
+            effort=_tier_palette.strongest("effort", (u.tier.effort for u in units)),
+        )
 
         # Resolve engine_intent the same way: upgrade-only max ("second-opinion" beats
         # "offload") when a same-engine segment's members disagree, rather than silently

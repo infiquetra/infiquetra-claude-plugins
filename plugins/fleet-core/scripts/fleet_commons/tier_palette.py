@@ -123,3 +123,98 @@ def effort_ceiling(model: str) -> str:
         return _EFFORT_CEILINGS[model]
     except KeyError:
         raise ValueError(f"unknown model {model!r}; expected one of {MODELS}") from None
+
+
+# ---------------------------------------------------------------------------
+# Ladder operations (#370). The two vocabularies run in OPPOSITE directions —
+# MODELS is strongest-first (rank 0 strong), EFFORTS is weakest-first (rung 0
+# weak) — so every op reasons in *strength* (higher = stronger) and a caller
+# never touches raw ``.index()`` arithmetic ({#tier-vocab-ordering}).
+# ---------------------------------------------------------------------------
+
+_LADDERS: dict[str, tuple[str, ...]] = {"model": MODELS, "effort": EFFORTS}
+_STRONGEST_FIRST: dict[str, bool] = {"model": True, "effort": False}
+
+
+def _strength(kind: str, value: str) -> int:
+    """Strength position on the ``kind`` ladder (higher = stronger), direction-agnostic."""
+    if kind not in _LADDERS:
+        raise ValueError(f"unknown ladder {kind!r}; expected 'model' or 'effort'")
+    ladder = _LADDERS[kind]
+    try:
+        idx = ladder.index(value)
+    except ValueError:
+        raise ValueError(f"unknown {kind} {value!r}; expected one of {ladder}") from None
+    return (len(ladder) - 1 - idx) if _STRONGEST_FIRST[kind] else idx
+
+
+def _from_strength(kind: str, strength: int) -> str:
+    ladder = _LADDERS[kind]
+    strength = max(0, min(strength, len(ladder) - 1))
+    idx = (len(ladder) - 1 - strength) if _STRONGEST_FIRST[kind] else strength
+    return ladder[idx]
+
+
+def escalate(kind: str, value: str, steps: int = 1, *, ceiling: str | None = None) -> str:
+    """Return ``value`` moved ``steps`` stronger on the ``kind`` ladder.
+
+    Escalating past the strongest rung (or past ``ceiling`` when given) is a no-op,
+    never an error.
+    """
+    strength = _strength(kind, value)  # validates kind + value before any ladder access
+    top = len(_LADDERS[kind]) - 1
+    if ceiling is not None:
+        top = min(top, _strength(kind, ceiling))
+    return _from_strength(kind, min(strength + steps, top))
+
+
+def downgrade(kind: str, value: str, steps: int = 1, *, floor: str | None = None) -> str:
+    """Return ``value`` moved ``steps`` weaker; past the weakest rung is a no-op."""
+    strength = _strength(kind, value)  # validates kind + value before any ladder access
+    bottom = 0
+    if floor is not None:
+        bottom = max(bottom, _strength(kind, floor))
+    return _from_strength(kind, max(strength - steps, bottom))
+
+
+def clamp(kind: str, value: str, *, floor: str | None = None, ceiling: str | None = None) -> str:
+    """Clamp ``value`` between ``floor`` and ``ceiling`` (by strength) on the ``kind`` ladder."""
+    strength = _strength(kind, value)
+    if floor is not None:
+        strength = max(strength, _strength(kind, floor))
+    if ceiling is not None:
+        strength = min(strength, _strength(kind, ceiling))
+    return _from_strength(kind, strength)
+
+
+def stronger(kind: str, a: str, b: str) -> str:
+    """The stronger of two values on the ``kind`` ladder (upgrade-only merge primitive)."""
+    return a if _strength(kind, a) >= _strength(kind, b) else b
+
+
+def strongest(kind: str, values: object) -> str:
+    """The strongest value among ``values`` on the ``kind`` ladder (upgrade-only merge)."""
+    items = list(values)  # type: ignore[call-overload]
+    if not items:
+        raise ValueError("strongest() requires at least one value")
+    best = items[0]
+    for value in items[1:]:
+        best = stronger(kind, best, value)
+    return best
+
+
+def supports_effort(model: str, effort: str) -> bool:
+    """True iff ``model`` can run ``effort`` (effort at or below the model's ceiling)."""
+    return effort_rank(effort) <= effort_rank(effort_ceiling(model))
+
+
+def clamp_effort_to_model(model: str, effort: str) -> tuple[str, str | None]:
+    """Return ``(effort_or_ceiling, note_or_None)`` — clamp ``effort`` to the model's ceiling.
+
+    AC5: escalating a haiku unit toward xhigh resolves to haiku's real ceiling with the
+    clamp surfaced as a note, rather than silently producing an un-runnable tier.
+    """
+    ceiling = effort_ceiling(model)
+    if effort_rank(effort) > effort_rank(ceiling):
+        return ceiling, f"effort {effort!r} exceeds {model!r} ceiling; clamped to {ceiling!r}"
+    return effort, None

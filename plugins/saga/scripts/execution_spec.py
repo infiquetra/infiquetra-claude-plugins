@@ -118,6 +118,24 @@ SANDBOX_ENFORCEABLE_BY_BACKEND: dict[str, frozenset[str]] = {
     "team-execution": frozenset(),
 }
 
+# Per-backend tier enforceability (#369 U1, KTD2) -- the tier-axis sibling of
+# SANDBOX_ENFORCEABLE_BY_BACKEND. Each backend maps to the set of MODELS it can actually spawn a unit
+# at. ``inline`` and ``cc-workflows-ultracode`` set the per-call {model, effort} (the readonly-verifier
+# per-call pattern / the Workflow ``agent()`` model+effort opts), so they reach the whole palette.
+# ``team-execution`` spawns by ``agentType`` and inherits the agent's frontmatter ``model:`` -- whose
+# closed set across all 25 team-execution agents is {opus, sonnet, haiku}; NONE pin ``fable`` (it is
+# unreachable outside saga plan vocabulary). So a plan-authored fable/xhigh unit routed to
+# team-execution HALTS at emit instead of rendering a cosmetic Tier row it cannot obey. A backend NOT
+# listed enforces nothing (frozenset()) -- unknown is never permissive (R3), matching the sandbox
+# matrix. v1 enforces the MODEL axis only; per-teammate EFFORT (xhigh) enforceability rides with the
+# deferred agent-frontmatter tier-floor mechanism (its per-teammate override is the QUEUED
+# {#team-execution-per-teammate-effort} ask).
+TIER_ENFORCEABLE_BY_BACKEND: dict[str, frozenset[str]] = {
+    "inline": frozenset(MODELS),
+    "cc-workflows-ultracode": frozenset(MODELS),
+    "team-execution": frozenset({"opus", "sonnet", "haiku"}),
+}
+
 # Hard upper bound on a verify panel's verifier count. N above this FAILS validate/emit --
 # the bound directly guards the rate-limit overcorrection (R3: the 22/23-judges panel that
 # tripped the concurrency cap). N <= CAP is allowed; a soft warn band starts at WARN below.
@@ -606,6 +624,23 @@ def unenforceable_sandbox_axis(backend: str, sandbox: Sandbox | None) -> tuple[s
     return None
 
 
+def unenforceable_tier(backend: str, tier: Tier) -> tuple[str, str] | None:
+    """Return the (axis, value) ``backend`` cannot honor for ``tier``, or None if it can.
+
+    v1 checks the MODEL axis (#369 KTD2): a backend can spawn only the models in its
+    ``TIER_ENFORCEABLE_BY_BACKEND`` set. A backend absent from the matrix enforces nothing, so any
+    authored model trips (R3 -- unknown never permissive, matching ``unenforceable_sandbox_axis``).
+    Unlike the sandbox helper this is NOT duck-typed across houses: ``tier`` is an execution-spec
+    ``Tier``, and ``outcome_spec.Node`` carries no {model, effort} tier to enforce. The EFFORT axis is
+    not checked in v1 (it rides with the deferred per-teammate tier-floor mechanism). Returns the
+    offending ("model", value) so a halt message can name a concrete model.
+    """
+    enforceable = TIER_ENFORCEABLE_BY_BACKEND.get(backend, frozenset())
+    if tier.model not in enforceable:
+        return ("model", tier.model)
+    return None
+
+
 @dataclass
 class Unit:
     """One execution unit -- one ``agent()`` call in the emitted script.
@@ -648,6 +683,10 @@ class Unit:
     # Sandbox capability envelope (#287 U1). Absent => ambient x read-write (today's behavior);
     # an absent field emits no new key so existing specs round-trip byte-identical.
     sandbox: Sandbox | None = None
+    # Tier floor (#369 U2): the weakest tier this unit may resolve to. segment_units() clamps the
+    # merged segment tier UP to this floor (never a silent downgrade). Absent => no floor; an absent
+    # field emits no new key so existing specs round-trip byte-identical (R6).
+    min_tier: Tier | None = None
 
     def validate(self, where: str) -> None:
         if not self.unit_id:
@@ -671,6 +710,11 @@ class Unit:
             self.verify.validate(f"unit {self.unit_id}")
         if self.sandbox is not None:
             self.sandbox.validate(f"unit {self.unit_id}")
+        if self.min_tier is not None:
+            # Validated as a normal (non-engine) tier: off-palette model/effort fails (R5), and an
+            # on-palette-but-unrunnable floor (e.g. haiku/xhigh) also halts via Tier.validate's ceiling
+            # check -- a floor you cannot run is nonsense.
+            self.min_tier.validate(f"unit {self.unit_id} min_tier")
         if self.fanout and not self.targets:
             # R10: a fan-out unit MUST enumerate its targets -- never a silent filter.
             raise SpecError(
@@ -700,6 +744,8 @@ class Unit:
             engine_intent = "offload"
         sandbox_raw = data.get("sandbox")
         sandbox = Sandbox.from_dict(sandbox_raw, where) if sandbox_raw else None
+        min_tier_raw = data.get("min_tier")
+        min_tier = Tier.from_dict(min_tier_raw, where) if min_tier_raw else None
         return cls(
             unit_id=unit_id,
             label=str(data.get("label", unit_id)),
@@ -717,6 +763,7 @@ class Unit:
             capability=capability,
             engine_intent=engine_intent,
             sandbox=sandbox,
+            min_tier=min_tier,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -747,6 +794,10 @@ class Unit:
         # sandbox emits its expanded axes -- the canonical form (KTD1).
         if self.sandbox is not None:
             out["sandbox"] = self.sandbox.to_dict()
+        # Absent min_tier emits no key (existing specs stay byte-identical, R6); a declared floor
+        # emits its {model, effort} pair.
+        if self.min_tier is not None:
+            out["min_tier"] = self.min_tier.to_dict()
         return out
 
 
@@ -1618,6 +1669,20 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
             model=_tier_palette.strongest("model", (u.tier.model for u in units)),
             effort=_tier_palette.strongest("effort", (u.tier.effort for u in units)),
         )
+
+        # #369 U2: a member unit's declared floor (min_tier) pulls the merged segment tier UP -- never
+        # a silent downgrade. A segment collapses to ONE resident spawn, so any member's floor governs
+        # the whole segment. Fold each floor in with the SAME ladder op the base merge uses
+        # ({#tier-vocab-ordering}: reason in strength, never raw index), so a cheap unit sharing a
+        # segment with a floored one resolves to at least the floor.
+        floors = [u.min_tier for u in units if u.min_tier is not None]
+        if floors:
+            seg_tier = Tier(
+                model=_tier_palette.strongest("model", [seg_tier.model, *(f.model for f in floors)]),
+                effort=_tier_palette.strongest(
+                    "effort", [seg_tier.effort, *(f.effort for f in floors)]
+                ),
+            )
 
         # Resolve engine_intent the same way: upgrade-only max ("second-opinion" beats
         # "offload") when a same-engine segment's members disagree, rather than silently

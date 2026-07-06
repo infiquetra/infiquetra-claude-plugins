@@ -553,6 +553,39 @@ def test_default_sandbox_unit_emits_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tier enforceability halt (#369 U3): team-execution spawns by agentType and
+# cannot honor a model outside its reachable set (fable), so emit HALTs at
+# authoring time rather than rendering a cosmetic Tier cell it will not obey.
+# ---------------------------------------------------------------------------
+
+
+def _spec_with_tier(tier: dict[str, str]) -> dict[str, Any]:
+    data: dict[str, Any] = _valid_spec_dict()
+    data["units"][0]["tier"] = tier
+    return data
+
+
+def test_fable_xhigh_unit_halts_on_non_enforcing_backend() -> None:
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    # A fable/xhigh unit validates fine against the palette but cannot be spawned by team-execution
+    # -> emit HALTs, naming the unit, the model, and the backend.
+    spec = es_mod.ExecutionSpec.from_dict(_spec_with_tier({"model": "fable", "effort": "xhigh"}))
+    with pytest.raises(es_mod.SpecError) as exc:
+        te_mod.emit_team_structure(spec)
+    msg = str(exc.value)
+    assert "U1" in msg  # names the offending unit
+    assert "fable" in msg  # names the unreachable model
+    assert "team-execution" in msg  # names the backend
+    # The enforcing-backend half of the issue AC (inline / cc-workflows honor the whole palette) is
+    # asserted at the helper level in
+    # test_saga_execution_spec.py::test_unenforceable_tier_passes_reachable_model -- emit_team_structure
+    # is team-execution-only, so here a reachable-model unit simply emits cleanly (no regression).
+    ok = es_mod.ExecutionSpec.from_dict(_spec_with_tier({"model": "sonnet", "effort": "high"}))
+    assert "## Team Structure" in te_mod.emit_team_structure(ok)
+
+
+# ---------------------------------------------------------------------------
 # U3: A7 tier effort validation, three-layer cascade, chaperone exclusion
 # (R4/R5/R6, KTD4/KTD5).
 # ---------------------------------------------------------------------------

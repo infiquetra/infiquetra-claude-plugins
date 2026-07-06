@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-07-06
+
+### When the deliverable IS a drift guard, adversarially verify the guard REDS on the drift it claims to catch — a matcher-blind guard is vacuously green  {#verify-the-guard-reds}
+
+**Context.** #370 shipped several drift guards (AC1 "no second vocabulary source", AC8 "no tier-token drift in operator tables"). All were green on the first build, all tests passed, coverage looked complete. The pre-PR code-review gate (a `saga:readonly-verifier` lens tasked specifically with "is this guard real or trivially-green?") found two that passed *because their matcher was blind*, not because there was no drift.
+**Evidence.** PR #499 (`52445d8`), fix commit `6315564`. (1) The AC8 tier-token regex required an *unspaced* `opus/high`, but the `/plan` tier table is written *spaced* (`opus / high`) — the verifier injected `opus / superhigh` into the live table and the guard still passed (0 findings). (2) The AC1 AST scan only matched bare tuple/list literals — `_X = tuple(["fable","opus","sonnet","haiku"])` (a full vocabulary re-declaration) slipped past it. Both were demonstrated with a reproducible red, not hypothesized.
+**Mechanism.** A guard test asserts `offenders == []`. That passes in two very different worlds: "there is no drift" and "my matcher cannot see the drift that exists." The two are indistinguishable from the green checkmark alone. Only a *forcing function* — inject the exact drift and confirm the guard reds — separates them.
+**Fix.** Scoped the AC8 token guard to the table whose format it actually matches (team-execution, unspaced) and guarded the spaced `/plan` table by render-equality instead (`render_block() in plan_text`); widened the AC1 scan to also catch `tuple(...)`/`list(...)`/`set`/`frozenset` call-wrapped redefinitions. Both fixes ship with forcing-function tests that assert the guard reds on the drift.
+**Validation.** `test_guard_reds_when_vocab_reintroduced` now asserts the call-wrapped case is caught; `test_plan_table_render_synced` reds on a spaced-token `/plan` drift or block removal. Full suite 2214 passed.
+**What surprised.** The guards that were *most* trivially-green were the ones for the ACs the issue named *first* — the ones that felt most "obviously done." Confidence in a guard is inversely correlated with how carefully anyone checks that it can fail.
+**Generalizable rule.** A guard test's green is only meaningful if you have separately watched it go red. When a PR's deliverable is a guard (lint, drift check, schema check, invariant test), the review question is not "does it pass?" — it is "does it fail on the exact thing it exists to catch, and is its matcher blind to a realistic variant (spacing, call-wrapping, aliasing, casing)?" Add the forcing-function red as a committed test, not a one-off manual check.
+**Refs.** Extends [[serial-build-cross-cutting-caught-at-gate]] (both are "the gate catches what the build's own green misses"). DECISIONS `{#tier-vocab-ordering}`. PR #499.
+
+---
+
 ## 2026-07-05
 
 ### A serial multi-agent build's *cross-cutting* defects have no owner — the pre-PR gate + the committed-state re-run are the only backstop  {#serial-build-cross-cutting-caught-at-gate}

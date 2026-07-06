@@ -1,6 +1,6 @@
 # Outcome: infiquetra/infiquetra-claude-plugins#343
 
-**Outcome ID:** `tier-effort-first-class` · **Revision:** 3 · **Progress:** 2/9 (22%)
+**Outcome ID:** `tier-effort-first-class` · **Revision:** 3 · **Progress:** 3/9 (33%)
 
 ## Topology
 
@@ -8,13 +8,13 @@
 flowchart TD
     sub-362["sub-362: done"]
     sub-363["sub-363: done"]
-    sub-364["sub-364: blocked"]
+    sub-364["sub-364: dispatched"]
     sub-365["sub-365: dispatched"]
-    sub-366["sub-366: blocked"]
-    sub-367["sub-367: blocked"]
+    sub-366["sub-366: dispatched"]
+    sub-367["sub-367: dispatched"]
     sub-368["sub-368: dispatched"]
     sub-369["sub-369: dispatched"]
-    sub-370["sub-370: dispatched"]
+    sub-370["sub-370: done"]
     sub-362 --> sub-364
     sub-370 --> sub-364
     sub-362 --> sub-365
@@ -36,13 +36,13 @@ flowchart TD
 | --- | --- | --- | --- |
 | `sub-362` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/493, issue infiquetra/infiquetra-claude-plugins#362 | no data yet |
 | `sub-363` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/498, issue infiquetra/infiquetra-claude-plugins#363 | no data yet |
-| `sub-364` | blocked | issue infiquetra/infiquetra-claude-plugins#364 | no data yet |
+| `sub-364` | dispatched | issue infiquetra/infiquetra-claude-plugins#364 | no data yet |
 | `sub-365` | dispatched | issue infiquetra/infiquetra-claude-plugins#365 | no data yet |
-| `sub-366` | blocked | issue infiquetra/infiquetra-claude-plugins#366 | no data yet |
-| `sub-367` | blocked | issue infiquetra/infiquetra-claude-plugins#367 | no data yet |
+| `sub-366` | dispatched | issue infiquetra/infiquetra-claude-plugins#366 | no data yet |
+| `sub-367` | dispatched | issue infiquetra/infiquetra-claude-plugins#367 | no data yet |
 | `sub-368` | dispatched | issue infiquetra/infiquetra-claude-plugins#368 | no data yet |
 | `sub-369` | dispatched | issue infiquetra/infiquetra-claude-plugins#369 | no data yet |
-| `sub-370` | dispatched | issue infiquetra/infiquetra-claude-plugins#370 | no data yet |
+| `sub-370` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/499, issue infiquetra/infiquetra-claude-plugins#370 | no data yet |
 
 ## Cost rollup
 

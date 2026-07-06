@@ -1769,3 +1769,17 @@ Always validate immediately: `python3 -m json.tool .claude-plugin/marketplace.js
 **Generalizable rule.** "Release surface synced" means *per touched plugin*, not *per feature*. A cross-plugin change (module in a library plugin, behavior in its consumer) needs a version bump on **every** plugin whose files changed. The internal-consistency checks won't catch a missing bump; only the diff-aware guard does, and only against committed state — so run it (committed) in the pre-push gate whenever a diff spans more than one `plugins/<X>/` tree.
 
 ---
+
+### A new rule on a shared `validate()` collides with "no retroactive backfill" — gate it at the authoring boundary  {#new-validate-rule-authoring-gated}
+
+**Context.** #367 added a worth-it hard-block: a premium tier must carry a `worth_it_because` + `cheaper_fallback`. The issue's AC said "fails `validate()`"; its non-goal said "no retroactive backfill — applies to newly authored specs going forward." Implemented literally (unconditional in `Unit.validate`/`ExecutionSpec.validate`), it broke **75 existing emitter tests** and would break every premium spec authored before the rule.
+
+**Evidence.** `plugins/saga/scripts/execution_spec.py` `Unit.validate(require_receipts=...)` and `ExecutionSpec.validate(require_receipts=...)`; the 75 failures were all existing fixtures at `opus/high`/`fable/xhigh` re-run through `emit_workflow_script` → `spec.validate()`. Fixed by gating the new check on `require_receipts` (default off); `/plan` sets it at authoring (`execution_spec.py validate --require-receipts`), emit and existing specs use the default. PR #511.
+
+**Mechanism.** A shared `validate()` runs on *every* path that touches a spec — authoring, emit, re-validate after a `/tier` patch, and any test that builds a spec. An "always on" new rule is therefore *retroactive by construction*: it re-judges specs that were valid when written. "Applies going forward" can only mean *enforced at the authoring boundary*, not *on every structural validation*. The two are different call sites even though they share a method name.
+
+**Generalizable rule.** When you add a *content/policy* rule (not a *structural* invariant) to a validator that many code paths already call, gate it behind an opt-in flag the **authoring** path sets, and leave the default validation untouched — otherwise you retroactively invalidate everything the validator has ever blessed. A blast radius of dozens of unrelated test failures is the signal that a "new rule" was wired as an "always-on invariant." Structural invariants (a cycle, an off-palette tier, a duplicate id) are always-on; policy rules (must-justify, must-name-a-fallback) are authoring-gated.
+
+**Refs.** Same lifecycle-quality thread as `{#adversarial-gate-4-for-4}` — here the *test blast radius during `/work`*, not the adversarial gate, surfaced the design bug. Both the `sonnet/high` baseline (25 failures) and this `require_receipts` gating (75 failures) in #367 were caught by running the full suite, not by the plan reading cleanly.
+
+---

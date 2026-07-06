@@ -114,21 +114,50 @@ def resolve_tier_for_plan(
     return _registry_default(work_shape)
 
 
+def _unfenced_lines(body: str) -> list[str]:
+    """Lines of ``body`` outside fenced code blocks (``` / ~~~), fence markers excluded.
+
+    Header detection must be fence-aware on BOTH sides of the stamp/parse contract: a Verification
+    section showing example output, or prose demonstrating the format, must neither parse as a real
+    band nor suppress the compile-time stamp. Mirrored by ``sdlc_manager._has_tier_band_section``.
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in body.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            out.append(line)
+    return out
+
+
 def parse_tier_band(body: str) -> Tier | None:
     """Extract the issue-carried ``### Recommended Tier Band`` from an issue body (AC6).
 
     Absence is tolerant (an issue without a band is normal — returns None, callers fall through to
     the registry). A band that is *present but invalid* (unparseable value, off-palette or unrunnable
-    tier) fails loud with ``TierDefaultsError`` — it claims to be a band, so a silent fall-through
-    would quietly discard a bad stamp instead of surfacing it (halt-not-degrade).
+    tier, or duplicated sections) fails loud with ``TierDefaultsError`` — it claims to be a band, so
+    a silent fall-through would quietly discard a bad stamp instead of surfacing it
+    (halt-not-degrade). Only a real H3 header line outside a fenced code block counts as the band.
     """
-    match = re.search(rf"^###\s+{re.escape(TIER_BAND_HEADER)}\s*$", body, flags=re.MULTILINE)
-    if match is None:
+    header_re = re.compile(rf"###\s+{re.escape(TIER_BAND_HEADER)}\s*")
+    lines = _unfenced_lines(body)
+    header_indexes = [i for i, line in enumerate(lines) if header_re.fullmatch(line)]
+    if not header_indexes:
         return None
-    # First non-empty line after the header, up to the next H3 (or end of body).
-    tail = body[match.end() :]
-    section = re.split(r"^###\s", tail, maxsplit=1, flags=re.MULTILINE)[0]
-    value = next((line.strip() for line in section.splitlines() if line.strip()), "")
+    if len(header_indexes) > 1:
+        raise TierDefaultsError(
+            f"issue band: {len(header_indexes)} '### {TIER_BAND_HEADER}' sections; expected one"
+        )
+    # First non-empty unfenced line after the header, up to the next H3 (or end of body).
+    value = ""
+    for line in lines[header_indexes[0] + 1 :]:
+        if line.startswith("### "):
+            break
+        if line.strip():
+            value = line.strip()
+            break
     parts = value.split("/")
     if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
         raise TierDefaultsError(

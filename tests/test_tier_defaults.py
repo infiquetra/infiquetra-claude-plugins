@@ -141,3 +141,20 @@ def test_parse_tier_band_invalid() -> None:
     # Empty section (header present, no value) -> loud, it claims to be a band.
     with pytest.raises(TD.TierDefaultsError):
         TD.parse_tier_band("### Recommended Tier Band\n\n### Next Section\nx\n")
+
+
+def test_parse_tier_band_fence_and_duplicate_hardening() -> None:
+    """Verifier P1: only a real unfenced H3 header is a band; duplicates fail loud."""
+    # Header text inside a fenced code block is NOT a band (e.g. Verification example output).
+    fenced = "### Verification\n```\n### Recommended Tier Band\nopus/high\n```\n"
+    assert TD.parse_tier_band(fenced) is None
+    # A mid-line prose mention is not a header either.
+    prose = "### Objective\nDocument the ### Recommended Tier Band feature.\n"
+    assert TD.parse_tier_band(prose) is None
+    # A fenced mention beside ONE real header parses the real one.
+    both = fenced + "\n### Recommended Tier Band\nsonnet/medium\n"
+    assert TD.parse_tier_band(both) == {"model": "sonnet", "effort": "medium"}
+    # Two REAL headers is an ambiguous claim -> loud.
+    dup = "### Recommended Tier Band\nopus/high\n\n### Recommended Tier Band\nsonnet/low\n"
+    with pytest.raises(TD.TierDefaultsError, match="expected one"):
+        TD.parse_tier_band(dup)

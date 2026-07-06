@@ -3467,6 +3467,25 @@ def derive_tier_band(issue_type: str) -> dict[str, str] | None:
     return {"model": band[0], "effort": band[1]}
 
 
+def _has_tier_band_section(body: str) -> bool:
+    """True when a real H3 tier-band header exists outside fenced code blocks.
+
+    The idempotence guard must be fence-aware, not a substring test: a prose or
+    code-block *mention* of the header text (e.g. a Verification section showing
+    example output) must not silently suppress the stamp. Mirrored by saga's
+    ``tier_defaults._unfenced_lines`` on the parse side of the format contract.
+    """
+    header_re = re.compile(rf"###\s+{re.escape(_TIER_BAND_HEADER)}\s*")
+    in_fence = False
+    for line in body.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if not in_fence and header_re.fullmatch(line):
+            return True
+    return False
+
+
 def _append_tier_band(body: str, issue_type: str) -> str:
     """Stamp the derived band as an auto-populated H3 section (idempotent).
 
@@ -3475,7 +3494,7 @@ def _append_tier_band(body: str, issue_type: str) -> str:
     so the extra section is accepted as-is.
     """
     band = derive_tier_band(issue_type)
-    if band is None or f"### {_TIER_BAND_HEADER}" in body:
+    if band is None or _has_tier_band_section(body):
         return body
     return body.rstrip() + f"\n\n### {_TIER_BAND_HEADER}\n{band['model']}/{band['effort']}\n"
 

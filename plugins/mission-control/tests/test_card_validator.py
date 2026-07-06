@@ -342,3 +342,19 @@ def test_tier_band_stamped_on_compiled_body() -> None:
         "Track the initiative", "objective", "campps", "infiquetra/widgets", None, None
     )
     assert "### Recommended Tier Band" not in obj_body
+
+
+def test_tier_band_stamp_not_suppressed_by_mention() -> None:
+    """Verifier P1: a prose or code-fence MENTION of the header must not suppress the stamp."""
+    prose = (
+        "### Objective\nDocument the ### Recommended Tier Band feature.\n\n"
+        "### Acceptance criteria\n- [ ] done\n"
+    )
+    stamped = sdlc_manager._append_tier_band(prose, "defect")
+    assert "\n### Recommended Tier Band\nopus/high" in stamped
+    fenced = "### Verification\n```\n### Recommended Tier Band\nopus/high\n```\n"
+    stamped_fenced = sdlc_manager._append_tier_band(fenced, "defect")
+    assert stamped_fenced.rstrip().endswith("### Recommended Tier Band\nopus/high")
+    # A REAL existing section still suppresses (idempotence intact).
+    real = prose + "\n### Recommended Tier Band\nsonnet/low\n"
+    assert sdlc_manager._append_tier_band(real, "defect") == real

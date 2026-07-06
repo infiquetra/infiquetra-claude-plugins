@@ -111,6 +111,16 @@ def test_ladder_ops_past_the_end_are_no_ops() -> None:
     assert tier_palette.downgrade("effort", "low", 5) == "low"
 
 
+def test_escalate_downgrade_are_monotonic_under_contradictory_bounds() -> None:
+    """A ceiling weaker than the value (or a floor stronger) is a no-op, never a direction
+    inversion — escalate only strengthens, downgrade only weakens (matters for #364's
+    runtime ladder climbing, which calls escalate)."""
+    assert tier_palette.escalate("model", "fable", ceiling="haiku") == "fable"
+    assert tier_palette.escalate("effort", "high", ceiling="low") == "high"
+    assert tier_palette.downgrade("model", "haiku", floor="fable") == "haiku"
+    assert tier_palette.downgrade("effort", "low", floor="xhigh") == "low"
+
+
 def test_clamp_and_stronger_bounds() -> None:
     assert tier_palette.clamp("effort", "xhigh", ceiling="high") == "high"
     assert tier_palette.clamp("effort", "low", floor="medium") == "medium"
@@ -245,9 +255,27 @@ _PRODUCTION_ROOTS = (REPO_ROOT / "plugins", REPO_ROOT / "scripts")
 _CANONICAL_HOME_BASENAMES = {"tier_palette.py"}
 
 
+def _vocab_kind_of_elts(
+    elts: list[ast.expr], model_set: set[str], effort_set: set[str]
+) -> str | None:
+    """Return 'model'/'effort' when ``elts`` are all string constants of ONE closed
+    vocabulary (>=2 elements); else None. A (model, effort) pair or a mixed sequence is a
+    tier value, not a vocabulary re-declaration."""
+    strings = [e.value for e in elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+    if len(strings) < 2 or len(strings) != len(elts):
+        return None
+    if all(s in model_set for s in strings):
+        return "model"
+    if all(s in effort_set for s in strings):
+        return "effort"
+    return None
+
+
 def _vocabulary_redefinitions(source: str, path_label: str) -> list[tuple[int, str]]:
-    """Return [(lineno, 'model'|'effort')] for tuple/list assignments that re-declare the
-    closed model or effort vocabulary (>=2 elements, all from one vocabulary)."""
+    """Return [(lineno, 'model'|'effort')] for assignments that re-declare the closed model
+    or effort vocabulary — a bare tuple/list/set literal OR a ``tuple(...)``/``list(...)``/
+    ``frozenset(...)``/``set(...)`` call wrapping one (the call-wrapped form is a real, if
+    narrow, evasion of a literal-only scan)."""
     findings: list[tuple[int, str]] = []
     tree = ast.parse(source, filename=path_label)
     model_set, effort_set = set(tier_palette.MODELS), set(tier_palette.EFFORTS)
@@ -255,19 +283,22 @@ def _vocabulary_redefinitions(source: str, path_label: str) -> list[tuple[int, s
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         value = node.value
-        if not isinstance(value, (ast.Tuple, ast.List)):
+        elts: list[ast.expr] | None = None
+        if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+            elts = value.elts
+        elif (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id in {"tuple", "list", "frozenset", "set"}
+            and len(value.args) == 1
+            and isinstance(value.args[0], (ast.Tuple, ast.List, ast.Set))
+        ):
+            elts = value.args[0].elts
+        if elts is None:
             continue
-        strings = [
-            elt.value
-            for elt in value.elts
-            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-        ]
-        if len(strings) < 2 or len(strings) != len(value.elts):
-            continue  # a (model, effort) PAIR or a mixed tuple is a tier value, not a vocab
-        if all(s in model_set for s in strings):
-            findings.append((node.lineno, "model"))
-        elif all(s in effort_set for s in strings):
-            findings.append((node.lineno, "effort"))
+        kind = _vocab_kind_of_elts(elts, model_set, effort_set)
+        if kind is not None:
+            findings.append((node.lineno, kind))
     return findings
 
 
@@ -292,14 +323,16 @@ def test_no_bare_model_literals_outside_module() -> None:
 
 
 def test_guard_reds_when_vocab_reintroduced() -> None:
-    """AC1 forcing function: reintroducing the tuple into a module reds the guard."""
+    """AC1 forcing function: reintroducing the vocabulary into a module reds the guard,
+    including the call-wrapped evasion (tuple([...])) — but a (model, effort) pair does not."""
     scratch = (
         'MODELS = ("fable", "opus", "sonnet", "haiku")\n'
-        'EFFORTS = ("low", "medium", "high", "xhigh")\n'
+        'EFFORTS = ["low", "medium", "high", "xhigh"]\n'
+        '_WRAPPED = tuple(["fable", "opus", "sonnet", "haiku"])\n'  # call-wrapped evasion
         'a_tier = ("sonnet", "high")\n'  # a (model, effort) pair must NOT trip the guard
     )
     findings = _vocabulary_redefinitions(scratch, "scratch.py")
-    assert sorted(kind for _, kind in findings) == ["effort", "model"]
+    assert sorted(kind for _, kind in findings) == ["effort", "model", "model"]
 
 
 # ---------------------------------------------------------------------------
@@ -333,11 +366,24 @@ def _tier_token_drift(text: str) -> list[str]:
     return bad
 
 
-@pytest.mark.parametrize("skill_md", [PLAN_SKILL_MD, TEAM_SKILL_MD])
-def test_tier_catalog_check(skill_md: pathlib.Path) -> None:
-    """AC8: no `model/effort` tier token in an operator table drifts from the vocabulary."""
-    drift = sorted(set(_tier_token_drift(skill_md.read_text(encoding="utf-8"))))
-    assert drift == [], f"{skill_md.name}: tier tokens drift from the palette: {drift}"
+def test_tier_catalog_check() -> None:
+    """AC8 (team-execution half): no unspaced `model/effort` token in the team-execution
+    worker table drifts from the vocabulary. That table uses unspaced tokens (`opus/high`);
+    the /plan table is spaced and is guarded by render-equality instead — see
+    test_plan_table_render_synced (and test_tier_resolver.py::test_skill_registry_sync).
+    A spaced regex here would false-positive on prose ("high / low"), so the two tables use
+    the guard each fits."""
+    drift = sorted(set(_tier_token_drift(TEAM_SKILL_MD.read_text(encoding="utf-8"))))
+    assert drift == [], f"team-execution SKILL.md tier tokens drift from the palette: {drift}"
+
+
+def test_plan_table_render_synced() -> None:
+    """AC8 (/plan half): the /plan tier table equals a fresh render from tier_policy.json, so
+    a spaced-token drift (`opus / superhigh`) OR removal of the generated block reds this —
+    the coverage the unspaced tier-token check above cannot provide for /plan."""
+    from fleet_commons import render_tier_table
+
+    assert render_tier_table.render_block() in PLAN_SKILL_MD.read_text(encoding="utf-8")
 
 
 def test_tier_catalog_check_reds_on_drift() -> None:

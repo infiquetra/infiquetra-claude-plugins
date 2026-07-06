@@ -165,16 +165,20 @@ def escalate(kind: str, value: str, steps: int = 1, *, ceiling: str | None = Non
     top = len(_LADDERS[kind]) - 1
     if ceiling is not None:
         top = min(top, _strength(kind, ceiling))
-    return _from_strength(kind, min(strength + steps, top))
+    # escalate only ever strengthens: a ceiling weaker than the current value is a no-op,
+    # never a down-push (the outer max keeps the result >= the input strength).
+    return _from_strength(kind, max(strength, min(strength + steps, top)))
 
 
 def downgrade(kind: str, value: str, steps: int = 1, *, floor: str | None = None) -> str:
-    """Return ``value`` moved ``steps`` weaker; past the weakest rung is a no-op."""
+    """Return ``value`` moved ``steps`` weaker; past the weakest rung (or a floor stronger
+    than ``value``) is a no-op, never an up-push."""
     strength = _strength(kind, value)  # validates kind + value before any ladder access
     bottom = 0
     if floor is not None:
         bottom = max(bottom, _strength(kind, floor))
-    return _from_strength(kind, max(strength - steps, bottom))
+    # downgrade only ever weakens: a floor stronger than the current value is a no-op.
+    return _from_strength(kind, min(strength, max(strength - steps, bottom)))
 
 
 def clamp(kind: str, value: str, *, floor: str | None = None, ceiling: str | None = None) -> str:

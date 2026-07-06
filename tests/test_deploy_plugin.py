@@ -39,7 +39,7 @@ def test_infiquetra_deploy_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "deploy")
 
     assert plugin_json["name"] == "deploy"
-    assert plugin_json["version"] == "0.1.3"  # release-surface CHANGELOG reformat (#429)
+    assert plugin_json["version"] == "0.1.4"  # effort: frontmatter on release-orchestrator (#363)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/deploy"
     assert "tag-promotion" in plugin_json["description"]

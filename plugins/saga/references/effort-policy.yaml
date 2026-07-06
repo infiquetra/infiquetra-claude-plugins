@@ -1,0 +1,15 @@
+# Effort-escrow policy (#366 U4) — governs how the EffortLedger (plugins/saga/scripts/effort_ledger.py)
+# refunds unused per-unit allocation and how it surfaces escalation-requests. When this file is ABSENT
+# the ledger resolves to exactly these same safe defaults (load_policy() returns EffortPolicy()), so the
+# file is a place to tune, not a requirement. Loaded via PyYAML like engine-registry.yaml.
+
+# A unit that under-spends its declared allocation refunds the unused remainder to the run-level pool.
+refund_unused: true
+
+# A unit whose requested spend would exceed its allocation raises an escalation-request BEFORE it runs
+# (surfaced to the operator ahead of the overspend, never after), mirroring the #364 between-rounds gate.
+surface_escalation_before_execution: true
+
+# Escalation-requests are always surfaced for an operator decision, never silently auto-approved — the
+# safe side of the asymmetry (#366 keeps the operator in the loop on spend increases).
+auto_approve_escalation: false

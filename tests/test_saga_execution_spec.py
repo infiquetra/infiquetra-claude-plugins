@@ -830,3 +830,136 @@ def test_cord_proposal_respects_session_ceiling() -> None:  # verifier P1
     # Without the ceiling the same unit proposes its one-rung climb.
     unlimited = str(ES.emit_workflow_script(spec))
     assert 'cordProposal: "haiku/high -> sonnet/high (+1 model rung)"' in unlimited
+
+
+# --- #366 U2: cost_budget emit-time HALT ---------------------------------------------------
+
+
+def _budget_spec(units: list[dict[str, object]], cost_budget: object = None) -> dict[str, object]:
+    """Build a multi-unit spec dict with an optional cost_budget."""
+    spec: dict[str, object] = {
+        "name": "budget-demo",
+        "description": "exercise the #366 cost budget",
+        "repo": "/tmp/repo",
+        "units": units,
+    }
+    if cost_budget is not None:
+        spec["cost_budget"] = cost_budget
+    return spec
+
+
+def _unit(unit_id: str, model: str, effort: str, **overrides: object) -> dict[str, object]:
+    unit: dict[str, object] = {
+        "unit_id": unit_id,
+        "label": unit_id,
+        "tier": {"model": model, "effort": effort},
+        "prompt": "do the thing",
+    }
+    unit.update(overrides)
+    return unit
+
+
+def test_over_budget_spec_fails_emit_naming_total_vs_ceiling() -> None:
+    # One sonnet/high unit costs 12; a budget of 10 must HALT naming both numbers.
+    spec = ES.ExecutionSpec.from_dict(_budget_spec([_unit("U1", "sonnet", "high")], cost_budget=10))
+    with pytest.raises(ES.SpecError, match=r"total spend 12 exceeds cost_budget 10"):
+        spec.validate()
+
+
+def test_under_budget_spec_passes() -> None:
+    # Summed spend 12 <= budget 100 validates and emits clean.
+    spec = ES.ExecutionSpec.from_dict(
+        _budget_spec([_unit("U1", "sonnet", "high")], cost_budget=100)
+    )
+    spec.validate()  # no raise
+    assert spec.spec_spend() == 12
+    ES.emit_workflow_script(spec)  # emit path also runs validate -> no raise
+
+
+def test_over_budget_counts_fanout_and_verify_multiplicity() -> None:
+    # Naive one-weight-per-unit sum = 12 + 6 = 18 (<= budget 40, would pass).
+    # Multiplicity-aware: fan-out sonnet/high x3 targets = 36; sonnet/medium (6) + verify n=3 (3x6)
+    # = 24; total 60 > 40 -> HALT. Guards the false-negative KTD8 exists to prevent.
+    fanout_unit = _unit("U1", "sonnet", "high", fanout=True, targets=["a", "b", "c"])
+    verify_unit = _unit("U2", "sonnet", "medium", verify={"n": 3, "pass_rule": "majority"})
+    spec = ES.ExecutionSpec.from_dict(_budget_spec([fanout_unit, verify_unit], cost_budget=40))
+    assert spec.spec_spend() == 60
+    with pytest.raises(ES.SpecError, match=r"total spend 60 exceeds cost_budget 40"):
+        spec.validate()
+
+
+def test_cost_budget_absent_roundtrips() -> None:
+    # No cost_budget key -> to_dict emits none, and from_dict(to_dict) is byte-identical.
+    payload = _budget_spec([_unit("U1", "sonnet", "high")])
+    spec = ES.ExecutionSpec.from_dict(payload)
+    assert spec.cost_budget is None
+    assert "cost_budget" not in spec.to_dict()
+    assert ES.ExecutionSpec.from_dict(spec.to_dict()).to_dict() == spec.to_dict()
+    spec.validate()  # absent budget performs no spend check
+
+
+def test_cost_budget_soft_warn_band(capsys: pytest.CaptureFixture[str]) -> None:
+    # sonnet/high costs 12; budget 13 -> 12 is within 10% of the ceiling (0.9*13 = 11.7).
+    spec = ES.ExecutionSpec.from_dict(_budget_spec([_unit("U1", "sonnet", "high")], cost_budget=13))
+    spec.validate()  # no raise -- legal but near the ceiling
+    captured = capsys.readouterr()
+    assert "close to the ceiling" in captured.err
+
+
+def test_cost_budget_below_one_rejected() -> None:
+    spec = ES.ExecutionSpec.from_dict(_budget_spec([_unit("U1", "sonnet", "high")], cost_budget=0))
+    with pytest.raises(ES.SpecError, match=r"cost_budget 0 must be >= 1"):
+        spec.validate()
+
+
+def test_cost_budget_non_integer_rejected() -> None:
+    with pytest.raises(ES.SpecError, match=r"cost_budget"):
+        ES.ExecutionSpec.from_dict(
+            _budget_spec([_unit("U1", "sonnet", "high")], cost_budget="lots")
+        )
+    with pytest.raises(ES.SpecError, match=r"must be an integer, not a bool"):
+        ES.ExecutionSpec.from_dict(_budget_spec([_unit("U1", "sonnet", "high")], cost_budget=True))
+
+
+def test_unit_spend_pilot_not_double_counted() -> None:
+    # A pilot is a separate declared unit counted on its own row; the fan-out must not re-add it.
+    pilot = _unit("P1", "sonnet", "high")
+    fanout = _unit("U1", "sonnet", "high", fanout=True, targets=["a", "b"], pilot="P1")
+    spec = ES.ExecutionSpec.from_dict(_budget_spec([pilot, fanout]))
+    # pilot 12 + fan-out (12 x 2 targets = 24) = 36; the pilot is NOT added again onto U1.
+    assert ES.unit_spend(spec.unit_by_id("U1")) == 24
+    assert spec.spec_spend() == 36
+
+
+def test_spend_cli_reports_total_and_headroom(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The `spend` verb is the real read-consumer /plan invokes -- it reports even an over-budget
+    # spec rather than HALTing, so the operator sees the numbers.
+    import json
+
+    payload = _budget_spec([_unit("U1", "sonnet", "high")], cost_budget=20)
+    payload["spend_envelope"] = 15
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    rc = ES.main(["spend", str(spec_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "total spend: 12" in out
+    assert "cost_budget: 20  (headroom 8)" in out
+    assert "spend_envelope: 15" in out
+
+
+def test_spend_cli_reports_overage(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    import json
+
+    payload = _budget_spec([_unit("U1", "opus", "high")], cost_budget=10)  # opus/high = 32
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    rc = ES.main(["spend", str(spec_path)])
+    out = capsys.readouterr().out
+    assert rc == 0  # a report never HALTs
+    assert "total spend: 32" in out
+    assert "OVER by 22" in out

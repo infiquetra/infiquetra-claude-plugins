@@ -2830,3 +2830,54 @@ the effort/tier vocabulary work alongside #363 and #370).
   the emission shape reconciled with what #362 renders (KTD6).
 
 ---
+
+### Run-scoped spend budgets — price the tier lever with a guarded ordinal weight table (commit pending)  {#run-scoped-spend-budgets-366}
+
+Issue #366 gives the fleet's one model/effort lever a notion of *magnitude*: a shared ordinal
+cost-weight table, a run-scoped `spend_envelope`, an emit-time `cost_budget` HALT, and an effort-escrow
+ledger. Operator chose the **full DoD** (escrow ledger in the same PR, not deferred). Outcome leaf
+`sub-366` of `tier-effort-first-class`; the spend-*delta* classifier is the separate #367.
+
+- **KTD1 — `cost_weights.json` + its `cost_weights.py` loader live in `fleet_commons/`, beside
+  `models.json`, not in `saga/references/`.** The weight table must not drift from the `tier_palette`
+  ordering it prices; co-locating it with the ordering source and validating monotonicity at load
+  closes the `{#tier-vocab-ordering}` two-contracts gap. `execution_spec.py` loads it via
+  `fleet_commons_shim.load("cost_weights")`, symmetric with `tier_palette`. This overrides the issue's
+  *indicative* `plugins/saga/references/cost_weights.json` (the issue delegates the path to `/plan`).
+- **KTD2 — weights are hand-authored ordinal values (non-linear allowed), not `rank + rung`
+  arithmetic.** A hand-authored table lets `xhigh`/`opus`/`fable` be disproportionately expensive (a
+  real cost signal) while a load-time monotonicity guard keeps it honest. Weights stay ordinal/relative
+  — no dollar prices, stable across provider price changes.
+- **KTD3 — the `cost_budget` HALT mirrors `VERIFY_N_CAP` exactly** (`execution_spec.py:489-500`): same
+  fail-loud `SpecError`, both sides named, optional soft warn band. This is the correctness-critical
+  facet — a false-negative silently lets an over-budget run proceed, violating the `/outcome` campaign's
+  binding HALT-not-degrade rule — so its unit carries the adversarial verify gate at merge.
+- **KTD4 — `spend_envelope`/`cost_budget` live on `ExecutionSpec` (per-run), not `OutcomeSpec`.**
+  `OutcomeSpec` keeps its derived `cost_rollup` (R24 leaf-produced fact); a run-scoped budget on the
+  coordinator would fight the grounding-brief `/outcome` law ("cost ledger = leaf-produced fact"). This
+  resolves the DoD's "run/outcome spec" ambiguity toward the per-run spec.
+- **KTD5 — `SpendEnvelope` is a pure accumulator primitive** (crossing iff `cumulative + delta >
+  envelope` while `cumulative <= envelope`), tested in isolation. Its consumers are a new
+  `execution_spec.py spend` CLI verb (real read) and `/work`'s #364 between-rounds escalation (doc). No
+  autonomous runtime gate is built (#366: "not a new autonomous gate; the envelope is a CLI-set field").
+- **KTD6 — the effort-escrow ledger is a self-contained module** (`allocate`/`record_actual`/`refund`/
+  `request_escalation`, allocations in `to_spend()` units) with `effort-policy.yaml` real config it
+  loads via PyYAML. `/work` records actuals (producer); the refund/escalation compute and `/plan`
+  reading the policy are consumers. The escalation-request surfaces pre-execution, mirroring #364's
+  between-rounds gate.
+- **KTD7 — new test files are `test_cost_weights.py`, `test_spend_envelope.py`, `test_effort_ledger.py`;
+  `cost_budget` over/under-budget tests land in the EXISTING `tests/test_saga_execution_spec.py`.** The
+  issue names `tests/test_execution_spec.py`, which does not exist (same reconciliation #364 made). The
+  AC `-k` selectors become test-function-name fragments so every AC check resolves.
+- **KTD8 — the `cost_budget` sum accounts for call MULTIPLICITY, not one weight per unit (surfaced by
+  doc-review).** A fan-out unit runs its op `len(targets)` times and a verify panel adds `n` verifier
+  calls at the unit's tier (× iterations when it iterates to consensus), so `unit_spend = to_spend(tier)
+  × max(len(targets),1) + verify.n × to_spend(tier) × iterations`. A `pilot` is a separate declared unit
+  counted on its own row and is deliberately not re-added (double-count guard). A one-weight-per-unit sum
+  would undercount exactly the expensive fan-out/panel plans and false-negative the HALT — the
+  HALT-not-degrade violation U2 exists to prevent, which is why U2 carries the adversarial gate.
+- **Revisit when.** A second emitter (`team-execution`'s markdown path) needs budget parity and must
+  consume the shared `cost_weights.json`; or #367's spend-delta classifier lands and the ordinal weight
+  unit needs reconciling with its `spend_delta`/`adjacent_tier` ordering math.
+
+---

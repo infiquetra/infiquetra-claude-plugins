@@ -553,6 +553,18 @@ def test_tier_ceiling_never_escalates() -> None:
     ) == ES.Tier("sonnet", "medium")
 
 
+def test_clamp_tier_to_ceiling_is_always_runnable() -> None:
+    # #365 gate P0: even a direct caller passing an unrunnable ceiling Tier (bypassing tier_session)
+    # must never yield an unrunnable result -- the clamped effort is pulled to the model's ceiling.
+    out = ES.clamp_tier_to_ceiling(ES.Tier("opus", "xhigh"), ES.Tier("haiku", "xhigh"))
+    assert out == ES.Tier("haiku", "high")  # not haiku/xhigh (haiku's ceiling is high)
+    # And an emit with such a ceiling never renders the unrunnable combo.
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(tier={"model": "opus", "effort": "xhigh"}))
+    script = ES.emit_workflow_script(spec, session_ceiling=ES.Tier("haiku", "xhigh"))
+    assert 'effort: "xhigh"' not in script
+    assert 'model: "haiku"' in script and 'effort: "high"' in script
+
+
 def test_workflow_emit_honors_session_ceiling() -> None:
     spec = ES.ExecutionSpec.from_dict(_spec_dict(tier={"model": "opus", "effort": "high"}))
     # No ceiling -> the authored tier is rendered verbatim.

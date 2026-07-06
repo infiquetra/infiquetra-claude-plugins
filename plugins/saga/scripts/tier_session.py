@@ -45,6 +45,14 @@ def _validate_tier(tier: Any, where: str) -> dict[str, str]:
         raise TierSessionError(f"{where}: model {model!r} not in {MODELS}")
     if effort not in EFFORTS:
         raise TierSessionError(f"{where}: effort {effort!r} not in {EFFORTS}")
+    # Reject an on-palette-but-unrunnable tier (e.g. haiku/xhigh -- haiku's ceiling is high). A
+    # nonsensical ceiling would otherwise clamp units to an un-runnable {model, effort}; catch it loudly
+    # at the source instead of silently mis-steering a run.
+    if not _tier_palette.supports_effort(model, effort):
+        raise TierSessionError(
+            f"{where}: {model}/{effort} is unrunnable -- {model}'s effort ceiling is "
+            f"{_tier_palette.effort_ceiling(model)!r}"
+        )
     return {"model": model, "effort": effort}
 
 

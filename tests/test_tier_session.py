@@ -50,6 +50,15 @@ def test_tier_session_off_palette_rejected(tmp_path: Path) -> None:
         TS.set_unit_override("U1", "sonnet", "turbo", root=tmp_path)
 
 
+def test_tier_session_unrunnable_rejected(tmp_path: Path) -> None:
+    # #365 gate P0: an on-palette-but-unrunnable tier (haiku's ceiling is high) is rejected loudly, so
+    # it can never be clamped-to and rendered into an emitted artifact.
+    with pytest.raises(TS.TierSessionError, match="unrunnable"):
+        TS.set_ceiling("haiku", "xhigh", root=tmp_path)
+    with pytest.raises(TS.TierSessionError, match="unrunnable"):
+        TS.set_unit_override("U1", "haiku", "xhigh", root=tmp_path)
+
+
 def test_tier_session_absent_is_empty(tmp_path: Path) -> None:
     assert TS.read_session_override(root=tmp_path) == {"ceiling": None, "unit_overrides": {}}
 

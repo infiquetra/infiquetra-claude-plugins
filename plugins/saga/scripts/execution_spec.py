@@ -649,11 +649,17 @@ def clamp_tier_to_ceiling(tier: Tier, ceiling: Tier) -> Tier:
     (``{#tier-vocab-ordering}`` -- "no stronger than" is defined by strength, never raw index), so a
     ceiling weaker than the tier pulls each axis down and a ceiling already at-or-above the tier is a
     no-op. Both emitters (workflow + team) apply this before rendering a unit/segment tier (#365 U3).
+
+    The result is always a RUNNABLE tier. A runnable ceiling can never yield an unrunnable result, but
+    ``tier_session`` is not the only caller (the emitters accept a ``session_ceiling`` Tier directly),
+    so as a total-function guarantee the clamped effort is finally pulled down to the clamped model's
+    own ``effort_ceiling`` -- a no-op on the normal path, a safety net for a direct caller that passes
+    an unrunnable ceiling (which ``tier_session`` rejects at write time).
     """
-    return Tier(
-        model=_tier_palette.clamp("model", tier.model, ceiling=ceiling.model),
-        effort=_tier_palette.clamp("effort", tier.effort, ceiling=ceiling.effort),
-    )
+    model = _tier_palette.clamp("model", tier.model, ceiling=ceiling.model)
+    effort = _tier_palette.clamp("effort", tier.effort, ceiling=ceiling.effort)
+    effort = _tier_palette.clamp("effort", effort, ceiling=_tier_palette.effort_ceiling(model))
+    return Tier(model=model, effort=effort)
 
 
 @dataclass

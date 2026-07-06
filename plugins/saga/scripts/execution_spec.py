@@ -212,6 +212,18 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
     return val;
   }
 
+  // #364 R7: pull_cord -- the worker-initiated out-of-depth disposition, a valid alternative
+  // to the return contract (distinct from success and from the missing/malformed throws).
+  // Cords batch into __pulledCords for ONE coordinator escalation entry (R8); the unit is
+  // never marked complete because the batched check fails the run before it returns.
+  const cordProbe = parseResult(result);
+  if (cordProbe && typeof cordProbe === 'object' && !Array.isArray(cordProbe)
+      && typeof cordProbe.pull_cord === 'string' && cordProbe.pull_cord.trim() !== '') {
+    __pulledCords.push({ unit: unitId, reason: cordProbe.pull_cord.trim(),
+                         proposal: opts.cordProposal || null });
+    return result;
+  }
+
   if (opts.expectsOutput && isEmptyOrAbsent(result)) {
     throw new Error(
       `missing-output: Unit ${unitId} expected structured output but received none or empty.`
@@ -708,6 +720,11 @@ class Unit:
     # merged segment tier UP to this floor (never a silent downgrade). Absent => no floor; an absent
     # field emits no new key so existing specs round-trip byte-identical (R6).
     min_tier: Tier | None = None
+    # Runtime ladder climbing (#364 U2): when this unit's verify panel refutes it, propose (attended)
+    # or perform (unattended emit) exactly ONE rung of tier escalation via escalate_tier(). Absent /
+    # False => today's behavior (refute throws); an absent field emits no new key so existing specs
+    # round-trip byte-identical. v1 composition exclusions live in validate().
+    escalate_on_signal: bool = False
 
     def validate(self, where: str) -> None:
         if not self.unit_id:
@@ -736,6 +753,34 @@ class Unit:
             # on-palette-but-unrunnable floor (e.g. haiku/xhigh) also halts via Tier.validate's ceiling
             # check -- a floor you cannot run is nonsense.
             self.min_tier.validate(f"unit {self.unit_id} min_tier")
+        if "pull_cord" in self.returns:
+            # #364 (verifier P2): pull_cord is the reserved worker-initiated escalation
+            # disposition -- a legitimate return field with that name would be silently
+            # swallowed as a cord by the gate. Reject at authoring time.
+            raise SpecError(
+                f"unit {self.unit_id}: 'pull_cord' is a reserved return-disposition key "
+                f"(#364) -- rename the return field"
+            )
+        if self.escalate_on_signal:
+            # #364 v1 composition exclusions (doc-review P1s): both would compound the one-rung
+            # climb into unbounded spend -- the exact failure the issue forbids.
+            if self.verify is None:
+                raise SpecError(
+                    f"unit {self.unit_id}: escalate_on_signal without a verify panel has no "
+                    f"refute signal to react to -- add a verify panel or drop the flag"
+                )
+            if self.verify.iterate_to_consensus:
+                raise SpecError(
+                    f"unit {self.unit_id}: escalate_on_signal cannot compose with "
+                    f"iterate_to_consensus in v1 -- nesting the consensus loop inside a climb "
+                    f"retry compounds retry loops (unbounded spend)"
+                )
+            if self.fanout:
+                raise SpecError(
+                    f"unit {self.unit_id}: escalate_on_signal cannot compose with a fan-out "
+                    f"unit in v1 -- a climb re-runs ALL targets, silently multiplying "
+                    f"higher-tier spend"
+                )
         if self.fanout and not self.targets:
             # R10: a fan-out unit MUST enumerate its targets -- never a silent filter.
             raise SpecError(
@@ -785,6 +830,7 @@ class Unit:
             engine_intent=engine_intent,
             sandbox=sandbox,
             min_tier=min_tier,
+            escalate_on_signal=bool(data.get("escalate_on_signal", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -819,6 +865,9 @@ class Unit:
         # emits its {model, effort} pair.
         if self.min_tier is not None:
             out["min_tier"] = self.min_tier.to_dict()
+        # False/absent escalate_on_signal emits no key (byte-identical round-trip, #364).
+        if self.escalate_on_signal:
+            out["escalate_on_signal"] = True
         return out
 
 
@@ -1003,7 +1052,7 @@ def _js_var(unit_id: str) -> str:
     return unit_id.replace("-", "_").replace(".", "_")
 
 
-def _emit_gate_call(unit: Unit, var: str) -> str:
+def _emit_gate_call(unit: Unit, var: str, session_ceiling: Tier | None = None) -> str:
     """Emit the __gate call for a unit."""
     opts: list[str] = [f"unitId: {_js_string(unit.unit_id)}"]
     expects_output = bool(unit.returns) or (unit.fanout and bool(unit.targets))
@@ -1013,6 +1062,20 @@ def _emit_gate_call(unit: Unit, var: str) -> str:
     if unit.returns:
         ret_strs = ", ".join(_js_string(r) for r in unit.returns)
         opts.append(f"returns: [{ret_strs}]")
+        # #364 R8: the one-rung proposal a pulled cord carries into the batched escalation
+        # entry -- computed at emit time (escalate_tier is pure); null at the top of the ladder
+        # OR when the #365 session ceiling blocks the climb (the ceiling is the final word -- a
+        # cord must never propose a tier the operator's own cap forbids; verifier P1).
+        cord_climb = escalate_tier(unit.tier, ceiling=session_ceiling)
+        if cord_climb is not None:
+            cord_axis = "effort" if cord_climb.model == unit.tier.model else "model"
+            opts.append(
+                "cordProposal: "
+                + _js_string(
+                    f"{unit.tier.model}/{unit.tier.effort} -> "
+                    f"{cord_climb.model}/{cord_climb.effort} (+1 {cord_axis} rung)"
+                )
+            )
     opts_str = ", ".join(opts)
     return f"__gate({var}, {{ {opts_str} }})"
 
@@ -1118,6 +1181,8 @@ def _emit_panel_reconciliation(
     indent: str,
     *,
     direct_throw: bool,
+    open_refuted_block: bool = False,
+    throw_suffix: str = "",
 ) -> None:
     """Emit the verdict-collection / threshold / consumer block for a refute-N panel (plan KTD5).
 
@@ -1129,6 +1194,12 @@ def _emit_panel_reconciliation(
     selects the one-shot panel's immediate throw-if-refuted consumer instead of the iterate
     loop's break-if-accepted / throw-at-max-iterations consumer; callers remain responsible for
     opening/closing their own enclosing loop.
+
+    #364 escalate_on_signal consumers: ``throw_suffix`` (direct_throw only) appends a static
+    tail inside the thrown template literal -- the attended escalation-proposal / at-top HALT
+    annotation. ``open_refuted_block`` (direct_throw only) replaces the throw with an OPEN
+    ``if (<refuted>) {`` block the caller fills (the unattended one-rung climb retry) and must
+    close.
     """
     panel = unit.verify
     assert panel is not None
@@ -1200,9 +1271,14 @@ def _emit_panel_reconciliation(
     throw_line = (
         f"throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
         f"${{{refute_count_var}}}/${{{reported_var}.length}} reporting verifiers "
-        f"(${{{missing_idx_var}.length}} missing)`)"
+        f"(${{{missing_idx_var}.length}} missing){throw_suffix}`)"
     )
     if direct_throw:
+        if open_refuted_block:
+            # #364 unattended climb: the caller fills the refuted block (one-rung retry) and
+            # closes it -- the reconciliation stays the single source of the verdict math.
+            lines.append(f"{indent}if ({refuted_var}) {{")
+            return
         lines.append(f"{indent}if ({refuted_var}) {{")
         lines.append(f"{indent}  {throw_line}")
         lines.append(f"{indent}}}")
@@ -1216,7 +1292,9 @@ def _emit_panel_reconciliation(
         lines.append(f"{indent}}}")
 
 
-def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
+def _emit_thunk(
+    lines: list[str], spec: ExecutionSpec, unit: Unit, session_ceiling: Tier | None = None
+) -> None:
     """Append one thunk entry for ``unit`` inside a ``parallel([...])``.
 
     Every thunk carries the unit's per-unit ``{model, effort}`` tier (R2(b)) and the same
@@ -1237,7 +1315,7 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
         lines.append(f"        {_js_string(prompt)},")
         lines.append("        { " + ", ".join(opts) + " },")
         lines.append(f"      {_retry_close(unit)})")
-        lines.append(f"      {_emit_gate_call(unit, 'result')}")
+        lines.append(f"      {_emit_gate_call(unit, 'result', session_ceiling)}")
         _emit_panel_reconciliation(lines, unit, "result", "", "      ", direct_throw=False)
         lines.append("    }")
         lines.append("    return result")
@@ -1263,7 +1341,11 @@ def _emit_thunk(lines: list[str], spec: ExecutionSpec, unit: Unit) -> None:
 
 
 def _emit_verify_loop_singleton(
-    lines: list[str], spec: ExecutionSpec, unit: Unit, var: str
+    lines: list[str],
+    spec: ExecutionSpec,
+    unit: Unit,
+    var: str,
+    session_ceiling: Tier | None = None,
 ) -> None:
     """Emit the iterate-to-consensus loop for a singleton unit."""
     panel = unit.verify
@@ -1285,13 +1367,35 @@ def _emit_verify_loop_singleton(
     lines.append(f"    {_js_string(prompt)},")
     lines.append("    { " + ", ".join(opts) + " },")
     lines.append("  )")
-    lines.append(f"  {_emit_gate_call(unit, var)}")
+    lines.append(f"  {_emit_gate_call(unit, var, session_ceiling)}")
     _emit_panel_reconciliation(lines, unit, var, "", "  ", direct_throw=False)
     lines.append("}")
     lines.append("")
 
 
-def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
+def _emits_climb_retry(unit: Unit, unattended: bool, session_ceiling: Tier | None) -> bool:
+    """True when the emitted script will contain an in-script climb retry for this unit (#364).
+
+    Single predicate shared by the `let`-vs-`const` declaration sites and (implicitly) the
+    verify-panel emission -- an at-top or ceiling-blocked unit emits no retry, so its var is
+    never reassigned and its declaration stays const (byte-stable for all non-climbing output).
+    """
+    return (
+        unattended
+        and unit.escalate_on_signal
+        and escalate_tier(unit.tier, ceiling=session_ceiling) is not None
+    )
+
+
+def _emit_verify_panel(
+    lines: list[str],
+    spec: ExecutionSpec,
+    unit: Unit,
+    var: str,
+    *,
+    unattended: bool = False,
+    session_ceiling: Tier | None = None,
+) -> None:
     """Append a refute-N judge-panel + pass-rule reconciliation for ``unit`` to ``lines``.
 
     Renders a ``parallel([...])`` of ``unit.verify.n`` verifier ``agent()`` calls over the
@@ -1320,7 +1424,83 @@ def _emit_verify_panel(lines: list[str], unit: Unit, var: str) -> None:
         f"met (quorum floor {floor} of {n} declared; runtime-missing verifiers shrink the "
         f"denominator))"
     )
-    _emit_panel_reconciliation(lines, unit, var, f"{var}_", "", direct_throw=True)
+    if not unit.escalate_on_signal:
+        _emit_panel_reconciliation(lines, unit, var, f"{var}_", "", direct_throw=True)
+        return
+
+    # Runtime ladder climbing (#364): a refuted escalate_on_signal unit proposes (attended) or
+    # performs (unattended) exactly ONE rung of escalation. The climb is computed at emit time --
+    # escalate_tier is pure over the unit's (already ceiling-clamped) tier, so the emitted script
+    # stays deterministic. A ceiling-blocked or at-top climb HALTs (KTD2/KTD5), never loops.
+    climbed = escalate_tier(unit.tier, ceiling=session_ceiling)
+    if climbed is None:
+        blocked_by_ceiling = session_ceiling is not None and escalate_tier(unit.tier) is not None
+        reason = "climb blocked by session ceiling" if blocked_by_ceiling else "at top of ladder"
+        _emit_panel_reconciliation(
+            lines,
+            unit,
+            var,
+            f"{var}_",
+            "",
+            direct_throw=True,
+            throw_suffix=(
+                f" -- escalate_on_signal: {reason}, no rung above "
+                f"{unit.tier.model}/{unit.tier.effort} (HALT, not loop -- #364 R3)"
+            ),
+        )
+        return
+    axis = "effort" if climbed.model == unit.tier.model else "model"
+    proposal = (
+        f"{unit.tier.model}/{unit.tier.effort} -> {climbed.model}/{climbed.effort} (+1 {axis} rung)"
+    )
+    if not unattended:
+        # Attended (KTD4): the ask gate is throw-with-proposal -- the /work operator loop
+        # confirms via the existing #365 /tier patch + re-emit; no silent higher-tier re-run.
+        _emit_panel_reconciliation(
+            lines,
+            unit,
+            var,
+            f"{var}_",
+            "",
+            direct_throw=True,
+            throw_suffix=(
+                f" -- escalation-proposal (#364 R5): re-run {unit.unit_id} at "
+                f"{proposal}; confirm via /tier patch and re-emit"
+            ),
+        )
+        return
+
+    # Unattended (KTD5): ONE in-script climb retry, then a fresh panel at the climbed tier
+    # (R4: the panel matches the unit it verifies), then HALT if still refuted. Never a second
+    # climb in the same run -- chained silent climbs are the unbounded-overspend failure.
+    retry_unit = replace(unit, tier=climbed)
+    _emit_panel_reconciliation(
+        lines, unit, var, f"{var}_", "", direct_throw=True, open_refuted_block=True
+    )
+    lines.append(
+        f"  log(`escalate_on_signal: {unit.unit_id} refuted at "
+        f"{unit.tier.model}/{unit.tier.effort}; climbing ONE rung to "
+        f"{climbed.model}/{climbed.effort} and retrying once (unattended, #364 R6)`)"
+    )
+    lines.append(f"  {var} = await agent(")
+    lines.append(f"    {_js_string(_agent_prompt(spec, retry_unit))},")
+    lines.append(f"    {{ {', '.join(_agent_opts(retry_unit))} }},")
+    lines.append("  )")
+    lines.append(f"  {_emit_gate_call(retry_unit, var, session_ceiling)}")
+    _emit_panel_reconciliation(
+        lines,
+        retry_unit,
+        var,
+        f"{var}_retry_",
+        "  ",
+        direct_throw=True,
+        throw_suffix=(
+            f" -- still refuted after the one-rung climb to "
+            f"{climbed.model}/{climbed.effort} (HALT -- #364 KTD5: one climb per unit per run)"
+        ),
+    )
+    lines.append("}")
+    lines.append("")
 
 
 def _agent_prompt(spec: ExecutionSpec, unit: Unit) -> str:
@@ -1349,7 +1529,44 @@ def _agent_prompt(spec: ExecutionSpec, unit: Unit) -> str:
             "Emit it as your last action even if the work is only partial (fill each key with what "
             "you have plus a short note)."
         )
+        if unit.tier.is_cheap:
+            # #364 R7: the cord rider rides the cheap-tier return contract (beside BUDGET_RIDER)
+            # -- the worker-initiated depth signal only matters where under-tiering is plausible.
+            parts.append(
+                "PULL-CORD (#364, overrides the return contract above when it applies): if you "
+                "judge this task is genuinely beyond your depth -- not merely hard, but you "
+                "cannot produce a substantively correct result at your tier -- emit ONLY "
+                '{"pull_cord": "<one-line reason>"} as your final message instead of the return '
+                "contract. The coordinator batches every pulled cord into ONE escalation ask; "
+                "your unit is never marked complete. Never pull the cord for partial-but-sound "
+                "work (use the return contract with a note instead)."
+            )
     return "\n\n".join(p for p in parts if p)
+
+
+def escalate_tier(tier: Tier, *, ceiling: Tier | None = None) -> Tier | None:
+    """Return the tier exactly one rung stronger, or None when no legal rung exists (#364 R1).
+
+    Effort-first, then model (KTD1): climb the EFFORT axis while the current model supports a
+    stronger effort; at the model's effort ceiling, climb the MODEL axis one rung keeping effort
+    (runnability validated via ``supports_effort``, never assumed). Built on the named palette ops
+    -- raw ``MODELS.index()`` arithmetic is forbidden (see segment_units). The palette's
+    ``escalate`` deliberately no-ops at the top rung; the *runtime* at-the-top / blocked-by-ceiling
+    signal is ``None`` (KTD2) -- every caller renders it as an explicit HALT/end-clamp, never a
+    silent same-tier re-run. A ``ceiling`` (e.g. the #365 session ceiling) blocks any climb that
+    would exceed it on either axis.
+    """
+    cand_effort = _tier_palette.escalate("effort", tier.effort)
+    if cand_effort != tier.effort and _tier_palette.supports_effort(tier.model, cand_effort):
+        new = Tier(model=tier.model, effort=cand_effort)
+    else:
+        cand_model = _tier_palette.escalate("model", tier.model)
+        if cand_model == tier.model or not _tier_palette.supports_effort(cand_model, tier.effort):
+            return None  # top of the ladder (or no runnable one-rung move) -- caller HALTs
+        new = Tier(model=cand_model, effort=tier.effort)
+    if ceiling is not None and is_escalation(ceiling, new):
+        return None  # climb blocked by the ceiling -- caller HALTs/asks, never exceeds
+    return new
 
 
 def is_escalation(old: Tier, new: Tier) -> bool:
@@ -1392,13 +1609,22 @@ def patch_spec_tiers(
     return replace(spec, units=patched)
 
 
-def emit_workflow_script(spec: ExecutionSpec, session_ceiling: Tier | None = None) -> str:
+def emit_workflow_script(
+    spec: ExecutionSpec,
+    session_ceiling: Tier | None = None,
+    unattended: bool = False,
+) -> str:
     """Emit a runnable Claude Code workflow script (.workflow.js) from the spec.
 
     Validates first (fail emit on R3 / R10), then renders a control-flow-only harness:
     one ``agent()`` call per unit at its ``{model, effort}`` tier, dependency barriers
     rendered as ``await`` ordering, fan-out reconciliation + cheap-tier budget riders
     baked into prompts. The agents do the real work; this script is control flow only.
+
+    ``unattended`` (#364 KTD3) is a run property, not spec state: attended emission (default)
+    renders every escalate_on_signal refute as a throw-with-proposal ask gate; unattended
+    emission renders the one-rung in-script climb retry instead. Attendance never enters the
+    durable spec JSON.
 
     Returns the script source as a string (the caller writes it beside the plan and
     records the path as the saga ``orchestration_ref``).
@@ -1445,6 +1671,10 @@ def emit_workflow_script(spec: ExecutionSpec, session_ceiling: Tier | None = Non
         lines.append(f"const REPO = {_js_string(spec.repo)}")
         lines.append("")
 
+    # #364 R7/R8: workflow-level cord collector -- __gate pushes worker-initiated pull_cord
+    # dispositions here; the single batched escalation check runs after every layer.
+    lines.append("const __pulledCords = []")
+    lines.append("")
     lines.append(_JS_GATE_HELPER)
     lines.append("")
     lines.append(_JS_RETRY_HELPER)
@@ -1474,21 +1704,33 @@ def emit_workflow_script(spec: ExecutionSpec, session_ceiling: Tier | None = Non
             _emit_unit_header(unit)
             var = _var(unit.unit_id)
             if unit.verify is not None and unit.verify.iterate_to_consensus:
-                _emit_verify_loop_singleton(lines, spec, unit, var)
+                _emit_verify_loop_singleton(lines, spec, unit, var, session_ceiling)
             else:
                 prompt = _agent_prompt(spec, unit)
                 opts = _agent_opts(unit)
                 marker = _external_engine_marker(unit)
                 if marker is not None:
                     lines.append(f"// external-engine dispatch: {marker}")
-                lines.append(f"const {var} = await agent(")
+                # #364: an unattended escalate_on_signal retry reassigns the unit's var, so it
+                # needs `let`; everything else keeps today's `const` (byte-stable emission).
+                # `let` tracks ACTUAL reassignment: an at-top/ceiling-blocked unit emits no
+                # retry branch, so its declaration stays const.
+                decl = "let" if _emits_climb_retry(unit, unattended, session_ceiling) else "const"
+                lines.append(f"{decl} {var} = await agent(")
                 lines.append(f"  {_js_string(prompt)},")
                 lines.append("  { " + ", ".join(opts) + " },")
                 lines.append(")")
-                lines.append(_emit_gate_call(unit, var))
+                lines.append(_emit_gate_call(unit, var, session_ceiling))
                 lines.append("")
                 if unit.verify is not None:
-                    _emit_verify_panel(lines, unit, var)
+                    _emit_verify_panel(
+                        lines,
+                        spec,
+                        unit,
+                        var,
+                        unattended=unattended,
+                        session_ceiling=session_ceiling,
+                    )
             continue
 
         # A layer of >1 ready unit -> one parallel() wave of thunks. The wave's results
@@ -1497,19 +1739,54 @@ def emit_workflow_script(spec: ExecutionSpec, session_ceiling: Tier | None = Non
             assert unit is not None
             _emit_unit_header(unit)
         layer_vars = [_var(uid) for uid in layer]
-        lines.append(f"const [{', '.join(layer_vars)}] = await parallel([")
+        # #364: `let` destructure when any wave unit may reassign its var in an unattended climb.
+        wave_decl = (
+            "let"
+            if any(
+                u is not None and _emits_climb_retry(u, unattended, session_ceiling)
+                for u in layer_units
+            )
+            else "const"
+        )
+        lines.append(f"{wave_decl} [{', '.join(layer_vars)}] = await parallel([")
         for unit in layer_units:
             assert unit is not None
-            _emit_thunk(lines, spec, unit)
+            _emit_thunk(lines, spec, unit, session_ceiling)
         lines.append("])")
         for unit in layer_units:
             assert unit is not None
-            lines.append(_emit_gate_call(unit, _var(unit.unit_id)))
+            lines.append(_emit_gate_call(unit, _var(unit.unit_id), session_ceiling))
         lines.append("")
         for unit in layer_units:
             assert unit is not None
             if unit.verify is not None and not unit.verify.iterate_to_consensus:
-                _emit_verify_panel(lines, unit, _var(unit.unit_id))
+                _emit_verify_panel(
+                    lines,
+                    spec,
+                    unit,
+                    _var(unit.unit_id),
+                    unattended=unattended,
+                    session_ceiling=session_ceiling,
+                )
+
+    # #364 R8: pull-cord batch -- exactly ONE coordinator escalation entry, never one ask per
+    # cord. Emitted after every layer so all cords collect before the single batched throw; a
+    # cord unit is never marked complete because the run fails here before returning.
+    lines.append("if (__pulledCords.length > 0) {")
+    lines.append(
+        "  throw new Error(`pull-cord (#364): ${__pulledCords.length} unit(s) self-reported "
+        "out of depth -- ` +"
+    )
+    lines.append(
+        "    __pulledCords.map((c) => `${c.unit}: ${c.reason}` + "
+        "(c.proposal ? ` (propose ${c.proposal})` : ' (no legal climb: top of ladder or session ceiling -- HALT)'))"
+        ".join('; ') +"
+    )
+    lines.append(
+        "    '. ONE batched escalation ask -- confirm climbs via /tier patch and re-emit.')"
+    )
+    lines.append("}")
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -1839,6 +2116,12 @@ def main(argv: list[str] | None = None) -> int:
     p_emit = sub.add_parser("emit", help="emit a workflow script from a spec JSON")
     p_emit.add_argument("spec", type=Path)
     p_emit.add_argument("-o", "--out", type=Path, help="write the script here (default: stdout)")
+    p_emit.add_argument(
+        "--unattended",
+        action="store_true",
+        help="operator is away (#364 KTD3): escalate_on_signal refutes climb one rung "
+        "in-script instead of throwing the attended ask-gate proposal",
+    )
 
     p_base = sub.add_parser(
         "baseline", help="emit the runnable inline/serial baseline (R11 floor) from a spec JSON"
@@ -1900,7 +2183,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "baseline":
             script = emit_inline_baseline(spec)
         else:
-            script = emit_workflow_script(spec, session_ceiling=_read_session_ceiling())
+            script = emit_workflow_script(
+                spec,
+                session_ceiling=_read_session_ceiling(),
+                unattended=bool(getattr(args, "unattended", False)),
+            )
     except SpecError as exc:
         print(f"SPEC ERROR: {exc}", file=sys.stderr)
         return 2

@@ -641,3 +641,192 @@ def test_tier_patch_spend_delta_gate() -> None:
     assert (
         ES.is_escalation(ES.Tier("sonnet", "medium"), ES.Tier("sonnet", "medium")) is False
     )  # lateral
+
+
+# --- Runtime ladder climbing (#364): escalate_tier + escalate_on_signal + pull_cord ---
+
+
+def test_escalate_tier_one_rung_effort_first() -> None:  # R1
+    t = ES.escalate_tier(ES.Tier(model="sonnet", effort="medium"))
+    assert t == ES.Tier(model="sonnet", effort="high")  # exactly one effort rung, same model
+
+
+def test_escalate_tier_model_climb_at_effort_ceiling() -> None:  # R1
+    # haiku's ceiling is high (models.json) -> the next rung is the MODEL axis, keeping effort.
+    t = ES.escalate_tier(ES.Tier(model="haiku", effort="high"))
+    assert t == ES.Tier(model="sonnet", effort="high")
+
+
+def test_escalate_tier_top_of_ladder_returns_none() -> None:  # R3 signal
+    assert ES.escalate_tier(ES.Tier(model="fable", effort="xhigh")) is None
+
+
+def test_escalate_tier_ceiling_blocks_climb() -> None:  # KTD5
+    blocked = ES.escalate_tier(
+        ES.Tier(model="sonnet", effort="high"), ceiling=ES.Tier(model="sonnet", effort="high")
+    )
+    assert blocked is None  # never exceeds the ceiling, never same-tier re-run
+
+
+def test_escalate_tier_never_unrunnable() -> None:  # KTD1 invariant
+    seen = ES.Tier(model="haiku", effort="low")
+    for _ in range(16):  # walk the whole ladder from the bottom
+        nxt = ES.escalate_tier(seen)
+        if nxt is None:
+            break
+        assert nxt != seen
+        nxt.validate("walk")  # would raise SpecError on an unrunnable pair
+        seen = nxt
+    assert seen == ES.Tier(model="fable", effort="xhigh")  # the walk terminates at the top
+
+
+def _escalate_unit(**kw: object) -> dict[str, object]:
+    unit = _verify_unit("U1", verify={"n": 3, "pass_rule": "majority"}, escalate_on_signal=True)
+    unit["tier"] = {"model": "sonnet", "effort": "medium"}
+    unit.update(kw)
+    return unit
+
+
+def _emit_units_unattended(units: list[dict[str, object]]) -> str:
+    spec = ES.ExecutionSpec.from_dict(
+        {"name": "verify-demo", "description": "d", "repo": "/tmp/r", "units": units}
+    )
+    spec.validate()
+    return str(ES.emit_workflow_script(spec, unattended=True))
+
+
+def test_escalate_on_signal_one_rung_reemit() -> None:  # R2
+    script = _emit_units_unattended([_escalate_unit()])
+    # The retry re-runs at EXACTLY one rung up (sonnet/medium -> sonnet/high), never more.
+    assert 'effort: "high"' in script
+    assert "climbing ONE rung to sonnet/high" in script
+    assert "sonnet/xhigh" not in script.split("cordProposal")[0]  # no rung-skipping in the retry
+    # let-declared so the refuted branch can reassign the unit var.
+    assert "let U1 = await agent(" in script
+
+
+def test_escalate_on_signal_top_of_ladder_halts() -> None:  # R3
+    script = _emit_units_unattended([_escalate_unit(tier={"model": "fable", "effort": "xhigh"})])
+    assert "at top of ladder" in script
+    assert "HALT, not loop" in script
+    assert "climbing ONE rung" not in script  # no retry branch exists at the top
+    assert "const U1 = await agent(" in script  # nothing to reassign -> const stays
+
+
+def test_escalate_attended_asks() -> None:  # R5
+    script = _emit_units([_escalate_unit()])  # attended is the default emission
+    assert "escalation-proposal" in script
+    assert "confirm via /tier patch and re-emit" in script
+    assert "climbing ONE rung" not in script  # never a silent in-script climb when attended
+
+
+def test_escalate_unattended_silent() -> None:  # R6
+    script = _emit_units_unattended([_escalate_unit()])
+    assert "escalation-proposal" not in script  # no ask gate -- the climb is silent
+    assert "climbing ONE rung" in script
+    assert "still refuted after the one-rung climb" in script  # then HALT, never a second climb
+
+
+def test_escalate_on_signal_absent_roundtrips() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+    unit_out = spec.to_dict()["units"][0]
+    assert "escalate_on_signal" not in unit_out  # absent field emits no key (byte-identical)
+    spec_on = ES.ExecutionSpec.from_dict(
+        _spec_dict(escalate_on_signal=True, verify={"n": 3, "pass_rule": "majority"})
+    )
+    assert spec_on.to_dict()["units"][0]["escalate_on_signal"] is True
+
+
+def test_escalate_on_signal_rejects_iterate_to_consensus() -> None:  # doc-review P1 (a)
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(
+            escalate_on_signal=True,
+            verify={"n": 3, "pass_rule": "majority", "iterate_to_consensus": True},
+        )
+    )
+    with pytest.raises(ES.SpecError, match="iterate_to_consensus"):
+        spec.validate()
+
+
+def test_escalate_on_signal_rejects_fanout() -> None:  # doc-review P1 (b)
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(
+            escalate_on_signal=True,
+            verify={"n": 3, "pass_rule": "majority"},
+            fanout=True,
+            targets=["a.py", "b.py"],
+        )
+    )
+    with pytest.raises(ES.SpecError, match="fan-out"):
+        spec.validate()
+
+
+def test_escalate_on_signal_requires_verify_panel() -> None:  # dead-wiring guard
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(escalate_on_signal=True))
+    with pytest.raises(ES.SpecError, match="no.*refute signal|refute signal"):
+        spec.validate()
+
+
+def test_pull_cord_disposition() -> None:  # R7
+    script = _emit_units([_verify_unit("U1", tier={"model": "haiku", "effort": "low"})])
+    # The gate accepts the cord shape as a valid alternative, distinct from the
+    # missing/malformed-output throws (which remain in the helper for non-cord results).
+    assert "pull_cord" in script
+    assert "__pulledCords.push" in script
+    assert "missing-output" in script  # crash-path throws still present and distinct
+    # The cheap-tier prompt carries the cord rider so the disposition has a producer.
+    assert "PULL-CORD (#364" in script
+    # A non-cheap unit does NOT get the rider (the signal rides the cheap-tier contract).
+    opus_script = _emit_units([_verify_unit("U1")])
+    assert "PULL-CORD (#364" not in opus_script
+
+
+def test_pull_cord_not_complete_batched() -> None:  # R8
+    script = _emit_units(
+        [
+            _verify_unit("U1", tier={"model": "haiku", "effort": "low"}),
+            _verify_unit("U2", tier={"model": "haiku", "effort": "low"}, depends_on=["U1"]),
+        ]
+    )
+    # Exactly ONE batched escalation check for the whole run -- not one per unit.
+    assert script.count("if (__pulledCords.length > 0)") == 1
+    assert "ONE batched escalation ask" in script
+    # The batch fails the run (throw) so a cord unit is never marked complete.
+    assert "throw new Error(`pull-cord (#364)" in script
+    # Each cord entry carries its one-rung proposal computed at emit time.
+    assert 'cordProposal: "haiku/low -> haiku/medium (+1 effort rung)"' in script
+
+
+def test_pull_cord_reserved_returns_key() -> None:  # verifier P2
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(returns=["diff", "pull_cord"]))
+    with pytest.raises(ES.SpecError, match="reserved return-disposition key"):
+        spec.validate()
+
+
+def test_cord_proposal_respects_session_ceiling() -> None:  # verifier P1
+    # A unit AT the session ceiling has zero climb room: the cord entry must carry NO
+    # proposal (the ceiling is the final word), rendering the no-legal-climb HALT branch.
+    spec = ES.ExecutionSpec.from_dict(
+        {
+            "name": "d",
+            "description": "d",
+            "repo": "/tmp/r",
+            "units": [
+                {
+                    "unit_id": "U1",
+                    "label": "l",
+                    "prompt": "p",
+                    "tier": {"model": "haiku", "effort": "high"},
+                    "returns": ["result"],
+                }
+            ],
+        }
+    )
+    spec.validate()
+    ceiling = ES.Tier(model="haiku", effort="high")
+    script = str(ES.emit_workflow_script(spec, session_ceiling=ceiling))
+    assert 'cordProposal: "' not in script  # no proposal above the operator's own cap
+    assert "no legal climb: top of ladder or session ceiling" in script
+    # Without the ceiling the same unit proposes its one-rung climb.
+    unlimited = str(ES.emit_workflow_script(spec))
+    assert 'cordProposal: "haiku/high -> sonnet/high (+1 model rung)"' in unlimited

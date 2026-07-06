@@ -127,6 +127,11 @@ closed). `/work` **owns this re-entry** — it does not depend on `/resume` bein
 through `--rounds-seen` (never `next_round`). Branches that re-execute units re-enter Phases 2-5 with the
 round incremented; branches that merge or pause set `status`/`phase_status` and stop.
 
+On a failure row, run the **between-rounds tier escalation proposal** (#364) in
+`references/pr-continuation-loop.md` before re-executing: when the failure is depth-shaped, propose
+exactly one `escalate_tier` rung with its ordinal cost delta, gated on operator confirmation
+(end-clamped at the ladder top / session ceiling — never silently applied).
+
 ### 0.5 Complexity triage
 
 For a fresh build (no `pr_refs`), size the execution strategy with the CE complexity triage in

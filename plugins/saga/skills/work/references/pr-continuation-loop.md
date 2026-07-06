@@ -46,6 +46,35 @@ engine derives `next_round = max(rounds_seen) + 1` at save time (saga-spec §6.1
 `next_round` directly**; it is a derived field. Each round re-enters Phases 2-5 with the incremented round
 and re-runs the test + review gates from scratch (re-verify, don't trust the prior round's evidence).
 
+## Between-rounds tier escalation proposal (#364, gated)
+
+Before re-executing round N+1 after a **failure row** (CHANGES_REQUESTED, red checks, a refuted
+unit, a `pull_cord` batch, or an `escalation-proposal` throw from an emitted workflow), consider
+whether the failure is a *depth* problem rather than a defect: the same tier re-running the same
+work is how rounds loop. When it is, **propose** climbing exactly one rung via
+`execution_spec.escalate_tier(tier)` and surface it to the operator with the ordinal cost delta:
+
+```
+Round N failed at sonnet/medium. Propose re-running the affected unit(s) at
+sonnet/high (+1 effort rung). Confirm to apply via /tier patch + re-emit, or
+decline to re-run at the same tier.
+```
+
+Rules (all load-bearing):
+
+- **Gated, never silent** — this is a documented affordance the operator confirms; the ask rides
+  the same `is_escalation` → confirm-before-re-emit pattern as the `/tier` mid-run lever (#365).
+  A silent between-rounds climb is never permitted in the attended `/work` loop.
+- **One rung per proposal** (`escalate_tier` — effort-first, then model), never a multi-rung jump.
+- **End-clamp** — when `escalate_tier` returns `None` (top of ladder, or blocked by the #365
+  session ceiling), state that plainly ("at top of ladder — no escalation available; this is now
+  a defect-shaped problem, not a depth-shaped one") and propose nothing.
+- **The cost delta is ordinal** (`<old> → <new> (+1 <axis> rung)`) — the cost-weighted spend-delta
+  classifier is #367's; this mirrors the same deferral recorded in `commands/tier.md`.
+- A de-escalation (round succeeded trivially at an expensive tier) may be *mentioned* but is never
+  auto-applied — cheapening is the operator's call at the next `/plan` (the #368 write-back is the
+  durable home for that judgment).
+
 ## Merge is a confirmed git op `/work` owns
 
 When `destination ⊇ merge` and the approved-fresh row fires, `/work` performs the merge itself — but only

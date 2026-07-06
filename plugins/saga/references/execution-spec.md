@@ -67,6 +67,32 @@ retries up to `max_iterations` then throws on the final attempt.
 
 Absent `verify` round-trips unchanged — existing specs and the `team_emitter.py` never gain a spurious key.
 
+### Runtime ladder climbing (#364): `escalate_on_signal` + `pull_cord`
+
+A unit may set `"escalate_on_signal": true` (requires a verify panel — the refute is the signal).
+On a refuted panel the emitted script reacts by **exactly one rung** of `escalate_tier()`
+(effort-first, then model; never unrunnable; `None` at the top / session ceiling):
+
+- **Attended emission (default):** the refute `throw` carries an
+  `escalation-proposal: re-run <unit> at <old> -> <new> (+1 <axis> rung)` tail — the ask gate is
+  the `/work` operator loop, which confirms via the #365 `/tier` patch and re-emits. Never a
+  silent in-script climb.
+- **Unattended emission (`emit --unattended`):** ONE in-script retry of the unit's `agent()` call
+  at the climbed tier, a fresh panel at that tier (R4), then a HALT throw if still refuted — never
+  a second climb in the same run. At the top of the ladder (or blocked by the session ceiling) the
+  throw names the HALT instead of retrying.
+
+Attendance is a **run property, not spec state** — `--unattended` never enters the spec JSON.
+Absent/false `escalate_on_signal` emits no key (byte-identical round-trip). v1 composition
+exclusions (fail `validate`): `iterate_to_consensus` and fan-out units — both would compound the
+one-rung climb into unbounded spend.
+
+`pull_cord` is the worker-initiated depth disposition: a **cheap-tier** unit with a return contract
+carries a rider permitting `{"pull_cord": "<one-line reason>"}` instead of the contract when the
+worker judges itself out of depth. The gate recognizes the cord (distinct from success and from the
+missing/malformed throws), the unit is never marked complete, and every cord batches into **one**
+end-of-run coordinator escalation entry carrying its one-rung proposal — never one ask per cord.
+
 ### Missing verdicts — runtime failure vs. static non-applicability (R1–R5, KTD7–KTD10)
 
 A verifier that dies before emitting resolves to a `null` verdict slot (harness contract: terminal
@@ -241,6 +267,10 @@ uv run python plugins/saga/scripts/execution_spec.py validate spec.json
 
 # Emit a runnable workflow script (stdout, or -o to a file).
 uv run python plugins/saga/scripts/execution_spec.py emit spec.json -o out.workflow.js
+
+# Unattended emission (#364): escalate_on_signal refutes climb one rung in-script
+# instead of throwing the attended ask-gate proposal.
+uv run python plugins/saga/scripts/execution_spec.py emit spec.json --unattended -o out.workflow.js
 
 # Emit the runnable inline/serial baseline (R11 floor — runs on any host).
 uv run python plugins/saga/scripts/execution_spec.py baseline spec.json -o baseline.md

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.68.0] - 2026-07-06
+
+### Added — runtime ladder climbing: gated one-rung escalation on failure signals (#364)
+
+- `escalate_tier(tier, ceiling=None)` — the pair-level one-rung climb: effort-first, then model
+  (`supports_effort` invariant, never unrunnable), built on the named `tier_palette` ops. Returns
+  `None` at the top of the ladder or when blocked by a ceiling — every caller renders that as an
+  explicit HALT, never a silent same-tier re-run.
+- `Unit.escalate_on_signal` (requires a verify panel): attended emission renders a refute as a
+  throw-with-`escalation-proposal` ask gate (confirmed via the #365 `/tier` patch + re-emit);
+  `emit --unattended` renders ONE in-script climb retry at the climbed tier with a fresh panel,
+  then HALT — one climb per unit per run, session-ceiling-aware. Attendance is a run property and
+  never enters the spec JSON (absent field round-trips byte-identical). v1 validate exclusions:
+  `iterate_to_consensus`, fan-out, and no-panel (all unbounded-spend or dead-wiring vectors).
+- `pull_cord` — the worker-initiated out-of-depth disposition on the cheap-tier return contract:
+  the gate accepts `{"pull_cord": "<reason>"}` distinct from success/crash, the unit is never
+  marked complete, and all cords batch into ONE end-of-run coordinator escalation entry carrying
+  one-rung proposals.
+- `/work` between-rounds recovery step (`references/pr-continuation-loop.md`): on a failure row,
+  propose exactly one rung with the ordinal cost delta (`<old> -> <new> (+1 <axis> rung)`),
+  end-clamped at the ladder top / session ceiling, gated on operator confirmation. The priced
+  spend-delta classifier stays #367's.
+
 ## [0.67.0] - 2026-07-06
 
 ### Added — persisted tier preferences: repo overlay + issue band + one precedence rule (#368)

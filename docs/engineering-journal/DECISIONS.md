@@ -2,6 +2,38 @@
 
 ## 2026-07-06
 
+### Runtime ladder climbing: one rung, effort-first, throw-with-proposal is the attended ask gate {#runtime-ladder-climbing-364}
+
+**Context.** `docs/plans/2026-07-06-runtime-ladder-climbing-plan.md` (#364). The tier ladder had
+plan-time merge (#369) and a manual mid-run lever (#365) but no *runtime* reaction to a failure
+signal — a refuted unit threw and a human guessed the next tier from the transcript.
+
+- **KTD1 — pair-level climb is effort-first, then model, one rung per event.** Effort is the
+  cheapest increment; model dominates spend, so it climbs last. Runnability is validated via
+  `supports_effort`, never assumed. *Rejected:* model-first (spends the dominant axis first).
+- **KTD2 — `escalate_tier` returns `None` at the top; callers convert to HALT.** The palette's
+  `escalate` no-ops at the top (vocabulary contract, `fleet_commons` untouched); runtime
+  halt-not-loop semantics belong to the consumer.
+- **KTD3 — attendance is emit-time (`emit --unattended`), never spec state.** A run property, not
+  a plan property; precedent `outcome.py --autonomous`. Existing specs round-trip byte-identical.
+- **KTD4 — the attended ask gate is throw-with-proposal + the existing #365 lever.** An emitted
+  workflow cannot question the operator mid-run; the refute throw carries the
+  `escalation-proposal` and the `/work` loop confirms via `/tier` patch + re-emit. No new ask
+  machinery enters the emitted script. *Rejected:* an in-script ask primitive (doesn't exist) or
+  auto-climb-then-report (violates the attended asymmetric-approval rule).
+- **KTD5 — silent climbs are strictly bounded: one climb per unit per run, ceiling-aware, then
+  HALT.** Chained silent climbs are the loop/overspend failure the issue forbids. The `let`-vs-
+  `const` declaration tracks *actual* reassignment (`_emits_climb_retry`), keeping all
+  non-climbing emission byte-stable.
+- **KTD6 — the cost delta is ordinal** (`<old> → <new> (+1 <axis> rung)`); no price-per-tier data
+  exists in the repo — the priced classifier is #367's (same deferral as `commands/tier.md`).
+- **KTD7 — `pull_cord` always batches to ONE coordinator entry** (attended and unattended); the
+  R6 silent-climb permission is exercised on the refute path where the retry is cleanly boundable.
+  v1 composition exclusions at `validate`: `iterate_to_consensus`, fan-out, no-panel (doc-review
+  P1s — unbounded-spend / dead-wiring vectors). **Revisit when.** #366/#367 land spend telemetry +
+  the priced classifier (chained climbs across runs), or a real unattended run shows cords are
+  frequent enough to earn silent climbing.
+
 ### Persisted tier preferences: repo overlay > issue band > registry, and the band stamps at compile {#tier-defaults-368}
 
 **Context.** `docs/plans/2026-07-06-persisted-tier-preferences-plan.md` (#368). Tier judgment was

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.71.0] - 2026-07-06
+
+### Fixed — /outcome code-leaf completion harvest silently never fired (#495)
+
+- **The producer gap (gap 1).** The `code:pr-merged` barrier (`outcome_orchestrator.py`) and the
+  auto-merge queue (`outcome_merge._is_mergeable_kind`) both *consume* `node.github["pr"]`, but the
+  record-only dispatch → native `/work` → squash-merge flow never *produced* it, so `advance` read
+  "no PR ref yet" forever and left every code leaf pending (the only recovery was a hand-edit of the
+  committed spec). New verb **`/outcome link-pr <id> <subplot> <pr-url>`** is the attended producer:
+  it writes `node.github["pr"]` (validated as a PR URL, code-node-only, idempotent; `--push` banks it
+  to the outcome branch). It attaches a pointer only — the barrier still re-verifies `merged`, so a
+  wrong/unmerged link never falsely completes a node.
+- **The ref-format gap (gap 2).** `outcome_github._parse_ref`/`_gh_ref` normalize a stored ref
+  (`owner/repo#N` | full URL | bare `N`) to a gh-consumable token; `pr_state`, `issue_state`,
+  `board_status`, and `issue_close_info` now resolve `owner/repo#N` (previously `gh` rejected it as an
+  invalid issue format / misread it as a branch). `_closed_by` consumes `_parse_ref` too, so
+  normalizing a view-ref to a URL never starves its REST events path.
+- The `code:pr-merged` contract is unchanged and now regression-guarded: a closed tracking issue never
+  satisfies a code leaf; only a merged `github.pr` does.
+
+### Notes
+
+- Saga-only; **R17 preserved** — the fix touches GitHub refs + completion events, never persists derived
+  `node.state`/`complete` into the committed spec JSON.
+- Deferred (not built): a zero-touch autonomous PR producer (the autonomous auto-merge path is not yet
+  exercised, and its auto-mechanisms are fragile/coupling); a merge-time writeback was rejected as
+  vacuous (the merge queue already requires `github.pr` to act).
+
 ## [0.70.0] - 2026-07-06
 
 ### Added — spend-delta machinery: the silent-cheap/ask-expensive levers (#367)

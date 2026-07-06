@@ -2929,3 +2929,47 @@ Issue #367 gives `/plan` and `/work` one shared primitive for tier-spend *direct
   cross-repo authority registry is wanted beyond the single per-repo `.saga/spend-authority.json`.
 
 ---
+
+## 2026-07-06
+
+### /outcome completion harvest — supply the missing PR-ref producer, don't touch the consumers  {#outcome-completion-harvest-writeback-495}
+
+Issue #495 (the first `/outcome` dogfood defect, found running `tier-effort-first-class` / objective
+#343): code-leaf completion harvest silently never fired. The `code:pr-merged` barrier and the auto-merge
+queue both *consume* `node.github["pr"]`, but the record-only dispatch → native `/work` → squash-merge
+flow never *produced* it. Backend inline; saga-only.
+
+- **KTD1 — Supply the one missing producer (`link-pr`); do not change the consumers.** Both the harvester
+  barrier (`outcome_orchestrator.py:100-112`) and `outcome_merge._is_mergeable_kind` (`:170`, which
+  requires `bool(node.github.get("pr"))` before it will queue a merge) consume the ref, so one producer
+  unblocks both. **Rejected: a merge-time writeback** — vacuous, since the merge queue already requires
+  the ref to act. **Rejected: a closing-PR timeline resolver** — `issue_close_info`/`_closed_by` surface
+  only the closing *actor*, a robust closing-PR query is edge-case-heavy, and it would not even have
+  fired for the tier-effort leaves (their sub-issues were closed manually, not by a keyword-closing PR).
+- **KTD2 — Normalize refs at READ time, in `outcome_github`, via a components `_parse_ref`.** Read-time
+  normalization repairs already-committed specs (tier-effort's `owner/repo#N` issue refs) with no
+  migration. `_parse_ref → (owner, repo, number)` is consumed by both the `view` calls (which build a
+  gh-consumable URL via `_gh_ref`) and `_closed_by`'s REST events path (which needs the components) — so
+  normalizing a view-ref to a URL never starves `_closed_by` (the doc-review coupling guard).
+- **KTD3 — `owner/repo#N` → full URL, not `N --repo owner/repo`.** A URL is one cwd-independent positional
+  token, uniform across pr/issue; the caller's kind picks `/pull/` vs `/issues/`. Full URLs and bare
+  numbers pass through unchanged.
+- **KTD4 — `link-pr` writes local + optional `--push`; no auto-commit by default.** Consistent with
+  `prune`/`promote` (`save_spec` local) and the R26/R27 explicit-bank cadence. It attaches a *pointer* —
+  the barrier re-verifies `merged`, so a wrong/unmerged link never falsely completes a node.
+- **KTD5 — R17 is untouched (rejected the "self-describing artifact" broadening).** The fix operates on
+  GitHub refs + completion events, never persists derived `node.state`/`complete` into the committed spec
+  JSON. The operator confirmed the outcome is already durably reconstructable (committed gh-consumable PR
+  refs + reconstruct-on-advance); `node.state: pending` in the JSON is authoring-time by design.
+- **KTD6 — "Automatic" = the attended verb, not zero-touch (operator-confirmed scope).** In an attended
+  outcome an explicit `link-pr` verb IS the automation (vs hand-editing committed JSON + re-commit). A
+  zero-touch autonomous producer is **deferred**, on evidence: no code leaf has ever reached the auto-merge
+  queue (all outcomes ran attended/inline), and its auto-mechanisms are fragile or couple the leaf to the
+  coordinator.
+- **KTD7 — test placement:** ref normalization + the `code:pr-merged` guard → `tests/test_outcome_completion.py`;
+  the `link-pr` verb → `tests/test_outcome_command.py`; the end-to-end harvest loop → `tests/test_outcome_integration.py`.
+- **Revisit when.** The autonomous auto-merge path is actually exercised (then build the zero-touch
+  producer — a coordinator-side read of the dispatched leaf saga's PR ref), or ingestion is changed to
+  store full-URL refs at the source.
+
+---

@@ -27,6 +27,24 @@
 
 ## 2026-07-05
 
+### A serial multi-agent build's *cross-cutting* defects have no owner — the pre-PR gate + the committed-state re-run are the only backstop  {#serial-build-cross-cutting-caught-at-gate}
+
+**Context.** `/work` on #363 (effort-first-class) ran a serialized 6-unit ultracode Workflow (U1–U6). Every unit's own gate passed and the full local suite was green (2185), yet the Phase-5 `/code-review` gate then surfaced **two P1s**, and the staleness re-run surfaced a third — none caused by a single unit's internal logic.
+
+**Evidence.** PR #498 (`6a367ad`), 2026-07-05. (1) U6 wrote `QUEUED.md` heading `— SHIPPED (#363)` while its own body concedes only the `EFFORT_RIDER` proxy shipped — an honesty overclaim the plan's U6 explicitly forbade (`fc8eff2`). (2) U4 added `effort:` frontmatter to `plugins/agy/agents/agy-coder.md` + `plugins/deploy/agents/release-orchestrator.md`, but U6 bumped only saga/team-execution/fleet-core → `release_surface_diff_guard` red once committed (`c260d8c`). (3) The version bump then broke the agy/deploy version-pin drift-guard tests (`tests/test_agy_plugin.py:38`, `tests/test_deploy_plugin.py:42`), caught only by re-running pytest against the *committed* HEAD (`706cd6a`).
+
+**Mechanism.** In a serial fan-out, a unit that reaches into *another* plugin's files (U4 → agy/deploy) creates a release-surface obligation that a *different* unit (U6) was scoped to satisfy — but U6's prompt named only three plugins. No single agent holds the whole blast radius, so cross-unit consequences fall through the per-unit gates. Compounding it: `release_surface_diff_guard --base-ref main` reads the **committed** `main..HEAD` diff, so it read clean while the build was uncommitted and only flipped red *after* the build commit — an earlier "green" was a false all-clear.
+
+**Fix.** Both P1s fixed in the same `/work` loop (heading corrected; agy 0.1.1 / deploy 0.1.4 across plugin.json + marketplace + CHANGELOG + drift-guard pins), each re-verified by the full deterministic gate before proceeding.
+
+**Validation.** Final gate at `706cd6a`: pytest 2185 passed, ruff/format/mypy clean, both validators + release guard green; CI on PR #498 all-SUCCESS; merged `6a367ad`.
+
+**What surprised.** The release guard *passed* on the first run — because the build was still uncommitted. Running a committed-diff guard before committing the build is worse than not running it: it manufactures false confidence.
+
+**Generalizable rule.** After any multi-agent build, re-run the release/parity guards **against committed state**, and treat cross-plugin touches as un-owned until proven bumped. A version bump is not done until its metadata drift-guard pin moves in lockstep — always re-run the *full* suite after a release-surface fix, because the fix itself can red a pinned test.
+
+**Refs.** DECISIONS `{#lifecycle-engine-merge-campaign}` (verify journal CLOSURE vs real `git diff`; dead-wiring recurs); code-review artifact `docs/code-reviews/2026-07-05-feat-363-effort-first-class-code-review.md`; QUEUED `{#team-execution-per-teammate-effort}`.
+
 ### A `ship_ceremony.py` CLI change can't be fully dogfooded through its own ceremony — `checkout_main` reverts the working-tree script to the pre-merge version  {#ship-ceremony-self-dogfood-checkout-main}
 
 **Context.** Shipping the `--saga-id` flag (PR #484) *through* the ceremony, driving every transition with `run --saga-id …`. `commit`→`checkout_main` worked; `pull` and `branch_delete` then died with `error: unrecognized arguments: --saga-id`.

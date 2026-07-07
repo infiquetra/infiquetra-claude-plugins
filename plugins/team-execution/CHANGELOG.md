@@ -4,6 +4,15 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.12.2] - 2026-07-06
+
+### Changed — pointer update to codex first-party bridge (#476, R6)
+
+- `skills/team-execution/references/external-engine-workers.md`'s `codex` `ENGINE_INTENTS`
+  cross-reference now points at the first-party `codex:delegate` bridge (`plugins/codex/`)
+  instead of the retired `codex:codex-rescue` marketplace agent. Documentation-only —
+  team-execution's own resolution stays fully declarative and requires no code change.
+
 ## [2.12.1] - 2026-07-06
 
 ### Changed — pointer update to saga's dispatch-adapter contract (#387, #383)

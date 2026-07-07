@@ -11,7 +11,7 @@ holds a gated verdict.** Dispatch produces *advisory evidence*, never a decision
 
 The adapter dispatches to the wrapper each engine already owns — it does not re-implement containment.
 
-- **Codex** (`resolution.engine_id == "codex"`) → `codex:codex-rescue`. The invocation carries
+- **Codex** (`resolution.engine_id == "codex"`) → `codex:delegate`. The invocation carries
   `sandbox: read-only` (R23) and `task` set to `resolution.payload` **byte-for-byte** — the assembled
   protocol + context is forwarded verbatim, never paraphrased or shell-interpolated (R9/R11/AE5).
 - **agy** (`resolution.engine_id == "agy"`) → `agy:delegate`. The invocation is an

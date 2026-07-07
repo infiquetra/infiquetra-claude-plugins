@@ -37,16 +37,17 @@ REGISTRY_SCRIPT = ROOT / "plugins" / "saga" / "scripts" / "engine_registry.py"
 IN_REPO_EMITTERS: dict[str, Path] = {
     "http-bridge": ROOT / "plugins" / "saga" / "scripts" / "engine_bridge_http.py",
     "agy-delegate": ROOT / "plugins" / "agy" / "scripts" / "agy_delegate.py",
+    "codex-bridge": ROOT / "plugins" / "codex" / "scripts" / "codex_delegate.py",
 }
 
 # --- Emitters named in the registry with NO in-repo wiring yet, each pinned to its tracking -----
-# issue. Dated explicit declaration (KTD9): codex-bridge lands with #476's ``plugins/codex/`` work.
-# The value is the issue reference for humans; NOTHING in this module queries its live state.
-PENDING_EMITTERS: dict[str, str] = {"codex-bridge": "#476"}
+# issue. Dated explicit declaration (KTD9). The value is the issue reference for humans; NOTHING
+# in this module queries its live state.
+PENDING_EMITTERS: dict[str, str] = {}
 
 # The plugin directory whose appearance means a pending emitter must now be wired in-repo.
 # Purely a filesystem sentinel -- no network, no issue-state.
-PENDING_EMITTER_PLUGIN_DIR: dict[str, Path] = {"codex-bridge": ROOT / "plugins" / "codex"}
+PENDING_EMITTER_PLUGIN_DIR: dict[str, Path] = {}
 
 # --- Shared-path vocabulary (KTD6): the one and only sanctioned emit route. --------------------
 _SHIM_MODULE = "fleet_commons_shim"
@@ -202,15 +203,17 @@ def test_all_bridges_emit_through_shared_path(emitter_tag: str) -> None:
 # Pending-emitter discipline (hermetic: static declaration + directory sentinel only).
 # ================================================================================================
 def test_pending_emitters_is_the_explicit_dated_entry() -> None:
-    # KTD9: exactly the codex-bridge -> #476 entry, no silent skips of anything else.
-    assert PENDING_EMITTERS == {"codex-bridge": "#476"}
+    # KTD6/KTD9: codex-bridge landed with plugins/codex/ (#476) and moved to IN_REPO_EMITTERS, so
+    # no pending entries remain. No silent skips of anything else.
+    assert PENDING_EMITTERS == {}
 
 
 def test_pending_emitter_plugin_absent_until_wired() -> None:
     """If a pending emitter's plugin directory appears, it must be wired in-repo, not left pending.
 
-    Pure filesystem check -- reds when ``plugins/codex/`` shows up without moving codex-bridge into
-    IN_REPO_EMITTERS. No GitHub-issue-state lookup (that would break the hermetic contract).
+    Pure filesystem check -- reds if any future pending plugin directory shows up without moving
+    its emitter into IN_REPO_EMITTERS. No GitHub-issue-state lookup (that would break the hermetic
+    contract).
     """
     for emitter, issue in PENDING_EMITTERS.items():
         plugin_dir = PENDING_EMITTER_PLUGIN_DIR[emitter]

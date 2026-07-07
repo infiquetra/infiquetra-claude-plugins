@@ -25,6 +25,97 @@
 
 ---
 
+## 2026-07-07
+
+### A registry recipe is machine-consumed truth — validate it against the live CLI, not memory {#codex-registry-recipe-stale-flag}
+
+**Context.** codex U4 (#476, R5, KTD4): rewiring `plugins/saga/references/engine-registry.yaml`'s
+two codex rows to `codex:delegate` required correcting the `recipe` string alongside the
+`invocation.via` change. The pre-rewire recipe read `codex -s read-only --effort <level> --help`,
+naming a `--effort` flag.
+
+**Evidence.** `codex --help` on the installed 0.142.5 binary has no `--effort` flag at all;
+effort rides `-c model_reasoning_effort=<effort>` (a `-c` config override), verified live
+against the running CLI, not against the registry's prose. `engine-registry.yaml:27,58`
+now carries the corrected recipe and `last_validated: 2026-07-06`.
+
+**Mechanism.** The registry's `recipe` field reads like documentation but is dispatch-adjacent
+data — `build_codex_invocation` (`plugins/saga/scripts/engine_dispatch.py`) and any operator
+copy-pasting the recipe both treat it as executable truth. A stale recipe survives silently
+because nothing exercises it against the real CLI at author time — it only breaks when someone
+runs it, by which point the failure looks like a codex problem, not a registry problem.
+
+**Generalizable rule.** Any registry field that describes how to invoke an external CLI
+(a recipe, a flag list, a command template) is machine-consumed truth, not comment-grade prose —
+validate it against the live CLI's actual `--help` output (or equivalent ground truth) at rewire
+time, every time the registry touches that row, not just when the CLI's behavior is suspected
+to have changed.
+
+**Refs.** `{#codex-first-party-bridge-476}` (DECISIONS), KTD4.
+
+### Whole-tree kill proofs need a grandchild pid, and live smokes must tolerate ambient MCP dirt {#codex-lifecycle-tree-kill-proof}
+
+**Context.** codex delegate U6 (#476, R7): the lifecycle suite must prove the delegate kills the
+*entire* codex process tree on timeout/SIGTERM, not just its direct child, and must include an
+availability-gated live `codex exec` round-trip.
+
+**Evidence.** `tests/test_codex_delegate_lifecycle.py` — the fake codex spawns its own child and
+writes both pids to a pidfile; the test polls the grandchild's pid directly. Red proof: a broken
+delegate variant with `_kill_process_tree` replaced by direct `process.kill()` fails exactly on
+the grandchild-survival assertion ("fake codex's CHILD survived the timeout kill") while every
+direct-child-only assertion stays green. Live smoke: real `codex exec` in a fresh tmp git repo
+came back `out_of_scope_mutation` with `new_paths: [".serena/"]` — locally-configured codex MCP
+tooling wrote state into the repo under review.
+
+**Mechanism.** A test that asserts only "the launched pid is dead" is vacuously green under a
+child-only kill because `Popen.kill()` reaches argv[0] fine — only a process the *delegate never
+knew about* (the fake bin's own child, sharing the session group) distinguishes `killpg` from
+`kill`. And a live smoke that pins `status == "success"` couples the test to whatever ambient
+agent tooling the operator's codex config runs; the diff-scan flagging `.serena/` is the scanner
+working, not the delegate failing.
+
+**Generalizable rule.** (1) To prove tree-kill semantics, the fixture must fork a grandchild the
+supervisor cannot see and the test must poll that pid — then demonstrate red against a
+kill-direct-child-only mutant before trusting the green. (2) Availability-gated live smokes
+should assert the *bridge contract* (receipt + transcript + last message + terminal status),
+never a single happy status, because live environments carry side-effecting tooling the hermetic
+tests deliberately exclude.
+
+**Refs.** `{#codex-diff-scan-snapshot-relative}` (the scan that caught `.serena/`); Ollama smoke
+posture in `tests/test_engine_bridge_http.py`.
+
+### A non-mutation diff-scan must be snapshot-relative, and must exclude its own evidence dir {#codex-diff-scan-snapshot-relative}
+
+**Context.** codex delegate U3 (#476): the reviewer (read-only) surface must prove codex did not
+mutate the live repo, and the coder (task) surface must prove the live tree is untouched while it
+works in a disposable clone. The naive proof — "run codex, then assert `git status --porcelain` is
+clean" — is wrong on two counts.
+
+**Evidence.** `plugins/codex/scripts/codex_delegate.py` `derive_reviewer_scan` / `_porcelain_paths`;
+tests `tests/test_codex_delegate_modes.py::test_reviewer_pre_dirty_tree_does_not_false_positive`
+and `::test_coder_captures_patch_and_leaves_live_tree_untouched`.
+
+**Mechanism.** (1) Operators routinely run a reviewer over an already-dirty working tree. An
+absolute "is it clean now" check false-positives on their pre-existing edits. The proof must be the
+*set difference* of post-run dirty paths against a pre-run snapshot captured before launch — dirt
+present at baseline is excluded from `new_paths` regardless of its post-run status, so a pre-dirty
+tree cannot false-positive. (2) The delegate writes its own evidence bundle to
+`.claude/codex/runs/<id>` *in the live tree*, so an unfiltered porcelain scan flags the bundle
+itself as a mutation. Both the delegate's scan and the tests' untouched-tree assertion must scope
+to `git status --porcelain -- . ':(exclude).claude'` — the guarantee is about source/working files,
+not the delegate's own evidence store.
+
+**Validation.** 8 U3 mode tests green; full suite 2465 passed / 1 skipped.
+
+**Generalizable rule.** A "did X mutate the tree?" guard is only honest if it is (a) differential
+against a pre-action snapshot, not absolute, and (b) blind to the guard's own artifacts. Bake both
+into the scan primitive, not the call sites.
+
+**Refs.** Mirrors agy's clone/diff-evidence shape (`plugins/agy/scripts/agy_delegate.py`); #476 U3,
+R2, KTD5.
+
+---
+
 ## 2026-07-06
 
 ### Worktree-isolated verify panels are blind to uncommitted worker output — refute-N ran 0/3 vacuous on every panel {#verify-panels-blind-to-uncommitted-tree}
@@ -1862,3 +1953,15 @@ merge (commit `5a92695`). The two dogfood defects shared one primitive — #495'
 **Generalizable rule.** Before `/plan`-ing or decomposing a multi-issue objective authored more than a day ago, re-verify each draft's *absence* claims against current HEAD (re-grep, do not trust the draft's grep), and persist the correction onto the artifact the planner consumes (the issue), so the stale draft self-corrects at plan time. "Verified absent (2026-07-03)" is a timestamp, not a fact.
 
 **Refs.** Discipline recorded in `{#outcome-dag-decompose-stale-objective-336}`. Same "durable state belongs where it is consumed" thread as `{#outcome-derived-truth-vs-missing-producer}` — the fix was scope-note comments on the issues, not a side doc, because `/plan` reads the issue.
+
+---
+
+### Per-unit verify panels and a whole-diff review pass find disjoint defect classes — run both  {#unit-panels-vs-whole-diff-lenses-476}
+
+**Evidence.** #476's workflow ran 9 refute-panel verifiers (3 units × 3), all upheld with examined-SHA quoting — yet the post-workflow `/code-review` (6 lenses + 10 independent validators, artifact `docs/code-reviews/2026-07-07-feat-476-codex-first-party-bridge-code-review.md`) surfaced 10 confirmed findings the panels structurally could not see: U1's "runner lands in follow-on units" docs falsified by U2/U3 shipping the runner (P1 — no unit owned refreshing them); `_kill_process_tree`'s return discarded at every call site so `shutdown_incomplete` was dead vocabulary (each unit's own tests passed); the die-clean handler covering only U2's window while U3/U6 added spans outside it; and fleet-parity gaps (non-atomic `_write_json`, narrow `except OSError`, unbounded transcript reads) inherited byte-for-byte from the agy sibling the units were told to mirror.
+
+**Mechanism.** A refute-panel verifies a unit's OWN claims at that unit's commit — it is unit-scoped by design. Defects that live BETWEEN units (an earlier unit's statement invalidated by a later unit's code, a handler installed in one span but needed in another, a mirrored sibling's latent bug faithfully copied) have no owning unit, so no panel interrogates them. The serialized-plan failure shape is specific: scope-boundary prose ("X lands in U2/U3") is written true and becomes false in the same PR, and "mirror the sibling" instructions import the sibling's defects with full test coverage of the defective behavior.
+
+**Generalizable rule.** Panels upholding 9/9 is evidence the units are built-as-claimed, not that the diff is sound — always run a whole-diff review pass after a multi-unit workflow, and treat two prompts as standing risks: any "lands in a later unit" doc line (assign the LAST unit a doc-currency sweep) and any "mirror <sibling>" instruction (audit the sibling's known gaps; file the parity fix both ways).
+
+**Refs.** Fix round: all 10 findings fixed in-PR (this commit); agy parity follow-up filed for the shared patterns. Panel-side guardrails from Wave A remain in `{#verify-panels-blind-to-uncommitted-tree}`.

@@ -109,7 +109,7 @@ actually invokes the engine is the existing containment wrapper, not a new one t
   declared files, `apply_policy: "preserve-patch"` (`build_agy_envelope`). No new isolation is
   built — the remotes-stripped disposable clone agy already sets up is the workspace, and the
   `git diff <BASE_SHA>` harvest imports only the declared write_set (R23 gate stays upstream).
-- **codex** → `codex:codex-rescue`, `sandbox: "read-only"` (`build_codex_invocation`). codex has
+- **codex** → `codex:delegate`, `sandbox: "read-only"` (`build_codex_invocation`). codex has
   **no write adapter**: a `sandboxed-mutate` unit routed to codex HALTS with a visible
   `DispatchError` rather than silently running read-only and dropping the write (#287 KTD4/R6).
 

@@ -1,0 +1,198 @@
+{
+  "name": "codex-first-party-bridge-plugin",
+  "description": "Issue #476: first-party plugins/codex/ guarded delegate (agy-grammar mirror, codex.delegation.v1), synchronous supervised codex exec runner with evidence bundle + bridge_receipt.v1 emission, enforced read-only review / patch-capture task modes, registry+dispatch rewire off codex:codex-rescue, marketplace-plugin retirement dereference, lifecycle proof. SERIALIZED unit chain (every unit depends_on its predecessor) deliberately: operator rate-limit cap is max 3 concurrent non-haiku agents / 6 haiku; the only parallelism is the n=3 verify panels on U2/U3/U6, so peak concurrency is exactly 3 by construction (precedent: 2026-07-06 http-bridge-receipt-pair spec, serialized for the same reason). Serialization also prevents concurrent edits to plugins/codex/scripts/codex_delegate.py (touched by U1/U2/U3) and the shared saga test files. WAVE-A GUARDRAIL (journal {#verify-panels-blind-to-uncommitted-tree}): every worker commits its completed unit on the branch so verify-panel worktrees (cut from main) can materialize committed state; verifier prompts are patched post-emit with mandatory branch materialization + examined-sha quoting.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "plugin scaffold + codex.delegation.v1 envelope schema + drift-guard move",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: Create plugins/codex/ \u2014 .claude-plugin/plugin.json (name codex, version 0.1.0, Infiquetra author block per repo CLAUDE.md), README.md, CHANGELOG.md, commands/delegate.md, skills/codex-delegate/SKILL.md, agents/codex-coder.md + agents/codex-reviewer.md (mirror plugins/agy/ structure), vendor plugins/fleet-core/scripts/fleet_commons_shim.py BYTE-IDENTICALLY into plugins/codex/scripts/ and extend the hardcoded vendored-copy list in tests/test_fleet_commons_resolution.py with the codex copy. Create plugins/codex/scripts/codex_delegate.py with the codex.delegation.v1 envelope schema (roles coder|reviewer, modes, review lenses, evidence levels, status vocabulary mirroring agy.delegation.v1 minus inapplicable members), Envelope dataclass + validation (EnvelopeError, fail loud), and the receipt builder calling fleet_commons_shim.load('bridge_receipt').emit_receipt(engine_id='codex', transport='cli', ...) with emit-only-when-launched semantics (agy _supervised_receipt parity, plugins/agy/scripts/agy_delegate.py:1390-1412). SAME COMMIT (KTD6): move 'codex-bridge' from PENDING_EMITTERS to IN_REPO_EMITTERS -> plugins/codex/scripts/codex_delegate.py in tests/test_bridge_receipt_drift.py and update its pending-entry assertions \u2014 the guard sentinels on plugins/codex/ existing, so the tree reds if these land apart. Add tests/test_codex_delegate_contract.py (envelope round-trip valid/invalid) and tests/test_codex_plugin.py (plugin.json required fields). Read the plan at docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md (U1, R1/R8, KTD1/KTD6) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/codex/.claude-plugin/plugin.json",
+        "plugins/codex/README.md",
+        "plugins/codex/CHANGELOG.md",
+        "plugins/codex/commands/delegate.md",
+        "plugins/codex/skills/codex-delegate/SKILL.md",
+        "plugins/codex/agents/codex-coder.md",
+        "plugins/codex/agents/codex-reviewer.md",
+        "plugins/codex/scripts/fleet_commons_shim.py",
+        "plugins/codex/scripts/codex_delegate.py",
+        "tests/test_bridge_receipt_drift.py",
+        "tests/test_fleet_commons_resolution.py",
+        "tests/test_codex_delegate_contract.py",
+        "tests/test_codex_plugin.py"
+      ]
+    },
+    {
+      "unit_id": "U2",
+      "label": "supervised synchronous runner + evidence bundle + receipt",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "the correctness core this issue exists for: process supervision with timeout kill-tree, stdin write-then-close (codex blocks on an open pipe \u2014 verified live), receipt-iff-launched, and terminal-status-always semantics; a defect here recreates the zombie-running failure class the marketplace plugin is being retired for",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U2: In plugins/codex/scripts/codex_delegate.py implement the supervised synchronous runner: launch codex exec --json -o <bundle>/last-message.txt -s <sandbox> -m <model> -c model_reasoning_effort=<effort> --ephemeral (KTD3, verified live on codex-cli 0.142.5 \u2014 --effort is NOT a flag), prompt delivered via stdin then EXPLICITLY closed (codex appends piped stdin as a <stdin> block and blocks reading an open pipe), --codex-bin override for hermetic tests (mirror agy's --agy-bin). Supervise with wall-clock --timeout-seconds (default 900) + no-output watchdog; on expiry KILL the process tree and record a terminal status \u2014 on-disk state must NEVER say running (R4). Install a SIGTERM/SIGINT die-clean handler with the SAME semantics: kill the codex process tree, finalize a terminal bundle, exit nonzero \u2014 a caller's Bash-tool timeout is the expected delivery vector (R4). Omit -m when the envelope names no model (codex falls back to the user config default). Write the evidence bundle at .claude/codex/runs/<run-id>/: envelope.json, prompt.txt, command.json, transcript.jsonl (raw JSONL from stdout, tolerant of malformed lines), last-message.txt, result.json, projection.md; best-effort token accounting parsed from JSONL usage events (degrade to nulls, never fail the run). Build the bridge_receipt.v1 iff the process actually launched (pid/argv/exit_code runner section); launch failure (missing bin, OSError) -> fail-loud status, codex_launched=false, NO receipt, result still validates. Support --validate-only/--dry-run stopping after the bundle skeleton. Extend tests/test_codex_delegate_contract.py per the plan's U2 scenarios (fake-bin success/launch-failure/timeout/SIGTERM-mid-run die-clean/malformed-JSONL). Read the plan at docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md (U2, R1/R3/R4/R8, KTD2/KTD3) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/codex/scripts/codex_delegate.py",
+        "tests/test_codex_delegate_contract.py"
+      ]
+    },
+    {
+      "unit_id": "U3",
+      "label": "modes: enforced read-only review, patch-capture task",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "security-enforcement seam: reviewer non-mutation must be PROVEN by post-run diff scan (any dirt -> out_of_scope_mutation), coder writes must be contained to a disposable remotes-stripped clone with patch capture and never touch the live tree; a containment defect here is a silent write into the operator's repo",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U3: In plugins/codex/scripts/codex_delegate.py implement the mode surfaces (R2, KTD5): reviewer role (review / second-opinion lenses) runs -s read-only against the live repo with a post-run diff scan proving non-mutation against a pre-run `git status --porcelain` snapshot \u2014 any NEW dirt relative to the baseline maps to status out_of_scope_mutation with the diff evidence in the bundle; a PRE-DIRTY operator tree must NOT false-positive (test this case); coder role (task) runs -s workspace-write inside a disposable remotes-stripped clone (--cd <clone> --skip-git-repo-check), captures the resulting diff as a patch artifact (apply_policy preserve-patch \u2014 never auto-apply to the live tree in v1), honors write_set scoping (out-of-set mutation flagged), and tears the clone down on success AND failure paths. The live primary tree must be untouched by every coder run (assert its git status is unchanged from the pre-run snapshot in tests). Add tests/test_codex_delegate_modes.py per the plan's U3 scenarios. Read the plan at docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md (U3, R2, KTD5) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/codex/scripts/codex_delegate.py",
+        "tests/test_codex_delegate_modes.py"
+      ]
+    },
+    {
+      "unit_id": "U4",
+      "label": "registry + dispatch rewire off codex:codex-rescue",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U4: Rewire the codex lane to the first-party delegate (R5, KTD4/KTD5). In plugins/saga/references/engine-registry.yaml update BOTH codex rows (lines ~27 and ~58): invocation.via -> codex:delegate (pinned; mirrors the agy:delegate convention at registry :85/:116), recipe corrected to the verified 0.142.5 shape (codex exec -s read-only -c model_reasoning_effort=<high|xhigh> \u2014 the --effort flag does NOT exist on this CLI version), last_validated: 2026-07-06; receipt_emitter stays codex-bridge; write_capable stays false. Rewrite build_codex_invocation in plugins/saga/scripts/engine_dispatch.py to emit via: 'codex:delegate' PRESERVING the halt-on-write guard (sandboxed-mutate routed to codex still HALTS, #287 R4/R6) and _assert_payload_preserved byte-preservation. Update plugins/saga/references/engine-dispatch.md and plugins/team-execution/skills/team-execution/references/external-engine-workers.md to name the new bridge. Update the existing suites (tests/test_saga_engine_dispatch.py, tests/test_saga_engine_registry.py, tests/test_saga_engine_resolver.py) \u2014 the registry routing-stability regression pins row literals, so update its expected values deliberately, not as collateral. Read the plan at docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md (U4, R5, KTD4/KTD5) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": [
+        "plugins/saga/references/engine-registry.yaml",
+        "plugins/saga/scripts/engine_dispatch.py",
+        "plugins/saga/references/engine-dispatch.md",
+        "plugins/team-execution/skills/team-execution/references/external-engine-workers.md",
+        "tests/test_saga_engine_dispatch.py",
+        "tests/test_saga_engine_registry.py",
+        "tests/test_saga_engine_resolver.py"
+      ]
+    },
+    {
+      "unit_id": "U5",
+      "label": "retirement dereference + operator runbook",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U5: Complete the retirement dereference (R6). Grep-sweep the repo for codex:codex-rescue and codex-rescue \u2014 zero live references may remain outside historical CHANGELOG/journal entries (docs/engineering-journal and CHANGELOG history are records, not live wiring; leave them). Write the operator runbook section in plugins/codex/README.md: uninstalling the openai-codex marketplace plugin, and the codex: namespace-collision note (both plugins claim the codex: agent prefix, so the marketplace copy must be uninstalled before this plugin's agents resolve cleanly). Add the retirement note to plugins/saga/CHANGELOG.md. Report the final grep-sweep output in your summary as verification evidence. Read the plan at docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md (U5, R6) as your authoritative spec. When done, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines).",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [
+        "plugins/codex/README.md",
+        "plugins/saga/CHANGELOG.md"
+      ]
+    },
+    {
+      "unit_id": "U6",
+      "label": "lifecycle proof + availability-gated live smoke",
+      "tier": {
+        "model": "fable",
+        "effort": "xhigh"
+      },
+      "worth_it_because": "the deliverable IS the R7 lifecycle guarantee \u2014 adversarial test design over process trees (kill-grace windows, child-pid polling, launcher-exit survival, never-running-for-dead) plus the availability-gated live smoke; a weak test here lets the zombie failure class ship with a green suite (journal {#verify-the-guard-reds}). Operator-directed fable/xhigh 2026-07-06: this failure class is the standing pain point that spawned #476, there is no local pattern to mirror (agy never had the failure), and a vacuous-green suite fails invisibly and forever \u2014 the panel rides the tier, so fable also refutes fable's test design.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U6: Create tests/test_codex_delegate_lifecycle.py (R7). Prove: (a) a completed run's bundle is terminal and self-contained \u2014 a launcher process that exits immediately after the delegate returns leaves no live children and no non-terminal state; (b) a fake-bin that sleeps past --timeout-seconds gets its WHOLE process tree killed within the grace window (poll the fake bin's child pid) with terminal timeout status and no 'running' string anywhere in the bundle's state files; (c) a delegate killed mid-run leaves a dead process tree and a diagnosable bundle, never a running record. Every red condition hermetic (fake codex bin, no network). Add the availability-gated live smoke: one real codex exec round-trip through the delegate asserting receipt + transcript + last-message, SKIP (never fail) when `codex login status` exits nonzero (verified live: exits 0 when authenticated) \u2014 mirror the Ollama smoke posture in tests/test_engine_bridge_http.py. Prove your tests red: for at least the timeout case, demonstrate the test fails against a deliberately-broken variant (e.g. kill only the direct child, not the tree) and say so in your summary. Read the plan at docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md (U6, R7) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U5"
+      ],
+      "files": [
+        "tests/test_codex_delegate_lifecycle.py"
+      ]
+    },
+    {
+      "unit_id": "U7",
+      "label": "release surfaces + journal",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U7: Release surfaces (repo rule: installed-plugin metadata tells the same story as the diff). Add the codex plugin (0.1.0) to .claude-plugin/marketplace.json; bump plugins/saga (registry + dispatch + reference docs changed) and plugins/team-execution (reference doc changed) plugin.json versions and mirror both in marketplace.json; CHANGELOG entries for codex, saga, team-execution. Journal: the DECISIONS entry {#codex-first-party-bridge-476} already exists on the branch \u2014 verify it and do NOT duplicate; add a dated LEARNINGS.md entry for the stale-recipe catch if it generalizes (registry recipe named a nonexistent --effort flag; the registry is machine-consumed truth \u2014 generalizable rule: validate registry recipes against the live CLI version at rewire time). Confirm the metadata drift-guard / release-surface-parity tests are green. Read the plan at docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md (U7) as your authoritative spec. When done, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines).",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U6"
+      ],
+      "files": [
+        "plugins/codex/.claude-plugin/plugin.json",
+        "plugins/saga/.claude-plugin/plugin.json",
+        "plugins/team-execution/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/codex/CHANGELOG.md",
+        "plugins/saga/CHANGELOG.md",
+        "plugins/team-execution/CHANGELOG.md",
+        "docs/engineering-journal/LEARNINGS.md"
+      ]
+    }
+  ]
+}

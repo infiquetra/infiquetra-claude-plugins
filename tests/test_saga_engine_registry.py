@@ -40,8 +40,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "substrate": "external",
                 "default_for_engine": True,
                 "invocation": {
-                    "via": "codex:codex-rescue",
-                    "recipe": "codex -s read-only --effort xhigh",
+                    "via": "codex:delegate",
+                    "recipe": "codex exec -s read-only -c model_reasoning_effort=xhigh",
                     "write_capable": False,
                 },
                 "context_window": 400000,

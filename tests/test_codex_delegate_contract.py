@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -207,7 +208,7 @@ def test_supervised_receipt_is_emitted_when_codex_launched() -> None:
     assert bridge_receipt.validate_receipt(receipt) == []
 
 
-def test_validate_only_cli_prints_envelope_and_exits_zero(capsys) -> None:
+def test_validate_only_cli_prints_envelope_and_exits_zero(capsys, tmp_path) -> None:
     exit_code = codex_delegate.main(
         [
             "--role",
@@ -215,11 +216,27 @@ def test_validate_only_cli_prints_envelope_and_exits_zero(capsys) -> None:
             "--task",
             "Review the diff.",
             "--validate-only",
+            "--repo-root",
+            str(tmp_path),
+            "--run-id",
+            "validate-run",
         ]
     )
     assert exit_code == 0
     captured = capsys.readouterr()
     assert '"schema": "codex.delegation.v1"' in captured.out
+    bundle = tmp_path / ".claude" / "codex" / "runs" / "validate-run"
+    assert (bundle / "envelope.json").exists()
+    assert (bundle / "prompt.txt").exists()
+    assert (bundle / "command.json").exists()
+    assert (bundle / "result.json").exists()
+    assert (bundle / "projection.md").exists()
+    # validate-only must NOT launch codex (no transcript / receipt).
+    assert not (bundle / "transcript.jsonl").exists()
+    assert not (bundle / "bridge-receipt.json").exists()
+    command = json.loads((bundle / "command.json").read_text())
+    assert command["validation_only"] is True
+    assert command["codex_launch_planned"] is False
 
 
 def test_cli_rejects_invalid_envelope_with_nonzero_exit(capsys) -> None:
@@ -237,3 +254,247 @@ def test_cli_rejects_invalid_envelope_with_nonzero_exit(capsys) -> None:
     assert exit_code == 2
     captured = capsys.readouterr()
     assert "envelope error" in captured.err
+
+
+# --- U2: supervised synchronous runner + evidence bundle ---------------------------------------
+
+
+def _write_fake_codex_bin(tmp_path: Path, body: str) -> Path:
+    """Write an executable fake ``codex`` that mimics the KTD3 invocation shape."""
+    bin_path = tmp_path / "fake-codex.py"
+    bin_path.write_text(body, encoding="utf-8")
+    bin_path.chmod(0o755)
+    return bin_path
+
+
+# A cooperative fake codex: parses ``-o <path>``, echoes stdin into the transcript to prove
+# delivery, emits JSONL (including a usage event), writes the last message, and exits 0.
+_FAKE_CODEX_SUCCESS = """#!/usr/bin/env python3
+import json, sys
+argv = sys.argv[1:]
+out_path = None
+for i, tok in enumerate(argv):
+    if tok == "-o":
+        out_path = argv[i + 1]
+piped = sys.stdin.read()
+print(json.dumps({"type": "session_start", "argv": argv}))
+print(json.dumps({"type": "stdin_echo", "stdin": piped}))
+print(json.dumps({"type": "token_count", "usage": {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}}))
+sys.stdout.flush()
+if out_path:
+    with open(out_path, "w") as fh:
+        fh.write("final agent message")
+sys.exit(0)
+"""
+
+# Emits malformed lines interleaved with valid JSONL; still exits 0.
+_FAKE_CODEX_MALFORMED = """#!/usr/bin/env python3
+import json, sys
+argv = sys.argv[1:]
+out_path = None
+for i, tok in enumerate(argv):
+    if tok == "-o":
+        out_path = argv[i + 1]
+sys.stdin.read()
+print(json.dumps({"type": "session_start"}))
+print("this is not json at all {{{")
+print(json.dumps({"type": "token_count", "input_tokens": 3, "output_tokens": 4}))
+print("<<< another malformed line >>>")
+sys.stdout.flush()
+if out_path:
+    open(out_path, "w").write("done")
+sys.exit(0)
+"""
+
+# Sleeps far past any small timeout and writes a marker file, so the test can prove the tree
+# was killed (the marker's completion sentinel never appears).
+_FAKE_CODEX_SLEEP = """#!/usr/bin/env python3
+import sys, time
+sys.stdin.read()
+print('{"type": "session_start"}', flush=True)
+time.sleep(120)
+print('{"type": "done"}', flush=True)
+sys.exit(0)
+"""
+
+
+def _run_bundle(tmp_path, envelope_kwargs, fake_body, *, timeout_seconds=None):
+    import subprocess as _subprocess
+
+    payload = {
+        "schema": codex_delegate.SCHEMA,
+        "role": "reviewer",
+        "task": "Review the diff.",
+    }
+    payload.update(envelope_kwargs)
+    if timeout_seconds is not None:
+        payload["timeout_seconds"] = timeout_seconds
+        payload["no_output_seconds"] = timeout_seconds
+    envelope = codex_delegate.Envelope.from_mapping(payload)
+    bin_path = _write_fake_codex_bin(tmp_path, fake_body)
+    # codex_bin is invoked as a single argv[0]; wrap python + script in a shim script.
+    shim = tmp_path / "codex-shim"
+    shim.write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "{bin_path}" "$@"\n', encoding="utf-8"
+    )
+    shim.chmod(0o755)
+    _ = _subprocess  # keep import local
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    result = codex_delegate.create_supervised_bundle(
+        envelope,
+        repo_root=repo_root,
+        run_id="run-under-test",
+        codex_bin=str(shim),
+    )
+    return result, repo_root / ".claude" / "codex" / "runs" / "run-under-test"
+
+
+def test_supervised_success_writes_full_bundle_and_receipt(tmp_path) -> None:
+    result, bundle = _run_bundle(tmp_path, {"model": "gpt-5"}, _FAKE_CODEX_SUCCESS)
+    assert result.status == "success"
+    for name in (
+        "envelope.json",
+        "prompt.txt",
+        "command.json",
+        "transcript.jsonl",
+        "last-message.txt",
+        "result.json",
+        "projection.md",
+    ):
+        assert (bundle / name).exists(), name
+
+    # stdin was delivered and closed (fake echoes it back into the transcript).
+    transcript = (bundle / "transcript.jsonl").read_text()
+    assert "stdin_echo" in transcript
+    assert "# codex delegation packet" in transcript  # the prompt reached codex via stdin
+
+    assert (bundle / "last-message.txt").read_text() == "final agent message"
+
+    result_payload = json.loads((bundle / "result.json").read_text())
+    assert result_payload["codex_launched"] is True
+    assert result_payload["return_code"] == 0
+    assert result_payload["token_usage"] == {
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "total_tokens": 18,
+    }
+    assert result_payload["receipt_emitted"] is True
+
+    # Receipt emitted iff launched, and it validates.
+    receipt = json.loads((bundle / "bridge-receipt.json").read_text())
+    assert receipt["schema"] == "bridge_receipt.v1"
+    assert receipt["engine_id"] == "codex"
+    assert codex_delegate._bridge_receipt.validate_receipt(receipt) == []
+
+
+def test_supervised_launch_failure_is_fail_loud_with_no_receipt(tmp_path) -> None:
+    envelope = codex_delegate.Envelope.from_mapping(
+        {"schema": codex_delegate.SCHEMA, "role": "reviewer", "task": "Review."}
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    result = codex_delegate.create_supervised_bundle(
+        envelope,
+        repo_root=repo_root,
+        run_id="launch-fail",
+        codex_bin=str(tmp_path / "does-not-exist-codex"),
+    )
+    bundle = repo_root / ".claude" / "codex" / "runs" / "launch-fail"
+    assert result.status == "error"
+    payload = json.loads((bundle / "result.json").read_text())
+    assert payload["codex_launched"] is False
+    assert payload["receipt_emitted"] is False
+    assert payload["status"] != "running"
+    # No receipt when codex never launched (R8).
+    assert not (bundle / "bridge-receipt.json").exists()
+    # result.json still validates as a terminal bundle.
+    assert payload["schema"] == "codex.result.v1"
+
+
+def test_supervised_timeout_kills_tree_and_records_terminal_status(tmp_path) -> None:
+    result, bundle = _run_bundle(
+        tmp_path, {}, _FAKE_CODEX_SLEEP, timeout_seconds=1
+    )
+    assert result.status in {"timeout", "no_output"}
+    payload = json.loads((bundle / "result.json").read_text())
+    # On-disk state must NEVER say running (R4).
+    assert payload["status"] != "running"
+    assert payload["status"] in {"timeout", "no_output"}
+    assert payload["codex_launched"] is True
+
+
+def test_supervised_malformed_jsonl_degrades_token_accounting(tmp_path) -> None:
+    result, bundle = _run_bundle(tmp_path, {}, _FAKE_CODEX_MALFORMED)
+    assert result.status == "success"
+    payload = json.loads((bundle / "result.json").read_text())
+    # Tolerant parse: picks the valid usage line, ignores the malformed ones, never fails.
+    assert payload["token_usage"]["input_tokens"] == 3
+    assert payload["token_usage"]["output_tokens"] == 4
+    assert payload["token_usage"]["total_tokens"] is None
+    # Raw transcript preserved as durable fallback, malformed lines and all.
+    transcript = (bundle / "transcript.jsonl").read_text()
+    assert "not json at all" in transcript
+
+
+def test_supervised_sigterm_mid_run_is_die_clean(tmp_path) -> None:
+    """A SIGTERM to the delegate mid-run kills the codex tree and finalizes a terminal bundle.
+
+    Exercised through a real subprocess so the signal can arrive while codex is still running,
+    mirroring a caller's Bash-tool timeout (R4).
+    """
+    import signal as _signal
+    import subprocess as _subprocess
+    import time as _time
+
+    bin_path = _write_fake_codex_bin(tmp_path, _FAKE_CODEX_SLEEP)
+    shim = tmp_path / "codex-shim"
+    shim.write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "{bin_path}" "$@"\n', encoding="utf-8"
+    )
+    shim.chmod(0o755)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    delegate = _subprocess.Popen(
+        [
+            sys.executable,
+            str(MODULE_PATH),
+            "--role",
+            "reviewer",
+            "--task",
+            "Review the diff.",
+            "--timeout-seconds",
+            "300",
+            "--no-output-seconds",
+            "300",
+            "--repo-root",
+            str(repo_root),
+            "--run-id",
+            "sigterm-run",
+            "--codex-bin",
+            str(shim),
+        ],
+        stdout=_subprocess.PIPE,
+        stderr=_subprocess.PIPE,
+        start_new_session=True,
+    )
+    bundle = repo_root / ".claude" / "codex" / "runs" / "sigterm-run"
+    # Wait for the run to actually launch codex (transcript begins to fill).
+    deadline = _time.monotonic() + 15
+    while _time.monotonic() < deadline:
+        if (bundle / "transcript.jsonl").exists() and (
+            bundle / "transcript.jsonl"
+        ).read_text().strip():
+            break
+        _time.sleep(0.05)
+    delegate.send_signal(_signal.SIGTERM)
+    exit_code = delegate.wait(timeout=30)
+
+    # die-clean: exits nonzero, terminal bundle, never running.
+    assert exit_code != 0
+    payload = json.loads((bundle / "result.json").read_text())
+    assert payload["status"] != "running"
+    assert payload["codex_launched"] is True
+    # The fake codex "done" sentinel must never appear — the tree was killed mid-sleep.
+    assert '"type": "done"' not in (bundle / "transcript.jsonl").read_text()

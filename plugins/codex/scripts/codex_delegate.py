@@ -25,10 +25,11 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -418,7 +419,12 @@ def render_bundle_failed_projection(bundle_path: Path) -> str:
 
 
 def _build_codex_argv(
-    *, resolved_codex: str, envelope: Envelope, last_message_path: Path, sandbox: str
+    *,
+    resolved_codex: str,
+    envelope: Envelope,
+    last_message_path: Path,
+    sandbox: str,
+    clone_path: Path | None = None,
 ) -> list[str]:
     """Build the ``codex exec`` argv per KTD3 (verified live on codex-cli 0.142.5).
 
@@ -426,6 +432,11 @@ def _build_codex_argv(
     model_reasoning_effort=<effort>``. ``-m`` is omitted when the envelope names no model so
     codex falls back to the user config default. The prompt is delivered via stdin (closed
     write), never argv, keeping large prompts out of a ps-visible command line.
+
+    Coder (``task``) runs execute inside a disposable, remotes-stripped clone: ``--cd <clone>``
+    scopes codex to the clone and ``--skip-git-repo-check`` lets it run there without tripping
+    the git-repo guard (R2, KTD5). The live primary tree is never handed to codex on a coder
+    run — only reviewer (read-only) runs point codex at the live repo.
     """
     argv = [
         resolved_codex,
@@ -436,6 +447,8 @@ def _build_codex_argv(
         "-s",
         sandbox,
     ]
+    if clone_path is not None:
+        argv += ["--cd", str(clone_path), "--skip-git-repo-check"]
     if envelope.model:
         argv += ["-m", envelope.model]
     if envelope.effort:
@@ -512,12 +525,17 @@ def run_codex_supervised(
     last_message_path: Path,
     sandbox: str,
     codex_bin: str | None = None,
+    clone_path: Path | None = None,
 ) -> SupervisedRunResult:
     """Launch and supervise one ``codex exec`` invocation (KTD2/KTD3, R4).
 
     Enforces a wall-clock timeout and a no-output watchdog; on either expiry, or on an external
     SIGTERM/SIGINT, the codex process tree is killed and a terminal status is returned — the
     on-disk state never says ``running`` behind a dead worker.
+
+    When ``clone_path`` is set (coder/``task`` runs) codex is scoped to the disposable clone via
+    ``--cd``/``--skip-git-repo-check`` and the child's cwd is the clone — the live primary tree is
+    never the working directory of a write-capable run (R2, KTD5).
     """
     global _ACTIVE_PROCESS, _DIE_CLEAN_SIGNAL
 
@@ -543,7 +561,9 @@ def run_codex_supervised(
         envelope=envelope,
         last_message_path=last_message_path,
         sandbox=sandbox,
+        clone_path=clone_path,
     )
+    workdir = clone_path if clone_path is not None else repo_root
 
     stdout_bytes = 0
     stderr_bytes = 0
@@ -566,7 +586,7 @@ def run_codex_supervised(
             try:
                 process = subprocess.Popen(
                     argv,
-                    cwd=repo_root,
+                    cwd=workdir,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -855,6 +875,251 @@ def create_validation_bundle(
     )
 
 
+# ---------------------------------------------------------------------------
+# U3 mode surfaces: reviewer read-only diff-scan proof + coder disposable clone
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CloneSetupResult:
+    """Outcome of standing up a disposable, remotes-stripped clone for a coder run."""
+
+    success: bool
+    base_sha: str | None
+    clone_path: Path
+    removed_remotes: list[str]
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class DiffEvidence:
+    """Patch-capture evidence from a coder run's disposable clone (preserve-patch, KTD5)."""
+
+    changed_paths: list[str]
+    out_of_scope_paths: list[str]
+    diff_patch_path: Path
+    changed_paths_path: Path
+
+
+@dataclass(frozen=True)
+class ReviewerScan:
+    """Post-run non-mutation proof for a reviewer (read-only) run against the live tree."""
+
+    baseline_dirty: list[str]
+    post_dirty: list[str]
+    new_paths: list[str]
+    diff_scan_path: Path
+    mutation_patch_path: Path | None
+
+
+def _run_git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _git_nul_lines(args: list[str], *, cwd: Path) -> list[str]:
+    completed = _run_git(args, cwd=cwd)
+    if completed.returncode != 0 or not completed.stdout:
+        return []
+    return [item for item in completed.stdout.split("\0") if item]
+
+
+def _parse_status_z(output: str) -> list[str]:
+    """Parse ``git status --porcelain=v1 -z`` into the set of touched paths."""
+    if not output:
+        return []
+    parts = output.split("\0")
+    paths: list[str] = []
+    index = 0
+    while index < len(parts):
+        item = parts[index]
+        index += 1
+        if not item:
+            continue
+        status = item[:2]
+        paths.append(item[3:])
+        # Rename/copy entries carry the origin path in the following NUL field.
+        if status.startswith("R") or status.startswith("C"):
+            if index < len(parts) and parts[index]:
+                paths.append(parts[index])
+            index += 1
+    return paths
+
+
+def _porcelain_paths(repo_root: Path) -> list[str]:
+    """Snapshot the set of dirty paths in ``repo_root`` (excludes the ``.claude`` bundle dir).
+
+    The bundle itself is written under ``.claude/codex/runs`` in the live tree, so excluding
+    ``.claude`` keeps the reviewer diff-scan from flagging its own evidence as a mutation.
+    """
+    status = _run_git(
+        ["status", "--porcelain=v1", "-z", "--", ".", ":(exclude).claude"],
+        cwd=repo_root,
+    )
+    if status.returncode != 0:
+        return []
+    return sorted(set(_parse_status_z(status.stdout)))
+
+
+def _path_in_write_set(path: str, write_set: list[str]) -> bool:
+    normalized_path = Path(path).as_posix()
+    for allowed in write_set:
+        normalized_allowed = Path(allowed).as_posix().rstrip("/")
+        if normalized_path == normalized_allowed:
+            return True
+        if normalized_path.startswith(f"{normalized_allowed}/"):
+            return True
+    return False
+
+
+def _paths_outside_write_set(changed_paths: list[str], write_set: list[str]) -> list[str]:
+    if not write_set:
+        return list(changed_paths)
+    return [path for path in changed_paths if not _path_in_write_set(path, write_set)]
+
+
+def setup_disposable_clone(*, repo_root: Path, clone_path: Path) -> CloneSetupResult:
+    """Stand up a disposable ``--no-hardlinks`` clone and strip every remote (R2, KTD5).
+
+    A coder run mutates only this clone; stripping remotes makes an accidental push impossible,
+    and the caller tears the clone down on both success and failure so nothing leaks.
+    """
+    base_sha_result = _run_git(["rev-parse", "HEAD"], cwd=repo_root)
+    if base_sha_result.returncode != 0:
+        return CloneSetupResult(
+            success=False,
+            base_sha=None,
+            clone_path=clone_path,
+            removed_remotes=[],
+            error=base_sha_result.stderr.strip() or "could not resolve live repo HEAD",
+        )
+    base_sha = base_sha_result.stdout.strip()
+
+    clone_result = subprocess.run(
+        ["git", "clone", "--no-hardlinks", str(repo_root), str(clone_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if clone_result.returncode != 0:
+        return CloneSetupResult(
+            success=False,
+            base_sha=base_sha,
+            clone_path=clone_path,
+            removed_remotes=[],
+            error=clone_result.stderr.strip() or clone_result.stdout.strip() or "git clone failed",
+        )
+
+    remotes = [line.strip() for line in _run_git(["remote"], cwd=clone_path).stdout.splitlines()]
+    removed_remotes = [remote for remote in remotes if remote]
+    for remote in removed_remotes:
+        remove_result = _run_git(["remote", "remove", remote], cwd=clone_path)
+        if remove_result.returncode != 0:
+            return CloneSetupResult(
+                success=False,
+                base_sha=base_sha,
+                clone_path=clone_path,
+                removed_remotes=removed_remotes,
+                error=remove_result.stderr.strip() or f"could not remove remote {remote}",
+            )
+
+    return CloneSetupResult(
+        success=True,
+        base_sha=base_sha,
+        clone_path=clone_path,
+        removed_remotes=removed_remotes,
+    )
+
+
+def teardown_clone(clone_path: Path) -> None:
+    """Remove the disposable clone. Best-effort — teardown must never mask the run's outcome."""
+    with contextlib.suppress(OSError):
+        shutil.rmtree(clone_path, ignore_errors=True)
+
+
+def derive_diff_evidence(
+    *, clone_path: Path, base_sha: str, bundle_path: Path, write_set: list[str]
+) -> DiffEvidence:
+    """Capture the coder run's clone diff as a preserved patch and score write_set scoping.
+
+    The patch is written into the bundle (which lives in the live tree) *before* the clone is
+    torn down, so the evidence survives teardown. Nothing is ever applied to the live tree (KTD5).
+    """
+    untracked = _git_nul_lines(["ls-files", "--others", "--exclude-standard", "-z"], cwd=clone_path)
+    if untracked:
+        _run_git(["add", "--intent-to-add", "--", *untracked], cwd=clone_path)
+
+    diff_patch_path = bundle_path / "diff.patch"
+    diff_result = _run_git(["diff", "--binary", base_sha], cwd=clone_path)
+    diff_patch_path.write_text(diff_result.stdout, encoding="utf-8")
+
+    changed_paths = sorted(
+        set(_git_nul_lines(["diff", "--name-only", "-z", base_sha], cwd=clone_path))
+    )
+    out_of_scope_paths = _paths_outside_write_set(changed_paths, write_set)
+    changed_paths_path = bundle_path / "changed-paths.json"
+    _write_json(
+        changed_paths_path,
+        {
+            "base_sha": base_sha,
+            "changed_paths": changed_paths,
+            "write_set": write_set,
+            "out_of_scope_paths": out_of_scope_paths,
+        },
+    )
+    return DiffEvidence(
+        changed_paths=changed_paths,
+        out_of_scope_paths=out_of_scope_paths,
+        diff_patch_path=diff_patch_path,
+        changed_paths_path=changed_paths_path,
+    )
+
+
+def derive_reviewer_scan(
+    *, repo_root: Path, baseline_dirty: list[str], bundle_path: Path
+) -> ReviewerScan:
+    """Prove a reviewer run did not mutate the live tree, snapshot-relative (R2).
+
+    New dirt is computed as the set difference of post-run dirty paths against the pre-run
+    baseline. A pre-dirty operator tree cannot false-positive: every path dirty before launch is
+    in the baseline and therefore excluded from ``new_paths`` regardless of its post-run status.
+    """
+    post_dirty = _porcelain_paths(repo_root)
+    baseline_set = set(baseline_dirty)
+    new_paths = sorted(path for path in post_dirty if path not in baseline_set)
+
+    mutation_patch_path: Path | None = None
+    if new_paths:
+        mutation_patch_path = bundle_path / "mutation.patch"
+        diff_result = _run_git(["diff", "--", *new_paths], cwd=repo_root)
+        mutation_patch_path.write_text(diff_result.stdout, encoding="utf-8")
+
+    diff_scan_path = bundle_path / "diff-scan.json"
+    _write_json(
+        diff_scan_path,
+        {
+            "baseline_dirty": sorted(baseline_dirty),
+            "post_dirty": post_dirty,
+            "new_paths": new_paths,
+            "mutation_detected": bool(new_paths),
+            "mutation_patch": str(mutation_patch_path) if mutation_patch_path else None,
+        },
+    )
+    return ReviewerScan(
+        baseline_dirty=sorted(baseline_dirty),
+        post_dirty=post_dirty,
+        new_paths=new_paths,
+        diff_scan_path=diff_scan_path,
+        mutation_patch_path=mutation_patch_path,
+    )
+
+
 def create_supervised_bundle(
     envelope: Envelope,
     *,
@@ -865,13 +1130,25 @@ def create_supervised_bundle(
     codex_bin: str | None = None,
     now: datetime | None = None,
 ) -> BundleResult:
-    """Launch codex, supervise it, and write the full evidence bundle (U2, R4/R8)."""
+    """Launch codex, supervise it, and write the full evidence bundle (U2/U3, R2/R4/R8).
+
+    Mode surfaces (U3, R2, KTD5):
+
+    * Reviewer (``read-only``) runs against the *live* repo. A pre-run ``git status --porcelain``
+      snapshot is taken before launch; the post-run diff-scan flags any NEW dirt relative to that
+      baseline as ``out_of_scope_mutation`` (a pre-dirty tree cannot false-positive).
+    * Coder (``task``) runs inside a disposable, remotes-stripped clone via ``--cd`` /
+      ``--skip-git-repo-check``. The resulting diff is preserved as a patch artifact and never
+      applied to the live tree; out-of-write_set mutation is flagged. The clone is torn down on
+      both success and failure. The live primary tree is never the working directory.
+    """
     repo_root = repo_root.resolve()
     timestamp = now or datetime.now(UTC)
     resolved_run_id = run_id or _new_run_id(timestamp)
     _validate_run_id(resolved_run_id)
     bundle_path = repo_root / ".claude" / "codex" / "runs" / resolved_run_id
 
+    clone_dir: Path | None = None
     try:
         bundle_path.mkdir(parents=True, exist_ok=False)
         prompt = render_prompt(envelope, repo_root=repo_root)
@@ -886,19 +1163,94 @@ def create_supervised_bundle(
         stderr_path.touch()
 
         sandbox = _sandbox_for_mode(envelope.mode)
-        run_result = run_codex_supervised(
-            envelope,
-            prompt=prompt,
-            repo_root=repo_root,
-            transcript_path=transcript_path,
-            stderr_path=stderr_path,
-            last_message_path=last_message_path,
-            sandbox=sandbox,
-            codex_bin=codex_bin,
-        )
+        is_coder = envelope.role == "coder"
+
+        clone_setup: CloneSetupResult | None = None
+        clone_path: Path | None = None
+        baseline_dirty: list[str] = []
+        if is_coder:
+            clone_dir = Path(tempfile.mkdtemp(prefix=f"codex-clone-{resolved_run_id}-"))
+            clone_path = clone_dir / "worktree"
+            clone_setup = setup_disposable_clone(repo_root=repo_root, clone_path=clone_path)
+        else:
+            # Reviewer runs against the live tree — snapshot its dirt BEFORE launch so the
+            # post-run scan can distinguish operator-pre-existing dirt from codex mutations.
+            baseline_dirty = _porcelain_paths(repo_root)
+
+        if is_coder and clone_setup is not None and not clone_setup.success:
+            # Clone could not be created — never touch the live tree; fail clean and terminal.
+            run_result = SupervisedRunResult(
+                status=parse_status("error"),
+                codex_launched=False,
+                resolved_codex=None,
+                argv=[],
+                process_id=None,
+                return_code=None,
+                started_at=timestamp,
+                ended_at=datetime.now(UTC),
+                stdout_bytes=0,
+                stderr_bytes=0,
+                error=clone_setup.error or "disposable clone setup failed",
+            )
+        else:
+            run_result = run_codex_supervised(
+                envelope,
+                prompt=prompt,
+                repo_root=repo_root,
+                transcript_path=transcript_path,
+                stderr_path=stderr_path,
+                last_message_path=last_message_path,
+                sandbox=sandbox,
+                codex_bin=codex_bin,
+                clone_path=clone_path,
+            )
 
         token_usage = parse_token_usage(transcript_path)
         _write_json(bundle_path / "token-usage.json", token_usage)
+
+        # --- Mode-surface post-run scan + status finalization (U3, R2, KTD5) ---
+        mode_evidence: dict[str, Any] = {}
+        final_status = run_result.status
+        if is_coder:
+            if clone_setup is not None and clone_setup.success and clone_path is not None:
+                diff_evidence = derive_diff_evidence(
+                    clone_path=clone_path,
+                    base_sha=clone_setup.base_sha or "HEAD",
+                    bundle_path=bundle_path,
+                    write_set=envelope.write_set,
+                )
+                mode_evidence = {
+                    "base_sha": clone_setup.base_sha,
+                    "removed_remotes": clone_setup.removed_remotes,
+                    "changed_paths": diff_evidence.changed_paths,
+                    "out_of_scope_paths": diff_evidence.out_of_scope_paths,
+                    "diff_patch": str(diff_evidence.diff_patch_path),
+                }
+                if run_result.status == "success":
+                    if diff_evidence.out_of_scope_paths:
+                        final_status = parse_status("out_of_scope_mutation")
+                    elif diff_evidence.changed_paths:
+                        final_status = parse_status("patch_ready")
+        else:
+            scan = derive_reviewer_scan(
+                repo_root=repo_root,
+                baseline_dirty=baseline_dirty,
+                bundle_path=bundle_path,
+            )
+            mode_evidence = {
+                "baseline_dirty": scan.baseline_dirty,
+                "post_dirty": scan.post_dirty,
+                "new_paths": scan.new_paths,
+                "diff_scan": str(scan.diff_scan_path),
+                "mutation_patch": (
+                    str(scan.mutation_patch_path) if scan.mutation_patch_path else None
+                ),
+            }
+            if run_result.status == "success" and scan.new_paths:
+                final_status = parse_status("out_of_scope_mutation")
+
+        if final_status != run_result.status:
+            run_result = replace(run_result, status=final_status)
 
         command_payload = {
             "validation_only": False,
@@ -911,8 +1263,11 @@ def create_supervised_bundle(
             ),
             "source_envelope": str(source_envelope) if source_envelope else None,
             "repo_root": str(repo_root),
-            "working_directory": str(repo_root),
+            "working_directory": str(clone_path) if clone_path is not None else str(repo_root),
             "sandbox": sandbox,
+            "role": envelope.role,
+            "mode": envelope.mode,
+            "mode_surface": mode_evidence,
         }
         _write_json(bundle_path / "command.json", command_payload)
 
@@ -940,6 +1295,10 @@ def create_supervised_bundle(
             bundle_path=bundle_path,
             projection=projection,
         )
+    finally:
+        # Disposable clone is torn down on BOTH the success and failure paths (R2, KTD5).
+        if clone_dir is not None:
+            teardown_clone(clone_dir)
 
     return BundleResult(
         status=parse_status(run_result.status),

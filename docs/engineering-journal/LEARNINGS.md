@@ -25,6 +25,40 @@
 
 ---
 
+## 2026-07-07
+
+### A non-mutation diff-scan must be snapshot-relative, and must exclude its own evidence dir {#codex-diff-scan-snapshot-relative}
+
+**Context.** codex delegate U3 (#476): the reviewer (read-only) surface must prove codex did not
+mutate the live repo, and the coder (task) surface must prove the live tree is untouched while it
+works in a disposable clone. The naive proof — "run codex, then assert `git status --porcelain` is
+clean" — is wrong on two counts.
+
+**Evidence.** `plugins/codex/scripts/codex_delegate.py` `derive_reviewer_scan` / `_porcelain_paths`;
+tests `tests/test_codex_delegate_modes.py::test_reviewer_pre_dirty_tree_does_not_false_positive`
+and `::test_coder_captures_patch_and_leaves_live_tree_untouched`.
+
+**Mechanism.** (1) Operators routinely run a reviewer over an already-dirty working tree. An
+absolute "is it clean now" check false-positives on their pre-existing edits. The proof must be the
+*set difference* of post-run dirty paths against a pre-run snapshot captured before launch — dirt
+present at baseline is excluded from `new_paths` regardless of its post-run status, so a pre-dirty
+tree cannot false-positive. (2) The delegate writes its own evidence bundle to
+`.claude/codex/runs/<id>` *in the live tree*, so an unfiltered porcelain scan flags the bundle
+itself as a mutation. Both the delegate's scan and the tests' untouched-tree assertion must scope
+to `git status --porcelain -- . ':(exclude).claude'` — the guarantee is about source/working files,
+not the delegate's own evidence store.
+
+**Validation.** 8 U3 mode tests green; full suite 2465 passed / 1 skipped.
+
+**Generalizable rule.** A "did X mutate the tree?" guard is only honest if it is (a) differential
+against a pre-action snapshot, not absolute, and (b) blind to the guard's own artifacts. Bake both
+into the scan primitive, not the call sites.
+
+**Refs.** Mirrors agy's clone/diff-evidence shape (`plugins/agy/scripts/agy_delegate.py`); #476 U3,
+R2, KTD5.
+
+---
+
 ## 2026-07-06
 
 ### Worktree-isolated verify panels are blind to uncommitted worker output — refute-N ran 0/3 vacuous on every panel {#verify-panels-blind-to-uncommitted-tree}

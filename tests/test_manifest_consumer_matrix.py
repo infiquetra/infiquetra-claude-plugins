@@ -112,3 +112,40 @@ def test_matrix_has_no_phantom_fields() -> None:
         f"saga-spec.md §13.3 names field(s) {sorted(phantoms)} that do not exist in "
         "provenance_manifest.py — matrix has drifted ahead of (or diverged from) the schema."
     )
+
+
+EXTERNAL_ENGINE_WORKERS_MD = (
+    REPO_ROOT
+    / "plugins"
+    / "team-execution"
+    / "skills"
+    / "team-execution"
+    / "references"
+    / "external-engine-workers.md"
+)
+
+
+def test_external_engine_workers_has_one_manifest_construction_path() -> None:
+    """R5/#392 (U3): the chaperone contract documents exactly one manifest-construction path.
+
+    §5 step 4 must always call the shared `record_dispatch_manifest` builder with
+    `expected_identity` threaded through — never hand-construct `provenance_manifest.Manifest`
+    directly for the substituted-engine disposition. A regression here means an agent reading
+    this contract would (re-)author a second, divergent manifest-construction path.
+    """
+    body = EXTERNAL_ENGINE_WORKERS_MD.read_text(encoding="utf-8")
+    assert "expected_identity" in body, (
+        "external-engine-workers.md must reference `expected_identity` — the single "
+        "substitution-detection input threaded from §1's preview through dispatch() to the "
+        "shared manifest builder."
+    )
+    assert "has no way to express this disposition" not in body, (
+        "external-engine-workers.md must not claim record_dispatch_manifest/build_dispatch_"
+        "manifest can't express the substituted-engine disposition — the shared builder now "
+        "derives it from expected_identity (R5)."
+    )
+    assert "pm.Manifest(" not in body, (
+        "external-engine-workers.md must not instruct the chaperone to hand-construct "
+        "provenance_manifest.Manifest directly — record_dispatch_manifest is the only "
+        "manifest-construction path this contract documents (R5)."
+    )

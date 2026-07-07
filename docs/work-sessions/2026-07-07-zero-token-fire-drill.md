@@ -52,7 +52,19 @@ map. Checks run: none yet (docs-only units; hard gate lands with U3/U7).
   defects filed via mission-control: **#523**, **#524**. Manifest evidence: 11 rows under saga
   `issue-468`.
 
+## U7 + Merge (complete)
+
+Full hard gate green (pytest 2547 passed / 1 skipped; `ruff check` + `ruff format --check` both
+clean; mypy clean, 160 files). Programmatic `/code-review` at `93974d5`: PASS, one P3
+(dispatch-count precision) fixed as `c0a4b6a` — the gate run itself exercised the freshly fixed
+programmatic-mode contract (no artifact, no tick, envelope returned to `/work`). PR #522 flipped
+ready via ceremony; CI 6/6 green, `mergeStateStatus: CLEAN`. **Merged on operator word as
+`5c3e2af`** (squash); ceremony completed checkout-main → pull → branch-delete. Post-merge:
+board Status → Done + #468 CLOSED (verified); outcome harvest `sub-468 → done` (external-engine
+offload DAG 5/20, frontier empty); follow-ups #523 (agy wrapper false-positive success) and #524
+(HTTP-lane corroboration gap) filed via mission-control.
+
 ## Next step
 
-U7: full gates (pytest + ruff pair + mypy), programmatic /code-review, PR #522 body + ready flip,
-merge on operator word.
+Outcome DAG: 15 leaves dispatched, none ready — next moves are operator-paced (e.g. `/resume` a
+dispatched leaf, or #520 tripwire hardening which #523/#524 now feed).

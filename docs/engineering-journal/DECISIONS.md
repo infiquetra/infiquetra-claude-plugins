@@ -2,6 +2,42 @@
 
 ## 2026-07-07
 
+### No silent Claude-fallback (#390): consumer re-grounding, SUBSTITUTED derivation, gate refusal {#no-silent-claude-fallback-390}
+
+**Context.** `docs/plans/2026-07-07-no-silent-claude-fallback-plan.md` (#390, sub-390 of outcome
+external-engine-offload #336, absorbing closed #392's invocation-proof facet). Five dead-wiring
+gaps where a delegation check has a producer but no consumer; the issue body predated PRs
+#516/#518/#521/#522, so consumers were re-grounded before wiring.
+
+- **KTD1 — `provenance_required` wires in as a post-classification status coercion reusing the
+  existing status vocabulary and exit mapping (`agy_delegate.py:1167`).** *Rejected:* a dedicated
+  exit code — callers already branch on the status set. *Revisit when:* the agy result schema
+  versions.
+- **KTD2 — facet-2's consumer is what exists: `disposition_note` (already threaded since #384) +
+  `manifest_reader`'s R18 report; do NOT build the issue's named `DELEGATION_NOOP` roll-up (zero
+  grep hits — never existed) or write run-fact records (#386/#393 own those writers).** The
+  generalizable move: when an issue names a consumer, grep for it before building toward it.
+  *Revisit when:* #386/#393 land their ledger writers.
+- **KTD3 — substitution baseline = optional `expected_identity` threaded through `dispatch()` into
+  evidence provenance (additive-defaulted, `runner_receipt` precedent); resolver/registry
+  untouched.** Keeps the builder pure and the #388 seam clean. *Rejected:* deriving the baseline
+  inside the resolver — couples plan-time preview to run-time routing.
+- **KTD4 — disposition precedence: `DELEGATION_INTEGRITY` > halt > `SUBSTITUTED_ENGINE` > receipt
+  (`UNPROVEN`/`RAN_AS_REQUESTED`).** Contradiction beats absence; a valid receipt for the wrong
+  engine must never read `RAN_AS_REQUESTED`. *Revisit when:* #388 adds attestation legs below the
+  substitution branch.
+- **KTD5 — the #392 fail-loud leg is a `satisfy_gate` disposition refusal, not a dispatch-time
+  exception.** Dispatch keeps recording honest evidence; the gate is where loudness is owed.
+  *Rejected:* raising in `build_dispatch_manifest` — loses the manifest record itself.
+- **KTD6 — empty-delivery is a new `check_empty_delivery.py` verdict helper GATING the chaperone's
+  existing documented commit step; no new auto-commit machinery (none exists; `/optimize` shed its
+  own deliberately).** File-delivery axis kept distinct from `record-completeness`'s returned-value
+  axis. *Revisit when:* `/work` grows a structured unit-boundary runner.
+- **KTD7 — verifier attribution is emitter-stamped where the spawner is code
+  (`execution_spec.py` verdict schema), self-recorded where the spawner is Claude prose (ladder
+  rule in `sandbox-spawn-sites.md`); render rule is a pure function.** *Rejected:* verifier
+  self-declared identity alone — fabricatable by exactly the failure mode this issue closes.
+
 ### Zero-token fire drill (#468): both $0 lanes, real-unit target, verdict rubric, one-PR shape {#zero-token-fire-drill-468}
 
 **Context.** `docs/plans/2026-07-07-zero-token-fire-drill-plan.md` (#468, sub-468 of outcome

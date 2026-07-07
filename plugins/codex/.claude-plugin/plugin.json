@@ -1,0 +1,17 @@
+{
+  "name": "codex",
+  "version": "0.1.0",
+  "description": "First-party guarded synchronous codex delegation bridge with evidence bundles, mirroring the agy wrapper's shape.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": [
+    "codex",
+    "openai",
+    "delegation",
+    "teammate",
+    "evidence"
+  ]
+}

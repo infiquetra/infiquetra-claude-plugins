@@ -125,7 +125,10 @@ def _invoke(
             status_code = int(getattr(response, "status", 0) or getattr(response, "code", 0) or 0)
             raw = response.read()
     except urllib.error.HTTPError as exc:
-        # A non-2xx response: real network round-trip happened, but no usable output.
+        # A non-2xx response: real network round-trip happened, but no usable output. The
+        # exception itself holds the live response handle (the with-block above never entered),
+        # so close it or every 4xx/5xx leaks a socket until GC.
+        exc.close()
         return _failure(STATUS_ERROR, f"http {exc.code} from {url}")
     except TimeoutError:
         return _failure(STATUS_TIMEOUT, f"request to {url} timed out")

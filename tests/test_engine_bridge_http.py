@@ -279,18 +279,21 @@ def _raising_urlopen(exc: BaseException):
 
 
 def test_http_error_maps_to_failure_status_never_ok() -> None:
+    body = io.BytesIO(b"")
     exc = urllib.error.HTTPError(
         url="https://ollama.com/v1/chat/completions",
         code=503,
         msg="Service Unavailable",
         hdrs=None,  # type: ignore[arg-type]
-        fp=io.BytesIO(b""),
+        fp=body,
     )
     result = BRIDGE.runner(urlopen=_raising_urlopen(exc), getenv={"OLLAMA_API_KEY": "t"}.get)(
         D._build_invocation(_http_resolution(OLLAMA_ROW), model=None)
     )
     assert result["status"] == "error"
     assert result["receipt"] is None
+    # The HTTPError carries the live response handle; the bridge must close it, not leak it.
+    assert body.closed
 
 
 def test_timeout_maps_to_timeout_status_never_ok() -> None:

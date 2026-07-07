@@ -476,3 +476,255 @@ class TestDelegationStopAuditHookEdgeMatrix:
         assert records
         record = json.loads(records[-1].read_text(encoding="utf-8"))
         assert record["verdict"] == "real"
+
+
+# ---------------------------------------------------------------------------
+# U5 — dispatch-layer two-signal acceptance + DELEGATION_INTEGRITY
+#      (plugins/saga/scripts/engine_dispatch.py, provenance_manifest.py)
+# ---------------------------------------------------------------------------
+
+SAGA_SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
+if str(SAGA_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SAGA_SCRIPTS))
+
+_R = _load_module(SAGA_SCRIPTS / "engine_resolver.py", "engine_resolver_u5")
+_D = _load_module(SAGA_SCRIPTS / "engine_dispatch.py", "engine_dispatch_u5")
+_PM = _D.pm
+_MS = _D.manifest_store
+
+
+def _resolution(engine_id: str = "agy", variant: str = "gemini-3.1-pro-high") -> Any:
+    return _R.Resolution(
+        engine_id=engine_id,
+        variant=variant,
+        effort="high",
+        recipe="recipe",
+        protocol=["Run."],
+        payload="do the delegated thing",
+        write_capable=False,
+        fallback=None,
+        halt=None,
+    )
+
+
+def _valid_agy_receipt() -> dict[str, Any]:
+    return dict(
+        _D._bridge_receipt.emit_receipt(
+            engine_id="agy",
+            variant="gemini-3.1-pro-high",
+            transport="cli",
+            wall_time_s=0.5,
+            bytes_produced=17,
+            runner={"pid": 4242, "argv": ["agy", "run"], "exit_code": 0},
+        )
+    )
+
+
+def _write_bundle(
+    root: Path,
+    run_id: str,
+    *,
+    payload: dict[str, Any],
+    future_mtime: bool = True,
+) -> Path:
+    """Write an agy result bundle; ``future_mtime`` lifts it past any armed_at filter."""
+    import os
+
+    run_dir = root / ".claude" / "agy" / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "result.json").write_text(json.dumps(payload), encoding="utf-8")
+    if future_mtime:
+        future = time.time() + 120
+        os.utime(run_dir, (future, future))
+    return run_dir
+
+
+def _ok_runner_with_receipt(_invocation: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "ok", "output": "external finding", "receipt": _valid_agy_receipt()}
+
+
+def _dispatch(tmp_path: Path, *, gated: bool, session_id: str = "", runner: Any = None) -> Any:
+    return _D.dispatch(
+        _resolution(),
+        runner=runner or _ok_runner_with_receipt,
+        model="opus",
+        gated=gated,
+        session_id=session_id,
+        workspace_root=tmp_path,
+    )
+
+
+def _manifest_for(tmp_path: Path, evidence: Any, execution_id: str) -> Any:
+    store = _MS.Store(root=tmp_path / "manifests" / execution_id).ensure()
+    return _D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id=execution_id,
+        saga_ref="saga-u5",
+        created_at="2026-07-07T00:00:00Z",
+    )
+
+
+class TestTwoSignalAcceptanceDoD:
+    def test_reconciliation_flags_divergence(self, tmp_path: Path) -> None:
+        """R4 DoD: self-report ok + bundle launch flag false -> DELEGATION_INTEGRITY, not
+        accepted."""
+        _write_bundle(tmp_path, "run-div", payload={"status": "ok", "agy_launched": False})
+
+        disposition = _dispatch(tmp_path, gated=True, session_id="sess-u5-div")
+
+        assert isinstance(disposition, _D.RequeueDisposition)
+        assert disposition.disposition == "requeue"
+        assert "delegation-integrity" in disposition.reason
+
+        manifest = _manifest_for(tmp_path, disposition.evidence, "exec-div")
+        assert manifest.disposition is _PM.Disposition.DELEGATION_INTEGRITY
+        assert "delegation-integrity" in manifest.disposition_note
+
+        # Not accepted: divergent evidence can never satisfy a gate.
+        with pytest.raises(_D.DispatchError):
+            _D.satisfy_gate(disposition.evidence)
+
+    def test_two_signal_disagreement_requeues(self, tmp_path: Path) -> None:
+        """KTD7 DoD: first divergence -> requeue disposition; corroborating retry -> accepted;
+        second consecutive divergence -> DispatchError HALT."""
+        session = "sess-u5-requeue"
+        bundle = _write_bundle(tmp_path, "run-rq", payload={"status": "ok", "agy_launched": False})
+
+        first = _dispatch(tmp_path, gated=True, session_id=session)
+        assert isinstance(first, _D.RequeueDisposition)
+        assert first.attempt == 1
+
+        # Corroborating retry: the bundle now proves the launch -> accepted, counter reset.
+        _write_bundle(tmp_path, "run-rq", payload={"status": "ok", "agy_launched": True})
+        retry = _dispatch(tmp_path, gated=True, session_id=session)
+        assert isinstance(retry, _D.AdvisoryEvidence)
+        assert retry.provenance.get("observer_corroborated") is True
+
+        # Two NEW consecutive divergences: requeue once, then HALT.
+        _write_bundle(tmp_path, "run-rq", payload={"status": "ok", "agy_launched": False})
+        again = _dispatch(tmp_path, gated=True, session_id=session)
+        assert isinstance(again, _D.RequeueDisposition)
+        assert again.attempt == 1  # counter was reset by the corroborated acceptance
+        with pytest.raises(_D.DispatchError, match="HALT"):
+            _dispatch(tmp_path, gated=True, session_id=session)
+        assert bundle.is_dir()
+
+
+class TestTwoSignalAcceptanceMatrix:
+    def test_both_signals_agree_ran_as_requested_and_gate_satisfiable(self, tmp_path: Path) -> None:
+        _write_bundle(tmp_path, "run-ok", payload={"status": "ok", "agy_launched": True})
+
+        evidence = _dispatch(tmp_path, gated=True, session_id="sess-u5-agree")
+        assert isinstance(evidence, _D.AdvisoryEvidence)
+        assert evidence.halt is None
+        assert evidence.provenance["observer_corroborated"] is True
+
+        manifest = _manifest_for(tmp_path, evidence, "exec-agree")
+        assert manifest.disposition is _PM.Disposition.RAN_AS_REQUESTED
+
+        verified = _D.AdvisoryEvidence(
+            engine_id=evidence.engine_id,
+            variant=evidence.variant,
+            evidence=evidence.evidence,
+            provenance=evidence.provenance,
+            verified_by_claude=True,
+            runner_receipt=evidence.runner_receipt,
+        )
+        assert _D.satisfy_gate(verified) is None
+
+    def test_receipt_valid_but_launch_flag_missing_is_observer_no(self, tmp_path: Path) -> None:
+        """Conservative observer: a result.json with NO launch flag at all is observer-no."""
+        _write_bundle(tmp_path, "run-noflag", payload={"status": "ok"})
+
+        disposition = _dispatch(tmp_path, gated=True, session_id="sess-u5-noflag")
+        assert isinstance(disposition, _D.RequeueDisposition)
+        assert "delegation-integrity" in disposition.reason
+
+    def test_advisory_divergence_downgrades_without_requeue(self, tmp_path: Path) -> None:
+        """Non-gated divergence keeps the downgrade_note mechanism with the integrity reason
+        attached; repeated calls never requeue and never HALT."""
+        _write_bundle(tmp_path, "run-adv", payload={"status": "ok", "agy_launched": False})
+
+        for _ in range(3):  # no requeue loop, no HALT escalation
+            evidence = _dispatch(tmp_path, gated=False, session_id="sess-u5-advisory")
+            assert isinstance(evidence, _D.AdvisoryEvidence)
+            assert evidence.halt is not None
+            assert "Downgraded external engine agy" in evidence.halt
+            assert "delegation-integrity" in evidence.halt
+
+        manifest = _manifest_for(tmp_path, evidence, "exec-advisory")
+        assert manifest.disposition is _PM.Disposition.DELEGATION_INTEGRITY
+
+    def test_arming_failure_dispatch_still_runs_and_manifest_names_tripwire_unarmed(
+        self, tmp_path: Path
+    ) -> None:
+        """Fail-open, named: arm() raising must not block dispatch; the manifest records
+        tripwire_unarmed."""
+        # Force arm() to fail: the marker's parent path exists as a FILE.
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "delegation").write_text("not a directory", encoding="utf-8")
+        _write_bundle(tmp_path, "run-unarmed", payload={"status": "ok", "agy_launched": True})
+
+        evidence = _dispatch(tmp_path, gated=True, session_id="sess-u5-unarmed")
+        assert isinstance(evidence, _D.AdvisoryEvidence)
+        assert evidence.evidence == "external finding"
+        assert str(evidence.provenance.get("tripwire", "")).startswith("tripwire_unarmed")
+
+        manifest = _manifest_for(tmp_path, evidence, "exec-unarmed")
+        assert manifest.disposition is _PM.Disposition.RAN_AS_REQUESTED
+        assert "tripwire_unarmed" in manifest.disposition_note
+
+    def test_dispatch_arms_during_run_and_disarms_in_finally(self, tmp_path: Path) -> None:
+        """KTD4: the marker is live while the adapter runs and gone afterwards -- even when
+        the runner raises."""
+        session = "sess-u5-armed"
+        _write_bundle(tmp_path, "run-armed", payload={"status": "ok", "agy_launched": True})
+
+        seen: dict[str, Any] = {}
+
+        def observing_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+            seen["entry"] = _delegation_state.active(session, root=tmp_path)
+            return _ok_runner_with_receipt(_invocation)
+
+        _dispatch(tmp_path, gated=True, session_id=session, runner=observing_runner)
+        assert seen["entry"] is not None
+        assert seen["entry"].engine == "agy"
+        assert _delegation_state.active(session, root=tmp_path) is None
+
+        def raising_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+            raise RuntimeError("adapter blew up")
+
+        with pytest.raises(RuntimeError):
+            _dispatch(tmp_path, gated=True, session_id=session, runner=raising_runner)
+        assert _delegation_state.active(session, root=tmp_path) is None
+
+    def test_single_signal_callers_are_unchanged(self, tmp_path: Path) -> None:
+        """Omitting gated/session_id/workspace_root keeps today's advisory behavior
+        byte-identical -- no observer mark, no integrity note, no requeue."""
+        evidence = _D.dispatch(_resolution(), runner=_ok_runner_with_receipt, model="opus")
+        assert isinstance(evidence, _D.AdvisoryEvidence)
+        assert evidence.halt is None
+        assert evidence.provenance == {
+            "engine": "agy",
+            "variant": "gemini-3.1-pro-high",
+            "status": "ok",
+        }
+
+    def test_delegation_integrity_disposition_round_trips(self, tmp_path: Path) -> None:
+        _write_bundle(tmp_path, "run-rt", payload={"status": "ok", "agy_launched": False})
+        disposition = _dispatch(tmp_path, gated=True, session_id="sess-u5-rt")
+        store = _MS.Store(root=tmp_path / "manifests" / "rt").ensure()
+        _D.record_dispatch_manifest(
+            store,
+            disposition.evidence,
+            execution_id="exec-rt",
+            saga_ref="saga-u5",
+            created_at="2026-07-07T00:00:00Z",
+        )
+        persisted = _MS.read_manifest(store, "exec-rt")
+        assert persisted is not None
+        assert persisted["disposition"] == "delegation-integrity"
+        round_tripped = _PM.Manifest.from_dict(persisted)
+        assert round_tripped.disposition is _PM.Disposition.DELEGATION_INTEGRITY

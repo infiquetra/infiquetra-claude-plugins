@@ -142,11 +142,28 @@ def test_satisfy_gate_requires_claude_verification() -> None:
     with pytest.raises(D.DispatchError):
         D.satisfy_gate(unverified)
 
-    verified = D.AdvisoryEvidence(
+    # #384 U5/R6 (deliberate acceptance change): Claude verification alone is no longer
+    # sufficient -- the gate also requires the observer_corroborated mark dispatch stamps.
+    verified_uncorroborated = D.AdvisoryEvidence(
         engine_id="codex",
         variant="gpt-5.5-xhigh",
         evidence="Claude verified external finding",
         provenance={"engine": "codex", "variant": "gpt-5.5-xhigh", "status": "ok"},
+        verified_by_claude=True,
+    )
+    with pytest.raises(D.DispatchError, match="observer corroboration"):
+        D.satisfy_gate(verified_uncorroborated)
+
+    verified = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="Claude verified external finding",
+        provenance={
+            "engine": "codex",
+            "variant": "gpt-5.5-xhigh",
+            "status": "ok",
+            "observer_corroborated": True,
+        },
         verified_by_claude=True,
     )
 
@@ -280,7 +297,8 @@ def test_satisfy_gate_refuses_claimed_only_manifest(tmp_path: Path) -> None:
         engine_id=evidence.engine_id,
         variant=evidence.variant,
         evidence=evidence.evidence,
-        provenance=evidence.provenance,
+        # #384 U5/R6 deliberate update: the gate now also requires the observer mark.
+        provenance={**evidence.provenance, "observer_corroborated": True},
         verified_by_claude=True,
     )
 

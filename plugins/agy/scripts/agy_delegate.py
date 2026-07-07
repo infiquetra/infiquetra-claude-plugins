@@ -636,7 +636,11 @@ def create_supervised_bundle(
         )
 
     return BundleResult(
-        status=parse_status(run_result.status),
+        # Source status from result_payload, not run_result.status directly: the
+        # provenance_required coercion in _result_payload (R1/KTD1) may have escalated
+        # a passing run_result.status to "fallback_suspected", and the exit code (main()
+        # at :1167) must reflect that escalation, not the pre-coercion status.
+        status=parse_status(result_payload["status"]),
         run_id=resolved_run_id,
         bundle_path=bundle_path,
         projection=projection,
@@ -1413,6 +1417,9 @@ def _supervised_receipt(
     )
 
 
+_PASSING_STATUSES = frozenset({"success", "patch_ready", "applied"})
+
+
 def _result_payload(
     *,
     envelope: Envelope,
@@ -1427,9 +1434,22 @@ def _result_payload(
     checks_path: Path,
     clone_path: Path,
 ) -> dict[str, Any]:
+    status = parse_status(run_result.status)
+    coerced_by: str | None = None
+    if (
+        envelope.provenance_required
+        and status in _PASSING_STATUSES
+        and _real_agy_verdict(run_result) == "unproven"
+    ):
+        # R1/KTD1: a caller that demanded provenance must not get exit 0 on a run the
+        # wrapper itself cannot prove actually launched agy. classify_transcript is
+        # deliberately not consulted here — transcript auditing is the Stop-hook's job
+        # (#384); _real_agy_verdict is the wrapper's only in-run provenance signal.
+        status = parse_status("fallback_suspected")
+        coerced_by = "provenance_required"
     payload: dict[str, Any] = {
         "schema": "agy.result.v1",
-        "status": parse_status(run_result.status),
+        "status": status,
         "run_id": run_id,
         "bundle_path": str(bundle_path),
         "role": envelope.role,
@@ -1451,6 +1471,8 @@ def _result_payload(
         payload["receipt"] = receipt
     if run_result.error is not None:
         payload["error"] = run_result.error
+    if coerced_by is not None:
+        payload["coerced_by"] = coerced_by
     return payload
 
 

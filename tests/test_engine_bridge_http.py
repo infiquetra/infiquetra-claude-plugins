@@ -66,7 +66,9 @@ DEEPSEEK_ROW = {
 }
 
 
-def _http_resolution(row: dict[str, str], *, payload: str = "Summarize this.", bearer: bool = True) -> Any:
+def _http_resolution(
+    row: dict[str, str], *, payload: str = "Summarize this.", bearer: bool = True
+) -> Any:
     auth = {"mode": "bearer", "key_env": row["key_env"]} if bearer else {"mode": "none"}
     invocation = {
         "via": "engine-bridge-http",
@@ -358,7 +360,9 @@ def _dead_adapter(_invocation: dict[str, Any]) -> dict[str, Any]:
 
 def test_dispatch_adapter_contract_greens_on_conformant_runner() -> None:
     invocation = D._build_invocation(_http_resolution(OLLAMA_ROW), model=None)
-    runner = BRIDGE.runner(urlopen=_capturing_urlopen(_chat_body("real work")), getenv={"OLLAMA_API_KEY": "t"}.get)
+    runner = BRIDGE.runner(
+        urlopen=_capturing_urlopen(_chat_body("real work")), getenv={"OLLAMA_API_KEY": "t"}.get
+    )
     assert_adapter_conformant(runner, invocation)  # must not raise
 
 
@@ -375,7 +379,9 @@ def test_dispatch_adapter_contract_reds_on_dead_runner() -> None:
     not os.environ.get("OLLAMA_API_KEY"),
     reason="AC3' availability-gated smoke: OLLAMA_API_KEY absent -- skip, never fail",
 )
-def test_ollama_cloud_smoke_records_ok_when_key_present() -> None:  # pragma: no cover - live network
+def test_ollama_cloud_smoke_records_ok_when_key_present() -> (
+    None
+):  # pragma: no cover - live network
     resolution = _http_resolution(OLLAMA_ROW, payload="Reply with the single word: ok")
     evidence = D.dispatch(resolution, runner=BRIDGE.runner())
     # Reachability is proven only here, live. A wrong URL/model shows up as a failure status, but

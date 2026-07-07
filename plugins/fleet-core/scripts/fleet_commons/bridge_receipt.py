@@ -124,7 +124,9 @@ def validate_receipt(receipt: dict[str, Any]) -> list[str]:
         required = RUNNER_FIELDS[transport]
         missing = [f for f in required if f not in runner]
         for field in missing:
-            errors.append(f"runner section missing required field for transport {transport!r}: {field}")
+            errors.append(
+                f"runner section missing required field for transport {transport!r}: {field}"
+            )
 
         other_transport = TRANSPORT_HTTP if transport == TRANSPORT_CLI else TRANSPORT_CLI
         other_only = set(RUNNER_FIELDS[other_transport]) - set(required)

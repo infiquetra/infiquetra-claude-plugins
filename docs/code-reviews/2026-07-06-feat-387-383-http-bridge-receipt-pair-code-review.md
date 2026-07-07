@@ -53,7 +53,11 @@ U7 forcing-function drift guard · U8 four-plugin release surfaces + journal.
 
 ## Post-review delta rationale
 
-`39569c4` (the only commit past the reviewed SHA `58e513f`) contains exclusively the
-validated P2 fix and its regression assertion (2 files, +8/−2). Full suite, ruff, and mypy
-re-run green at `39569c4`. Recorded here in lieu of a five-lens re-pass per the
-override-with-recorded-rationale rule; the staleness window contains no unreviewed change.
+Commits past the reviewed SHA `58e513f`: `39569c4` — exclusively the validated P2 fix and
+its regression assertion (2 files, +8/−2); a docs commit adding this artifact and the
+work-session; and a formatting-only commit (`ruff format` over 8 pair-touched files —
+CI's Lint job checks `ruff format --check`, which the local gate run had not mirrored;
+zero semantic change). Full suite green at `39569c4`; targeted suites (104 tests) plus
+both ruff gates and mypy green after formatting. Recorded here in lieu of a five-lens
+re-pass per the override-with-recorded-rationale rule; the staleness window contains no
+unreviewed logic change.

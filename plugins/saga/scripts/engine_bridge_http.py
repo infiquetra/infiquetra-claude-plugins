@@ -103,9 +103,9 @@ def _invoke(
         return _failure(STATUS_ERROR, "http invocation missing base_url, model, or task payload")
 
     url = base_url.rstrip("/") + "/chat/completions"
-    body = json.dumps(
-        {"model": model, "messages": [{"role": "user", "content": task}]}
-    ).encode("utf-8")
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": task}]}).encode(
+        "utf-8"
+    )
     headers = {"Content-Type": "application/json"}
 
     # --- SECRET BOUNDARY: token exists only inside this block and the headers dict it feeds. ---

@@ -179,8 +179,7 @@ def _http_preflight(engine_id: str, entry: EngineEntry) -> dict[str, bool | str]
         return {
             "available": True,
             "reason": (
-                f"{engine_id} available: bearer key env {key_env!r} present; "
-                "no live API call made"
+                f"{engine_id} available: bearer key env {key_env!r} present; no live API call made"
             ),
         }
     return {

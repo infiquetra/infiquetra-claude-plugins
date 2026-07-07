@@ -50,7 +50,7 @@ PENDING_EMITTER_PLUGIN_DIR: dict[str, Path] = {"codex-bridge": ROOT / "plugins" 
 
 # --- Shared-path vocabulary (KTD6): the one and only sanctioned emit route. --------------------
 _SHIM_MODULE = "fleet_commons_shim"
-_SHIM_LOADER_ATTR = "load"              # fleet_commons_shim.load("bridge_receipt")
+_SHIM_LOADER_ATTR = "load"  # fleet_commons_shim.load("bridge_receipt")
 _SHARED_LOADER_ARG = "bridge_receipt"
 _SHARED_EMIT_ATTR = "emit_receipt"
 
@@ -118,9 +118,7 @@ def _is_shared_loader_call(
     return isinstance(arg0, ast.Constant) and arg0.value == _SHARED_LOADER_ARG
 
 
-def _receipt_handles(
-    tree: ast.AST, shim_names: set[str], bare_loader_names: set[str]
-) -> set[str]:
+def _receipt_handles(tree: ast.AST, shim_names: set[str], bare_loader_names: set[str]) -> set[str]:
     """Local names assigned the shared receipt module (``_br = shim.load("bridge_receipt")``)."""
     handles: set[str] = set()
     for node in ast.walk(tree):
@@ -298,9 +296,7 @@ def test_matcher_accepts_genuine_aliased_emit(source: str) -> None:
     assert emits_through_shared_path(source)
 
 
-@pytest.mark.parametrize(
-    "source", [_EVASION_ALIASED_LOCAL, _EVASION_RENAMED_LOCAL]
-)
+@pytest.mark.parametrize("source", [_EVASION_ALIASED_LOCAL, _EVASION_RENAMED_LOCAL])
 def test_matcher_rejects_realistic_evasion(source: str) -> None:
     assert not emits_through_shared_path(source), (
         "matcher was fooled by a counterfeit emit that bypasses the shared receipt handle"

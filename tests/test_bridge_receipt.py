@@ -31,7 +31,11 @@ br = _load_module()
 
 
 CLI_RUNNER = {"pid": 12345, "argv": ["codex", "run"], "exit_code": 0}
-HTTP_RUNNER = {"url": "https://api.deepseek.com/chat/completions", "status_code": 200, "model": "deepseek-chat"}
+HTTP_RUNNER = {
+    "url": "https://api.deepseek.com/chat/completions",
+    "status_code": 200,
+    "model": "deepseek-chat",
+}
 
 
 def test_valid_cli_receipt_round_trips() -> None:

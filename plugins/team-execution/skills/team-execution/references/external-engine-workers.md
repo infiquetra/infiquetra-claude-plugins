@@ -164,6 +164,15 @@ here.
    worker already has (`worker-manifest.md` "grants no privilege... workers keep today's
    file-edit scope").
 3. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
+3a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
+   chaperone runs `check_empty_delivery.check_empty_delivery()` (or its CLI,
+   `plugins/saga/scripts/check_empty_delivery.py --claims-delivery`) against the working tree. A
+   unit whose evidence claims delivery but changed zero paths gets a HALT verdict — the chaperone
+   surfaces that HALT to the coordinator exactly like any other blocked worker and never reaches
+   the commit step below. A proceed verdict authorizes continuing to Apply's commit; the helper
+   itself never commits and mints no new auto-commit machinery (none exists in this repo — `/optimize`
+   deliberately shed its own). This is a distinct axis from `manifest_store.py`'s `missing-output`
+   trip (`manifest_store.py:249-363`), which checks the returned-value axis, not file delivery.
 4. **Manifest.** One path, for every disposition — `ran-as-requested`, `fell-back-to-claude`, and
    `substituted-engine` alike. The chaperone never branches on §4's `substituted` result and never
    constructs `provenance_manifest.Manifest` directly; it always calls the existing builder,

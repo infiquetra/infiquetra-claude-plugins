@@ -58,3 +58,21 @@ def test_stale_main_startup_resume_entry_unchanged() -> None:
     assert any("stale_main_session_hook.py" in c for c in cmds)
     # And the spore hook must NOT have leaked into the stale-main entry.
     assert not any("compact_spore_session_hook.py" in c for c in cmds)
+
+
+def test_delegation_tripwire_hook_registered_for_file_tools() -> None:
+    # U3 (#384, KTD3): PreToolUse matcher covering Write|Edit|MultiEdit|NotebookEdit ->
+    # delegation_tripwire_hook.py, as a NEW entry beside validate_json's Edit|Write|MultiEdit one.
+    events = _events()
+    cmds = _commands_for(events["PreToolUse"], "Write|Edit|MultiEdit|NotebookEdit")
+    assert any("delegation_tripwire_hook.py" in c for c in cmds), (
+        "PreToolUse(Write|Edit|MultiEdit|NotebookEdit) not wired to delegation_tripwire_hook.py"
+    )
+
+
+def test_validate_json_pretooluse_entry_unchanged() -> None:
+    # The pre-existing validate_json entry must be untouched by the new registration.
+    events = _events()
+    cmds = _commands_for(events["PreToolUse"], "Edit|Write|MultiEdit")
+    assert any("validate_json_hook.py" in c for c in cmds)
+    assert not any("delegation_tripwire_hook.py" in c for c in cmds)

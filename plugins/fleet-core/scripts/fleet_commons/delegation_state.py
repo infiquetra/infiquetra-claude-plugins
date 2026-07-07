@@ -66,7 +66,9 @@ class DelegationEntry:
             return None
         if not isinstance(armed_by, str):
             return None
-        return cls(engine=engine, session_id=session_id, armed_at=float(armed_at), armed_by=armed_by)
+        return cls(
+            engine=engine, session_id=session_id, armed_at=float(armed_at), armed_by=armed_by
+        )
 
 
 def _marker_path(root: Path | str | None = None) -> Path:
@@ -137,7 +139,9 @@ def arm(
     """
     path = _marker_path(root)
     effective_now = time.time() if now is None else now
-    entry = DelegationEntry(engine=engine, session_id=session_id, armed_at=effective_now, armed_by=armed_by)
+    entry = DelegationEntry(
+        engine=engine, session_id=session_id, armed_at=effective_now, armed_by=armed_by
+    )
 
     live = _live_entries(path, now=effective_now, ttl_seconds=ttl_seconds)
     surviving = [existing for existing in live if existing.session_id != session_id]

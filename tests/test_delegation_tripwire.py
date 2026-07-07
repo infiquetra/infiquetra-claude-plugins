@@ -840,9 +840,7 @@ class TestFleetCoreUnavailableFailOpen:
         stub.load = _raise  # type: ignore[attr-defined]
         return stub
 
-    def test_tripwire_hook_fails_open_without_fleet_core(
-        self, hook: Any, tmp_path: Path
-    ) -> None:
+    def test_tripwire_hook_fails_open_without_fleet_core(self, hook: Any, tmp_path: Path) -> None:
         # Armed with no evidence: a working shim would block (exit 2); a broken
         # shim must fail open (exit 0) rather than crash or block.
         session_id = "sess-shim-broken"
@@ -855,9 +853,7 @@ class TestFleetCoreUnavailableFailOpen:
         with patch.dict(sys.modules, {"fleet_commons_shim": self._broken_shim()}):
             assert _run_main(hook, payload) == 0
 
-    def test_stop_hook_fails_open_without_fleet_core(
-        self, stop_hook: Any, tmp_path: Path
-    ) -> None:
+    def test_stop_hook_fails_open_without_fleet_core(self, stop_hook: Any, tmp_path: Path) -> None:
         session_id = "sess-shim-broken-stop"
         _arm(tmp_path, "agy", session_id)
         payload = {

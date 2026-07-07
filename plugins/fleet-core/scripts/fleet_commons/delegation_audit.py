@@ -246,7 +246,9 @@ def classify(transcript_path: Path | str, engine: str) -> AuditClassification:
     )
 
 
-def corroborate(engine: str, since_ts: float | None, *, root: Path | str | None = None) -> BundleCorroboration:
+def corroborate(
+    engine: str, since_ts: float | None, *, root: Path | str | None = None
+) -> BundleCorroboration:
     """Corroborate a delegation via bundle artifacts under the engine's bundle root.
 
     Data contract only (``result.json`` launch flag + receipt presence) — no cross-plugin code

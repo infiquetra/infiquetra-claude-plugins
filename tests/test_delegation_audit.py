@@ -1,9 +1,10 @@
-"""Tests for the fleet-core engine-parametrized delegation auditor (#384, U1)."""
+"""Tests for the fleet-core engine-parametrized delegation auditor (#384, U1/U2)."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -12,6 +13,7 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 MODULE_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "delegation_audit.py"
+STATE_MODULE_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "delegation_state.py"
 AGY_DELEGATE_PATH = ROOT / "plugins" / "agy" / "scripts" / "agy_delegate.py"
 FIXTURES = ROOT / "tests" / "fixtures" / "delegation"
 
@@ -34,6 +36,11 @@ def delegation_audit() -> ModuleType:
 @pytest.fixture
 def agy_delegate() -> ModuleType:
     return _load_module(AGY_DELEGATE_PATH, "agy_delegate")
+
+
+@pytest.fixture
+def delegation_state() -> ModuleType:
+    return _load_module(STATE_MODULE_PATH, "delegation_state")
 
 
 # --- classify() happy path -----------------------------------------------------------------
@@ -212,3 +219,103 @@ def test_fixture_parity_original_agy_fixtures(delegation_audit: ModuleType, agy_
         assert fleet_result.classification == agy_result.classification, path
         assert fleet_result.command_seen == agy_result.agy_command_seen, path
         assert fleet_result.claude_file_tool_seen == agy_result.claude_file_tool_seen, path
+
+
+# --- delegation_state: arm/disarm/active liveness channel (#384, U2) ------------------------
+
+
+def test_arm_status_disarm_round_trip(delegation_state: ModuleType, tmp_path: Path) -> None:
+    delegation_state.arm("agy", "session-1", "engine_dispatch", root=tmp_path)
+    entry = delegation_state.active("session-1", root=tmp_path)
+    assert entry is not None
+    assert entry.engine == "agy"
+    assert entry.session_id == "session-1"
+    assert entry.armed_by == "engine_dispatch"
+
+    removed = delegation_state.disarm("session-1", root=tmp_path)
+    assert removed is True
+    assert delegation_state.active("session-1", root=tmp_path) is None
+
+
+def test_stale_entry_invisible_and_reaped(delegation_state: ModuleType, tmp_path: Path) -> None:
+    now = 1_000_000.0
+    delegation_state.arm("agy", "session-old", "engine_dispatch", root=tmp_path, now=now)
+
+    # Past the TTL: invisible to active().
+    later = now + delegation_state.DEFAULT_TTL_SECONDS + 1
+    assert delegation_state.active("session-old", root=tmp_path, now=later) is None
+
+    # A subsequent write (arming a different session) reaps the stale entry from the file.
+    delegation_state.arm("agy", "session-new", "engine_dispatch", root=tmp_path, now=later)
+    marker_path = tmp_path / ".claude" / "delegation" / "active.json"
+    payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    session_ids = {entry["session_id"] for entry in payload["entries"]}
+    assert session_ids == {"session-new"}
+
+
+def test_two_concurrent_sessions_isolated(delegation_state: ModuleType, tmp_path: Path) -> None:
+    delegation_state.arm("agy", "session-a", "engine_dispatch", root=tmp_path)
+    delegation_state.arm("codex", "session-b", "engine_dispatch", root=tmp_path)
+
+    entry_a = delegation_state.active("session-a", root=tmp_path)
+    entry_b = delegation_state.active("session-b", root=tmp_path)
+    assert entry_a is not None and entry_a.engine == "agy"
+    assert entry_b is not None and entry_b.engine == "codex"
+
+    delegation_state.disarm("session-a", root=tmp_path)
+    assert delegation_state.active("session-a", root=tmp_path) is None
+    # Disarming one session must not touch the other's entry.
+    assert delegation_state.active("session-b", root=tmp_path) is not None
+
+
+def test_arm_twice_supersedes_in_place(delegation_state: ModuleType, tmp_path: Path) -> None:
+    delegation_state.arm("agy", "session-1", "engine_dispatch", root=tmp_path, now=100.0)
+    delegation_state.arm("codex", "session-1", "engine_dispatch_retry", root=tmp_path, now=200.0)
+
+    entry = delegation_state.active("session-1", root=tmp_path, now=200.0)
+    assert entry is not None
+    assert entry.engine == "codex"
+    assert entry.armed_by == "engine_dispatch_retry"
+    assert entry.armed_at == 200.0
+
+    marker_path = tmp_path / ".claude" / "delegation" / "active.json"
+    payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert len(payload["entries"]) == 1
+
+
+def test_corrupt_marker_json_is_unarmed_fail_open(delegation_state: ModuleType, tmp_path: Path) -> None:
+    marker_path = tmp_path / ".claude" / "delegation" / "active.json"
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text("{not valid json", encoding="utf-8")
+
+    # Fail-open contract: active() never raises, corrupt file reads as unarmed.
+    assert delegation_state.active("session-1", root=tmp_path) is None
+
+
+def test_missing_marker_file_is_unarmed_fail_open(delegation_state: ModuleType, tmp_path: Path) -> None:
+    assert delegation_state.active("session-1", root=tmp_path) is None
+
+
+def test_cli_arm_status_disarm_round_trip(tmp_path: Path) -> None:
+    def run_cli(*args: str) -> dict:
+        result = subprocess.run(
+            [sys.executable, str(STATE_MODULE_PATH), "--root", str(tmp_path), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
+
+    armed = run_cli("arm", "--engine", "agy", "--session-id", "cli-session", "--armed-by", "cli-test")
+    assert armed["engine"] == "agy"
+    assert armed["session_id"] == "cli-session"
+
+    status = run_cli("status", "--session-id", "cli-session")
+    assert status["armed"] is True
+    assert status["engine"] == "agy"
+
+    disarmed = run_cli("disarm", "--session-id", "cli-session")
+    assert disarmed["removed"] is True
+
+    final_status = run_cli("status", "--session-id", "cli-session")
+    assert final_status["armed"] is False

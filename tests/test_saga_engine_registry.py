@@ -48,6 +48,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "cost_speed_rank": 2,
                 "model_identity": "gpt-5.5",
                 "last_validated": "2026-06-27",
+                "receipt_emitter": "codex-bridge",
                 "capability_profile": {
                     "code-generation": {
                         "rating": "STRONG",
@@ -87,6 +88,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "cost_speed_rank": 1,
                 "model_identity": "gemini-3.1-pro",
                 "last_validated": "2026-06-20",
+                "receipt_emitter": "agy-delegate",
                 "capability_profile": {
                     "code-generation": {
                         "rating": "STRONG",
@@ -213,7 +215,145 @@ def test_shipped_seed_registry_loads_and_resolves() -> None:
     for entry in registry.engines:
         assert entry.sources
         assert isinstance(entry.cost_speed_rank, int)
+        assert entry.receipt_emitter
     # the cross-family review panel (R16) is present and advisory (R13/R15).
     panel = registry.by_role("cross-family-review-panel")
     assert panel.verdict == "advisory"
     assert panel.verifier == "claude"
+
+
+# ---- U3: transport / http-conditional invocation / receipt_emitter (R9/R11, KTD2/KTD3/KTD9) -----
+
+
+def _http_engine_row(**overrides: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "engine_id": "ollama-cloud",
+        "variant": "gpt-oss-120b",
+        "substrate": "external",
+        "default_for_engine": True,
+        "transport": "http",
+        "invocation": {
+            "via": "engine-bridge-http",
+            "recipe": "POST https://ollama.com/v1/chat/completions",
+            "write_capable": False,
+            "base_url": "https://ollama.com/v1",
+            "model": "gpt-oss:120b",
+            "effort": "default",
+            "auth": {"mode": "bearer", "key_env": "OLLAMA_API_KEY"},
+        },
+        "context_window": 128000,
+        "cost_speed_rank": 5,
+        "model_identity": "gpt-oss-120b",
+        "last_validated": "2026-07-06",
+        "receipt_emitter": "http-bridge",
+        "capability_profile": {
+            "code-generation": {"rating": "MODERATE", "note": "seed rating"},
+        },
+        "prompting_protocol": ["Resolve the bearer token at request-build time only."],
+        "sources": [
+            {
+                "claim": "OpenAI-compatible base URL",
+                "url": "https://docs.ollama.com/api/openai-compatibility",
+                "date": "2026-07-06",
+                "tag": "OFFICIAL",
+                "corroboration": "STRONG",
+            }
+        ],
+    }
+    row.update(overrides)
+    return row
+
+
+def _registry_with_extra_engine(extra_engine: dict[str, Any]) -> dict[str, Any]:
+    data = _valid_registry_dict()
+    data["engines"].append(extra_engine)
+    return data
+
+
+def test_transport_defaults_to_cli_for_existing_shape_rows(tmp_path: Path) -> None:
+    registry = M.Registry.load(_write_registry(tmp_path, _valid_registry_dict()))
+    for entry in registry.engines:
+        assert entry.transport == "cli"
+
+
+def test_transport_http_row_parses_with_required_invocation_fields(tmp_path: Path) -> None:
+    data = _registry_with_extra_engine(_http_engine_row())
+    registry = M.Registry.load(_write_registry(tmp_path, data))
+
+    entry = registry.by_engine("ollama-cloud")
+    assert entry.transport == "http"
+    assert entry.invocation["base_url"] == "https://ollama.com/v1"
+    assert entry.invocation["auth"]["key_env"] == "OLLAMA_API_KEY"
+
+
+@pytest.mark.parametrize("missing_field", ["base_url", "model", "effort", "auth"])
+def test_http_row_missing_required_invocation_field_errors(
+    tmp_path: Path, missing_field: str
+) -> None:
+    row = _http_engine_row()
+    del row["invocation"][missing_field]
+    data = _registry_with_extra_engine(row)
+
+    with pytest.raises(M.RegistryError, match=missing_field):
+        M.Registry.load(_write_registry(tmp_path, data))
+
+
+def test_http_row_bearer_auth_missing_key_env_errors(tmp_path: Path) -> None:
+    row = _http_engine_row()
+    del row["invocation"]["auth"]["key_env"]
+    data = _registry_with_extra_engine(row)
+
+    with pytest.raises(M.RegistryError, match="key_env"):
+        M.Registry.load(_write_registry(tmp_path, data))
+
+
+def test_unknown_transport_value_rejected(tmp_path: Path) -> None:
+    row = _http_engine_row(transport="carrier-pigeon")
+    data = _registry_with_extra_engine(row)
+
+    with pytest.raises(M.RegistryError, match="transport"):
+        M.Registry.load(_write_registry(tmp_path, data))
+
+
+def test_missing_receipt_emitter_errors(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    del data["engines"][0]["receipt_emitter"]
+
+    with pytest.raises(M.RegistryError, match="receipt_emitter"):
+        M.Registry.load(_write_registry(tmp_path, data))
+
+
+def test_by_capability_routing_stability_regression_shipped_registry_winners_unchanged() -> None:
+    """U3/KTD3: adding the http rows must not reroute any existing capability winner.
+
+    Bakes today's by_capability winners as literals (engine/variant keys) against the
+    shipped registry -- if the new ollama-cloud/deepseek rows ever rate a capability
+    at or above the current winner, this regression reds.
+    """
+    registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
+
+    expected_winners = {
+        "code-generation": "codex/gpt-5.5-xhigh",
+        "adversarial-review": "codex/gpt-5.5-high",
+        "second-opinion": "agy/gemini-3.1-pro-high",
+        "debug": "codex/gpt-5.5-xhigh",
+        "refactor": "codex/gpt-5.5-high",
+        "scaffold": "agy/gemini-3.5-flash-high",
+        "long-form-writing": "codex/gpt-5.5-high",
+    }
+    for capability, expected_key in expected_winners.items():
+        assert registry.by_capability(capability).key == expected_key, capability
+
+
+def test_shipped_registry_http_rows_parse_and_are_advisory_only(tmp_path: Path) -> None:
+    """The new ollama-cloud/deepseek rows load as transport=http with receipt_emitter set,
+    conservative (<= MODERATE) seed ratings, and cost_speed_rank in the 5-6 range (KTD3)."""
+    registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
+
+    for engine_id in ("ollama-cloud", "deepseek"):
+        entry = registry.by_engine(engine_id)
+        assert entry.transport == "http"
+        assert entry.receipt_emitter == "http-bridge"
+        assert entry.cost_speed_rank in (5, 6)
+        for claim in entry.capability_profile.values():
+            assert claim["rating"] in ("WEAK", "MODERATE")

@@ -6,7 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -179,8 +179,21 @@ def test_dispatch_returns_advisory_evidence_without_tree_mutation_surface() -> N
 # --- U3: typed manifests (claim_provenance, attribution, disposition) + R11 gate ----------
 
 
-def _ok_runner(_invocation: dict[str, Any]) -> dict[str, str]:
-    return {"status": "ok", "output": "external finding"}
+def _valid_receipt(*, engine_id: str = "codex", variant: str = "gpt-5.5-xhigh") -> dict[str, Any]:
+    """A schema-valid ``bridge_receipt.v1`` (cli-shaped) for tests exercising the RAN_AS_REQUESTED
+    path (U6/KTD8): receipt-gating means a bare ``ok`` runner result is no longer sufficient."""
+    return cast("dict[str, Any]", D._bridge_receipt.emit_receipt(
+        engine_id=engine_id,
+        variant=variant,
+        transport="cli",
+        wall_time_s=0.5,
+        bytes_produced=17,
+        runner={"pid": 4242, "argv": ["codex", "run"], "exit_code": 0},
+    ))
+
+
+def _ok_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "ok", "output": "external finding", "receipt": _valid_receipt()}
 
 
 def _store(tmp_path: Path) -> Any:
@@ -559,3 +572,289 @@ def test_codex_advisory_writes_no_delegation_fact(tmp_path: Path) -> None:
     assert [f["kind"] for f in RL.read_facts(ledger)] == [
         "engine"
     ]  # not a delegation -> engine only
+
+
+# ---- U4: resolve_memoization -- RunMemo caches the preflight probe (KTD5, R5) ----
+
+
+def _memoization_registry_dict() -> dict[str, Any]:
+    return {
+        "capabilities": list(REG.CAPABILITIES),
+        "engines": [
+            {
+                "engine_id": "codex",
+                "variant": "gpt-5.5-xhigh",
+                "substrate": "external",
+                "default_for_engine": True,
+                "invocation": {
+                    "via": "codex:codex-rescue",
+                    "recipe": "codex -s read-only --effort xhigh",
+                    "write_capable": False,
+                },
+                "context_window": 400000,
+                "cost_speed_rank": 2,
+                "model_identity": "gpt-5.5",
+                "last_validated": "2026-06-27",
+                "receipt_emitter": "codex-bridge",
+                "capability_profile": {
+                    "code-generation": {
+                        "rating": "STRONG",
+                        "note": "structured-output fidelity, multi-file refactor",
+                    },
+                },
+                "prompting_protocol": [
+                    "Run read-only when generating against the repo.",
+                    "Return a unified diff plus assumptions.",
+                ],
+                "sources": [
+                    {
+                        "claim": "top composite reasoning",
+                        "url": "https://example.invalid/codex",
+                        "date": "2026-06-27",
+                        "tag": "OFFICIAL",
+                        "corroboration": "STRONG",
+                    }
+                ],
+            }
+        ],
+        "roles": {},
+    }
+
+
+def _load_memoization_registry(tmp_path: Path) -> Any:
+    import yaml
+
+    path = tmp_path / "engine-registry.yaml"
+    path.write_text(yaml.safe_dump(_memoization_registry_dict(), sort_keys=False), encoding="utf-8")
+    return REG.Registry.load(path)
+
+
+def test_resolve_memoization_ten_resolves_probe_once_with_memo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC5/R5: 10 resolves of the same engine within one RunMemo invoke the
+    availability probe exactly once (call-counting `-k resolve_memoization`)."""
+    registry = _load_memoization_registry(tmp_path)
+    probe_calls: list[str] = []
+
+    def counting_cli_preflight(
+        engine_id: str,
+        *,
+        which: Any,
+        config_exists: Any,
+    ) -> dict[str, bool | str]:
+        probe_calls.append(engine_id)
+        return {"available": True, "reason": f"{engine_id} available"}
+
+    monkeypatch.setattr(R, "_cli_preflight", counting_cli_preflight)
+
+    memo = R.RunMemo()
+    for _ in range(10):
+        resolution = R.resolve(
+            {"engine": "codex", "role_kind": "worker"},
+            mode="dispatch",
+            registry=registry,
+            memo=memo,
+        )
+        assert resolution.halt is None
+        assert resolution.engine_id == "codex"
+
+    assert probe_calls == ["codex"]
+
+
+def test_resolve_memoization_ten_resolves_without_memo_probes_every_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R11: memo is opt-in -- omitting it keeps today's per-resolve probing."""
+    registry = _load_memoization_registry(tmp_path)
+    probe_calls: list[str] = []
+
+    def counting_cli_preflight(
+        engine_id: str,
+        *,
+        which: Any,
+        config_exists: Any,
+    ) -> dict[str, bool | str]:
+        probe_calls.append(engine_id)
+        return {"available": True, "reason": f"{engine_id} available"}
+
+    monkeypatch.setattr(R, "_cli_preflight", counting_cli_preflight)
+
+    for _ in range(10):
+        R.resolve(
+            {"engine": "codex", "role_kind": "worker"},
+            mode="dispatch",
+            registry=registry,
+            memo=None,
+        )
+
+    assert len(probe_calls) == 10
+
+
+def test_resolve_memoization_does_not_change_capability_reroute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R5/KTD5: memoized resolution matches the unmemoized resolution byte-for-byte;
+    an argument-differing call does not reroute or change the probe count."""
+    registry = _load_memoization_registry(tmp_path)
+    monkeypatch.setattr(
+        R,
+        "_cli_preflight",
+        lambda engine_id, **_kwargs: {"available": True, "reason": f"{engine_id} available"},
+    )
+
+    memo = R.RunMemo()
+    request = {
+        "capability": "code-generation",
+        "role_kind": "generator",
+        "task_context": {"context": "Implement the bounded change."},
+    }
+    baseline = R.resolve(request, mode="dispatch", registry=registry)
+
+    for context in (
+        "Implement the bounded change.",
+        "A different caller context string.",
+        "Yet another context body entirely.",
+    ):
+        memoized = R.resolve(
+            {**request, "task_context": {"context": context}},
+            mode="dispatch",
+            registry=registry,
+            memo=memo,
+        )
+        assert memoized.engine_id == baseline.engine_id
+        assert memoized.variant == baseline.variant
+        assert memoized.halt is None
+
+
+# --- U6: receipt-gated disposition + never-gatekeeper guard --------------------------------
+
+
+def test_fabricated_evidence_no_receipt_is_unproven(tmp_path: Path) -> None:
+    """R8/KTD8: an ``ok`` runner result with no receipt is `UNPROVEN`, never a silently
+    fabricated `RAN_AS_REQUESTED` -- and not the lie of `FELL_BACK_TO_CLAUDE` either."""
+    store = _store(tmp_path)
+
+    def no_receipt_runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        return {"status": "ok", "output": "external finding"}
+
+    evidence = D.dispatch(_resolution(), runner=no_receipt_runner)
+    assert evidence.runner_receipt is None
+
+    manifest = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-unproven",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+    )
+
+    assert manifest.disposition is PM.Disposition.UNPROVEN
+    assert "no receipt present" in manifest.disposition_note
+
+    persisted = MS.read_manifest(store, "exec-unproven")
+    assert persisted is not None
+    assert persisted["disposition"] == "unproven"
+
+
+def test_fabricated_evidence_invalid_receipt_is_unproven(tmp_path: Path) -> None:
+    """An `ok` runner result with a malformed/incomplete receipt is also `UNPROVEN`, never
+    `RAN_AS_REQUESTED` -- the schema, not mere presence of a `receipt` key, gates."""
+    store = _store(tmp_path)
+
+    def bad_receipt_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+        return {"status": "ok", "output": "external finding", "receipt": {"schema": "not-v1"}}
+
+    evidence = D.dispatch(_resolution(), runner=bad_receipt_runner)
+    manifest = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-unproven-2",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+    )
+
+    assert manifest.disposition is PM.Disposition.UNPROVEN
+    assert manifest.disposition_note
+
+
+def test_valid_receipt_yields_ran_as_requested(tmp_path: Path) -> None:
+    """The positive case: a schema-valid receipt on the evidence is required for, and
+    produces, `RAN_AS_REQUESTED`."""
+    store = _store(tmp_path)
+    evidence = D.dispatch(_resolution(), runner=_ok_runner)
+    assert evidence.runner_receipt is not None
+    assert D._bridge_receipt.validate_receipt(evidence.runner_receipt) == []
+
+    manifest = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-proven",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+    )
+    assert manifest.disposition is PM.Disposition.RAN_AS_REQUESTED
+    assert manifest.disposition_note == ""
+
+
+def test_halted_dispatch_stays_fell_back_to_claude_regardless_of_receipt(tmp_path: Path) -> None:
+    """Halted evidence keeps today's `FELL_BACK_TO_CLAUDE` -- receipt gating only changes the
+    `ok` path (U6 scope: halted/failed dispatches are untouched)."""
+    store = _store(tmp_path)
+
+    def failing_runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        return {"status": "error", "output": "boom"}
+
+    evidence = D.dispatch(_resolution(), runner=failing_runner)
+    manifest = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-halt-receipt",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+    )
+    assert manifest.disposition is PM.Disposition.FELL_BACK_TO_CLAUDE
+
+
+def test_manifest_round_trips_unproven_disposition(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+
+    def no_receipt_runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        return {"status": "ok", "output": "external finding"}
+
+    evidence = D.dispatch(_resolution(), runner=no_receipt_runner)
+    D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-unproven-roundtrip",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+    )
+    persisted = MS.read_manifest(store, "exec-unproven-roundtrip")
+    assert persisted is not None
+    round_tripped = PM.Manifest.from_dict(persisted)
+    assert round_tripped.disposition is PM.Disposition.UNPROVEN
+
+
+@pytest.mark.parametrize("gatekeeper_key", ["verdict", "gate_status", "adjudicated"])
+def test_never_gatekeeper_guard_rejects_gate_fields(gatekeeper_key: str) -> None:
+    """R6/#283 `{#external-engines-never-gatekeepers}`: a runner result carrying any
+    gate/verdict-shaped key is structurally rejected -- not merely ignored, not policy-gated
+    downstream. This must be impossible to smuggle past `dispatch()`."""
+
+    def gatekeeping_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+        return {"status": "ok", "output": "external finding", gatekeeper_key: "approved"}
+
+    with pytest.raises(D.DispatchError, match="never gatekeepers"):
+        D.dispatch(_resolution(), runner=gatekeeping_runner)
+
+
+def test_never_gatekeeper_guard_allows_clean_result() -> None:
+    """Sanity companion to the guard test: a result with none of the gatekeeper keys dispatches
+    normally (the guard doesn't over-fire on ordinary evidence)."""
+    evidence = D.dispatch(_resolution(), runner=_ok_runner)
+    assert evidence.halt is None
+    assert evidence.evidence == "external finding"

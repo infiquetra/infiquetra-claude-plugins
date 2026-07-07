@@ -31,6 +31,7 @@ engines:
     cost_speed_rank: 2
     model_identity: gpt-5.5
     last_validated: 2026-06-27
+    receipt_emitter: codex-bridge      # R9/KTD9 -- #476 tracks the codex-side emit wiring
     capability_profile:
       code-generation: {rating: MODERATE, note: "multi-file refactor, structured-output fidelity"}
       adversarial-review: {rating: STRONG, note: "top composite reasoning; repo-access verification"}
@@ -61,6 +62,7 @@ engines:
     cost_speed_rank: 3                 # xhigh is the cost multiplier -- pricier than high
     model_identity: gpt-5.5
     last_validated: 2026-06-27
+    receipt_emitter: codex-bridge      # R9/KTD9 -- #476 tracks the codex-side emit wiring
     capability_profile:
       code-generation: {rating: STRONG, note: "hardest bounded implementation; reserve for the tough unit"}
       adversarial-review: {rating: STRONG, note: "deepest reasoning pass"}
@@ -88,6 +90,7 @@ engines:
     cost_speed_rank: 1                 # cheapest + fastest (STRONG)
     model_identity: gemini-3.5-flash
     last_validated: 2026-06-27
+    receipt_emitter: agy-delegate      # R9/KTD9
     capability_profile:
       scaffold: {rating: STRONG, note: "greenfield scaffolding, one-shot coding"}
       code-generation: {rating: MODERATE, note: "one-shot; structured output"}
@@ -118,6 +121,7 @@ engines:
     cost_speed_rank: 4                 # largest / priciest / slowest of the seed set
     model_identity: gemini-3.1-pro
     last_validated: 2026-06-27
+    receipt_emitter: agy-delegate      # R9/KTD9
     capability_profile:
       adversarial-review: {rating: STRONG, note: "strong cross-family reviewer; converges with Codex on real findings"}
       second-opinion: {rating: STRONG, note: "different model family = best sycophancy mitigation"}
@@ -132,6 +136,77 @@ engines:
     sources:
       - {claim: "strong cross-family reviewer; different-family = best sycophancy mitigation", url: "Google DeepMind Gemini 3.1 Pro model card; SycEval; readiness review panel", date: 2026-06-27, tag: OFFICIAL, corroboration: STRONG}
       - {claim: "not the expert long-form writing engine", url: "readiness review correction; contracollective/gitautoreview write-ups", date: 2026-06-27, tag: INDEPENDENT, corroboration: MODERATE}
+
+  # ---- Ollama Cloud / gpt-oss:120b (generic OpenAI-compatible HTTP bridge, R3/AC3') ------------
+  # Base URL + auth verified against https://docs.ollama.com/api/openai-compatibility and
+  # https://docs.ollama.com/cloud on 2026-07-06 (U3 authoring step, KTD3). Ratings held at or
+  # below MODERATE and omit refactor/scaffold/long-form-writing so this row cannot outrank the
+  # current by_capability winners (routing-stability regression, KTD3).
+  - engine_id: ollama-cloud
+    variant: gpt-oss-120b
+    substrate: external
+    default_for_engine: true
+    transport: http
+    invocation:
+      via: engine-bridge-http
+      recipe: "POST https://ollama.com/v1/chat/completions (gpt-oss:120b)"
+      write_capable: false
+      base_url: "https://ollama.com/v1"
+      model: "gpt-oss:120b"
+      effort: default
+      auth:
+        mode: bearer
+        key_env: OLLAMA_API_KEY
+    context_window: 128000
+    cost_speed_rank: 5                 # conservative seed rank -- ties always lose to rank 1-4
+    model_identity: gpt-oss-120b
+    last_validated: 2026-07-06
+    receipt_emitter: http-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "$0-marginal subscription offload; seed rating, availability-gated smoke only"}
+      debug: {rating: MODERATE, note: "seed rating pending live-dispatch corroboration"}
+      second-opinion: {rating: WEAK, note: "seed rating; cheap cross-family sanity pass at most"}
+    prompting_protocol:
+      - "Resolve the bearer token from OLLAMA_API_KEY at request-build time only; never log it."
+      - "Availability-gated: skip (never fail) when OLLAMA_API_KEY is absent or endpoint unreachable."
+      - "Advisory only -- never a gate/verdict source (R6, {#external-engines-never-gatekeepers})."
+    sources:
+      - {claim: "OpenAI-compatible base URL https://ollama.com/v1; bearer auth via OLLAMA_API_KEY", url: "https://docs.ollama.com/api/openai-compatibility", date: 2026-07-06, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "gpt-oss:120b is a current Ollama Cloud model id", url: "https://docs.ollama.com/cloud", date: 2026-07-06, tag: OFFICIAL, corroboration: MODERATE}
+
+  # ---- DeepSeek / deepseek-chat (generic OpenAI-compatible HTTP bridge, R4) ---------------------
+  # Base URL + model id verified against https://api-docs.deepseek.com/ on 2026-07-06 (U3
+  # authoring step, KTD3). Ratings held at or below MODERATE per the same routing-stability rule.
+  - engine_id: deepseek
+    variant: deepseek-chat
+    substrate: external
+    default_for_engine: true
+    transport: http
+    invocation:
+      via: engine-bridge-http
+      recipe: "POST https://api.deepseek.com/chat/completions (deepseek-chat)"
+      write_capable: false
+      base_url: "https://api.deepseek.com"
+      model: "deepseek-chat"
+      effort: default
+      auth:
+        mode: bearer
+        key_env: DEEPSEEK_API_KEY
+    context_window: 64000
+    cost_speed_rank: 6                 # conservative seed rank -- ties always lose to rank 1-4
+    model_identity: deepseek-chat
+    last_validated: 2026-07-06
+    receipt_emitter: http-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "seed rating; API-key routing, never hardcoded (R4)"}
+      adversarial-review: {rating: WEAK, note: "seed rating; advisory-tagged, never a gate verdict"}
+      second-opinion: {rating: WEAK, note: "seed rating; cheap cross-family sanity pass at most"}
+    prompting_protocol:
+      - "Resolve the bearer token from DEEPSEEK_API_KEY at request-build time only; never log it."
+      - "Output is advisory-tagged; it never carries a gate/verdict field (R4/R6)."
+    sources:
+      - {claim: "OpenAI-compatible base URL https://api.deepseek.com; bearer auth via DEEPSEEK_API_KEY env convention", url: "https://api-docs.deepseek.com/", date: 2026-07-06, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "deepseek-chat is a current (non-deprecated at seed time) DeepSeek model id", url: "https://api-docs.deepseek.com/", date: 2026-07-06, tag: OFFICIAL, corroboration: MODERATE}
 
 roles:
   # The doc-review external-reviewer panel (R16) -- a first-class composing role, not a one-off.

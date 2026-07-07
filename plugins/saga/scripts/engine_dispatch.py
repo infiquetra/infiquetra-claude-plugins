@@ -12,12 +12,21 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import fleet_commons_shim  # noqa: E402
 import manifest_store  # noqa: E402
 import provenance_manifest as pm  # noqa: E402
 import run_ledger  # noqa: E402
 from engine_resolver import Resolution  # noqa: E402
 
+_bridge_receipt = fleet_commons_shim.load("bridge_receipt")
+
 FAILURE_STATUSES = frozenset({"timeout", "no-output", "error", "malformed", "clone-failed"})
+
+# A runner result carrying any of these keys is attempting to set/override a gate verdict --
+# structurally rejected, not policy-rejected (R6, plan U6, binding decision
+# `{#external-engines-never-gatekeepers}` #283). An external engine's output is advisory by
+# construction; no runner may hand back a key that looks like a gate authority surface.
+_GATEKEEPER_KEYS = frozenset({"verdict", "gate_status", "adjudicated"})
 
 Runner = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -36,6 +45,11 @@ class AdvisoryEvidence:
     provenance: dict[str, Any]
     verified_by_claude: bool = False
     halt: str | None = None
+    # The runner's ``bridge_receipt.v1`` proof-of-execution, threaded from ``result["receipt"]``
+    # by :func:`dispatch` (plan U5, KTD8). Additive and defaulted (R11) -- receipt-less runners
+    # (every CLI adapter today, and any failed dispatch) leave it ``None``. U6 consumes it to gate
+    # ``RAN_AS_REQUESTED`` vs ``UNPROVEN``; this unit only lands and populates the field.
+    runner_receipt: dict[str, Any] | None = None
 
 
 def build_codex_invocation(resolution: Resolution, *, sandbox: Any = None) -> dict[str, Any]:
@@ -140,6 +154,7 @@ def dispatch(
 
     invocation = _build_invocation(resolution, model=model, sandbox=sandbox, write_set=write_set)
     result = runner(invocation)
+    _reject_gatekeeper_keys(result)
     status = _string_result(result.get("status"), default="malformed")
     output = _string_result(result.get("output"), default="")
     provenance = {
@@ -147,6 +162,11 @@ def dispatch(
         "variant": resolution.variant,
         "status": status,
     }
+    # A runner may hand back a ``bridge_receipt.v1`` proving what actually ran (HTTP bridge does;
+    # CLI adapters don't yet). Thread it through verbatim -- never fabricated here, and a secret
+    # can never ride it because the bridge never puts one in (KTD8; see engine_bridge_http).
+    receipt = result.get("receipt")
+    runner_receipt = receipt if isinstance(receipt, dict) else None
 
     if status == "ok":
         evidence = AdvisoryEvidence(
@@ -154,6 +174,7 @@ def dispatch(
             variant=resolution.variant,
             evidence=output,
             provenance=provenance,
+            runner_receipt=runner_receipt,
         )
     elif status not in FAILURE_STATUSES:
         raise DispatchError(f"runner returned unsupported status {status!r}")
@@ -166,10 +187,38 @@ def dispatch(
             evidence="",
             provenance=provenance,
             halt=note,
+            runner_receipt=runner_receipt,
         )
 
     _record_advisory_facts(ledger, invocation, evidence, result, subplot_id=subplot_id, at=at)
     return evidence
+
+
+def _receipt_problems(runner_receipt: dict[str, Any] | None) -> list[str]:
+    """Validate ``runner_receipt`` against ``bridge_receipt.v1``; a list of problems (empty =
+    valid). Absent receipt is its own problem -- named explicitly rather than folded into a
+    generic validation error, so the disposition note is legible (R8)."""
+    if runner_receipt is None:
+        return ["no receipt present on evidence"]
+    if not isinstance(runner_receipt, dict):
+        return [f"receipt must be a dict, got {type(runner_receipt).__name__}"]
+    return list(_bridge_receipt.validate_receipt(runner_receipt))
+
+
+def _reject_gatekeeper_keys(result: dict[str, Any]) -> None:
+    """Structurally refuse a runner result that attempts to carry gate/verdict authority (R6).
+
+    Policy-level advisory-only behavior is not enough -- a runner shaped to slip a
+    ``verdict``/``gate_status``/``adjudicated`` key past the dispatch boundary must be
+    rejected by the contract itself, never merely ignored.
+    """
+    found = _GATEKEEPER_KEYS.intersection(result)
+    if found:
+        raise DispatchError(
+            "external engines never gatekeepers "
+            "(#283 {#external-engines-never-gatekeepers}): runner result carries "
+            f"disallowed key(s) {sorted(found)!r}"
+        )
 
 
 def _num(value: Any) -> float:
@@ -243,18 +292,27 @@ def build_dispatch_manifest(
 ) -> pm.Manifest:
     """Type today's ad-hoc ``provenance`` dict into a saga.manifest.v1 envelope (U3/R2/R18).
 
-    Disposition mapping (AE6/F4): a halted or failed dispatch fell back to Claude, carrying
-    the existing ``downgrade_note`` flow as ``disposition_note``; an ``ok`` dispatch ran as
-    requested. Engine output claims enter the claimed layer only — adjudication is written
-    later by the driving session (Claude) via :func:`adjudicate_manifest`, never by the
-    engine (D5, #external-engines-never-gatekeepers).
+    Disposition mapping (AE6/F4, U6/KTD8/R8): a halted or failed dispatch fell back to Claude,
+    carrying the existing ``downgrade_note`` flow as ``disposition_note``; an ``ok`` dispatch
+    is ``RAN_AS_REQUESTED`` only when ``evidence.runner_receipt`` is a schema-valid
+    ``bridge_receipt.v1`` (validated via the fleet-commons ``bridge_receipt`` module) --
+    receipt-less or invalid-receipt "ok" evidence resolves to ``UNPROVEN`` with a note naming
+    what was missing, never a silent ``RAN_AS_REQUESTED`` and never the lie of
+    ``FELL_BACK_TO_CLAUDE`` (nothing fell back). Engine output claims enter the claimed layer
+    only — adjudication is written later by the driving session (Claude) via
+    :func:`adjudicate_manifest`, never by the engine (D5, #external-engines-never-gatekeepers).
     """
     if evidence.halt is not None:
         disposition = pm.Disposition.FELL_BACK_TO_CLAUDE
         note = evidence.provenance.get("note") or evidence.halt or ""
     else:
-        disposition = pm.Disposition.RAN_AS_REQUESTED
-        note = ""
+        receipt_problems = _receipt_problems(evidence.runner_receipt)
+        if receipt_problems:
+            disposition = pm.Disposition.UNPROVEN
+            note = "no schema-valid bridge_receipt.v1: " + "; ".join(receipt_problems)
+        else:
+            disposition = pm.Disposition.RAN_AS_REQUESTED
+            note = ""
     return pm.Manifest(
         execution_id=execution_id,
         saga_ref=saga_ref,
@@ -383,6 +441,43 @@ def downgrade_note(engine: str, reason: str) -> str:
     return f"Downgraded external engine {engine}: {safe_reason}"
 
 
+def build_http_invocation(resolution: Resolution) -> dict[str, Any]:
+    """Build a generic OpenAI-compatible HTTP invocation, driven purely by the registry row.
+
+    Every provider difference (base URL, model id, bearer auth env var) is copied straight from the
+    resolution's row ``invocation`` -- there is no per-provider branching. The task payload is carried
+    byte-for-byte (same ``_assert_payload_preserved`` guarantee the CLI builders give, R11).
+
+    SECRET LIFECYCLE: the ``auth`` mapping carries the env var *name* (``key_env``) only, never a
+    resolved token -- this invocation dict flows into run-ledger telemetry
+    (``_record_advisory_facts``), so a value here would leak. The bridge resolves the token from
+    ``key_env`` at request-build time; see ``engine_bridge_http`` (KTD10, plan risk "secret leakage").
+    """
+    row = resolution.invocation or {}
+    base_url = row.get("base_url")
+    model = row.get("model")
+    if not isinstance(base_url, str) or not base_url:
+        raise DispatchError("http invocation missing base_url in registry row data")
+    if not isinstance(model, str) or not model:
+        raise DispatchError("http invocation missing model in registry row data")
+    row_auth = row.get("auth") or {}
+    # Name only -- never the key value (SECRET LIFECYCLE).
+    auth = {"mode": row_auth.get("mode"), "key_env": row_auth.get("key_env")}
+    invocation = {
+        "via": "engine-bridge-http",
+        "transport": "http",
+        "engine_id": resolution.engine_id,
+        "variant": resolution.variant,
+        "base_url": base_url,
+        "model": model,
+        "effort": row.get("effort", resolution.effort),
+        "auth": auth,
+        "task": resolution.payload,
+    }
+    _assert_payload_preserved(invocation["task"], resolution.payload)
+    return invocation
+
+
 def _build_invocation(
     resolution: Resolution,
     *,
@@ -390,6 +485,11 @@ def _build_invocation(
     sandbox: Any = None,
     write_set: list[str] | None = None,
 ) -> dict[str, Any]:
+    # Transport-keyed branch (KTD1): a row carrying http-transport invocation data dispatches
+    # through the generic bridge; the cli arm keeps the existing codex/agy builders unchanged.
+    row = resolution.invocation or {}
+    if row.get("via") == "engine-bridge-http":
+        return build_http_invocation(resolution)
     if resolution.engine_id == "codex":
         return build_codex_invocation(resolution, sandbox=sandbox)
     if resolution.engine_id == "agy":

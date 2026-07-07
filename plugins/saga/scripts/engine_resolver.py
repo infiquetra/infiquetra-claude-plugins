@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from collections.abc import Callable, Mapping
@@ -47,6 +48,60 @@ class Resolution:
     write_capable: bool
     fallback: str | None
     halt: str | None
+    # Row-driven invocation data (base_url/model/auth/effort/via) for transport-keyed dispatch.
+    # Additive and defaulted (R11): existing callers/tests that construct a Resolution without it
+    # stay byte-identical; ``transport: http`` dispatch reads it in ``engine_dispatch._build_invocation``.
+    invocation: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class _CapabilityDecision:
+    """Cached outcome of capability -> entry selection (KTD5, R5).
+
+    Captures only the selection/fit-check outcome -- not the built Resolution
+    (whose payload embeds caller-supplied context text) -- so cached decisions
+    stay correct across calls with differing ``task_context['context']``.
+    """
+
+    entry: EngineEntry | None
+    no_capability_reason: str | None
+    no_fit_reason: str | None
+
+
+class RunMemo:
+    """Explicit, run-scoped memoization object (KTD5).
+
+    Not module state: callers own an instance's lifetime, so memoized results
+    are invalidated simply by discarding the instance at a run boundary.
+    Threading ``memo=None`` (the default everywhere) is byte-identical to
+    today's uncached behavior (R5/R11) -- this is strictly opt-in.
+
+    Keys: ``engine_id`` for preflight probes; ``(capability, token_estimate)``
+    for capability resolution decisions.
+    """
+
+    def __init__(self) -> None:
+        self._preflight: dict[str, dict[str, bool | str]] = {}
+        self._capability: dict[tuple[str, int | None], _CapabilityDecision] = {}
+
+    def preflight(self, engine_id: str) -> dict[str, bool | str] | None:
+        return self._preflight.get(engine_id)
+
+    def store_preflight(self, engine_id: str, result: dict[str, bool | str]) -> None:
+        self._preflight[engine_id] = result
+
+    def capability_decision(
+        self, capability: str, token_estimate: int | None
+    ) -> _CapabilityDecision | None:
+        return self._capability.get((capability, token_estimate))
+
+    def store_capability_decision(
+        self,
+        capability: str,
+        token_estimate: int | None,
+        decision: _CapabilityDecision,
+    ) -> None:
+        self._capability[(capability, token_estimate)] = decision
 
 
 def preflight(
@@ -54,8 +109,42 @@ def preflight(
     *,
     which: Callable[[str], str | None] = shutil.which,
     config_exists: Callable[[str], bool] | None = None,
+    entry: EngineEntry | None = None,
+    memo: RunMemo | None = None,
 ) -> dict[str, bool | str]:
-    """Return cheap engine availability without making live API calls."""
+    """Return cheap engine availability without making live API calls.
+
+    Transport-aware (KTD4): ``cli`` (the default, and the case when ``entry``
+    is not supplied) keeps the existing ``shutil.which`` + config-file checks.
+    ``http`` rows check only that the configured auth env var is present (when
+    ``auth.mode`` is ``bearer``) and that the row is well-formed -- reachability
+    is proven only by the availability-gated smoke test, never here.
+
+    When ``memo`` is supplied, the probe runs at most once per ``engine_id``
+    for the memo's lifetime (R5); ``memo=None`` performs the probe on every
+    call, identical to pre-U4 behavior.
+    """
+    if memo is not None:
+        cached = memo.preflight(engine_id)
+        if cached is not None:
+            return cached
+
+    if entry is not None and entry.transport == "http":
+        result = _http_preflight(engine_id, entry)
+    else:
+        result = _cli_preflight(engine_id, which=which, config_exists=config_exists)
+
+    if memo is not None:
+        memo.store_preflight(engine_id, result)
+    return result
+
+
+def _cli_preflight(
+    engine_id: str,
+    *,
+    which: Callable[[str], str | None],
+    config_exists: Callable[[str], bool] | None,
+) -> dict[str, bool | str]:
     cli = ENGINE_CLI.get(engine_id, engine_id)
     if which(cli) is None:
         return {
@@ -76,7 +165,37 @@ def preflight(
     }
 
 
-def resolve(request: dict[str, Any], *, mode: str, registry: Registry) -> Resolution:
+def _http_preflight(engine_id: str, entry: EngineEntry) -> dict[str, bool | str]:
+    auth = entry.invocation.get("auth") or {}
+    mode = auth.get("mode")
+    if mode != "bearer":
+        return {
+            "available": True,
+            "reason": f"{engine_id} available: http row well-formed; no live API call made",
+        }
+
+    key_env = auth.get("key_env")
+    if key_env and os.environ.get(key_env):
+        return {
+            "available": True,
+            "reason": (
+                f"{engine_id} available: bearer key env {key_env!r} present; "
+                "no live API call made"
+            ),
+        }
+    return {
+        "available": False,
+        "reason": f"{engine_id} is not configured: bearer key env {key_env!r} absent",
+    }
+
+
+def resolve(
+    request: dict[str, Any],
+    *,
+    mode: str,
+    registry: Registry,
+    memo: RunMemo | None = None,
+) -> Resolution:
     """Resolve a capability or explicit engine request into the U2 contract."""
     if mode not in MODES:
         raise RegistryError(f"mode {mode!r} not in {MODES}")
@@ -91,6 +210,7 @@ def resolve(request: dict[str, Any], *, mode: str, registry: Registry) -> Resolu
             role_kind=role_kind,
             task_context=task_context,
             registry=registry,
+            memo=memo,
         )
 
     if engine is None:
@@ -103,6 +223,7 @@ def resolve(request: dict[str, Any], *, mode: str, registry: Registry) -> Resolu
         task_context=task_context,
         registry=registry,
         explicit_engine=True,
+        memo=memo,
     )
 
 
@@ -111,6 +232,7 @@ def resolve_role(
     *,
     registry: Registry,
     task_context: dict[str, Any] | None = None,
+    memo: RunMemo | None = None,
 ) -> list[Resolution]:
     """Expand a composing role into one advisory Resolution per member (R16/F3).
 
@@ -125,7 +247,7 @@ def resolve_role(
         request: dict[str, Any] = {"engine": member, "role_kind": "advisory-reviewer"}
         if task_context is not None:
             request["task_context"] = task_context
-        resolutions.append(resolve(request, mode="advisory", registry=registry))
+        resolutions.append(resolve(request, mode="advisory", registry=registry, memo=memo))
     return resolutions
 
 
@@ -181,34 +303,59 @@ def _resolve_capability(
     role_kind: str,
     task_context: dict[str, Any],
     registry: Registry,
+    memo: RunMemo | None = None,
 ) -> Resolution:
+    token_estimate = _token_estimate(task_context)
+    decision = memo.capability_decision(capability, token_estimate) if memo is not None else None
+    if decision is None:
+        decision = _decide_capability(capability, registry)
+        if memo is not None:
+            memo.store_capability_decision(capability, token_estimate, decision)
+
+    if decision.no_capability_reason is not None:
+        return _no_fit_resolution(
+            capability,
+            role_kind=role_kind,
+            task_context=task_context,
+            reason=decision.no_capability_reason,
+        )
+
+    assert decision.entry is not None
+    if decision.no_fit_reason is not None:
+        return _no_fit_resolution(
+            capability,
+            role_kind=role_kind,
+            task_context=task_context,
+            reason=decision.no_fit_reason,
+            entry=decision.entry,
+        )
+
+    return _resolve_entry(
+        decision.entry,
+        role_kind=role_kind,
+        task_context=task_context,
+        registry=registry,
+        explicit_engine=False,
+        memo=memo,
+    )
+
+
+def _decide_capability(capability: str, registry: Registry) -> _CapabilityDecision:
     try:
         entry = registry.by_capability(capability)
     except RegistryError as exc:
         if "no engine variant supports capability" not in str(exc):
             raise
         reason = f"no external engine supports capability {capability!r}"
-        return _no_fit_resolution(
-            capability, role_kind=role_kind, task_context=task_context, reason=reason
-        )
+        return _CapabilityDecision(entry=None, no_capability_reason=reason, no_fit_reason=None)
 
     fit_failure = _capability_fit_failure(entry, capability)
     if fit_failure is not None:
-        return _no_fit_resolution(
-            capability,
-            role_kind=role_kind,
-            task_context=task_context,
-            reason=fit_failure,
-            entry=entry,
+        return _CapabilityDecision(
+            entry=entry, no_capability_reason=None, no_fit_reason=fit_failure
         )
 
-    return _resolve_entry(
-        entry,
-        role_kind=role_kind,
-        task_context=task_context,
-        registry=registry,
-        explicit_engine=False,
-    )
+    return _CapabilityDecision(entry=entry, no_capability_reason=None, no_fit_reason=None)
 
 
 def _resolve_entry(
@@ -218,17 +365,18 @@ def _resolve_entry(
     task_context: dict[str, Any],
     registry: Registry,
     explicit_engine: bool,
+    memo: RunMemo | None = None,
 ) -> Resolution:
     context_halt = _context_window_halt(entry, task_context)
     if context_halt is not None:
         return _resolution_from_entry(entry, task_context=task_context, halt=context_halt)
 
     if role_kind == "panel":
-        panel_halt = _panel_availability_halt(registry, task_context)
+        panel_halt = _panel_availability_halt(registry, task_context, memo=memo)
         if panel_halt is not None:
             return _resolution_from_entry(entry, task_context=task_context, halt=panel_halt)
 
-    availability = preflight(entry.engine_id)
+    availability = preflight(entry.engine_id, entry=entry, memo=memo)
     if not bool(availability["available"]):
         reason = f"{entry.key} is unavailable: {availability['reason']}"
         if explicit_engine or role_kind in HALT_ROLE_KINDS:
@@ -307,6 +455,7 @@ def _resolution_from_entry(
         write_capable=bool(entry.invocation["write_capable"]),
         fallback=fallback,
         halt=halt,
+        invocation=dict(entry.invocation),
     )
 
 
@@ -413,7 +562,12 @@ def _entry_by_key(registry: Registry, key: str) -> EngineEntry:
     raise RegistryError(f"unknown engine variant {key!r}")
 
 
-def _panel_availability_halt(registry: Registry, task_context: Mapping[str, Any]) -> str | None:
+def _panel_availability_halt(
+    registry: Registry,
+    task_context: Mapping[str, Any],
+    *,
+    memo: RunMemo | None = None,
+) -> str | None:
     role_name = (
         task_context.get("role") or task_context.get("role_name") or task_context.get("panel")
     )
@@ -422,7 +576,7 @@ def _panel_availability_halt(registry: Registry, task_context: Mapping[str, Any]
     role = registry.by_role(_require_string_value(role_name, "task_context.role"))
     for member in role.members:
         entry = _entry_by_key(registry, member)
-        availability = preflight(entry.engine_id)
+        availability = preflight(entry.engine_id, entry=entry, memo=memo)
         if not bool(availability["available"]):
             return f"role {role.name!r} member {member!r} is unavailable: {availability['reason']}"
     return None

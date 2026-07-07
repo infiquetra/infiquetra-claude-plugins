@@ -1,0 +1,192 @@
+{
+  "name": "no-silent-claude-fallback",
+  "description": "Issue #390 (+#392 facet): fail-loud provenance wiring — provenance_required becomes a status/exit consumer in agy_delegate, build_dispatch_manifest auto-derives SUBSTITUTED_ENGINE from an expected_identity baseline (KTD4 precedence: integrity > halt > substituted > receipt), satisfy_gate refuses substituted manifests, manifest_reader surfaces fallback reasons, check_empty_delivery gates the chaperone's documented commit step, execution_spec verify panels gain verifier_identity/fallback_depth attribution, release surfaces across agy/saga/team-execution. SERIALIZED unit chain (every unit depends_on its predecessor) deliberately: operator rate-limit cap is max 3 concurrent non-haiku agents; the only parallelism is the n=3 verify panels on U1/U2/U5/U6, so peak concurrency is exactly 3 by construction (precedent: delegation-tripwires, codex-first-party-bridge specs). Serialization also prevents concurrent edits to tests/test_saga_engine_dispatch.py (U2/U4) and external-engine-workers.md (U3/U5). WAVE-A GUARDRAIL (journal {#verify-panels-blind-to-uncommitted-tree}): every worker commits its completed unit on the branch so verify-panel worktrees (cut from main) can materialize committed state; verifier prompts must include mandatory branch materialization (git checkout <branch> -- .) + examined-sha quoting — verify the emitter includes this or patch post-emit. COORDINATION SEAM: #388 extends the receipt-validation leg BELOW the new substitution branch and rebases over this work; nothing here touches engine_resolver.py or engine-registry.yaml.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "agy — provenance_required becomes a status/exit consumer",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U1: Wire provenance_required into agy's status/exit decision (plan U1, R1, KTD1). In plugins/agy/scripts/agy_delegate.py, where the result payload is assembled (_result_payload, :1416-1454, called at :415/:474/:612): when envelope.provenance_required is true AND _real_agy_verdict(run_result) (:1627-1635) is 'unproven' AND the status is a passing one (success/patch_ready/applied), coerce the run status to 'fallback_suspected' and record the coercion reason in the payload (e.g. coerced_by='provenance_required'). Do NOT call classify_transcript in the run path — transcript auditing is the Stop-hook's (#384); the wrapper's only provenance signal is _real_agy_verdict. Do NOT add exit codes or envelope fields — exit 1 arrives free via the existing mapping at agy_delegate.py:1167 (return 0 only for success/patch_ready/applied). provenance_required=False keeps today's behavior byte-for-byte; a status already fallback_suspected (stdout marker :1374) is not double-coerced. BOUNDARY (#523): do not touch the verdict input side (the wrapper mapping executor-construction failure to success is #523's scope) — this unit wires the verdict OUTPUT to status/exit. ORACLE DISCIPLINE (R10): write the new tests FIRST and run them against the pre-fix tree to record them red, then land the fix. Tests in tests/test_agy_delegate_contract.py, selector provenance_required_coerces_fallback: unproven+required → fallback_suspected + exit 1; unproven+not-required → unchanged + exit 0; real verdict+required → unchanged; already-fallback_suspected (marker path)+required → stays fallback_suspected, no double-coercion, still exit 1. Read the plan at docs/plans/2026-07-07-no-silent-claude-fallback-plan.md (U1, R1/R10, KTD1) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "red_on_main_evidence",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/agy/scripts/agy_delegate.py",
+        "tests/test_agy_delegate_contract.py"
+      ]
+    },
+    {
+      "unit_id": "U2",
+      "label": "saga — SUBSTITUTED_ENGINE auto-derivation + satisfy_gate refusal + note invariant",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "acceptance semantics on the live dispatch path: a branch-precedence mistake in build_dispatch_manifest either re-opens the silent-substitution hole (a valid receipt for the wrong engine reading RAN_AS_REQUESTED) or breaks the four existing disposition consumers (drill manifests, tripwire suite, two-signal acceptance); satisfy_gate refusal is the #392 fail-loud discriminator",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U2: SUBSTITUTED_ENGINE auto-derivation + gate refusal (plan U2, R2/R3/R4, KTD3/KTD4/KTD5). In plugins/saga/scripts/engine_dispatch.py: (a) dispatch() gains optional expected_identity: str | None = None ('engine/variant' plan-time preview baseline), stamped into evidence provenance — additive-defaulted, mirroring the runner_receipt precedent (engine_dispatch.py:41-55); (b) build_dispatch_manifest (:443-506) gains the SUBSTITUTED_ENGINE branch at KTD4 precedence — DELEGATION_INTEGRITY > halt (FELL_BACK_TO_CLAUDE) > SUBSTITUTED_ENGINE (expected_identity set and != f'{engine_id}/{variant}') > receipt check (UNPROVEN/RAN_AS_REQUESTED) — with disposition_note naming BOTH identities; (c) enforce the R3 invariant: every non-RAN_AS_REQUESTED manifest carries a non-empty disposition_note (fixed fallback string for degenerate empty reasons); (d) satisfy_gate (:585-625) additionally refuses a manifest whose disposition is SUBSTITUTED_ENGINE (DispatchError — substituted evidence can never satisfy a gate as-approved). PRESERVE: expected_identity=None keeps every existing path byte-for-byte; never modify engine_resolver.py or engine-registry.yaml (#388 seam). ORACLE DISCIPLINE (R10): record the derivation test red on the pre-fix tree first. Tests in tests/test_saga_engine_dispatch.py, selectors substituted_disposition and fallback_reason: expected≠resolved → SUBSTITUTED_ENGINE + both identities in note; expected=resolved → unchanged; None → unchanged; halt+mismatch → halt branch wins; mismatch+schema-valid receipt → still SUBSTITUTED_ENGINE, never RAN_AS_REQUESTED; satisfy_gate on substituted manifest → DispatchError; empty halt/note → fixed non-empty reason. Read the plan at docs/plans/2026-07-07-no-silent-claude-fallback-plan.md (U2, R2/R3/R4, KTD3/KTD4/KTD5) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "red_on_main_evidence",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/saga/scripts/engine_dispatch.py",
+        "tests/test_saga_engine_dispatch.py"
+      ]
+    },
+    {
+      "unit_id": "U3",
+      "label": "team-execution — delete the hand-build manifest path from the chaperone contract",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U3: One manifest-construction path (plan U3, R5). Rewrite plugins/team-execution/skills/team-execution/references/external-engine-workers.md §5 step 4 to a single-path instruction: record_dispatch_manifest(..., expected_identity=<the §4 preview identity>) for EVERY disposition including substitution; DELETE the documented direct provenance_manifest.Manifest construction (the ':163-176' region — 'build_dispatch_manifest has no way to express this disposition' prose is now false); update §4's 'only reachable substitution path' wording to point at the shared builder's derivation; refresh the stale engine_dispatch.py:124-161 and :153 line citations (the builder now lives at :443+); state the #392 fail-loud discriminator as the worker-slot contract: a substituted run is refused by satisfy_gate and must surface as a HALT, never pass as an external result. Add a doc-guard test asserting the contract file no longer instructs direct Manifest construction and does reference expected_identity (default home: tests/test_manifest_consumer_matrix.py beside the existing manifest-contract guards; place it with the other doc-drift guards if a better home exists). Read the plan at docs/plans/2026-07-07-no-silent-claude-fallback-plan.md (U3, R5) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines).",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/team-execution/skills/team-execution/references/external-engine-workers.md",
+        "tests/test_manifest_consumer_matrix.py"
+      ]
+    },
+    {
+      "unit_id": "U4",
+      "label": "saga — fallback reasons reach the manifest_reader roll-up",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U4: Fallback reasons reach the operator surface (plan U4, R6, KTD2). In plugins/saga/scripts/manifest_reader.py, the report gains a reasons section: for each manifest whose disposition != RAN_AS_REQUESTED, render execution id, disposition, and disposition_note. Do NOT invent a new roll-up artifact and do NOT write run-fact-ledger records (#386/#393 own those writers per run_ledger.py's docstring) — the R18 report in manifest_reader is the surface. Tests in tests/test_manifest_reader.py, selector fallback_reason_propagation: a halted dispatch's manifest renders its resolver reason; substituted and integrity rows render notes; an all-RAN_AS_REQUESTED store renders no reasons section; empty store unchanged. Read the plan at docs/plans/2026-07-07-no-silent-claude-fallback-plan.md (U4, R6, KTD2) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines).",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": [
+        "plugins/saga/scripts/manifest_reader.py",
+        "tests/test_manifest_reader.py"
+      ]
+    },
+    {
+      "unit_id": "U5",
+      "label": "saga — check_empty_delivery() at the delegated-unit boundary",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U5: Empty-delivery HALT at the delegated-unit boundary (plan U5, R7, KTD6). Create plugins/saga/scripts/check_empty_delivery.py: a pure verdict function (inputs: changed paths list, claims_delivery flag; output: a typed HALT verdict when claims_delivery is true and zero paths changed, a proceed verdict otherwise) plus a thin CLI reading `git status --porcelain -z`, exiting non-zero on HALT — argparse style matching sibling saga scripts. The helper GATES the chaperone's existing documented commit step; it NEVER commits anything itself and mints no new auto-commit machinery (none exists in this repo — /optimize deliberately shed its own). Keep the file-delivery axis distinct from record-completeness's returned-value missing-output trip (manifest_store.py:249-363) — do not touch manifest_store. Wire the contract: external-engine-workers.md §5 gains the check between verify and the chaperone-owned commit (ADDITIVE edit — U3 already rewrote step 4; do not undo it). Tests in NEW tests/test_check_empty_delivery.py, selectors halts_on_empty_delivery and autocommits_on_delivery: claims-delivery + zero paths → HALT; claims-delivery + paths → proceed verdict authorizing the documented commit step (the 'autocommits' selector asserts the proceed verdict — the helper itself never commits); no-delivery-claimed + zero paths → ok (legitimately read-only unit); CLI outside a git repo → clean error, not a stack trace. Read the plan at docs/plans/2026-07-07-no-silent-claude-fallback-plan.md (U5, R7, KTD6) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [
+        "plugins/saga/scripts/check_empty_delivery.py",
+        "plugins/team-execution/skills/team-execution/references/external-engine-workers.md",
+        "tests/test_check_empty_delivery.py"
+      ]
+    },
+    {
+      "unit_id": "U6",
+      "label": "saga — attributed verify-spawn fallback in execution_spec panels",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "three emission layers of a 2500-line emitter move together (verdict schema, verifier prompt, panel aggregation/render) and the change modifies the very verify-panel machinery this workflow run is simultaneously using; a wrong render rule silently weakens verify-gate visibility fleet-wide — the exact failure class this issue exists to close",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U6: Attributed verify-spawn fallback (plan U6, R8, KTD7). In plugins/saga/scripts/execution_spec.py: the verifier verdict schema + prompt (:1326-1332 region) gain verifier_identity (emitter-stamped from the agentType the emitter already knows, echoed by the verifier) and fallback_depth (int, default 0); the panel aggregation (:1369-1439 region) renders an explicit 'fallback tier N' marker in the panel summary/throw message when any reporter's fallback_depth exceeds 0, and NO marker when all reporters are depth 0 — implement the marker formatting as a PURE render helper function so it is unit-testable without emitting a workflow. The ladder itself is untouched (binding decision {#readonly-verifier-fallback-ladder-325}: attribution only, never reorder/redefine rungs). In plugins/saga/references/sandbox-spawn-sites.md, the fallback-ladder section gains the recording rule: an inline spawner descending to rung 2/3 must carry the fallback_depth into whatever verdict/tick it records. Tests: NEW tests/test_verify_spawn_gate_summary.py for the render helper, selectors fallback_tier_2_rendered and no_fallback_marker_on_first_choice (depth 2 → 'fallback tier 2'; all depth 0 → no marker; mixed panel → marker names the degraded reporter only), PLUS emitted-JS assertions in tests/test_saga_execution_spec.py (emitted workflow carries the schema fields and stamped identity; existing emission tests stay green). Read the plan at docs/plans/2026-07-07-no-silent-claude-fallback-plan.md (U6, R8, KTD7) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U5"
+      ],
+      "files": [
+        "plugins/saga/scripts/execution_spec.py",
+        "plugins/saga/references/sandbox-spawn-sites.md",
+        "tests/test_verify_spawn_gate_summary.py",
+        "tests/test_saga_execution_spec.py"
+      ]
+    },
+    {
+      "unit_id": "U7",
+      "label": "release surfaces + journal + full gate",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U7: Release surfaces (plan U7, R9/R10; repo rule 6: installed-plugin metadata tells the same story as the diff). Minor bumps with description updates: plugins/agy 0.1.2 → 0.2.0 (plugin.json + CHANGELOG — the entry MUST flag the behavior change: previously-passing unproven runs with provenance_required=True now fail loud, and provenance_required defaults to True); plugins/saga 0.74.1 → 0.75.0 (SUBSTITUTED_ENGINE auto-derivation + satisfy_gate refusal, reader reasons section, check_empty_delivery, verify-panel attribution); plugins/team-execution 2.12.3 → 2.13.0 (single-path manifest contract + empty-delivery gate in §5). Mirror all three in .claude-plugin/marketplace.json and verify with scripts/sync_marketplace.py --check. UPDATE THE DRIFT-GUARD VERSION PINS BY RUNNING THEM, not by assumption (tests/test_saga_plugin.py, tests/test_agy_plugin.py, tests/test_team_execution_plugin.py) — the #476 round shipped surface bumps but missed pins and the suite went red. Run the R5 grep check: grep -rn 'pm.Disposition.SUBSTITUTED_ENGINE' plugins/ must find only the enum definition and shared-builder/test references (no hand-build instruction). The DECISIONS.md entry for this plan's KTDs already exists ({#no-silent-claude-fallback-390}) — verify it matches what shipped, amend only if a KTD changed during execution. Full gate: uv run pytest && uv run ruff format --check . && uv run ruff check . && uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports. Read the plan at docs/plans/2026-07-07-no-silent-claude-fallback-plan.md (U7, R9/R10) as your authoritative spec. When done, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines).",
+      "returns": [
+        "files_changed",
+        "gate_results",
+        "summary"
+      ],
+      "depends_on": [
+        "U6"
+      ],
+      "files": [
+        "plugins/agy/.claude-plugin/plugin.json",
+        "plugins/agy/CHANGELOG.md",
+        "plugins/saga/.claude-plugin/plugin.json",
+        "plugins/saga/CHANGELOG.md",
+        "plugins/team-execution/.claude-plugin/plugin.json",
+        "plugins/team-execution/CHANGELOG.md",
+        ".claude-plugin/marketplace.json",
+        "tests/test_saga_plugin.py",
+        "tests/test_agy_plugin.py",
+        "tests/test_team_execution_plugin.py",
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    }
+  ]
+}

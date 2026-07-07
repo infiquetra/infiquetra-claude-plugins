@@ -108,10 +108,24 @@ surfaces; the pin was in S2's source material as "tri-lock" only.
 
 ### S4 — review
 
+Task: adversarially refute the landed `d439bbb` diff (identical diff + standards package both
+lanes). Every returned finding Claude-adjudicated: accept → fixed in-branch, reject → rationale.
+
 | Lane | Status | Disposition (manifest) | Verdict | Rework | Evidence |
 |---|---|---|---|---|---|
-| agy | _pending_ | | | | |
-| ollama-cloud | _pending_ | | | | |
+| agy | ok first try, observer-corroborated; findings cite its clone's real line numbers (proof of genuine repo access) | `drill-468-s4-agy` ran-as-requested | **offloaded-clean** | accept-rate 1 real + 3 defensible of 4; calibrated APPROVE-WITH-NITS verdict | manifest + `evidence/s4-agy.md` |
+| ollama-cloud | ok first try, receipt valid | `drill-468-s4-ollama-cloud` ran-as-requested | **degraded** | accept-rate 1 of 3; 2 fabrications; verdict miscalibrated (REQUEST-CHANGES on a summary-line nit it inflated to P1) | manifest + `evidence/s4-ollama-cloud.md` |
+
+**Step verdict: offloaded-clean.** Both lanes independently converged on the same genuine
+finding — the §5.7 summary line (the chaperone's own consistency touch) still implied
+unconditional artifact-write and routing. **Accepted** and fixed in-branch: 5.7 now splits the
+closing summary by mode. Rejected with rationale: ollama F2 (claimed the no-saga scan-first guard
+vanished — it survives verbatim in the diff context lines; fabricated absence), ollama F3
+("~156-char line" — measured a logical sentence, not a physical line), agy F2–F4 line-length P3s
+(measured correctly at 101–105 chars but against a stricter standard than the file keeps — 81
+pre-existing lines exceed 100; the edit matches the existing wrap distribution). Cross-lane
+convergence on the one real defect is the strongest reviewer signal this drill produced —
+convergent independent review caught what the chaperone's own consistency pass introduced.
 
 ### S5 — PR-preparation
 

@@ -333,8 +333,9 @@ agent, `/work`, or `team-execution` (operator-choice). `/code-review` never appl
 ### 5.7 Hard boundary
 
 `/code-review` reviews, classifies, and routes. It does **NOT** implement fixes, does **NOT** commit,
-does **NOT** push, does **NOT** open or update a PR, and does **NOT** file SDLC issues. Review, write the
-artifact, append the saga tick (interactive mode, if one exists), route — then stop.
+does **NOT** push, does **NOT** open or update a PR, and does **NOT** file SDLC issues. In interactive
+mode: review, write the artifact, append the saga tick (if one exists), route — then stop. In
+programmatic mode: review and return the envelope — the caller owns persistence and routing.
 
 ---
 

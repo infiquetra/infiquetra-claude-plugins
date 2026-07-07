@@ -43,7 +43,9 @@ def delegation_audit() -> ModuleType:
     return _load_module(MODULE_PATH, "delegation_audit_tripwire")
 
 
-def test_codex_bridge_untested_run_classified_false(delegation_audit: ModuleType, tmp_path: Path) -> None:
+def test_codex_bridge_untested_run_classified_false(
+    delegation_audit: ModuleType, tmp_path: Path
+) -> None:
     """R5 codex parity: Claude-finished run, no codex launch, bundle codex_launched=false → flagged.
 
     The transcript shows Claude editing files directly with no codex Bash command; the bundle's
@@ -81,7 +83,9 @@ def test_codex_bridge_untested_run_classified_false(delegation_audit: ModuleType
     run_dir = tmp_path / ".claude" / "codex" / "runs" / "run-untested"
     run_dir.mkdir(parents=True)
     (run_dir / "result.json").write_text(
-        json.dumps({"schema": "codex.result.v1", "status": "codex_unavailable", "codex_launched": False}),
+        json.dumps(
+            {"schema": "codex.result.v1", "status": "codex_unavailable", "codex_launched": False}
+        ),
         encoding="utf-8",
     )
 
@@ -274,3 +278,201 @@ class TestDelegationTripwireHookEdgeMatrix:
             "cwd": str(tmp_path),
         }
         assert _run_main(hook, payload) == 0
+
+
+# ---------------------------------------------------------------------------
+# U4 — Stop/SubagentStop audit (plugins/saga/hooks/delegation_stop_audit_hook.py)
+# ---------------------------------------------------------------------------
+
+STOP_HOOK_PATH = ROOT / "plugins" / "saga" / "hooks" / "delegation_stop_audit_hook.py"
+
+
+@pytest.fixture
+def stop_hook() -> Any:
+    spec = importlib.util.spec_from_file_location("delegation_stop_audit_hook", STOP_HOOK_PATH)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def _write_transcript(path: Path, events: list[dict]) -> None:
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+
+
+def _fallback_transcript(path: Path) -> None:
+    _write_transcript(
+        path,
+        [
+            {"type": "tool_use", "tool_name": "Edit", "input": {"file_path": "foo.py"}},
+            {"type": "tool_use", "tool_name": "Bash", "arguments": {"command": "ls -la"}},
+        ],
+    )
+
+
+def _real_agy_transcript(path: Path) -> None:
+    _write_transcript(
+        path,
+        [
+            {
+                "type": "tool_use",
+                "tool_name": "Bash",
+                "arguments": {"command": "python3 plugins/agy/scripts/agy_delegate.py --task t1"},
+            },
+        ],
+    )
+
+
+def _agy_bundle(root: Path, run_id: str, *, launched: bool) -> None:
+    run_dir = root / ".claude" / "agy" / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {"status": "ok", "agy_launched": launched}
+    if launched:
+        payload["receipt"] = {"schema": "agy.receipt.v1"}
+    (run_dir / "result.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _audit_records(root: Path) -> list[Path]:
+    audits = root / ".claude" / "delegation" / "audits"
+    return sorted(audits.glob("*.json")) if audits.is_dir() else []
+
+
+class TestDelegationStopAuditHookDoD:
+    def test_stop_hook_classifies_fallback_suspected(
+        self, stop_hook: Any, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """R3 DoD: armed turn, transcript shows Claude Edit + no engine command -> exit 2 HALT."""
+        _arm(tmp_path, "agy", "sess-stop-fallback")
+        transcript = tmp_path / "transcript.jsonl"
+        _fallback_transcript(transcript)
+        payload = {
+            "session_id": "sess-stop-fallback",
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+        }
+        assert _run_main(stop_hook, payload) == 2
+        err = capsys.readouterr().err
+        assert "HALT" in err
+        assert "fallback_suspected" in err
+        assert "re-run the delegation" in err
+
+    def test_stop_hook_passes_real_classification(
+        self, stop_hook: Any, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """R3 DoD: armed, genuine engine transcript + corroborating bundle -> exit 0, disarmed."""
+        _arm(tmp_path, "agy", "sess-stop-real", armed_at=time.time() - 5)
+        transcript = tmp_path / "transcript.jsonl"
+        _real_agy_transcript(transcript)
+        _agy_bundle(tmp_path, "run-real", launched=True)
+        payload = {
+            "session_id": "sess-stop-real",
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+        }
+        assert _run_main(stop_hook, payload) == 0
+        assert capsys.readouterr().err == ""
+        # Disarm-on-pass: the next turn starts unarmed.
+        assert _delegation_state.active("sess-stop-real", root=tmp_path) is None
+
+
+class TestDelegationStopAuditHookEdgeMatrix:
+    def test_loop_guard_stop_hook_active_writes_audit_record_and_exits_0(
+        self, stop_hook: Any, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """KTD2 loop guard: stop_hook_active=true + still failing -> audit record + exit 0."""
+        _arm(tmp_path, "agy", "sess-stop-loop")
+        transcript = tmp_path / "transcript.jsonl"
+        _fallback_transcript(transcript)
+        payload = {
+            "session_id": "sess-stop-loop",
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": True,
+        }
+        assert _run_main(stop_hook, payload) == 0
+        err = capsys.readouterr().err
+        assert "LOOP GUARD" in err
+        records = _audit_records(tmp_path)
+        assert records, "loop guard must write an audit record"
+        record = json.loads(records[-1].read_text(encoding="utf-8"))
+        assert record["loop_guard"] is True
+        assert record["verdict"] == "fallback_suspected"
+        assert record["session_id"] == "sess-stop-loop"
+
+    def test_divergence_transcript_real_bundle_launch_false_names_delegation_integrity(
+        self, stop_hook: Any, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """R4: transcript real but bundle launch=false -> exit 2 naming DELEGATION_INTEGRITY."""
+        _arm(tmp_path, "agy", "sess-stop-diverge", armed_at=time.time() - 5)
+        transcript = tmp_path / "transcript.jsonl"
+        _real_agy_transcript(transcript)
+        _agy_bundle(tmp_path, "run-diverge", launched=False)
+        payload = {
+            "session_id": "sess-stop-diverge",
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+        }
+        assert _run_main(stop_hook, payload) == 2
+        assert "DELEGATION_INTEGRITY" in capsys.readouterr().err
+
+    def test_unarmed_turn_never_opens_transcript(
+        self, stop_hook: Any, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Unarmed -> exit 0 without opening the transcript, proven via a nonexistent path.
+
+        Were the transcript touched while armed, the missing-path branch prints a banner;
+        an unarmed turn must produce NO output at all (marker stat first, KTD8).
+        """
+        payload = {
+            "session_id": "sess-stop-unarmed",
+            "cwd": str(tmp_path),
+            "transcript_path": str(tmp_path / "does-not-exist" / "transcript.jsonl"),
+            "stop_hook_active": False,
+        }
+        assert _run_main(stop_hook, payload) == 0
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        assert captured.out == ""
+
+    def test_missing_transcript_while_armed_banners_and_exits_0(
+        self, stop_hook: Any, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Fail-open: armed but transcript path missing -> banner, exit 0, never crash."""
+        _arm(tmp_path, "agy", "sess-stop-no-transcript")
+        payload = {
+            "session_id": "sess-stop-no-transcript",
+            "cwd": str(tmp_path),
+            "transcript_path": str(tmp_path / "missing.jsonl"),
+            "stop_hook_active": False,
+        }
+        assert _run_main(stop_hook, payload) == 0
+        assert "audit skipped" in capsys.readouterr().err
+
+    def test_malformed_stdin_exits_0(self, stop_hook: Any, capsys: pytest.CaptureFixture) -> None:
+        with patch.object(sys, "stdin") as mock_stdin:
+            mock_stdin.read.return_value = "not json"
+            with pytest.raises(SystemExit) as exc_info:
+                stop_hook.main()
+        assert exc_info.value.code == 0
+        assert capsys.readouterr().err == ""
+
+    def test_pass_writes_audit_record(self, stop_hook: Any, tmp_path: Path) -> None:
+        """An audit record is written either way — including the clean pass."""
+        _arm(tmp_path, "agy", "sess-stop-record", armed_at=time.time() - 5)
+        transcript = tmp_path / "transcript.jsonl"
+        _real_agy_transcript(transcript)
+        _agy_bundle(tmp_path, "run-record", launched=True)
+        payload = {
+            "session_id": "sess-stop-record",
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+        }
+        assert _run_main(stop_hook, payload) == 0
+        records = _audit_records(tmp_path)
+        assert records
+        record = json.loads(records[-1].read_text(encoding="utf-8"))
+        assert record["verdict"] == "real"

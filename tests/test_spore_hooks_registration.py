@@ -70,6 +70,32 @@ def test_delegation_tripwire_hook_registered_for_file_tools() -> None:
     )
 
 
+def _all_commands(entries: list[dict]) -> list[str]:
+    """All hook commands under an event, regardless of matcher (Stop entries have none)."""
+    return [h.get("command", "") for e in entries for h in e.get("hooks", [])]
+
+
+def test_delegation_stop_audit_hook_registered_for_stop() -> None:
+    # U4 (#384, R3/KTD8): Stop must run delegation_stop_audit_hook.py (marker-gated).
+    events = _events()
+    assert "Stop" in events, "Stop event not registered"
+    cmds = _all_commands(events["Stop"])
+    assert any("delegation_stop_audit_hook.py" in c for c in cmds), (
+        "Stop not wired to delegation_stop_audit_hook.py"
+    )
+
+
+def test_delegation_stop_audit_hook_registered_for_subagent_stop() -> None:
+    # U4 (#384, KTD8): SubagentStop runs the SAME script — its transcript_path is the
+    # subagent's own transcript, the delegation-bearing one for bridge-agent runs.
+    events = _events()
+    assert "SubagentStop" in events, "SubagentStop event not registered"
+    cmds = _all_commands(events["SubagentStop"])
+    assert any("delegation_stop_audit_hook.py" in c for c in cmds), (
+        "SubagentStop not wired to delegation_stop_audit_hook.py"
+    )
+
+
 def test_validate_json_pretooluse_entry_unchanged() -> None:
     # The pre-existing validate_json entry must be untouched by the new registration.
     events = _events()

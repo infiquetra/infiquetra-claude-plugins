@@ -13,7 +13,9 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 MODULE_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "delegation_audit.py"
-STATE_MODULE_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "delegation_state.py"
+STATE_MODULE_PATH = (
+    ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "delegation_state.py"
+)
 AGY_DELEGATE_PATH = ROOT / "plugins" / "agy" / "scripts" / "agy_delegate.py"
 FIXTURES = ROOT / "tests" / "fixtures" / "delegation"
 
@@ -85,7 +87,9 @@ def test_classify_empty_transcript(delegation_audit: ModuleType) -> None:
     assert result.evidence == []
 
 
-def test_classify_over_byte_cap_uses_capped_prefix(delegation_audit: ModuleType, tmp_path: Path) -> None:
+def test_classify_over_byte_cap_uses_capped_prefix(
+    delegation_audit: ModuleType, tmp_path: Path
+) -> None:
     big = tmp_path / "big.jsonl"
     line = json.dumps({"tool_name": "Read"}) + "\n"
     # Write well past a tiny cap to prove capped streaming doesn't error.
@@ -97,7 +101,9 @@ def test_classify_over_byte_cap_uses_capped_prefix(delegation_audit: ModuleType,
                 {
                     "type": "tool_use",
                     "tool_name": "Bash",
-                    "arguments": {"command": "python3 plugins/agy/scripts/agy_delegate.py --launch-agy"},
+                    "arguments": {
+                        "command": "python3 plugins/agy/scripts/agy_delegate.py --launch-agy"
+                    },
                 }
             )
             + "\n"
@@ -120,18 +126,24 @@ def test_classify_unknown_engine_raises(delegation_audit: ModuleType) -> None:
 # --- corroborate() -----------------------------------------------------------------
 
 
-def test_corroborate_missing_bundle_root_is_unproven(delegation_audit: ModuleType, tmp_path: Path) -> None:
+def test_corroborate_missing_bundle_root_is_unproven(
+    delegation_audit: ModuleType, tmp_path: Path
+) -> None:
     result = delegation_audit.corroborate("agy", since_ts=None, root=tmp_path)
     assert result.launched is False
     assert result.receipt_present is False
     assert result.problems
 
 
-def test_corroborate_agy_launched_true_embedded_receipt(delegation_audit: ModuleType, tmp_path: Path) -> None:
+def test_corroborate_agy_launched_true_embedded_receipt(
+    delegation_audit: ModuleType, tmp_path: Path
+) -> None:
     run_dir = tmp_path / ".claude" / "agy" / "runs" / "run-1"
     run_dir.mkdir(parents=True)
     (run_dir / "result.json").write_text(
-        json.dumps({"status": "success", "agy_launched": True, "receipt": {"schema": "bridge_receipt.v1"}}),
+        json.dumps(
+            {"status": "success", "agy_launched": True, "receipt": {"schema": "bridge_receipt.v1"}}
+        ),
         encoding="utf-8",
     )
     result = delegation_audit.corroborate("agy", since_ts=None, root=tmp_path)
@@ -152,7 +164,9 @@ def test_corroborate_codex_launched_false(delegation_audit: ModuleType, tmp_path
     assert result.receipt_present is False
 
 
-def test_corroborate_corrupt_result_json_never_raises(delegation_audit: ModuleType, tmp_path: Path) -> None:
+def test_corroborate_corrupt_result_json_never_raises(
+    delegation_audit: ModuleType, tmp_path: Path
+) -> None:
     run_dir = tmp_path / ".claude" / "agy" / "runs" / "run-1"
     run_dir.mkdir(parents=True)
     (run_dir / "result.json").write_text("{not valid json", encoding="utf-8")
@@ -161,7 +175,9 @@ def test_corroborate_corrupt_result_json_never_raises(delegation_audit: ModuleTy
     assert result.problems
 
 
-def test_corroborate_missing_result_json_never_raises(delegation_audit: ModuleType, tmp_path: Path) -> None:
+def test_corroborate_missing_result_json_never_raises(
+    delegation_audit: ModuleType, tmp_path: Path
+) -> None:
     run_dir = tmp_path / ".claude" / "agy" / "runs" / "run-1"
     run_dir.mkdir(parents=True)
     result = delegation_audit.corroborate("agy", since_ts=None, root=tmp_path)
@@ -182,13 +198,17 @@ def test_reconcile_real_agrees(delegation_audit: ModuleType) -> None:
 
 def test_reconcile_fallback_suspected_short_circuits(delegation_audit: ModuleType) -> None:
     classification = delegation_audit.classify(FIXTURES / "claude-clone-agy.jsonl", "agy")
-    corroboration = delegation_audit.BundleCorroboration(engine="agy", launched=False, receipt_present=False)
+    corroboration = delegation_audit.BundleCorroboration(
+        engine="agy", launched=False, receipt_present=False
+    )
     assert delegation_audit.reconcile(classification, corroboration, "ok") == "fallback_suspected"
 
 
 def test_reconcile_divergence_flagged_delegation_integrity(delegation_audit: ModuleType) -> None:
     classification = delegation_audit.classify(FIXTURES / "real-agy.jsonl", "agy")
-    corroboration = delegation_audit.BundleCorroboration(engine="agy", launched=False, receipt_present=False)
+    corroboration = delegation_audit.BundleCorroboration(
+        engine="agy", launched=False, receipt_present=False
+    )
     assert delegation_audit.reconcile(classification, corroboration, "ok") == "delegation_integrity"
 
 
@@ -211,7 +231,9 @@ def test_fixture_parity_with_agy_delegate(
     assert fleet_result.claude_file_tool_seen == agy_result.claude_file_tool_seen
 
 
-def test_fixture_parity_original_agy_fixtures(delegation_audit: ModuleType, agy_delegate: ModuleType) -> None:
+def test_fixture_parity_original_agy_fixtures(
+    delegation_audit: ModuleType, agy_delegate: ModuleType
+) -> None:
     original_fixtures = ROOT / "tests" / "fixtures" / "agy" / "transcripts"
     for path in sorted(original_fixtures.glob("*.jsonl")):
         fleet_result = delegation_audit.classify(path, "agy")
@@ -283,7 +305,9 @@ def test_arm_twice_supersedes_in_place(delegation_state: ModuleType, tmp_path: P
     assert len(payload["entries"]) == 1
 
 
-def test_corrupt_marker_json_is_unarmed_fail_open(delegation_state: ModuleType, tmp_path: Path) -> None:
+def test_corrupt_marker_json_is_unarmed_fail_open(
+    delegation_state: ModuleType, tmp_path: Path
+) -> None:
     marker_path = tmp_path / ".claude" / "delegation" / "active.json"
     marker_path.parent.mkdir(parents=True)
     marker_path.write_text("{not valid json", encoding="utf-8")
@@ -292,7 +316,9 @@ def test_corrupt_marker_json_is_unarmed_fail_open(delegation_state: ModuleType, 
     assert delegation_state.active("session-1", root=tmp_path) is None
 
 
-def test_missing_marker_file_is_unarmed_fail_open(delegation_state: ModuleType, tmp_path: Path) -> None:
+def test_missing_marker_file_is_unarmed_fail_open(
+    delegation_state: ModuleType, tmp_path: Path
+) -> None:
     assert delegation_state.active("session-1", root=tmp_path) is None
 
 
@@ -304,9 +330,13 @@ def test_cli_arm_status_disarm_round_trip(tmp_path: Path) -> None:
             text=True,
             check=True,
         )
-        return json.loads(result.stdout)
+        payload = json.loads(result.stdout)
+        assert isinstance(payload, dict)
+        return payload
 
-    armed = run_cli("arm", "--engine", "agy", "--session-id", "cli-session", "--armed-by", "cli-test")
+    armed = run_cli(
+        "arm", "--engine", "agy", "--session-id", "cli-session", "--armed-by", "cli-test"
+    )
     assert armed["engine"] == "agy"
     assert armed["session_id"] == "cli-session"
 

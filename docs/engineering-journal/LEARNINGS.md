@@ -27,6 +27,32 @@
 
 ## 2026-07-07
 
+### A registry recipe is machine-consumed truth — validate it against the live CLI, not memory {#codex-registry-recipe-stale-flag}
+
+**Context.** codex U4 (#476, R5, KTD4): rewiring `plugins/saga/references/engine-registry.yaml`'s
+two codex rows to `codex:delegate` required correcting the `recipe` string alongside the
+`invocation.via` change. The pre-rewire recipe read `codex -s read-only --effort <level> --help`,
+naming a `--effort` flag.
+
+**Evidence.** `codex --help` on the installed 0.142.5 binary has no `--effort` flag at all;
+effort rides `-c model_reasoning_effort=<effort>` (a `-c` config override), verified live
+against the running CLI, not against the registry's prose. `engine-registry.yaml:27,58`
+now carries the corrected recipe and `last_validated: 2026-07-06`.
+
+**Mechanism.** The registry's `recipe` field reads like documentation but is dispatch-adjacent
+data — `build_codex_invocation` (`plugins/saga/scripts/engine_dispatch.py`) and any operator
+copy-pasting the recipe both treat it as executable truth. A stale recipe survives silently
+because nothing exercises it against the real CLI at author time — it only breaks when someone
+runs it, by which point the failure looks like a codex problem, not a registry problem.
+
+**Generalizable rule.** Any registry field that describes how to invoke an external CLI
+(a recipe, a flag list, a command template) is machine-consumed truth, not comment-grade prose —
+validate it against the live CLI's actual `--help` output (or equivalent ground truth) at rewire
+time, every time the registry touches that row, not just when the CLI's behavior is suspected
+to have changed.
+
+**Refs.** `{#codex-first-party-bridge-476}` (DECISIONS), KTD4.
+
 ### Whole-tree kill proofs need a grandchild pid, and live smokes must tolerate ambient MCP dirt {#codex-lifecycle-tree-kill-proof}
 
 **Context.** codex delegate U6 (#476, R7): the lifecycle suite must prove the delegate kills the

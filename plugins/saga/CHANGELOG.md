@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.73.0] - 2026-07-06
+## [0.73.1] - 2026-07-06
 
 ### Retired — `codex:codex-rescue` (openai-codex marketplace plugin) (#476, R6)
 
@@ -14,6 +14,8 @@
   marketplace plugin and the `codex:` namespace-collision note (both plugins claim the
   `codex:` agent prefix; the marketplace copy must be uninstalled before this plugin's
   agents resolve cleanly).
+
+## [0.73.0] - 2026-07-06
 
 ### Added — generic HTTP bridge + bridge_receipt.v1 keystone pair (#387, #383)
 

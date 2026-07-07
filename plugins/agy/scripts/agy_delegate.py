@@ -17,6 +17,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import fleet_commons_shim  # noqa: E402
+
+_bridge_receipt = fleet_commons_shim.load("bridge_receipt")
+
 SCHEMA = "agy.delegation.v1"
 
 ROLES = frozenset({"coder", "reviewer"})
@@ -1381,6 +1387,32 @@ def _decode_timeout_output(value: bytes | str | None) -> str:
     return value
 
 
+def _supervised_receipt(
+    run_result: SupervisedRunResult, *, envelope: Envelope
+) -> dict[str, Any] | None:
+    """Build a ``bridge_receipt.v1`` for a run that actually launched ``agy``.
+
+    Launch-failure paths (``agy`` missing, ``OSError`` on ``Popen``) set
+    ``agy_launched=False`` and never reach here — there is nothing to prove was run, so no
+    receipt is emitted and the result envelope validates without one (KTD6/KTD7).
+    """
+    if not run_result.agy_launched:
+        return None
+    wall_time_s = (run_result.ended_at - run_result.started_at).total_seconds()
+    return _bridge_receipt.emit_receipt(
+        engine_id="agy",
+        variant=envelope.model,
+        transport="cli",
+        wall_time_s=wall_time_s,
+        bytes_produced=run_result.stdout_bytes + run_result.stderr_bytes,
+        runner={
+            "pid": run_result.process_id,
+            "argv": run_result.argv,
+            "exit_code": run_result.return_code,
+        },
+    )
+
+
 def _result_payload(
     *,
     envelope: Envelope,
@@ -1414,6 +1446,9 @@ def _result_payload(
         "checks_path": str(checks_path),
         "summary": summary,
     }
+    receipt = _supervised_receipt(run_result, envelope=envelope)
+    if receipt is not None:
+        payload["receipt"] = receipt
     if run_result.error is not None:
         payload["error"] = run_result.error
     return payload

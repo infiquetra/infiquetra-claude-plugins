@@ -59,7 +59,15 @@ Diff vs main: 27 files, +2598/−16.
 4. Front-loaded ship ceremony (push + draft PR) deferred to the PR-ready boundary — operator
    away; no silent GitHub mutation.
 
+## Code-review gate + round-1 fixes (same day)
+
+Programmatic `/code-review` at `5e41244`: 5 lenses → 7 findings, 7/7 independently validated,
+**no P0/P1** — artifact `docs/code-reviews/2026-07-07-feat-384-delegation-tripwires-code-review.md`.
+Operator routed "fix safe_auto, then PR": F3/F6/F7 fixed in `b11fcf4` (TTL boundary pin, lazy
+auditor load on armed path, shim-absent fail-open tests), gates re-run green (pytest 2547/1
+skipped, ruff, mypy), targeted delta re-review passed (mutation-tested). F1/F4/F5 + suppressed
+hardening → issue #520. F2 validated as documented accepted design (KTD2/KTD4).
+
 ## Next step
 
-Programmatic `/code-review` gate at the branch tip, then PR-ready card + PR-open offer
-(operator confirmation required).
+Push + open PR via ship ceremony (operator-approved); await review on the PR.

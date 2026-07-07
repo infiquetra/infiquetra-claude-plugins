@@ -85,3 +85,19 @@ traverse; below threshold under the harness-trusted model, worth a `Path(...).na
 
 No P0/P1 → PR-ready gate PASSES. safe_auto set (F3, F6, F7) offered for fixer dispatch;
 manual set (F1, F4, F5) routes to operator decision (fix in-branch or follow-up issue).
+
+## Round-1 fix addendum (operator: "Fix safe_auto, then PR")
+
+- **F3 FIXED** — `test_ttl_exact_boundary_still_live` pins strict `>` semantics.
+- **F6 FIXED** — auditor module now loads only on the armed path; docstring corrected.
+- **F7 FIXED** — `TestFleetCoreUnavailableFailOpen` drives the shim-absent fail-open branch in
+  both hooks (armed-with-no-evidence, so the exit-0 assertion genuinely distinguishes fail-open
+  from pass-through).
+- **F1, F4, F5 → issue #520** (delegation tripwires hardening), including the suppressed
+  `session_id` filename-sanitization note. F2 remains accepted design.
+
+Fix commit `b11fcf4` (3 files, +65/−3). Gates re-run green: pytest 2547 passed/1 skipped, ruff
+clean, mypy clean. Staleness refreshed by targeted adversarial delta re-review (readonly
+verifier, worktree, examined SHA `b11fcf4...6860): verdict **pass**, zero regressions — the
+armed-block stderr path is byte-identical, and the TTL test was mutation-tested (`>`→`>=` makes
+it fail). **Effective reviewed SHA: `b11fcf4`.**

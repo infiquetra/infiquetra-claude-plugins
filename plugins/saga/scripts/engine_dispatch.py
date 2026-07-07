@@ -53,7 +53,7 @@ class AdvisoryEvidence:
 
 
 def build_codex_invocation(resolution: Resolution, *, sandbox: Any = None) -> dict[str, Any]:
-    """Build a read-only codex-rescue invocation with a verbatim task payload.
+    """Build a read-only codex:delegate invocation with a verbatim task payload.
 
     codex has no write adapter (#287 KTD4): ``sandbox: "read-only"`` is its only supported posture.
     A sandboxed-mutate unit routed to codex HALTS visibly here rather than silently running

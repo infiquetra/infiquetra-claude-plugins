@@ -28,6 +28,46 @@ python3 plugins/codex/scripts/codex_delegate.py
   the retirement units land, uninstall the `openai-codex` marketplace plugin to avoid a `codex:`
   namespace collision.
 
+## Operator Runbook: Retiring the `openai-codex` Marketplace Plugin
+
+This plugin is the first-party replacement for the upstream `openai-codex` marketplace
+plugin's fleet-dispatch surface (former `codex:codex-rescue` agent and its
+`codex:rescue` / `codex:status` / `codex:result` / `codex:cancel` / `codex:transfer` /
+`codex:review` / `codex:adversarial-review` / `codex:setup` command family). That upstream
+dispatch path is session-scoped: its jobs die when the launching session's process tree is
+reaped, it cannot emit `bridge_receipt.v1` evidence, and reaped jobs stay recorded as
+`running` forever. All in-repo callers (saga's engine registry and `engine_dispatch.py`)
+have been rewired to `codex:delegate` — nothing in this repository dispatches to
+`codex:codex-rescue` any longer.
+
+**`codex:` namespace collision.** Both the `openai-codex` marketplace plugin and this
+first-party `codex` plugin claim the `codex:` agent/command namespace prefix. With both
+installed, agent/command resolution for `codex:*` is ambiguous and may resolve to the
+retired marketplace copy instead of this plugin's `codex-coder` / `codex-reviewer` agents
+and `/codex:delegate` command. **Uninstall the `openai-codex` marketplace plugin before
+relying on this plugin's `codex:` surfaces.**
+
+To uninstall the marketplace copy:
+
+```bash
+/plugin marketplace remove openai-codex   # or your marketplace's equivalent uninstall path
+```
+
+Then verify no `codex:` command other than this plugin's remains:
+
+```bash
+/help | grep '^codex:'
+```
+
+Only `codex:delegate` (this plugin) should be present. If any of the retired
+`codex:rescue` / `codex:status` / `codex:result` / `codex:cancel` / `codex:transfer` /
+`codex:review` / `codex:adversarial-review` / `codex:setup` commands still resolve, the
+marketplace plugin is still installed — repeat the uninstall step.
+
+Cross-repo retirement (removing `openai-codex` from fleet-standard install manifests in
+other repos, e.g. home-lab-ops, infiquetra-context-library) is out of scope for this repo
+and tracked as a separate ops follow-up.
+
 ## Modes
 
 - `read-only`: reviewer default. Runs codex with `-s read-only`; no mutation is permitted.

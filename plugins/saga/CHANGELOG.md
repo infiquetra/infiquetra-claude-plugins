@@ -2,6 +2,19 @@
 
 ## [0.73.0] - 2026-07-06
 
+### Retired — `codex:codex-rescue` (openai-codex marketplace plugin) (#476, R6)
+
+- Every in-repo dispatch reference to the retired `codex:codex-rescue` agent (engine
+  registry rows, `engine_dispatch.py`'s `build_codex_invocation`, engine-dispatch and
+  external-engine-workers reference docs, tests) now points at the first-party
+  `codex:delegate` (`plugins/codex/`). A grep sweep for `codex:codex-rescue` / `codex-rescue`
+  confirms zero live references remain outside historical CHANGELOG and
+  `docs/engineering-journal` entries, which are records and intentionally untouched. See
+  `plugins/codex/README.md`'s operator runbook for uninstalling the `openai-codex`
+  marketplace plugin and the `codex:` namespace-collision note (both plugins claim the
+  `codex:` agent prefix; the marketplace copy must be uninstalled before this plugin's
+  agents resolve cleanly).
+
 ### Added — generic HTTP bridge + bridge_receipt.v1 keystone pair (#387, #383)
 
 - `engine_dispatch.py`'s `_build_invocation` gains a `transport`-keyed branch: `transport: http`

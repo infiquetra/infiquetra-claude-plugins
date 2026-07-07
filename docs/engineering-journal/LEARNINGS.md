@@ -35,15 +35,20 @@
 
 **Evidence.** Workflow logs: `verify panel over U5: 3/3 verifier(s) missing (runtime-failure);
 verdict computed over 0/3 — UNDER-STRENGTH (quorum floor 2)` — identical for U6 and U7. Verifier
-transcripts all report a clean worktree with nothing to verify against.
+transcripts all report a clean worktree with nothing to verify against. Second run
+(`wf_5afd99b3-636`, after the implementation was committed on the work branch): verifiers report
+their worktree HEAD at `9a84311` (main) while the primary tree sat on the branch at `df42a39` —
+two of nine refuted claims against main's code, citing main's line numbers and zero-match greps
+for symbols provably present on the branch.
 
-**Mechanism.** Workers edit the shared working tree but do not commit; a verifier's disposable
-worktree is cut from git HEAD, which contains none of that uncommitted output. So every verifier
-saw a tree without the implementation, returned "nothing to verify" prose instead of a schema
-verdict, and the panel counted all three as runtime failures. The quorum floor correctly labeled
-the panel UNDER-STRENGTH but only as a log line — the run still completed "successfully". Two
-independent assumptions collided: worktree isolation assumes committed state; the worker contract
-assumes the driving session owns commits.
+**Mechanism.** A verifier's disposable worktree is cut from the DEFAULT branch (main), not from
+the driving session's current branch — so uncommitted worker output is invisible (first run), and
+even committed branch work is invisible unless the verifier deliberately materializes the target
+commit (`git checkout <sha> -- .` or `git archive` into scratch, as the compensating verifiers
+did). Verifiers that don't compensate either return "nothing to verify" prose (counted as
+runtime-failure → vacuous pass) or, worse, confidently refute the wrong revision (false kill). The
+quorum floor correctly labeled the first run's panels UNDER-STRENGTH but only as a log line — the
+run still completed "successfully".
 
 **Fix (or queued).** This run: the driving `/work` session committed the tree and re-ran the three
 panels against real commits before PR. Durable fix queued: `{#execution-spec-verifier-visibility}`

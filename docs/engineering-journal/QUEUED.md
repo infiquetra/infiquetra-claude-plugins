@@ -247,13 +247,16 @@ deliberately uncommitted-tree fixture).
 `wf_6f7f3de8-926`) all three refute-3 panels computed their verdict over 0/3 verifiers and the run
 still returned success. See LEARNINGS `{#verify-panels-blind-to-uncommitted-tree}`.
 
-**Context.** Verifiers spawn with `isolation: worktree`, cut from git HEAD; workers leave output
-uncommitted in the shared tree, so panels verify a tree with no implementation in it. Two fixes,
-both needed: (1) give verifiers sight of the unit's output — either the emitter injects the unit's
-diff/result into the verifier prompt, or the workflow commits per unit before the panel spawns
-(interacts with commit-ownership: today the driving session owns commits); (2) treat a panel below
+**Context.** Verifiers spawn with `isolation: worktree`, cut from the DEFAULT branch (main) — not
+the driving session's branch — so panels verify a tree with no implementation in it: uncommitted
+worker output is always invisible, and committed branch work is too unless the verifier manually
+materializes the target commit. Three fixes, all needed: (1) give verifiers sight of the unit's
+output — the emitter injects the unit's diff/result AND the target commit sha + a mandatory
+materialization step (`git checkout <sha> -- .`) into the verifier prompt; (2) treat a panel below
 its quorum floor as a workflow failure (throw/halt), not a `log()` line — a vacuous pass is
-indistinguishable from a real pass in the return value today.
+indistinguishable from a real pass in the return value today; (3) a verifier verdict must carry
+the sha it actually examined, so a false kill against the wrong revision is detectable
+mechanically (two of nine verifiers on `wf_5afd99b3-636` confidently refuted main's code).
 
 ### `execution_spec` emitter: spec-level concurrency cap replacing serialize-by-construction  {#execution-spec-concurrency-cap}
 

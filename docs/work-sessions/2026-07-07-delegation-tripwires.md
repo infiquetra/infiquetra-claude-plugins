@@ -68,6 +68,19 @@ auditor load on armed path, shim-absent fail-open tests), gates re-run green (py
 skipped, ruff, mypy), targeted delta re-review passed (mutation-tested). F1/F4/F5 + suppressed
 hardening → issue #520. F2 validated as documented accepted design (KTD2/KTD4).
 
+## Merge (same day, operator word given)
+
+PR #521 hit CI with Lint red: the CI job runs `ruff format --check .` beside `ruff check .`; the
+local gate had only run the latter. Three workflow-generated files reformatted (`9cff3a0`,
+formatting-only +11/−9), all 12 checks green, then ceremony ran request_review → merge →
+checkout_main → pull → branch_delete. **Merged as `481fffb`.** See LEARNINGS
+`{#local-lint-gate-misses-ruff-format}`.
+
+Post-merge writebacks: board_progression set #384 Done + closed it; outcome
+`external-engine-offload` `link-pr sub-384 → PR #521` (pushed) and `advance --persist`
+harvested sub-384 → **4/20 done**. Saga `issue-384` closed (`status: done`).
+
 ## Next step
 
-Push + open PR via ship ceremony (operator-approved); await review on the PR.
+Thread complete. Outcome continuation: sub-468 (zero-token fire drill, `/resume issue-468`
+handoff exists) is the remaining Wave C leaf; #520 (tripwire hardening) awaits `/plan`.

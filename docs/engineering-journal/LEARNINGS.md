@@ -27,6 +27,20 @@
 
 ## 2026-07-07
 
+### Local lint gate passed while CI's failed — CI runs the ruff pair, the gate ran only half {#local-lint-gate-misses-ruff-format}
+
+**Context.** PR #521 (#384 delegation tripwires) arrived at the merge step with `mergeStateStatus: BLOCKED`: the CI Lint job was red even though the `/work` test gate had reported "ruff clean" twice (initial gates and the round-1 re-run).
+
+**Evidence.** CI run 28879082238 at head `6b90ee1`: `uv run python -m ruff check .` passed, then `uv run python -m ruff format --check .` failed on `delegation_audit.py`, `delegation_state.py`, `tests/test_delegation_tripwire.py` (`.github/workflows/ci.yml` Lint job runs both steps). The local gate ran only `ruff check .` — the pair diverges exactly when new files carry check-clean but format-nonconforming line wrapping.
+
+**Mechanism.** `ruff check` (linter) and `ruff format --check` (formatter) are disjoint gates: the linter's line-length rule tolerates lines the formatter would still rewrap. Workflow-generated code (three files written by `wf_3e667626-303` unit agents) satisfied the linter but not the formatter, so every local "ruff clean" claim was true yet insufficient.
+
+**Fix.** `ruff format` on the three files — formatting-only, +11/−9 (`9cff3a0`); all 12 CI checks green; merged as `481fffb`.
+
+**Generalizable rule.** "Lint gate green" means *the same commands CI runs*, not a plausible subset — read the CI job's steps once and mirror them verbatim in the local gate (here: `ruff check .` AND `ruff format --check .`). Agent-generated code makes the divergence likely, not hypothetical, because agents match the linter contract they were told about, not the formatter's opinions.
+
+**Refs.** CLAUDE.md "Running Quality Checks" (lists only `ruff check`), work-session `docs/work-sessions/2026-07-07-delegation-tripwires.md`.
+
 ### Refute-N panels went vacuous a second way — real verdicts returned as prose are counted as missing verifiers {#panel-verdicts-unparsed-prose}
 
 **Context.** Third `cc-workflows-ultracode` run (#384, `wf_3e667626-303`): the Wave-A branch-materialization patch was applied to all 12 verifier prompts and *worked* — every verifier checked out `feat/384-delegation-tripwires -- .`, quoted the correct per-unit examined SHA, and produced a genuine verdict. The panels still computed `0/3 reporting — UNDER-STRENGTH` on all four units and the run returned success.

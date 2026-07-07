@@ -120,8 +120,9 @@ uv run pytest
 # Run specific test file
 uv run pytest tests/test_deploy_plugin.py -v
 
-# Run linting
+# Run linting (CI runs BOTH — a check-clean tree can still fail the format gate)
 uv run ruff check .
+uv run ruff format --check .
 
 # Run type checking (match CI scope — CI checks plugins/ scripts/ tests/, not just plugins/)
 uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports

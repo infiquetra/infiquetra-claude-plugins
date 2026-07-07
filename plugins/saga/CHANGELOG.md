@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.74.1] - 2026-07-07
+
+### Fixed — code-review: gate Phase 5.4 saga append in programmatic mode (#468, Defect 2)
+
+- `plugins/saga/skills/code-review/SKILL.md`: update Phase 5.4 to skip the saga tick append entirely
+  in programmatic / report-only mode where the caller owns persistence, while keeping the
+  interactive mode behavior and the no-saga scan-first guard unchanged.
+
 ## [0.74.0] - 2026-07-07
 
 ### Added — runtime delegation tripwires: armed PreToolUse block, Stop-hook audit, two-signal acceptance (#384, U3-U5)

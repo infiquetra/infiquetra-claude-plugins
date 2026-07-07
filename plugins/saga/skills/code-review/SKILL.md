@@ -293,11 +293,14 @@ structured findings envelope (CE headless shape — findings grouped by `autofix
 header, `Review complete` as the terminal line) and write **ZERO file writes to reviewed code**; the
 caller owns durable persistence and any downstream routing.
 
-### 5.4 Append the saga tick (only if a saga exists)
+### 5.4 Append the saga tick (only if a saga exists and in interactive mode)
 
-**If and only if** Phase 5.1 found an active work-thread saga, append a tick — reusing its exact `kind`
-and `id`, passing the artifact path to `--review-paths` and the chosen backend to
-`--orchestration-mode`. **OMIT `--lifecycle-phase`** so the existing phase carries forward (verified:
+In **programmatic / report-only** mode, SKIP this step entirely — the caller owns durable persistence
+(the Phase 5.3 contract), and no `docs/code-reviews/` artifact was written for a tick to reference.
+
+In **interactive** mode, **if and only if** Phase 5.1 found an active work-thread saga, append a tick —
+reusing its exact `kind` and `id`, passing the artifact path to `--review-paths` and the chosen backend
+to `--orchestration-mode`. **OMIT `--lifecycle-phase`** so the existing phase carries forward (verified:
 omitting it sends the argparse default `ideation`, which equals the dataclass default, so `saga.py`'s
 `_merge` scalar carry-forward preserves the prior phase — code-review never advances the phase). Never
 `git add` the tick (saga state is git-ignored, machine-local):
@@ -331,7 +334,7 @@ agent, `/work`, or `team-execution` (operator-choice). `/code-review` never appl
 
 `/code-review` reviews, classifies, and routes. It does **NOT** implement fixes, does **NOT** commit,
 does **NOT** push, does **NOT** open or update a PR, and does **NOT** file SDLC issues. Review, write the
-artifact, append the saga tick (if one exists), route — then stop.
+artifact, append the saga tick (interactive mode, if one exists), route — then stop.
 
 ---
 

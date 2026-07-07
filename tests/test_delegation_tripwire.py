@@ -825,3 +825,46 @@ class TestChaperoneIntegrationArc:
         stop_err = capsys.readouterr().err
         assert "HALT" in stop_err
         assert "fallback_suspected" in stop_err
+
+
+class TestFleetCoreUnavailableFailOpen:
+    """Drive the documented 'missing fleet-core shim/module -> fail open' branch directly."""
+
+    @staticmethod
+    def _broken_shim() -> ModuleType:
+        stub = ModuleType("fleet_commons_shim")
+
+        def _raise(_module: str) -> Any:
+            raise RuntimeError("fleet-core unavailable (simulated)")
+
+        stub.load = _raise  # type: ignore[attr-defined]
+        return stub
+
+    def test_tripwire_hook_fails_open_without_fleet_core(
+        self, hook: Any, tmp_path: Path
+    ) -> None:
+        # Armed with no evidence: a working shim would block (exit 2); a broken
+        # shim must fail open (exit 0) rather than crash or block.
+        session_id = "sess-shim-broken"
+        _arm(tmp_path, "agy", session_id)
+        payload = {
+            "tool_name": "Write",
+            "session_id": session_id,
+            "cwd": str(tmp_path),
+        }
+        with patch.dict(sys.modules, {"fleet_commons_shim": self._broken_shim()}):
+            assert _run_main(hook, payload) == 0
+
+    def test_stop_hook_fails_open_without_fleet_core(
+        self, stop_hook: Any, tmp_path: Path
+    ) -> None:
+        session_id = "sess-shim-broken-stop"
+        _arm(tmp_path, "agy", session_id)
+        payload = {
+            "session_id": session_id,
+            "cwd": str(tmp_path),
+            "transcript_path": str(tmp_path / "missing-transcript.jsonl"),
+            "stop_hook_active": False,
+        }
+        with patch.dict(sys.modules, {"fleet_commons_shim": self._broken_shim()}):
+            assert _run_main(stop_hook, payload) == 0

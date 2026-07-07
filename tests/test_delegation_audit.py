@@ -349,3 +349,19 @@ def test_cli_arm_status_disarm_round_trip(tmp_path: Path) -> None:
 
     final_status = run_cli("status", "--session-id", "cli-session")
     assert final_status["armed"] is False
+
+
+def test_ttl_exact_boundary_still_live(delegation_state: ModuleType, tmp_path: Path) -> None:
+    """Pin the strict `>` staleness comparison: age == TTL is still live, age == TTL+1 is not."""
+    now = 1_000_000.0
+    delegation_state.arm("agy", "session-boundary", "engine_dispatch", root=tmp_path, now=now)
+
+    at_boundary = delegation_state.active(
+        "session-boundary", root=tmp_path, now=now + delegation_state.DEFAULT_TTL_SECONDS
+    )
+    assert at_boundary is not None
+
+    past_boundary = delegation_state.active(
+        "session-boundary", root=tmp_path, now=now + delegation_state.DEFAULT_TTL_SECONDS + 1
+    )
+    assert past_boundary is None

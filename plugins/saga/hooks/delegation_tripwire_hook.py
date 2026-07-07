@@ -4,7 +4,8 @@ PreToolUse hook: block file-tool calls during an unproven armed delegation (#384
 
 Fires on ``Write``/``Edit``/``MultiEdit``/``NotebookEdit``. Reads the delegation liveness
 marker (fleet-core ``delegation_state.active(session_id)``) written by the dispatch layer
-(KTD4): unarmed sessions see zero behavior change, zero further I/O. When armed, this hook
+(KTD4): unarmed sessions see zero behavior change beyond one marker read — the auditor
+module is loaded only when armed. When armed, this hook
 is the runtime half of the zero-engine-call tripwire — Claude cannot silently do the file
 work itself while a delegation is supposedly in flight (KTD3's file-tool vocabulary matches
 the transcript classifier's own).
@@ -93,7 +94,6 @@ def main() -> None:
         import fleet_commons_shim  # noqa: PLC0415
 
         delegation_state = fleet_commons_shim.load("delegation_state")
-        delegation_audit = fleet_commons_shim.load("delegation_audit")
     except Exception:
         # fleet-core unavailable — fail open (never block on a missing dependency).
         sys.exit(0)
@@ -105,10 +105,13 @@ def main() -> None:
         sys.exit(0)
 
     if entry is None:
-        # Unarmed — zero behavior change, zero further I/O.
+        # Unarmed — zero behavior change; the auditor module is never loaded.
         sys.exit(0)
 
     try:
+        # Loaded here, not at the top: the unarmed fast path must not pay for the
+        # auditor module.
+        delegation_audit = fleet_commons_shim.load("delegation_audit")
         engine_config = delegation_audit.ENGINE_CONFIGS.get(entry.engine)
     except Exception:
         sys.exit(0)

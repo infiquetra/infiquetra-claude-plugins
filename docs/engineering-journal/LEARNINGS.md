@@ -27,6 +27,52 @@
 
 ## 2026-07-07
 
+### `ship_ceremony.py run` is a one-step-per-call mutation ledger — the tier label does not gate it {#ship-ceremony-run-does-not-self-gate}
+
+**Context.** During #390 scaffold, `/work` wanted the front-loaded draft PR and called
+`ship_ceremony.py run` in a three-iteration loop expecting the ceremony to stop at a draft-PR
+boundary.
+**Evidence.** PR #525 (scaffold docs only) merged to main as `2d35f36` on 2026-07-07 without the
+operator's word — the loop stepped `commit` → `push` → `open_pr` → `request_review` → `merge` in
+order; `gh pr view 525` showed `state: MERGED` while the session believed it was still opening a
+draft.
+**Mechanism.** `run` executes the NEXT unrun transition of a fixed linear ledger, one per call,
+unconditionally. `tier=always_operator` on a transition documents *who may invoke it*; nothing in
+the CLI enforces it — the caller is the gate. The front-load affordance is the separate `start`
+subcommand (push + draft PR), not repeated `run` calls.
+**Fix (or queued).** Operator accepted the breach (docs-only, main-bound content); branch reset
+onto merged main. Hardening follow-up issue filed: gated transitions should require an explicit
+operator-confirm flag and refuse a bare `run`.
+**What surprised.** The first call answered `ran transition 'commit'` — a shape mismatch with the
+expected draft-PR step — and the loop kept going anyway instead of stopping to reconcile.
+**Generalizable rule.** Never loop a stateful one-step-per-call mutation CLI; and when a tool's
+first response contradicts your model of what it does, stop and reconcile before invoking it
+again — a documented authority tier is not an enforced gate unless code checks it.
+**Refs.** `{#no-silent-claude-fallback-390}` (DECISIONS) — the same producer-without-consumer
+shape #390 itself closes; `docs/work-sessions/2026-07-07-no-silent-claude-fallback.md`.
+
+### Verify panels count structured verdicts — prose-returning verifiers empty the panel silently {#verify-panel-prose-verdicts-vacuous-aggregation}
+
+**Context.** The #390 workflow (`wf_ada4ca97-365`) ran refute-3 panels on U1/U2/U5/U6; all 12
+verifiers completed with substantive verdicts (branch materialized, examined SHAs quoted, zero
+refutations).
+**Evidence.** Workflow logs: every panel reported "3/3 verifier(s) missing (runtime-failure) —
+verdict computed over 0/3, UNDER-STRENGTH" while the per-agent results held full prose verdicts;
+journal `wf_ada4ca97-365/journal.jsonl` shows all 12 returns are non-JSON strings.
+**Mechanism.** The emitter's verifier `agent()` calls carry the verdict shape only as prompt
+prose — no `schema` option — so verifiers may return markdown; the panel aggregation counts a
+reporter only when `Array.isArray(v.refuted)`, so every prose verdict is classified
+runtime-missing. The aggregation correctly logged under-strength rather than passing silently,
+but the refute-N automation was vacuous; Claude adjudicated the prose verdicts manually.
+**Fix (or queued).** Follow-up issue filed: emit verifier calls with a structured-output schema so
+the return shape is enforced at the tool boundary, not hoped for in prose. (#390 U6's attribution
+fields land in that same schema.)
+**Generalizable rule.** Any automated aggregation over agent returns must enforce the return
+shape at the boundary (schema-forced output); a prompt-requested format is a request, not a
+contract.
+**Refs.** `docs/code-reviews/2026-07-07-fix-390-no-silent-claude-fallback-code-review.md`;
+`{#unit-panels-vs-whole-diff-lenses-476}`.
+
 ### $0-lane engines fail at the margins, and a receipt proves launch, not output {#zero-token-drill-marginal-fabrication}
 
 **Context.** The #468 zero-token fire drill ran one real lifecycle loop (spec → plan → implement →

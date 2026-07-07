@@ -27,6 +27,37 @@
 
 ## 2026-07-07
 
+### Whole-tree kill proofs need a grandchild pid, and live smokes must tolerate ambient MCP dirt {#codex-lifecycle-tree-kill-proof}
+
+**Context.** codex delegate U6 (#476, R7): the lifecycle suite must prove the delegate kills the
+*entire* codex process tree on timeout/SIGTERM, not just its direct child, and must include an
+availability-gated live `codex exec` round-trip.
+
+**Evidence.** `tests/test_codex_delegate_lifecycle.py` — the fake codex spawns its own child and
+writes both pids to a pidfile; the test polls the grandchild's pid directly. Red proof: a broken
+delegate variant with `_kill_process_tree` replaced by direct `process.kill()` fails exactly on
+the grandchild-survival assertion ("fake codex's CHILD survived the timeout kill") while every
+direct-child-only assertion stays green. Live smoke: real `codex exec` in a fresh tmp git repo
+came back `out_of_scope_mutation` with `new_paths: [".serena/"]` — locally-configured codex MCP
+tooling wrote state into the repo under review.
+
+**Mechanism.** A test that asserts only "the launched pid is dead" is vacuously green under a
+child-only kill because `Popen.kill()` reaches argv[0] fine — only a process the *delegate never
+knew about* (the fake bin's own child, sharing the session group) distinguishes `killpg` from
+`kill`. And a live smoke that pins `status == "success"` couples the test to whatever ambient
+agent tooling the operator's codex config runs; the diff-scan flagging `.serena/` is the scanner
+working, not the delegate failing.
+
+**Generalizable rule.** (1) To prove tree-kill semantics, the fixture must fork a grandchild the
+supervisor cannot see and the test must poll that pid — then demonstrate red against a
+kill-direct-child-only mutant before trusting the green. (2) Availability-gated live smokes
+should assert the *bridge contract* (receipt + transcript + last message + terminal status),
+never a single happy status, because live environments carry side-effecting tooling the hermetic
+tests deliberately exclude.
+
+**Refs.** `{#codex-diff-scan-snapshot-relative}` (the scan that caught `.serena/`); Ollama smoke
+posture in `tests/test_engine_bridge_http.py`.
+
 ### A non-mutation diff-scan must be snapshot-relative, and must exclude its own evidence dir {#codex-diff-scan-snapshot-relative}
 
 **Context.** codex delegate U3 (#476): the reviewer (read-only) surface must prove codex did not

@@ -728,3 +728,100 @@ class TestTwoSignalAcceptanceMatrix:
         assert persisted["disposition"] == "delegation-integrity"
         round_tripped = _PM.Manifest.from_dict(persisted)
         assert round_tripped.disposition is _PM.Disposition.DELEGATION_INTEGRITY
+
+
+# ---------------------------------------------------------------------------
+# U6 -- cross-mechanism integration scenarios (arm -> PreToolUse -> Stop) that
+# no single unit's tests prove: the *same* armed session is walked through both
+# hooks in sequence, in a scratch repo, exactly as a real turn would.
+# ---------------------------------------------------------------------------
+
+
+class TestChaperoneIntegrationArc:
+    def test_full_genuine_arc_pretooluse_passes_then_stop_disarms(
+        self, hook: Any, stop_hook: Any, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Full arc: arm -> fake genuine bundle (prompt.txt + result.json launch=true +
+        receipt) -> PreToolUse hook passes (exit 0) -> Stop hook passes and disarms
+        (exit 0). No single unit test drives both hooks off one armed session."""
+        session_id = "sess-u6-genuine"
+        armed_at = time.time() - 5
+        _arm(tmp_path, "agy", session_id, armed_at=armed_at)
+
+        # Genuine engine evidence: prompt.txt with mtime >= armed_at (R2), plus a
+        # corroborating result.json bundle with the receipt the Stop-hook auditor
+        # will reconcile against the transcript.
+        run_dir = tmp_path / ".claude" / "agy" / "runs" / "run-u6-genuine"
+        run_dir.mkdir(parents=True)
+        prompt = run_dir / "prompt.txt"
+        prompt.write_text("do delegated thing", encoding="utf-8")
+        import os
+
+        os.utime(prompt, (armed_at + 1, armed_at + 1))
+        _agy_bundle(tmp_path, "run-u6-genuine", launched=True)
+
+        # PreToolUse: Claude tries to Write mid-turn while armed -- must pass
+        # because genuine engine evidence (prompt.txt newer than armed_at) exists.
+        pretool_payload = {
+            "tool_name": "Write",
+            "tool_input": {"file_path": "foo.py", "content": "x"},
+            "session_id": session_id,
+            "cwd": str(tmp_path),
+        }
+        assert _run_main(hook, pretool_payload) == 0
+        assert capsys.readouterr().err == ""
+
+        # Stop: transcript shows the genuine engine invocation, bundle corroborates
+        # launch=true -- verdict is "real", hook passes and disarms the session.
+        transcript = tmp_path / "transcript.jsonl"
+        _real_agy_transcript(transcript)
+        stop_payload = {
+            "session_id": session_id,
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+        }
+        assert _run_main(stop_hook, stop_payload) == 0
+        assert capsys.readouterr().err == ""
+        assert _delegation_state.active(session_id, root=tmp_path) is None
+
+    def test_full_zero_engine_call_arc_pretooluse_blocks_then_stop_halts(
+        self, hook: Any, stop_hook: Any, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Full arc: arm -> no bundle at all -> PreToolUse blocks (exit 2) ->
+        Stop hook, invoked as if the block were bypassed (Claude wrote the file
+        anyway, no engine ever ran), still hard-HALTs at turn end (exit 2). Proves
+        the two enforcement points are independent, redundant defenses around the
+        same armed-unproven state -- not just one hook covering for the other."""
+        session_id = "sess-u6-zero-call"
+        _arm(tmp_path, "agy", session_id)
+
+        # No bundle evidence anywhere under the engine's bundle root.
+        assert not (tmp_path / ".claude" / "agy" / "runs").exists()
+
+        pretool_payload = {
+            "tool_name": "Write",
+            "tool_input": {"file_path": "foo.py", "content": "x"},
+            "session_id": session_id,
+            "cwd": str(tmp_path),
+        }
+        assert _run_main(hook, pretool_payload) == 2
+        pretool_err = capsys.readouterr().err
+        assert pretool_err != ""
+
+        # Simulate the PreToolUse block being bypassed (e.g. an out-of-band write):
+        # the turn still ends with Claude having done the file-tool work itself
+        # and no engine command ever invoked -- Stop-hook classification must
+        # still catch this independently and HALT.
+        transcript = tmp_path / "transcript.jsonl"
+        _fallback_transcript(transcript)
+        stop_payload = {
+            "session_id": session_id,
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+        }
+        assert _run_main(stop_hook, stop_payload) == 2
+        stop_err = capsys.readouterr().err
+        assert "HALT" in stop_err
+        assert "fallback_suspected" in stop_err

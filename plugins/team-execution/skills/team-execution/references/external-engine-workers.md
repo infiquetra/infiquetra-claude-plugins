@@ -182,3 +182,44 @@ the one the operator approved in the tier table. This is the only reachable subs
 Tier and `claim_provenance` guidance for the resulting manifest are unchanged from
 `worker-manifest.md`'s existing "Tier" and "Claim provenance" sections — this contract only adds
 the `kind=external-engine` attribution leg those sections already reserved space for.
+
+## 5a. Runtime tripwire contract (#384) — the chaperone's obligations, not new team-execution code
+
+The mechanics in §§1-5 above are now backed by always-on runtime enforcement living in
+`saga`/`fleet-core` (`{#external-engine-chaperone-dispatch}` (#318)). This is documentation of
+that existing contract, not a change to team-execution's own code — no chaperone behavior in this
+plugin changes; the enforcement already runs underneath every dispatch a chaperone makes through
+`engine_dispatch.dispatch()`.
+
+1. **Arm before you dispatch.** Before invoking an external engine, the chaperone (via
+   `engine_dispatch.dispatch(..., gated=True, session_id=..., workspace_root=...)`) arms the
+   delegation-liveness marker through the `delegation_state` CLI/API
+   (`plugins/fleet-core/scripts/fleet_commons/delegation_state.py`) for the duration of the
+   engine run, and disarms it in a `finally` once the run completes — win, lose, or raise. A
+   chaperone that calls `dispatch()` with `gated=True` gets this for free; there is no separate
+   arm/disarm call for the chaperone to make itself.
+2. **Two-signal acceptance, not one.** While armed, a `Write`/`Edit`/`MultiEdit`/`NotebookEdit`
+   tool call with no evidenced genuine engine invocation is blocked at the tool-call boundary
+   (PreToolUse tripwire, exit 2) and, at turn end, the transcript is classified against the
+   engine's bundle evidence (Stop/SubagentStop audit). A dispatched unit is accepted only when
+   **both** signals agree: Claude's own self-report AND independent observer corroboration
+   (schema-valid receipt + bundle launch flag `true`). Neither signal adjudicates alone — the
+   `verified_by_claude` bit that satisfied gates before #384 is no longer sufficient by itself
+   for a gated dispatch.
+3. **Disagreement re-queues once, then HALTs.** When the two signals diverge, the chaperone does
+   not get to choose which one to believe. `dispatch()` returns a re-queue disposition on the
+   first divergence for a given session; the chaperone may re-dispatch that unit at most once.
+   A second consecutive divergence raises a hard `DispatchError` and the chaperone HALTs on that
+   unit exactly as it does for any other blocked-worker halt path (§2's halt paths) — it does not
+   retry further, silently fall back, or manifest the unit as accepted.
+4. **`DELEGATION_INTEGRITY` names the failure.** Whenever a HALT originates from this two-signal
+   disagreement rather than an ordinary substitution/fallback, the halt reason surfaced to the
+   coordinator names it explicitly as `DELEGATION_INTEGRITY` (the same disposition name
+   `provenance_manifest.Disposition.DELEGATION_INTEGRITY` records on the manifest). A chaperone
+   relaying a halt upward must not paraphrase this away — the coordinator and any operator
+   reading the halt need to see the literal `DELEGATION_INTEGRITY` string to distinguish "the two
+   signals disagreed" from an ordinary engine failure or substitution.
+
+No behavior in team-execution's own dispatch, consensus, or validator-cap code changes as a
+result of this section — it is documentation of mechanics saga/fleet-core already enforce
+underneath every chaperone dispatch call.

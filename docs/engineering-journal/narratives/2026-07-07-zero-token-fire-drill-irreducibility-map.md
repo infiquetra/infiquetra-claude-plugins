@@ -56,10 +56,19 @@ losing output.
 
 ### S1 — spec-framing
 
+Task: write the issue-shaped defect spec for the `/code-review` Defect 2 fix from the QUEUED
+entry + SKILL 5.3/5.4 excerpts (identical context package both lanes; sources inline).
+
 | Lane | Status | Disposition (manifest) | Verdict | Rework | Evidence |
 |---|---|---|---|---|---|
-| agy | _pending_ | | | | |
-| ollama-cloud | _pending_ | | | | |
+| agy | attempt 1 false-positive `success` with **0 output bytes** (OBS-2); attempt 2 ok, observer-corroborated | `drill-468-s1-agy` ran-as-requested (+ preserved `drill-468-s1-agy-attempt1`) | **degraded** (second dispatch needed, KTD3; attempt-2 content itself clean at ~6% rework) | ~6% (2/33 lines: temper "unconditionally" per plan F5; priority label) | manifests + bundles `drill-468-s1-agy-190129` (failed), `-190558` (good) |
+| ollama-cloud | ok first try — **first-ever live dispatch on this lane**, schema-valid `bridge_receipt.v1`, 34s-class latency | `drill-468-s1-ollama-cloud` ran-as-requested | **degraded** (substantive factual repairs) | ~14% (5/36 lines: priority "high" vs source's "not urgent"; invented "causes failed runs" consequence; wrong `marketplace.json` path; inapplicable automated-test AC) | manifest + `evidence/s1-ollama-cloud.md` |
+
+**Step verdict: degraded** (both lanes usable after Claude repair; neither clean). Adjudicated
+working spec = agy attempt-2 text with the two trivial repairs (P2 priority restored,
+"unconditionally" tempered to "with no mode gate"). Notable: agy alone carried the
+`--lifecycle-phase` carry-forward subtlety into its acceptance criteria and got the root-level
+`.claude-plugin/marketplace.json` path right; ollama-cloud misplaced it under `plugins/saga/`.
 
 ### S2 — plan authoring
 
@@ -96,4 +105,24 @@ revisit-when condition (AC3)._
 
 ## Tripwire machinery observations (#384, first real exercise)
 
-_Filled as observed: arming behavior, stop-audit records, corroboration outcomes._
+**OBS-2 — wrapper false-positive: `success` + corroborating receipt on a zero-output run.**
+S1/agy attempt 1: a transient 503 on agy's `loadCodeAssist` left the model table empty at flag
+resolution ("model Gemini 3.5 Flash (High) is not recognized" — the string is still valid,
+`agy models` lists it), the executor failed to construct, and agy exited cleanly having produced
+nothing. `agy_delegate` mapped that to `status=success`, `agy_launched=true`, and emitted a
+schema-valid receipt with **`bytes_produced: 0`** — so `dispatch()` returned
+`observer_corroborated=true` and the manifest said `ran-as-requested` for a run that produced no
+output. The tell was IN the receipt (`bytes_produced: 0`); corroboration checks only launch flag +
+schema validity. Follow-up candidates (out of scope, R5): wrapper maps executor-construction
+failure to a failure status; observer treats `bytes_produced == 0` as observer-NO for
+prose-deliverable dispatches. Preserved evidence: manifest `drill-468-s1-agy-attempt1`, bundle
+`drill-468-s1-agy-190129` (`agy.log` lines 97–131).
+
+**OBS-3 — delegation markers are per-session, so lanes must serialize.** `delegation_state.arm()`
+keys the liveness marker by session (disarm takes only `session_id`); dispatching both lanes
+concurrently from one chaperone session would race arm/disarm and corrupt the audit window. The
+drill serialized every lane pair. Same shape as #520 F4 (marker locking).
+
+**OBS-4 — arming worked on both lanes.** `session_id` arming succeeded for `agy` and for
+`ollama-cloud` (no `tripwire_unarmed` note on any manifest); `dispatch()` disarmed in its
+`finally` every time — no stuck marker, chaperone never write-blocked.

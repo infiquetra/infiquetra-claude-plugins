@@ -1,0 +1,2 @@
+{"type":"tool_use","tool_name":"Bash","arguments":{"command":"python3 plugins/codex/scripts/codex_delegate.py --launch-codex --codex-bin /Users/jefcox/.local/bin/codex --envelope /tmp/envelope.json"}}
+{"type":"tool_result","tool_name":"Bash","content":"Status: success\nBundle: /tmp/repo/.claude/codex/runs/live\n"}

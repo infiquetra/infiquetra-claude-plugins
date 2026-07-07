@@ -4,6 +4,17 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.12.3] - 2026-07-07
+
+### Changed — chaperone contract documents runtime two-signal acceptance + re-queue-once rule (#384, U6)
+
+- `skills/team-execution/references/external-engine-workers.md` §5: documents the additive
+  chaperone step — arm via saga's fleet-core-backed `arm`/`disarm`/`status` CLI before dispatch,
+  accept a delegation only on two-signal agreement (engine self-report AND independent observer
+  corroboration), one re-queue on disagreement then HALT, with `DELEGATION_INTEGRITY` named in
+  the halt reason. Documentation-only — no team-execution code changes; the protocol's mechanics
+  are enforced entirely on saga's side (dispatch layer + hooks).
+
 ## [2.12.2] - 2026-07-06
 
 ### Changed — pointer update to codex first-party bridge (#476, R6)

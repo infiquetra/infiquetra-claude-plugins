@@ -258,6 +258,15 @@ indistinguishable from a real pass in the return value today; (3) a verifier ver
 the sha it actually examined, so a false kill against the wrong revision is detectable
 mechanically (two of nine verifiers on `wf_5afd99b3-636` confidently refuted main's code).
 
+**Update (2026-07-07, #384 `wf_3e667626-303`).** A fourth fix joined the list: (4) verdict
+*transport* — emit verifier `agent()` calls with a `schema` option so the runtime validates and
+retries the structured verdict. On this run fixes (1) and (3) were applied as a post-emit prompt
+patch and worked (all 12 verifiers materialized the branch and quoted correct SHAs), yet all four
+panels still computed `0/3 reporting`: the panel arithmetic dereferences `.refuted` on the raw
+`agent()` return value, which is a prose string without a schema. See LEARNINGS
+`{#panel-verdicts-unparsed-prose}`. Fix (2) remains the backstop that would have turned this
+vacuous pass into a visible failure.
+
 ### `execution_spec` emitter: spec-level concurrency cap replacing serialize-by-construction  {#execution-spec-concurrency-cap}
 
 **Priority.** P2.

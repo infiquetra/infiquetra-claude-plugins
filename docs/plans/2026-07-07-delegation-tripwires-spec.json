@@ -1,0 +1,193 @@
+{
+  "name": "delegation-tripwires",
+  "description": "Issue #384: runtime delegation tripwires — engine-parametrized fleet-core auditor (agy's classify_transcript untouched, fixture-parity pinned), arm/disarm delegation-state protocol, saga PreToolUse block hook (Write|Edit|MultiEdit|NotebookEdit, armed-unproven only, fail-open), saga Stop/SubagentStop audit hook (hard-block exit 2, stop_hook_active loop guard), dispatch-layer two-signal acceptance with DELEGATION_INTEGRITY disposition and re-queue-once-then-HALT, chaperone contract doc, release surfaces across fleet-core/saga/team-execution. SERIALIZED unit chain (every unit depends_on its predecessor) deliberately: operator rate-limit cap is max 3 concurrent non-haiku agents; the only parallelism is the n=3 verify panels on U1/U3/U4/U5, so peak concurrency is exactly 3 by construction (precedent: #476 and http-bridge-receipt-pair specs). Serialization also prevents concurrent edits to plugins/saga/hooks/hooks.json (U3/U4) and tests/test_delegation_tripwire.py (U3/U4/U5/U6). WAVE-A GUARDRAIL (journal {#verify-panels-blind-to-uncommitted-tree}): every worker commits its completed unit on the branch so verify-panel worktrees (cut from main) can materialize committed state; verifier prompts must include mandatory branch materialization (git checkout <branch> -- .) + examined-sha quoting — verify the emitter includes this or patch post-emit.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "fleet-core delegation_audit.py — engine-parametrized classifier + corroborator",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U1: Create plugins/fleet-core/scripts/fleet_commons/delegation_audit.py — the engine-parametrized transcript classifier + bundle corroborator every tripwire consumes. classify(transcript_path, engine) generalizes the scan at plugins/agy/scripts/agy_delegate.py:995-1021 (engine Bash-command seen vs Claude file-tool seen; vocabulary real|fallback_suspected; per-line evidence) with per-engine config rows {command_re, bundle_root, launch_key} for agy (.claude/agy/runs, agy_launched) and codex (.claude/codex/runs, codex_launched); claude-file-tool set is Write|Edit|MultiEdit|NotebookEdit; stream lines with an 8 MiB byte cap, never read_text a whole transcript. corroborate(engine, since_ts) reads result.json launch flags + bridge-receipt.json presence under the bundle root — data contract only, NO cross-plugin code import. reconcile(classification, corroboration, self_report) returns real|fallback_suspected|delegation_integrity. HARD CONSTRAINT (R7): plugins/agy/scripts/agy_delegate.py is NOT modified — add a fixture-parity test that runs every fixture transcript through BOTH classify(engine='agy') and agy_delegate.classify_transcript (importlib-load it like plugins/agy/scripts/audit_harness_transcript.py:20 does) and asserts identical classification + seen-flags. Fixtures under tests/fixtures/delegation/. Tests in tests/test_delegation_audit.py, PLUS the DoD-named test_codex_bridge_untested_run_classified_false in tests/test_delegation_tripwire.py (create the file): Claude-finished run, no codex launch, bundle codex_launched=false → flagged. Read the plan at docs/plans/2026-07-07-delegation-tripwires-plan.md (U1, R4/R5/R7, KTD5/KTD8) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/delegation_audit.py",
+        "tests/test_delegation_audit.py",
+        "tests/test_delegation_tripwire.py",
+        "tests/fixtures/delegation/"
+      ]
+    },
+    {
+      "unit_id": "U2",
+      "label": "fleet-core delegation_state.py — arm/disarm marker protocol + CLI",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U2: Create plugins/fleet-core/scripts/fleet_commons/delegation_state.py — the liveness channel (KTD4). arm(engine, session_id, armed_by) / disarm(...) / active(session_id) over .claude/delegation/active.json: atomic tmp+rename writes (mirror codex_delegate's _write_json), entries {engine, session_id, armed_at, armed_by}, arm-twice supersedes in place, reads ignore AND reap entries older than a 4h TTL constant. CLI verbs arm/disarm/status (argparse, same style as sibling fleet-core scripts). FAIL-OPEN CONTRACT: active() NEVER raises — corrupt/missing/unreadable marker file is treated as unarmed (hooks depend on this); arm() MAY raise for the dispatcher (read-only fs). Extend tests/test_delegation_audit.py: arm→status→disarm round trip, stale-TTL invisibility + reap, two concurrent sessions isolated, arm-twice supersession, corrupt-JSON unarmed fail-open, CLI round trip via subprocess. Read the plan at docs/plans/2026-07-07-delegation-tripwires-plan.md (U2, R1/R2/R8, KTD4) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines).",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/delegation_state.py",
+        "tests/test_delegation_audit.py"
+      ]
+    },
+    {
+      "unit_id": "U3",
+      "label": "saga PreToolUse delegation tripwire hook + registration",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U3: Create plugins/saga/hooks/delegation_tripwire_hook.py and register it in plugins/saga/hooks/hooks.json under PreToolUse with matcher Write|Edit|MultiEdit|NotebookEdit (a NEW entry beside the existing validate_json entry — do not touch existing entries). Contract copied from plugins/saga/hooks/pre_push_gate_hook.py EXACTLY: stdin JSON tool_name/tool_input, block = exit 2 + stderr (name the armed engine, the expected evidence path, and the arm/disarm CLI), every other path silent exit 0, every error path fail-open exit 0 (malformed stdin, unreadable marker, missing bundle roots). Logic: marker check FIRST via delegation_state.active(session_id) (unarmed → exit 0 with zero further I/O); armed → evidence check per KTD5: any run dir under the armed engine's bundle_root containing prompt.txt with mtime >= armed_at passes; no such evidence → exit 2. Load fleet-core modules via saga's vendored fleet_commons_shim (insert ../scripts on sys.path relative to the hook file); if the shim or fleet-core module is unavailable, fail open. Tests: DoD-named test_zero_engine_call_write_blocks and test_genuine_agy_run_passes in tests/test_delegation_tripwire.py plus the edge matrix (unarmed no-marker exit 0, stale-TTL exit 0, evidence older than armed_at blocked, each of Edit/MultiEdit/NotebookEdit blocked when armed-unproven) using the repo hook-test convention (importlib spec_from_file_location + stdin-mocked main). Extend tests/test_spore_hooks_registration.py for the new hooks.json entry. Read the plan at docs/plans/2026-07-07-delegation-tripwires-plan.md (U3, R1/R2, KTD3/KTD4/KTD5) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/saga/hooks/delegation_tripwire_hook.py",
+        "plugins/saga/hooks/hooks.json",
+        "tests/test_delegation_tripwire.py",
+        "tests/test_spore_hooks_registration.py"
+      ]
+    },
+    {
+      "unit_id": "U4",
+      "label": "saga Stop/SubagentStop audit hook + registration",
+      "tier": {
+        "model": "fable",
+        "effort": "xhigh"
+      },
+      "worth_it_because": "the most novel surface in the plan: no Stop-hook precedent exists anywhere in this repo, the hook hard-blocks turn completion fleet-wide (a loop-guard defect means an infinite block or a silent bypass — both operator-facing), and the transcript-vs-bundle reconciliation is the observer half of the two-signal guarantee this issue exists for; operator-bumped from opus/high to fable/xhigh at plan approval (2026-07-07)",
+      "cheaper_fallback": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U4: Create plugins/saga/hooks/delegation_stop_audit_hook.py and register it in plugins/saga/hooks/hooks.json under BOTH Stop and SubagentStop (verified contract: input carries transcript_path + stop_hook_active, SubagentStop adds agent_id/agent_type and its transcript_path IS the subagent's own; exit 2 + stderr blocks the stop and feeds the reason to Claude). Logic: marker stat FIRST (unarmed → exit 0 without opening the transcript); armed → delegation_audit.classify (8 MiB streaming cap) + corroborate + reconcile. Clean real+corroborated pass → disarm + exit 0. fallback_suspected OR transcript-vs-bundle divergence → HALT: exit 2 with stderr instructing Claude to surface the audit failure and re-run the delegation genuinely — name DELEGATION_INTEGRITY for the divergence flavor. LOOP GUARD (KTD2, operator-confirmed): when stop_hook_active is true and the audit still fails, write an audit record to .claude/delegation/audits/<ts>.json, print a banner to stderr, exit 0 — exactly one forced continuation, never an infinite block. Fail-open on every error path (missing transcript while armed → banner + exit 0, never crash). Tests: DoD-named test_stop_hook_classifies_fallback_suspected and test_stop_hook_passes_real_classification in tests/test_delegation_tripwire.py plus: stop_hook_active loop-guard case (audit record written, exit 0), divergence case (transcript real but bundle launch=false → exit 2 naming DELEGATION_INTEGRITY), unarmed turn never opens the transcript (prove via a nonexistent transcript path that would error if opened), disarm-on-pass. Extend tests/test_spore_hooks_registration.py for both event registrations. Read the plan at docs/plans/2026-07-07-delegation-tripwires-plan.md (U4, R3/R4/R8, KTD2/KTD8) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": [
+        "plugins/saga/hooks/delegation_stop_audit_hook.py",
+        "plugins/saga/hooks/hooks.json",
+        "tests/test_delegation_tripwire.py",
+        "tests/test_spore_hooks_registration.py"
+      ]
+    },
+    {
+      "unit_id": "U5",
+      "label": "dispatch-layer two-signal acceptance + DELEGATION_INTEGRITY",
+      "tier": {
+        "model": "fable",
+        "effort": "xhigh"
+      },
+      "worth_it_because": "acceptance-gate semantics on the live dispatch path: satisfy_gate() gains a second mandatory signal and dispatch() gains arm/disarm + reconciliation + a typed re-queue disposition — a defect here either re-opens the silent-accept hole (the issue's raison d'etre) or breaks every existing advisory dispatch consumer; regression surface includes the whole existing engine-dispatch suite; operator-bumped from opus/high to fable/xhigh at plan approval (2026-07-07)",
+      "cheaper_fallback": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "prompt": "U5: Two-signal acceptance at the dispatch layer (R4/R6, KTD6/KTD7). In plugins/saga/scripts/provenance_manifest.py add DELEGATION_INTEGRITY to the Disposition StrEnum (:54). In plugins/saga/scripts/engine_dispatch.py: (a) arm via delegation_state before the adapter run and disarm in a finally (arming failure → dispatch still runs, manifest records tripwire_unarmed — fail-open, named); (b) after the run, corroborate via delegation_audit (launch_key true + _receipt_problems()-clean receipt = observer-yes); (c) self-report ok + observer-no → Disposition.DELEGATION_INTEGRITY, dispatch returns a typed requeue disposition ONCE (attempt counter in the manifest record), a second consecutive divergence raises DispatchError HALT; (d) advisory (non-gated) divergence keeps the existing downgrade_note mechanism with the integrity reason attached — NO requeue loop; (e) satisfy_gate() (:409-435) additionally requires observer corroboration beside verified_by_claude. PRESERVE: _reject_gatekeeper_keys posture, existing FAILURE_STATUSES downgrade behavior, and every existing engine-dispatch test's advisory semantics (update expected values deliberately where acceptance changed, never as collateral). Tests: DoD-named test_reconciliation_flags_divergence and test_two_signal_disagreement_requeues in tests/test_delegation_tripwire.py (first divergence → requeue disposition; corroborating retry → accepted; second divergence → HALT; both-signals-agree → RAN_AS_REQUESTED and gate satisfiable; receipt-valid-but-launch-flag-missing → observer-no conservative). Extend the existing engine-dispatch suites as needed. Read the plan at docs/plans/2026-07-07-delegation-tripwires-plan.md (U5, R4/R6, KTD6/KTD7) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines) so verify panels can materialize committed state.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [
+        "plugins/saga/scripts/engine_dispatch.py",
+        "plugins/saga/scripts/provenance_manifest.py",
+        "tests/test_delegation_tripwire.py",
+        "tests/test_saga_engine_dispatch.py"
+      ]
+    },
+    {
+      "unit_id": "U6",
+      "label": "chaperone contract doc + end-to-end integration scenarios",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U6: Make the runtime contract legible to team-execution's chaperone (R6/R8). Update plugins/team-execution/skills/team-execution/references/external-engine-workers.md §5 ADDITIVELY: the chaperone arms via the delegation_state CLI before dispatch, accepts only on two-signal agreement, re-queues at most once then HALTs, and DELEGATION_INTEGRITY appears in the halt reason — no team-execution CODE changes (issue non-goal). Then add the cross-mechanism integration scenarios to tests/test_delegation_tripwire.py that no single unit proves: full arc in a scratch repo — arm → fake genuine bundle (prompt.txt + result.json launch=true + receipt) → PreToolUse hook passes → Stop hook passes and disarms; full zero-engine-call arc — arm → no bundle → PreToolUse blocks → Stop hook (invoked as if the block were bypassed) exits 2. Read the plan at docs/plans/2026-07-07-delegation-tripwires-plan.md (U6) as your authoritative spec. When the unit's tests pass, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines).",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U5"
+      ],
+      "files": [
+        "plugins/team-execution/skills/team-execution/references/external-engine-workers.md",
+        "tests/test_delegation_tripwire.py"
+      ]
+    },
+    {
+      "unit_id": "U7",
+      "label": "release surfaces + journal",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U7: Release surfaces (repo rule 6: installed-plugin metadata tells the same story as the diff). Bump plugins/fleet-core (0.7.0 → 0.8.0, two new commons modules), plugins/saga (0.73.1 → 0.74.0, two new hooks + dispatch acceptance change), plugins/team-execution (patch bump, §5 contract) — plugin.json + CHANGELOG.md each, mirrored in .claude-plugin/marketplace.json. UPDATE THE DRIFT-GUARD VERSION PINS by RUNNING them, not by assumption (tests/test_saga_plugin.py, tests/test_team_execution_plugin.py, any fleet-core pin/vendored-copy tests) — the #476 round shipped surface bumps but missed pins and the suite went red. Journal: DECISIONS.md entries for KTD1 (hooks live in saga, auditor in fleet-core — rejected agy-hosted mirror, cite {#unit-panels-vs-whole-diff-lenses-476}) and KTD6 (DELEGATION_INTEGRITY lives at the dispatch layer, not wrapper STATUSES — the two fallback_suspected taxonomies stay separate), each with rationale + revisit-when. Confirm release-surface-parity and drift-guard tests green. Read the plan at docs/plans/2026-07-07-delegation-tripwires-plan.md (U7, R9) as your authoritative spec. When done, commit ALL of the unit's work on the current branch in ONE conventional commit (no attribution lines).",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U6"
+      ],
+      "files": [
+        "plugins/fleet-core/.claude-plugin/plugin.json",
+        "plugins/fleet-core/CHANGELOG.md",
+        "plugins/saga/.claude-plugin/plugin.json",
+        "plugins/saga/CHANGELOG.md",
+        "plugins/team-execution/.claude-plugin/plugin.json",
+        "plugins/team-execution/CHANGELOG.md",
+        ".claude-plugin/marketplace.json",
+        "tests/test_saga_plugin.py",
+        "tests/test_team_execution_plugin.py",
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    }
+  ]
+}

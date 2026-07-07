@@ -62,6 +62,13 @@ class Disposition(StrEnum):
     # `FELL_BACK_TO_CLAUDE` -- nothing fell back, the engine ran -- and distinct from
     # `RAN_AS_REQUESTED` -- derived truth must not assert proof that doesn't exist.
     UNPROVEN = "unproven"
+    # Two-signal divergence (#384 U5, KTD6/R4): the engine's self-report and the independent
+    # observer signal (bundle launch flag + schema-valid receipt) DISAGREE about whether the
+    # delegation genuinely ran. Named at the dispatch/manifest layer -- the only place both
+    # signals meet -- never silently resolved in either direction. Distinct from `UNPROVEN`
+    # (single missing proof, no contradiction) and from `FELL_BACK_TO_CLAUDE` (an admitted
+    # failure, not a disputed success).
+    DELEGATION_INTEGRITY = "delegation-integrity"
 
 
 class ClaimedStatus(StrEnum):

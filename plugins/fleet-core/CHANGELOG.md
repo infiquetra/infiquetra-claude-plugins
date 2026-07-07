@@ -5,6 +5,26 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-07-07
+
+### Added — `delegation_audit.py` engine-parametrized classifier + corroborator, `delegation_state.py` arm/disarm liveness channel (#384, U1/U2)
+
+- `scripts/fleet_commons/delegation_audit.py` — one auditor, two engine configs (agy, codex):
+  `classify(transcript_path, engine=None) -> AuditClassification` (`real` / `fallback_suspected`
+  vocabulary, generalizing the scan at `agy_delegate.py:995-1021`), `corroborate(engine, since_ts)
+  -> BundleCorroboration` (launch flag + receipt presence under the engine's bundle root), and
+  `reconcile(classification, corroboration, self_report) -> verdict` (`real` /
+  `fallback_suspected` / `delegation_integrity`). Streams transcripts line-by-line under an 8 MiB
+  cap (matching codex's `MAX_LAST_MESSAGE_BYTES` precedent). agy's original `classify_transcript`
+  stays untouched as a parity tripwire (R7).
+- `scripts/fleet_commons/delegation_state.py` — `arm(engine, session_id)` / `disarm(...)` /
+  `active(session_id)` over `.claude/delegation/active.json`, atomic tmp+rename writes (codex
+  `_write_json` precedent), TTL-reaped stale entries (default 4h), plus an `arm`/`disarm`/`status`
+  CLI. Reads never raise — corrupt or missing state is always treated as unarmed (fail-open).
+- Both modules live under `scripts/fleet_commons/` per the vendored-shim placement rule
+  (`{#fleet-commons-mechanism-463}`); saga's hooks and dispatch layer load them the same way
+  `engine_dispatch.py` already loads `bridge_receipt`.
+
 ## [0.7.0] - 2026-07-06
 
 ### Added — bridge_receipt.v1 schema module (#387, #383)

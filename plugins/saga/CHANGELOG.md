@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.74.0] - 2026-07-07
+
+### Added — runtime delegation tripwires: armed PreToolUse block, Stop-hook audit, two-signal acceptance (#384, U3-U5)
+
+- `hooks/delegation_tripwire_hook.py` (new `PreToolUse` hook, matcher
+  `Write|Edit|MultiEdit|NotebookEdit`): while a session is armed and no genuine engine invocation
+  is yet evidenced (a run directory under `.claude/agy/runs/` or `.claude/codex/runs/` containing
+  a `prompt.txt` newer than the armed-at timestamp), Claude's own file-tool calls are blocked
+  (exit 2). Unarmed sessions and every error path (malformed stdin, unreadable marker) fail open
+  (exit 0) — zero behavior change when nothing is armed.
+- `hooks/delegation_stop_audit_hook.py` (new `Stop` + `SubagentStop` hook): on an armed turn,
+  classifies the transcript and corroborates the engine's bundle via fleet-core's
+  `delegation_audit` module; hard-blocks the stop (exit 2, stderr reason) on
+  `fallback_suspected`, honoring the `stop_hook_active` loop guard (one forced continuation
+  max, banner + durable audit record under `.claude/delegation/audits/`). Transcript-verdict vs.
+  engine self-report divergence is surfaced as `DELEGATION_INTEGRITY` rather than silently
+  resolved either way.
+- `engine_dispatch.py` arms around each adapter run and reconciles the engine's self-report
+  against observer corroboration (receipt validity + bundle launch flag); divergence is a new
+  `Disposition.DELEGATION_INTEGRITY` member on `provenance_manifest.py`, returned as a typed
+  re-queue disposition — one re-dispatch attempt, then HALT (never silent accept).
+  `satisfy_gate()` now additionally requires observer corroboration, not just Claude's own
+  `verified_by_claude` bit.
+- `hooks/hooks.json`: registers both new hooks (`PreToolUse` matcher-scoped;
+  `Stop`/`SubagentStop` both marker-gated, each fed the correct turn's transcript path).
+
 ## [0.73.1] - 2026-07-06
 
 ### Retired — `codex:codex-rescue` (openai-codex marketplace plugin) (#476, R6)

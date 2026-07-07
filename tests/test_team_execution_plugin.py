@@ -62,8 +62,8 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
     assert (
-        plugin_json["version"] == "2.12.2"
-    )  # external-engine-workers codex row points at codex:delegate (#476)
+        plugin_json["version"] == "2.12.3"
+    )  # chaperone contract documents two-signal acceptance + re-queue-once rule (#384)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import sys
 from collections.abc import Callable
@@ -19,6 +20,8 @@ import run_ledger  # noqa: E402
 from engine_resolver import Resolution  # noqa: E402
 
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
+_delegation_audit = fleet_commons_shim.load("delegation_audit")
+_delegation_state = fleet_commons_shim.load("delegation_state")
 
 FAILURE_STATUSES = frozenset({"timeout", "no-output", "error", "malformed", "clone-failed"})
 
@@ -50,6 +53,36 @@ class AdvisoryEvidence:
     # (every CLI adapter today, and any failed dispatch) leave it ``None``. U6 consumes it to gate
     # ``RAN_AS_REQUESTED`` vs ``UNPROVEN``; this unit only lands and populates the field.
     runner_receipt: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class RequeueDisposition:
+    """The typed re-queue disposition a GATED two-signal divergence returns (#384 U5, KTD7).
+
+    Returned by :func:`dispatch` exactly ONCE per consecutive-divergence streak: the first
+    time the engine's self-report ("ok") and the observer signal (bundle launch flag +
+    schema-valid receipt) disagree. Consumers re-dispatch at most once; a second consecutive
+    divergence raises :class:`DispatchError` (HALT) instead of returning this. ``attempt``
+    is the divergence counter carried into the manifest record; ``evidence`` is the disputed
+    advisory evidence whose manifest names ``Disposition.DELEGATION_INTEGRITY``.
+    """
+
+    reason: str
+    attempt: int
+    evidence: AdvisoryEvidence
+    disposition: str = "requeue"
+
+
+# Consecutive gated-divergence attempt counter (KTD7 re-queue-once-then-HALT), keyed by
+# session + engine. Reset on any corroborated acceptance; a surviving count of 1 means the
+# NEXT divergence for the same key is the second consecutive one and must HALT.
+_INTEGRITY_ATTEMPTS: dict[str, int] = {}
+
+_TRIPWIRE_UNARMED = "tripwire_unarmed"
+_INTEGRITY_REASON = (
+    "delegation-integrity: engine self-report 'ok' but observer corroboration failed "
+    "(bundle launch flag + schema-valid receipt required)"
+)
 
 
 def build_codex_invocation(resolution: Resolution, *, sandbox: Any = None) -> dict[str, Any]:
@@ -126,7 +159,10 @@ def dispatch(
     ledger: run_ledger.RunLedger | None = None,
     subplot_id: str = "",
     at: str = "",
-) -> AdvisoryEvidence:
+    gated: bool = False,
+    session_id: str = "",
+    workspace_root: Path | str | None = None,
+) -> AdvisoryEvidence | RequeueDisposition:
     """Run an external engine adapter and return advisory evidence only.
 
     ``sandbox`` (a Unit's declared containment) + ``write_set`` (its declared files) thread through
@@ -138,6 +174,25 @@ def dispatch(
     advisory call records an ``engine`` run-fact (and a ``delegation`` fact for an ``agy.delegation.v1``
     call). This never gates and never changes the returned evidence (KTD5); omitting them is a no-op, so
     every existing caller is byte-identical.
+
+    Two-signal acceptance (#384 U5, R4/R6, KTD6/KTD7) is opt-in through three new kwargs:
+
+    - ``session_id`` — when supplied, the dispatch layer ARMS the delegation-liveness marker
+      (``delegation_state.arm``) before running the adapter and disarms it in a ``finally``.
+      An arming failure never blocks dispatch: it is recorded fail-open as a named
+      ``tripwire_unarmed`` note on the evidence provenance (and the manifest).
+    - ``workspace_root`` — the repo root under which the engine's bundle artifacts live;
+      supplying it (or ``gated=True``) enables observer corroboration after the run:
+      observer-yes = bundle ``launch_key`` true (``delegation_audit.corroborate``) AND a
+      ``_receipt_problems()``-clean receipt. A missing launch flag is observer-NO
+      (conservative).
+    - ``gated`` — a self-report "ok" with observer-no becomes ``DELEGATION_INTEGRITY``:
+      dispatch returns a typed :class:`RequeueDisposition` ONCE, and a second consecutive
+      divergence for the same session+engine raises :class:`DispatchError` (HALT, KTD7).
+      Advisory (``gated=False``) divergence keeps the existing ``downgrade_note`` mechanism
+      with the integrity reason attached — no re-queue loop.
+
+    Omitting all three keeps every existing caller byte-identical.
     """
     if resolution.halt is not None:
         return AdvisoryEvidence(
@@ -153,11 +208,32 @@ def dispatch(
         )
 
     invocation = _build_invocation(resolution, model=model, sandbox=sandbox, write_set=write_set)
-    result = runner(invocation)
+
+    # Arm the delegation-liveness marker BEFORE the adapter runs (KTD4: arming authority is
+    # the dispatch layer) and disarm in a finally. Arming failure is fail-open but NAMED:
+    # dispatch still runs, and the evidence/manifest carry a `tripwire_unarmed` note.
+    armed_at: float | None = None
+    tripwire_note = ""
+    if session_id:
+        try:
+            entry = _delegation_state.arm(
+                resolution.engine_id, session_id, "engine_dispatch", root=workspace_root
+            )
+            armed_at = float(entry.armed_at)
+        except Exception as exc:  # noqa: BLE001 - fail-open, named (plan U5 error scenario)
+            tripwire_note = f"{_TRIPWIRE_UNARMED}: {exc}"
+    try:
+        result = runner(invocation)
+    finally:
+        if armed_at is not None:
+            # Disarm failure must never mask the adapter's result.
+            with contextlib.suppress(Exception):
+                _delegation_state.disarm(session_id, root=workspace_root)
+
     _reject_gatekeeper_keys(result)
     status = _string_result(result.get("status"), default="malformed")
     output = _string_result(result.get("output"), default="")
-    provenance = {
+    provenance: dict[str, Any] = {
         "engine": resolution.engine_id,
         "variant": resolution.variant,
         "status": status,
@@ -168,7 +244,69 @@ def dispatch(
     receipt = result.get("receipt")
     runner_receipt = receipt if isinstance(receipt, dict) else None
 
+    if tripwire_note:
+        provenance["tripwire"] = tripwire_note
+
     if status == "ok":
+        # Two-signal reconciliation (R4/R6): the engine SAYS ok; the observer signal is the
+        # bundle launch flag plus a schema-valid receipt. Opt-in (gated or workspace_root) so
+        # every existing single-signal advisory caller stays byte-identical.
+        two_signal = gated or workspace_root is not None
+        observer_yes = two_signal and _observer_corroborates(
+            resolution.engine_id,
+            runner_receipt,
+            workspace_root=workspace_root,
+            since_ts=armed_at,
+        )
+        integrity_key = f"{session_id or 'anon'}:{resolution.engine_id}"
+        if two_signal and not observer_yes:
+            provenance["integrity"] = pm.Disposition.DELEGATION_INTEGRITY.value
+            if gated:
+                # KTD7 re-queue-once-then-HALT: first divergence returns the typed re-queue
+                # disposition; a second CONSECUTIVE divergence for the same key HALTs.
+                attempt = _INTEGRITY_ATTEMPTS.get(integrity_key, 0) + 1
+                if attempt >= 2:
+                    _INTEGRITY_ATTEMPTS.pop(integrity_key, None)
+                    raise DispatchError(
+                        "HALT: second consecutive delegation-integrity divergence for "
+                        f"{integrity_key!r} -- {_INTEGRITY_REASON} "
+                        "(KTD7: re-queue once, then HALT -- never silent accept)"
+                    )
+                _INTEGRITY_ATTEMPTS[integrity_key] = attempt
+                reason = f"{_INTEGRITY_REASON} (divergence attempt {attempt}; one re-queue allowed)"
+                provenance["note"] = reason
+                disputed = AdvisoryEvidence(
+                    engine_id=resolution.engine_id,
+                    variant=resolution.variant,
+                    evidence="",
+                    provenance=provenance,
+                    halt=reason,
+                    runner_receipt=runner_receipt,
+                )
+                _record_advisory_facts(
+                    ledger, invocation, disputed, result, subplot_id=subplot_id, at=at
+                )
+                return RequeueDisposition(reason=reason, attempt=attempt, evidence=disputed)
+            # Advisory (non-gated) divergence: the existing downgrade_note mechanism with the
+            # integrity reason attached -- NO re-queue loop (plan U5 edge scenario).
+            note = downgrade_note(resolution.engine_id, _INTEGRITY_REASON)
+            provenance["note"] = note
+            evidence = AdvisoryEvidence(
+                engine_id=resolution.engine_id,
+                variant=resolution.variant,
+                evidence="",
+                provenance=provenance,
+                halt=note,
+                runner_receipt=runner_receipt,
+            )
+            _record_advisory_facts(
+                ledger, invocation, evidence, result, subplot_id=subplot_id, at=at
+            )
+            return evidence
+        if gated:
+            _INTEGRITY_ATTEMPTS.pop(integrity_key, None)
+        if two_signal and observer_yes:
+            provenance["observer_corroborated"] = True
         evidence = AdvisoryEvidence(
             engine_id=resolution.engine_id,
             variant=resolution.variant,
@@ -203,6 +341,29 @@ def _receipt_problems(runner_receipt: dict[str, Any] | None) -> list[str]:
     if not isinstance(runner_receipt, dict):
         return [f"receipt must be a dict, got {type(runner_receipt).__name__}"]
     return list(_bridge_receipt.validate_receipt(runner_receipt))
+
+
+def _observer_corroborates(
+    engine_id: str,
+    runner_receipt: dict[str, Any] | None,
+    *,
+    workspace_root: Path | str | None,
+    since_ts: float | None,
+) -> bool:
+    """The independent observer signal (#384 U5): launch flag true + schema-valid receipt.
+
+    Conservative by construction: a receipt-valid bundle whose ``launch_key`` is missing or
+    false is observer-NO, an unknown/uncorroboratable engine is observer-NO, and any error
+    reading the bundles is observer-NO. The observer never raises -- divergence handling
+    (not this predicate) decides what a "no" costs.
+    """
+    if _receipt_problems(runner_receipt):
+        return False
+    try:
+        corroboration = _delegation_audit.corroborate(engine_id, since_ts, root=workspace_root)
+    except Exception:  # noqa: BLE001 - observer-no beats crashing the dispatch path
+        return False
+    return bool(corroboration.launched)
 
 
 def _reject_gatekeeper_keys(result: dict[str, Any]) -> None:
@@ -302,7 +463,17 @@ def build_dispatch_manifest(
     only — adjudication is written later by the driving session (Claude) via
     :func:`adjudicate_manifest`, never by the engine (D5, #external-engines-never-gatekeepers).
     """
-    if evidence.halt is not None:
+    if evidence.provenance.get("integrity") == pm.Disposition.DELEGATION_INTEGRITY.value:
+        # Two-signal divergence (#384 U5/KTD6): the engine said "ok" but the observer signal
+        # disagreed. Named, never folded into FELL_BACK_TO_CLAUDE (nothing admitted failure)
+        # or UNPROVEN (this is a contradiction, not merely missing proof).
+        disposition = pm.Disposition.DELEGATION_INTEGRITY
+        note = (
+            evidence.provenance.get("note")
+            or evidence.halt
+            or "engine self-report diverged from observer corroboration"
+        )
+    elif evidence.halt is not None:
         disposition = pm.Disposition.FELL_BACK_TO_CLAUDE
         note = evidence.provenance.get("note") or evidence.halt or ""
     else:
@@ -313,6 +484,11 @@ def build_dispatch_manifest(
         else:
             disposition = pm.Disposition.RAN_AS_REQUESTED
             note = ""
+    # A failed arming attempt (fail-open, #384 U5) is NAMED on the manifest record so a
+    # tripwire-unprotected run is distinguishable from a protected one.
+    tripwire = evidence.provenance.get("tripwire")
+    if tripwire:
+        note = f"{note}; {tripwire}" if note else str(tripwire)
     return pm.Manifest(
         execution_id=execution_id,
         saga_ref=saga_ref,
@@ -420,10 +596,22 @@ def satisfy_gate(evidence: AdvisoryEvidence, manifest: pm.Manifest | None = None
     Any caller that has a manifest for this evidence MUST pass it here for the R11
     per-claim check to run at all -- silently omitting it degrades the guarantee to the
     evidence-level `verified_by_claude` bit alone.
+
+    Two-signal acceptance (#384 U5/R6): beside ``verified_by_claude``, a gated verdict
+    additionally requires OBSERVER corroboration — the ``observer_corroborated`` provenance
+    mark :func:`dispatch` stamps only when the bundle launch flag was true AND the receipt
+    was ``_receipt_problems()``-clean. Claude's own say-so is one signal; the gate needs
+    both. Divergent or uncorroborated "ok" evidence can therefore never satisfy a gate.
     """
     if evidence.verified_by_claude is not True:
         raise DispatchError(
             "external advisory evidence must be verified by Claude before satisfying a gate"
+        )
+    if evidence.provenance.get("observer_corroborated") is not True:
+        raise DispatchError(
+            "two-signal acceptance (#384 R6): a gated verdict requires observer corroboration "
+            "(bundle launch flag true + schema-valid receipt) beside Claude verification -- "
+            "this evidence carries no observer_corroborated mark"
         )
     if manifest is None or manifest.claim_provenance is None:
         return

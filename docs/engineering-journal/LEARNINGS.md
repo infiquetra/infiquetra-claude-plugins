@@ -27,6 +27,20 @@
 
 ## 2026-07-07
 
+### Refute-N panels went vacuous a second way — real verdicts returned as prose are counted as missing verifiers {#panel-verdicts-unparsed-prose}
+
+**Context.** Third `cc-workflows-ultracode` run (#384, `wf_3e667626-303`): the Wave-A branch-materialization patch was applied to all 12 verifier prompts and *worked* — every verifier checked out `feat/384-delegation-tripwires -- .`, quoted the correct per-unit examined SHA, and produced a genuine verdict. The panels still computed `0/3 reporting — UNDER-STRENGTH` on all four units and the run returned success.
+
+**Evidence.** Workflow logs: `verify panel over U1: 3/3 verifier(s) missing (runtime-failure)` — identical for U3/U4/U5. The run journal (`journal.jsonl`) shows all 12 verifiers returned substantive verdicts: 11 with `refuted: []`, one U3 verifier with a real refutation (release surfaces missing at U3's intermediate SHA — deliberately owned by U7, moot at branch tip). Six verdicts were fenced/prose-wrapped JSON; the panel check `U1_verdicts.filter(v => v != null && Array.isArray(v.refuted))` ran against the raw *string*, so every verifier — including the ones that returned bare JSON objects as text — counted as runtime-missing.
+
+**Mechanism.** The emitter gives worker `agent()` calls a return-contract prompt and routes their output through `__gate()`'s `parseResult()` (which extracts embedded JSON from prose). Verifier `agent()` calls get *neither*: no `schema` option, no parse step — the panel arithmetic dereferences `.refuted` on whatever `agent()` returned, which is a string unless the model's final message happened to be a parseable value. Two independent guardrails (worker commits + verifier materialization) fixed *visibility*; verdict *transport* was the untested third leg.
+
+**Fix (or queued).** This run: the driving `/work` session parsed all 12 verdicts out of `journal.jsonl` post-hoc and confirmed the panels substantively pass (U3's single refutation < 2-of-3 majority). Durable fix folded into QUEUED `{#execution-spec-verifier-visibility}`: emit verifier calls with a `schema` (the runtime then validates and retries on mismatch) — one line in the emitter, removes the whole class.
+
+**Generalizable rule.** A majority gate that filters non-conforming votes *before* counting can pass vacuously in as many ways as votes have failure modes — every leg (visibility, execution, transport/parse) needs its own proof. When a workflow "completes successfully," read the panel denominators, not just the exit status.
+
+**Refs.** LEARNINGS `{#verify-panels-blind-to-uncommitted-tree}` (Wave A, legs 1–2), QUEUED `{#execution-spec-verifier-visibility}`.
+
 ### A registry recipe is machine-consumed truth — validate it against the live CLI, not memory {#codex-registry-recipe-stale-flag}
 
 **Context.** codex U4 (#476, R5, KTD4): rewiring `plugins/saga/references/engine-registry.yaml`'s

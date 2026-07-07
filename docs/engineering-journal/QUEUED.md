@@ -97,13 +97,6 @@ primitive. Ids named in issue #463 itself are marked ★.
 **Boundary.** A Tier-2-only enhancement — Tier 1 (saga all-ticks) does not rank candidates (it has the saga_id). Stays context-safe by ranking the already-extracted skeletons, never the multi-MB session files.
 **Context.** Cross-ref DECISIONS [#resume-engine-rebuild](DECISIONS.md#resume-engine-rebuild) (Q1 — CE port staged behind Tier 1; ranking deferred as the rejected "port-keyword-ranking-now" alternative).
 
-### P2 — `/code-review` programmatic-mode append contradiction (Defect 2 of the scan touch-ups)  {#code-review-saga-scan-touchups}
-
-**Priority.** P2. **Effort.** Small (one `/code-review` SKILL mode-gate). **Category.** cross-skill defect (surfaced by the `/work` build review; **Defect 1 — the `saga.py scan()` match-key omission — SHIPPED** with the `/loop` rebuild, ARCHIVE [#code-review-saga-scan-touchups-shipped](ARCHIVE.md#code-review-saga-scan-touchups-shipped); this item is the **remaining Defect 2**).
-**Worth it when.** The **standalone** `/code-review` review-track is actually exercised (human-run, not `/work`'s programmatic in-loop call). `/work`'s own gate does NOT depend on this (it reads the envelope directly), so it is not urgent.
-**Defect 2 — `/code-review` programmatic-mode append contradiction.** code-review Phase 5.3 says programmatic/report-only mode writes ZERO files and the caller owns persistence, but Phase 5.4 unconditionally appends `--review-paths docs/code-reviews/<file>.md` to the saga — a path never created in that mode. Fix: mode-gate 5.4 to skip the append in programmatic mode (caller owns persistence), or have programmatic mode also write the durable artifact.
-**Boundary.** This is a `/code-review` SKILL change — deliberately OUT of scope for the `/loop` rebuild (which touched no other skill). Fold into the next `/code-review` touch-up. Cross-ref DECISIONS [#code-review-engine-rebuild](DECISIONS.md#code-review-engine-rebuild), [#work-engine-rebuild](DECISIONS.md#work-engine-rebuild) (the forward-coupling residual), [#loop-engine-rebuild](DECISIONS.md#loop-engine-rebuild) (where Defect 1 shipped).
-
 ### P3 — `/loop` re-entry tick `--rounds-seen` placeholder crashes on multi-round values (latent, surfaced by the `/resume` build review)  {#loop-rounds-seen-placeholder-crash}
 
 **Priority.** P3. **Effort.** Tiny (two markdown placeholder edits). **Category.** cross-skill latent defect (surfaced by the `/resume` build review; `/resume`'s own occurrence was fixed in 0.12.0).
@@ -211,26 +204,6 @@ primitive. Ids named in issue #463 itself are marked ★.
 2. **Encode the solo-operator exception** in both skills: never propose measure-before-build / smallest-slice-then-expand / ROI-threshold framing for single-operator tooling; the operator + `/retro` is the measurement loop. Cross-ref the `no-roi-ceremony-solo-tools` memory.
 3. **Make the challenger symmetric.** The "higher-upside challenger" should surface a *do-the-whole-valuable-thing* option as readily as a *simpler* one — the bias is currently one-directional.
 - Cross-ref: [LEARNINGS.md](LEARNINGS.md) no-ROI-ceremony pattern; [#ideate-brainstorm-handoff-symmetry](#ideate-brainstorm-handoff-symmetry) (related handoff-contract item); ideation S-1 build-first in `docs/ideation/2026-06-26-vecu-port-seeds-ideation.md`.
-
----
-
-### CI guard: assert plugin directories match marketplace.json entries  {#marketplace-ci-guard}
-
-**Priority.** P1.
-
-**Effort.** Half-day. GitHub Actions workflow + a small Python script (~30 lines).
-
-**Worth it when.** Right now — the bug it prevents has shipped twice in a row (PRs #110, #111) and required a third PR (#112) to fix. The class of bug ("file A and file B must stay in sync but reviewers don't notice the absence in B") will recur with every new plugin or rename.
-
-**Context.**
-- See [LEARNINGS.md](LEARNINGS.md#marketplace-drift) for the bug's history + mechanism.
-- Spec sketch:
-  - Walk `plugins/*/` directories that contain `.claude-plugin/plugin.json`.
-  - Read `.claude-plugin/marketplace.json`.
-  - Assert: `set(plugin dir names) == set(p["name"] for p in marketplace["plugins"])`.
-  - Optional v2: assert each entry's `source: ./plugins/<name>` resolves and the entry's `version` equals the plugin's own `plugin.json` version.
-- Run on every push + PR via `.github/workflows/marketplace-consistency.yml`.
-- Should also run on `main` post-merge so a slip is caught immediately rather than at next-PR time.
 
 ---
 

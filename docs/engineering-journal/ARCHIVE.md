@@ -12,6 +12,30 @@
 
 ## Shipped
 
+### `/code-review` Defect 2 — programmatic-mode saga append mode-gated (completes the scan touch-ups pair)  {#code-review-defect2-shipped}
+
+**SHIPPED** 2026-07-07, saga 0.74.1, as the real work unit of the #468 zero-token fire drill (PR #522).
+Phase 5.4 now skips entirely in programmatic / report-only mode (the caller owns durable persistence —
+the Phase 5.3 contract; no `docs/code-reviews/` artifact exists in that mode for a tick to reference)
+and the §5.7 closing summary is split by mode (an S4 review finding both drill lanes converged on
+independently). Interactive behavior, phase-preservation (`OMIT --lifecycle-phase`), and the no-saga
+scan-first guard unchanged. Defect 1 shipped earlier with the `/loop` rebuild
+([#code-review-saga-scan-touchups-shipped](#code-review-saga-scan-touchups-shipped)) — the QUEUED item
+`{#code-review-saga-scan-touchups}` is now fully retired. Evidence: the drill map
+(`narratives/2026-07-07-zero-token-fire-drill-irreducibility-map.md`), DECISIONS
+[#zero-token-fire-drill-468](DECISIONS.md#zero-token-fire-drill-468).
+
+### CI guard: plugin-dir ↔ marketplace parity — found already shipped three ways; stale QUEUED entry pruned  {#marketplace-ci-guard-pruned}
+
+**SHIPPED (discovered retroactively)** — pruned from QUEUED 2026-07-07 by the #468 drill's
+stale-draft re-triage. The P1 entry's whole spec sketch (dir↔entry parity, source resolution, version
+equality — including its "optional v2") is live in CI three ways: `.github/workflows/ci.yml:76`
+(marketplace validator), `ci.yml:102` (`scripts/sync_marketplace.py --check` generator parity), and
+`tests/test_release_surface_parity.py` (tri-lock plugin.json ↔ marketplace.json ↔ CHANGELOG). CI runs
+on push to `main`, covering the post-merge leg. The entry sat in QUEUED after the guards landed —
+re-triage against the live repo before executing any QUEUED draft (the #336 stale-draft discipline).
+Cross-ref DECISIONS [#zero-token-fire-drill-468](DECISIONS.md#zero-token-fire-drill-468) KTD2.
+
 ### Whole-family plugin rename — `saga` / `mission-control` / `deploy`, blueprint-reviewer folded into `saga`, command rebrand, dropped `infiquetra-` prefix (Phase 1 of a multi-repo migration)  {#plugin-family-rename-shipped}
 
 **SHIPPED 2026-06-05** (squash `b6a03e0`, PR #199). Implements DECISIONS [#plugin-family-rename-scheme-y](DECISIONS.md#plugin-family-rename-scheme-y).

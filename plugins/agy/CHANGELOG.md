@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-07
+
+### Changed — BREAKING: `provenance_required` now coerces unproven passing runs to fail loud (#390 U1)
+
+- `plugins/agy/scripts/agy_delegate.py`: a passing status (`success`/`patch_ready`/`applied`) whose
+  supervision verdict (`_real_agy_verdict`) is `unproven`, combined with `provenance_required=True`
+  (the envelope default), now coerces the run status to `fallback_suspected` and exits non-zero via
+  the existing exit mapping. **Behavior change**: callers that previously relied on exit 0 for an
+  unproven run under `provenance_required=True` (the default) will now see exit 1 —
+  `provenance_required` was parsed and threaded since its introduction but consulted nowhere; this
+  closes that dead wire. `provenance_required=False` preserves the old behavior unchanged, and a
+  status already `fallback_suspected` via the stdout marker is not double-coerced. Transcript
+  auditing stays the Stop-hook's responsibility (#384) — the wrapper's only signal is
+  `_real_agy_verdict`.
+
 ## [0.1.2] - 2026-07-06
 
 ### Added

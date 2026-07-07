@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.74.1"
-    )  # code-review 5.4 saga append mode-gated to interactive (#468, Defect 2)
+        plugin_json["version"] == "0.75.0"
+    )  # SUBSTITUTED_ENGINE derivation, gate refusal, empty-delivery HALT, verify attribution (#390)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

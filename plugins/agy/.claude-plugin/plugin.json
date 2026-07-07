@@ -1,7 +1,7 @@
 {
   "name": "agy",
-  "version": "0.1.2",
-  "description": "Antigravity-backed coder and reviewer bridge agents with guarded evidence bundles and patch import.",
+  "version": "0.2.0",
+  "description": "Antigravity-backed coder and reviewer bridge agents with guarded evidence bundles, patch import, and fail-loud provenance-required status/exit coercion.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

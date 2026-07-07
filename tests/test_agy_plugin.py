@@ -35,7 +35,7 @@ def test_agy_metadata_is_marketplace_registered() -> None:
     marketplace_entry = next(plugin for plugin in marketplace["plugins"] if plugin["name"] == "agy")
 
     assert plugin_json["name"] == "agy"
-    assert plugin_json["version"] == "0.1.2"  # bridge_receipt.v1 fleet-commons shim (#387, #383)
+    assert plugin_json["version"] == "0.2.0"  # provenance_required fail-loud coercion (#390 U1)
     assert "Antigravity" in plugin_json["description"]
     assert {"agy", "antigravity", "delegation", "teammate", "evidence"} <= set(
         plugin_json["keywords"]

@@ -4,6 +4,19 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.13.0] - 2026-07-07
+
+### Changed — single-path manifest contract + empty-delivery gate in §5 (#390 U3/U5)
+
+- `skills/team-execution/references/external-engine-workers.md` §5: collapse the chaperone
+  contract to exactly one manifest-construction path — `record_dispatch_manifest(...,
+  expected_identity=<§4 preview>)` — and delete the documented direct
+  `provenance_manifest.Manifest` hand-build instruction; refresh stale `engine_dispatch.py` line
+  citations and state the fail-loud discriminator (a substituted manifest is refused at the gate)
+  as the worker-slot contract. §5 also now runs saga's `check_empty_delivery` check between verify
+  and the chaperone-owned commit step, HALTing on a delegated unit that claims delivery with zero
+  changed paths. Documentation-only — the mechanics are enforced entirely on saga's side.
+
 ## [2.12.3] - 2026-07-07
 
 ### Changed — chaperone contract documents runtime two-signal acceptance + re-queue-once rule (#384, U6)

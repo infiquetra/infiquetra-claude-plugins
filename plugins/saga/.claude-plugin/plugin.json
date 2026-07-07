@@ -1,7 +1,7 @@
 {
   "name": "saga",
-  "version": "0.74.1",
-  "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas.",
+  "version": "0.75.0",
+  "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas, with fail-loud SUBSTITUTED_ENGINE derivation, gate refusal, empty-delivery HALT, and verify-spawn fallback attribution.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

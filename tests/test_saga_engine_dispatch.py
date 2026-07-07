@@ -65,7 +65,7 @@ def test_codex_invocation_preserves_payload_byte_for_byte_and_read_only() -> Non
     invocation = D.build_codex_invocation(resolution)
 
     assert invocation == {
-        "via": "codex:codex-rescue",
+        "via": "codex:delegate",
         "task": payload,
         "sandbox": "read-only",
     }
@@ -214,13 +214,13 @@ def test_dispatch_emits_manifest_with_attribution(tmp_path: Path) -> None:
         saga_ref="saga-1",
         created_at="2026-07-01T00:00:00Z",
         effort="high",
-        protocol="codex:codex-rescue",
+        protocol="codex:delegate",
     )
 
     assert manifest.attribution.kind is PM.ProducerKind.EXTERNAL_ENGINE
     assert manifest.attribution.identity == "codex/gpt-5.5-xhigh"
     assert manifest.attribution.effort == "high"
-    assert manifest.attribution.protocol == "codex:codex-rescue"
+    assert manifest.attribution.protocol == "codex:delegate"
     assert manifest.disposition is PM.Disposition.RAN_AS_REQUESTED
 
     persisted = MS.read_manifest(store, "exec-1")
@@ -590,14 +590,14 @@ def _memoization_registry_dict() -> dict[str, Any]:
                 "substrate": "external",
                 "default_for_engine": True,
                 "invocation": {
-                    "via": "codex:codex-rescue",
-                    "recipe": "codex -s read-only --effort xhigh",
+                    "via": "codex:delegate",
+                    "recipe": "codex exec -s read-only -c model_reasoning_effort=xhigh",
                     "write_capable": False,
                 },
                 "context_window": 400000,
                 "cost_speed_rank": 2,
                 "model_identity": "gpt-5.5",
-                "last_validated": "2026-06-27",
+                "last_validated": "2026-07-06",
                 "receipt_emitter": "codex-bridge",
                 "capability_profile": {
                     "code-generation": {

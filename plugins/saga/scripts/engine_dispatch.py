@@ -66,7 +66,7 @@ def build_codex_invocation(resolution: Resolution, *, sandbox: Any = None) -> di
             "sandbox to run codex read-only"
         )
     invocation = {
-        "via": "codex:codex-rescue",
+        "via": "codex:delegate",
         "task": resolution.payload,
         "sandbox": "read-only",
     }

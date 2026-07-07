@@ -24,13 +24,13 @@ engines:
     substrate: external
     default_for_engine: true          # engine-only "use codex" resolves here (R1/R6); xhigh reserved
     invocation:
-      via: codex:codex-rescue
-      recipe: "codex -s read-only --effort high"
+      via: codex:delegate
+      recipe: "codex exec -s read-only -c model_reasoning_effort=high"
       write_capable: false            # evidence-only default (R23)
     context_window: 400000            # R25 -- Codex CLI ChatGPT-account limit
     cost_speed_rank: 2
     model_identity: gpt-5.5
-    last_validated: 2026-06-27
+    last_validated: 2026-07-06
     receipt_emitter: codex-bridge      # R9/KTD9 -- #476 tracks the codex-side emit wiring
     capability_profile:
       code-generation: {rating: MODERATE, note: "multi-file refactor, structured-output fidelity"}
@@ -55,13 +55,13 @@ engines:
     substrate: external
     default_for_engine: false
     invocation:
-      via: codex:codex-rescue
-      recipe: "codex -s read-only --effort xhigh"
+      via: codex:delegate
+      recipe: "codex exec -s read-only -c model_reasoning_effort=xhigh"
       write_capable: false
     context_window: 400000
     cost_speed_rank: 3                 # xhigh is the cost multiplier -- pricier than high
     model_identity: gpt-5.5
-    last_validated: 2026-06-27
+    last_validated: 2026-07-06
     receipt_emitter: codex-bridge      # R9/KTD9 -- #476 tracks the codex-side emit wiring
     capability_profile:
       code-generation: {rating: STRONG, note: "hardest bounded implementation; reserve for the tough unit"}

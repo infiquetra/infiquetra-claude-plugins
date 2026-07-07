@@ -43,8 +43,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "substrate": "external",
                 "default_for_engine": True,
                 "invocation": {
-                    "via": "codex:codex-rescue",
-                    "recipe": "codex -s read-only --effort xhigh",
+                    "via": "codex:delegate",
+                    "recipe": "codex exec -s read-only -c model_reasoning_effort=xhigh",
                     "write_capable": False,
                 },
                 "context_window": 400000,
@@ -176,7 +176,7 @@ def test_capability_dispatch_returns_variant_protocol_and_payload(registry: Any)
     assert resolution.engine_id == "codex"
     assert resolution.variant == "gpt-5.5-xhigh"
     assert resolution.effort == "xhigh"
-    assert resolution.recipe == "codex -s read-only --effort xhigh"
+    assert resolution.recipe == "codex exec -s read-only -c model_reasoning_effort=xhigh"
     assert resolution.protocol == [
         "Run read-only when generating against the repo.",
         "Return a unified diff plus assumptions.",

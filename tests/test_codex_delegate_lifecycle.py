@@ -43,7 +43,9 @@ def _load_module():
     scripts_dir = MODULE_PATH.parent
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
-    spec = importlib.util.spec_from_file_location("codex_delegate_lifecycle_under_test", MODULE_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "codex_delegate_lifecycle_under_test", MODULE_PATH
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -380,7 +382,16 @@ def test_codex_live_smoke_round_trip() -> None:  # pragma: no cover - live codex
         (repo_root / "README.md").write_text("live smoke fixture\n", encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=repo_root, check=True, timeout=30)
         subprocess.run(
-            ["git", "-c", "user.email=smoke@test", "-c", "user.name=smoke", "commit", "-qm", "init"],
+            [
+                "git",
+                "-c",
+                "user.email=smoke@test",
+                "-c",
+                "user.name=smoke",
+                "commit",
+                "-qm",
+                "init",
+            ],
             cwd=repo_root,
             check=True,
             timeout=30,
@@ -419,3 +430,140 @@ def test_codex_live_smoke_round_trip() -> None:  # pragma: no cover - live codex
         # Last message: codex wrote its final agent message via -o.
         assert (bundle / "last-message.txt").read_text(encoding="utf-8").strip()
         _assert_no_running_in_state_files(bundle)
+
+
+# --- Code-review fixes (#476 findings 2, 5, 7, 9) ------------------------------------------------
+
+
+_QUICK_OK_BODY = """#!/usr/bin/env python3
+import json, sys
+argv = sys.argv[1:]
+out_path = None
+for i, tok in enumerate(argv):
+    if tok == "-o":
+        out_path = argv[i + 1]
+sys.stdin.read()
+print(json.dumps({"type": "session_start"}), flush=True)
+if out_path:
+    open(out_path, "w").write("ok")
+sys.exit(0)
+"""
+
+
+def _reviewer_envelope(**overrides):
+    payload = {
+        "schema": codex_delegate.SCHEMA,
+        "role": "reviewer",
+        "task": "Review the diff.",
+    }
+    payload.update(overrides)
+    return codex_delegate.Envelope.from_mapping(payload)
+
+
+def _quick_bundle(tmp_path: Path, *, run_id: str, body: str | None = None, **envelope_overrides):
+    shim = _write_shim(tmp_path, body or _QUICK_OK_BODY)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(exist_ok=True)
+    result = codex_delegate.create_supervised_bundle(
+        _reviewer_envelope(**envelope_overrides),
+        repo_root=repo_root,
+        run_id=run_id,
+        codex_bin=str(shim),
+    )
+    return result, repo_root / ".claude" / "codex" / "runs" / run_id
+
+
+def test_unreapable_tree_surfaces_as_shutdown_incomplete(tmp_path, monkeypatch) -> None:
+    """A kill that cannot reap the tree must map to terminal ``shutdown_incomplete`` (F2).
+
+    The real kill still runs (so the fake dies), but its outcome is forced to the
+    could-not-reap value — the run status must flag the leak, never read as a clean timeout.
+    """
+    real_kill = codex_delegate._kill_process_tree
+
+    def _kill_but_report_incomplete(process):
+        real_kill(process)
+        return "shutdown_incomplete"
+
+    monkeypatch.setattr(codex_delegate, "_kill_process_tree", _kill_but_report_incomplete)
+    pidfile = tmp_path / "tree.pid"
+    result, bundle = _quick_bundle(
+        tmp_path,
+        run_id="unreapable",
+        body=_tree_sleep_body(pidfile),
+        timeout_seconds=1,
+        no_output_seconds=1,
+    )
+    assert result.status == "shutdown_incomplete"
+    payload = json.loads((bundle / "result.json").read_text())
+    assert payload["status"] == "shutdown_incomplete"
+    assert "reaped" in payload["error"]
+    _assert_no_running_in_state_files(bundle)
+
+
+def test_signal_in_post_run_window_still_ends_terminal(tmp_path, monkeypatch) -> None:
+    """A caller SIGTERM landing OUTSIDE the supervised launch window must die clean (F5).
+
+    Delivers a real signal from the post-run token-parse seam: the bundle-span handler must
+    convert it into an unwind that writes a terminal ``result.json`` and returns nonzero-class
+    status instead of the interpreter dying with the bundle non-terminal.
+    """
+    original_disposition = signal.getsignal(signal.SIGTERM)
+    real_parse = codex_delegate.parse_token_usage
+
+    def _signal_then_parse(transcript_path):
+        os.kill(os.getpid(), signal.SIGTERM)
+        # Give the interpreter a bytecode boundary to deliver the signal on.
+        time.sleep(0.2)
+        return real_parse(transcript_path)
+
+    monkeypatch.setattr(codex_delegate, "parse_token_usage", _signal_then_parse)
+    result, bundle = _quick_bundle(tmp_path, run_id="post-run-signal")
+    assert result.status == "error"
+    payload = json.loads((bundle / "result.json").read_text())
+    assert payload["status"] == "error"
+    assert "signal" in payload["error"]
+    assert payload["terminal"] is True
+    # The bundle-span handler was restored on exit.
+    assert signal.getsignal(signal.SIGTERM) is original_disposition
+
+
+def test_output_byte_cap_kills_runaway_spam(tmp_path, monkeypatch) -> None:
+    """Cumulative output beyond MAX_OUTPUT_BYTES must kill the tree and end terminal (F7)."""
+    monkeypatch.setattr(codex_delegate, "MAX_OUTPUT_BYTES", 64 * 1024)
+    spam_body = """#!/usr/bin/env python3
+import json, sys, time
+sys.stdin.read()
+filler = "y" * 1024
+for _ in range(1024):
+    print(json.dumps({"type": "spam", "data": filler}), flush=True)
+time.sleep(60)
+sys.exit(0)
+"""
+    result, bundle = _quick_bundle(
+        tmp_path,
+        run_id="runaway-spam",
+        body=spam_body,
+        timeout_seconds=30,
+        no_output_seconds=30,
+    )
+    assert result.status == "error"
+    payload = json.loads((bundle / "result.json").read_text())
+    assert payload["status"] == "error"
+    assert "MAX_OUTPUT_BYTES" in payload["error"]
+    _assert_no_running_in_state_files(bundle)
+
+
+def test_receipt_emission_failure_still_ends_terminal(tmp_path, monkeypatch) -> None:
+    """A non-OSError after a successful run must still produce a terminal bundle (F9)."""
+
+    def _boom(**_kwargs):
+        raise ValueError("receipt validation exploded")
+
+    monkeypatch.setattr(codex_delegate._bridge_receipt, "emit_receipt", _boom)
+    result, bundle = _quick_bundle(tmp_path, run_id="receipt-boom")
+    assert result.status == "bundle_failed"
+    payload = json.loads((bundle / "result.json").read_text())
+    assert payload["status"] == "bundle_failed"
+    assert "ValueError" in payload["error"]
+    assert payload["terminal"] is True

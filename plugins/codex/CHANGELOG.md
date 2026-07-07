@@ -22,11 +22,31 @@
   `codex` maps a schema-valid CLI `bridge_receipt.v1`; launch-failure paths emit no receipt.
   This moves `codex-bridge` from `PENDING_EMITTERS` to `IN_REPO_EMITTERS` in
   `tests/test_bridge_receipt_drift.py` (KTD6).
-- Add `tests/test_codex_delegate_contract.py` (envelope round-trip valid/invalid) and
-  `tests/test_codex_plugin.py` (plugin.json required fields).
+- Add the supervised synchronous `codex exec` runner: verified 0.142.5 invocation shape
+  (`exec --json -o … -s … -c model_reasoning_effort=…`, `-m` only when a model is set), prompt
+  fed via stdin write-then-close, timeout and no-output watchdogs, cumulative output byte cap
+  (`MAX_OUTPUT_BYTES`), whole-tree kill (process group, SIGTERM→SIGKILL escalation) with the
+  kill outcome captured — an unreaped tree surfaces as terminal `shutdown_incomplete`, never as
+  a clean timeout.
+- Add SIGTERM/SIGINT die-clean handling across the whole bundle span (launch window AND clone
+  setup / token parse / diff scan / bundle writes): kill the codex tree, write a terminal
+  `result.json`, tear down the clone, exit nonzero.
+- Add the evidence bundle at `.claude/codex/runs/<run-id>/` (envelope, prompt, JSONL
+  transcript, last message, command argv, token accounting, `result.json` — all JSON written
+  atomically via tmp+rename); every attempted run ends with an on-disk terminal status, even on
+  unexpected post-launch exceptions.
+- Add enforced mode surfaces: reviewer runs `-s read-only` with a snapshot-relative diff-scan
+  (only NEW dirt flags `out_of_scope_mutation`; reversions of pre-existing dirt are surfaced as
+  `reverted_paths`/`reversion_suspected` audit signals; the scan excludes only
+  `.claude/codex/runs`, keeping the rest of `.claude` visible); coder runs confined to a
+  disposable remote-stripped clone with patch capture, never the live tree.
+- Add `tests/test_codex_delegate_contract.py`, `tests/test_codex_delegate_modes.py`,
+  `tests/test_codex_delegate_lifecycle.py` (real-subprocess kill/terminality proofs, live smoke
+  gated on `codex login status`), and `tests/test_codex_plugin.py`.
 
 ### Notes
 
-- The supervised `codex exec` runner, evidence-bundle writer, diff-scan machinery, and registry
-  rewire are out of scope for this unit and land in U2–U4 of
-  `docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md`.
+- Invoking `codex_delegate.py` without `--validate-only`/`--dry-run` launches a live,
+  supervised `codex exec` subprocess by default.
+- The saga registry/dispatch rewire off `codex:codex-rescue` ships alongside this release in
+  saga `0.73.1` (see `plugins/saga/CHANGELOG.md`).

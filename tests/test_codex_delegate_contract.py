@@ -334,9 +334,7 @@ def _run_bundle(tmp_path, envelope_kwargs, fake_body, *, timeout_seconds=None):
     bin_path = _write_fake_codex_bin(tmp_path, fake_body)
     # codex_bin is invoked as a single argv[0]; wrap python + script in a shim script.
     shim = tmp_path / "codex-shim"
-    shim.write_text(
-        f'#!/bin/sh\nexec "{sys.executable}" "{bin_path}" "$@"\n', encoding="utf-8"
-    )
+    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{bin_path}" "$@"\n', encoding="utf-8")
     shim.chmod(0o755)
     _ = _subprocess  # keep import local
     repo_root = tmp_path / "repo"
@@ -413,9 +411,7 @@ def test_supervised_launch_failure_is_fail_loud_with_no_receipt(tmp_path) -> Non
 
 
 def test_supervised_timeout_kills_tree_and_records_terminal_status(tmp_path) -> None:
-    result, bundle = _run_bundle(
-        tmp_path, {}, _FAKE_CODEX_SLEEP, timeout_seconds=1
-    )
+    result, bundle = _run_bundle(tmp_path, {}, _FAKE_CODEX_SLEEP, timeout_seconds=1)
     assert result.status in {"timeout", "no_output"}
     payload = json.loads((bundle / "result.json").read_text())
     # On-disk state must NEVER say running (R4).
@@ -449,9 +445,7 @@ def test_supervised_sigterm_mid_run_is_die_clean(tmp_path) -> None:
 
     bin_path = _write_fake_codex_bin(tmp_path, _FAKE_CODEX_SLEEP)
     shim = tmp_path / "codex-shim"
-    shim.write_text(
-        f'#!/bin/sh\nexec "{sys.executable}" "{bin_path}" "$@"\n', encoding="utf-8"
-    )
+    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{bin_path}" "$@"\n', encoding="utf-8")
     shim.chmod(0o755)
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -498,3 +492,57 @@ def test_supervised_sigterm_mid_run_is_die_clean(tmp_path) -> None:
     assert payload["codex_launched"] is True
     # The fake codex "done" sentinel must never appear — the tree was killed mid-sleep.
     assert '"type": "done"' not in (bundle / "transcript.jsonl").read_text()
+
+
+# --- Code-review fixes (#476 findings 3, 4) -----------------------------------------------------
+
+
+def test_supervised_command_includes_model_flag_only_when_set(tmp_path) -> None:
+    """`-m <model>` must appear in the recorded argv exactly when the envelope sets a model."""
+    _, bundle = _run_bundle(tmp_path, {"model": "gpt-5"}, _FAKE_CODEX_SUCCESS)
+    argv = json.loads((bundle / "command.json").read_text())["argv"]
+    assert "-m" in argv
+    assert argv[argv.index("-m") + 1] == "gpt-5"
+
+
+def test_supervised_command_omits_model_flag_when_absent(tmp_path) -> None:
+    _, bundle = _run_bundle(tmp_path, {}, _FAKE_CODEX_SUCCESS)
+    argv = json.loads((bundle / "command.json").read_text())["argv"]
+    assert "-m" not in argv
+
+
+# Floods stdout past the OS pipe buffer BEFORE reading stdin: a supervisor that wrote stdin
+# synchronously (instead of on the writer thread) would deadlock here — parent blocked writing
+# a large prompt into a full stdin pipe, child blocked writing into a full stdout pipe.
+_FAKE_CODEX_STDOUT_FIRST = """#!/usr/bin/env python3
+import json, sys
+argv = sys.argv[1:]
+out_path = None
+for i, tok in enumerate(argv):
+    if tok == "-o":
+        out_path = argv[i + 1]
+filler = "x" * 1024
+for _ in range(256):
+    print(json.dumps({"type": "filler", "data": filler}))
+sys.stdout.flush()
+data = sys.stdin.read()
+print(json.dumps({"type": "stdin_len", "n": len(data)}), flush=True)
+if out_path:
+    open(out_path, "w").write("done")
+sys.exit(0)
+"""
+
+
+def test_supervised_large_prompt_does_not_deadlock_stdin(tmp_path) -> None:
+    """A prompt larger than the OS pipe buffer must not deadlock against the stdout flood.
+
+    Guards the threaded ``_feed_stdin`` writer: on a synchronous-write regression the watchdog
+    kills the pair and the status stops being ``success`` (the test fails rather than hangs).
+    """
+    big_task = "Review this. " + ("x" * (256 * 1024))
+    result, bundle = _run_bundle(
+        tmp_path, {"task": big_task}, _FAKE_CODEX_STDOUT_FIRST, timeout_seconds=30
+    )
+    assert result.status == "success"
+    transcript = (bundle / "transcript.jsonl").read_text()
+    assert '"type": "stdin_len"' in transcript

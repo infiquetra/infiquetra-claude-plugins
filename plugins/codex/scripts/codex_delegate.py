@@ -2,11 +2,15 @@
 """Codex delegation wrapper.
 
 First-party, guarded, synchronous codex delegation bridge mirroring the agy wrapper's shape
-(``plugins/agy/scripts/agy_delegate.py``). This module currently ships the ``codex.delegation.v1``
-schema, the ``Envelope`` contract with fail-loud validation, and the ``bridge_receipt.v1`` emitter
-seam (U1). The supervised ``codex exec`` runner, evidence-bundle writer, and diff-scan machinery
-land in follow-on units (U2/U3) — see
+(``plugins/agy/scripts/agy_delegate.py``). This module ships the ``codex.delegation.v1`` schema,
+the ``Envelope`` contract with fail-loud validation, the supervised ``codex exec`` runner with
+timeout/no-output/die-clean termination, the evidence-bundle writer
+(``.claude/codex/runs/<run-id>/``), the reviewer diff-scan and coder disposable-clone mode
+surfaces, and ``bridge_receipt.v1`` emission — see
 ``docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md``.
+
+Invoking the CLI WITHOUT ``--validate-only``/``--dry-run`` launches a live, supervised
+``codex exec`` subprocess; the validate-only path is opt-in, not the default.
 
 Schema shape mirrors ``agy.delegation.v1`` minus members that do not apply to codex's v1 scope
 (KTD1): codex has no ``verification`` policy and no ``apply_policy`` beyond ``preserve-patch``,
@@ -304,16 +308,47 @@ class BundleResult:
 
 
 # Mode → codex sandbox flag (``-s``). "read-only" mirrors agy's no-write reviewer posture;
-# "task" runs write-capable — in v1 the write-capable clone/diff machinery lands in U3, so U2
-# supervises the launch and captures evidence only (KTD3/KTD5).
+# "task" runs write-capable, scoped to the disposable clone (KTD3/KTD5).
 _SANDBOX_BY_MODE = {"read-only": "read-only", "task": "workspace-write"}
 
 _USAGE_KEYS = frozenset({"input_tokens", "output_tokens", "total_tokens"})
+
+# codex is a black box that can emit runaway output; without a cumulative cap, spam resets the
+# no-output watchdog and only the wall clock bounds it — 1-10 MB/s over the 900 s default is
+# 0.9-9 GB on disk and then in memory at token-parse time. Cap and kill instead.
+MAX_OUTPUT_BYTES = 128 * 1024 * 1024
+MAX_LAST_MESSAGE_BYTES = 8 * 1024 * 1024
 
 # Active supervised process, tracked so the SIGTERM/SIGINT die-clean handler can kill the codex
 # process tree even if the signal arrives while the supervising loop is between reads (R4).
 _ACTIVE_PROCESS: subprocess.Popen[bytes] | None = None
 _DIE_CLEAN_SIGNAL: int | None = None
+
+
+class DieCleanInterrupt(BaseException):
+    """Raised by the bundle-scope SIGTERM/SIGINT handler to unwind through ``finally`` blocks.
+
+    Derives from BaseException so the terminal-bundle ``except Exception`` guard in
+    ``create_supervised_bundle`` cannot swallow it — it has its own dedicated handler. Raising
+    (rather than terminating at default disposition) is the whole fix: default SIGTERM kills the
+    interpreter without unwinding, skipping clone teardown and the terminal ``result.json`` (R4).
+    """
+
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        super().__init__(f"terminated by signal {signum}")
+
+
+def _bundle_die_clean_handler(signum: int, _frame: object) -> None:
+    """Bundle-span SIGTERM/SIGINT handler: kill any live codex tree, then unwind (R4).
+
+    Covers the windows OUTSIDE ``run_codex_supervised`` (clone setup, token parse, diff scan,
+    bundle writes) — the supervised loop installs its own handler and restores this one after.
+    """
+    process = _ACTIVE_PROCESS
+    if process is not None and process.poll() is None:
+        _kill_process_tree(process)
+    raise DieCleanInterrupt(signum)
 
 
 def _sandbox_for_mode(mode: str) -> str:
@@ -330,7 +365,14 @@ def _validate_run_id(run_id: str) -> None:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    """Write JSON atomically (tmp + rename) — a mid-write kill must never leave torn JSON.
+
+    ``result.json`` is the terminal-bundle record; a partial write would present as an
+    unparseable, ambiguous state to every downstream reader.
+    """
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def _sanitize_argv(argv: list[str], *, prompt_replacement: str | None = None) -> list[str]:
@@ -623,11 +665,12 @@ def run_codex_supervised(
 
             start_monotonic = time.monotonic()
             last_output_monotonic = start_monotonic
+            shutdown_outcome: str | None = None
 
             while process.poll() is None:
                 if _DIE_CLEAN_SIGNAL is not None:
                     timeout_class = "die_clean"
-                    _kill_process_tree(process)
+                    shutdown_outcome = _kill_process_tree(process)
                     break
 
                 events = selector.select(timeout=0.05)
@@ -644,14 +687,19 @@ def run_codex_supervised(
                         stderr_bytes += len(data)
                     last_output_monotonic = time.monotonic()
 
+                if stdout_bytes + stderr_bytes >= MAX_OUTPUT_BYTES:
+                    timeout_class = "output_limit"
+                    shutdown_outcome = _kill_process_tree(process)
+                    break
+
                 now_monotonic = time.monotonic()
                 if now_monotonic - start_monotonic >= envelope.timeout_seconds:
                     timeout_class = "timeout"
-                    _kill_process_tree(process)
+                    shutdown_outcome = _kill_process_tree(process)
                     break
                 if now_monotonic - last_output_monotonic >= envelope.no_output_seconds:
                     timeout_class = "no_output"
-                    _kill_process_tree(process)
+                    shutdown_outcome = _kill_process_tree(process)
                     break
 
             # Drain any remaining buffered output after the process exited or was killed.
@@ -687,9 +735,24 @@ def run_codex_supervised(
     ended_at = datetime.now(UTC)
     signal_caught = _DIE_CLEAN_SIGNAL
     error: str | None = None
-    if timeout_class == "die_clean":
+    if shutdown_outcome == "shutdown_incomplete":
+        # A tree that survived SIGKILL + grace is worse than any timeout class: the on-disk
+        # status must flag the leaked processes, never read as a clean termination (R4;
+        # parity with agy_delegate's shutdown mapping).
+        status = parse_status("shutdown_incomplete")
+        error = (
+            f"codex process tree could not be fully reaped after {timeout_class or 'kill'};"
+            " orphaned processes may remain"
+        )
+    elif timeout_class == "die_clean":
         status = parse_status("error")
         error = f"terminated by signal {signal_caught}; codex process tree killed"
+    elif timeout_class == "output_limit":
+        status = parse_status("error")
+        error = (
+            f"cumulative output exceeded MAX_OUTPUT_BYTES ({MAX_OUTPUT_BYTES}); "
+            "codex process tree killed"
+        )
     elif timeout_class == "timeout":
         status = parse_status("timeout")
     elif timeout_class == "no_output":
@@ -741,19 +804,21 @@ def parse_token_usage(transcript_path: Path) -> dict[str, int | None]:
         "total_tokens": None,
     }
     try:
-        text = transcript_path.read_text(encoding="utf-8")
+        # Stream line-by-line: the transcript is codex-controlled and byte-capped only at the
+        # supervise loop, so never slurp the whole file into memory here.
+        with transcript_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    event = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                for key, value in _find_usage(event).items():
+                    usage[key] = value
     except OSError:
         return usage
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            event = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        for key, value in _find_usage(event).items():
-            usage[key] = value
     return usage
 
 
@@ -766,6 +831,11 @@ def _supervised_summary(run_result: SupervisedRunResult) -> str:
         return "codex exec exceeded the wall-clock timeout; process tree was killed."
     if run_result.status == "no_output":
         return "codex exec produced no output within the watchdog window; process tree was killed."
+    if run_result.status == "shutdown_incomplete":
+        return (
+            "codex process tree could not be fully reaped after kill; "
+            "orphaned processes may remain."
+        )
     if run_result.error:
         return f"codex exec ended with status {run_result.status}: {run_result.error}"
     return f"codex exec ended with status {run_result.status}."
@@ -784,7 +854,9 @@ def _result_payload(
     elapsed_seconds = (run_result.ended_at - run_result.started_at).total_seconds()
     last_message_present = False
     try:
-        last_message_present = bool(last_message_path.read_text(encoding="utf-8").strip())
+        # Bounded read: codex writes this file; a runaway payload must not be slurped whole.
+        with last_message_path.open("r", encoding="utf-8", errors="replace") as handle:
+            last_message_present = bool(handle.read(MAX_LAST_MESSAGE_BYTES).strip())
     except OSError:
         last_message_present = False
     return {
@@ -908,6 +980,7 @@ class ReviewerScan:
     baseline_dirty: list[str]
     post_dirty: list[str]
     new_paths: list[str]
+    reverted_paths: list[str]
     diff_scan_path: Path
     mutation_patch_path: Path | None
 
@@ -952,13 +1025,16 @@ def _parse_status_z(output: str) -> list[str]:
 
 
 def _porcelain_paths(repo_root: Path) -> list[str]:
-    """Snapshot the set of dirty paths in ``repo_root`` (excludes the ``.claude`` bundle dir).
+    """Snapshot the set of dirty paths in ``repo_root`` (excludes ``.claude/codex/runs`` only).
 
-    The bundle itself is written under ``.claude/codex/runs`` in the live tree, so excluding
-    ``.claude`` keeps the reviewer diff-scan from flagging its own evidence as a mutation.
+    Evidence bundles are written under ``.claude/codex/runs`` in the live tree, so that subtree
+    (any run — concurrent siblings must not false-positive) is excluded from the reviewer
+    diff-scan. The rest of ``.claude`` (settings, hooks, other plugins' state) stays VISIBLE:
+    this scan is the defense-in-depth check for a fail-open codex sandbox, and those paths are
+    exactly where tampering would be most valuable.
     """
     status = _run_git(
-        ["status", "--porcelain=v1", "-z", "--", ".", ":(exclude).claude"],
+        ["status", "--porcelain=v1", "-z", "--", ".", ":(exclude).claude/codex/runs"],
         cwd=repo_root,
     )
     if status.returncode != 0:
@@ -1089,10 +1165,17 @@ def derive_reviewer_scan(
     New dirt is computed as the set difference of post-run dirty paths against the pre-run
     baseline. A pre-dirty operator tree cannot false-positive: every path dirty before launch is
     in the baseline and therefore excluded from ``new_paths`` regardless of its post-run status.
+
+    Reversions are surfaced separately: a baseline path that is CLEAN after the run
+    (``reverted_paths``) means the run may have discarded uncommitted operator work — recorded
+    as an audit signal in ``diff-scan.json``, not folded into ``mutation_detected`` (an operator
+    cleaning their own tree mid-run must not hard-fail a legitimate review).
     """
     post_dirty = _porcelain_paths(repo_root)
     baseline_set = set(baseline_dirty)
+    post_set = set(post_dirty)
     new_paths = sorted(path for path in post_dirty if path not in baseline_set)
+    reverted_paths = sorted(path for path in baseline_set if path not in post_set)
 
     mutation_patch_path: Path | None = None
     if new_paths:
@@ -1107,6 +1190,8 @@ def derive_reviewer_scan(
             "baseline_dirty": sorted(baseline_dirty),
             "post_dirty": post_dirty,
             "new_paths": new_paths,
+            "reverted_paths": reverted_paths,
+            "reversion_suspected": bool(reverted_paths),
             "mutation_detected": bool(new_paths),
             "mutation_patch": str(mutation_patch_path) if mutation_patch_path else None,
         },
@@ -1115,9 +1200,33 @@ def derive_reviewer_scan(
         baseline_dirty=sorted(baseline_dirty),
         post_dirty=post_dirty,
         new_paths=new_paths,
+        reverted_paths=reverted_paths,
         diff_scan_path=diff_scan_path,
         mutation_patch_path=mutation_patch_path,
     )
+
+
+def _finalize_failed_bundle(bundle_path: Path, *, run_id: str, status: str, error: str) -> str:
+    """Best-effort terminal record for a run that failed outside the happy path (R4).
+
+    Every attempted run must end with an on-disk terminal status — a bundle whose
+    ``result.json`` is missing is exactly the ambiguous zombie state this delegate exists to
+    eliminate. If even this write fails, the projection still reports the failure loudly.
+    """
+    with contextlib.suppress(OSError):
+        if bundle_path.exists() and not (bundle_path / "result.json").exists():
+            _write_json(
+                bundle_path / "result.json",
+                {
+                    "schema": "codex.result.v1",
+                    "run_id": run_id,
+                    "bundle_path": str(bundle_path),
+                    "status": status,
+                    "error": error,
+                    "terminal": True,
+                },
+            )
+    return render_bundle_failed_projection(bundle_path)
 
 
 def create_supervised_bundle(
@@ -1147,6 +1256,18 @@ def create_supervised_bundle(
     resolved_run_id = run_id or _new_run_id(timestamp)
     _validate_run_id(resolved_run_id)
     bundle_path = repo_root / ".claude" / "codex" / "runs" / resolved_run_id
+
+    # Bundle-span die-clean handlers (R4): a caller's SIGTERM can arrive during clone setup,
+    # token parse, diff scan, or bundle writes — windows OUTSIDE run_codex_supervised (which
+    # installs its own handler for the launch window and restores these afterward). At default
+    # disposition the interpreter dies without unwinding: no terminal result.json, no clone
+    # teardown. ValueError = non-main-thread caller; proceed uncovered rather than fail.
+    prior_handlers: dict[int, Any] = {}
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            prior_handlers[signum] = signal.signal(signum, _bundle_die_clean_handler)
+    except ValueError:
+        prior_handlers = {}
 
     clone_dir: Path | None = None
     try:
@@ -1241,6 +1362,8 @@ def create_supervised_bundle(
                 "baseline_dirty": scan.baseline_dirty,
                 "post_dirty": scan.post_dirty,
                 "new_paths": scan.new_paths,
+                "reverted_paths": scan.reverted_paths,
+                "reversion_suspected": bool(scan.reverted_paths),
                 "diff_scan": str(scan.diff_scan_path),
                 "mutation_patch": (
                     str(scan.mutation_patch_path) if scan.mutation_patch_path else None
@@ -1287,8 +1410,42 @@ def create_supervised_bundle(
         _write_json(bundle_path / "result.json", result_payload)
         projection = render_projection(result_payload)
         (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
-    except OSError:
-        projection = render_bundle_failed_projection(bundle_path)
+    except DieCleanInterrupt as exc:
+        # Signal arrived outside the supervised launch window: still end terminal (R4).
+        projection = _finalize_failed_bundle(
+            bundle_path,
+            run_id=resolved_run_id,
+            status=parse_status("error"),
+            error=f"terminated by signal {exc.signum} outside the supervised window",
+        )
+        return BundleResult(
+            status=parse_status("error"),
+            run_id=resolved_run_id,
+            bundle_path=bundle_path,
+            projection=projection,
+        )
+    except OSError as exc:
+        projection = _finalize_failed_bundle(
+            bundle_path,
+            run_id=resolved_run_id,
+            status=parse_status("bundle_failed"),
+            error=f"bundle write failed: {exc}",
+        )
+        return BundleResult(
+            status=parse_status("bundle_failed"),
+            run_id=resolved_run_id,
+            bundle_path=bundle_path,
+            projection=projection,
+        )
+    except Exception as exc:
+        # Terminal-bundle guarantee over exception precision (R4): a post-launch failure
+        # (receipt emission, JSON serialization) must not leave a launched run non-terminal.
+        projection = _finalize_failed_bundle(
+            bundle_path,
+            run_id=resolved_run_id,
+            status=parse_status("bundle_failed"),
+            error=f"{type(exc).__name__}: {exc}",
+        )
         return BundleResult(
             status=parse_status("bundle_failed"),
             run_id=resolved_run_id,
@@ -1296,7 +1453,11 @@ def create_supervised_bundle(
             projection=projection,
         )
     finally:
-        # Disposable clone is torn down on BOTH the success and failure paths (R2, KTD5).
+        # Restore the caller's signal disposition, then tear the disposable clone down on
+        # BOTH the success and failure paths (R2, KTD5).
+        for signum, handler in prior_handlers.items():
+            with contextlib.suppress(ValueError):
+                signal.signal(signum, handler)
         if clone_dir is not None:
             teardown_clone(clone_dir)
 
@@ -1320,7 +1481,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--review-lens", dest="review_lens", choices=sorted(REVIEW_LENSES))
     parser.add_argument("--write-set", dest="write_set", action="append", default=[])
     parser.add_argument(
-        "--apply-policy", dest="apply_policy", choices=sorted(APPLY_POLICIES), default="preserve-patch"
+        "--apply-policy",
+        dest="apply_policy",
+        choices=sorted(APPLY_POLICIES),
+        default="preserve-patch",
     )
     parser.add_argument("--evidence", choices=sorted(EVIDENCE_LEVELS), default="summary")
     parser.add_argument("--timeout-seconds", dest="timeout_seconds", type=int, default=900)

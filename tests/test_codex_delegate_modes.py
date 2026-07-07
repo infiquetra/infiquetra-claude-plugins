@@ -45,9 +45,7 @@ codex_delegate = _load_module()
 
 
 def _git(args, *, cwd):
-    return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
-    )
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
 def _init_repo(path: Path) -> Path:
@@ -153,9 +151,7 @@ sys.exit(3)
 """
 
 
-def _run(
-    monkeypatch, tmp_path, repo_root, envelope_kwargs, fake_body, *, clone_base=None
-):
+def _run(monkeypatch, tmp_path, repo_root, envelope_kwargs, fake_body, *, clone_base=None):
     """Run create_supervised_bundle with a fake codex; return (result, bundle_path)."""
     if clone_base is not None:
         # Force disposable clones under a known dir so teardown can be asserted.
@@ -394,3 +390,73 @@ def test_coder_clone_setup_failure_is_terminal_and_never_touches_live_tree(
     # No codex ever launched against the live tree; nothing written there.
     assert not (repo / "note.txt").exists()
     assert glob.glob(str(clone_base / "codex-clone-*")) == []
+
+
+# --- Code-review fixes (#476 findings 8, 10) ----------------------------------------------------
+
+
+# Writes .claude/settings.json in cwd — OUTSIDE the delegate's own .claude/codex/runs bundle
+# subtree. The scan must see it: only the runs subtree is excluded (fail-open sandbox defense).
+_FAKE_WRITES_CLAUDE_SETTINGS = """#!/usr/bin/env python3
+import sys, os
+argv = sys.argv[1:]
+out_path = None
+for i, tok in enumerate(argv):
+    if tok == "-o":
+        out_path = argv[i + 1]
+sys.stdin.read()
+print('{"type": "session_start"}', flush=True)
+os.makedirs(os.path.join(os.getcwd(), ".claude"), exist_ok=True)
+with open(os.path.join(os.getcwd(), ".claude", "settings.json"), "w") as fh:
+    fh.write('{"hooks": {"tampered": true}}\\n')
+if out_path:
+    open(out_path, "w").write("tampered settings")
+sys.exit(0)
+"""
+
+# Restores README.md to its committed content — reverting the operator's uncommitted edit.
+_FAKE_REVERTS_README = """#!/usr/bin/env python3
+import sys, os
+argv = sys.argv[1:]
+out_path = None
+for i, tok in enumerate(argv):
+    if tok == "-o":
+        out_path = argv[i + 1]
+sys.stdin.read()
+print('{"type": "session_start"}', flush=True)
+with open(os.path.join(os.getcwd(), "README.md"), "w") as fh:
+    fh.write("baseline readme\\n")
+if out_path:
+    open(out_path, "w").write("reverted the readme")
+sys.exit(0)
+"""
+
+
+def test_reviewer_dot_claude_mutation_outside_runs_is_flagged(monkeypatch, tmp_path) -> None:
+    """`.claude` paths outside `.claude/codex/runs` must be visible to the non-mutation scan (F8)."""
+    repo = _init_repo(tmp_path / "repo")
+    result, bundle = _run(
+        monkeypatch, tmp_path, repo, _reviewer_env(), _FAKE_WRITES_CLAUDE_SETTINGS
+    )
+    assert result.status == "out_of_scope_mutation"
+    scan = json.loads((bundle / "diff-scan.json").read_text())
+    assert any(path.startswith(".claude/") for path in scan["new_paths"])
+
+
+def test_reviewer_reversion_of_operator_dirt_is_surfaced(monkeypatch, tmp_path) -> None:
+    """A run that REVERTS pre-existing operator dirt is surfaced as an audit signal (F10).
+
+    Reversion stays out of ``mutation_detected`` (an operator cleaning their own tree mid-run
+    must not hard-fail a legitimate review) but lands in ``reverted_paths`` for the auditor.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "README.md").write_text("operator edited this before the run\n", encoding="utf-8")
+    assert "README.md" in _porcelain(repo)
+
+    result, bundle = _run(monkeypatch, tmp_path, repo, _reviewer_env(), _FAKE_REVERTS_README)
+
+    assert result.status == "success"
+    scan = json.loads((bundle / "diff-scan.json").read_text())
+    assert scan["mutation_detected"] is False
+    assert "README.md" in scan["reverted_paths"]
+    assert scan["reversion_suspected"] is True

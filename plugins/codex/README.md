@@ -17,16 +17,20 @@ python3 plugins/codex/scripts/codex_delegate.py
 
 ## Current Status
 
-- Version `0.1.0`: envelope schema (`codex.delegation.v1`), validation, and the
-  `bridge_receipt.v1` emitter seam are packaged (U1 of
-  `docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md`).
-- The supervised `codex exec` runner, evidence-bundle writer, and diff-scan machinery land in
-  follow-on units (U2/U3); until then the wrapper validates envelopes and exits nonzero rather
-  than launching an unsupervised process.
+- Version `0.1.0` ships the full delegate surface
+  (`docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md`, U1–U7): the
+  `codex.delegation.v1` envelope schema with fail-loud validation, the supervised synchronous
+  `codex exec` runner (timeout + no-output watchdogs, whole-tree kill with the kill outcome
+  captured, SIGTERM/SIGINT die-clean across the whole bundle span, cumulative output byte cap),
+  the evidence bundle under `.claude/codex/runs/<run-id>/` (all JSON written atomically),
+  the enforced read-only reviewer diff-scan and coder disposable-clone modes, and
+  `bridge_receipt.v1` emission for every launched run.
+- **Invoking the wrapper without `--validate-only`/`--dry-run` launches a live, supervised
+  `codex exec` subprocess.** The validate-only path is opt-in, not the default.
 - This plugin retires the upstream `openai-codex` marketplace plugin's `codex:codex-rescue` agent,
-  whose fleet dispatch is session-scoped and cannot receipt (see the plan's Problem Frame). Once
-  the retirement units land, uninstall the `openai-codex` marketplace plugin to avoid a `codex:`
-  namespace collision.
+  whose fleet dispatch is session-scoped and cannot receipt (see the plan's Problem Frame).
+  Uninstall the `openai-codex` marketplace plugin to avoid a `codex:` namespace collision (see
+  the runbook below).
 
 ## Operator Runbook: Retiring the `openai-codex` Marketplace Plugin
 

@@ -1953,3 +1953,15 @@ merge (commit `5a92695`). The two dogfood defects shared one primitive — #495'
 **Generalizable rule.** Before `/plan`-ing or decomposing a multi-issue objective authored more than a day ago, re-verify each draft's *absence* claims against current HEAD (re-grep, do not trust the draft's grep), and persist the correction onto the artifact the planner consumes (the issue), so the stale draft self-corrects at plan time. "Verified absent (2026-07-03)" is a timestamp, not a fact.
 
 **Refs.** Discipline recorded in `{#outcome-dag-decompose-stale-objective-336}`. Same "durable state belongs where it is consumed" thread as `{#outcome-derived-truth-vs-missing-producer}` — the fix was scope-note comments on the issues, not a side doc, because `/plan` reads the issue.
+
+---
+
+### Per-unit verify panels and a whole-diff review pass find disjoint defect classes — run both  {#unit-panels-vs-whole-diff-lenses-476}
+
+**Evidence.** #476's workflow ran 9 refute-panel verifiers (3 units × 3), all upheld with examined-SHA quoting — yet the post-workflow `/code-review` (6 lenses + 10 independent validators, artifact `docs/code-reviews/2026-07-07-feat-476-codex-first-party-bridge-code-review.md`) surfaced 10 confirmed findings the panels structurally could not see: U1's "runner lands in follow-on units" docs falsified by U2/U3 shipping the runner (P1 — no unit owned refreshing them); `_kill_process_tree`'s return discarded at every call site so `shutdown_incomplete` was dead vocabulary (each unit's own tests passed); the die-clean handler covering only U2's window while U3/U6 added spans outside it; and fleet-parity gaps (non-atomic `_write_json`, narrow `except OSError`, unbounded transcript reads) inherited byte-for-byte from the agy sibling the units were told to mirror.
+
+**Mechanism.** A refute-panel verifies a unit's OWN claims at that unit's commit — it is unit-scoped by design. Defects that live BETWEEN units (an earlier unit's statement invalidated by a later unit's code, a handler installed in one span but needed in another, a mirrored sibling's latent bug faithfully copied) have no owning unit, so no panel interrogates them. The serialized-plan failure shape is specific: scope-boundary prose ("X lands in U2/U3") is written true and becomes false in the same PR, and "mirror the sibling" instructions import the sibling's defects with full test coverage of the defective behavior.
+
+**Generalizable rule.** Panels upholding 9/9 is evidence the units are built-as-claimed, not that the diff is sound — always run a whole-diff review pass after a multi-unit workflow, and treat two prompts as standing risks: any "lands in a later unit" doc line (assign the LAST unit a doc-currency sweep) and any "mirror <sibling>" instruction (audit the sibling's known gaps; file the parity fix both ways).
+
+**Refs.** Fix round: all 10 findings fixed in-PR (this commit); agy parity follow-up filed for the shared patterns. Panel-side guardrails from Wave A remain in `{#verify-panels-blind-to-uncommitted-tree}`.

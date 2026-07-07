@@ -879,3 +879,143 @@ def test_never_gatekeeper_guard_allows_clean_result() -> None:
     evidence = D.dispatch(_resolution(), runner=_ok_runner)
     assert evidence.halt is None
     assert evidence.evidence == "external finding"
+
+
+# --- U2: SUBSTITUTED_ENGINE auto-derivation + gate refusal + note invariant (R2/R3/R4) -----
+# selectors: substituted_disposition, fallback_reason
+
+
+def _evidence(
+    *,
+    engine_id: str = "codex",
+    variant: str = "gpt-5.5-xhigh",
+    provenance: dict[str, Any] | None = None,
+    halt: str | None = None,
+    runner_receipt: dict[str, Any] | None = None,
+) -> Any:
+    prov: dict[str, Any] = {"status": "ok"} if provenance is None else provenance
+    return D.AdvisoryEvidence(
+        engine_id=engine_id,
+        variant=variant,
+        evidence="external finding",
+        provenance=prov,
+        halt=halt,
+        runner_receipt=runner_receipt,
+    )
+
+
+def test_substituted_disposition_when_expected_differs_from_resolved() -> None:
+    """Expected 'agy/gemini-3.1-pro-high' but codex/gpt-5.5-xhigh ran -> SUBSTITUTED_ENGINE with
+    BOTH identities named in the note (KTD4, R2)."""
+    evidence = _evidence(
+        provenance={"status": "ok", "expected_identity": "agy/gemini-3.1-pro-high"},
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence, execution_id="e-sub", saga_ref="s1", created_at="2026-07-02"
+    )
+    assert manifest.disposition is PM.Disposition.SUBSTITUTED_ENGINE
+    assert "agy/gemini-3.1-pro-high" in manifest.disposition_note
+    assert "codex/gpt-5.5-xhigh" in manifest.disposition_note
+
+
+def test_substituted_disposition_absent_when_expected_matches_resolved() -> None:
+    """expected == resolved -> unchanged path (RAN_AS_REQUESTED with a valid receipt)."""
+    receipt = _valid_receipt()
+    evidence = _evidence(
+        provenance={"status": "ok", "expected_identity": "codex/gpt-5.5-xhigh"},
+        runner_receipt=receipt,
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence, execution_id="e-match", saga_ref="s1", created_at="2026-07-02"
+    )
+    assert manifest.disposition is PM.Disposition.RAN_AS_REQUESTED
+    assert manifest.disposition_note == ""
+
+
+def test_substituted_disposition_none_expected_is_byte_identical() -> None:
+    """expected_identity absent -> today's behavior byte-for-byte (valid receipt -> RAN)."""
+    evidence = _evidence(provenance={"status": "ok"}, runner_receipt=_valid_receipt())
+    manifest = D.build_dispatch_manifest(
+        evidence, execution_id="e-none", saga_ref="s1", created_at="2026-07-02"
+    )
+    assert manifest.disposition is PM.Disposition.RAN_AS_REQUESTED
+    assert manifest.disposition_note == ""
+
+
+def test_substituted_disposition_halt_and_mismatch_halt_branch_wins() -> None:
+    """halt + identity mismatch -> FELL_BACK_TO_CLAUDE wins (KTD4 precedence: halt outranks
+    substitution)."""
+    evidence = _evidence(
+        provenance={"status": "halted", "expected_identity": "agy/gemini", "note": "boom"},
+        halt="boom",
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence, execution_id="e-halt", saga_ref="s1", created_at="2026-07-02"
+    )
+    assert manifest.disposition is PM.Disposition.FELL_BACK_TO_CLAUDE
+
+
+def test_substituted_disposition_outranks_valid_receipt() -> None:
+    """A schema-valid receipt for the WRONG engine must never yield RAN_AS_REQUESTED -- an
+    affirmative substitution contradiction outranks mere proof-presence (KTD4)."""
+    evidence = _evidence(
+        provenance={"status": "ok", "expected_identity": "agy/gemini-3.1-pro-high"},
+        runner_receipt=_valid_receipt(),
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence, execution_id="e-sub-receipt", saga_ref="s1", created_at="2026-07-02"
+    )
+    assert manifest.disposition is PM.Disposition.SUBSTITUTED_ENGINE
+    assert manifest.disposition is not PM.Disposition.RAN_AS_REQUESTED
+
+
+def test_satisfy_gate_refuses_substituted_manifest() -> None:
+    """Substituted evidence can never satisfy a gate as-approved (KTD5, R4)."""
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="Claude verified external finding",
+        provenance={"status": "ok", "observer_corroborated": True},
+        verified_by_claude=True,
+    )
+    substituted = D.build_dispatch_manifest(
+        _evidence(provenance={"status": "ok", "expected_identity": "agy/gemini"}),
+        execution_id="e-gate",
+        saga_ref="s1",
+        created_at="2026-07-02",
+    )
+    assert substituted.disposition is PM.Disposition.SUBSTITUTED_ENGINE
+    with pytest.raises(D.DispatchError, match="substitut"):
+        D.satisfy_gate(evidence, substituted)
+
+
+def test_fallback_reason_invariant_fills_empty_note_for_non_ran() -> None:
+    """R3: every non-RAN_AS_REQUESTED manifest carries a non-empty disposition_note; a degenerate
+    empty halt/reason gets a fixed fallback string rather than an empty note."""
+    evidence = _evidence(provenance={"status": "halted", "note": "   "}, halt="")
+    manifest = D.build_dispatch_manifest(
+        evidence, execution_id="e-empty", saga_ref="s1", created_at="2026-07-02"
+    )
+    assert manifest.disposition is PM.Disposition.FELL_BACK_TO_CLAUDE
+    assert manifest.disposition_note.strip() != ""
+
+
+def test_dispatch_stamps_expected_identity_into_provenance() -> None:
+    """dispatch(expected_identity=...) threads the plan-time preview baseline into evidence
+    provenance so the builder can derive substitution (KTD3)."""
+    evidence = D.dispatch(
+        _resolution(),
+        runner=_ok_runner,
+        expected_identity="agy/gemini-3.1-pro-high",
+    )
+    assert evidence.provenance["expected_identity"] == "agy/gemini-3.1-pro-high"
+    manifest = D.build_dispatch_manifest(
+        evidence, execution_id="e-thread", saga_ref="s1", created_at="2026-07-02"
+    )
+    assert manifest.disposition is PM.Disposition.SUBSTITUTED_ENGINE
+
+
+def test_dispatch_expected_identity_none_leaves_provenance_clean() -> None:
+    """expected_identity=None -> no expected_identity key stamped (byte-for-byte preserved)."""
+    evidence = D.dispatch(_resolution(), runner=_ok_runner)
+    assert "expected_identity" not in evidence.provenance

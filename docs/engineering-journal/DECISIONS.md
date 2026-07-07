@@ -1,5 +1,39 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-07
+
+### Zero-token fire drill (#468): both $0 lanes, real-unit target, verdict rubric, one-PR shape {#zero-token-fire-drill-468}
+
+**Context.** `docs/plans/2026-07-07-zero-token-fire-drill-plan.md` (#468, sub-468 of outcome
+external-engine-offload #336). Exploration: measure the irreducibility boundary of the cheapest
+offload lanes across one real lifecycle loop; the map is evidence, never a gate.
+
+- **KTD1 — dispatch every step down BOTH $0 lanes: `agy/gemini-3.5-flash-high` (rank 1) primary +
+  `ollama-cloud/gpt-oss-120b` (rank 5) secondary.** AC1's letter is satisfied by rank 1; the
+  ollama-cloud row (never live-dispatched, key wired same-day) gets first real receipts.
+  *Rejected:* single-lane variants — either loses AC1 compliance or leaves the newly wired lane
+  unmeasured. *Revisit when:* a third $0-class row lands in the registry.
+- **KTD2 — drill target is a verified-real QUEUED item: `/code-review` Defect 2
+  (`{#code-review-saga-scan-touchups}`), after stale-draft re-triage killed the first pick.**
+  `{#marketplace-ci-guard}` turned out already-shipped three ways in CI (validator, generator
+  `--check`, tri-lock test) — pruned by this drill. *Rejected:* `{#loop-rounds-seen-placeholder-crash}`
+  (two placeholder edits — degenerate implementation signal). *Revisit when:* never — target is
+  one-shot.
+- **KTD3 — verdict rubric: `offloaded-clean` (<~10% rework) / `degraded` (≥~10% or retry) /
+  `claude-irreducible` (unusable or structurally blocked), per step × lane, step verdict = best
+  lane.** *Rejected:* binary pass/fail — hides exactly the degradation gradient the map exists to
+  measure.
+- **KTD7 — one branch, one PR (fix + release surfaces + map + journal), destination merge, hard
+  test gate.** *Rejected:* separate evidence-only PR — splits the drill's receipt chain from the
+  work it proves.
+- **KTD8 — dispatch failure is data: a halt, bridge error, integrity divergence, or unusable
+  output fails the step's lane and is recorded; the drill never aborts on lane failure and never
+  fixes lane machinery mid-run (measurement contamination).** *Revisit when:* a repeat drill wants
+  intervention-and-remeasure semantics.
+
+Full KTD set (incl. KTD4 evidence fabric, KTD5 advisory-ungated posture, KTD6 narratives map
+location) in the plan doc.
+
 ## 2026-07-06
 
 ### External-engine HTTP bridge + bridge_receipt.v1 keystone pair: transport-keyed adapter, fleet-commons receipt schema, receipt-gated disposition, required emitter wiring {#http-bridge-receipt-pair-387-383}

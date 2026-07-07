@@ -92,6 +92,21 @@ A rung applies only when its named agent type is actually present in the current
 agent type. If neither rung resolves, surface the gap to the operator rather than spawning
 unsandboxed.
 
+### Recording rule — carry the fallback depth (#390 U6, R8, KTD7)
+
+Descending this ladder is never silent. An **inline** spawner (a Claude-prose spawn following the
+ad-hoc rule, not a workflow `agent()` call) that drops to rung 1 or rung 2 MUST carry the rung
+index as `fallback_depth` into whatever verdict or tick it records: first-choice
+`saga:readonly-verifier` is `fallback_depth: 0`, the `Explore` rung is `fallback_depth: 1`, the
+`general-purpose` rung is `fallback_depth: 2` — alongside the `verifier_identity` of the agent type
+actually spawned. The panel gate summary keys off exactly these two fields to render an explicit
+"fallback tier N" marker naming the degraded reporter (see
+`render_fallback_tier_marker` in `execution_spec.py`), so a run that quietly degraded its verifier
+cannot pass as a first-choice pass. Workflow `agent()` calls need no manual recording — the emitter
+stamps `fallback_depth: 0` because an unresolvable `agentType` fails the call outright rather than
+descending. This is attribution only; the ladder's order and contract are unchanged (binding
+decision `{#readonly-verifier-fallback-ladder-325}`).
+
 ## KTD7 residual boundary (documented, not defended)
 
 A git worktree shares `.git` with the primary checkout. A `git push` or a branch-ref mutation run via

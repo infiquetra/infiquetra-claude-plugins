@@ -368,6 +368,27 @@ def test_verifier_panel_emits_readonly_agenttype_and_isolation() -> None:
     assert 'isolation: "worktree"' in script
 
 
+def test_verifier_panel_stamps_identity_and_fallback_schema_fields() -> None:
+    # U6/R8/KTD7: the emitted verifier prompt carries the emitter-stamped identity and instructs
+    # the verifier to echo verifier_identity + fallback_depth (default 0). A workflow agent() call
+    # can only ever be the first-choice rung, so the stamped depth is 0.
+    script = _emit_units([_verify_unit("a", verify={"n": 2, "pass_rule": "majority"})])
+    assert "verifier_identity" in script
+    assert "fallback_depth" in script
+    # Stamped identity == the readonly-verifier agent type the emitter knows.
+    assert "verifier_identity: saga:readonly-verifier" in script
+    assert "fallback_depth: 0" in script
+
+
+def test_verifier_panel_emits_fallback_tier_marker_in_throw() -> None:
+    # The runtime gate summary computes a "fallback tier" marker over the reporting verdicts and
+    # rides it on the operator-facing verifier-disagreement throw.
+    script = _emit_units([_verify_unit("a", verify={"n": 2, "pass_rule": "majority"})])
+    assert "fallback tier" in script
+    assert "fallback_marker" in script
+    assert "verifier-disagreement" in script
+
+
 def test_verifier_iterate_singleton_emits_readonly_agenttype_and_isolation() -> None:
     script = _emit_units(
         [_verify_unit("b", verify={"n": 2, "pass_rule": "majority", "iterate_to_consensus": True})]

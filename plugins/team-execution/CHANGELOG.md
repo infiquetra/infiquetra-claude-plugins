@@ -4,6 +4,17 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.12.1] - 2026-07-06
+
+### Changed — pointer update to saga's dispatch-adapter contract (#387, #383)
+
+- `skills/team-execution/references/external-engine-workers.md` (the `ENGINE_INTENTS`
+  cross-reference by `<engine-key>` / `cap:<capability>`) now points at the new
+  `plugins/saga/references/dispatch-adapter-contract.md`, which documents the `transport: http`
+  registry field and generic HTTP bridge added in this pair (#387 keystone). Documentation-only —
+  team-execution's own resolution stays fully declarative; new registry rows (`ollama-cloud`,
+  `deepseek`) join `ENGINE_INTENTS` resolution automatically with no team-execution code change.
+
 ## [2.12.0] - 2026-07-06
 
 ### Added — segment-boundary session tier override read (#365)

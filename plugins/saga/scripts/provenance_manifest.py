@@ -57,6 +57,11 @@ class Disposition(StrEnum):
     RAN_AS_REQUESTED = "ran-as-requested"
     FELL_BACK_TO_CLAUDE = "fell-back-to-claude"
     SUBSTITUTED_ENGINE = "substituted-engine"
+    # A dispatch reported "ok" but carried no schema-valid `bridge_receipt.v1` proof of
+    # execution (plan `2026-07-06-...pair-plan.md` U6, KTD8, #383 DoD 2). Distinct from
+    # `FELL_BACK_TO_CLAUDE` -- nothing fell back, the engine ran -- and distinct from
+    # `RAN_AS_REQUESTED` -- derived truth must not assert proof that doesn't exist.
+    UNPROVEN = "unproven"
 
 
 class ClaimedStatus(StrEnum):

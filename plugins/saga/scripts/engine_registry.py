@@ -23,6 +23,8 @@ CAPABILITIES = (
 RATINGS = ("WEAK", "MODERATE", "STRONG")
 _RATING_SCORE = {rating: index for index, rating in enumerate(RATINGS, start=1)}
 
+TRANSPORTS = ("cli", "http")
+
 
 class RegistryError(ValueError):
     """A registry row or role violates the external-engine schema."""
@@ -146,6 +148,33 @@ def _parse_prompting_protocol(data: dict[str, Any], where: str) -> list[str]:
     return protocol
 
 
+def _validate_invocation_transport(
+    invocation: dict[str, Any],
+    transport: str,
+    where: str,
+) -> None:
+    """KTD2: http-conditional required invocation fields.
+
+    ``transport: http`` rows must carry ``base_url``, ``model``, an ``auth`` mapping with
+    ``mode``, ``auth.key_env`` when ``auth.mode`` is ``bearer``, and an explicit ``effort``.
+    ``transport: cli`` rows are unaffected -- existing shape stays byte-identical (R11).
+    """
+    if transport != "http":
+        return
+
+    _require_string(invocation, "base_url", f"{where}: invocation")
+    _require_string(invocation, "model", f"{where}: invocation")
+    _require_field(invocation, "effort", f"{where}: invocation")
+
+    auth = _require_mapping(
+        _require_field(invocation, "auth", f"{where}: invocation"),
+        f"{where}: invocation.auth",
+    )
+    mode = _require_string(auth, "mode", f"{where}: invocation.auth")
+    if mode == "bearer":
+        _require_string(auth, "key_env", f"{where}: invocation.auth")
+
+
 def _parse_sources(data: dict[str, Any], where: str) -> list[dict[str, Any]]:
     if "sources" not in data:
         raise RegistryError(f"{where}: missing per-row sources")
@@ -178,6 +207,8 @@ class EngineEntry:
     prompting_protocol: list[str]
     sources: list[dict[str, Any]]
     registry_order: int
+    receipt_emitter: str
+    transport: str = "cli"
 
     @property
     def key(self) -> str:
@@ -190,6 +221,12 @@ class EngineEntry:
         variant = _require_string(data, "variant", row)
         where = f"engine {engine_id}/{variant}"
 
+        transport = data.get("transport", "cli")
+        if not isinstance(transport, str) or transport not in TRANSPORTS:
+            raise RegistryError(
+                f"{where}: transport {transport!r} not in closed vocabulary {TRANSPORTS}"
+            )
+
         invocation = _require_mapping(
             _require_field(data, "invocation", where),
             f"{where}: invocation",
@@ -197,6 +234,7 @@ class EngineEntry:
         _require_string(invocation, "via", f"{where}: invocation")
         _require_string(invocation, "recipe", f"{where}: invocation")
         _require_bool(invocation, "write_capable", f"{where}: invocation")
+        _validate_invocation_transport(invocation, transport, where)
 
         if "cost_speed_rank" not in data:
             raise RegistryError(f"{where}: missing cost_speed_rank")
@@ -204,6 +242,8 @@ class EngineEntry:
 
         if "last_validated" not in data:
             raise RegistryError(f"{where}: missing last_validated")
+
+        receipt_emitter = _require_string(data, "receipt_emitter", where)
 
         return cls(
             engine_id=engine_id,
@@ -225,6 +265,8 @@ class EngineEntry:
             prompting_protocol=_parse_prompting_protocol(data, where),
             sources=_parse_sources(data, where),
             registry_order=registry_order,
+            receipt_emitter=receipt_emitter,
+            transport=transport,
         )
 
 

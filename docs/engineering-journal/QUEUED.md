@@ -236,6 +236,94 @@ primitive. Ids named in issue #463 itself are marked ★.
 
 ## P2 — important
 
+### `execution_spec` emitter: verifiers must see unit output, and UNDER-STRENGTH panels must fail the run  {#execution-spec-verifier-visibility}
+
+**Priority.** P2 (P1 the moment another ultracode run relies on refute-N for its assurance story).
+
+**Effort.** Half-day (`execution_spec.py` panel emission + quorum handling + regression test with a
+deliberately uncommitted-tree fixture).
+
+**Worth it when.** Any next `cc-workflows-ultracode` run — on the first real run (#387+#383,
+`wf_6f7f3de8-926`) all three refute-3 panels computed their verdict over 0/3 verifiers and the run
+still returned success. See LEARNINGS `{#verify-panels-blind-to-uncommitted-tree}`.
+
+**Context.** Verifiers spawn with `isolation: worktree`, cut from the DEFAULT branch (main) — not
+the driving session's branch — so panels verify a tree with no implementation in it: uncommitted
+worker output is always invisible, and committed branch work is too unless the verifier manually
+materializes the target commit. Three fixes, all needed: (1) give verifiers sight of the unit's
+output — the emitter injects the unit's diff/result AND the target commit sha + a mandatory
+materialization step (`git checkout <sha> -- .`) into the verifier prompt; (2) treat a panel below
+its quorum floor as a workflow failure (throw/halt), not a `log()` line — a vacuous pass is
+indistinguishable from a real pass in the return value today; (3) a verifier verdict must carry
+the sha it actually examined, so a false kill against the wrong revision is detectable
+mechanically (two of nine verifiers on `wf_5afd99b3-636` confidently refuted main's code).
+
+### `execution_spec` emitter: spec-level concurrency cap replacing serialize-by-construction  {#execution-spec-concurrency-cap}
+
+**Priority.** P2.
+
+**Effort.** Half-day to a day (`execution_spec.py` emitter change + regression tests for the
+existing serial-by-construction call sites).
+
+**Worth it when.** The next time an operator needs deliberate bounded parallelism above what
+today's ad hoc serial emission allows — flagged now off the 2026-07-04 operator rate-limit
+incident (concurrency-and-spend-discipline memory: "no launches without a go; concurrency 3 hard
+default"), before another spend incident forces it.
+
+**Context.** Today the `execution_spec` emitter avoids concurrency problems by serializing at
+construction time — the spec simply never asks for more than one runner at once for a given
+fan-out, rather than declaring a cap the runtime enforces. That works but has no explicit
+ceiling: nothing in the spec schema stops a future emitter change from fanning out unbounded.
+Proposed direction: add a spec-level `concurrency` field (e.g. `{default: 3, cheap: 6}`,
+mirroring the operator's standing hard default of 3 concurrent launches, with a higher ceiling for
+demonstrably cheap/low-risk units) that the emitter honors as a bounded pool rather than a serial
+queue — same operator-facing ceiling, but expressed as policy the spec carries instead of an
+emission-order accident. Needs: where the field lives in the spec schema (top-level vs
+per-workflow), how it composes with the existing tier/backend ladder, and a regression test
+proving the default (3) reproduces today's de facto serial behavior for every existing caller.
+
+### `recommend_execution_backend`'s ultracode risk suppressor has no reachable escape hatch for large security-touching changes  {#ultracode-elevated-risk-suppressor-reachability}
+
+**Priority.** P2.
+
+**Effort.** Half-day (mostly threading a size-vs-risk interaction test through
+`lifecycle_state.py`; the fix itself is likely a small branch-order or precedence change).
+
+**Worth it when.** A real security-touching change at or above the file-count/phase-count
+threshold needs `cc-workflows-ultracode`'s deterministic independent-verification shape and
+currently cannot reach it — surfaced during the #387/#383 release-surface pass while reading
+`recommend_execution_backend` (`plugins/saga/scripts/lifecycle_state.py:100-223`).
+
+**Context.**
+- `should_offer_team_execution`'s size trigger (`file_count` / `phase_count` thresholds) already
+  ORs its way past the GATED-vs-ADVISORY consensus split — a big-enough change routes to
+  `team-execution` regardless of whether consensus is gated. That is intentional per KTD/R7 (size
+  alone earns the review-consensus + gates fit).
+- Separately, `elevated_risk = (has_security or has_infra or deployment_sensitive) and
+  has_code_surface` unconditionally suppresses the `ultracode` branch
+  (`ultracode = (broad_independent_fanout or adversarial_confidence or advisory_consensus) and not
+  elevated_risk`, `lifecycle_state.py:183-186`).
+- Net effect: for a security-touching change with a real code surface at or above the size
+  threshold, `team` already fires first (size alone), so the suppressor never gets exercised in
+  that shape today — but for a security-touching change *below* the team-execution size
+  threshold that still wants `ultracode`'s broad-fanout/adversarial-confidence verification, the
+  suppressor unconditionally rules it out with no alternative path back to `ultracode`. The
+  `alternatives` list still names `cc-workflows-ultracode` as reachable
+  (`workflow_available`-gated) even when `elevated_risk` is what actually excluded it as the
+  *recommendation* — so the operator sees it listed as an escalation option that the function's
+  own logic will re-suppress if chosen via the same recommend path.
+- **Fix direction (needs design, not just a flip):** decouple "does a gate exist for this risk
+  class" from "should ultracode ever be an option here." One option: only suppress `ultracode`
+  when `elevated_risk` AND no `team-execution` gate is actually reachable for that risk class
+  (i.e., the suppressor should reflect *gate absence*, not *risk presence*) — today it conflates
+  the two, exactly the framing in the task description ("size trigger ORs past the gated/advisory
+  answer AND elevated_risk suppresses ultracode... revisit the suppressor so backend choice is
+  decoupled from gate existence"). Needs a size-vs-risk interaction test matrix (below threshold +
+  elevated risk + fanout signal) added to whatever test module owns
+  `recommend_execution_backend` today before changing the branch.
+- Cross-ref: `operator-choice.md` section 3 (GATED vs ADVISORY consensus split, precedence
+  ordering); `plugins/saga/scripts/lifecycle_state.py:100-223`.
+
 ### Evaluate joined `doc-review` plus `blueprint-reviewer` review flow  {#doc-review-blueprint-unification}
 
 **Priority.** P2.

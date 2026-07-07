@@ -6,6 +6,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -233,6 +234,202 @@ def test_cli_envelope_dry_validation_outputs_projection(tmp_path: Path) -> None:
     assert "Status: success" in completed.stdout
     assert f"Bundle: {bundle}" in completed.stdout
     assert completed.stdout == (bundle / "projection.md").read_text(encoding="utf-8")
+
+
+def test_supervised_receipt_maps_pid_argv_exit_code_when_launched(
+    agy_delegate: ModuleType, tmp_path: Path
+) -> None:
+    envelope = agy_delegate.Envelope.from_mapping(_valid_payload(model="flash"))
+    started = datetime(2026, 7, 6, 12, 0, 0, tzinfo=UTC)
+    ended = datetime(2026, 7, 6, 12, 0, 3, tzinfo=UTC)
+    run_result = agy_delegate.SupervisedRunResult(
+        status="success",
+        agy_launched=True,
+        resolved_agy="/usr/local/bin/agy",
+        argv=["/usr/local/bin/agy", "--role", "coder"],
+        process_id=4242,
+        return_code=0,
+        started_at=started,
+        ended_at=ended,
+        shutdown="exited",
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        timeout_class=None,
+        stdout_bytes=120,
+        stderr_bytes=8,
+    )
+
+    receipt = agy_delegate._supervised_receipt(run_result, envelope=envelope)
+
+    assert receipt is not None
+    assert agy_delegate._bridge_receipt.validate_receipt(receipt) == []
+    assert receipt["schema"] == "bridge_receipt.v1"
+    assert receipt["engine_id"] == "agy"
+    assert receipt["variant"] == "flash"
+    assert receipt["transport"] == "cli"
+    assert receipt["wall_time_s"] == pytest.approx(3.0)
+    assert receipt["bytes_produced"] == 128
+    assert receipt["runner"] == {
+        "pid": 4242,
+        "argv": ["/usr/local/bin/agy", "--role", "coder"],
+        "exit_code": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    "run_result_kwargs",
+    [
+        pytest.param(
+            {
+                "status": "error",
+                "agy_launched": False,
+                "resolved_agy": None,
+                "argv": [],
+                "process_id": None,
+                "return_code": None,
+                "shutdown": "not_started",
+                "timeout_class": None,
+                "stdout_bytes": 0,
+                "stderr_bytes": 0,
+                "error": "agy executable not found",
+            },
+            id="agy-missing",
+        ),
+        pytest.param(
+            {
+                "status": "error",
+                "agy_launched": False,
+                "resolved_agy": "/usr/local/bin/agy",
+                "argv": ["/usr/local/bin/agy"],
+                "process_id": None,
+                "return_code": None,
+                "shutdown": "not_started",
+                "timeout_class": None,
+                "stdout_bytes": 0,
+                "stderr_bytes": 3,
+                "error": "[Errno 13] Permission denied",
+            },
+            id="oserror-on-launch",
+        ),
+    ],
+)
+def test_supervised_receipt_none_on_launch_failure_paths(
+    agy_delegate: ModuleType, tmp_path: Path, run_result_kwargs: dict[str, object]
+) -> None:
+    envelope = agy_delegate.Envelope.from_mapping(_valid_payload())
+    timestamp = datetime(2026, 7, 6, 12, 0, 0, tzinfo=UTC)
+    run_result = agy_delegate.SupervisedRunResult(
+        started_at=timestamp,
+        ended_at=timestamp,
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        **run_result_kwargs,
+    )
+
+    assert agy_delegate._supervised_receipt(run_result, envelope=envelope) is None
+
+    payload = agy_delegate._result_payload(
+        envelope=envelope,
+        run_id="failed-run",
+        bundle_path=tmp_path / "bundle",
+        run_result=run_result,
+        stdout_path=run_result.stdout_path,
+        stderr_path=run_result.stderr_path,
+        summary="launch failed",
+        changed_paths=[],
+        diff_patch_path=tmp_path / "diff.patch",
+        checks_path=tmp_path / "checks.json",
+        clone_path=tmp_path / "clone",
+    )
+
+    assert "receipt" not in payload
+    # The envelope still validates (schema-valid JSON, no receipt-shaped placeholder).
+    assert json.loads(json.dumps(payload))["agy_launched"] is False
+
+
+def test_result_payload_includes_receipt_when_launched(
+    agy_delegate: ModuleType, tmp_path: Path
+) -> None:
+    envelope = agy_delegate.Envelope.from_mapping(_valid_payload(model="pro"))
+    started = datetime(2026, 7, 6, 12, 0, 0, tzinfo=UTC)
+    ended = datetime(2026, 7, 6, 12, 0, 1, tzinfo=UTC)
+    run_result = agy_delegate.SupervisedRunResult(
+        status="success",
+        agy_launched=True,
+        resolved_agy="/usr/local/bin/agy",
+        argv=["/usr/local/bin/agy"],
+        process_id=99,
+        return_code=0,
+        started_at=started,
+        ended_at=ended,
+        shutdown="exited",
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        timeout_class=None,
+        stdout_bytes=10,
+        stderr_bytes=0,
+    )
+
+    payload = agy_delegate._result_payload(
+        envelope=envelope,
+        run_id="ok-run",
+        bundle_path=tmp_path / "bundle",
+        run_result=run_result,
+        stdout_path=run_result.stdout_path,
+        stderr_path=run_result.stderr_path,
+        summary="ran clean",
+        changed_paths=[],
+        diff_patch_path=tmp_path / "diff.patch",
+        checks_path=tmp_path / "checks.json",
+        clone_path=tmp_path / "clone",
+    )
+
+    assert agy_delegate._bridge_receipt.validate_receipt(payload["receipt"]) == []
+    assert payload["receipt"]["variant"] == "pro"
+    # Round-trips through JSON exactly as it would when written to result.json.
+    reloaded = json.loads(json.dumps(payload))
+    assert reloaded["receipt"]["runner"]["pid"] == 99
+
+
+def test_run_agy_supervised_missing_agy_emits_no_receipt(
+    agy_delegate: ModuleType, tmp_path: Path
+) -> None:
+    envelope = agy_delegate.Envelope.from_mapping(_valid_payload())
+    run_result = agy_delegate.run_agy_supervised(
+        envelope,
+        prompt="do the thing",
+        repo_root=tmp_path,
+        bundle_path=tmp_path,
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        agy_bin=str(tmp_path / "no-such-agy-binary"),
+    )
+
+    assert run_result.agy_launched is False
+    assert agy_delegate._supervised_receipt(run_result, envelope=envelope) is None
+
+
+def test_run_agy_supervised_oserror_on_launch_emits_no_receipt(
+    agy_delegate: ModuleType, tmp_path: Path
+) -> None:
+    envelope = agy_delegate.Envelope.from_mapping(_valid_payload())
+    # A directory is a "found" path but not executable: Popen raises OSError on launch.
+    not_executable = tmp_path / "a-directory-not-a-binary"
+    not_executable.mkdir()
+
+    run_result = agy_delegate.run_agy_supervised(
+        envelope,
+        prompt="do the thing",
+        repo_root=tmp_path,
+        bundle_path=tmp_path,
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        agy_bin=str(not_executable),
+    )
+
+    assert run_result.agy_launched is False
+    assert run_result.error is not None
+    assert agy_delegate._supervised_receipt(run_result, envelope=envelope) is None
 
 
 def test_cli_rejects_invalid_envelope_without_bundle(tmp_path: Path) -> None:

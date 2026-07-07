@@ -5,6 +5,14 @@ an external engine (agy, codex) instead of a Claude agent, without team-executio
 second executor kind. It closes #283's deferred U12 leg and activates the dispositions
 `worker-manifest.md` reserved (`fell-back-to-claude` / `substituted-engine`).
 
+> **Dispatch-adapter contract, generic HTTP bridge, and `bridge_receipt.v1`:** how a
+> `transport: http` registry row dispatches through the shared generic HTTP bridge with zero
+> per-provider branching, and the receipt-gated proof-of-execution contract every bridge (CLI or
+> HTTP) now emits, live in
+> [`plugins/saga/references/dispatch-adapter-contract.md`](../../../../saga/references/dispatch-adapter-contract.md)
+> (#387, #383). No team-execution code changes with a new registry row — resolution here stays
+> fully declarative by `<engine-key>` / `cap:<capability>`; new rows join automatically.
+
 **Shape (KTD1):** one resident **chaperone** — an ordinary Claude team-execution worker,
 `worker-<engine>` or `worker-<capability>` per the Workers-table naming rule
 (`SKILL.md`'s `### Workers`, KTD3) — owns an engine's units end-to-end: resolve → dispatch →

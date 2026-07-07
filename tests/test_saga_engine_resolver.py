@@ -51,6 +51,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "cost_speed_rank": 2,
                 "model_identity": "gpt-5.5",
                 "last_validated": "2026-06-27",
+                "receipt_emitter": "codex-bridge",
                 "capability_profile": {
                     "code-generation": {
                         "rating": "STRONG",
@@ -98,6 +99,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "cost_speed_rank": 1,
                 "model_identity": "gemini-3.1-pro",
                 "last_validated": "2026-06-20",
+                "receipt_emitter": "agy-delegate",
                 "capability_profile": {
                     "code-generation": {
                         "rating": "MODERATE",
@@ -153,7 +155,7 @@ def engine_available(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         R,
         "preflight",
-        lambda engine_id: {"available": True, "reason": f"{engine_id} available"},
+        lambda engine_id, **_kwargs: {"available": True, "reason": f"{engine_id} available"},
     )
 
 
@@ -240,7 +242,7 @@ def test_panel_with_unavailable_member_halts_not_fallbacks(
     registry: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_preflight(engine_id: str) -> dict[str, bool | str]:
+    def fake_preflight(engine_id: str, **_kwargs: object) -> dict[str, bool | str]:
         if engine_id == "agy":
             return {"available": False, "reason": "agy is not installed"}
         return {"available": True, "reason": f"{engine_id} available"}
@@ -273,7 +275,7 @@ def test_named_unavailable_engine_halts_even_for_worker(
     monkeypatch.setattr(
         R,
         "preflight",
-        lambda _engine_id: {"available": False, "reason": "codex is not installed"},
+        lambda _engine_id, **_kwargs: {"available": False, "reason": "codex is not installed"},
     )
 
     resolution = R.resolve(
@@ -358,7 +360,7 @@ def test_resolve_role_halts_panel_when_member_unavailable(
     registry: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_preflight(engine_id: str) -> dict[str, bool | str]:
+    def fake_preflight(engine_id: str, **_kwargs: object) -> dict[str, bool | str]:
         if engine_id == "agy":
             return {"available": False, "reason": "agy is not installed"}
         return {"available": True, "reason": f"{engine_id} available"}
@@ -371,3 +373,164 @@ def test_resolve_role_halts_panel_when_member_unavailable(
     # R17: an unavailable panel member halts the panel; no Claude substitution.
     assert halt is not None
     assert "agy" in halt
+
+
+# ---- U4: transport-aware preflight (KTD4) + RunMemo (KTD5, R5/R11) -----------
+
+
+def _http_engine_row(**overrides: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "engine_id": "ollama-cloud",
+        "variant": "gpt-oss-120b",
+        "substrate": "external",
+        "default_for_engine": True,
+        "transport": "http",
+        "invocation": {
+            "via": "engine-bridge-http",
+            "recipe": "POST https://ollama.com/v1/chat/completions",
+            "write_capable": False,
+            "base_url": "https://ollama.com/v1",
+            "model": "gpt-oss:120b",
+            "effort": "default",
+            "auth": {"mode": "bearer", "key_env": "OLLAMA_API_KEY"},
+        },
+        "context_window": 128000,
+        "cost_speed_rank": 5,
+        "model_identity": "gpt-oss-120b",
+        "last_validated": "2026-07-06",
+        "receipt_emitter": "http-bridge",
+        "capability_profile": {
+            "code-generation": {"rating": "MODERATE", "note": "seed rating"},
+        },
+        "prompting_protocol": ["Resolve the bearer token at request-build time only."],
+        "sources": [
+            {
+                "claim": "OpenAI-compatible base URL",
+                "url": "https://docs.ollama.com/api/openai-compatibility",
+                "date": "2026-07-06",
+                "tag": "OFFICIAL",
+                "corroboration": "STRONG",
+            }
+        ],
+    }
+    row.update(overrides)
+    return row
+
+
+def _http_entry(**overrides: Any) -> Any:
+    return REG.EngineEntry.from_dict(_http_engine_row(**overrides), registry_order=0)
+
+
+def test_preflight_http_transport_never_touches_which_or_config_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = _http_entry()
+    monkeypatch.setenv("OLLAMA_API_KEY", "sk-fake")
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("http preflight must not call CLI which/config_exists")
+
+    result = R.preflight("ollama-cloud", which=_boom, config_exists=_boom, entry=entry)
+
+    assert result["available"] is True
+    assert "no live API call" in str(result["reason"])
+
+
+def test_preflight_http_transport_unavailable_when_bearer_key_env_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = _http_entry()
+    monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
+
+    result = R.preflight("ollama-cloud", entry=entry)
+
+    assert result["available"] is False
+    assert "OLLAMA_API_KEY" in str(result["reason"])
+
+
+def test_preflight_http_transport_available_when_auth_not_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = _http_entry(
+        invocation={
+            "via": "engine-bridge-http",
+            "recipe": "POST https://ollama.com/v1/chat/completions",
+            "write_capable": False,
+            "base_url": "https://ollama.com/v1",
+            "model": "gpt-oss:120b",
+            "effort": "default",
+            "auth": {"mode": "none"},
+        }
+    )
+
+    result = R.preflight("ollama-cloud", entry=entry)
+
+    assert result["available"] is True
+    assert "no live API call" in str(result["reason"])
+
+
+def test_preflight_cli_transport_unaffected_by_entry_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # KTD4/R11: preflight with no entry supplied (or a cli-transport entry) keeps
+    # the pre-U4 shutil.which + config-file behavior byte-identical.
+    result = R.preflight(
+        "codex",
+        which=lambda cli: f"/usr/bin/{cli}",
+        config_exists=lambda engine_id: engine_id == "codex",
+    )
+
+    assert result["available"] is True
+    assert "CLI and config present" in str(result["reason"])
+
+
+def test_run_memo_caches_preflight_result_per_engine_id() -> None:
+    memo = R.RunMemo()
+    calls: list[str] = []
+
+    def fake_which(cli: str) -> str:
+        calls.append(cli)
+        return f"/usr/bin/{cli}"
+
+    for _ in range(5):
+        result = R.preflight(
+            "codex",
+            which=fake_which,
+            config_exists=lambda _engine_id: True,
+            memo=memo,
+        )
+        assert result["available"] is True
+
+    assert len(calls) == 1
+
+
+def test_run_memo_none_probes_every_call_byte_identical_to_no_memo() -> None:
+    calls: list[str] = []
+
+    def fake_which(cli: str) -> str:
+        calls.append(cli)
+        return f"/usr/bin/{cli}"
+
+    for _ in range(3):
+        R.preflight(
+            "codex",
+            which=fake_which,
+            config_exists=lambda _engine_id: True,
+            memo=None,
+        )
+
+    assert len(calls) == 3
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_resolve_with_memo_returns_same_resolution_as_without(registry: Any) -> None:
+    request = {
+        "capability": "code-generation",
+        "role_kind": "generator",
+        "task_context": {"context": "Implement the bounded change."},
+    }
+
+    without_memo = R.resolve(request, mode="dispatch", registry=registry)
+    with_memo = R.resolve(request, mode="dispatch", registry=registry, memo=R.RunMemo())
+
+    assert without_memo == with_memo

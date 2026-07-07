@@ -263,3 +263,95 @@ def test_reader_skips_malformed_manifest_files(tmp_path: Path, mr: ModuleType) -
 
     assert summary.total_manifests == 1
     assert manifests[0].execution_id == "exec-good"
+
+
+# ---------------------------------------------------------------------------
+# Fallback reasons reach the operator surface (R6/U4/KTD2)
+# ---------------------------------------------------------------------------
+
+
+def _manifest_with_note(execution_id: str, *, disposition: str, disposition_note: str) -> dict:
+    manifest = _manifest(execution_id, disposition=disposition)
+    manifest["disposition_note"] = disposition_note
+    return manifest
+
+
+def test_reader_fallback_reason_propagation_halted_dispatch(tmp_path: Path, mr: ModuleType) -> None:
+    _write(
+        tmp_path,
+        "saga-1",
+        "exec-halted",
+        _manifest_with_note(
+            "exec-halted",
+            disposition="fell-back-to-claude",
+            disposition_note="resolver: requested engine unavailable, halted dispatch",
+        ),
+    )
+
+    summary, _manifests = mr.read_manifest_summary(tmp_path)
+
+    assert len(summary.fallback_reasons) == 1
+    reason = summary.fallback_reasons[0]
+    assert reason.execution_id == "exec-halted"
+    assert reason.disposition == "fell-back-to-claude"
+    assert "requested engine unavailable" in reason.disposition_note
+    report = mr.format_report(summary)
+    assert "resolver: requested engine unavailable, halted dispatch" in report
+
+
+def test_reader_fallback_reason_propagation_substituted_and_integrity_rows(
+    tmp_path: Path, mr: ModuleType
+) -> None:
+    _write(
+        tmp_path,
+        "saga-1",
+        "exec-substituted",
+        _manifest_with_note(
+            "exec-substituted",
+            disposition="substituted-engine",
+            disposition_note="expected gemini-3.1-pro, resolved to claude-opus-4",
+        ),
+    )
+    _write(
+        tmp_path,
+        "saga-1",
+        "exec-unproven",
+        _manifest_with_note(
+            "exec-unproven",
+            disposition="unproven",
+            disposition_note="no schema-valid bridge_receipt.v1 proof of execution",
+        ),
+    )
+
+    summary, _manifests = mr.read_manifest_summary(tmp_path)
+
+    execution_ids = {reason.execution_id for reason in summary.fallback_reasons}
+    assert execution_ids == {"exec-substituted", "exec-unproven"}
+    report = mr.format_report(summary)
+    assert "expected gemini-3.1-pro, resolved to claude-opus-4" in report
+    assert "no schema-valid bridge_receipt.v1 proof of execution" in report
+
+
+def test_reader_fallback_reason_propagation_all_ran_as_requested_no_section(
+    tmp_path: Path, mr: ModuleType
+) -> None:
+    _write(tmp_path, "saga-1", "exec-1", _manifest("exec-1", disposition="ran-as-requested"))
+    _write(tmp_path, "saga-1", "exec-2", _manifest("exec-2", disposition="ran-as-requested"))
+
+    summary, _manifests = mr.read_manifest_summary(tmp_path)
+
+    assert summary.fallback_reasons == ()
+    report = mr.format_report(summary)
+    assert "Fallback Reasons" not in report
+
+
+def test_reader_fallback_reason_propagation_empty_store_unchanged(
+    tmp_path: Path, mr: ModuleType
+) -> None:
+    summary, manifests = mr.read_manifest_summary(tmp_path)
+
+    assert manifests == []
+    assert summary.fallback_reasons == ()
+    report = mr.format_report(summary)
+    assert "Fallback Reasons" not in report
+    assert "No manifests recorded yet" in report

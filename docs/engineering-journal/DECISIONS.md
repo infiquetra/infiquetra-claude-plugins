@@ -3087,3 +3087,51 @@ Standing up objective #336 ("external-engine offload lane", 20 children) as the 
 - **Revisit when.** Task-mode patch capture has operational history (lift KTD5 toward agy-parity sandboxed-mutate dispatch), or a driving-session need for >10-minute codex runs materializes that background Bash cannot serve (then design detach+poll against the issue's never-`running`-for-dead requirement).
 
 ---
+
+### Runtime delegation tripwires: hooks live in saga, the classifier/corroborator lives in fleet-core {#delegation-tripwire-hook-home-384}
+
+**Context.** `docs/plans/2026-07-07-delegation-tripwires-plan.md` (#384, KTD1). Wiring fleet's
+existing, manual, post-hoc delegation auditing (agy's `classify_transcript`,
+`audit_harness_transcript.py`) into always-on runtime tripwires: an armed `PreToolUse` block plus
+a `Stop`/`SubagentStop` audit, with codex needing the same classification algorithm agy already has.
+
+- **KTD1 — Hooks live in `plugins/saga/hooks/`; the engine-parametrized classifier and
+  corroborator live in `plugins/fleet-core/scripts/fleet_commons/delegation_audit.py`.** saga is
+  the only plugin with hook-registration precedent (`tests/test_spore_hooks_registration.py`) and
+  already owns the dispatch layer (`engine_dispatch.py`) the tripwires must arm around; root
+  `.claude/settings.json` is gitignored and cannot host hooks at all. The classifier/corroborator,
+  by contrast, must serve two engines (agy, codex) identically, so it is one fleet-core module
+  loaded through the established vendored-shim mechanism (`{#fleet-commons-mechanism-463}`) —
+  the same way `engine_dispatch.py` already loads `bridge_receipt` (`engine_dispatch.py:15,21`).
+  *Rejected:* hosting the hooks in agy with a hand-mirrored copy for codex — this is exactly the
+  mirroring drift vector `{#unit-panels-vs-whole-diff-lenses-476}` documented one round earlier;
+  a second parallel mirror was not worth relitigating.
+- **Revisit when.** A third plugin needs its own delegation-bearing hooks (not just an engine
+  config in the fleet-core auditor) — then reconsider whether hook ownership should move to a
+  dedicated hooks-hosting plugin rather than staying bolted onto saga by precedent alone.
+
+---
+
+### `DELEGATION_INTEGRITY` lives at the dispatch layer, not inside either wrapper's `STATUSES` {#delegation-integrity-dispatch-layer-384}
+
+**Context.** Same plan (#384, KTD6). The issue draft proposed adding `DELEGATION_INTEGRITY`
+alongside `fallback_suspected` inside `agy_delegate.py`'s wrapper status vocabulary.
+
+- **KTD6 — Compute divergence in `engine_dispatch.reconcile()`/`provenance_manifest.Disposition`,
+  not in either engine wrapper.** Grounding showed `fallback_suspected` already names two
+  *unrelated* mechanisms sharing one string inside agy: transcript classification
+  (`agy_delegate.py:1021`) and log-marker status (`agy_delegate.py:1374`). Adding a third,
+  dispatch-scoped condition into that same wrapper vocabulary would compound the conflation
+  rather than resolve it. `DELEGATION_INTEGRITY` names the divergence between the engine's
+  self-report and the independent observer signal (transcript classification + bundle
+  corroboration) — that reconciliation only makes sense at the dispatch layer, which is the one
+  place both signals are visible together; wrappers stay single-signal emitters and never
+  self-adjudicate. *Rejected:* the issue draft's "add alongside `fallback_suspected` in
+  `agy_delegate.py`" — it would have planted a third meaning on an already-overloaded name inside
+  a single-signal component.
+- **Revisit when.** agy's `classify_transcript` is eventually consolidated into the fleet-core
+  auditor (tracked as deferred follow-up on #384/#517) — at that point re-examine whether
+  `fallback_suspected`'s two conflated wrapper meanings can finally be split apart now that the
+  dispatch layer no longer depends on either one directly.
+
+---

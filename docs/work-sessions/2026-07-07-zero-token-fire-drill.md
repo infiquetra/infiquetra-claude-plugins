@@ -32,7 +32,27 @@ Machinery observations OBS-2 (zero-output false positive), OBS-3 (per-session ma
 serialize; #520 F4 shape), OBS-4 (arming + finally-disarm clean on both lanes) recorded in the
 map. Checks run: none yet (docs-only units; hard gate lands with U3/U7).
 
+## U3–U6 — implement, review, PR-prep, map + journal (complete)
+
+- **U3:** agy's patch adopted (heading + explicit programmatic-skip contract sentence + CHANGELOG
+  verbatim; one sentence regrounded); landed `d439bbb` with saga 0.74.1 across plugin.json /
+  marketplace.json / CHANGELOG / test pin; parity 39-passed + generator check green.
+- **U4:** both lanes independently converged on the one real finding (the §5.7 summary still
+  implied unconditional artifact-write) — accepted and fixed (`1c1bf72`); 5 other findings
+  rejected with recorded rationales (fabricated absence, sentence-vs-line measurement,
+  stricter-than-house line-length standard).
+- **U5:** ollama-cloud drafted first-try but fabricated gate completion and misplaced
+  marketplace.json a third time; agy needed a retry (honest `fell-back-to-claude` on attempt 1 —
+  the correct-behavior mirror of OBS-2) then produced the more disciplined draft. Final PR body =
+  Claude's merge.
+- **U6:** map complete — 10 dispositions, **zero claude-irreducible steps**, verdict table,
+  5 recommendations + revisit-whens, OBS-1..OBS-7; LEARNINGS
+  `{#zero-token-drill-marginal-fabrication}`; QUEUED retired `{#code-review-saga-scan-touchups}`
+  (Defect 2 shipped) and pruned stale `{#marketplace-ci-guard}` → ARCHIVE (`701beaf`); follow-up
+  defects filed via mission-control: **#523**, **#524**. Manifest evidence: 11 rows under saga
+  `issue-468`.
+
 ## Next step
 
-U3: adjudicate the S3 patches (both lanes dispatched), land the Defect 2 fix + release surfaces,
-run the U3 test scenarios.
+U7: full gates (pytest + ruff pair + mypy), programmatic /code-review, PR #522 body + ready flip,
+merge on operator word.

@@ -27,6 +27,34 @@
 
 ## 2026-07-07
 
+### $0-lane engines fail at the margins, and a receipt proves launch, not output {#zero-token-drill-marginal-fabrication}
+
+**Context.** The #468 zero-token fire drill ran one real lifecycle loop (spec → plan → implement →
+review → PR-prep) with all five steps dispatched through both $0 lanes — `agy/gemini-3.5-flash-high`
+and `ollama-cloud/gpt-oss-120b` (its first-ever live dispatch) — Claude verifying everything.
+**Evidence.** The irreducibility map
+(`narratives/2026-07-07-zero-token-fire-drill-irreducibility-map.md`): 10 dispositions, 11 manifest
+rows under saga `issue-468`, PR #522; observations OBS-1..OBS-7.
+**Mechanism.** Two independent findings. (1) *Content:* zero steps were `claude-irreducible`, and
+across all 10 dispositions the failure mode was never wholesale wrongness — it was confident
+marginal fabrication: misplaced file paths, inflated priorities, invented test coverage,
+completion-tense claims about gates that had not run. (2) *Provenance:* a transient agy 503 produced
+a zero-output run the wrapper stamped `success` with a schema-valid receipt (`bytes_produced: 0`) —
+which the #384 observer then CORROBORATED, because corroboration checks launch flag + schema
+validity, never bytes. The receipt proved the engine *launched*, not that it *produced*.
+**Fix (or queued).** Verification recipe encoded in the map's recommendations; machinery gaps filed
+as #523 (wrapper failure-honesty / bytes-aware observer) and #524 (HTTP lanes structurally cannot
+corroborate — no `ENGINE_CONFIGS` row; passing `workspace_root` on such a lane *discards* honest
+output as an integrity divergence).
+**What surprised.** The two lanes' failure profiles are perfect complements: agy is
+content-precise but transport-flaky (2 of 7 dispatches needed a retry); ollama-cloud was 5/5 on
+transport with receipts every time but needed marginal-fact repair on 4 of 5 artifacts.
+**Generalizable rule.** When verifying cheap-engine output, spend the effort on the *margins* —
+paths, line numbers, priorities, tenses, claimed test coverage — not the core argument; and never
+treat a corroborating receipt as proof of useful output unless something checked the bytes.
+**Refs.** DECISIONS `{#zero-token-fire-drill-468}`; ARCHIVE `{#code-review-defect2-shipped}`,
+`{#marketplace-ci-guard-pruned}`; issues #523, #524, #520 (OBS-3 marker serialization is F4's shape).
+
 ### Local lint gate passed while CI's failed — CI runs the ruff pair, the gate ran only half {#local-lint-gate-misses-ruff-format}
 
 **Context.** PR #521 (#384 delegation tripwires) arrived at the merge step with `mergeStateStatus: BLOCKED`: the CI Lint job was red even though the `/work` test gate had reported "ruff clean" twice (initial gates and the round-1 re-run).

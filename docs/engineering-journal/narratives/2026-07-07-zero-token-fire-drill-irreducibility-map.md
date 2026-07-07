@@ -48,7 +48,7 @@ plan recipe's blanket "session_id + workspace_root REQUIRED", recorded here per 
 
 Follow-up candidate (out of scope, R5): an `ollama-cloud` row in `ENGINE_CONFIGS` — or receipt-only
 corroboration for bundle-less HTTP engines — so the HTTP lane can opt into two-signal without
-losing output.
+losing output. **Filed as #524.**
 
 ## Dispositions
 
@@ -129,15 +129,61 @@ convergent independent review caught what the chaperone's own consistency pass i
 
 ### S5 — PR-preparation
 
+Task: PR title/body from a verified FACTS package (branch commits, diffstat, artifact paths,
+gates posture).
+
 | Lane | Status | Disposition (manifest) | Verdict | Rework | Evidence |
 |---|---|---|---|---|---|
-| agy | _pending_ | | | | |
-| ollama-cloud | _pending_ | | | | |
+| agy | attempt 1 no-output timeout — wrapper honestly reported `error`, manifest said `fell-back-to-claude` (the correct-behavior mirror of OBS-2); attempt 2 ok, observer-corroborated | `drill-468-s5-agy` ran-as-requested (attempt-1 row overwritten — see OBS-5) | **degraded** (second dispatch; systematic `file://` clone-URL citations needing a full strip; journal writebacks misattributed to DECISIONS.md) | second dispatch + ~15 link rewrites | manifest + `evidence/s5-agy.md` |
+| ollama-cloud | ok first try, receipt valid | `drill-468-s5-ollama-cloud` ran-as-requested | **degraded** | ~15-20% (asserted the full gates as already passed when the FACTS said "run before ready-flip" — fabricated completion; `marketplace.json` misplaced under `plugins/saga/` for the third consecutive step; journal writebacks misattributed) | manifest + `evidence/s5-ollama-cloud.md` |
+
+**Step verdict: degraded.** Both drafts structurally correct and adoptable after repair. agy's
+successful attempt was the more disciplined text (gates kept in future tense, correct paths,
+correct manifest count); its clone-rooted `file://` links are a systematic habit a chaperone
+template could strip mechanically. The final PR body is Claude's merge of both drafts.
 
 ## Step verdicts + recommendations
 
-_Filled at U6: per-step verdict, and for every `claude-irreducible` step a recommendation and a
-revisit-when condition (AC3)._
+| Step | agy/gemini-3.5-flash-high | ollama-cloud/gpt-oss-120b | Step verdict |
+|---|---|---|---|
+| S1 spec-framing | degraded (retry; attempt-2 ~6%) | degraded (~14%) | **degraded** |
+| S2 plan authoring | offloaded-clean (~7%) | offloaded-clean (~7%) | **offloaded-clean** |
+| S3 implementation | offloaded-clean (adopted, ~7%) | degraded (~15-20%) | **offloaded-clean** |
+| S4 review | offloaded-clean (4/4 findings real or defensible; calibrated verdict) | degraded (1/3 accepted; 2 fabrications; miscalibrated verdict) | **offloaded-clean** |
+| S5 PR-preparation | degraded (retry + link strip) | degraded (fabricated completion) | **degraded** |
+
+**Zero steps are `claude-irreducible`** — the $0 tier can draft every lifecycle step of a
+small, well-packaged unit when the chaperone supplies a self-contained context package and
+verifies the result. AC3's per-irreducible-step clause is vacuously satisfied; the
+recommendations below cover the degraded steps instead.
+
+**Lane profiles.** agy: 3 clean / 2 degraded — and both degradations were *transport*, not
+content (a 503-window and a no-output timeout; 2 of 7 dispatches needed a retry). When it runs,
+its content is the precision leader (verbatim quotes, correct paths, calibrated review verdict).
+ollama-cloud: 1 clean / 4 degraded but **5/5 first-try transport reliability** with a schema-valid
+receipt every time; its weakness is content precision — recurring marginal fabrication (paths,
+priorities, tenses, invented tests).
+
+**Recommendations (advisory — registry/rating changes are `/retro` + operator turf, R5):**
+
+1. **Keep agy rank-1 as the primary $0 lane; budget exactly one retry per dispatch.** Its
+   failure mode is service flakiness, not capability. *Revisit when:* #523 lands (wrapper
+   honesty makes retry-need visible in manifests) or a future drill shows a stable transport
+   week.
+2. **Use ollama-cloud as the redundancy/second-draft lane, not a sole drafter.** Every artifact
+   needed marginal-fact repair; none was unusable. Its seed ratings (MODERATE code-generation,
+   WEAK second-opinion) look right; a capability note "verify paths and completion claims" would
+   pay for itself. *Revisit when:* a second drill on a different work-unit shape, or a stronger
+   HTTP-lane variant joins the registry.
+3. **Chaperone template hardening (cheap wins):** strip `file://` clone URLs from agy prose
+   deliverables; suffix retry execution ids (OBS-5); include exact source-path lists in every
+   context package (the lanes copy them correctly when given, fabricate them when not).
+4. **Close the corroboration gaps:** #523 (bytes-aware observer / wrapper failure honesty) and
+   #524 (receipt-only corroboration for HTTP lanes) would let both lanes run full two-signal.
+5. **Where verification effort goes:** across all 10 dispositions the failure mode was
+   *confident marginal fabrication* — never wholesale wrongness. Claude verification should
+   target the margins: paths, line numbers, priorities, tense of completion claims, invented
+   test coverage.
 
 ## Tripwire machinery observations (#384, first real exercise)
 
@@ -151,8 +197,8 @@ schema-valid receipt with **`bytes_produced: 0`** — so `dispatch()` returned
 output. The tell was IN the receipt (`bytes_produced: 0`); corroboration checks only launch flag +
 schema validity. Follow-up candidates (out of scope, R5): wrapper maps executor-construction
 failure to a failure status; observer treats `bytes_produced == 0` as observer-NO for
-prose-deliverable dispatches. Preserved evidence: manifest `drill-468-s1-agy-attempt1`, bundle
-`drill-468-s1-agy-190129` (`agy.log` lines 97–131).
+prose-deliverable dispatches. **Filed as #523.** Preserved evidence: manifest
+`drill-468-s1-agy-attempt1`, bundle `drill-468-s1-agy-190129` (`agy.log` lines 97–131).
 
 **OBS-3 — delegation markers are per-session, so lanes must serialize.** `delegation_state.arm()`
 keys the liveness marker by session (disarm takes only `session_id`); dispatching both lanes
@@ -162,3 +208,22 @@ drill serialized every lane pair. Same shape as #520 F4 (marker locking).
 **OBS-4 — arming worked on both lanes.** `session_id` arming succeeded for `agy` and for
 `ollama-cloud` (no `tripwire_unarmed` note on any manifest); `dispatch()` disarmed in its
 `finally` every time — no stuck marker, chaperone never write-blocked.
+
+**OBS-5 — retries overwrite their manifest row.** `manifest_store.write_manifest` overwrites by
+design (documented never-write-once), and the driver reused `drill-468-s5-agy` for the retry —
+the attempt-1 `fell-back-to-claude` row was clobbered. The S1 retry was preserved manually
+(`drill-468-s1-agy-attempt1`); S5's attempt-1 disposition survives only in this map and the
+drill log. Chaperone rule: suffix retry execution ids (`-attemptN`).
+
+**OBS-6 — the Stop-hook audit leg never engaged.** No `.claude/delegation/audits/` records
+exist after 11 dispatches: `dispatch()` disarms in-`finally` within the same turn, so the
+Stop/SubagentStop audit only covers windows where a turn ends while armed (a hung or
+long-running engine). For synchronous in-turn dispatches, the PreToolUse block + receipt
+corroboration are the only live tripwire legs. Expected by design, but worth knowing: KTD4's
+"tripwire audit record where present" resolves to *absent* for every disposition in this drill.
+
+**OBS-7 — receipts and false positives, paired.** The honest S5 failure (no-output timeout →
+`error` → `fell-back-to-claude`) is the exact behavioral mirror of OBS-2's false positive
+(executor-construction failure → `success` + corroborated receipt). Same wrapper, same lane,
+opposite integrity outcomes — the difference is only *which* internal failure path agy took.
+#523 exists to collapse the two onto the honest path.

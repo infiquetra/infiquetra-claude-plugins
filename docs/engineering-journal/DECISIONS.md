@@ -2,6 +2,70 @@
 
 ## 2026-07-06
 
+### External-engine HTTP bridge + bridge_receipt.v1 keystone pair: transport-keyed adapter, fleet-commons receipt schema, receipt-gated disposition, required emitter wiring {#http-bridge-receipt-pair-387-383}
+
+**Context.** `docs/plans/2026-07-06-external-engine-http-bridge-receipt-pair-plan.md` (#387, #383).
+Scope-note corrections on both issues named them a keystone pair: a bridge that ships unproven, or
+a receipt contract with no consuming emitter, would each ship incomplete — one PR lands both.
+
+- **KTD1 — the adapter table extends `engine_dispatch.py`, keyed on a new top-level registry field
+  `transport` (closed vocab `cli | http`, default `cli`).** `_build_invocation` gains a
+  transport-keyed branch: `http` builds a generic invocation from row data with zero
+  per-provider branching in the bridge; `cli` keeps the existing codex/agy builders unchanged.
+  *Rejected:* a new `plugins/team-execution/scripts/engine_dispatch.py` (a draft suggestion) — would
+  fork the dispatch substrate; the scope note is explicit that dispatch already lives in saga and
+  should be extended, not forked. *Revisit when:* team-execution needs its own dispatch surface for
+  a reason unrelated to external engines (none identified).
+- **KTD3 — `ollama-cloud` and `deepseek` are new seed registry rows; routing-stability is enforced
+  by a literal-baking regression test, not a promise.** Neither row may rate any capability above
+  the current `by_capability` winner (verified against `engine-registry.yaml` at authoring time);
+  new rows either omit capabilities or rate low enough, or use a losing `cost_speed_rank`, to never
+  hijack today's winner. Base URLs and model ids are authored against provider docs, not recalled
+  from memory, and proven live only by an availability-gated smoke test (skip-not-fail when no key
+  or endpoint unreachable). *Rejected:* trusting rating authorship alone without a regression test —
+  a plausible-looking rating is exactly the failure mode a "should be fine" review misses.
+  *Revisit when:* `/retro` re-validates ratings against fresh seed data (same posture as the
+  2026-06-27 seed data) and the literals need a deliberate, reviewed update.
+- **KTD6 — `bridge_receipt.py` is canonical in fleet-commons, vendored into agy via the established
+  shim mechanism.** A saga-local module imported directly by agy would break at install time
+  (`{#marketplace-install-layout-no-import-path}`); fleet-commons + vendored shim
+  (`{#fleet-commons-mechanism-463}`) is the established mechanism, and agy did not carry a shim
+  before this pair — U2 adds one, byte-identical, covered by the existing vendored-copy drift
+  guard. *Rejected:* a per-plugin vendored copy of the receipt module's schema logic itself (as
+  opposed to the file) — the whole reason the shim mechanism exists is so schema logic never has to
+  be independently re-implemented per plugin. *Revisit when:* a third consumer needs the receipt
+  schema and the shim-per-plugin pattern starts feeling like duplication rather than isolation.
+- **KTD8 — receipt-less success maps to a new `Disposition.UNPROVEN`, never a silent
+  `RAN_AS_REQUESTED`.** `AdvisoryEvidence` gains an additive `runner_receipt: dict | None = None`
+  field; `build_dispatch_manifest` assigns `RAN_AS_REQUESTED` only when a schema-valid receipt is
+  present, else `UNPROVEN` with a note naming what is missing. `FELL_BACK_TO_CLAUDE` is unaffected
+  (a halt carries no receipt because there is nothing to prove). Existing tests asserting
+  `RAN_AS_REQUESTED` without a receipt were updated to supply one — a deliberate assertion flip,
+  called out in the PR rather than treated as collateral damage. *Rejected:* leaving receipt-less
+  success as `RAN_AS_REQUESTED` and treating the receipt as advisory metadata — that would make the
+  whole receipt contract provably unenforced from day one. *Revisit when:* a v2 receipt schema
+  needs a third disposition state (none anticipated).
+- **KTD9 — `receipt_emitter` is a required registry key, validated at load, with an explicit
+  pending-emitter ledger rather than a silent skip.** Every row must declare `receipt_emitter`; a
+  missing one raises `RegistryError` at load, enforced in CI. The bridge-enumeration drift guard
+  (`tests/test_bridge_receipt_drift.py`) proves every declared emitter actually emits through the
+  shared path — a test-double bridge that skips the emit call reds it (forcing-function verified,
+  journal `{#verify-the-guard-reds}`) — and a `PENDING_EMITTERS = {"codex-bridge": "#476"}` entry
+  covers the not-yet-landed codex bridge (`plugins/codex/`, #476) so its absence doesn't red the
+  suite, while the guard reds if that issue closes and the entry is still marked pending. *Rejected:*
+  a silent skip for any registry row lacking an emitter — that is exactly the "harvest never fires"
+  missing-producer failure mode already logged once in this repo (LEARNINGS, re #495/#491/#343).
+  *Revisit when:* `plugins/codex/` (#476) ships its bridge — the `PENDING_EMITTERS` entry must be
+  removed in that same PR, not left stale.
+
+**Release surfaces** (R12, same PR): `plugins/saga` 0.72.0→0.73.0, `plugins/agy` 0.1.1→0.1.2,
+`plugins/fleet-core` 0.6.0→0.7.0 (new schema module), `plugins/team-execution` 2.12.0→2.12.1
+(documentation-only pointer update to the new
+`plugins/saga/references/dispatch-adapter-contract.md` from
+`external-engine-workers.md` — no team-execution code change, since `ENGINE_INTENTS`
+resolution is declarative and new rows join it automatically). `.claude-plugin/marketplace.json`
+mirrored for all four; `check_release_surface_parity.py` green.
+
 ### Runtime ladder climbing: one rung, effort-first, throw-with-proposal is the attended ask gate {#runtime-ladder-climbing-364}
 
 **Context.** `docs/plans/2026-07-06-runtime-ladder-climbing-plan.md` (#364). The tier ladder had

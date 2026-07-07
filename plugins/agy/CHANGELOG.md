@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-06
+
+### Added
+
+- `plugins/agy/scripts/fleet_commons_shim.py` vendors the canonical
+  `bridge_receipt.py` module (`plugins/fleet-core/scripts/fleet_commons/bridge_receipt.py`)
+  byte-identical, per the established fleet-commons + vendored-shim distribution mechanism
+  (`{#fleet-commons-mechanism-463}`) — `agy_delegate.py`'s `SupervisedRunResult` now maps a
+  schema-valid CLI `bridge_receipt.v1` for a completed run; launch-failure paths (agy missing,
+  `OSError`) emit no receipt, since there is nothing to prove. The vendored copy is covered by the
+  existing vendored-copy drift guard (`tests/test_fleet_commons_resolution.py`).
+
 ## [0.1.1] - 2026-07-05
 
 ### Added

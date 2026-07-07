@@ -27,6 +27,37 @@
 
 ## 2026-07-06
 
+### Worktree-isolated verify panels are blind to uncommitted worker output — refute-N ran 0/3 vacuous on every panel {#verify-panels-blind-to-uncommitted-tree}
+
+**Context.** First real `cc-workflows-ultracode` run through `/work` (issues #387+#383, workflow
+`wf_6f7f3de8-926`): 8 serialized workers, refute-3 panels on U5/U6/U7, verifiers spawned as
+`saga:readonly-verifier` with `isolation: worktree` per #287 KTD6.
+
+**Evidence.** Workflow logs: `verify panel over U5: 3/3 verifier(s) missing (runtime-failure);
+verdict computed over 0/3 — UNDER-STRENGTH (quorum floor 2)` — identical for U6 and U7. Verifier
+transcripts all report a clean worktree with nothing to verify against.
+
+**Mechanism.** Workers edit the shared working tree but do not commit; a verifier's disposable
+worktree is cut from git HEAD, which contains none of that uncommitted output. So every verifier
+saw a tree without the implementation, returned "nothing to verify" prose instead of a schema
+verdict, and the panel counted all three as runtime failures. The quorum floor correctly labeled
+the panel UNDER-STRENGTH but only as a log line — the run still completed "successfully". Two
+independent assumptions collided: worktree isolation assumes committed state; the worker contract
+assumes the driving session owns commits.
+
+**Fix (or queued).** This run: the driving `/work` session committed the tree and re-ran the three
+panels against real commits before PR. Durable fix queued: `{#execution-spec-verifier-visibility}`
+in QUEUED.md (emitter must either commit per unit before panel spawn or inject the unit diff into
+verifier prompts, and UNDER-STRENGTH must fail loudly, not log quietly).
+
+**Generalizable rule.** A verification stage is only as real as its view of the artifact — when
+isolation and uncommitted state mix, the panel passes vacuously and reads as green. Any quorum
+mechanism that can be under-strength must fail the run, not annotate it.
+
+**Refs.** DECISIONS `{#http-bridge-receipt-pair-387-383}`; QUEUED
+`{#execution-spec-verifier-visibility}`, `{#execution-spec-concurrency-cap}`; LEARNINGS
+`{#verify-the-guard-reds}`.
+
 ### 4/4 tier-mechanics leaves: the adversarial execution gate caught a real compositional finding on EVERY leaf that a fully-green suite missed {#adversarial-gate-4-for-4}
 
 **Evidence.** The tier-mechanics batch (#369 PR #500, #365 PR #504, #368 PR #508, #364 PR #509 —

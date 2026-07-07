@@ -5,6 +5,20 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-06
+
+### Added — bridge_receipt.v1 schema module (#387, #383)
+
+- `scripts/fleet_commons/bridge_receipt.py` — the `bridge_receipt.v1` proof-of-execution schema:
+  `emit_receipt(...)` builder and `validate_receipt(dict) -> list[str]` (empty list = valid). Common
+  core (`schema`, `engine_id`, `variant`, `transport`, `wall_time_s`, `bytes_produced`) plus
+  transport-discriminated `runner` evidence — `{pid, argv, exit_code}` for `transport: cli`,
+  `{url, status_code, model}` for `transport: http`. The emit helper stamps `schema`/version itself
+  so a caller cannot mislabel a receipt.
+- Canonical home for the schema per the fleet-commons + vendored-shim distribution mechanism
+  (`{#fleet-commons-mechanism-463}`) — `plugins/agy/scripts/fleet_commons_shim.py` carries a
+  byte-identical vendored copy, covered by the existing vendored-copy drift guard.
+
 ## [0.6.0] - 2026-07-06
 
 ### Added — ordinal cost-weight table beside the tier palette (#366)

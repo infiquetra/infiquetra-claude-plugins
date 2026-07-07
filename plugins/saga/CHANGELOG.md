@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.73.0] - 2026-07-06
+
+### Added — generic HTTP bridge + bridge_receipt.v1 keystone pair (#387, #383)
+
+- `engine_dispatch.py`'s `_build_invocation` gains a `transport`-keyed branch: `transport: http`
+  registry rows dispatch through one generic OpenAI-compatible bridge
+  (`engine_bridge_http.py`, stdlib `urllib.request` behind a `Runner`-shaped seam) with zero
+  per-provider branching inside the bridge — provider differences live entirely in registry row
+  data (base URL, auth mode/env var, model id). `transport: cli` keeps the existing codex/agy
+  builders unchanged (default `cli`, byte-identical for every existing row).
+- `engine_registry.py` / `engine-registry.yaml`: new `transport` field (closed vocab `cli | http`)
+  plus http-conditional required invocation fields (`base_url`, `model`, `auth.mode`,
+  `auth.key_env` when bearer, explicit `effort`); `receipt_emitter` is now a required key on every
+  row, validated at load (`RegistryError` on a row missing it — a row without receipt wiring
+  cannot be dispatched to). Two new seed rows: `ollama-cloud` (Ollama Cloud, bearer auth from
+  `OLLAMA_API_KEY`, first $0-marginal offload row) and `deepseek` (bearer auth from
+  `DEEPSEEK_API_KEY`). Neither row outranks an existing `by_capability` winner (routing-stability
+  regression test bakes current winners as literals).
+- `engine_resolver.py`: transport-aware `preflight()` (HTTP checks the auth env var is present and
+  the row is well-formed — no live network; reachability is proven only by the availability-gated
+  smoke test) and an explicit `RunMemo` object threaded as an optional `memo` keyword through
+  `resolve` / `resolve_role`, memoizing one resolve/preflight per engine per run
+  (`(capability, token_estimate)` for resolution, `engine_id` for preflight) — 10 resolves of one
+  engine in a single run now invoke the availability probe once. Memo is opt-in; the no-memo path
+  stays today's byte-for-byte behavior.
+- `bridge_receipt.v1` (new `plugins/fleet-core/scripts/fleet_commons/bridge_receipt.py`,
+  vendored to `plugins/agy/scripts/fleet_commons_shim.py`): the proof-of-execution contract every
+  bridge emits — a common core (`schema`, `engine_id`, `variant`, `transport`, `wall_time_s`,
+  `bytes_produced`) plus transport-discriminated runner evidence (`{pid, argv, exit_code}` for
+  `cli`, `{url, status_code, model}` for `http`). `AdvisoryEvidence` gains an additive
+  `runner_receipt: dict | None = None` field; `build_dispatch_manifest` assigns
+  `Disposition.RAN_AS_REQUESTED` only when a schema-valid receipt is present, else the new
+  `Disposition.UNPROVEN` (receipt-less success is never mislabeled as proven; `FELL_BACK_TO_CLAUDE`
+  is unaffected). A structural guard rejects any runner result carrying a gate/verdict-shaped key
+  (`verdict`, `gate_status`, `adjudicated`) as a `DispatchError` — external engines can never become
+  gatekeepers (`{#external-engines-never-gatekeepers}` #283), enforced by construction, not policy.
+- New `tests/test_bridge_receipt_drift.py`: a forcing-function drift guard enumerating every
+  registry `receipt_emitter` value and proving each in-repo emitter dispatches through the shared
+  receipt-emitting path (`PENDING_EMITTERS = {"codex-bridge": "#476"}` covers the not-yet-landed
+  codex bridge; the guard reds if a pending entry's issue closes while the entry is still pending).
+- Secret lifecycle: a bearer token resolved from `auth.key_env` exists only in the HTTP request
+  headers at call time — never in the invocation dict (which flows into run-ledger telemetry), a
+  receipt, `AdvisoryEvidence`, or a log line. Receipts may carry the env var *name*, never its
+  value.
+- New `plugins/saga/references/dispatch-adapter-contract.md`: the dispatch-adapter contract
+  reference for anyone adding a `transport: http` registry row or a new bridge.
+- Existing callers stay byte-identical: no signature breaks, `transport` defaults to `cli` for
+  every pre-existing row, memo is opt-in, and `preflight()`'s new `entry` parameter is optional.
+
 ## [0.72.0] - 2026-07-06
 
 ### Fixed — /outcome attend emits the leaf's real issue-backed saga id (#491)

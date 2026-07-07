@@ -72,10 +72,21 @@ working spec = agy attempt-2 text with the two trivial repairs (P2 priority rest
 
 ### S2 — plan authoring
 
+Task: mini-plan (files / edit shape / version bump / test scenarios / risks) from the adjudicated
+S1 spec + current 5.4 text + release-surface facts.
+
 | Lane | Status | Disposition (manifest) | Verdict | Rework | Evidence |
 |---|---|---|---|---|---|
-| agy | _pending_ | | | | |
-| ollama-cloud | _pending_ | | | | |
+| agy | ok first try, observer-corroborated | `drill-468-s2-agy` ran-as-requested | **offloaded-clean** | ~7% (1 wrong claim: ruff lints "JSON and Markdown" — it lints Python) | manifest + `evidence/s2-agy.md` |
+| ollama-cloud | ok first try, receipt valid | `drill-468-s2-ollama-cloud` ran-as-requested | **offloaded-clean** | ~7% (1 invented verification: a skill-parsing test asserting 5.4 prose content — no such test) | manifest + `evidence/s2-ollama-cloud.md` |
+
+**Step verdict: offloaded-clean.** Both lanes produced correct four-file plans with the right
+patch bump (0.74.0 → 0.74.1) and correct guard mapping (tri-lock parity, generator `--check`).
+Each fabricated exactly one plausible-but-false verification claim — the recurring failure shape
+this step measures: engines invent test coverage that does not exist, which is precisely why the
+never-gatekeeper rule (R6) keeps Claude as verifier-of-record. Adjudicated plan = intersection of
+both plans with the two false claims pruned; gate placement locked to "modify/immediately follow
+the If-and-only-if sentence".
 
 ### S3 — implementation
 

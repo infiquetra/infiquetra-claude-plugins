@@ -84,7 +84,7 @@
       "name": "saga",
       "source": "./plugins/saga",
       "version": "0.75.0",
-      "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas, with fail-loud SUBSTITUTED_ENGINE derivation, gate refusal, empty-delivery HALT, and verify-spawn fallback attribution.",
+      "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome outcome-DAG orchestration and fail-loud external-engine delegation provenance.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -199,7 +199,7 @@
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
       "version": "0.8.0",
-      "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only \u2014 no skills, commands, or agents.",
+      "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only — no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"

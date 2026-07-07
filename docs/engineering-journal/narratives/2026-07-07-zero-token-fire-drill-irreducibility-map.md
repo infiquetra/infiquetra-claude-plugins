@@ -216,7 +216,7 @@ the attempt-1 `fell-back-to-claude` row was clobbered. The S1 retry was preserve
 drill log. Chaperone rule: suffix retry execution ids (`-attemptN`).
 
 **OBS-6 — the Stop-hook audit leg never engaged.** No `.claude/delegation/audits/` records
-exist after 11 dispatches: `dispatch()` disarms in-`finally` within the same turn, so the
+exist after 12 dispatches (11 surviving manifest rows — OBS-5): `dispatch()` disarms in-`finally` within the same turn, so the
 Stop/SubagentStop audit only covers windows where a turn ends while armed (a hung or
 long-running engine). For synchronous in-turn dispatches, the PreToolUse block + receipt
 corroboration are the only live tripwire legs. Expected by design, but worth knowing: KTD4's

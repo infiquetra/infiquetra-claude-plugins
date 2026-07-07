@@ -601,14 +601,6 @@ def create_supervised_bundle(
         )
         _write_json(bundle_path / "command.json", command_payload)
 
-        lease_payload = _run_lease_payload(
-            run_id=resolved_run_id,
-            envelope=envelope,
-            run_result=run_result,
-            repo_root=clone_path,
-        )
-        _write_json(bundle_path / "run-lease.json", lease_payload)
-
         result_payload = _result_payload(
             envelope=envelope,
             run_id=resolved_run_id,
@@ -622,6 +614,17 @@ def create_supervised_bundle(
             checks_path=checks_path,
             clone_path=clone_path,
         )
+
+        lease_payload = _run_lease_payload(
+            run_id=resolved_run_id,
+            envelope=envelope,
+            run_result=run_result,
+            repo_root=clone_path,
+        )
+        # One status per bundle: the provenance_required coercion (R1/KTD1) lives in
+        # result_payload, and the lease must not report the pre-coercion status beside it.
+        lease_payload["status"] = result_payload["status"]
+        _write_json(bundle_path / "run-lease.json", lease_payload)
 
         projection = render_projection(result_payload)
         _write_json(bundle_path / "result.json", result_payload)
@@ -1168,7 +1171,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(result.projection, end="")
-    return 0 if result.status in {"success", "patch_ready", "applied"} else 1
+    return _exit_code_for_status(result.status)
 
 
 def _default_mode(role: str) -> str:
@@ -1418,6 +1421,11 @@ def _supervised_receipt(
 
 
 _PASSING_STATUSES = frozenset({"success", "patch_ready", "applied"})
+
+
+def _exit_code_for_status(status: str) -> int:
+    """The one status-to-process-exit mapping (single source: ``_PASSING_STATUSES``)."""
+    return 0 if status in _PASSING_STATUSES else 1
 
 
 def _result_payload(

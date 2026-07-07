@@ -159,10 +159,12 @@ here.
    reviews it itself — never self-attested. Only after review does the chaperone set
    `evidence.verified_by_claude = True`; this is the bit `satisfy_gate()` requires (§ "Never a
    gatekeeper").
-2. **Apply.** The chaperone applies the reviewed patch and **owns the commit** — the engine never
-   touches the working tree (KTD6/R23). This is the same file-edit scope every team-execution
-   worker already has (`worker-manifest.md` "grants no privilege... workers keep today's
-   file-edit scope").
+2. **Apply.** The chaperone applies the reviewed patch — the engine never touches the working
+   tree (KTD6/R23). The chaperone **owns the commit**, but the commit itself happens only after
+   Test (step 3) and the empty-delivery check (step 3a) pass — apply and commit are distinct
+   steps of the same chaperone-owned sequence. This is the same file-edit scope every
+   team-execution worker already has (`worker-manifest.md` "grants no privilege... workers keep
+   today's file-edit scope").
 3. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
 3a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
    chaperone runs `check_empty_delivery.check_empty_delivery()` (or its CLI,

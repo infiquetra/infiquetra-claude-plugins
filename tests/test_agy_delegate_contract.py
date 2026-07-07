@@ -546,11 +546,31 @@ def test_provenance_required_coerces_fallback(
     )
 
     assert payload["status"] == expected_status
-    # exit-code equivalence: main() at :1167 returns 0 only for these statuses.
-    passing = {"success", "patch_ready", "applied"}
-    expect_exit_zero = expected_status in passing
-    assert (payload["status"] in passing) == expect_exit_zero
+    # Exit-code contract observed through the module's own single-source mapping —
+    # main() returns _exit_code_for_status(result.status); no duplicated status set here.
+    expect_exit_zero = expected_status in agy_delegate._PASSING_STATUSES
+    assert agy_delegate._exit_code_for_status(payload["status"]) == (0 if expect_exit_zero else 1)
     if expect_coerced:
         assert payload.get("coerced_by") == "provenance_required"
     else:
         assert "coerced_by" not in payload
+
+
+def test_blocked_status_marker_parsing_produces_fallback_suspected(
+    agy_delegate: ModuleType, tmp_path: Path
+) -> None:
+    """The stdout-marker parser is the real producer of the 'already fallback_suspected'
+    state the no-double-coercion case above starts from — exercise it against real log
+    content so the marker path cannot regress unnoticed (#390 review F1)."""
+    stdout_path = tmp_path / "stdout.log"
+    stderr_path = tmp_path / "stderr.log"
+    stdout_path.write_text("agy output\nFALLBACK_SUSPECTED: no genuine engine invocation\n")
+    stderr_path.write_text("")
+    assert agy_delegate._blocked_status_from_logs(stdout_path, stderr_path) == "fallback_suspected"
+
+    stdout_path.write_text("agy output, clean run\n")
+    assert agy_delegate._blocked_status_from_logs(stdout_path, stderr_path) is None
+
+    # Marker in stderr alone is also honored (the parser reads both streams).
+    stderr_path.write_text("TEST_CONFLICT: fixture collision\n")
+    assert agy_delegate._blocked_status_from_logs(stdout_path, stderr_path) == "test_conflict"

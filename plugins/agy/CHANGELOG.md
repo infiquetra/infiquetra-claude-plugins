@@ -16,6 +16,10 @@
   status already `fallback_suspected` via the stdout marker is not double-coerced. Transcript
   auditing stays the Stop-hook's responsibility (#384) — the wrapper's only signal is
   `_real_agy_verdict`.
+- Bundle-wide status consistency: `run-lease.json` now reports the same (post-coercion) status as
+  `result.json` instead of the raw pre-coercion supervisor status, and the status→exit-code
+  mapping has a single source (`_PASSING_STATUSES` / `_exit_code_for_status`) shared by `main()`
+  and the contract tests (#390 code-review round).
 
 ## [0.1.2] - 2026-07-06
 

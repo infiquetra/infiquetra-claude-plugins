@@ -1462,13 +1462,23 @@ def _emit_panel_reconciliation(
     # marker rides the operator-facing throw so a silent Claude-substituted verifier cannot hide.
     fallback_marker_var = f"{name_prefix}fallback_marker"
     lines.append(f"{indent}const {fallback_marker_var} = (() => {{")
+    # Depth coercion mirrors render_fallback_tier_marker()'s Python guard exactly (bool -> 0,
+    # non-integer string -> 0, float -> trunc, unparseable -> 0) so the tests that pin the pure
+    # helper describe THIS runtime marker too (#390 review F4).
+    lines.append(f"{indent}  const depthOf = (v) => {{")
+    lines.append(f"{indent}    const raw = v.fallback_depth")
+    lines.append(f'{indent}    if (typeof raw === "boolean") return 0')
     lines.append(
-        f"{indent}  const degraded = {reported_var}.filter((v) => (v.fallback_depth || 0) > 0)"
+        f'{indent}    if (typeof raw === "string" && !/^-?\\d+$/.test(raw.trim())) return 0'
     )
+    lines.append(f"{indent}    const d = Math.trunc(Number(raw))")
+    lines.append(f"{indent}    return Number.isFinite(d) && d > 0 ? d : 0")
+    lines.append(f"{indent}  }}")
+    lines.append(f"{indent}  const degraded = {reported_var}.filter((v) => depthOf(v) > 0)")
     lines.append(f'{indent}  if (degraded.length === 0) return ""')
     lines.append(
         f'{indent}  return " — " + degraded.map((v) => '
-        f"`fallback tier ${{v.fallback_depth || 0}} "
+        f"`fallback tier ${{depthOf(v)}} "
         f'(${{v.verifier_identity || "unknown-verifier"}})`).join("; ")'
     )
     lines.append(f"{indent}}})()")

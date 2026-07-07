@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import sys
 from pathlib import Path
@@ -933,7 +934,9 @@ def test_substituted_disposition_absent_when_expected_matches_resolved() -> None
 
 
 def test_substituted_disposition_none_expected_is_byte_identical() -> None:
-    """expected_identity absent -> today's behavior byte-for-byte (valid receipt -> RAN)."""
+    """expected_identity absent -> unchanged derivation (valid receipt -> RAN_AS_REQUESTED,
+    empty note); the omitted-vs-explicit-None equivalence is pinned at the dispatch level by
+    test_dispatch_expected_identity_none_leaves_provenance_clean."""
     evidence = _evidence(provenance={"status": "ok"}, runner_receipt=_valid_receipt())
     manifest = D.build_dispatch_manifest(
         evidence, execution_id="e-none", saga_ref="s1", created_at="2026-07-02"
@@ -1002,7 +1005,9 @@ def test_fallback_reason_invariant_fills_empty_note_for_non_ran() -> None:
 
 def test_dispatch_stamps_expected_identity_into_provenance() -> None:
     """dispatch(expected_identity=...) threads the plan-time preview baseline into evidence
-    provenance so the builder can derive substitution (KTD3)."""
+    provenance so the builder can derive substitution (KTD3) — chained through to the gate:
+    the full real path dispatch -> build_dispatch_manifest -> satisfy_gate refuses the
+    substituted run even when the evidence itself is verified and corroborated (#390 review)."""
     evidence = D.dispatch(
         _resolution(),
         runner=_ok_runner,
@@ -1014,8 +1019,16 @@ def test_dispatch_stamps_expected_identity_into_provenance() -> None:
     )
     assert manifest.disposition is PM.Disposition.SUBSTITUTED_ENGINE
 
+    verified = dataclasses.replace(evidence, verified_by_claude=True)
+    verified.provenance["observer_corroborated"] = True
+    with pytest.raises(D.DispatchError, match="substituted"):
+        D.satisfy_gate(verified, manifest)
+
 
 def test_dispatch_expected_identity_none_leaves_provenance_clean() -> None:
-    """expected_identity=None -> no expected_identity key stamped (byte-for-byte preserved)."""
+    """expected_identity=None (explicit or omitted) -> no expected_identity key stamped and
+    identical provenance either way — the additive-default preserves today's behavior."""
     evidence = D.dispatch(_resolution(), runner=_ok_runner)
     assert "expected_identity" not in evidence.provenance
+    explicit_none = D.dispatch(_resolution(), runner=_ok_runner, expected_identity=None)
+    assert explicit_none.provenance == evidence.provenance

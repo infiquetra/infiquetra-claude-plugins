@@ -43,11 +43,12 @@ prose ordering); post-fix gate: **2592 passed / 1 skipped**, ruff pair + mypy cl
 
 ## Follow-ups filed
 
-- ship_ceremony: gated transitions need a hard operator-confirm flag (`always_operator` must not
-  execute on a bare `run` call) — feeds the same delegation-integrity theme as #390 itself.
-- execution_spec emitter: verify-panel verifier calls must schema-enforce the verdict shape so
-  prose returns cannot vacuously empty the panel (aggregation already logs under-strength; it
-  should never be reachable by shape drift).
+- **#526** — ship_ceremony: gated transitions need a hard operator-confirm flag
+  (`always_operator` must not execute on a bare `run` call) — feeds the same
+  delegation-integrity theme as #390 itself.
+- **#527** — execution_spec emitter: verify-panel verifier calls must schema-enforce the verdict
+  shape so prose returns cannot vacuously empty the panel (aggregation already logs
+  under-strength; it should never be reachable by shape drift).
 
 ## PR
 

@@ -90,10 +90,21 @@ the If-and-only-if sentence".
 
 ### S3 — implementation
 
+Task: exact replacement text for SKILL.md §5.4 + the 0.74.1 CHANGELOG entry (evidence-only —
+engines return text, the chaperone applies; landed as `d439bbb`).
+
 | Lane | Status | Disposition (manifest) | Verdict | Rework | Evidence |
 |---|---|---|---|---|---|
-| agy | _pending_ | | | | |
-| ollama-cloud | _pending_ | | | | |
+| agy | ok first try, observer-corroborated | `drill-468-s3-agy` ran-as-requested | **offloaded-clean** (adopted) | ~7% (lead sentence regrounded to say *why* the skip exists; otherwise adopted incl. heading + CHANGELOG verbatim) | manifest + `evidence/s3-agy.md` |
+| ollama-cloud | ok first try, receipt valid | `drill-468-s3-ollama-cloud` ran-as-requested | **degraded** | ~15-20% (gate clause works but omits the required caller-owns-persistence contract sentence; heading left stale; first line re-wrapped to ~135 chars breaking the 100-char house style) | manifest + `evidence/s3-ollama-cloud.md` |
+
+**Step verdict: offloaded-clean.** agy delivered the adoptable artifact: correct restructure
+(explicit programmatic-skip sentence mirroring 5.3's contract language, updated heading,
+house-style wrap) and a precise CHANGELOG entry adopted verbatim. ollama-cloud produced the
+minimal inline gate — functional but under-specified against the stated constraints. Chaperone
+additions outside both patches (recorded, not engine rework): the §5.7 summary-line consistency
+touch and the `tests/test_saga_plugin.py` drift-guard pin bump — neither lane was shown those
+surfaces; the pin was in S2's source material as "tri-lock" only.
 
 ### S4 — review
 

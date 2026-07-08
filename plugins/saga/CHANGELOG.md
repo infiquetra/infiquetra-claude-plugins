@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.75.3] - 2026-07-08
+
+### Fixed — execution_spec emits StructuredOutput schemas for returned unit values (#503)
+
+- `plugins/saga/scripts/execution_spec.py`: unit `agent()` calls now carry a schema derived
+  from declared `returns`, so singleton units, parallel thunks, iterate-to-consensus loops,
+  external-engine dispatches, and unattended climb retries request structured output at
+  generation time instead of relying only on prose parsing in `__gate`.
+- Cheap-tier unit schemas preserve the existing pull-cord escape hatch with a `oneOf`
+  alternative, keeping budget-depth escalation behavior compatible with the structured return
+  contract.
+
 ## [0.75.2] - 2026-07-08
 
 ### Fixed — cross-repo Objective ingestion stamps child repos and collision-safe subplot IDs (#512/#513)

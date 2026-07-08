@@ -42,7 +42,7 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -960,7 +960,7 @@ def unit_spend(unit: Unit) -> int:
     sum would undercount exactly the expensive fan-out/panel plans and silently false-negative
     the cost HALT (the HALT-not-degrade violation U2 exists to prevent).
     """
-    base = to_spend(unit.tier.model, unit.tier.effort)
+    base = cast(int, to_spend(unit.tier.model, unit.tier.effort))
     calls = len(unit.targets) if (unit.fanout and unit.targets) else 1
     total = base * calls
     if unit.verify is not None:
@@ -1305,6 +1305,25 @@ def _external_engine_marker(unit: Unit) -> str | None:
     return f"{key}={value}"
 
 
+def _return_schema(unit: Unit) -> dict[str, object]:
+    """Build the StructuredOutput JSON Schema for a unit's declared returns (#503)."""
+    return_schema: dict[str, object] = {
+        "type": "object",
+        "properties": {key: {} for key in unit.returns},
+        "required": list(unit.returns),
+        "additionalProperties": True,
+    }
+    if not unit.tier.is_cheap:
+        return return_schema
+    pull_cord_schema: dict[str, object] = {
+        "type": "object",
+        "properties": {"pull_cord": {"type": "string"}},
+        "required": ["pull_cord"],
+        "additionalProperties": True,
+    }
+    return {"oneOf": [return_schema, pull_cord_schema]}
+
+
 def _agent_opts(unit: Unit) -> list[str]:
     opts = [f"label: {_js_string(unit.label)}"]
     selector = _external_engine_selector(unit)
@@ -1312,9 +1331,11 @@ def _agent_opts(unit: Unit) -> list[str]:
         key, value = selector
         opts.append('dispatch: "external-engine"')
         opts.append(f"{key}: {_js_string(value)}")
-        return opts
-    opts.append(f"model: {_js_string(unit.tier.model)}")
-    opts.append(f"effort: {_js_string(unit.tier.effort)}")
+    else:
+        opts.append(f"model: {_js_string(unit.tier.model)}")
+        opts.append(f"effort: {_js_string(unit.tier.effort)}")
+    if unit.returns:
+        opts.append(f"schema: {json.dumps(_return_schema(unit), sort_keys=True)}")
     return opts
 
 

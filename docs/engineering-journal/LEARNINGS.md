@@ -43,8 +43,29 @@ cheap-tier units keep a `oneOf` pull-cord alternative.
 diff-aware bump guard both passed.
 **Generalizable rule.** When a harness offers schema-enforced output, put the contract on the
 agent call and keep downstream parsing as a backstop, not the primary enforcement mechanism.
-**Refs.** `{#verify-panel-prose-verdicts-vacuous-aggregation}`; issue #503; #519 remains the
+**Refs.** `{#verify-panel-prose-verdicts-vacuous-aggregation}`; issue #503; issue #519 ships the
 verifier-panel half of the same lesson.
+
+### Refute-N verifier panels must fail on under-strength and report examined SHA {#refute-n-under-strength-hard-fail}
+
+**Context.** Issue #519 closed the remaining verifier-panel half of the structured-output lesson:
+verifiers could return prose, run against the wrong worktree, and leave the panel with `0/N`
+reporting verifiers while the workflow still completed.
+**Evidence.** Saga `0.75.4` adds a verifier verdict schema, runtime unit-result prompt handoff,
+explicit primary-checkout materialization instructions, required `examined_sha`, and a
+`verifier-under-strength` throw.
+**Mechanism.** A majority gate is unsafe if below-quorum is only a log line. The runtime must
+distinguish "enough valid skeptical votes upheld the result" from "the voters never produced
+valid ballots or inspected the right revision."
+**Fix.** `_verifier_agent_opts()` emits a StructuredOutput schema; `_emit_panel_reconciliation()`
+uses a stricter valid-verdict predicate and throws when `reported.length` is below the quorum
+floor; verifier prompts carry the unit result and branch-materialization protocol.
+**Validation.** Focused emitter tests cover verifier schema, unit-result prompt handoff, strict
+verdict validity, and hard under-strength throws.
+**Generalizable rule.** Any quorum verifier must make both evidence visibility and vote validity
+machine-checkable; a below-quorum panel is a hard failure, not an annotated pass.
+**Refs.** `{#execution-spec-verifier-visibility}`; `{#panel-verdicts-unparsed-prose}`;
+`{#verify-panels-blind-to-uncommitted-tree}`.
 
 ## 2026-07-07
 

@@ -777,6 +777,11 @@ def test_verify_panel_emits_n_verifier_agents_and_majority_check() -> None:
     assert script.count("() => agent(") == 3
     # The verifiers are adversarial skeptics over the unit's output (refute, not redo).
     assert "REFUTE-N VERIFIER" in script
+    assert "VERIFIER VISIBILITY PROTOCOL (#519)" in script
+    assert "UNIT RESULT INPUT (authoritative structured evidence)" in script
+    assert "status --short" in script
+    assert "named untracked output files" in script
+    assert "examined_sha" in script
     # Majority pass-rule reconciliation: recomputed over REPORTING verifiers (R3), not the
     # declared n; with no missing verifiers this is equivalent to the old fixed ceil(3/2)=2
     # (R10 no-regression).
@@ -864,8 +869,8 @@ def test_layered_spec_with_verify_panel_full_emission() -> None:
 
 
 def test_missing_verifier_recording_emits_runtime_failure_log() -> None:
-    """R1/R5: missing-verifier bookkeeping is always emitted, with the baked quorum floor
-    (KTD3) noted when the reporting count falls under it."""
+    """R1/R5: missing-verifier bookkeeping is always emitted, and a below-floor panel
+    throws instead of continuing with a vacuous pass."""
     mod = _load()
     data = _valid_spec_dict()
     units = data["units"]
@@ -877,17 +882,25 @@ def test_missing_verifier_recording_emits_runtime_failure_log() -> None:
     spec = mod.ExecutionSpec.from_dict(data)
     script = mod.emit_workflow_script(spec)
 
-    assert (
-        "U2_reported = U2_verdicts.filter((v) => v != null && Array.isArray(v.refuted))" in script
-    )
+    assert 'U2_valid_verifier_verdict = (v) => v != null && typeof v === "object"' in script
+    assert "Array.isArray(v.refuted)" in script
+    assert "Array.isArray(v.upheld)" in script
+    assert 'typeof v.verifier_identity === "string" && v.verifier_identity.length > 0' in script
+    assert 'Object.prototype.hasOwnProperty.call(v, "fallback_depth")' in script
+    assert 'typeof v.examined_sha === "string" && v.examined_sha.length > 0' in script
+    assert "U2_reported = U2_verdicts.filter((v) => U2_valid_verifier_verdict(v))" in script
     assert (
         "U2_missing_idx = U2_verdicts.map((v, i) => "
-        "(v == null || !Array.isArray(v.refuted) ? i + 1 : null))" in script
+        "(!U2_valid_verifier_verdict(v) ? i + 1 : null))" in script
     )
     assert "if (U2_missing_idx.length > 0) {" in script
     assert "verify panel over U2:" in script
     assert 'runtime-failure: #${U2_missing_idx.join(", #")}' in script
     assert "UNDER-STRENGTH (quorum floor 2)" in script
+    assert (
+        "verifier-under-strength: Unit U2 reported ${U2_reported.length}/3 verifiers "
+        "(quorum floor 2; missing #${U2_missing_idx.join(', #')})" in script
+    )
     # R13: the throw carries the reporting-count detail after the intact prefix.
     assert (
         "verifier-disagreement: Unit U2 refuted by ${U2_refute_count}/${U2_reported.length} "
@@ -947,17 +960,14 @@ def test_missing_verifier_unanimous_threshold_over_reporters() -> None:
     assert "UNDER-STRENGTH (quorum floor 3)" in script
     assert (
         "U2_missing_idx = U2_verdicts.map((v, i) => "
-        "(v == null || !Array.isArray(v.refuted) ? i + 1 : null))" in script
+        "(!U2_valid_verifier_verdict(v) ? i + 1 : null))" in script
     )
 
 
 def test_malformed_verdict_treated_as_missing_not_implicit_uphold() -> None:
-    """A non-null verdict lacking a usable `.refuted` array (e.g. `{}`, a partial/malformed
-    verifier response) must not be silently counted as a reporting non-refuter -- that would
-    inflate the reported-count denominator and could suppress the UNDER-STRENGTH marker for a
-    verifier that never actually delivered a usable verdict. completeness_gate.py's classify()
-    only gates the unit's own result, never verifier verdicts, so this predicate is the only
-    place a malformed verdict is caught."""
+    """A non-null verdict lacking the structured verifier fields must not be silently counted
+    as a reporting non-refuter -- that would inflate the reported-count denominator and could
+    suppress the UNDER-STRENGTH throw for a verifier that never delivered a usable verdict."""
     mod = _load()
     data = _valid_spec_dict()
     units = data["units"]
@@ -970,13 +980,18 @@ def test_malformed_verdict_treated_as_missing_not_implicit_uphold() -> None:
     script = mod.emit_workflow_script(spec)
 
     # Both the reported-filter and the missing-index map must check verdict shape, not just
-    # null-ness, so `{}` / `{refuted: null}` / a truncated object is treated as missing.
-    assert (
-        "U2_reported = U2_verdicts.filter((v) => v != null && Array.isArray(v.refuted))" in script
-    )
+    # null-ness, so `{}` / `{refuted: []}` without upheld/identity/depth/examined_sha is treated
+    # as missing.
+    assert 'U2_valid_verifier_verdict = (v) => v != null && typeof v === "object"' in script
+    assert "Array.isArray(v.refuted)" in script
+    assert "Array.isArray(v.upheld)" in script
+    assert 'typeof v.verifier_identity === "string" && v.verifier_identity.length > 0' in script
+    assert 'Object.prototype.hasOwnProperty.call(v, "fallback_depth")' in script
+    assert 'typeof v.examined_sha === "string" && v.examined_sha.length > 0' in script
+    assert "U2_reported = U2_verdicts.filter((v) => U2_valid_verifier_verdict(v))" in script
     assert (
         "U2_missing_idx = U2_verdicts.map((v, i) => "
-        "(v == null || !Array.isArray(v.refuted) ? i + 1 : null))" in script
+        "(!U2_valid_verifier_verdict(v) ? i + 1 : null))" in script
     )
     # refute_count no longer needs a redundant `v.refuted &&` guard -- reported already
     # guarantees `Array.isArray(v.refuted)` for every element.
@@ -984,13 +999,8 @@ def test_malformed_verdict_treated_as_missing_not_implicit_uphold() -> None:
 
 
 def test_refute_throw_guard_is_unconditional_on_quorum_floor() -> None:
-    """KTD4 (skeptical asymmetry): a refutation over reporters always throws/retries, even
-    under-strength -- the quorum floor only annotates the accept-path log, never gates the
-    throw. A regression that gated the throw on the floor (e.g.
-    `if (refuted && reported.length >= floor)`) would still satisfy the _refuted-formula,
-    threshold-formula, and throw-message assertions elsewhere, so this pins the guard's literal
-    shape directly: the `if (refuted)` block's very next line is the throw, with no
-    floor/reported.length condition folded into the guard."""
+    """A refutation over a reporting quorum still throws/retries; under-strength has its own
+    earlier hard failure, but the disagreement guard must not fold in extra conditions."""
     mod = _load()
     data = _valid_spec_dict()
     units = data["units"]

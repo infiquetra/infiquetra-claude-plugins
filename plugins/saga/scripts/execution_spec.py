@@ -392,6 +392,36 @@ async function __retry(thunk, opts) {
 }"""
 
 
+_JS_VERIFIER_PROMPT_HELPER = r"""function __verifierPrompt(basePrompt, unitResult) {
+  var rendered;
+  try {
+    rendered = JSON.stringify(unitResult, null, 2);
+  } catch (err) {
+    rendered = String(unitResult);
+  }
+  var repoLine = (typeof REPO === "string")
+    ? `PRIMARY REPO PATH: ${REPO}`
+    : "PRIMARY REPO PATH: not declared by this workflow";
+  return `${basePrompt}
+
+VERIFIER VISIBILITY PROTOCOL (#519):
+${repoLine}
+- You run in a disposable verifier worktree. Before judging file content, capture the primary
+  checkout SHA with: git -C <primary repo path> rev-parse HEAD
+- Materialize that exact SHA in your verifier worktree with: git checkout <sha> -- .
+- If the unit result names uncommitted files or diffs, inspect the primary checkout read-only
+  with git -C <primary repo path> status --short and git -C <primary repo path> diff / diff --
+  <path>. For named untracked output files, read the primary checkout path directly; never mutate
+  the primary checkout.
+- Return examined_sha as the SHA you actually materialized or inspected. If you cannot see enough
+  evidence to judge, return a refuted entry explaining the visibility gap; do not emit prose-only
+  "nothing to verify" output.
+
+UNIT RESULT INPUT (authoritative structured evidence):
+${rendered}`;
+}"""
+
+
 class SpecError(ValueError):
     """A spec that violates an authoring-time invariant (R3 / R10) or is malformed.
 
@@ -1351,14 +1381,15 @@ def _verifier_prompt(unit: Unit) -> str:
         f"skeptic: attempt to REFUTE the unit's result, do NOT re-do its work. Read the unit's "
         f"output and the evidence it cites; for each claimed finding decide REFUTED (with a "
         f"concrete reason) or UPHELD. Emit a structured verdict {{refuted: [...], upheld: [...], "
-        f"verifier_identity: ..., fallback_depth: ...}}.",
+        f"verifier_identity: ..., fallback_depth: ..., examined_sha: ...}}.",
         # U6/R8/KTD7: attributed verify-spawn. The emitter STAMPS the agent identity it knows
         # ({READONLY_VERIFIER_AGENT_TYPE}) and a fallback_depth of 0 -- a workflow agent() call
         # cannot silently descend the #325 fallback ladder (an unresolvable agentType fails the
         # call outright), so the first-choice rung is the only rung reachable from here. Echo BOTH
         # verbatim in your verdict so the panel gate summary can attribute any degraded reporter.
         f"Echo verifier_identity: {READONLY_VERIFIER_AGENT_TYPE} and fallback_depth: 0 "
-        f"back in your verdict (do NOT alter them).",
+        f"back in your verdict (do NOT alter them). Include examined_sha as the git SHA you "
+        f"actually materialized or inspected.",
     ]
     if unit.tier.is_cheap:
         parts.append(BUDGET_RIDER)
@@ -1407,13 +1438,37 @@ def _verifier_agent_opts(unit: Unit) -> list[str]:
     smell, and an opt-out would be an escalation channel contradicting R8. The unit's per-tier
     ``model``/``effort`` still ride so the panel runs at the same tier as the unit (R4).
     """
-    return [
+    opts = [
         f"label: {_js_string(unit.label + ' verifier')}",
         f"model: {_js_string(unit.tier.model)}",
         f"effort: {_js_string(unit.tier.effort)}",
         f"agentType: {_js_string(READONLY_VERIFIER_AGENT_TYPE)}",
         f"isolation: {_js_string(READONLY_VERIFIER_ISOLATION)}",
     ]
+    opts.append(f"schema: {json.dumps(_verifier_schema(), sort_keys=True)}")
+    return opts
+
+
+def _verifier_schema() -> dict[str, object]:
+    """StructuredOutput schema for refute-N verifier verdicts (#519)."""
+    return {
+        "type": "object",
+        "properties": {
+            "refuted": {"type": "array"},
+            "upheld": {"type": "array"},
+            "verifier_identity": {"type": "string"},
+            "fallback_depth": {},
+            "examined_sha": {"type": "string"},
+        },
+        "required": [
+            "refuted",
+            "upheld",
+            "verifier_identity",
+            "fallback_depth",
+            "examined_sha",
+        ],
+        "additionalProperties": True,
+    }
 
 
 def _emit_panel_reconciliation(
@@ -1461,8 +1516,12 @@ def _emit_panel_reconciliation(
     lines.append(f"{indent}const {verdicts_var} = await parallel([")
     for _ in range(n):
         lines.append(f"{indent}  () => {_retry_open()}")
-        lines.append(f"{indent}    {_js_string(verifier_prompt)},")
-        lines.append(f"{indent}    {{ " + ", ".join(verifier_opts) + f", input: {result_var} }},")
+        lines.append(f"{indent}    __verifierPrompt({_js_string(verifier_prompt)}, {result_var}),")
+        lines.append(
+            f"{indent}    {{ "
+            + ", ".join(verifier_opts)
+            + f", input: {{ unit_result: {result_var} }} }},"
+        )
         lines.append(f"{indent}  {_retry_close(unit)}),")
     lines.append(f"{indent}])")
     # R1/R5: record which verifiers reported vs. runtime-missing; R3: recompute the pass-rule
@@ -1472,9 +1531,16 @@ def _emit_panel_reconciliation(
     # legitimate non-refuting verdict unless shape is checked here -- completeness_gate.py's
     # classify() only gates the unit's own result, never verifier verdicts, so this is the only
     # place malformed verdicts get caught).
+    valid_verdict_var = f"{name_prefix}valid_verifier_verdict"
     lines.append(
-        f"{indent}const {reported_var} = {verdicts_var}.filter((v) => "
-        f"v != null && Array.isArray(v.refuted))"
+        f'{indent}const {valid_verdict_var} = (v) => v != null && typeof v === "object" && '
+        f"Array.isArray(v.refuted) && Array.isArray(v.upheld) && "
+        f'typeof v.verifier_identity === "string" && v.verifier_identity.length > 0 && '
+        f'Object.prototype.hasOwnProperty.call(v, "fallback_depth") && '
+        f'typeof v.examined_sha === "string" && v.examined_sha.length > 0'
+    )
+    lines.append(
+        f"{indent}const {reported_var} = {verdicts_var}.filter((v) => {valid_verdict_var}(v))"
     )
     # U6/R8/KTD7: attribute any reporter that descended the #325 fallback ladder. Each reporter
     # echoes verifier_identity + fallback_depth (default 0); this runtime marker mirrors the pure
@@ -1505,7 +1571,7 @@ def _emit_panel_reconciliation(
     lines.append(f"{indent}}})()")
     lines.append(
         f"{indent}const {missing_idx_var} = {verdicts_var}.map((v, i) => "
-        f"(v == null || !Array.isArray(v.refuted) ? i + 1 : null)).filter((i) => i != null)"
+        f"(!{valid_verdict_var}(v) ? i + 1 : null)).filter((i) => i != null)"
     )
     lines.append(
         f"{indent}const {refute_count_var} = {reported_var}.filter((v) => "
@@ -1522,9 +1588,8 @@ def _emit_panel_reconciliation(
             f"Math.max(1, {reported_var}.length)  // unanimous over reporters"
         )
     lines.append(f"{indent}const {refuted_var} = {refute_count_var} >= {threshold_var}")
-    # R4/R5: annotate missing verifiers and mark UNDER-STRENGTH below the baked quorum floor;
-    # this fires on both the accept and refute paths -- plan KTD4 keeps refutation acting
-    # regardless of under-strength.
+    # R4/R5: annotate missing verifiers and hard-fail below the baked quorum floor before any
+    # accept/disagree decision can be computed over too little evidence.
     lines.append(f"{indent}if ({missing_idx_var}.length > 0) {{")
     lines.append(
         f"{indent}  log(`verify panel over {unit.unit_id}: "
@@ -1535,6 +1600,13 @@ def _emit_panel_reconciliation(
     lines.append(
         f"{indent}      ({reported_var}.length < {floor} ? "
         f'" — UNDER-STRENGTH (quorum floor {floor})" : ""))'
+    )
+    lines.append(f"{indent}}}")
+    lines.append(f"{indent}if ({reported_var}.length < {floor}) {{")
+    lines.append(
+        f"{indent}  throw new Error(`verifier-under-strength: Unit {unit.unit_id} reported "
+        f"${{{reported_var}.length}}/{n} verifiers (quorum floor {floor}; "
+        f"missing #${{{missing_idx_var}.join(', #')}})${{{fallback_marker_var}}}`)"
     )
     lines.append(f"{indent}}}")
 
@@ -2029,6 +2101,8 @@ def emit_workflow_script(
     lines.append(_JS_GATE_HELPER)
     lines.append("")
     lines.append(_JS_RETRY_HELPER)
+    lines.append("")
+    lines.append(_JS_VERIFIER_PROMPT_HELPER)
     lines.append("")
 
     # Topological waves (KTD4): each layer's units are mutually independent and run in a

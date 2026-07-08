@@ -54,3 +54,12 @@ prose ordering); post-fix gate: **2592 passed / 1 skipped**, ruff pair + mypy cl
 
 Review round `09f19a3` pushed; PR opened via fresh ceremony start (deliberate single
 transitions this time). Merge only on the operator's word.
+
+**Merged:** PR #528 squash `d9150f9` (2026-07-08T00:09Z) on the operator's explicit word, as a
+single deliberate `gh pr merge` — the issue-390 ceremony ledger was already spent through
+`merge` by the #525 incident. Note: GitHub closed #390 earlier (2026-07-07T22:32Z) when the
+#525 scaffold squash carried the templated close reference — premature at that moment, true
+now that the content is merged. Post-merge: board Status→Done written
+(`set-field-status:…#390:Done`, idempotent ledger), outcome harvest `sub-390` → done
+(external-engine-offload 6/20 done / 14 dispatched, spec pushed), 18 agent worktrees
+(6 review/validator + 12 `wf_ada4ca97-365-*` verifiers) removed with their branches.

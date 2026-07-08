@@ -329,3 +329,273 @@ def test_set_field_raises_with_helpful_message_on_unknown_option() -> None:
         # Helpful: includes the actual options + the discovery command hint
         assert "olympus-quality" in msg or "olympus-performance" in msg
         assert "field-options" in msg
+
+
+def _field_response() -> dict:
+    return {
+        "organization": {
+            "projectV2": {
+                "id": "PVT_kwx",
+                "fields": {
+                    "nodes": [
+                        {
+                            "id": "FLD_kwabc",
+                            "name": "Status",
+                            "options": [
+                                {"id": "o1", "name": "Idea"},
+                                {"id": "o2", "name": "Active"},
+                            ],
+                        },
+                        {
+                            "id": "FLD_obj",
+                            "name": "Objective",
+                            "options": [
+                                {"id": "o3", "name": "defects-claude-plugins"},
+                            ],
+                        },
+                    ]
+                },
+            }
+        }
+    }
+
+
+def _project_item(number: int, item_id: str, repo: str = "infiquetra-claude-plugins") -> dict:
+    return {
+        "id": item_id,
+        "content": {
+            "number": number,
+            "repository": {"name": repo},
+        },
+    }
+
+
+def test_set_field_bulk_reuses_discovery_and_updates_each_number() -> None:
+    with (
+        patch.object(sdlc_manager, "load_config") as mock_load,
+        patch.object(sdlc_manager, "get_project_items") as mock_items,
+        patch.object(sdlc_manager, "_graphql") as mock_gql,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        mock_load.return_value = {
+            "project_mappings": {
+                "projects": {"operations": {"number": 1, "name": "Operations"}},
+            }
+        }
+        mock_items.return_value = (
+            "PVT_kwx",
+            [_project_item(1, "PVTI_1"), _project_item(2, "PVTI_2")],
+        )
+        mock_gql.side_effect = [_field_response(), {}, {}]
+
+        sdlc_manager.flow_set_field_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1, 2],
+            "Status",
+            "Idea",
+            fmt="json",
+        )
+
+    assert mock_items.call_count == 1
+    assert mock_gql.call_count == 3
+    assert mock_gql.call_args_list[0].args[0] == sdlc_manager.QUERY_GET_PROJECT_FIELDS
+    assert [call.args[0] for call in mock_gql.call_args_list[1:]] == [
+        sdlc_manager.QUERY_SET_FIELD_VALUE,
+        sdlc_manager.QUERY_SET_FIELD_VALUE,
+    ]
+    payload = mock_out.call_args.args[0]
+    assert payload["assignments"] == [{"field": "Status", "option": "Idea"}]
+    assert payload["updated"] == [
+        {"repo": "infiquetra-claude-plugins", "number": 1, "field": "Status", "option": "Idea"},
+        {"repo": "infiquetra-claude-plugins", "number": 2, "field": "Status", "option": "Idea"},
+    ]
+    assert payload["failed"] == []
+
+
+def test_set_fields_bulk_reuses_discovery_for_multiple_fields_and_numbers() -> None:
+    with (
+        patch.object(sdlc_manager, "load_config") as mock_load,
+        patch.object(sdlc_manager, "get_project_items") as mock_items,
+        patch.object(sdlc_manager, "_graphql") as mock_gql,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        mock_load.return_value = {
+            "project_mappings": {
+                "projects": {"operations": {"number": 1, "name": "Operations"}},
+            }
+        }
+        mock_items.return_value = (
+            "PVT_kwx",
+            [_project_item(1, "PVTI_1"), _project_item(2, "PVTI_2")],
+        )
+        mock_gql.side_effect = [_field_response(), {}, {}, {}, {}]
+
+        sdlc_manager.flow_set_fields_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1, 2],
+            [("Status", "Idea"), ("Objective", "defects-claude-plugins")],
+            fmt="json",
+        )
+
+    assert mock_items.call_count == 1
+    assert mock_gql.call_count == 5
+    assert mock_gql.call_args_list[0].args[0] == sdlc_manager.QUERY_GET_PROJECT_FIELDS
+    assert [call.args[0] for call in mock_gql.call_args_list[1:]] == [
+        sdlc_manager.QUERY_SET_FIELD_VALUE,
+        sdlc_manager.QUERY_SET_FIELD_VALUE,
+        sdlc_manager.QUERY_SET_FIELD_VALUE,
+        sdlc_manager.QUERY_SET_FIELD_VALUE,
+    ]
+    payload = mock_out.call_args.args[0]
+    assert payload["assignments"] == [
+        {"field": "Status", "option": "Idea"},
+        {"field": "Objective", "option": "defects-claude-plugins"},
+    ]
+    assert len(payload["updated"]) == 4
+    assert payload["failed"] == []
+
+
+def test_set_field_bulk_reports_partial_failure_and_continues() -> None:
+    with (
+        patch.object(sdlc_manager, "load_config") as mock_load,
+        patch.object(sdlc_manager, "get_project_items") as mock_items,
+        patch.object(sdlc_manager, "_graphql") as mock_gql,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        mock_load.return_value = {
+            "project_mappings": {
+                "projects": {"operations": {"number": 1, "name": "Operations"}},
+            }
+        }
+        mock_items.return_value = (
+            "PVT_kwx",
+            [_project_item(1, "PVTI_1"), _project_item(2, "PVTI_2")],
+        )
+        mock_gql.side_effect = [_field_response(), RuntimeError("mutation failed"), {}]
+
+        with pytest.raises(RuntimeError, match="failed for 1 of 2"):
+            sdlc_manager.flow_set_field_bulk(
+                "operations",
+                "infiquetra-claude-plugins",
+                [1, 2],
+                "Status",
+                "Idea",
+                fmt="json",
+            )
+
+    assert mock_gql.call_count == 3
+    payload = mock_out.call_args.args[0]
+    assert payload["updated"] == [
+        {"repo": "infiquetra-claude-plugins", "number": 2, "field": "Status", "option": "Idea"}
+    ]
+    assert payload["failed"] == [
+        {
+            "repo": "infiquetra-claude-plugins",
+            "number": 1,
+            "field": "Status",
+            "option": "Idea",
+            "error": "mutation failed",
+        }
+    ]
+
+
+def test_cli_numbers_arg_routes_to_bulk_set_field() -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "set-field",
+                "--project",
+                "operations",
+                "--repo",
+                "infiquetra/infiquetra-claude-plugins",
+                "--numbers",
+                "1, 2,3",
+                "--field",
+                "Status",
+                "--option",
+                "Idea",
+            ],
+        ),
+        patch.object(sdlc_manager, "flow_set_fields_bulk") as set_fields_bulk,
+    ):
+        sdlc_manager.main()
+
+    set_fields_bulk.assert_called_once_with(
+        "operations",
+        "infiquetra-claude-plugins",
+        [1, 2, 3],
+        [("Status", "Idea")],
+        "text",
+    )
+
+
+def test_cli_repeated_field_option_pairs_route_to_bulk_set_field() -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "set-field",
+                "--project",
+                "operations",
+                "--repo",
+                "infiquetra-claude-plugins",
+                "--numbers",
+                "1,2",
+                "--field",
+                "Status",
+                "--option",
+                "Idea",
+                "--field",
+                "Objective",
+                "--option",
+                "defects-claude-plugins",
+            ],
+        ),
+        patch.object(sdlc_manager, "flow_set_fields_bulk") as set_fields_bulk,
+    ):
+        sdlc_manager.main()
+
+    set_fields_bulk.assert_called_once_with(
+        "operations",
+        "infiquetra-claude-plugins",
+        [1, 2],
+        [("Status", "Idea"), ("Objective", "defects-claude-plugins")],
+        "text",
+    )
+
+
+def test_cli_rejects_mismatched_repeated_field_option_pairs() -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "set-field",
+                "--project",
+                "operations",
+                "--repo",
+                "infiquetra-claude-plugins",
+                "--numbers",
+                "1,2",
+                "--field",
+                "Status",
+                "--option",
+                "Idea",
+                "--field",
+                "Objective",
+            ],
+        ),
+        pytest.raises(SystemExit),
+    ):
+        sdlc_manager.main()

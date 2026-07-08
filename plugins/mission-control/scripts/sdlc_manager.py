@@ -98,6 +98,25 @@ def _normalize_repo_arg(value: str) -> str:
     return name
 
 
+def _parse_numbers_arg(value: str) -> list[int]:
+    """Parse a comma-separated issue-number list for CLI batch commands."""
+    numbers: list[int] = []
+    for part in value.split(","):
+        raw = part.strip()
+        if not raw:
+            raise argparse.ArgumentTypeError("numbers must be comma-separated issue numbers")
+        try:
+            number = int(raw)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"invalid issue number {raw!r}") from exc
+        if number <= 0:
+            raise argparse.ArgumentTypeError("issue numbers must be positive integers")
+        numbers.append(number)
+    if not numbers:
+        raise argparse.ArgumentTypeError("numbers cannot be empty")
+    return numbers
+
+
 def get_sdlc_path() -> Path:
     """Get path to infiquetra-sdlc checkout."""
     env_path = os.environ.get("INFIQUETRA_SDLC_PATH")
@@ -2159,21 +2178,34 @@ def rollout_update(repo: str, field: str, status: str, fmt: str) -> None:
 def _resolve_project_field(project_name: str, field_name: str) -> dict:
     """Look up a project field by name. Returns the field node (with
     id, name, options if SINGLE_SELECT). Raises RuntimeError if missing."""
+    return _resolve_project_fields(project_name, [field_name])[field_name]
+
+
+def _resolve_project_fields(project_name: str, field_names: list[str]) -> dict[str, dict[str, Any]]:
+    """Look up project fields by name with one live discovery query."""
     config = load_config()
     proj = get_project_config(config, project_name)
     data = _graphql(QUERY_GET_PROJECT_FIELDS, {"org": ORG, "number": proj["number"]})
     fields = data.get("organization", {}).get("projectV2", {}).get("fields", {}).get("nodes", [])
-    for f in fields:
-        if f.get("name", "").lower() == field_name.lower():
-            return {**f, "_project_id": data["organization"]["projectV2"]["id"]}
-    raise RuntimeError(
-        f"Field '{field_name}' not found on project '{project_name}'. "
-        f"Available fields: {[f.get('name') for f in fields]}. "
-        f"If you expected this field to exist (e.g., Initiative or Objective), "
-        f"the field-creation runbook is in "
-        f"`infiquetra-sdlc/docs/operations/operational-reference.md` "
-        f"under 'Initiative/Objective Tracking'."
-    )
+    requested = {name.lower(): name for name in field_names}
+    resolved: dict[str, dict[str, Any]] = {}
+    project_id = data["organization"]["projectV2"]["id"]
+    for field in fields:
+        requested_name = requested.get(field.get("name", "").lower())
+        if requested_name:
+            resolved[requested_name] = {**field, "_project_id": project_id}
+
+    missing = [name for name in field_names if name not in resolved]
+    if missing:
+        raise RuntimeError(
+            f"Field(s) {missing} not found on project '{project_name}'. "
+            f"Available fields: {[f.get('name') for f in fields]}. "
+            f"If you expected this field to exist (e.g., Initiative or Objective), "
+            f"the field-creation runbook is in "
+            f"`infiquetra-sdlc/docs/operations/operational-reference.md` "
+            f"under 'Initiative/Objective Tracking'."
+        )
+    return resolved
 
 
 def flow_field_options(project_name: str, field_name: str, fmt: str) -> None:
@@ -2207,8 +2239,27 @@ def flow_set_field(
     with the same option produces the same final state."""
     field = _resolve_project_field(project_name, field_name)
     project_id = field["_project_id"]
+    option = _resolve_field_option(project_name, field_name, field, option_name)
+    item_by_number = _project_items_by_number(project_name, repo)
 
-    # Find the option by name (case-insensitive)
+    target_item = item_by_number.get(number)
+    if not target_item:
+        raise RuntimeError(
+            f"Issue {repo}#{number} is not on project '{project_name}'. "
+            f"Use `sdlc_manager.py board add --repo {repo} --number {number}` first."
+        )
+
+    _set_project_field_value(project_id, field, option, target_item)
+    _out(f"Set {field_name}='{option_name}' on {repo}#{number} ({project_name})", fmt)
+
+
+def _resolve_field_option(
+    project_name: str,
+    field_name: str,
+    field: dict[str, Any],
+    option_name: str,
+) -> dict[str, Any]:
+    """Find a single-select option by name with the existing operator hint."""
     options = field.get("options", [])
     option = next(
         (o for o in options if o.get("name", "").lower() == option_name.lower()),
@@ -2221,24 +2272,28 @@ def flow_set_field(
             f"Hint: use `flow field-options --project {project_name} --field {field_name}` "
             f"to see current options."
         )
+    return cast(dict[str, Any], option)
 
-    # Find the project item for this repo+number
-    _, items = get_project_items(get_project_config(load_config(), project_name)["number"])
-    target_item = next(
-        (
-            i
-            for i in items
-            if i.get("content", {}).get("number") == number
-            and i.get("content", {}).get("repository", {}).get("name") == repo
-        ),
-        None,
-    )
-    if not target_item:
-        raise RuntimeError(
-            f"Issue {repo}#{number} is not on project '{project_name}'. "
-            f"Use `sdlc_manager.py board add --repo {repo} --number {number}` first."
-        )
 
+def _project_items_by_number(project_name: str, repo: str) -> dict[int, dict[str, Any]]:
+    """Index current project items for one repo; callers decide missing-item semantics."""
+    config = load_config()
+    project_number = get_project_config(config, project_name)["number"]
+    _, items = get_project_items(project_number)
+    return {
+        cast(int, item.get("content", {}).get("number")): cast(dict[str, Any], item)
+        for item in items
+        if item.get("content", {}).get("repository", {}).get("name") == repo
+        and isinstance(item.get("content", {}).get("number"), int)
+    }
+
+
+def _set_project_field_value(
+    project_id: str,
+    field: dict[str, Any],
+    option: dict[str, Any],
+    target_item: dict[str, Any],
+) -> None:
     _graphql(
         QUERY_SET_FIELD_VALUE,
         {
@@ -2248,7 +2303,101 @@ def flow_set_field(
             "optionId": option["id"],
         },
     )
-    _out(f"Set {field_name}='{option_name}' on {repo}#{number} ({project_name})", fmt)
+
+
+def flow_set_field_bulk(
+    project_name: str,
+    repo: str,
+    numbers: list[int],
+    field_name: str,
+    option_name: str,
+    fmt: str,
+) -> None:
+    """Set one single-select field value across multiple cards in one discovery pass."""
+    flow_set_fields_bulk(project_name, repo, numbers, [(field_name, option_name)], fmt)
+
+
+def flow_set_fields_bulk(
+    project_name: str,
+    repo: str,
+    numbers: list[int],
+    assignments: list[tuple[str, str]],
+    fmt: str,
+) -> None:
+    """Set one or more single-select fields across multiple cards in one discovery pass."""
+    if not numbers:
+        raise RuntimeError("numbers cannot be empty")
+    if not assignments:
+        raise RuntimeError("field assignments cannot be empty")
+
+    field_names = [field_name for field_name, _ in assignments]
+    fields = _resolve_project_fields(project_name, field_names)
+    resolved_assignments = [
+        (
+            field_name,
+            option_name,
+            fields[field_name],
+            _resolve_field_option(project_name, field_name, fields[field_name], option_name),
+        )
+        for field_name, option_name in assignments
+    ]
+    item_by_number = _project_items_by_number(project_name, repo)
+
+    updated: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for number in numbers:
+        target_item = item_by_number.get(number)
+        if not target_item:
+            failed.append(
+                {
+                    "repo": repo,
+                    "number": number,
+                    "error": (
+                        f"Issue {repo}#{number} is not on project '{project_name}'. "
+                        f"Use `sdlc_manager.py board add --repo {repo} --number {number}` first."
+                    ),
+                }
+            )
+            continue
+        for field_name, option_name, field, option in resolved_assignments:
+            try:
+                _set_project_field_value(field["_project_id"], field, option, target_item)
+            except RuntimeError as exc:
+                failed.append(
+                    {
+                        "repo": repo,
+                        "number": number,
+                        "field": field_name,
+                        "option": option_name,
+                        "error": str(exc),
+                    }
+                )
+                continue
+            updated.append(
+                {
+                    "repo": repo,
+                    "number": number,
+                    "field": field_name,
+                    "option": option_name,
+                }
+            )
+
+    result = {
+        "action": "set-field",
+        "project": project_name,
+        "repo": repo,
+        "assignments": [
+            {"field": field_name, "option": option_name} for field_name, option_name in assignments
+        ],
+        "updated": updated,
+        "failed": failed,
+    }
+    _out(result, fmt)
+    if failed:
+        raise RuntimeError(
+            f"flow set-field failed for {len(failed)} of "
+            f"{len(numbers) * len(assignments)} field update(s); see results above"
+        )
 
 
 def flow_discover_project(repo: str, fmt: str) -> None:
@@ -5274,11 +5423,21 @@ def main() -> None:
     )
     flow_setfield_p.add_argument("--project", required=True, help="Project name (e.g., operations)")
     flow_setfield_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
-    flow_setfield_p.add_argument("--number", required=True, type=int)
+    flow_setfield_numbers = flow_setfield_p.add_mutually_exclusive_group(required=True)
+    flow_setfield_numbers.add_argument("--number", type=int)
+    flow_setfield_numbers.add_argument("--numbers", type=_parse_numbers_arg)
     flow_setfield_p.add_argument(
-        "--field", required=True, help="Field name (e.g., Initiative, Objective, Status)"
+        "--field",
+        required=True,
+        action="append",
+        help="Field name (repeat with --option to set multiple fields)",
     )
-    flow_setfield_p.add_argument("--option", required=True, help="Option name (case-insensitive)")
+    flow_setfield_p.add_argument(
+        "--option",
+        required=True,
+        action="append",
+        help="Option name, case-insensitive (repeat with --field)",
+    )
 
     flow_options_p = flow_sp.add_parser(
         "field-options",
@@ -5465,7 +5624,22 @@ def main() -> None:
 
         elif args.resource == "flow":
             if args.action == "set-field":
-                flow_set_field(args.project, args.repo, args.number, args.field, args.option, fmt)
+                if len(args.field) != len(args.option):
+                    raise RuntimeError(
+                        "flow set-field requires the same number of --field and --option values"
+                    )
+                if args.numbers is not None or len(args.field) > 1:
+                    flow_set_fields_bulk(
+                        args.project,
+                        args.repo,
+                        args.numbers if args.numbers is not None else [args.number],
+                        list(zip(args.field, args.option, strict=True)),
+                        fmt,
+                    )
+                else:
+                    flow_set_field(
+                        args.project, args.repo, args.number, args.field[0], args.option[0], fmt
+                    )
             elif args.action == "field-options":
                 flow_field_options(args.project, args.field, fmt)
             elif args.action == "discover-project":

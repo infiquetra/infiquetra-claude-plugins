@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.6.2] - 2026-07-08
+
+### Fixed
+- Add `flow set-field --numbers <n1,n2,...>` plus repeated `--field/--option` pairs for bulk
+  project-field updates in one CLI invocation. Bulk mode reuses one field-discovery and
+  project-item discovery pass, reports per-item/per-field failures, and exits non-zero after
+  reporting when any requested update fails.
+
 ## [2.6.1] - 2026-07-08
 
 ### Fixed

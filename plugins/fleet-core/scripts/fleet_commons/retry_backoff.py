@@ -35,6 +35,26 @@ def _status_of(exc: BaseException) -> Any:
     return getattr(exc, "status_code", getattr(exc, "status", None))
 
 
+def _computed_delay(attempt: int, base_delay: float, max_delay: float, rng: random.Random) -> float:
+    delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+    return float(delay * (0.5 + rng.random() * 0.5))  # 50–100% jitter
+
+
+def _retry_delay(
+    *,
+    attempt: int,
+    base_delay: float,
+    max_delay: float,
+    hint: float | None,
+    rng: random.Random,
+) -> float:
+    if hint is not None:
+        hint_delay = float(hint)
+        if hint_delay > 0:
+            return min(max_delay, hint_delay)
+    return _computed_delay(attempt, base_delay, max_delay, rng)
+
+
 def retry_with_backoff(
     fn: Callable[[], Any],
     *,
@@ -53,8 +73,10 @@ def retry_with_backoff(
     propagates immediately (no wasted retry). On the final attempt the last error re-raises. ``retry_after``
     may extract a server ``Retry-After`` hint (seconds) from the error to override the computed delay.
 
-    The delay is ``min(max_delay, base_delay * 2**(attempt-1))`` scaled by 50–100% jitter (full-ish
-    jitter, so concurrent callers do not re-collide). ``sleep``/``rng`` are injected for deterministic tests.
+    Positive ``Retry-After`` hints are honored up to ``max_delay``; non-positive hints fall back to
+    computed backoff so they cannot create tight retry loops. Without a positive hint, the delay is
+    ``min(max_delay, base_delay * 2**(attempt-1))`` scaled by 50–100% jitter (full-ish jitter, so
+    concurrent callers do not re-collide). ``sleep``/``rng`` are injected for deterministic tests.
     """
     _rng = rng if rng is not None else random.Random()  # nosec B311 - jitter, not security
     retryable = (
@@ -70,11 +92,13 @@ def retry_with_backoff(
             if attempt >= max_attempts or not retryable(exc):
                 raise
             hint = retry_after(exc) if retry_after is not None else None
-            if hint is not None:
-                delay = float(hint)
-            else:
-                delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
-                delay *= 0.5 + _rng.random() * 0.5  # 50–100% jitter
+            delay = _retry_delay(
+                attempt=attempt,
+                base_delay=base_delay,
+                max_delay=max_delay,
+                hint=hint,
+                rng=_rng,
+            )
             sleep(delay)
 
 

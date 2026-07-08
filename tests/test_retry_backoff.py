@@ -122,6 +122,66 @@ def test_retry_after_hint_overrides_backoff() -> None:
     assert delays == [5.0]
 
 
+def test_retry_after_hint_is_clamped_to_max_delay() -> None:
+    calls = {"n": 0}
+
+    def fn() -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RateError("rate limited")
+        return "ok"
+
+    delays, sleep = _recorder()
+    RB.retry_with_backoff(fn, retry_after=lambda _exc: 999999.0, max_delay=7.0, sleep=sleep)
+    assert delays == [7.0]
+
+
+def test_zero_retry_after_hint_uses_computed_backoff() -> None:
+    import random
+
+    calls = {"n": 0}
+
+    def fn() -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RateError("rate limited")
+        return "ok"
+
+    delays, sleep = _recorder()
+    RB.retry_with_backoff(
+        fn,
+        retry_after=lambda _exc: 0.0,
+        base_delay=2.0,
+        sleep=sleep,
+        rng=random.Random(0),
+    )
+    assert len(delays) == 1
+    assert 1.0 <= delays[0] <= 2.0
+
+
+def test_negative_retry_after_hint_uses_computed_backoff() -> None:
+    import random
+
+    calls = {"n": 0}
+
+    def fn() -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RateError("rate limited")
+        return "ok"
+
+    delays, sleep = _recorder()
+    RB.retry_with_backoff(
+        fn,
+        retry_after=lambda _exc: -5.0,
+        base_delay=2.0,
+        sleep=sleep,
+        rng=random.Random(0),
+    )
+    assert len(delays) == 1
+    assert 1.0 <= delays[0] <= 2.0
+
+
 # --------------------------------------------------------------------------- CircuitBreaker / bridge_call
 
 

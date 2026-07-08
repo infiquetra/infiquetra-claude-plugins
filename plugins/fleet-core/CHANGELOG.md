@@ -5,6 +5,13 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-07-08
+
+### Fixed
+- Clamp positive `Retry-After` hints in `fleet_commons/retry_backoff.py` to `max_delay`, and treat
+  zero or negative hints as absent so retry loops use computed jittered backoff instead of sleeping
+  forever or retrying immediately.
+
 ## [0.8.0] - 2026-07-07
 
 ### Added — `delegation_audit.py` engine-parametrized classifier + corroborator, `delegation_state.py` arm/disarm liveness channel (#384, U1/U2)

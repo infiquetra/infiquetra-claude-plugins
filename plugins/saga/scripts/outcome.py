@@ -340,23 +340,31 @@ def nodes_from_objective(
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]], str]:
     """Build outcome node dicts from a GitHub Objective's sub-issues (#375 U3).
 
-    Returns ``(nodes, dropped_edges, objective_title)``. Each node carries ``subplot_id=sub-<N>``, a
-    ``kind`` from the sub-issue's labels (``non-code`` label -> ``non-code``, else ``code``), an authored
-    ``state`` from the sub-issue's state+reason, a ``github`` provenance stamp the reconcile/board-sync
-    consumers read, and ``depends_on`` from the inferred (cycle-safe) edges.
+    Returns ``(nodes, dropped_edges, objective_title)``. Each node carries a stable ``subplot_id``
+    derived from the sub-issue identity (repo-qualified only on same-number collisions), a ``kind``
+    from labels (``non-code`` -> ``non-code``, else ``code``), an authored ``state`` from the
+    sub-issue's state+reason, a ``github`` provenance stamp the reconcile/board-sync consumers read,
+    and ``depends_on`` from the inferred (cycle-safe) edges.
     """
     import discover_subissues  # noqa: PLC0415
     import outcome_edges  # noqa: PLC0415
 
     data = discover_subissues.fetch_objective(owner, repo, number, runner=runner)
-    subissues = data.get("subissues", []) or []
+    raw_subissues = data.get("subissues", [])
+    subissues = (
+        [sub for sub in raw_subissues if isinstance(sub, dict)]
+        if isinstance(raw_subissues, list)
+        else []
+    )
     depends_on_by_subplot, dropped = outcome_edges.edges_from_relationships(subissues)
+    subplot_ids = outcome_edges.subplot_ids_for_subissues(subissues)
 
     repo_full = f"{owner}/{repo}"
     nodes: list[dict[str, Any]] = []
     for sub in subissues:
         n = sub["number"]
-        sid = f"sub-{n}"
+        sub_repo = str(sub.get("repo") or repo_full)
+        sid = subplot_ids[(str(sub.get("repo") or ""), int(n))]
         labels = [str(x).lower() for x in (sub.get("labels") or [])]
         kind = "non-code" if "non-code" in labels else "code"
         node: dict[str, Any] = {
@@ -364,16 +372,17 @@ def nodes_from_objective(
             "title": sub.get("title") or sid,
             "kind": kind,
             "state": _ingest_state(sub.get("state"), sub.get("state_reason")),
-            # Stamp the sub-issue's OWN number (fully-qualified) so reconcile/board-sync resolve it,
-            # never the parent Objective (#375 KTD4/R5).
-            "github": {"repo": repo_full, "issue": f"{repo_full}#{n}", "sub_issue": n},
+            # Stamp the sub-issue's OWN repository+number so reconcile/board-sync resolve it, never
+            # the parent Objective (#375 KTD4/R5, #513).
+            "github": {"repo": sub_repo, "issue": f"{sub_repo}#{n}", "sub_issue": n},
         }
         deps = depends_on_by_subplot.get(sid)
         if deps:
             node["depends_on"] = deps
         nodes.append(node)
 
-    objective_title = str((data.get("parent") or {}).get("title") or "")
+    parent = data.get("parent")
+    objective_title = str(parent.get("title") or "") if isinstance(parent, dict) else ""
     return nodes, dropped, objective_title
 
 
@@ -904,9 +913,7 @@ def _reconcile_once(
             # A dispatcher-raised HALT (legacy / a restricted injected dispatcher). Release the lock so a
             # later tick re-attempts + re-surfaces it; record the receipt durably; never abort the tick.
             outcome_store.release_lease(store, f"dispatch-{sid}", holder)
-            receipt = (
-                halt.receipt.to_dict() if hasattr(halt.receipt, "to_dict") else dict(halt.receipt)
-            )
+            receipt = halt.receipt.to_dict()
             _append_ledger_once(store, {"phase": "halt", "kind": "dispatch", "key": key, **receipt})
             halted.append(receipt)
             continue

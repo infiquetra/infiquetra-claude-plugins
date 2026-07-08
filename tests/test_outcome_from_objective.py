@@ -57,20 +57,49 @@ def _sub(
     number: int,
     title: str,
     *,
+    repo: str | None = None,
     state: str = "OPEN",
     state_reason: str | None = None,
     labels: list[str] | None = None,
-    tracked: list[int] | None = None,
+    tracked: list[int | tuple[str, int]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    tracked_nodes: list[dict[str, Any]] = []
+    for item in tracked or []:
+        if isinstance(item, tuple):
+            tracked_repo, tracked_number = item
+            tracked_nodes.append(
+                {
+                    "number": tracked_number,
+                    "repository": {"nameWithOwner": tracked_repo},
+                }
+            )
+        else:
+            tracked_nodes.append({"number": item})
+
+    node: dict[str, Any] = {
         "number": number,
         "title": title,
         "state": state,
         "stateReason": state_reason,
-        "url": f"https://github.com/o/r/issues/{number}",
+        "url": f"https://github.com/{repo or 'o/r'}/issues/{number}",
         "labels": {"nodes": [{"name": name} for name in (labels or [])]},
         "assignees": {"nodes": []},
-        "trackedIssues": {"nodes": [{"number": t} for t in (tracked or [])]},
+        "trackedIssues": {"nodes": tracked_nodes},
+    }
+    if repo is not None:
+        node["repository"] = {"nameWithOwner": repo}
+    return node
+
+
+def _normalized_sub(
+    number: int,
+    repo: str = "",
+    blocked_by: list[int | dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "number": number,
+        "repo": repo,
+        "blocked_by": blocked_by or [],
     }
 
 
@@ -103,6 +132,29 @@ def test_normalize_surfaces_state_reason_and_blocked_by() -> None:
     sub = data["subissues"][0]
     assert sub["state_reason"] == "COMPLETED"
     assert sub["blocked_by"] == [1]
+
+
+def test_discovery_query_requests_child_and_tracked_issue_repositories() -> None:
+    """#512/#513: GraphQL must fetch repos for children and their tracked issues."""
+    assert "repository { nameWithOwner }" in DISC.GRAPHQL_QUERY
+    assert "trackedIssues(first: 50)" in DISC.GRAPHQL_QUERY
+
+
+def test_normalize_surfaces_child_repo_and_typed_blocked_by() -> None:
+    runner = _runner_for(
+        [
+            _sub(
+                95,
+                "Tenant",
+                repo="infiquetra/campps-tenant-setup",
+                tracked=[("infiquetra/campps-identity-access", 95)],
+            )
+        ]
+    )
+    data = DISC.fetch_objective("infiquetra", "campps-context-library", 69, runner=runner)
+    sub = data["subissues"][0]
+    assert sub["repo"] == "infiquetra/campps-tenant-setup"
+    assert sub["blocked_by"] == [{"number": 95, "repo": "infiquetra/campps-identity-access"}]
 
 
 # --------------------------------------------------------------------------- U2: edge inference
@@ -138,6 +190,39 @@ def test_edges_dangling_dropped() -> None:
     assert dropped == [{"reason": "dangling", "from": "sub-1", "to": "sub-999"}]
 
 
+def test_edges_resolve_cross_repo_same_number_relationships() -> None:
+    """#512: typed repo+number refs resolve to the matching repo-qualified subplot ID."""
+    tenant = "infiquetra/campps-tenant-setup"
+    identity = "infiquetra/campps-identity-access"
+    subs = [
+        _normalized_sub(95, tenant, [{"number": 95, "repo": identity}]),
+        _normalized_sub(95, identity),
+    ]
+
+    deps, dropped = EDGES.edges_from_relationships(subs)
+
+    assert deps == {
+        "sub-infiquetra-campps-tenant-setup-95": ["sub-infiquetra-campps-identity-access-95"]
+    }
+    assert dropped == []
+
+
+def test_edges_drop_ambiguous_legacy_number_ref() -> None:
+    """A bare number ref to a duplicated issue number is not guessed."""
+    subs = [
+        _normalized_sub(96, "infiquetra/campps-tenant-setup", [95]),
+        _normalized_sub(95, "infiquetra/campps-tenant-setup"),
+        _normalized_sub(95, "infiquetra/campps-identity-access"),
+    ]
+
+    deps, dropped = EDGES.edges_from_relationships(subs)
+
+    assert deps == {}
+    assert dropped == [
+        {"reason": "ambiguous", "from": "sub-96", "to": "sub-95"},
+    ]
+
+
 # --------------------------------------------------------------------------- U3: node assembly
 
 
@@ -168,6 +253,58 @@ def test_github_stamp_is_consumable_by_board_sync_parser() -> None:
     issue_raw = str(stamp.get("issue", "") or stamp.get("sub_issue", ""))
     parsed = BOARD_MOD._parse_issue_ref(issue_raw)
     assert parsed == ("o/r", 5)
+
+
+def test_cross_repo_duplicate_numbers_ingest_with_unique_ids_and_child_repo_stamps() -> None:
+    """#512/#513: duplicate numbers across repos produce unique IDs and true child issue stamps."""
+    tenant = "infiquetra/campps-tenant-setup"
+    identity = "infiquetra/campps-identity-access"
+    subs = [
+        _sub(95, "Tenant", repo=tenant, tracked=[(identity, 95)]),
+        _sub(95, "Identity", repo=identity),
+    ]
+
+    nodes, dropped, _title = ENG.nodes_from_objective(
+        "infiquetra", "campps-context-library", 69, runner=_runner_for(subs)
+    )
+
+    by = {n["subplot_id"]: n for n in nodes}
+    assert set(by) == {
+        "sub-infiquetra-campps-tenant-setup-95",
+        "sub-infiquetra-campps-identity-access-95",
+    }
+    assert by["sub-infiquetra-campps-tenant-setup-95"]["github"] == {
+        "repo": tenant,
+        "issue": f"{tenant}#95",
+        "sub_issue": 95,
+    }
+    assert by["sub-infiquetra-campps-identity-access-95"]["github"] == {
+        "repo": identity,
+        "issue": f"{identity}#95",
+        "sub_issue": 95,
+    }
+    assert by["sub-infiquetra-campps-tenant-setup-95"]["depends_on"] == [
+        "sub-infiquetra-campps-identity-access-95"
+    ]
+    assert dropped == []
+
+
+def test_same_repo_unique_numbers_keep_existing_subplot_ids() -> None:
+    """Non-colliding Objective ingests preserve the historical sub-<number> IDs."""
+    subs = [
+        _sub(1, "A", repo="infiquetra/campps-tenant-setup"),
+        _sub(2, "B", repo="infiquetra/campps-tenant-setup", tracked=[1]),
+    ]
+
+    nodes, dropped, _title = ENG.nodes_from_objective(
+        "infiquetra", "campps-tenant-setup", 200, runner=_runner_for(subs)
+    )
+
+    by = {n["subplot_id"]: n for n in nodes}
+    assert set(by) == {"sub-1", "sub-2"}
+    assert by["sub-1"]["github"]["issue"] == "infiquetra/campps-tenant-setup#1"
+    assert by["sub-2"]["depends_on"] == ["sub-1"]
+    assert dropped == []
 
 
 # --------------------------------------------------------------------------- U4: end-to-end start

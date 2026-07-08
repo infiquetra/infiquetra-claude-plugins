@@ -62,6 +62,17 @@ sdlc_manager.py flow set-field \
   --project campps --repo campps-mvp --number 42 \
   --field Initiative --option platform-quality
 
+# Set the same single-select field on multiple cards in one discovery pass
+sdlc_manager.py flow set-field \
+  --project operations --repo infiquetra-claude-plugins --numbers 101,102,103 \
+  --field Status --option Idea
+
+# Set multiple fields on multiple cards in one discovery pass
+sdlc_manager.py flow set-field \
+  --project operations --repo infiquetra-claude-plugins --numbers 101,102,103 \
+  --field Status --option Idea \
+  --field Objective --option defects-claude-plugins
+
 # List the options on a project field (live discovery — IDs rotate)
 sdlc_manager.py flow field-options \
   --project campps --field Objective
@@ -87,7 +98,7 @@ sdlc_manager.py flow validate-card --repo campps-mvp --number 42
 
 | Command | Idempotent? | Failure behavior |
 |---|---|---|
-| `set-field` | yes (same option = same final state) | Raises if option doesn't exist; error message lists current options |
+| `set-field` | yes (same option = same final state) | Raises if an option doesn't exist; error message lists current options. With `--numbers` and repeated `--field/--option` pairs, reports every updated/failed issue-field update and exits non-zero after reporting if any item fails. |
 | `field-options` | read-only | Raises if project or field doesn't exist |
 | `discover-project` | read-only | Returns "not mapped" or "excluded" without erroring |
 | `link-sub-issue` | yes (re-POST returns 422 "already exists" → success) | Raises on non-422 errors; rejects PR-as-parent |

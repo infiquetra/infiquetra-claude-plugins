@@ -173,6 +173,75 @@ def test_verify_label_does_NOT_create_on_non_404_error() -> None:
 # --- flow_field_options + flow_set_field -----------------------------------
 
 
+def test_normalize_repo_arg_strips_matching_owner() -> None:
+    assert sdlc_manager._normalize_repo_arg("infiquetra/team-freya") == "team-freya"
+    assert sdlc_manager._normalize_repo_arg("team-freya") == "team-freya"
+
+
+def test_normalize_repo_arg_rejects_foreign_owner() -> None:
+    with (
+        pytest.raises(SystemExit),
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "labels",
+                "audit",
+                "--repo",
+                "not-infiquetra/team-freya",
+            ],
+        ),
+    ):
+        sdlc_manager.main()
+
+
+def test_cli_repo_arg_normalizes_owner_before_dispatch() -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "labels",
+                "audit",
+                "--repo",
+                "infiquetra/infiquetra-claude-plugins",
+            ],
+        ),
+        patch.object(sdlc_manager, "labels_audit") as labels_audit,
+    ):
+        sdlc_manager.main()
+
+    labels_audit.assert_called_once_with("infiquetra-claude-plugins", "text")
+
+
+def test_cli_link_sub_issue_normalizes_parent_and_child_repos() -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "link-sub-issue",
+                "--parent-repo",
+                "infiquetra/parent-repo",
+                "--parent-number",
+                "1",
+                "--child-repo",
+                "infiquetra/child-repo",
+                "--child-number",
+                "2",
+            ],
+        ),
+        patch.object(sdlc_manager, "flow_link_sub_issue") as link_sub_issue,
+    ):
+        sdlc_manager.main()
+
+    link_sub_issue.assert_called_once_with("parent-repo", 1, "child-repo", 2, "text")
+
+
 def test_field_options_reads_live_from_graphql() -> None:
     """field-options is a live discovery — never cached. Call must hit
     QUERY_GET_PROJECT_FIELDS."""

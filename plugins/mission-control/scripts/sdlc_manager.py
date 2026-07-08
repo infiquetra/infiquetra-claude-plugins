@@ -81,6 +81,23 @@ from typing import Any, cast
 ORG = "infiquetra"
 
 
+def _normalize_repo_arg(value: str) -> str:
+    """Normalize a CLI repo argument to the script's internal bare-name contract."""
+    repo = value.strip()
+    if not repo:
+        raise argparse.ArgumentTypeError("repo cannot be empty")
+    if "/" not in repo:
+        return repo
+    owner, name = repo.split("/", 1)
+    if not owner or not name or "/" in name:
+        raise argparse.ArgumentTypeError("repo must be a bare repository name or infiquetra/<repo>")
+    if owner.lower() != ORG.lower():
+        raise argparse.ArgumentTypeError(
+            f"unsupported repo owner {owner!r}; pass a bare Infiquetra repo name or {ORG}/<repo>"
+        )
+    return name
+
+
 def get_sdlc_path() -> Path:
     """Get path to infiquetra-sdlc checkout."""
     env_path = os.environ.get("INFIQUETRA_SDLC_PATH")
@@ -4952,7 +4969,12 @@ def main() -> None:
             "(e.g. --project operations --project asgard)."
         ),
     )
-    board_add_p.add_argument("--repo", required=True, help="Repository name (without org)")
+    board_add_p.add_argument(
+        "--repo",
+        required=True,
+        type=_normalize_repo_arg,
+        help="Repository name (bare or infiquetra/<repo>)",
+    )
     board_add_p.add_argument("--number", required=True, type=int, help="Issue or PR number")
 
     board_move_p = board_sp.add_parser("move", help="Move item to different column")
@@ -4961,7 +4983,7 @@ def main() -> None:
         choices=PROJECT_CHOICES,
         help="Target a specific project instead of repo-based default routing",
     )
-    board_move_p.add_argument("--repo", required=True)
+    board_move_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     board_move_p.add_argument("--number", required=True, type=int)
     board_move_p.add_argument(
         "--status", required=True, help="Target status (e.g. 'Assigned', 'In Review', 'Active')"
@@ -4994,7 +5016,7 @@ def main() -> None:
         "create",
         help="Sub-issue-first interactive issue creation with metadata application",
     )
-    issue_create_p.add_argument("--repo", required=True)
+    issue_create_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     issue_create_p.add_argument(
         "--type",
         choices=[
@@ -5022,7 +5044,7 @@ def main() -> None:
         "prepare",
         help="Prepare a team-aware issue draft and readiness sidecar without GitHub mutation",
     )
-    issue_prepare_p.add_argument("--repo", required=True)
+    issue_prepare_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     issue_prepare_p.add_argument(
         "--type",
         required=True,
@@ -5091,29 +5113,29 @@ def main() -> None:
 
     # U3 (#279): issue write verbs — close / reopen / comment / label-add / label-remove
     issue_close_p = issue_sp.add_parser("close", help="Close a GitHub issue (idempotent)")
-    issue_close_p.add_argument("--repo", required=True)
+    issue_close_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     issue_close_p.add_argument("--number", required=True, type=int)
 
     issue_reopen_p = issue_sp.add_parser("reopen", help="Reopen a closed GitHub issue (idempotent)")
-    issue_reopen_p.add_argument("--repo", required=True)
+    issue_reopen_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     issue_reopen_p.add_argument("--number", required=True, type=int)
 
     issue_comment_p = issue_sp.add_parser("comment", help="Post a comment on a GitHub issue")
-    issue_comment_p.add_argument("--repo", required=True)
+    issue_comment_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     issue_comment_p.add_argument("--number", required=True, type=int)
     issue_comment_p.add_argument("--body", required=True)
 
     issue_label_add_p = issue_sp.add_parser(
         "label-add", help="Add a label to a GitHub issue (idempotent)"
     )
-    issue_label_add_p.add_argument("--repo", required=True)
+    issue_label_add_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     issue_label_add_p.add_argument("--number", required=True, type=int)
     issue_label_add_p.add_argument("--label", required=True)
 
     issue_label_remove_p = issue_sp.add_parser(
         "label-remove", help="Remove a label from a GitHub issue (idempotent — 404 = success)"
     )
-    issue_label_remove_p.add_argument("--repo", required=True)
+    issue_label_remove_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     issue_label_remove_p.add_argument("--number", required=True, type=int)
     issue_label_remove_p.add_argument("--label", required=True)
 
@@ -5126,17 +5148,17 @@ def main() -> None:
     labels_sync_p = labels_sp.add_parser(
         "sync-fields", help="Sync initiative/objective labels to project fields"
     )
-    labels_sync_p.add_argument("--repo", required=True)
+    labels_sync_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     labels_sync_p.add_argument("--number", required=True, type=int)
 
     labels_audit_p = labels_sp.add_parser("audit", help="Check repo has all SDLC labels")
-    labels_audit_p.add_argument("--repo", required=True)
+    labels_audit_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
     labels_deploy_p = labels_sp.add_parser("deploy", help="Create/update all labels in repo")
-    labels_deploy_p.add_argument("--repo", required=True)
+    labels_deploy_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
     labels_auto_p = labels_sp.add_parser("auto-label", help="Apply auto-label rules to issue")
-    labels_auto_p.add_argument("--repo", required=True)
+    labels_auto_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     labels_auto_p.add_argument("--number", required=True, type=int)
 
     # ===========================
@@ -5188,7 +5210,7 @@ def main() -> None:
     ms_sp = ms_p.add_subparsers(dest="action", required=True)
 
     ms_create_p = ms_sp.add_parser("create", help="Create milestone for Objective")
-    ms_create_p.add_argument("--repo", required=True)
+    ms_create_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     ms_create_p.add_argument(
         "--title", required=True, help="Milestone title (e.g. 'Pilot: Auth MVP')"
     )
@@ -5196,15 +5218,15 @@ def main() -> None:
     ms_create_p.add_argument("--description", default="", help="Milestone description")
 
     ms_list_p = ms_sp.add_parser("list", help="List milestones")
-    ms_list_p.add_argument("--repo", required=True)
+    ms_list_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     ms_list_p.add_argument("--state", choices=["open", "closed", "all"], default="open")
 
     ms_progress_p = ms_sp.add_parser("progress", help="Show milestone completion percent")
-    ms_progress_p.add_argument("--repo", required=True)
+    ms_progress_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     ms_progress_p.add_argument("--milestone", required=True, type=int, help="Milestone number")
 
     ms_link_p = ms_sp.add_parser("link", help="Link issue to milestone")
-    ms_link_p.add_argument("--repo", required=True)
+    ms_link_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     ms_link_p.add_argument("--issue", required=True, type=int)
     ms_link_p.add_argument("--milestone", required=True, type=int)
 
@@ -5218,21 +5240,21 @@ def main() -> None:
     rollout_status_p.add_argument("--team", help="Filter by team")
 
     rollout_gap_p = rollout_sp.add_parser("gap-analysis", help="Check what's missing from a repo")
-    rollout_gap_p.add_argument("--repo", required=True)
+    rollout_gap_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
     rollout_labels_p = rollout_sp.add_parser("deploy-labels", help="Deploy all SDLC labels to repo")
-    rollout_labels_p.add_argument("--repo", required=True)
+    rollout_labels_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
     rollout_templates_p = rollout_sp.add_parser(
         "deploy-templates", help="Deploy all SDLC templates to repo"
     )
-    rollout_templates_p.add_argument("--repo", required=True)
+    rollout_templates_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
     rollout_all_p = rollout_sp.add_parser("deploy-all", help="Full SDLC deployment to repo")
-    rollout_all_p.add_argument("--repo", required=True)
+    rollout_all_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
     rollout_update_p = rollout_sp.add_parser("update", help="Update beads-config.json")
-    rollout_update_p.add_argument("--repo", required=True)
+    rollout_update_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     rollout_update_p.add_argument(
         "--field", required=True, choices=["labels", "templates", "claude_md", "project"]
     )
@@ -5251,7 +5273,7 @@ def main() -> None:
         help="Set a single-select project field on a card",
     )
     flow_setfield_p.add_argument("--project", required=True, help="Project name (e.g., operations)")
-    flow_setfield_p.add_argument("--repo", required=True)
+    flow_setfield_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     flow_setfield_p.add_argument("--number", required=True, type=int)
     flow_setfield_p.add_argument(
         "--field", required=True, help="Field name (e.g., Initiative, Objective, Status)"
@@ -5269,22 +5291,22 @@ def main() -> None:
         "discover-project",
         help="Resolve which project(s) a repo is mapped to",
     )
-    flow_disc_p.add_argument("--repo", required=True)
+    flow_disc_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
     flow_link_p = flow_sp.add_parser(
         "link-sub-issue",
         help="Link child as native sub-issue of parent (cross-repo supported, idempotent)",
     )
-    flow_link_p.add_argument("--parent-repo", required=True)
+    flow_link_p.add_argument("--parent-repo", required=True, type=_normalize_repo_arg)
     flow_link_p.add_argument("--parent-number", required=True, type=int)
-    flow_link_p.add_argument("--child-repo", required=True)
+    flow_link_p.add_argument("--child-repo", required=True, type=_normalize_repo_arg)
     flow_link_p.add_argument("--child-number", required=True, type=int)
 
     flow_label_p = flow_sp.add_parser(
         "verify-label",
         help="Self-healing label create (404 → create; exists → no-op; other errors raise)",
     )
-    flow_label_p.add_argument("--repo", required=True)
+    flow_label_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     flow_label_p.add_argument("--name", required=True)
     flow_label_p.add_argument("--color", default=None, help="Hex color without leading '#'")
     flow_label_p.add_argument("--description", default=None)
@@ -5293,7 +5315,7 @@ def main() -> None:
         "validate-card",
         help="Run card_validator schema check on an existing issue body",
     )
-    flow_validate_p.add_argument("--repo", required=True)
+    flow_validate_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     flow_validate_p.add_argument("--number", required=True, type=int)
 
     # ===========================

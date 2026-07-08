@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.1] - 2026-07-08
+
+### Fixed
+- Normalize mission-control repo arguments at the CLI boundary so `--repo infiquetra/<repo>`
+  behaves like `--repo <repo>` across board, issue, label, milestone, rollout, and flow commands.
+  Repos qualified with a non-Infiquetra owner now fail clearly before any GitHub call.
+
 ## [2.6.0] - 2026-07-06
 
 ### Added — auto-stamped `Recommended Tier Band` on created issues (#368 AC5)

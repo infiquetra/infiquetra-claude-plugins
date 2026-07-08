@@ -213,6 +213,9 @@ primitive. Ids named in issue #463 itself are marked ★.
 
 **Priority.** P2 (P1 the moment another ultracode run relies on refute-N for its assurance story).
 
+**Status.** SHIPPED 2026-07-08 in saga `0.75.4` / issue #519. Keep this entry as the historical
+problem statement; active follow-up belongs in a new queued item.
+
 **Effort.** Half-day (`execution_spec.py` panel emission + quorum handling + regression test with a
 deliberately uncommitted-tree fixture).
 

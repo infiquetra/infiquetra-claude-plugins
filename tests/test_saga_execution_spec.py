@@ -360,6 +360,28 @@ def _return_schema_fragment(keys: tuple[str, ...] = ("result",), *, cheap: bool 
     return "schema: " + json.dumps(return_schema, sort_keys=True)
 
 
+def _verifier_schema_fragment() -> str:
+    schema: dict[str, object] = {
+        "type": "object",
+        "properties": {
+            "refuted": {"type": "array"},
+            "upheld": {"type": "array"},
+            "verifier_identity": {"type": "string"},
+            "fallback_depth": {},
+            "examined_sha": {"type": "string"},
+        },
+        "required": [
+            "refuted",
+            "upheld",
+            "verifier_identity",
+            "fallback_depth",
+            "examined_sha",
+        ],
+        "additionalProperties": True,
+    }
+    return "schema: " + json.dumps(schema, sort_keys=True)
+
+
 def test_readonly_verifier_agent_definition_exists_with_readonly_toolset() -> None:
     assert READONLY_VERIFIER_AGENT.exists()
     text = READONLY_VERIFIER_AGENT.read_text(encoding="utf-8")
@@ -385,6 +407,11 @@ def test_verifier_panel_emits_readonly_agenttype_and_isolation() -> None:
     script = _emit_units([_verify_unit("a", verify={"n": 2, "pass_rule": "majority"})])
     assert 'agentType: "saga:readonly-verifier"' in script
     assert 'isolation: "worktree"' in script
+    assert script.count(_verifier_schema_fragment()) == 2
+    assert "__verifierPrompt(" in script
+    assert "UNIT RESULT INPUT (authoritative structured evidence)" in script
+    assert "status --short" in script
+    assert "named untracked output files" in script
 
 
 def test_verifier_panel_stamps_identity_and_fallback_schema_fields() -> None:
@@ -394,9 +421,11 @@ def test_verifier_panel_stamps_identity_and_fallback_schema_fields() -> None:
     script = _emit_units([_verify_unit("a", verify={"n": 2, "pass_rule": "majority"})])
     assert "verifier_identity" in script
     assert "fallback_depth" in script
+    assert "examined_sha" in script
     # Stamped identity == the readonly-verifier agent type the emitter knows.
     assert "verifier_identity: saga:readonly-verifier" in script
     assert "fallback_depth: 0" in script
+    assert "Include examined_sha as the git SHA you" in script
 
 
 def test_verifier_panel_emits_fallback_tier_marker_in_throw() -> None:

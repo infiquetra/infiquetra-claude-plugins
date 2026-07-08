@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.75.4] - 2026-07-08
+
+### Fixed — refute-N verifier panels fail loudly instead of passing under-strength (#519)
+
+- `plugins/saga/scripts/execution_spec.py`: verifier `agent()` calls now carry a structured
+  verdict schema requiring `refuted`, `upheld`, `verifier_identity`, `fallback_depth`, and
+  `examined_sha`, so prose verdicts no longer collapse panels to `0/N` reporting.
+- Emitted workflows append the unit result directly to verifier prompts and instruct isolated
+  verifiers to materialize the primary checkout SHA before judging, making branch/output
+  visibility an explicit verifier contract rather than an improvisation.
+- Below-quorum panels now throw `verifier-under-strength` after logging missing-verifier detail;
+  refuted quorum panels still throw `verifier-disagreement`.
+
 ## [0.75.3] - 2026-07-08
 
 ### Fixed — execution_spec emits StructuredOutput schemas for returned unit values (#503)

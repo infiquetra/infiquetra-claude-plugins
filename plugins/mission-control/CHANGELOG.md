@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.6.3] - 2026-07-08
+
+### Fixed
+- Validate the loaded SDLC label taxonomy before `labels deploy` calls GitHub, surfacing overlong
+  descriptions and missing mission-control issue-taxonomy labels as one clear preflight error.
+
 ## [2.6.2] - 2026-07-08
 
 ### Fixed

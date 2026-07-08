@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.75.2] - 2026-07-08
+
+### Fixed — cross-repo Objective ingestion stamps child repos and collision-safe subplot IDs (#512/#513)
+
+- `discover_subissues.py` now fetches `repository.nameWithOwner` for sub-issues and tracked issues,
+  preserving typed repo/number relationships for cross-repo Objectives.
+- `outcome_edges.py` centralizes subplot ID derivation: existing `sub-<number>` IDs are preserved
+  for unique numbers, while same-number collisions become repo-qualified and edge inference resolves
+  typed cross-repo dependencies without guessing ambiguous legacy refs.
+- `outcome.py` stamps each ingested node with the child issue's own repository and uses the shared
+  subplot ID mapping, so board-sync, reconcile, and harvest target the correct GitHub issue.
+
 ## [0.75.1] - 2026-07-08
 
 ### Fixed — board-sync progress comments are crash-replay idempotent (#502)

@@ -23,6 +23,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -74,6 +75,32 @@ def _write_once(path: Path, content: str) -> bool:
     finally:
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
+
+
+_COMMENT_IDEMPOTENCY_PREFIX = "saga-board-sync-idempotency"
+_COMMENT_IDEMPOTENCY_RE = re.compile(
+    rf"<!--\s*{re.escape(_COMMENT_IDEMPOTENCY_PREFIX)}:[0-9a-f]{{64}}\s*-->"
+)
+
+
+def _comment_idempotency_marker(key: str) -> str:
+    """Return the hidden marker that makes additive progress comments replay-safe."""
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return f"<!-- {_COMMENT_IDEMPOTENCY_PREFIX}:{digest} -->"
+
+
+def _comment_marker_in(body: str) -> str:
+    """Return the first saga idempotency marker in ``body``, or ``""`` when absent."""
+    match = _COMMENT_IDEMPOTENCY_RE.search(body)
+    return match.group(0) if match else ""
+
+
+def _append_comment_marker(body: str, key: str) -> str:
+    """Append the deterministic marker exactly once, preserving visible prose."""
+    marker = _comment_idempotency_marker(key)
+    if marker in body:
+        return body
+    return f"{body.rstrip()}\n\n{marker}" if body.strip() else marker
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +155,8 @@ def authorize_and_write(
     pay: dict[str, Any] = dict(payload or {})
     if target_state and "target_state" not in pay:
         pay["target_state"] = target_state
+    if op_kind == str(cert.OpKind.ISSUE_PROGRESS_COMMENT):
+        pay["body"] = _append_comment_marker(str(pay.get("body", "")), key)
 
     # (ii) Bounded retry.  board_writer raises → retry; key written only on SUCCESS.
     last_exc: Exception | None = None
@@ -200,6 +229,34 @@ def default_board_writer(
     sdlc = str(repo_root / "plugins" / "mission-control" / "scripts" / "sdlc_manager.py")
     run = runner if runner is not None else subprocess.run
 
+    def _comment_exists(*, owner_repo: str, marker: str, issue_number: int) -> bool:
+        path = f"repos/{owner_repo}/issues/{issue_number}/comments"
+        result = run(
+            ["gh", "api", "--method", "GET", path, "--paginate", "-F", "per_page=100"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if getattr(result, "returncode", 0) != 0:
+            raise RuntimeError(
+                "board write issue-progress-comment preflight failed: "
+                f"{getattr(result, 'stderr', '')!r}"
+            )
+        try:
+            comments = json.loads(getattr(result, "stdout", "") or "[]")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "board write issue-progress-comment preflight returned invalid JSON"
+            ) from exc
+        if not isinstance(comments, list):
+            raise RuntimeError(
+                "board write issue-progress-comment preflight returned non-list JSON"
+            )
+        for comment in comments:
+            if isinstance(comment, dict) and marker in str(comment.get("body", "")):
+                return True
+        return False
+
     def _writer(*, op_kind: str, repo: str, number: int, payload: dict[str, Any]) -> None:
         base = ["python3", sdlc]
         n = str(number)
@@ -207,6 +264,7 @@ def default_board_writer(
         # BARE repo name. The caller passes an owner-qualified repo ("infiquetra/saga") for the
         # idempotency-key namespace; strip the owner here so the REST path is not doubled.
         repo = repo.rsplit("/", 1)[-1]
+        owner_repo = f"infiquetra/{repo}"
         if op_kind == "set-field-status":
             cmd = base + [
                 "flow",
@@ -237,6 +295,11 @@ def default_board_writer(
                 "--body",
                 str(payload.get("body", "")),
             ]
+            marker = _comment_marker_in(str(payload.get("body", "")))
+            if marker and _comment_exists(
+                owner_repo=owner_repo, marker=marker, issue_number=number
+            ):
+                return
         elif op_kind == "issue-label-add":
             cmd = base + [
                 "issue",

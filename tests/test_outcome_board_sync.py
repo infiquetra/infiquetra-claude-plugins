@@ -228,6 +228,9 @@ def test_ae4_comment_coalescing_written_then_skipped(tmp_path: Path) -> None:
 
     # board_writer called for comment exactly once total (across both runs)
     assert len(writer1.calls_for("issue-progress-comment")) == 1
+    comment_body = writer1.calls_for("issue-progress-comment")[0]["payload"]["body"]
+    assert "saga /outcome board-sync: leaf `leaf1` reached state `done`." in comment_body
+    assert "<!-- saga-board-sync-idempotency:" in comment_body
     assert len(writer2.calls_for("issue-progress-comment")) == 0
 
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.75.1] - 2026-07-08
+
+### Fixed — board-sync progress comments are crash-replay idempotent (#502)
+
+- `plugins/saga/scripts/board_progression.py`: `issue-progress-comment` payloads now carry a
+  hidden marker derived from the same idempotency key as the board-sync ledger. The production board
+  writer checks existing issue comments for that marker before posting, so a crash after the GitHub
+  comment POST but before the local ledger write replays as a remote-marker skip and then restores
+  the missing local ledger key instead of double-posting.
+
 ## [0.75.0] - 2026-07-07
 
 ### Added — fail-loud provenance wiring: SUBSTITUTED_ENGINE derivation, gate refusal, empty-delivery HALT, verify-spawn attribution (#390 U2/U4/U5/U6)

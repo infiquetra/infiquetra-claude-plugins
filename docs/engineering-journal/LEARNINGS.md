@@ -49,7 +49,17 @@ expected draft-PR step — and the loop kept going anyway instead of stopping to
 first response contradicts your model of what it does, stop and reconcile before invoking it
 again — a documented authority tier is not an enforced gate unless code checks it.
 **Refs.** `{#no-silent-claude-fallback-390}` (DECISIONS) — the same producer-without-consumer
-shape #390 itself closes; `docs/work-sessions/2026-07-07-no-silent-claude-fallback.md`.
+shape #390 itself closes; `docs/work-sessions/2026-07-07-no-silent-claude-fallback.md`;
+follow-up #526.
+
+**Addendum (2026-07-08, post-merge).** The breach had a second, initially unnoticed effect:
+issue #390 shows `closedAt 2026-07-07T22:32Z` — the #525 scaffold squash closed it, because the
+ceremony's `open_pr` transition had templated `Closes #390` into the PR body. The issue sat
+closed for ~1.5 hours while its implementation was still unmerged. An unauthorized merge fires
+*every* side effect wired to merge — issue closes, board automations — not just the code
+landing; the #526 operator-confirm gate belongs on the transition precisely because it protects
+all of them at once. When auditing a breach of this shape, enumerate the merge-wired side
+effects; don't stop at the commit.
 
 ### Verify panels count structured verdicts — prose-returning verifiers empty the panel silently {#verify-panel-prose-verdicts-vacuous-aggregation}
 

@@ -25,6 +25,27 @@
 
 ---
 
+## 2026-07-08
+
+### Unit workflow agents need schema at the call boundary, not only prose return contracts {#unit-agent-schema-boundary}
+
+**Context.** Issue #503 followed a workflow run where completed unit work could still fail because
+the final agent message wrapped the expected JSON object in prose or fences.
+**Evidence.** `plugins/saga/scripts/execution_spec.py` now emits `schema:` from each unit's
+declared `returns`; `tests/test_saga_execution_spec.py` covers normal, external-engine, parallel
+thunk, iterate-to-consensus, unattended retry, and cheap pull-cord paths.
+**Mechanism.** A prompt return contract shapes model behavior but does not bind the harness. The
+workflow harness can enforce structured output before `__gate`, so the generated `agent()` call
+is the durable boundary for returned unit shape.
+**Fix.** Saga `0.75.3` adds `_return_schema()` and single-sources schema emission in `_agent_opts()`;
+cheap-tier units keep a `oneOf` pull-cord alternative.
+**Validation.** Full local test suite: 2625 passed, 1 skipped. Release-surface parity and
+diff-aware bump guard both passed.
+**Generalizable rule.** When a harness offers schema-enforced output, put the contract on the
+agent call and keep downstream parsing as a backstop, not the primary enforcement mechanism.
+**Refs.** `{#verify-panel-prose-verdicts-vacuous-aggregation}`; issue #503; #519 remains the
+verifier-panel half of the same lesson.
+
 ## 2026-07-07
 
 ### `ship_ceremony.py run` is a one-step-per-call mutation ledger — the tier label does not gate it {#ship-ceremony-run-does-not-self-gate}

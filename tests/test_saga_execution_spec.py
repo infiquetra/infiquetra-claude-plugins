@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -341,6 +342,24 @@ def _verify_unit(uid: str, **kw: object) -> dict[str, object]:
     return unit
 
 
+def _return_schema_fragment(keys: tuple[str, ...] = ("result",), *, cheap: bool = False) -> str:
+    return_schema: dict[str, object] = {
+        "type": "object",
+        "properties": {key: {} for key in keys},
+        "required": list(keys),
+        "additionalProperties": True,
+    }
+    if cheap:
+        pull_cord_schema: dict[str, object] = {
+            "type": "object",
+            "properties": {"pull_cord": {"type": "string"}},
+            "required": ["pull_cord"],
+            "additionalProperties": True,
+        }
+        return_schema = {"oneOf": [return_schema, pull_cord_schema]}
+    return "schema: " + json.dumps(return_schema, sort_keys=True)
+
+
 def test_readonly_verifier_agent_definition_exists_with_readonly_toolset() -> None:
     assert READONLY_VERIFIER_AGENT.exists()
     text = READONLY_VERIFIER_AGENT.read_text(encoding="utf-8")
@@ -428,6 +447,39 @@ def test_plain_unit_without_verify_emits_no_verifier_wiring() -> None:
     script = _emit_units([_verify_unit("a")])
     assert "agentType" not in script
     assert "isolation:" not in script
+
+
+def test_unit_agent_call_emits_return_schema() -> None:
+    script = _emit_units([_verify_unit("a")])
+    assert _return_schema_fragment() in script
+    assert "schema:" in script.split("const a = await agent(", 1)[1].split("__gate(a", 1)[0]
+
+
+def test_external_engine_unit_emits_return_schema() -> None:
+    script = _emit_units([_verify_unit("ext", capability="code-generation")])
+    assert 'dispatch: "external-engine"' in script
+    assert 'capability: "code-generation"' in script
+    assert _return_schema_fragment() in script
+
+
+def test_parallel_thunks_emit_return_schema_for_each_unit() -> None:
+    script = _emit_units([_verify_unit("a"), _verify_unit("b")])
+    assert "parallel([" in script
+    assert script.count(_return_schema_fragment()) == 2
+
+
+def test_iterate_to_consensus_unit_emits_return_schema() -> None:
+    script = _emit_units(
+        [_verify_unit("i", verify={"n": 2, "pass_rule": "majority", "iterate_to_consensus": True})]
+    )
+    assert "for (let iter" in script
+    assert _return_schema_fragment() in script
+
+
+def test_cheap_tier_schema_preserves_pull_cord_alternative() -> None:
+    script = _emit_units([_verify_unit("cheap", tier={"model": "haiku", "effort": "low"})])
+    assert _return_schema_fragment(cheap=True) in script
+    assert "pull_cord" in script
 
 
 # ---------------------------------------------------------- enforceability matrix (U3)
@@ -724,6 +776,12 @@ def test_escalate_on_signal_one_rung_reemit() -> None:  # R2
     assert "sonnet/xhigh" not in script.split("cordProposal")[0]  # no rung-skipping in the retry
     # let-declared so the refuted branch can reassign the unit var.
     assert "let U1 = await agent(" in script
+
+
+def test_escalate_on_signal_unattended_retry_emits_return_schema() -> None:
+    script = _emit_units_unattended([_escalate_unit()])
+    assert "climbing ONE rung to sonnet/high" in script
+    assert script.count(_return_schema_fragment()) == 2
 
 
 def test_escalate_on_signal_top_of_ladder_halts() -> None:  # R3

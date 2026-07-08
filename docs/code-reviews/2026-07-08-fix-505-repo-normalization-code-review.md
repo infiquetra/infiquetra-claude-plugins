@@ -10,7 +10,7 @@
 |---|---|---|
 | P0 | None. | Clean. |
 | P1 | None. | Clean. |
-| P2 | None. | Clean. |
+| P2 | CI caught a stale hardcoded mission-control version expectation in the metadata drift guard. | Fixed. |
 
 ## Lenses Applied
 
@@ -35,6 +35,7 @@
 - Live acceptance: `labels audit` succeeded with both `infiquetra/infiquetra-claude-plugins` and
   `infiquetra-claude-plugins`.
 - `git diff --check`
+- CI follow-up: `uv run pytest plugins/mission-control/tests/test_prompt_alignment.py::test_sdlc_manager_metadata_and_marketplace_entry_match -v`
 
 ## Residual Risk
 

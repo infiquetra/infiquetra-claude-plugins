@@ -20,6 +20,8 @@ GraphQL calls.
   and `--child-repo`.
 - Added tests for direct helper behavior, parser-level label audit dispatch, and cross-repo
   `flow link-sub-issue` dispatch.
+- Updated the mission-control metadata drift guard to expect the new `2.6.1` release version after
+  CI caught the stale hardcoded value.
 - Updated mission-control release surfaces: plugin metadata `2.6.1`, changelog, and marketplace
   registry.
 
@@ -36,6 +38,7 @@ GraphQL calls.
 - `python3 plugins/mission-control/scripts/sdlc_manager.py labels audit --repo infiquetra/infiquetra-claude-plugins`
 - `python3 plugins/mission-control/scripts/sdlc_manager.py labels audit --repo infiquetra-claude-plugins`
 - `git diff --check`
+- CI follow-up: `uv run pytest plugins/mission-control/tests/test_prompt_alignment.py::test_sdlc_manager_metadata_and_marketplace_entry_match -v`
 
 ## Residual Risk
 

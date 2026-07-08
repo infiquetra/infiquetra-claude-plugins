@@ -603,3 +603,59 @@ class TestIssueLabelAddRemove:
         monkeypatch.setattr("subprocess.run", mock_run)
         with pytest.raises((sdlc_manager.GhApiError, RuntimeError)):
             sdlc_manager.issue_label_remove("infiquetra-claude-plugins", 3, "blocked")
+
+
+# ===========================
+# Label taxonomy validation (#506)
+# ===========================
+
+
+def _required_label_defs() -> list[dict[str, str]]:
+    return [
+        {"name": name, "color": "ededed", "description": name}
+        for name in sorted(sdlc_manager._required_issue_taxonomy_labels())
+    ]
+
+
+def test_validate_label_taxonomy_accepts_required_labels() -> None:
+    sdlc_manager._validate_label_taxonomy(_required_label_defs())
+
+
+def test_validate_label_taxonomy_reports_overlong_descriptions() -> None:
+    labels = _required_label_defs()
+    labels[0]["description"] = "x" * 101
+
+    with pytest.raises(RuntimeError) as exc:
+        sdlc_manager._validate_label_taxonomy(labels)
+
+    message = str(exc.value)
+    assert f"{labels[0]['name']}: description is 101 chars" in message
+    assert "GitHub max is 100" in message
+
+
+def test_validate_label_taxonomy_reports_missing_issue_taxonomy_labels() -> None:
+    labels = [
+        label for label in _required_label_defs() if label["name"] not in {"objective", "research"}
+    ]
+
+    with pytest.raises(RuntimeError) as exc:
+        sdlc_manager._validate_label_taxonomy(labels)
+
+    message = str(exc.value)
+    assert "missing required issue taxonomy labels" in message
+    assert "objective" in message
+    assert "research" in message
+
+
+def test_labels_deploy_validates_taxonomy_before_gh_mutation() -> None:
+    labels = _required_label_defs()
+    labels[0]["description"] = "x" * 101
+
+    with (
+        patch.object(sdlc_manager, "load_config", return_value={"labels": {"labels": labels}}),
+        patch.object(sdlc_manager, "_gh") as mock_gh,
+        pytest.raises(RuntimeError, match="Invalid SDLC label taxonomy"),
+    ):
+        sdlc_manager.labels_deploy("infiquetra-claude-plugins", fmt="text")
+
+    mock_gh.assert_not_called()

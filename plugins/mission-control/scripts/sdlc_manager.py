@@ -79,6 +79,7 @@ from typing import Any, cast
 # ===========================
 
 ORG = "infiquetra"
+MAX_GITHUB_LABEL_DESCRIPTION_LENGTH = 100
 
 
 def _normalize_repo_arg(value: str) -> str:
@@ -1499,6 +1500,7 @@ def labels_deploy(repo: str, fmt: str) -> None:
     """Create/update all SDLC labels in target repo."""
     config = load_config()
     label_defs = config.get("labels", {}).get("labels", [])
+    _validate_label_taxonomy(label_defs)
 
     results = []
     for label in label_defs:
@@ -1532,6 +1534,53 @@ def labels_deploy(repo: str, fmt: str) -> None:
         for r in results:
             if r.startswith("FAIL"):
                 print(f"  {r}")
+
+
+def _required_issue_taxonomy_labels() -> set[str]:
+    required: set[str] = set()
+    for labels in _ISSUE_TYPE_LABELS.values():
+        required.update(labels)
+    return required
+
+
+def _validate_label_taxonomy(label_defs: list[dict[str, Any]]) -> None:
+    """Validate loaded SDLC label definitions before any GitHub label mutation."""
+    errors: list[str] = []
+    if not label_defs:
+        errors.append("label taxonomy has no labels")
+
+    seen: set[str] = set()
+    names: set[str] = set()
+    for index, label in enumerate(label_defs):
+        raw_name = label.get("name", "")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        if not name:
+            errors.append(f"label at index {index} is missing a name")
+            continue
+        if name in seen:
+            errors.append(f"{name}: duplicate label name")
+        seen.add(name)
+        names.add(name)
+
+        raw_color = label.get("color", "")
+        color = raw_color.strip() if isinstance(raw_color, str) else ""
+        if not color:
+            errors.append(f"{name}: missing color")
+
+        description = label.get("description", "") or ""
+        if len(description) > MAX_GITHUB_LABEL_DESCRIPTION_LENGTH:
+            errors.append(
+                f"{name}: description is {len(description)} chars; "
+                f"GitHub max is {MAX_GITHUB_LABEL_DESCRIPTION_LENGTH}"
+            )
+
+    missing_required = sorted(_required_issue_taxonomy_labels() - names)
+    if missing_required:
+        errors.append("missing required issue taxonomy labels: " + ", ".join(missing_required))
+
+    if errors:
+        details = "\n".join(f"- {error}" for error in errors)
+        raise RuntimeError(f"Invalid SDLC label taxonomy:\n{details}")
 
 
 def labels_auto_label(repo: str, number: int, fmt: str) -> None:

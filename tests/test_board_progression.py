@@ -167,6 +167,118 @@ def test_extra_is_merged_into_record(tmp_path: Path) -> None:
     assert rec["op_kind"] == "set-field-status"
 
 
+def test_issue_progress_comment_payload_gets_idempotency_marker(tmp_path: Path) -> None:
+    """A progress comment carries a hidden marker derived from the same key as the ledger file."""
+    ld = _ledger(tmp_path)
+    writer = RecordingWriter()
+    payload = {"body": "visible progress"}
+
+    rec = BP.authorize_and_write(
+        "issue-progress-comment",
+        "infiquetra/x",
+        42,
+        "done",
+        board_writer=writer,
+        ledger_dir=ld,
+        payload=payload,
+    )
+
+    key = CERT_MOD.idempotency_key("issue-progress-comment", "infiquetra/x", 42, "done")
+    marker = BP._comment_idempotency_marker(key)
+    assert rec["status"] == "written"
+    assert writer.calls[0]["payload"]["body"] == f"visible progress\n\n{marker}"
+    assert payload == {"body": "visible progress"}, "caller payload must not be mutated"
+
+
+def test_non_comment_payload_does_not_get_comment_marker(tmp_path: Path) -> None:
+    """Only additive progress comments get the hidden comment marker."""
+    ld = _ledger(tmp_path)
+    writer = RecordingWriter()
+
+    BP.authorize_and_write(
+        "issue-label-add",
+        "infiquetra/x",
+        42,
+        "blocked",
+        board_writer=writer,
+        ledger_dir=ld,
+        payload={"label": "blocked"},
+    )
+
+    assert writer.calls[0]["payload"] == {"label": "blocked", "target_state": "blocked"}
+
+
+def test_default_writer_skips_post_when_marked_comment_already_exists(tmp_path: Path) -> None:
+    """Production writer preflights marked comments and treats an existing marker as success."""
+    key = CERT_MOD.idempotency_key("issue-progress-comment", "infiquetra/x", 42, "done")
+    marker = BP._comment_idempotency_marker(key)
+    calls: list[list[str]] = []
+
+    class _Ok:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "") -> None:
+            self.stdout = stdout
+
+    def fake_run(cmd: list[str], **_kw: Any) -> Any:
+        calls.append(cmd)
+        if cmd[:2] == ["gh", "api"]:
+            return _Ok(json.dumps([{"body": f"already posted {marker}"}]))
+        return _Ok()
+
+    writer = BP.default_board_writer(tmp_path, runner=fake_run)
+    writer(
+        op_kind="issue-progress-comment",
+        repo="infiquetra/x",
+        number=42,
+        payload={"body": f"visible progress\n\n{marker}"},
+    )
+
+    assert [c[:2] for c in calls] == [["gh", "api"]]
+    assert "--method" in calls[0]
+    assert "GET" in calls[0]
+    assert calls[0][4] == "repos/infiquetra/x/issues/42/comments"
+    assert not any(c[2:4] == ["issue", "comment"] for c in calls)
+
+
+def test_comment_crash_replay_skips_remote_duplicate_and_writes_local_ledger(
+    tmp_path: Path,
+) -> None:
+    """Remote marker present + missing local key → no duplicate POST, then ledger is restored."""
+    ld = _ledger(tmp_path)
+    key = CERT_MOD.idempotency_key("issue-progress-comment", "infiquetra/x", 42, "done")
+    marker = BP._comment_idempotency_marker(key)
+    calls: list[list[str]] = []
+
+    class _Ok:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "") -> None:
+            self.stdout = stdout
+
+    def fake_run(cmd: list[str], **_kw: Any) -> Any:
+        calls.append(cmd)
+        if cmd[:2] == ["gh", "api"]:
+            return _Ok(json.dumps([{"body": f"previous crash left {marker} remote"}]))
+        return _Ok()
+
+    rec = BP.authorize_and_write(
+        "issue-progress-comment",
+        "infiquetra/x",
+        42,
+        "done",
+        board_writer=BP.default_board_writer(tmp_path, runner=fake_run),
+        ledger_dir=ld,
+        payload={"body": "visible progress"},
+    )
+
+    assert rec["status"] == "written"
+    assert not any(c[2:4] == ["issue", "comment"] for c in calls)
+    assert (ld / BP._safe_ledger_name(key)).exists()
+
+
 # ---------------------------------------------------------------------------
 # CLI (skill-invokable, #344 KTD6)
 # ---------------------------------------------------------------------------

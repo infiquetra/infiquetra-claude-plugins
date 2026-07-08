@@ -601,14 +601,6 @@ def create_supervised_bundle(
         )
         _write_json(bundle_path / "command.json", command_payload)
 
-        lease_payload = _run_lease_payload(
-            run_id=resolved_run_id,
-            envelope=envelope,
-            run_result=run_result,
-            repo_root=clone_path,
-        )
-        _write_json(bundle_path / "run-lease.json", lease_payload)
-
         result_payload = _result_payload(
             envelope=envelope,
             run_id=resolved_run_id,
@@ -623,6 +615,17 @@ def create_supervised_bundle(
             clone_path=clone_path,
         )
 
+        lease_payload = _run_lease_payload(
+            run_id=resolved_run_id,
+            envelope=envelope,
+            run_result=run_result,
+            repo_root=clone_path,
+        )
+        # One status per bundle: the provenance_required coercion (R1/KTD1) lives in
+        # result_payload, and the lease must not report the pre-coercion status beside it.
+        lease_payload["status"] = result_payload["status"]
+        _write_json(bundle_path / "run-lease.json", lease_payload)
+
         projection = render_projection(result_payload)
         _write_json(bundle_path / "result.json", result_payload)
         (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
@@ -636,7 +639,11 @@ def create_supervised_bundle(
         )
 
     return BundleResult(
-        status=parse_status(run_result.status),
+        # Source status from result_payload, not run_result.status directly: the
+        # provenance_required coercion in _result_payload (R1/KTD1) may have escalated
+        # a passing run_result.status to "fallback_suspected", and the exit code (main()
+        # at :1167) must reflect that escalation, not the pre-coercion status.
+        status=parse_status(result_payload["status"]),
         run_id=resolved_run_id,
         bundle_path=bundle_path,
         projection=projection,
@@ -1164,7 +1171,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(result.projection, end="")
-    return 0 if result.status in {"success", "patch_ready", "applied"} else 1
+    return _exit_code_for_status(result.status)
 
 
 def _default_mode(role: str) -> str:
@@ -1413,6 +1420,14 @@ def _supervised_receipt(
     )
 
 
+_PASSING_STATUSES = frozenset({"success", "patch_ready", "applied"})
+
+
+def _exit_code_for_status(status: str) -> int:
+    """The one status-to-process-exit mapping (single source: ``_PASSING_STATUSES``)."""
+    return 0 if status in _PASSING_STATUSES else 1
+
+
 def _result_payload(
     *,
     envelope: Envelope,
@@ -1427,9 +1442,22 @@ def _result_payload(
     checks_path: Path,
     clone_path: Path,
 ) -> dict[str, Any]:
+    status = parse_status(run_result.status)
+    coerced_by: str | None = None
+    if (
+        envelope.provenance_required
+        and status in _PASSING_STATUSES
+        and _real_agy_verdict(run_result) == "unproven"
+    ):
+        # R1/KTD1: a caller that demanded provenance must not get exit 0 on a run the
+        # wrapper itself cannot prove actually launched agy. classify_transcript is
+        # deliberately not consulted here — transcript auditing is the Stop-hook's job
+        # (#384); _real_agy_verdict is the wrapper's only in-run provenance signal.
+        status = parse_status("fallback_suspected")
+        coerced_by = "provenance_required"
     payload: dict[str, Any] = {
         "schema": "agy.result.v1",
-        "status": parse_status(run_result.status),
+        "status": status,
         "run_id": run_id,
         "bundle_path": str(bundle_path),
         "role": envelope.role,
@@ -1451,6 +1479,8 @@ def _result_payload(
         payload["receipt"] = receipt
     if run_result.error is not None:
         payload["error"] = run_result.error
+    if coerced_by is not None:
+        payload["coerced_by"] = coerced_by
     return payload
 
 

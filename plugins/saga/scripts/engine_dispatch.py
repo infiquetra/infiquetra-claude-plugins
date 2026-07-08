@@ -162,6 +162,7 @@ def dispatch(
     gated: bool = False,
     session_id: str = "",
     workspace_root: Path | str | None = None,
+    expected_identity: str | None = None,
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Run an external engine adapter and return advisory evidence only.
 
@@ -193,6 +194,13 @@ def dispatch(
       with the integrity reason attached — no re-queue loop.
 
     Omitting all three keeps every existing caller byte-identical.
+
+    ``expected_identity`` (#390 U2, KTD3) is the plan-time preview baseline in ``engine/variant``
+    form. When supplied it is stamped verbatim onto the evidence provenance so
+    :func:`build_dispatch_manifest` can derive ``Disposition.SUBSTITUTED_ENGINE`` when the engine
+    that actually resolved/ran differs from the one the plan previewed. ``None`` (the default)
+    stamps nothing and keeps every existing path byte-for-byte -- the resolver/registry seam
+    (#388) is never touched.
     """
     if resolution.halt is not None:
         return AdvisoryEvidence(
@@ -246,6 +254,11 @@ def dispatch(
 
     if tripwire_note:
         provenance["tripwire"] = tripwire_note
+
+    # Stamp the plan-time preview baseline (#390 U2, KTD3) so the manifest builder can derive
+    # SUBSTITUTED_ENGINE. Additive-defaulted: None stamps nothing (byte-for-byte preserved).
+    if expected_identity is not None:
+        provenance["expected_identity"] = expected_identity
 
     if status == "ok":
         # Two-signal reconciliation (R4/R6): the engine SAYS ok; the observer signal is the
@@ -440,6 +453,23 @@ def _record_advisory_facts(
         )
 
 
+def _substitution_note(evidence: AdvisoryEvidence) -> str | None:
+    """The SUBSTITUTED_ENGINE note when the plan-time preview baseline
+    (``provenance['expected_identity']``, #390 U2/KTD3) differs from the engine that actually
+    resolved/ran; ``None`` when no baseline was stamped or it matches. The note names BOTH
+    identities so a forced substitution is traceable prose, not a bare enum (R2/R3)."""
+    expected = evidence.provenance.get("expected_identity")
+    if not expected:
+        return None
+    resolved = f"{evidence.engine_id}/{evidence.variant}"
+    if expected == resolved:
+        return None
+    return (
+        f"substituted engine: plan previewed {expected!r} but {resolved!r} resolved/ran "
+        "-- substituted evidence can never satisfy a gate as-approved (#390 KTD4/KTD5)"
+    )
+
+
 def build_dispatch_manifest(
     evidence: AdvisoryEvidence,
     *,
@@ -476,6 +506,13 @@ def build_dispatch_manifest(
     elif evidence.halt is not None:
         disposition = pm.Disposition.FELL_BACK_TO_CLAUDE
         note = evidence.provenance.get("note") or evidence.halt or ""
+    elif _substitution_note(evidence) is not None:
+        # SUBSTITUTED_ENGINE (#390 U2, KTD4): the plan previewed one engine but a different one
+        # resolved/ran. Ranks BELOW the halt branch (nothing-ran / admitted-failure outranks
+        # wrong-thing-ran) but ABOVE the receipt check -- a valid receipt for the WRONG engine
+        # must never yield RAN_AS_REQUESTED. The note names BOTH identities.
+        disposition = pm.Disposition.SUBSTITUTED_ENGINE
+        note = _substitution_note(evidence) or ""
     else:
         receipt_problems = _receipt_problems(evidence.runner_receipt)
         if receipt_problems:
@@ -489,6 +526,12 @@ def build_dispatch_manifest(
     tripwire = evidence.provenance.get("tripwire")
     if tripwire:
         note = f"{note}; {tripwire}" if note else str(tripwire)
+    # R3 invariant (#390 U2): every non-RAN_AS_REQUESTED manifest carries a non-empty,
+    # human-readable disposition_note -- a forced fallback must be traceable prose, not a bare
+    # enum. A degenerate empty reason (empty halt string, whitespace-only note) gets a fixed
+    # fallback naming the disposition rather than an empty note.
+    if disposition is not pm.Disposition.RAN_AS_REQUESTED and not str(note).strip():
+        note = f"{disposition.value}: reason unspecified"
     return pm.Manifest(
         execution_id=execution_id,
         saga_ref=saga_ref,
@@ -602,6 +645,11 @@ def satisfy_gate(evidence: AdvisoryEvidence, manifest: pm.Manifest | None = None
     mark :func:`dispatch` stamps only when the bundle launch flag was true AND the receipt
     was ``_receipt_problems()``-clean. Claude's own say-so is one signal; the gate needs
     both. Divergent or uncorroborated "ok" evidence can therefore never satisfy a gate.
+
+    Substitution refusal (#390 U2/KTD5): a manifest whose disposition is
+    ``SUBSTITUTED_ENGINE`` is refused outright -- a run that executed a different engine than the
+    plan approved can never satisfy a gate as-approved, regardless of how well-corroborated its
+    (wrong-engine) evidence is.
     """
     if evidence.verified_by_claude is not True:
         raise DispatchError(
@@ -612,6 +660,12 @@ def satisfy_gate(evidence: AdvisoryEvidence, manifest: pm.Manifest | None = None
             "two-signal acceptance (#384 R6): a gated verdict requires observer corroboration "
             "(bundle launch flag true + schema-valid receipt) beside Claude verification -- "
             "this evidence carries no observer_corroborated mark"
+        )
+    if manifest is not None and manifest.disposition is pm.Disposition.SUBSTITUTED_ENGINE:
+        raise DispatchError(
+            "substituted evidence can never satisfy a gate as-approved (#390 U2/KTD5): the "
+            f"manifest disposition is {manifest.disposition.value!r} -- "
+            f"{manifest.disposition_note}"
         )
     if manifest is None or manifest.claim_provenance is None:
         return

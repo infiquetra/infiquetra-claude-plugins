@@ -91,9 +91,19 @@ invocation = (
     )
 )
 evidence = engine_dispatch.dispatch(
-    resolution, runner=runner, model=model, sandbox=unit_sandbox, write_set=unit_files
+    resolution, runner=runner, model=model, sandbox=unit_sandbox, write_set=unit_files,
+    expected_identity=(
+        f"{plan_time_resolution_preview['engine_id']}/{plan_time_resolution_preview['variant']}"
+        if plan_time_resolution_preview is not None
+        else None
+    ),
 )
 ```
+
+`expected_identity` (`engine_dispatch.py:165`) is the §1 plan-time preview, forwarded verbatim
+so `dispatch()` stamps it onto the evidence's provenance. This is what lets the shared manifest
+builder derive the substitution disposition itself in §5 — the chaperone never computes or
+constructs that disposition by hand.
 
 `unit_sandbox` is the unit's declared `sandbox` envelope (or `None`) and `unit_files` its declared
 `files` list. Both builders assert byte-identical payload preservation (`_assert_payload_preserved`)
@@ -139,7 +149,9 @@ substituted = (
 
 A `True` result changes the disposition written in §5 from `ran-as-requested` to
 `substituted-engine` — the run-time capability router resolved a different engine/variant than
-the one the operator approved in the tier table. This is the only reachable substitution path.
+the one the operator approved in the tier table. This is the only reachable substitution path: the
+shared builder derives it itself from `expected_identity` (§3/§5), it is never hand-constructed
+here.
 
 ## 5. Verify → apply → test → manifest
 
@@ -147,33 +159,49 @@ the one the operator approved in the tier table. This is the only reachable subs
    reviews it itself — never self-attested. Only after review does the chaperone set
    `evidence.verified_by_claude = True`; this is the bit `satisfy_gate()` requires (§ "Never a
    gatekeeper").
-2. **Apply.** The chaperone applies the reviewed patch and **owns the commit** — the engine never
-   touches the working tree (KTD6/R23). This is the same file-edit scope every team-execution
-   worker already has (`worker-manifest.md` "grants no privilege... workers keep today's
-   file-edit scope").
+2. **Apply.** The chaperone applies the reviewed patch — the engine never touches the working
+   tree (KTD6/R23). The chaperone **owns the commit**, but the commit itself happens only after
+   Test (step 3) and the empty-delivery check (step 3a) pass — apply and commit are distinct
+   steps of the same chaperone-owned sequence. This is the same file-edit scope every
+   team-execution worker already has (`worker-manifest.md` "grants no privilege... workers keep
+   today's file-edit scope").
 3. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
-4. **Manifest.** Two paths, chosen by §4's `substituted` result:
+3a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
+   chaperone runs `check_empty_delivery.check_empty_delivery()` (or its CLI,
+   `plugins/saga/scripts/check_empty_delivery.py --claims-delivery`) against the working tree. A
+   unit whose evidence claims delivery but changed zero paths gets a HALT verdict — the chaperone
+   surfaces that HALT to the coordinator exactly like any other blocked worker and never reaches
+   the commit step below. A proceed verdict authorizes continuing to Apply's commit; the helper
+   itself never commits and mints no new auto-commit machinery (none exists in this repo — `/optimize`
+   deliberately shed its own). This is a distinct axis from `manifest_store.py`'s `missing-output`
+   trip (`manifest_store.py:249-363`), which checks the returned-value axis, not file delivery.
+4. **Manifest.** One path, for every disposition — `ran-as-requested`, `fell-back-to-claude`, and
+   `substituted-engine` alike. The chaperone never branches on §4's `substituted` result and never
+   constructs `provenance_manifest.Manifest` directly; it always calls the existing builder,
+   forwarding the same `expected_identity` it passed to `dispatch()` in §3:
+   ```python
+   engine_dispatch.record_dispatch_manifest(
+       store, evidence,
+       execution_id=f"{worker_id}-{unit_id}", saga_ref=saga_ref, created_at=created_at,
+       effort=resolution.effort, protocol="\n".join(resolution.protocol),
+   )
+   ```
+   `build_dispatch_manifest` (`engine_dispatch.py:473-576`) derives the disposition from the
+   evidence alone: `evidence.halt is not None` → `FELL_BACK_TO_CLAUDE` (carrying the
+   halt/downgrade note as `disposition_note`); otherwise, when the evidence's provenance carries
+   an `expected_identity` that differs from `f"{evidence.engine_id}/{evidence.variant}"` →
+   `SUBSTITUTED_ENGINE` (`_substitution_note`, `engine_dispatch.py:456-470`, naming both the
+   previewed and the resolved engine/variant); otherwise `RAN_AS_REQUESTED`. Attribution is always
+   `kind=EXTERNAL_ENGINE`, `identity=f"{evidence.engine_id}/{evidence.variant}"` — the same
+   identity format the builder always emits. There is no second, hand-built manifest path for the
+   substitution case; `record_dispatch_manifest` is the only manifest-construction call this
+   contract documents (R5).
 
-   - **Not substituted** (`ran-as-requested` or `fell-back-to-claude`): call the existing builder
-     unchanged —
-     ```python
-     engine_dispatch.record_dispatch_manifest(
-         store, evidence,
-         execution_id=f"{worker_id}-{unit_id}", saga_ref=saga_ref, created_at=created_at,
-         effort=resolution.effort, protocol="\n".join(resolution.protocol),
-     )
-     ```
-     `build_dispatch_manifest` (`engine_dispatch.py:124-161`) maps `evidence.halt is not None` →
-     `FELL_BACK_TO_CLAUDE` (carrying the halt/downgrade note as `disposition_note`) and otherwise
-     → `RAN_AS_REQUESTED`; attribution is `kind=EXTERNAL_ENGINE`,
-     `identity=f"{evidence.engine_id}/{evidence.variant}"` (same identity format the dispatch
-     builder always emits, `engine_dispatch.py:153`).
-   - **Substituted**: `build_dispatch_manifest` has no way to express this disposition (it only
-     inspects `evidence.halt`), so the chaperone constructs `provenance_manifest.Manifest`
-     directly (this is `worker-manifest.md`'s documented "the worker itself writes it" path) with
-     `disposition=pm.Disposition.SUBSTITUTED_ENGINE` and a `disposition_note` naming both the
-     previewed and the resolved engine/variant, then writes it the same way (`manifest_store.py
-     write --execution-id <worker-id>-<unit-id> --file <manifest.json>`, `worker-manifest.md:37-41`).
+   The fail-loud discriminator this feeds (#392): a substituted run is not a passing external
+   result. `satisfy_gate()` (`engine_dispatch.py:664`) refuses a manifest whose disposition is
+   `SUBSTITUTED_ENGINE` outright — the chaperone must surface that refusal as a HALT to the
+   coordinator, never paper over it or let the run count toward the unit's gate as if it were
+   `RAN_AS_REQUESTED`.
 
    A halted unit (§2's R26/R25 halt paths) never reaches this step — nothing ran, so there is
    nothing to manifest. The chaperone surfaces `resolution.halt` to the coordinator and stops on

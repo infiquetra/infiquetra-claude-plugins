@@ -1329,11 +1329,48 @@ def _verifier_prompt(unit: Unit) -> str:
         f"REFUTE-N VERIFIER over unit {unit.unit_id} ({unit.label}). You are an adversarial "
         f"skeptic: attempt to REFUTE the unit's result, do NOT re-do its work. Read the unit's "
         f"output and the evidence it cites; for each claimed finding decide REFUTED (with a "
-        f"concrete reason) or UPHELD. Emit a structured verdict {{refuted: [...], upheld: [...]}}."
+        f"concrete reason) or UPHELD. Emit a structured verdict {{refuted: [...], upheld: [...], "
+        f"verifier_identity: ..., fallback_depth: ...}}.",
+        # U6/R8/KTD7: attributed verify-spawn. The emitter STAMPS the agent identity it knows
+        # ({READONLY_VERIFIER_AGENT_TYPE}) and a fallback_depth of 0 -- a workflow agent() call
+        # cannot silently descend the #325 fallback ladder (an unresolvable agentType fails the
+        # call outright), so the first-choice rung is the only rung reachable from here. Echo BOTH
+        # verbatim in your verdict so the panel gate summary can attribute any degraded reporter.
+        f"Echo verifier_identity: {READONLY_VERIFIER_AGENT_TYPE} and fallback_depth: 0 "
+        f"back in your verdict (do NOT alter them).",
     ]
     if unit.tier.is_cheap:
         parts.append(BUDGET_RIDER)
     return "\n\n".join(parts)
+
+
+def render_fallback_tier_marker(reporters: list[dict[str, object]]) -> str:
+    """Pure render of the panel gate-summary 'fallback tier N' marker (U6/R8/KTD7).
+
+    ``reporters`` is the list of reporting verifier verdicts, each carrying ``verifier_identity``
+    and ``fallback_depth`` (default 0). Returns an explicit ``" - fallback tier N (<identity>)"``
+    marker naming ONLY the degraded reporters (``fallback_depth > 0``), or ``""`` when every
+    reporter sat on the first-choice ``saga:readonly-verifier`` rung (all depth 0). Kept a pure
+    function -- no workflow emission, no I/O -- so the marker formatting is unit-testable in
+    isolation. The #325 ladder itself is untouched by this: attribution only, never a reorder.
+    """
+    fragments: list[str] = []
+    for reporter in reporters:
+        raw_depth = reporter.get("fallback_depth", 0)
+        if isinstance(raw_depth, bool) or not isinstance(raw_depth, (int, float, str)):
+            depth = 0
+        else:
+            try:
+                depth = int(raw_depth)
+            except (TypeError, ValueError):
+                depth = 0
+        if depth <= 0:
+            continue
+        identity = reporter.get("verifier_identity") or "unknown-verifier"
+        fragments.append(f"fallback tier {depth} ({identity})")
+    if not fragments:
+        return ""
+    return " — " + "; ".join(fragments)
 
 
 def _verifier_agent_opts(unit: Unit) -> list[str]:
@@ -1418,6 +1455,33 @@ def _emit_panel_reconciliation(
         f"{indent}const {reported_var} = {verdicts_var}.filter((v) => "
         f"v != null && Array.isArray(v.refuted))"
     )
+    # U6/R8/KTD7: attribute any reporter that descended the #325 fallback ladder. Each reporter
+    # echoes verifier_identity + fallback_depth (default 0); this runtime marker mirrors the pure
+    # render_fallback_tier_marker() helper -- empty when every reporter sat on the first-choice
+    # rung, else " — fallback tier N (<identity>)" naming ONLY the degraded reporter(s). The
+    # marker rides the operator-facing throw so a silent Claude-substituted verifier cannot hide.
+    fallback_marker_var = f"{name_prefix}fallback_marker"
+    lines.append(f"{indent}const {fallback_marker_var} = (() => {{")
+    # Depth coercion mirrors render_fallback_tier_marker()'s Python guard exactly (bool -> 0,
+    # non-integer string -> 0, float -> trunc, unparseable -> 0) so the tests that pin the pure
+    # helper describe THIS runtime marker too (#390 review F4).
+    lines.append(f"{indent}  const depthOf = (v) => {{")
+    lines.append(f"{indent}    const raw = v.fallback_depth")
+    lines.append(f'{indent}    if (typeof raw === "boolean") return 0')
+    lines.append(
+        f'{indent}    if (typeof raw === "string" && !/^-?\\d+$/.test(raw.trim())) return 0'
+    )
+    lines.append(f"{indent}    const d = Math.trunc(Number(raw))")
+    lines.append(f"{indent}    return Number.isFinite(d) && d > 0 ? d : 0")
+    lines.append(f"{indent}  }}")
+    lines.append(f"{indent}  const degraded = {reported_var}.filter((v) => depthOf(v) > 0)")
+    lines.append(f'{indent}  if (degraded.length === 0) return ""')
+    lines.append(
+        f'{indent}  return " — " + degraded.map((v) => '
+        f"`fallback tier ${{depthOf(v)}} "
+        f'(${{v.verifier_identity || "unknown-verifier"}})`).join("; ")'
+    )
+    lines.append(f"{indent}}})()")
     lines.append(
         f"{indent}const {missing_idx_var} = {verdicts_var}.map((v, i) => "
         f"(v == null || !Array.isArray(v.refuted) ? i + 1 : null)).filter((i) => i != null)"
@@ -1456,7 +1520,7 @@ def _emit_panel_reconciliation(
     throw_line = (
         f"throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
         f"${{{refute_count_var}}}/${{{reported_var}.length}} reporting verifiers "
-        f"(${{{missing_idx_var}.length}} missing){throw_suffix}`)"
+        f"(${{{missing_idx_var}.length}} missing)${{{fallback_marker_var}}}{throw_suffix}`)"
     )
     if direct_throw:
         if open_refuted_block:

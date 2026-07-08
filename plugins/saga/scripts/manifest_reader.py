@@ -20,6 +20,12 @@ consumers of ``provenance_manifest.py``'s schema:
   vs. ``inferred``/``not-checked`` (``refuted`` claims are excluded from the denominator:
   they are parroting/mismatch signal, not a confidence-tier data point). ``None`` when no
   claim in the tree has been adjudicated yet.
+* **fallback_reasons** (R6/U4/KTD2) — for every manifest whose disposition is not
+  ``RAN_AS_REQUESTED``, the execution id, disposition, and ``disposition_note`` prose. This is
+  the operator-facing surface for the reason a run fell back or was substituted (the
+  ``disposition_note`` is already builder-enforced non-empty for these dispositions per R3 —
+  this reader just renders it, it does not invent a new roll-up artifact or write ledger
+  records).
 
 Every signal here is advisory only (R8/R12): this module computes findings, never raises,
 never gates, and an empty or absent manifest tree is not an error (R12 — no gate of its own).
@@ -92,8 +98,24 @@ def read_manifests(root: Path) -> list[provenance_manifest.Manifest]:
 
 
 @dataclass(frozen=True)
+class FallbackReason:
+    """A single non-``RAN_AS_REQUESTED`` manifest's operator-facing reason (R6/U4)."""
+
+    execution_id: str
+    disposition: str
+    disposition_note: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "execution_id": self.execution_id,
+            "disposition": self.disposition,
+            "disposition_note": self.disposition_note,
+        }
+
+
+@dataclass(frozen=True)
 class ManifestSummary:
-    """The full U6 advisory surface (R7/R16/R18)."""
+    """The full U6 advisory surface (R7/R16/R18) plus the R6/U4 fallback-reason roll-up."""
 
     total_manifests: int
     total_claims: int
@@ -103,6 +125,7 @@ class ManifestSummary:
     adjudicated_inferred_count: int  # R16
     adjudicated_not_checked_count: int  # R16
     adjudicated_refuted_count: int  # excluded from the R16 ratio denominator
+    fallback_reasons: tuple[FallbackReason, ...] = ()  # R6/U4
 
     @property
     def disposition_rate(self) -> dict[str, float | None]:
@@ -147,6 +170,7 @@ class ManifestSummary:
             "adjudicated_not_checked_count": self.adjudicated_not_checked_count,
             "adjudicated_refuted_count": self.adjudicated_refuted_count,
             "verified_ratio": self.verified_ratio,
+            "fallback_reasons": [reason.as_dict() for reason in self.fallback_reasons],
         }
 
 
@@ -161,9 +185,18 @@ def summarize(manifests: list[provenance_manifest.Manifest]) -> ManifestSummary:
     total_claims = 0
     parroting = 0
     verified = inferred = not_checked = refuted = 0
+    fallback_reasons: list[FallbackReason] = []
 
     for manifest in manifests:
         disposition_counts[manifest.disposition.value] += 1
+        if manifest.disposition != provenance_manifest.Disposition.RAN_AS_REQUESTED:
+            fallback_reasons.append(
+                FallbackReason(
+                    execution_id=manifest.execution_id,
+                    disposition=manifest.disposition.value,
+                    disposition_note=manifest.disposition_note,
+                )
+            )
         if manifest.claim_provenance is None:
             continue
         for claim in manifest.claim_provenance.claims:
@@ -188,6 +221,7 @@ def summarize(manifests: list[provenance_manifest.Manifest]) -> ManifestSummary:
         adjudicated_inferred_count=inferred,
         adjudicated_not_checked_count=not_checked,
         adjudicated_refuted_count=refuted,
+        fallback_reasons=tuple(fallback_reasons),
     )
 
 
@@ -235,6 +269,16 @@ def format_report(summary: ManifestSummary) -> str:
         f"  refuted (excluded from ratio): {summary.adjudicated_refuted_count}",
         f"  verified ratio: {_pct(summary.verified_ratio)}",
     ]
+
+    if summary.fallback_reasons:
+        lines += [
+            "",
+            "### Fallback Reasons (R6)",
+        ]
+        for reason in summary.fallback_reasons:
+            lines.append(
+                f"  {reason.execution_id} [{reason.disposition}]: {reason.disposition_note}"
+            )
 
     if summary.total_manifests == 0:
         lines += [

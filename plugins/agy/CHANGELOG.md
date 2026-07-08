@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-07
+
+### Changed — BREAKING: `provenance_required` now coerces unproven passing runs to fail loud (#390 U1)
+
+- `plugins/agy/scripts/agy_delegate.py`: a passing status (`success`/`patch_ready`/`applied`) whose
+  supervision verdict (`_real_agy_verdict`) is `unproven`, combined with `provenance_required=True`
+  (the envelope default), now coerces the run status to `fallback_suspected` and exits non-zero via
+  the existing exit mapping. **Behavior change**: callers that previously relied on exit 0 for an
+  unproven run under `provenance_required=True` (the default) will now see exit 1 —
+  `provenance_required` was parsed and threaded since its introduction but consulted nowhere; this
+  closes that dead wire. `provenance_required=False` preserves the old behavior unchanged, and a
+  status already `fallback_suspected` via the stdout marker is not double-coerced. Transcript
+  auditing stays the Stop-hook's responsibility (#384) — the wrapper's only signal is
+  `_real_agy_verdict`.
+- Bundle-wide status consistency: `run-lease.json` now reports the same (post-coercion) status as
+  `result.json` instead of the raw pre-coercion supervisor status, and the status→exit-code
+  mapping has a single source (`_PASSING_STATUSES` / `_exit_code_for_status`) shared by `main()`
+  and the contract tests (#390 code-review round).
+
 ## [0.1.2] - 2026-07-06
 
 ### Added

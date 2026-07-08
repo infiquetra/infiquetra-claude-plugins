@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.75.0] - 2026-07-07
+
+### Added — fail-loud provenance wiring: SUBSTITUTED_ENGINE derivation, gate refusal, empty-delivery HALT, verify-spawn attribution (#390 U2/U4/U5/U6)
+
+- `plugins/saga/scripts/engine_dispatch.py`: `dispatch()` gains an optional `expected_identity`,
+  stamped into evidence provenance; `build_dispatch_manifest` auto-derives
+  `Disposition.SUBSTITUTED_ENGINE` when the evidence's expected engine identity differs from the
+  resolved `engine_id`/`variant`, with a disposition note naming both identities (branch
+  precedence: `DELEGATION_INTEGRITY` > halt (`FELL_BACK_TO_CLAUDE`) > `SUBSTITUTED_ENGINE` >
+  receipt check). Every non-`RAN_AS_REQUESTED` manifest now carries a non-empty
+  `disposition_note` (fixed fallback string for degenerate empty reasons). `satisfy_gate` refuses
+  any manifest whose disposition is `SUBSTITUTED_ENGINE` — substituted evidence can never satisfy
+  a gate as-approved. `expected_identity=None` callers keep prior behavior byte-for-byte.
+- `plugins/saga/scripts/manifest_reader.py`: the roll-up report gains a reasons section listing
+  execution id, disposition, and `disposition_note` for every manifest whose disposition is not
+  `RAN_AS_REQUESTED`, so a forced fallback is traceable to prose, not just an enum.
+- `plugins/saga/scripts/check_empty_delivery.py` (new): pure verdict function plus a thin CLI
+  (reads `git status --porcelain -z`) that HALTs a delegated unit claiming delivery with zero
+  changed paths, and returns a proceed verdict authorizing the existing chaperone-owned commit
+  step for a delivering unit. Kept distinct from `manifest_store.py`'s returned-value
+  `missing-output` axis.
+- `plugins/saga/scripts/execution_spec.py`: verifier verdict schema and prompt gain
+  `verifier_identity` (emitter-stamped) and `fallback_depth` (default 0); panel aggregation
+  renders an explicit "fallback tier N" marker in the gate summary when any reporter's depth
+  exceeds 0, and no marker for an all-first-choice `saga:readonly-verifier` panel.
+  `plugins/saga/references/sandbox-spawn-sites.md` documents the rung-recording requirement for
+  inline prose-ladder spawns (rungs 2/3). The fallback ladder's own order and contract are
+  unchanged.
+
 ## [0.74.1] - 2026-07-07
 
 ### Fixed — code-review: gate Phase 5.4 saga append in programmatic mode (#468, Defect 2)

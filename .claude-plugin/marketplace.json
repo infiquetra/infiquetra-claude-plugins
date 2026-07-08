@@ -83,8 +83,8 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.74.1",
-      "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome, the OutcomeOrchestrator driving a whole outcome as a durable DAG of leaf sagas.",
+      "version": "0.75.0",
+      "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome outcome-DAG orchestration and fail-loud external-engine delegation provenance.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -108,8 +108,8 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.12.3",
-      "description": "Two-phase plan execution with reviewer consensus, validator gates, and guarded nonprod automation for Infiquetra repositories.",
+      "version": "2.13.0",
+      "description": "Two-phase plan execution with reviewer consensus, validator gates, a single-path dispatch-manifest chaperone contract, and guarded nonprod automation for Infiquetra repositories.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -178,8 +178,8 @@
     {
       "name": "agy",
       "source": "./plugins/agy",
-      "version": "0.1.2",
-      "description": "Antigravity-backed coder and reviewer bridge agents with guarded evidence bundles and patch import.",
+      "version": "0.2.0",
+      "description": "Antigravity-backed coder and reviewer bridge agents with guarded evidence bundles, patch import, and fail-loud provenance-required status/exit coercion.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -199,7 +199,7 @@
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
       "version": "0.8.0",
-      "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only \u2014 no skills, commands, or agents.",
+      "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only — no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"

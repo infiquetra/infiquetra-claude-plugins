@@ -458,3 +458,119 @@ def test_cli_rejects_invalid_envelope_without_bundle(tmp_path: Path) -> None:
     assert completed.returncode == 2
     assert "auto-if-clean requires a non-empty write_set" in completed.stderr
     assert not (tmp_path / ".claude").exists()
+
+
+@pytest.mark.parametrize(
+    (
+        "status",
+        "return_code",
+        "shutdown",
+        "timeout_class",
+        "provenance_required",
+        "expected_status",
+        "expect_coerced",
+    ),
+    [
+        pytest.param(
+            "success", 1, "exited", None, True, "fallback_suspected", True, id="unproven-required"
+        ),
+        pytest.param(
+            "success", 1, "exited", None, False, "success", False, id="unproven-not-required"
+        ),
+        pytest.param("success", 0, "exited", None, True, "success", False, id="proven-required"),
+        pytest.param(
+            "fallback_suspected",
+            1,
+            "exited",
+            None,
+            True,
+            "fallback_suspected",
+            False,
+            id="already-fallback-suspected-not-double-coerced",
+        ),
+    ],
+)
+def test_provenance_required_coerces_fallback(
+    agy_delegate: ModuleType,
+    tmp_path: Path,
+    status: str,
+    return_code: int | None,
+    shutdown: str,
+    timeout_class: str | None,
+    provenance_required: bool,
+    expected_status: str,
+    expect_coerced: bool,
+) -> None:
+    """R1/KTD1: provenance_required wires _real_agy_verdict into status/exit.
+
+    - unproven + required -> coerced to fallback_suspected (exit 1 via :1167 mapping).
+    - unproven + not required -> unchanged (today's behavior byte-for-byte).
+    - proven (real verdict) + required -> unchanged.
+    - already fallback_suspected (marker path, :1374) + required -> stays
+      fallback_suspected, not double-coerced (no duplicate coerced_by bookkeeping).
+    """
+    envelope = agy_delegate.Envelope.from_mapping(
+        _valid_payload(provenance_required=provenance_required)
+    )
+    started = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
+    ended = datetime(2026, 7, 7, 12, 0, 1, tzinfo=UTC)
+    run_result = agy_delegate.SupervisedRunResult(
+        status=status,
+        agy_launched=True,
+        resolved_agy="/usr/local/bin/agy",
+        argv=["/usr/local/bin/agy"],
+        process_id=99,
+        return_code=return_code,
+        started_at=started,
+        ended_at=ended,
+        shutdown=shutdown,
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        timeout_class=timeout_class,
+        stdout_bytes=10,
+        stderr_bytes=0,
+    )
+
+    payload = agy_delegate._result_payload(
+        envelope=envelope,
+        run_id="provenance-run",
+        bundle_path=tmp_path / "bundle",
+        run_result=run_result,
+        stdout_path=run_result.stdout_path,
+        stderr_path=run_result.stderr_path,
+        summary="ran",
+        changed_paths=[],
+        diff_patch_path=tmp_path / "diff.patch",
+        checks_path=tmp_path / "checks.json",
+        clone_path=tmp_path / "clone",
+    )
+
+    assert payload["status"] == expected_status
+    # Exit-code contract observed through the module's own single-source mapping —
+    # main() returns _exit_code_for_status(result.status); no duplicated status set here.
+    expect_exit_zero = expected_status in agy_delegate._PASSING_STATUSES
+    assert agy_delegate._exit_code_for_status(payload["status"]) == (0 if expect_exit_zero else 1)
+    if expect_coerced:
+        assert payload.get("coerced_by") == "provenance_required"
+    else:
+        assert "coerced_by" not in payload
+
+
+def test_blocked_status_marker_parsing_produces_fallback_suspected(
+    agy_delegate: ModuleType, tmp_path: Path
+) -> None:
+    """The stdout-marker parser is the real producer of the 'already fallback_suspected'
+    state the no-double-coercion case above starts from — exercise it against real log
+    content so the marker path cannot regress unnoticed (#390 review F1)."""
+    stdout_path = tmp_path / "stdout.log"
+    stderr_path = tmp_path / "stderr.log"
+    stdout_path.write_text("agy output\nFALLBACK_SUSPECTED: no genuine engine invocation\n")
+    stderr_path.write_text("")
+    assert agy_delegate._blocked_status_from_logs(stdout_path, stderr_path) == "fallback_suspected"
+
+    stdout_path.write_text("agy output, clean run\n")
+    assert agy_delegate._blocked_status_from_logs(stdout_path, stderr_path) is None
+
+    # Marker in stderr alone is also honored (the parser reads both streams).
+    stderr_path.write_text("TEST_CONFLICT: fixture collision\n")
+    assert agy_delegate._blocked_status_from_logs(stdout_path, stderr_path) == "test_conflict"

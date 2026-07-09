@@ -1,6 +1,6 @@
 # Outcome: objective: Stand up the external-engine offload lane
 
-**Outcome ID:** `external-engine-offload` · **Revision:** 3 · **Progress:** 15/20 (75%)
+**Outcome ID:** `external-engine-offload` · **Revision:** 3 · **Progress:** 18/20 (90%)
 
 ## Topology
 
@@ -17,11 +17,11 @@ flowchart TD
     sub-454["sub-454: done"]
     sub-386["sub-386: done"]
     sub-387["sub-387: done"]
-    sub-388["sub-388: dispatched"]
+    sub-388["sub-388: done"]
     sub-389["sub-389: done"]
-    sub-455["sub-455: dispatched"]
+    sub-455["sub-455: done"]
     sub-390["sub-390: done"]
-    sub-391["sub-391: dispatched"]
+    sub-391["sub-391: done"]
     sub-393["sub-393: dispatched"]
     sub-394["sub-394: dispatched"]
     sub-468["sub-468: done"]
@@ -49,11 +49,11 @@ flowchart TD
 | `sub-454` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/545, issue infiquetra/infiquetra-claude-plugins#454 | no data yet |
 | `sub-386` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/546, issue infiquetra/infiquetra-claude-plugins#386 | no data yet |
 | `sub-387` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/516, issue infiquetra/infiquetra-claude-plugins#387 | no data yet |
-| `sub-388` | dispatched | issue infiquetra/infiquetra-claude-plugins#388 | no data yet |
+| `sub-388` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/547, issue infiquetra/infiquetra-claude-plugins#388 | no data yet |
 | `sub-389` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/537, issue infiquetra/infiquetra-claude-plugins#389 | no data yet |
-| `sub-455` | dispatched | issue infiquetra/infiquetra-claude-plugins#455 | no data yet |
+| `sub-455` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/550, issue infiquetra/infiquetra-claude-plugins#455 | no data yet |
 | `sub-390` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/528, issue infiquetra/infiquetra-claude-plugins#390 | no data yet |
-| `sub-391` | dispatched | issue infiquetra/infiquetra-claude-plugins#391 | no data yet |
+| `sub-391` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/548, issue infiquetra/infiquetra-claude-plugins#391 | no data yet |
 | `sub-393` | dispatched | issue infiquetra/infiquetra-claude-plugins#393 | no data yet |
 | `sub-394` | dispatched | issue infiquetra/infiquetra-claude-plugins#394 | no data yet |
 | `sub-468` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/522, issue infiquetra/infiquetra-claude-plugins#468 | no data yet |

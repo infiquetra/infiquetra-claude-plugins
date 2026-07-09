@@ -36,6 +36,7 @@ Branch: `work/455-provider-onboarding`
 - `0d57320` - run-ledger promotion assessment.
 - `0dccb26` - reject embedding claims from the Chat Completions scaffolder.
 - `afb5b1e` - harden provider/evidence inputs from Team Execution review.
+- `37c2ef4` - close final Saga code-review gaps.
 
 ## Checks Run
 
@@ -45,11 +46,14 @@ Branch: `work/455-provider-onboarding`
 - Combined U1-U4 focused gate: `216 passed`.
 - Post-remediation behavior and package gate: `260 passed`.
 - New-module coverage: onboarding `86%`, promotion `98%`, conformance `91%`.
+- Broad repository suite: `2,806 passed, 1 skipped` with the two redis-channel tests excluded because
+  the optional `mcp` package is absent locally.
 - Focused Ruff format/check passed for onboarding, conformance, promotion, and their tests.
 - Isolated mypy passed for onboarding/promotion and their tests with `--follow-imports=skip`.
+- Repository-wide Ruff format/check and the canonical full mypy command passed.
 - Registry lint, conformance CLI, marketplace sync, release parity, and release diff guard passed.
-- The planned transitive mypy command reached pre-existing errors in `engine_overlay.py`,
-  `fleet_commons_shim.py`, and `engine_dispatch.py`; no unrelated baseline fix was made.
+- Unfiltered pytest collection stops on the two redis-channel imports when `mcp` is absent; no #455
+  test or changed path is involved.
 
 ## Review State
 
@@ -61,8 +65,10 @@ Branch: `work/455-provider-onboarding`
   filename-key finding remains a baseline warning.
 - Scenario tester: pass with `260 passed` plus registry and release checks.
 - Evidence root: `~/.codex/team-execution/state/infiquetra-claude-plugins/issue-455/`.
-- GitHub Actions monitor and the Saga code-review gate remain pending.
+- Saga code review: pass with no unresolved P0-P3 findings; artifact at
+  `docs/code-reviews/2026-07-09-issue-455-provider-onboarding-code-review.md`.
+- GitHub Actions monitor remains pending.
 
 ## Next Step
 
-Run the Saga code-review gate, then push the branch and monitor required GitHub Actions checks.
+Push the branch, open the PR, and monitor required GitHub Actions checks.

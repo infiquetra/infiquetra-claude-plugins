@@ -285,3 +285,17 @@ def test_cli_main_renders_both_dispositions_and_fails_cleanly(
         == 1
     )
     assert "engine promotion assessment failed" in capsys.readouterr().err
+
+
+def test_cli_main_reports_default_ledger_resolution_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(_cls: type[Any], _repo_root: Path) -> Any:
+        raise ValueError("git common dir unavailable")
+
+    monkeypatch.setattr(RUN_LEDGER.RunLedger, "resolve", classmethod(unavailable))
+
+    assert PROMOTION.main([ENGINE_KEY, "--registry", str(_registry(tmp_path))]) == 1
+    assert "git common dir unavailable" in capsys.readouterr().err

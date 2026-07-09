@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             registry_path=args.registry,
             ledger=ledger,
         )
-    except (OSError, PromotionError, RegistryError, run_ledger.RunLedgerError) as exc:
+    except (OSError, ValueError, yaml.YAMLError) as exc:
         print(f"engine promotion assessment failed: {exc}", file=sys.stderr)
         return 1
 

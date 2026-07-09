@@ -71,8 +71,8 @@ Field rules:
 | `context_window` | Positive integer token limit. |
 | `cost_speed_rank` | Non-negative tie-break rank; lower values win equal capability ratings. |
 | `cost_class` | `metered` or `free`. |
-| `cost_per_token` | Exactly `input_usd` and `output_usd`, both non-negative. Free providers use zero for both. |
-| `budget_ceiling_usd` | Required and non-negative for `metered`; omitted for `free`. |
+| `cost_per_token` | Exactly `input_usd` and `output_usd`, both finite and non-negative. Free providers use zero for both. |
+| `budget_ceiling_usd` | Required, finite, and non-negative for `metered`; omitted for `free`. |
 | `latency_class` | `fast`, `standard`, `slow`, or `batch`. |
 | `model_identity` | Stable model-family identity used by release-currency checks. |
 | `last_validated` | ISO date for the provider claims and model id. |

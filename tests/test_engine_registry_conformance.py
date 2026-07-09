@@ -87,6 +87,19 @@ def test_unknown_receipt_emitter_fails_with_row_key() -> None:
     )
 
 
+def test_independent_row_failures_are_reported_together() -> None:
+    data = _registry_data()
+    data["engines"][-1]["invocation"]["via"] = "missing-provider-bridge"
+    data["engines"][-2]["receipt_emitter"] = "missing-emitter"
+    registry = C.Registry.from_dict(data)
+
+    report = C.check_registry(registry)
+
+    failures = {(issue.engine_key, issue.check) for issue in report.issues}
+    assert ("deepseek/deepseek-chat", "dispatch-invocation") in failures
+    assert ("ollama-cloud/nomic-embed-text", "receipt-emitter") in failures
+
+
 def test_advertised_capability_must_appear_in_candidates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

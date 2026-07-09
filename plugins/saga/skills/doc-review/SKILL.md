@@ -118,6 +118,14 @@ artifact clearly warrants one.
   before adopting it; the gated readiness verdict stays Claude's alone (R13). Nothing an external
   engine returns blocks or persists a gate on its own say-so.
 
+## Engine Offer
+
+Before offering an external-engine second opinion for document review, run
+`python3 plugins/saga/scripts/engine_offer.py offer --stage doc-review --repo-root . --attended`.
+If the helper reports `prompt_required`, `/doc-review` owns the `AskUserQuestion` or channel-inline
+prompt and persists the selected preference with `engine_offer.py remember`. The offer is advisory
+only; the host still verifies every finding and owns the readiness verdict.
+
 ## Safe In-Place Fixes
 
 Safe fixes are enabled by default and edit the reviewed document in place.

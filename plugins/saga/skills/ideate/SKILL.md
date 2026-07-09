@@ -38,6 +38,14 @@ with `select:AskUserQuestion` first if its schema isn't loaded). Fall back to nu
 chat only when no blocking tool exists or the call errors. In a channel session, inline the
 choices in the reply text. Never silently skip a gate question. Ask one question at a time.
 
+## Engine Offer
+
+Before offering an external-engine lane for ideation, run
+`python3 plugins/saga/scripts/engine_offer.py offer --stage ideate --repo-root . --attended`.
+If the helper reports `prompt_required`, this skill owns the `AskUserQuestion` or channel-inline
+prompt and then persists the selected preference with `engine_offer.py remember`. The offer is
+advisory only; it never dispatches, scores, or gates ideas.
+
 ## Focus hint
 
 <focus_hint> #$ARGUMENTS </focus_hint>

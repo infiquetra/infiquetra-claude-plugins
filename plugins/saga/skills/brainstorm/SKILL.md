@@ -49,6 +49,14 @@ recommended or pre-selected option, record the interaction as `gate_id`
 on the next `saga.py save` call. Open-ended questions with no offered default have nothing to
 record.
 
+## Engine Offer
+
+Before offering an external-engine lane for brainstorming, run
+`python3 plugins/saga/scripts/engine_offer.py offer --stage brainstorm --repo-root . --attended`.
+If the helper reports `prompt_required`, this skill owns the `AskUserQuestion` or channel-inline
+prompt and then persists the selected preference with `engine_offer.py remember`. The offer is
+advisory only; it never dispatches, decides scope, or gates requirements.
+
 ## Topic
 
 Take the topic from command arguments, a `/ideate` survivor reference (e.g. `dig deeper on #N` or a

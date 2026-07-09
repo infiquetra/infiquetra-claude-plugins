@@ -69,6 +69,14 @@ in your reply text instead. Follow the canonical channel-inline convention in
 Use repo-relative paths in every generated document. Absolute paths break portability across machines
 and worktrees. (The one exception is the saga `--review-paths` value — see Phase 5.)
 
+## Engine Offer
+
+Before offering an external-engine second opinion for code review, run
+`python3 plugins/saga/scripts/engine_offer.py offer --stage code-review --repo-root . --attended`.
+If the helper reports `prompt_required`, `/code-review` owns the `AskUserQuestion` or channel-inline
+prompt and persists the selected preference with `engine_offer.py remember`. The offer is advisory
+only; `/code-review` still verifies every finding and owns the merge-readiness verdict.
+
 ---
 
 ## Phase 0 — Enter and scope

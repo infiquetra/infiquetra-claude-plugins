@@ -59,6 +59,8 @@ Thumbs.db
 
 # OutcomeOrchestrator managed sub-outcome worktrees (durable but never committed; R15)
 .saga-worktrees/
+# Local Saga engine-offer preferences (operator-specific, never committed)
+.saga/engine-prefs.json
 
 # Local tool state & generated artifacts — regenerated from source each run, never committed
 .neuralmind/

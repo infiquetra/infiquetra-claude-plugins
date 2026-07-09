@@ -53,6 +53,7 @@ def _receipt(
     attested_output: str | None = None,
     tokens: int = 42,
     emitter: str = "codex-bridge",
+    artifact: str = "evidence",
 ) -> dict[str, Any]:
     attested = output if attested_output is None else attested_output
     receipt: dict[str, Any] = BR.emit_receipt(
@@ -65,7 +66,7 @@ def _receipt(
         receipt_emitter=emitter,
         run_id="proof-run-1",
         external_tokens=tokens,
-        output_attestation=OA.emit_attestation(artifact="evidence", content=attested),
+        output_attestation=OA.emit_attestation(artifact=artifact, content=attested),
     )
     return receipt
 
@@ -92,6 +93,13 @@ def test_valid_attestation_can_run_as_requested() -> None:
 
 def test_hash_mismatch_becomes_proof_integrity() -> None:
     manifest = _manifest(_receipt(attested_output="different"))
+
+    assert manifest.disposition is PM.Disposition.PROOF_INTEGRITY
+    assert "output-attestation-mismatch" in manifest.disposition_note
+
+
+def test_non_evidence_artifact_hash_mismatch_becomes_proof_integrity() -> None:
+    manifest = _manifest(_receipt(artifact="summary", attested_output="different"))
 
     assert manifest.disposition is PM.Disposition.PROOF_INTEGRITY
     assert "output-attestation-mismatch" in manifest.disposition_note

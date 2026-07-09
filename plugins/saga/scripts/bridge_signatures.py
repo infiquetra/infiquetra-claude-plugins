@@ -85,11 +85,10 @@ def validate_receipt_signature(
                 f"got {type(attestation).__name__}"
             )
         else:
-            expected = evidence_text if attestation.get("artifact") == "evidence" else None
             errors.extend(
                 _output_attestation.validate_attestation(
                     attestation,
-                    expected_content=expected,
+                    expected_content=evidence_text,
                     require_non_empty=bool(policy.get("require_non_empty_output")),
                 )
             )

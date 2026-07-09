@@ -89,6 +89,20 @@ def test_hash_mismatch_fails_when_attestation_binds_evidence() -> None:
     assert any("output-attestation-mismatch" in error for error in errors)
 
 
+def test_non_evidence_artifact_still_hash_binds_manifested_evidence() -> None:
+    errors = BS.validate_receipt_signature(
+        _receipt(
+            output_attestation=OA.emit_attestation(
+                artifact="summary",
+                content="external finding",
+            )
+        ),
+        evidence_text="different output",
+    )
+
+    assert any("output-attestation-mismatch" in error for error in errors)
+
+
 def test_liveness_join_names_both_missing_halves() -> None:
     errors = BS.liveness_errors({"run-launched"}, {"run-consumed"})
 

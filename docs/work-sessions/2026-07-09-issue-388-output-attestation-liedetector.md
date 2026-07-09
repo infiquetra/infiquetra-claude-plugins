@@ -52,7 +52,40 @@ liveness join keys, proof-integrity disposition, and run-ledger de-duplication.
 - `uv run pytest --ignore tests/test_redis_channel_channel.py --ignore tests/test_redis_channel_notifier.py` —
   2718 passed, 1 skipped.
 
+## Code Review Round 1
+
+Artifact: `docs/code-reviews/2026-07-09-issue-388-output-attestation-liedetector-code-review.md`.
+
+Findings:
+
+- P1: `bridge_signatures.validate_receipt_signature()` only hash-checked attestations whose
+  `artifact` was `evidence`, leaving Agy `summary` and Codex `last-message.txt` receipts able to satisfy
+  proof policy without binding the manifest evidence text.
+- P1: the liveness helper existed as a pure set comparison, but production dispatch code had no
+  ledger-to-manifest join that could detect launched-unconsumed or consumed-unlaunched bridge runs.
+
+Fixes:
+
+- Validate every receipt `output_attestation` against the manifested evidence text, regardless of the
+  attestation artifact label.
+- Added `bridge_liveness_errors()` in Saga dispatch to compare run-ledger `engine` facts carrying
+  `bridge_run_key` against persisted provenance manifests carrying `bridge_run_key`.
+- Added regression tests for non-`evidence` artifact hash mismatch and real ledger/manifest liveness
+  joins.
+
+Additional checks:
+
+- `uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports` — passed.
+- `uv run pytest tests/test_chaperone_liveness.py -v` — 5 passed.
+- `uv run ruff check .` — passed.
+- `uv run ruff format --check .` — passed.
+- `git diff --check` — passed.
+- `uv run pytest tests/test_output_attestation.py tests/test_bridge_signatures.py tests/test_engine_dispatch_attestation.py tests/test_engine_dispatch_ledger.py tests/test_chaperone_liveness.py tests/test_bridge_lie_detector.py tests/test_saga_engine_dispatch.py tests/test_engine_bridge_http.py tests/test_agy_delegate_contract.py tests/test_codex_delegate_contract.py -v` — 160 passed.
+- `uv run pytest tests/test_bridge_receipt_drift.py tests/test_fleet_commons_resolution.py tests/test_provenance_manifest.py tests/test_manifest_reader.py tests/test_run_ledger.py tests/test_manifest_consumer_matrix.py -v` — 85 passed.
+- `uv run python scripts/sync_marketplace.py --check` — passed.
+- `COVERAGE_FILE=.coverage.release-388 uv run pytest tests/test_saga_plugin.py tests/test_agy_plugin.py tests/test_codex_plugin.py -v` — 45 passed.
+
 ## Next Step
 
-Commit the scoped implementation, run the Saga code-review gate against the committed diff, address
-any findings, then push/open PR for issue #388.
+Commit the round-1 fixes, run Saga code-review round 2 against the fixed commit, then push/open PR
+issue #388.

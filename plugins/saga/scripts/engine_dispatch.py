@@ -498,6 +498,31 @@ def _external_tokens(evidence: AdvisoryEvidence) -> float | None:
     return float(value)
 
 
+def bridge_liveness_errors(
+    ledger: run_ledger.RunLedger,
+    store: manifest_store.Store,
+) -> list[str]:
+    """Compare launched bridge runs in the ledger to consumed runs in manifests (#388)."""
+    launched: set[str] = set()
+    for fact in run_ledger.read_facts(ledger):
+        if fact.get("kind") != "engine":
+            continue
+        key = fact.get("bridge_run_key")
+        if isinstance(key, str) and key.strip():
+            launched.add(key)
+
+    consumed: set[str] = set()
+    for execution_id in manifest_store.list_manifests(store):
+        manifest = manifest_store.read_manifest(store, execution_id)
+        if not isinstance(manifest, dict):
+            continue
+        key = manifest.get("bridge_run_key")
+        if isinstance(key, str) and key.strip():
+            consumed.add(key)
+
+    return bridge_signatures.liveness_errors(launched, consumed)
+
+
 def _observer_corroborates(
     engine_id: str,
     runner_receipt: dict[str, Any] | None,

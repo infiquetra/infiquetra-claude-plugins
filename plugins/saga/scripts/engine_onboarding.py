@@ -266,6 +266,11 @@ def _validate_capabilities(value: Any) -> None:
     for capability, raw_claim in value.items():
         if capability not in CAPABILITIES:
             raise OnboardingError(f"capability_profile has unknown capability {capability!r}")
+        if capability == "embedding":
+            raise OnboardingError(
+                "capability_profile cannot advertise embedding; the v1 scaffolder targets "
+                "OpenAI-compatible chat/completions"
+            )
         if not isinstance(raw_claim, dict):
             raise OnboardingError(f"capability_profile.{capability} must be an object")
         rating = raw_claim.get("rating")

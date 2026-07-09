@@ -154,6 +154,16 @@ def test_cli_transport_is_rejected_without_a_real_wrapper(tmp_path: Path) -> Non
         ONBOARDING.onboard(spec, registry)
 
 
+def test_embedding_capability_is_rejected_by_chat_completions_scaffolder(tmp_path: Path) -> None:
+    data = _spec()
+    data["capability_profile"] = {
+        "embedding": {"rating": "STRONG", "note": "not a chat capability"}
+    }
+
+    with pytest.raises(ONBOARDING.OnboardingError, match="chat/completions"):
+        ONBOARDING.onboard(_write_spec(tmp_path, data), _copy_registry(tmp_path))
+
+
 def test_second_apply_rejects_duplicate_and_preserves_first_result(tmp_path: Path) -> None:
     spec = _write_spec(tmp_path)
     registry = _copy_registry(tmp_path)

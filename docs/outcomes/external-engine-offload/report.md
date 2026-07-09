@@ -1,13 +1,13 @@
 # Outcome: objective: Stand up the external-engine offload lane
 
-**Outcome ID:** `external-engine-offload` · **Revision:** 3 · **Progress:** 8/20 (40%)
+**Outcome ID:** `external-engine-offload` · **Revision:** 3 · **Progress:** 9/20 (45%)
 
 ## Topology
 
 ```mermaid
 flowchart TD
     sub-381["sub-381: done"]
-    sub-382["sub-382: dispatched"]
+    sub-382["sub-382: done"]
     sub-383["sub-383: done"]
     sub-384["sub-384: done"]
     sub-451["sub-451: dispatched"]
@@ -39,7 +39,7 @@ flowchart TD
 | Subplot | State | Evidence | Cost |
 | --- | --- | --- | --- |
 | `sub-381` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/538, issue infiquetra/infiquetra-claude-plugins#381 | no data yet |
-| `sub-382` | dispatched | issue infiquetra/infiquetra-claude-plugins#382 | no data yet |
+| `sub-382` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/539, issue infiquetra/infiquetra-claude-plugins#382 | no data yet |
 | `sub-383` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/516, issue infiquetra/infiquetra-claude-plugins#383 | no data yet |
 | `sub-384` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/521, issue infiquetra/infiquetra-claude-plugins#384 | no data yet |
 | `sub-451` | dispatched | issue infiquetra/infiquetra-claude-plugins#451 | no data yet |

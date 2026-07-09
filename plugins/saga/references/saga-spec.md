@@ -587,6 +587,7 @@ here may be absent from the `provenance_manifest.py` dataclasses (drift, both di
 | `output_completeness.produced_count` | `manifest_store.py` (`record-completeness`) | `/work` SKILL.md post-run step | live |
 | `output_completeness.missing_keys` | `manifest_store.py` (`record-completeness`) | `/work` SKILL.md post-run step (missing-output trip, R10) | live |
 | `economics` | `engine_dispatch.py` (`build_dispatch_manifest`, net-savings copy from dispatch provenance) | `manifest_reader.py`, `/work` and `/code-review` evidence summaries (offload net-savings audit) | live |
+| `bridge_run_key` | `engine_dispatch.py` (`build_dispatch_manifest`, stable key from `bridge_receipt.run_id` or receipt hash fallback) | `engine_dispatch.py` / `run_ledger.py` (bridge fact de-duplication and liveness join audit) | live |
 | `claim_provenance` / `claims` | `engine_dispatch.py` (claimed-layer at dispatch; adjudicated layer written by Claude via a `manifest_store` update helper, D5) | `manifest_reader.py` (parroting count, verified ratio); `code-review/SKILL.md` B.0 (skip re-verify) | live |
 | `claims[].text` | `engine_dispatch.py` | `manifest_reader.py` | live |
 | `claims[].claimed` | `engine_dispatch.py` | `manifest_reader.py`, gate adjudication ranking (KTD4) | live |
@@ -622,3 +623,15 @@ scheduled, not the field itself.
 - Provenance manifests: `../scripts/provenance_manifest.py`, `../scripts/manifest_store.py`,
   `../scripts/manifest_reader.py`, `#285`,
   `../../../docs/plans/2026-07-01-evidence-provenance-manifests-plan.md`
+
+### 13.6 Proof-integrity bridge fields (#388)
+
+`Disposition.PROOF_INTEGRITY` is the manifest disposition for a schema-valid bridge receipt whose
+stronger proof contract fails: missing output attestation, empty required output, hash mismatch,
+zero external tokens, or producer/consumer liveness contradiction. It is distinct from `UNPROVEN`
+(no schema-valid base receipt) and from `DELEGATION_INTEGRITY` (engine self-report contradicts the
+independent observer signal).
+
+`Manifest.bridge_run_key` is optional and additive in `saga.manifest.v1`. When present it carries the
+stable bridge run key from `bridge_receipt.run_id` or a canonical receipt hash fallback. Consumers use
+it to join producer launch evidence to manifest consumption and to de-duplicate run-ledger token facts.

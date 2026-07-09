@@ -1,0 +1,20 @@
+{
+  "schema": "bridge_signatures.v1",
+  "emitters": {
+    "agy-delegate": {
+      "required_fields": ["run_id", "external_tokens", "output_attestation"],
+      "allow_zero_external_tokens": false,
+      "require_non_empty_output": true
+    },
+    "codex-bridge": {
+      "required_fields": ["run_id", "external_tokens", "output_attestation"],
+      "allow_zero_external_tokens": false,
+      "require_non_empty_output": true
+    },
+    "http-bridge": {
+      "required_fields": ["run_id", "external_tokens", "output_attestation"],
+      "allow_zero_external_tokens": false,
+      "require_non_empty_output": true
+    }
+  }
+}

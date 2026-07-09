@@ -52,6 +52,17 @@ def _base_reviewer_payload(**overrides):
     return payload
 
 
+def _receipt_kwargs(content="codex message"):
+    return {
+        "run_id": "test-run",
+        "external_tokens": 11,
+        "output_attestation": codex_delegate._output_attestation.emit_attestation(
+            artifact="last-message.txt",
+            content=content,
+        ),
+    }
+
+
 # --- Valid round-trips -----------------------------------------------------------------------
 
 
@@ -176,7 +187,10 @@ def test_supervised_receipt_is_none_when_codex_did_not_launch() -> None:
         stderr_bytes=0,
         error="codex binary not found",
     )
-    assert codex_delegate._supervised_receipt(run_result, envelope=envelope) is None
+    assert (
+        codex_delegate._supervised_receipt(run_result, envelope=envelope, **_receipt_kwargs())
+        is None
+    )
 
 
 def test_supervised_receipt_is_emitted_when_codex_launched() -> None:
@@ -195,7 +209,11 @@ def test_supervised_receipt_is_emitted_when_codex_launched() -> None:
         stdout_bytes=128,
         stderr_bytes=0,
     )
-    receipt = codex_delegate._supervised_receipt(run_result, envelope=envelope)
+    receipt = codex_delegate._supervised_receipt(
+        run_result,
+        envelope=envelope,
+        **_receipt_kwargs(),
+    )
     assert receipt is not None
     assert receipt["schema"] == "bridge_receipt.v1"
     assert receipt["engine_id"] == "codex"

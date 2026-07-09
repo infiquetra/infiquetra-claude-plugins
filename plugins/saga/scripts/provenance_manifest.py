@@ -69,6 +69,11 @@ class Disposition(StrEnum):
     # (single missing proof, no contradiction) and from `FELL_BACK_TO_CLAUDE` (an admitted
     # failure, not a disputed success).
     DELEGATION_INTEGRITY = "delegation-integrity"
+    # A receipt exists and passes the base `bridge_receipt.v1` schema, but the stronger #388
+    # proof contract fails: missing output attestation, hash mismatch, zero external tokens, or
+    # producer/consumer liveness contradiction. This is distinct from `UNPROVEN` because the
+    # bridge did emit a receipt; the receipt's proof claims are not trustworthy.
+    PROOF_INTEGRITY = "proof-integrity"
 
 
 class ClaimedStatus(StrEnum):
@@ -397,10 +402,11 @@ class Manifest:
     output_completeness: OutputCompleteness | None = None
     claim_provenance: ClaimProvenance | None = None
     economics: EconomicsRecord | None = None
+    bridge_run_key: str = ""
     schema: str = field(default=SCHEMA_VERSION)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "schema": self.schema,
             "execution_id": self.execution_id,
             "saga_ref": self.saga_ref,
@@ -416,6 +422,9 @@ class Manifest:
             ),
             "economics": self.economics.to_dict() if self.economics else None,
         }
+        if self.bridge_run_key:
+            data["bridge_run_key"] = self.bridge_run_key
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Manifest:
@@ -432,6 +441,7 @@ class Manifest:
                 "output_completeness",
                 "claim_provenance",
                 "economics",
+                "bridge_run_key",
             },
             "manifest",
         )
@@ -464,6 +474,7 @@ class Manifest:
             output_completeness=OutputCompleteness.from_dict(oc_raw) if oc_raw else None,
             claim_provenance=ClaimProvenance.from_dict(cp_raw) if cp_raw else None,
             economics=EconomicsRecord.from_dict(economics_raw) if economics_raw else None,
+            bridge_run_key=str(data.get("bridge_run_key", "") or ""),
         )
 
 

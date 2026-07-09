@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-09
+
+### Added - output-attested bridge receipts (#388)
+
+- `plugins/agy/scripts/agy_delegate.py`: bridge receipts now include `receipt_emitter`,
+  `run_id`, `external_tokens`, and `output_attestation.v1` over the emitted summary so Saga can
+  reject zero-token or unattested delegated output as `proof-integrity`.
+
 ## [0.2.0] - 2026-07-07
 
 ### Changed — BREAKING: `provenance_required` now coerces unproven passing runs to fail loud (#390 U1)

@@ -13,6 +13,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import bridge_signatures  # noqa: E402
 import chaperone_economics as ce  # noqa: E402
 import fleet_commons_shim  # noqa: E402
 import manifest_store  # noqa: E402
@@ -291,6 +292,8 @@ def dispatch(
     # can never ride it because the bridge never puts one in (KTD8; see engine_bridge_http).
     receipt = result.get("receipt")
     runner_receipt = receipt if isinstance(receipt, dict) else None
+    if runner_receipt is not None:
+        provenance["bridge_run_key"] = bridge_signatures.bridge_run_key(runner_receipt)
 
     if tripwire_note:
         provenance["tripwire"] = tripwire_note
@@ -469,6 +472,32 @@ def _receipt_problems(runner_receipt: dict[str, Any] | None) -> list[str]:
     return list(_bridge_receipt.validate_receipt(runner_receipt))
 
 
+def _proof_integrity_problems(evidence: AdvisoryEvidence) -> list[str]:
+    """Stronger #388 proof checks, after the base receipt schema has passed."""
+    if _receipt_problems(evidence.runner_receipt):
+        return []
+    assert evidence.runner_receipt is not None  # narrowed by _receipt_problems above
+    return bridge_signatures.validate_receipt_signature(
+        evidence.runner_receipt,
+        evidence_text=evidence.evidence,
+    )
+
+
+def _bridge_run_key(evidence: AdvisoryEvidence) -> str:
+    if evidence.runner_receipt is None:
+        return ""
+    return bridge_signatures.bridge_run_key(evidence.runner_receipt)
+
+
+def _external_tokens(evidence: AdvisoryEvidence) -> float | None:
+    if evidence.runner_receipt is None:
+        return None
+    value = evidence.runner_receipt.get("external_tokens")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
 def _observer_corroborates(
     engine_id: str,
     runner_receipt: dict[str, Any] | None,
@@ -539,6 +568,21 @@ def _record_advisory_facts(
     """
     if ledger is None or not subplot_id or not at:
         return
+    bridge_run_key = _bridge_run_key(evidence)
+    if bridge_run_key:
+        for fact in run_ledger.read_facts(ledger):
+            if fact.get("kind") == "engine" and fact.get("bridge_run_key") == bridge_run_key:
+                return
+    proof_errors = _proof_integrity_problems(evidence)
+    proof_status = "failed" if proof_errors else "ok" if bridge_run_key else "unproven"
+    external_tokens = _external_tokens(evidence)
+    proof_fields: dict[str, Any] = {"proof_integrity_status": proof_status}
+    if bridge_run_key:
+        proof_fields["bridge_run_key"] = bridge_run_key
+    if external_tokens is not None:
+        proof_fields["external_tokens"] = external_tokens
+    if proof_errors:
+        proof_fields["proof_integrity_errors"] = list(proof_errors)
     run_ledger.append_fact(
         ledger,
         run_ledger.build_fact(
@@ -552,6 +596,7 @@ def _record_advisory_facts(
                 "cost": _num(result.get("cost")),
                 "latency_seconds": _num(result.get("latency_seconds")),
                 "tokens": _num(result.get("tokens")),
+                **proof_fields,
                 **_economics_fact_fields(evidence),
             },
         ),
@@ -662,8 +707,13 @@ def build_dispatch_manifest(
             disposition = pm.Disposition.UNPROVEN
             note = "no schema-valid bridge_receipt.v1: " + "; ".join(receipt_problems)
         else:
-            disposition = pm.Disposition.RAN_AS_REQUESTED
-            note = ""
+            proof_errors = _proof_integrity_problems(evidence)
+            if proof_errors:
+                disposition = pm.Disposition.PROOF_INTEGRITY
+                note = "; ".join(proof_errors)
+            else:
+                disposition = pm.Disposition.RAN_AS_REQUESTED
+                note = ""
     # A failed arming attempt (fail-open, #384 U5) is NAMED on the manifest record so a
     # tripwire-unprotected run is distinguishable from a protected one.
     tripwire = evidence.provenance.get("tripwire")
@@ -691,6 +741,7 @@ def build_dispatch_manifest(
         created_at=created_at,
         claim_provenance=claim_provenance,
         economics=economics,
+        bridge_run_key=_bridge_run_key(evidence),
     )
 
 
@@ -766,6 +817,7 @@ def adjudicate_manifest(
         output_completeness=manifest.output_completeness,
         claim_provenance=pm.ClaimProvenance(claims=tuple(updated_claims)),
         economics=manifest.economics,
+        bridge_run_key=manifest.bridge_run_key,
     )
     manifest_store.write_manifest(store, execution_id, adjudicated.to_dict())
     return adjudicated
@@ -818,6 +870,12 @@ def satisfy_gate(evidence: AdvisoryEvidence, manifest: pm.Manifest | None = None
     if manifest is not None and manifest.disposition is pm.Disposition.SUBSTITUTED_ENGINE:
         raise DispatchError(
             "substituted evidence can never satisfy a gate as-approved (#390 U2/KTD5): the "
+            f"manifest disposition is {manifest.disposition.value!r} -- "
+            f"{manifest.disposition_note}"
+        )
+    if manifest is not None and manifest.disposition is pm.Disposition.PROOF_INTEGRITY:
+        raise DispatchError(
+            "proof-integrity failure can never satisfy a gate (#388): the "
             f"manifest disposition is {manifest.disposition.value!r} -- "
             f"{manifest.disposition_note}"
         )

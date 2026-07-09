@@ -1,7 +1,7 @@
 {
   "name": "fleet-core",
-  "version": "0.8.2",
-  "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives (tier palette first) plus the vendored resolution shim's canonical copy. Scripts-only — no skills, commands, or agents.",
+  "version": "0.8.3",
+  "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives, bridge receipts, output attestations, and the vendored resolution shim. Scripts-only \u2014 no skills, commands, or agents.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

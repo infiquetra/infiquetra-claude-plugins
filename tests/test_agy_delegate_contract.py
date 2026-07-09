@@ -55,6 +55,17 @@ def _valid_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def _receipt_kwargs(agy_delegate: ModuleType, content: str = "agy summary") -> dict[str, object]:
+    return {
+        "run_id": "test-run",
+        "external_tokens": 7,
+        "output_attestation": agy_delegate._output_attestation.emit_attestation(
+            artifact="summary",
+            content=content,
+        ),
+    }
+
+
 def test_valid_envelope_normalizes_defaults(agy_delegate: ModuleType) -> None:
     envelope = agy_delegate.Envelope.from_mapping(
         {
@@ -259,7 +270,11 @@ def test_supervised_receipt_maps_pid_argv_exit_code_when_launched(
         stderr_bytes=8,
     )
 
-    receipt = agy_delegate._supervised_receipt(run_result, envelope=envelope)
+    receipt = agy_delegate._supervised_receipt(
+        run_result,
+        envelope=envelope,
+        **_receipt_kwargs(agy_delegate),
+    )
 
     assert receipt is not None
     assert agy_delegate._bridge_receipt.validate_receipt(receipt) == []
@@ -326,7 +341,14 @@ def test_supervised_receipt_none_on_launch_failure_paths(
         **run_result_kwargs,
     )
 
-    assert agy_delegate._supervised_receipt(run_result, envelope=envelope) is None
+    assert (
+        agy_delegate._supervised_receipt(
+            run_result,
+            envelope=envelope,
+            **_receipt_kwargs(agy_delegate),
+        )
+        is None
+    )
 
     payload = agy_delegate._result_payload(
         envelope=envelope,
@@ -406,7 +428,14 @@ def test_run_agy_supervised_missing_agy_emits_no_receipt(
     )
 
     assert run_result.agy_launched is False
-    assert agy_delegate._supervised_receipt(run_result, envelope=envelope) is None
+    assert (
+        agy_delegate._supervised_receipt(
+            run_result,
+            envelope=envelope,
+            **_receipt_kwargs(agy_delegate),
+        )
+        is None
+    )
 
 
 def test_run_agy_supervised_oserror_on_launch_emits_no_receipt(
@@ -429,7 +458,14 @@ def test_run_agy_supervised_oserror_on_launch_emits_no_receipt(
 
     assert run_result.agy_launched is False
     assert run_result.error is not None
-    assert agy_delegate._supervised_receipt(run_result, envelope=envelope) is None
+    assert (
+        agy_delegate._supervised_receipt(
+            run_result,
+            envelope=envelope,
+            **_receipt_kwargs(agy_delegate),
+        )
+        is None
+    )
 
 
 def test_cli_rejects_invalid_envelope_without_bundle(tmp_path: Path) -> None:

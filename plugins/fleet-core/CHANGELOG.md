@@ -5,6 +5,15 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-07-09
+
+### Added
+- Add `scripts/fleet_commons/output_attestation.py`, the shared `output_attestation.v1` helper
+  for byte count, SHA-256, and empty-output proof over bridge-produced artifacts.
+- Extend `bridge_receipt.emit_receipt(...)` with optional `receipt_emitter`, `run_id`,
+  `external_tokens`, and `output_attestation` fields while keeping `bridge_receipt.v1` base
+  validation backward-compatible for historical receipts.
+
 ## [0.8.2] - 2026-07-09
 
 ### Added

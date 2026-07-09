@@ -45,6 +45,8 @@ engines:
     context_window: 400000            # R25 -- Codex CLI ChatGPT-account limit
     cost_speed_rank: 2
     cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
     latency_class: standard
     model_identity: gpt-5.5
     last_validated: 2026-07-06
@@ -82,6 +84,8 @@ engines:
     context_window: 400000
     cost_speed_rank: 3                 # xhigh is the cost multiplier -- pricier than high
     cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
     latency_class: slow
     model_identity: gpt-5.5
     last_validated: 2026-07-06
@@ -116,6 +120,8 @@ engines:
     context_window: 1000000
     cost_speed_rank: 1                 # cheapest + fastest (STRONG)
     cost_per_token: {input_usd: 0.0000005, output_usd: 0.000002}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
     latency_class: fast
     model_identity: gemini-3.5-flash
     last_validated: 2026-06-27
@@ -155,6 +161,8 @@ engines:
     context_window: 1000000
     cost_speed_rank: 4                 # largest / priciest / slowest of the seed set
     cost_per_token: {input_usd: 0.0000035, output_usd: 0.0000105}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
     latency_class: standard
     model_identity: gemini-3.1-pro
     last_validated: 2026-06-27
@@ -197,6 +205,7 @@ engines:
     context_window: 128000
     cost_speed_rank: 5                 # conservative seed rank -- ties always lose to rank 1-4
     cost_per_token: {input_usd: 0.0, output_usd: 0.0}
+    cost_class: free
     latency_class: standard
     model_identity: gpt-oss-120b
     last_validated: 2026-07-06
@@ -234,6 +243,7 @@ engines:
     context_window: 2048
     cost_speed_rank: 1
     cost_per_token: {input_usd: 0.0, output_usd: 0.0}
+    cost_class: free
     latency_class: batch
     model_identity: nomic-embed-text
     last_validated: 2026-07-09
@@ -267,6 +277,8 @@ engines:
     context_window: 64000
     cost_speed_rank: 6                 # conservative seed rank -- ties always lose to rank 1-4
     cost_per_token: {input_usd: 0.00000014, output_usd: 0.00000028}
+    cost_class: metered
+    budget_ceiling_usd: 5.0
     latency_class: standard
     model_identity: deepseek-chat
     last_validated: 2026-07-06

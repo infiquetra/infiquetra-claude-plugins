@@ -52,6 +52,8 @@ def _registry_dict(*, last_validated: str = "2026-07-06") -> dict[str, Any]:
                 "context_window": 400000,
                 "cost_speed_rank": 2,
                 "cost_per_token": {"input_usd": 0.000005, "output_usd": 0.000015},
+                "cost_class": "metered",
+                "budget_ceiling_usd": 25.0,
                 "latency_class": "standard",
                 "model_identity": "gpt-5.5",
                 "last_validated": last_validated,

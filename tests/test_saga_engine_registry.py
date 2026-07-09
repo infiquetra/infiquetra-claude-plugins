@@ -47,6 +47,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "context_window": 400000,
                 "cost_speed_rank": 2,
                 "cost_per_token": {"input_usd": 0.000005, "output_usd": 0.000015},
+                "cost_class": "metered",
+                "budget_ceiling_usd": 25.0,
                 "latency_class": "standard",
                 "model_identity": "gpt-5.5",
                 "last_validated": "2026-06-27",
@@ -89,6 +91,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "context_window": 1000000,
                 "cost_speed_rank": 1,
                 "cost_per_token": {"input_usd": 0.0000035, "output_usd": 0.0000105},
+                "cost_class": "metered",
+                "budget_ceiling_usd": 25.0,
                 "latency_class": "standard",
                 "model_identity": "gemini-3.1-pro",
                 "last_validated": "2026-06-20",
@@ -299,6 +303,11 @@ def test_shipped_seed_registry_loads_and_resolves() -> None:
         assert entry.sources
         assert isinstance(entry.cost_speed_rank, int)
         assert entry.receipt_emitter
+        assert entry.cost_class in M.COST_CLASSES
+        if entry.cost_class == "metered":
+            assert entry.budget_ceiling_usd is not None
+        else:
+            assert entry.budget_ceiling_usd is None
     # the cross-family review panel (R16) is present and advisory (R13/R15).
     panel = registry.by_role("cross-family-review-panel")
     assert panel.verdict == "advisory"
@@ -327,6 +336,7 @@ def _http_engine_row(**overrides: Any) -> dict[str, Any]:
         "context_window": 128000,
         "cost_speed_rank": 5,
         "cost_per_token": {"input_usd": 0.0, "output_usd": 0.0},
+        "cost_class": "free",
         "latency_class": "standard",
         "model_identity": "gpt-oss-120b",
         "last_validated": "2026-07-06",
@@ -587,3 +597,73 @@ def test_shipped_registry_rows_expose_auth_and_cli_rows_have_cli() -> None:
             assert entry.invocation["cli"] in {"codex", "agy"}
             assert entry.auth["mode"] == "files"
             assert entry.auth["paths"]
+
+
+def test_cost_policy_metadata_is_required_and_exposed(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+
+    registry = M.Registry.load(_write_registry(tmp_path, data))
+    entry = registry.by_engine("codex")
+
+    assert entry.cost_class == "metered"
+    assert entry.budget_ceiling_usd == 25.0
+
+    missing_class = deepcopy(data)
+    del missing_class["engines"][0]["cost_class"]
+    with pytest.raises(M.RegistryError, match="cost_class"):
+        M.Registry.load(_write_registry(tmp_path, missing_class))
+
+    missing_ceiling = deepcopy(data)
+    del missing_ceiling["engines"][0]["budget_ceiling_usd"]
+    with pytest.raises(M.RegistryError, match="budget_ceiling_usd"):
+        M.Registry.load(_write_registry(tmp_path, missing_ceiling))
+
+    negative_ceiling = deepcopy(data)
+    negative_ceiling["engines"][0]["budget_ceiling_usd"] = -0.01
+    with pytest.raises(M.RegistryError, match="non-negative"):
+        M.Registry.load(_write_registry(tmp_path, negative_ceiling))
+
+
+def test_free_cost_class_requires_zero_cost_and_no_ceiling(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    row = data["engines"][0]
+    row["cost_class"] = "free"
+    row["cost_per_token"] = {"input_usd": 0.0, "output_usd": 0.0}
+    del row["budget_ceiling_usd"]
+
+    registry = M.Registry.load(_write_registry(tmp_path, data))
+
+    assert registry.by_engine("codex").cost_class == "free"
+    assert registry.by_engine("codex").budget_ceiling_usd is None
+
+    non_zero = deepcopy(data)
+    non_zero["engines"][0]["cost_per_token"]["output_usd"] = 0.0001
+    with pytest.raises(M.RegistryError, match="free cost_class"):
+        M.Registry.load(_write_registry(tmp_path, non_zero))
+
+    with_ceiling = deepcopy(data)
+    with_ceiling["engines"][0]["budget_ceiling_usd"] = 25.0
+    with pytest.raises(M.RegistryError, match="free cost_class"):
+        M.Registry.load(_write_registry(tmp_path, with_ceiling))
+
+
+def test_provider_variants_share_cost_class_and_budget_ceiling(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    variant = deepcopy(data["engines"][0])
+    variant["variant"] = "gpt-5.5-medium"
+    variant["default_for_engine"] = False
+    data["engines"].append(variant)
+
+    M.Registry.load(_write_registry(tmp_path, data))
+
+    inconsistent_ceiling = deepcopy(data)
+    inconsistent_ceiling["engines"][-1]["budget_ceiling_usd"] = 30.0
+    with pytest.raises(M.RegistryError, match="inconsistent budget_ceiling_usd"):
+        M.Registry.load(_write_registry(tmp_path, inconsistent_ceiling))
+
+    mixed_class = deepcopy(data)
+    mixed_class["engines"][-1]["cost_class"] = "free"
+    mixed_class["engines"][-1]["cost_per_token"] = {"input_usd": 0.0, "output_usd": 0.0}
+    del mixed_class["engines"][-1]["budget_ceiling_usd"]
+    with pytest.raises(M.RegistryError, match="mixed cost_class"):
+        M.Registry.load(_write_registry(tmp_path, mixed_class))

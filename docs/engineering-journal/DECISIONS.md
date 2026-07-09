@@ -1,5 +1,31 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-09
+
+### Objective-backed campaigns use the Objective Execution Loop playbook {#objective-execution-loop}
+
+**Context.** Repeated objective work in `team-freya` and `infiquetra-claude-plugins` settled on the
+same operating pattern: enumerate the full live objective set, route each leaf through plan,
+doc-review, work, code-review, PR/merge, CI, issue closeout, and board Done, then harvest the outcome
+before selecting the next leaf.
+
+- **KTD1 — the durable reference is a repo narrative, not session memory.** The canonical playbook is
+  `docs/engineering-journal/narratives/2026-07-09-objective-execution-loop.md`; memory should point
+  future sessions there instead of forcing another old-session archaeology pass.
+- **KTD2 — `/loop` drives across phases; the destination commands own their phases.** `/loop` routes
+  and sequences the campaign. `/plan`, `/doc-review`, `/work`, and `/code-review` remain the owners
+  of their phase work and gates.
+- **KTD3 — objective truth starts from live enumeration.** For board sweeps, query the Objective field
+  first. For outcome-backed work, read `outcome.py status` and `attend` the next leaf. Do not choose
+  work from whichever board card or local file is easiest to see.
+- **KTD4 — closeout is not local-green.** The loop is not complete until PR checks, GitHub issue state,
+  and board status all read back as done for the leaf, and the parent outcome/objective is harvested.
+
+**Revisit when.** `/outcome --loop` or a first-class outcome drive command ships and can encode this
+playbook directly.
+
+---
+
 ## 2026-07-06
 
 ### Runtime ladder climbing: one rung, effort-first, throw-with-proposal is the attended ask gate {#runtime-ladder-climbing-364}

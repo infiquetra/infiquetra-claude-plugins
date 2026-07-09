@@ -102,3 +102,20 @@ consumers on purpose so the format is fixed once.
 Before appending an `engine` fact, dispatch checks for an existing `engine` fact with the same
 `bridge_run_key` and skips the duplicate. The ledger remains append-only; exactly-once accounting is
 enforced by the writer before append rather than by mutating existing facts.
+
+## Probation promotion assessment (#455)
+
+`engine_promotion.py <engine>/<variant>` is a read-only consumer of the ledger. It verifies the hash
+chain, filters `engine` facts by the exact engine and variant, and inspects the five most recent exact
+matches. A probationary row is eligible only when all five have `status: ok`,
+`proof_integrity_status: ok`, and a distinct, non-empty `bridge_run_key`:
+
+```bash
+python3 plugins/saga/scripts/engine_promotion.py ollama-cloud/gpt-oss-120b --json
+```
+
+Insufficient or failed evidence returns a successful assessment with `eligible: false`. An unknown
+row, an already-advisory row, malformed input, a corrupt chain, or a ledger that changes during the
+read fails closed. The command never edits the registry or ledger. Eligibility is evidence for an
+operator-reviewed `trust_tier: advisory` registry change, not permission for telemetry to promote a
+provider automatically.

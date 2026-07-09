@@ -119,7 +119,7 @@ KTD7. Registry drives bridge proof expectations: `engine-registry.yaml` already 
 
 The proof path is a three-part contract:
 
-1. Bridge emits `bridge_receipt.v1` with `run_id`, `external_tokens`, and `output_attestation`.
+1. A bridge emits `bridge_receipt.v1` with `run_id`, `external_tokens`, and `output_attestation`.
 2. Dispatch validates the receipt through the base receipt validator plus the emitter-specific
    `bridge_signatures.py` policy before building manifest disposition.
 3. Manifest/ledger records carry the bridge run key so producer and consumer liveness can be checked
@@ -152,8 +152,8 @@ bridge run
 Add the emitter-keyed policy layer that says which receipts require output attestation, token proof,
 and transcript signatures.
 
-**Goal:** Create a single source of truth for proof requirements per `receipt_emitter` and a validator
-dispatch can call without per-engine branching.
+**Goal:** Create a single source of truth for proof requirements per `receipt_emitter` that dispatch
+can validate without per-engine branching.
 
 **Requirements:** R1, R3, R8, R11.
 

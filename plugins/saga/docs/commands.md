@@ -1,6 +1,6 @@
 # Saga Command Selection
 
-Saga has 21 command files and 20 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
+Saga has 22 command files and 21 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
 
 ![Command Matrix](assets/command-matrix.svg)
 
@@ -414,3 +414,22 @@ Outcome coordinator over a DAG of leaf sagas — the layer above a single work-t
 | Boundary | Owns frontier dispatch, harvest, and operator-attention routing; does not run leaf implementations, file issues, or deploy. |
 | Common mistakes | Expecting an `/outcome work` verb; treating status as stored rather than derived on read. |
 | Example | `/outcome advance ship-feature-x` |
+
+### /engines
+
+External-engine registry visibility and repo-local route overlay.
+
+| Field | Value |
+|-------|-------|
+| Purpose | Inspect registry rows, manage repo-local pins/deprecations, and dry-run route decisions without engine dispatch. |
+| Use when | Operator wants to see engine capability ratings, cost rank, latency, stale/current state, local pins/deprecations, or a route explanation before invoking a lifecycle surface. |
+| Do not use when | The task is to dispatch work to an engine, or registry seed ratings / committed policy need to change. |
+| Inputs | `list`, `pin`, `deprecate`, `clear`, or `route explain <capability>`. |
+| Outputs | Deterministic text/JSON listing or explanation; optional local overlay write. |
+| Saga state | Does not tick saga; `.saga/engine-overlay.json` is git-ignored repo-local operator state. |
+| Routes in | `/work`, `/code-review`, operator inspection. |
+| Routes out | `/work`, `/plan`, `/code-review`. |
+| Gates | Pin targets must exist, declare the capability, and not be locally deprecated; `route explain` is read-only. |
+| Boundary | Owns local visibility and overlay mutation only; does not dispatch engines, rewrite registry seed data, or file issues. |
+| Common mistakes | Treating `route explain` as an engine invocation; committing local overlay state as shared policy. |
+| Example | `/engines route explain code-generation` |

@@ -390,6 +390,32 @@ class EngineEntry:
 
 
 @dataclass(frozen=True)
+class CapabilityCandidate:
+    """One ranked candidate for a capability route explanation."""
+
+    entry: EngineEntry
+    capability: str
+    rating: str
+    rating_score: int
+    cost_speed_rank: int
+    registry_order: int
+    reason: str
+    pinned: bool = False
+
+
+@dataclass(frozen=True)
+class CapabilityExplanation:
+    """Deterministic route dry-run result for one capability."""
+
+    capability: str
+    selected: CapabilityCandidate
+    candidates: tuple[CapabilityCandidate, ...]
+    pinned_key: str | None
+    deprecated_keys: tuple[str, ...]
+    ranking: str = "rating desc, cost_speed_rank asc, registry_order asc"
+
+
+@dataclass(frozen=True)
 class Role:
     """A composing role whose members are engine/variant registry keys."""
 
@@ -500,23 +526,87 @@ class Registry:
                     )
 
     def by_capability(self, capability: str) -> EngineEntry:
+        return self.ranked_candidates(capability)[0].entry
+
+    def by_key(self, engine_key: str) -> EngineEntry:
+        for entry in self.engines:
+            if entry.key == engine_key:
+                return entry
+        raise RegistryError(f"unknown engine variant {engine_key!r}")
+
+    def ranked_candidates(
+        self,
+        capability: str,
+        *,
+        overlay: Any | None = None,
+    ) -> tuple[CapabilityCandidate, ...]:
+        self._validate_capability(capability)
+        pin_key = _overlay_pins(overlay).get(capability)
+        deprecated_keys = _overlay_deprecated(overlay)
+
+        supported = [entry for entry in self.engines if capability in entry.capability_profile]
+        if not supported:
+            raise RegistryError(f"no engine variant supports capability {capability!r}")
+
+        candidates = [entry for entry in supported if entry.key not in deprecated_keys]
+        if not candidates:
+            raise RegistryError(
+                f"no non-deprecated engine variant supports capability {capability!r}"
+            )
+
+        ranked = sorted(candidates, key=lambda entry: _capability_sort_key(entry, capability))
+        if pin_key is not None:
+            pinned = self._validate_pin(capability, pin_key, deprecated_keys)
+            ranked = [pinned, *[entry for entry in ranked if entry.key != pin_key]]
+
+        return tuple(
+            _candidate_from_entry(
+                entry,
+                capability,
+                pinned=pin_key == entry.key and index == 0,
+                selected=index == 0,
+            )
+            for index, entry in enumerate(ranked)
+        )
+
+    def explain_capability(
+        self,
+        capability: str,
+        *,
+        overlay: Any | None = None,
+    ) -> CapabilityExplanation:
+        candidates = self.ranked_candidates(capability, overlay=overlay)
+        return CapabilityExplanation(
+            capability=capability,
+            selected=candidates[0],
+            candidates=candidates,
+            pinned_key=_overlay_pins(overlay).get(capability),
+            deprecated_keys=tuple(sorted(_overlay_deprecated(overlay))),
+        )
+
+    def _validate_capability(self, capability: str) -> None:
         if capability not in CAPABILITIES:
             raise RegistryError(f"unknown capability key {capability!r}")
         if capability not in self.capabilities:
             raise RegistryError(f"capability {capability!r} is not declared in this registry")
 
-        candidates = [entry for entry in self.engines if capability in entry.capability_profile]
-        if not candidates:
-            raise RegistryError(f"no engine variant supports capability {capability!r}")
-
-        return min(
-            candidates,
-            key=lambda entry: (
-                -_RATING_SCORE[str(entry.capability_profile[capability]["rating"])],
-                entry.cost_speed_rank,
-                entry.registry_order,
-            ),
-        )
+    def _validate_pin(
+        self,
+        capability: str,
+        pin_key: str,
+        deprecated_keys: set[str],
+    ) -> EngineEntry:
+        pinned = self.by_key(pin_key)
+        if pin_key in deprecated_keys:
+            raise RegistryError(
+                f"overlay pin for capability {capability!r} points to deprecated row {pin_key!r}"
+            )
+        if capability not in pinned.capability_profile:
+            raise RegistryError(
+                f"overlay pin for capability {capability!r} points to {pin_key!r}, "
+                "which does not declare that capability"
+            )
+        return pinned
 
     def by_engine(self, engine_id: str) -> EngineEntry:
         entries = [entry for entry in self.engines if entry.engine_id == engine_id]
@@ -549,3 +639,49 @@ class Registry:
             revision,
             f"known revision date for {entry.model_identity}",
         )
+
+
+def _capability_sort_key(entry: EngineEntry, capability: str) -> tuple[int, int, int]:
+    rating = str(entry.capability_profile[capability]["rating"])
+    return (-_RATING_SCORE[rating], entry.cost_speed_rank, entry.registry_order)
+
+
+def _candidate_from_entry(
+    entry: EngineEntry,
+    capability: str,
+    *,
+    pinned: bool,
+    selected: bool,
+) -> CapabilityCandidate:
+    rating = str(entry.capability_profile[capability]["rating"])
+    if pinned:
+        reason = "selected by local overlay pin"
+    elif selected:
+        reason = "selected by rating desc, cost_speed_rank asc, registry_order asc"
+    else:
+        reason = "ranked fallback by rating desc, cost_speed_rank asc, registry_order asc"
+    return CapabilityCandidate(
+        entry=entry,
+        capability=capability,
+        rating=rating,
+        rating_score=_RATING_SCORE[rating],
+        cost_speed_rank=entry.cost_speed_rank,
+        registry_order=entry.registry_order,
+        reason=reason,
+        pinned=pinned,
+    )
+
+
+def _overlay_pins(overlay: Any | None) -> dict[str, str]:
+    if overlay is None:
+        return {}
+    pins = getattr(overlay, "pins", {})
+    if not isinstance(pins, dict):
+        return dict(pins)
+    return dict(pins)
+
+
+def _overlay_deprecated(overlay: Any | None) -> set[str]:
+    if overlay is None:
+        return set()
+    return set(getattr(overlay, "deprecated", set()))

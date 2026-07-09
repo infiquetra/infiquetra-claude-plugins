@@ -2,6 +2,26 @@
 
 ## 2026-07-09
 
+### Engine visibility overlay stays repo-local and explicit {#engine-visibility-overlay-453}
+
+**Context.** Issue #453 adds `/engines` and `route explain` surfaces so operators can inspect registry
+routing and apply repo-local pin/deprecate policy without editing shipped seed data.
+
+- **KTD1 - core ranking remains single-source.** Explanation helpers must reuse the same ordered
+  candidates as `Registry.by_capability()` rather than inventing a second ranking implementation.
+- **KTD2 - overlay state is explicit repo-local data.** Pins and deprecations live in
+  `.saga/engine-overlay.json`, are gitignored, and are passed explicitly into registry/resolver helpers.
+  Core registry lookups do not read ambient current-working-directory state.
+- **KTD3 - no-overlay behavior is compatibility ground.** Existing callers keep today's results unless
+  they supply an overlay or repo root.
+- **KTD4 - pins validate before winning.** A pin only outranks registry ranking when the row exists,
+  declares the requested capability, and is not deprecated.
+- **KTD5 - `/engines` and `route explain` are visibility tools.** They never invoke engines and never
+  satisfy gates.
+
+**Revisit when.** Overlay policy needs to become team/shared state rather than repo-local operator state,
+or engine routing moves into a dedicated service with a first-class policy store.
+
 ### Engine registry schema currency stays data-first {#engine-registry-schema-currency-452}
 
 **Context.** Issue #452 consolidates capability vocabulary, model-family profile inheritance, authored

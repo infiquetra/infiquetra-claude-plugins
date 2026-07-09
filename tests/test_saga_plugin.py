@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.75.10"  # engine registry schema currency (#452)
+    assert plugin_json["version"] == "0.75.11"  # engines route explain visibility (#453)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -72,6 +72,7 @@ def test_infiquetra_lifecycle_commands_are_packaged() -> None:
         "ceo-review",
         "doc-review",
         "code-review",
+        "engines",
         "optimize",
         "investigate",
         "spec",

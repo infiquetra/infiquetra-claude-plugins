@@ -48,7 +48,7 @@ def _spend(sub: str, *, tokens: int, cached: int, fresh: int, wall: float = 1.0)
 # --------------------------------------------------------------------------- U1: schema
 
 
-def test_schema_covers_all_four_kinds(tmp_path: Path) -> None:
+def test_schema_covers_all_five_kinds(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     RL.append_fact(ledger, _spend("s1", tokens=100, cached=60, fresh=40))
     RL.append_fact(ledger, RL.build_fact("cache", subplot_id="s1", at="t", cached=3, fresh=1))
@@ -70,8 +70,20 @@ def test_schema_covers_all_four_kinds(tmp_path: Path) -> None:
             "delegation", subplot_id="s1", at="t", evidence="ptr://run/abc", engine="agy"
         ),
     )
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "reconciliation", subplot_id="s1", at="t", reconciliation_id="recon-1"
+        ),
+    )
     facts = RL.read_facts(ledger)
-    assert [f["kind"] for f in facts] == ["spend", "cache", "engine", "delegation"]
+    assert [f["kind"] for f in facts] == [
+        "spend",
+        "cache",
+        "engine",
+        "delegation",
+        "reconciliation",
+    ]
     assert all(f["schema"] == "run_fact.v1" for f in facts)
     assert facts[2]["engine"] == "gemini" and facts[3]["evidence"] == "ptr://run/abc"
 

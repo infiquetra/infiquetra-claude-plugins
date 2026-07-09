@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import outcome_store  # noqa: E402  (after the sys.path shim, by design)
 
 RUN_FACT_SCHEMA = "run_fact.v1"
-FACT_KINDS = frozenset({"spend", "cache", "engine", "delegation"})
+FACT_KINDS = frozenset({"spend", "cache", "engine", "delegation", "reconciliation"})
 
 # Fields set by the ledger itself (chain links) — never part of a caller-supplied fact payload.
 _CHAIN_FIELDS = ("prev_hash", "this_hash")

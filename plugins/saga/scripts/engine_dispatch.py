@@ -18,6 +18,7 @@ import chaperone_economics as ce  # noqa: E402
 import fleet_commons_shim  # noqa: E402
 import manifest_store  # noqa: E402
 import provenance_manifest as pm  # noqa: E402
+import reconcile  # noqa: E402
 import run_ledger  # noqa: E402
 from engine_resolver import Resolution  # noqa: E402
 
@@ -935,10 +936,15 @@ def satisfy_gate(
     evidence: AdvisoryEvidence,
     manifest: pm.Manifest | None = None,
     *,
+    reconciliation: reconcile.ReconciliationResult | None = None,
     ledger: run_ledger.RunLedger | None = None,
     store: manifest_store.Store | None = None,
 ) -> None:
-    """Require Claude verification before advisory evidence can satisfy a gate.
+    """Require complete reconciliation and Claude verification before evidence satisfies a gate.
+
+    Issue #393 adds a first prerequisite: every source finding must appear in a typed
+    reconciliation result. This check deliberately runs before the existing authority checks; it
+    only closes an evidence-completeness gap and does not replace or relax any prior refusal.
 
     R11 extension (U3): when a typed manifest accompanies the evidence, a gated verdict
     additionally requires every gate-relevant claim to be Claude-adjudicated — a
@@ -971,6 +977,12 @@ def satisfy_gate(
     Claude verifies the evidence and the observer corroborates the run, it cannot satisfy a gate or
     move Team Execution consensus threshold math.
     """
+    if reconciliation is None:
+        raise DispatchError("a typed reconciliation result is required before satisfying a gate")
+    try:
+        reconciliation.require_ready()
+    except reconcile.ReconciliationError as exc:
+        raise DispatchError(f"reconciliation is not ready: {exc}") from exc
     if evidence.role_kind in NON_GATING_ROLE_KINDS:
         raise DispatchError(
             f"{evidence.role_kind} evidence is advisory-only and can never satisfy a gate"

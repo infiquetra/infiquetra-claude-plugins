@@ -37,6 +37,26 @@ D = _load("engine_dispatch", DISPATCH_SCRIPT)
 # enum classes and break `is` identity checks).
 MS = D.manifest_store
 PM = D.pm
+RC = D.reconcile
+
+
+def _ready_reconciliation(*, source_ids: tuple[str, ...] = ()) -> Any:
+    return RC.build_result(
+        reconciliation_id="test-reconciliation",
+        execution_id="test-execution",
+        intent="offload",
+        adjudicator_id="claude",
+        source_finding_ids=source_ids,
+        items=tuple(
+            RC.ReconciliationItem(
+                source_finding_id=finding_id,
+                status=RC.ReconciliationStatus.RECONCILED,
+                adjudicator_id="claude",
+                rationale="Claude accounted for the advisory finding.",
+            )
+            for finding_id in source_ids
+        ),
+    )
 
 
 def _resolution(
@@ -141,7 +161,7 @@ def test_satisfy_gate_requires_claude_verification() -> None:
     )
 
     with pytest.raises(D.DispatchError):
-        D.satisfy_gate(unverified)
+        D.satisfy_gate(unverified, reconciliation=_ready_reconciliation())
 
     # #384 U5/R6 (deliberate acceptance change): Claude verification alone is no longer
     # sufficient -- the gate also requires the observer_corroborated mark dispatch stamps.
@@ -153,7 +173,7 @@ def test_satisfy_gate_requires_claude_verification() -> None:
         verified_by_claude=True,
     )
     with pytest.raises(D.DispatchError, match="observer corroboration"):
-        D.satisfy_gate(verified_uncorroborated)
+        D.satisfy_gate(verified_uncorroborated, reconciliation=_ready_reconciliation())
 
     verified = D.AdvisoryEvidence(
         engine_id="codex",
@@ -168,7 +188,47 @@ def test_satisfy_gate_requires_claude_verification() -> None:
         verified_by_claude=True,
     )
 
-    assert D.satisfy_gate(verified) is None
+    assert D.satisfy_gate(verified, reconciliation=_ready_reconciliation()) is None
+
+
+def test_satisfy_gate_requires_ready_reconciliation_before_existing_checks() -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="Claude verified external finding",
+        provenance={"status": "ok", "observer_corroborated": True},
+        verified_by_claude=True,
+    )
+    with pytest.raises(D.DispatchError, match="typed reconciliation result is required"):
+        D.satisfy_gate(evidence)
+
+    incomplete = RC.build_result(
+        reconciliation_id="incomplete-reconciliation",
+        execution_id="test-execution",
+        intent="offload",
+        adjudicator_id="claude",
+        source_finding_ids=("net-new",),
+        items=(),
+    )
+    with pytest.raises(D.DispatchError, match="net-new"):
+        D.satisfy_gate(evidence, reconciliation=incomplete)
+
+    dropped = RC.build_result(
+        reconciliation_id="complete-reconciliation",
+        execution_id="test-execution",
+        intent="offload",
+        adjudicator_id="claude",
+        source_finding_ids=("net-new",),
+        items=(
+            RC.ReconciliationItem(
+                source_finding_id="net-new",
+                status=RC.ReconciliationStatus.DROPPED,
+                adjudicator_id="claude",
+                rationale="Claude found no source support for the advisory finding.",
+            ),
+        ),
+    )
+    assert D.satisfy_gate(evidence, reconciliation=dropped) is None
 
 
 def test_satisfy_gate_rejects_advisory_reviewer_evidence_even_when_verified() -> None:
@@ -187,7 +247,7 @@ def test_satisfy_gate_rejects_advisory_reviewer_evidence_even_when_verified() ->
     )
 
     with pytest.raises(D.DispatchError, match="advisory-only"):
-        D.satisfy_gate(evidence)
+        D.satisfy_gate(evidence, reconciliation=_ready_reconciliation())
 
 
 def _economics_resolution(**overrides: object) -> Any:
@@ -548,7 +608,7 @@ def test_satisfy_gate_refuses_claimed_only_manifest(tmp_path: Path) -> None:
 
     # Claimed-`verified` without adjudication cannot satisfy a gate (R11/AE1).
     with pytest.raises(D.DispatchError):
-        D.satisfy_gate(verified, manifest)
+        D.satisfy_gate(verified, manifest, reconciliation=_ready_reconciliation())
 
     # After the driving session adjudicates every claim, the gate opens.
     adjudicated = D.adjudicate_manifest(
@@ -565,11 +625,13 @@ def test_satisfy_gate_refuses_claimed_only_manifest(tmp_path: Path) -> None:
             )
         },
     )
-    assert D.satisfy_gate(verified, adjudicated) is None
+    assert (
+        D.satisfy_gate(verified, adjudicated, reconciliation=_ready_reconciliation()) is None
+    )
 
     # verified_by_claude is still required even with a fully adjudicated manifest.
     with pytest.raises(D.DispatchError):
-        D.satisfy_gate(evidence, adjudicated)
+        D.satisfy_gate(evidence, adjudicated, reconciliation=_ready_reconciliation())
 
 
 def test_adjudicated_refuted_counts_as_parroting(tmp_path: Path) -> None:
@@ -1240,7 +1302,7 @@ def test_satisfy_gate_refuses_substituted_manifest() -> None:
     )
     assert substituted.disposition is PM.Disposition.SUBSTITUTED_ENGINE
     with pytest.raises(D.DispatchError, match="substitut"):
-        D.satisfy_gate(evidence, substituted)
+        D.satisfy_gate(evidence, substituted, reconciliation=_ready_reconciliation())
 
 
 def test_fallback_reason_invariant_fills_empty_note_for_non_ran() -> None:
@@ -1273,7 +1335,7 @@ def test_dispatch_stamps_expected_identity_into_provenance() -> None:
     verified = dataclasses.replace(evidence, verified_by_claude=True)
     verified.provenance["observer_corroborated"] = True
     with pytest.raises(D.DispatchError, match="substituted"):
-        D.satisfy_gate(verified, manifest)
+        D.satisfy_gate(verified, manifest, reconciliation=_ready_reconciliation())
 
 
 def test_dispatch_expected_identity_none_leaves_provenance_clean() -> None:
@@ -1321,4 +1383,4 @@ def test_dispatch_copies_resolution_warnings_without_satisfying_gate() -> None:
 
     assert evidence.provenance["warnings"] == ["stale registry row"]
     with pytest.raises(D.DispatchError, match="verified"):
-        D.satisfy_gate(evidence)
+        D.satisfy_gate(evidence, reconciliation=_ready_reconciliation())

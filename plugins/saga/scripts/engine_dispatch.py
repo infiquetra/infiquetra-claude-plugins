@@ -472,35 +472,99 @@ def _receipt_problems(runner_receipt: dict[str, Any] | None) -> list[str]:
     return list(_bridge_receipt.validate_receipt(runner_receipt))
 
 
-def _proof_integrity_problems(evidence: AdvisoryEvidence) -> list[str]:
-    """Stronger #388 proof checks, after the base receipt schema has passed."""
-    if _receipt_problems(evidence.runner_receipt):
-        return []
-    assert evidence.runner_receipt is not None  # narrowed by _receipt_problems above
-    return bridge_signatures.validate_receipt_signature(
-        evidence.runner_receipt,
-        evidence_text=evidence.evidence,
+def _is_proof_extension_problem(problem: str) -> bool:
+    return problem.startswith(
+        (
+            "receipt_emitter ",
+            "run_id ",
+            "external_tokens ",
+            "output_attestation ",
+        )
     )
 
 
-def _bridge_run_key(evidence: AdvisoryEvidence) -> str:
-    if evidence.runner_receipt is None:
-        return ""
-    return bridge_signatures.bridge_run_key(evidence.runner_receipt)
+def _base_receipt_problems(runner_receipt: dict[str, Any] | None) -> list[str]:
+    return [
+        problem
+        for problem in _receipt_problems(runner_receipt)
+        if not _is_proof_extension_problem(problem)
+    ]
 
 
-def _external_tokens(evidence: AdvisoryEvidence) -> float | None:
-    if evidence.runner_receipt is None:
+def _receipt_identity_problems(evidence: AdvisoryEvidence) -> list[str]:
+    if evidence.runner_receipt is None or _base_receipt_problems(evidence.runner_receipt):
+        return []
+    receipt_engine = evidence.runner_receipt.get("engine_id")
+    receipt_variant = evidence.runner_receipt.get("variant")
+    errors: list[str] = []
+    if receipt_engine != evidence.engine_id:
+        errors.append(
+            "proof-integrity: receipt-engine-mismatch "
+            f"expected={evidence.engine_id!r} observed={receipt_engine!r}"
+        )
+    if receipt_variant != evidence.variant:
+        errors.append(
+            "proof-integrity: receipt-variant-mismatch "
+            f"expected={evidence.variant!r} observed={receipt_variant!r}"
+        )
+    return errors
+
+
+def _proof_integrity_problems(evidence: AdvisoryEvidence) -> list[str]:
+    """Stronger #388 proof checks, after the base receipt schema has passed."""
+    receipt_problems = _receipt_problems(evidence.runner_receipt)
+    if any(not _is_proof_extension_problem(problem) for problem in receipt_problems):
+        return []
+    assert evidence.runner_receipt is not None  # narrowed by _receipt_problems above
+    proof_errors = [
+        f"proof-integrity: {problem}"
+        for problem in receipt_problems
+        if _is_proof_extension_problem(problem)
+    ]
+    proof_errors.extend(
+        bridge_signatures.validate_receipt_signature(
+            evidence.runner_receipt,
+            evidence_text=evidence.evidence,
+        )
+    )
+    proof_errors.extend(_receipt_identity_problems(evidence))
+    return proof_errors
+
+
+def _bridge_key_set(
+    keys: set[str] | list[str] | tuple[str, ...] | None,
+) -> set[str] | None:
+    if keys is None:
         return None
-    value = evidence.runner_receipt.get("external_tokens")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    return float(value)
+    return {str(key) for key in keys if str(key)}
+
+
+def _gate_bridge_keys(evidence: AdvisoryEvidence, manifest: pm.Manifest | None) -> set[str]:
+    keys: set[str] = set()
+    evidence_key = _bridge_run_key(evidence)
+    if evidence_key:
+        keys.add(evidence_key)
+    if manifest is not None and manifest.bridge_run_key:
+        keys.add(manifest.bridge_run_key)
+    return keys
+
+
+def _filtered_liveness_errors(
+    launched_keys: set[str],
+    consumed_keys: set[str],
+    expected_keys: set[str] | None,
+) -> list[str]:
+    if expected_keys is not None:
+        launched_keys = launched_keys & expected_keys
+        consumed_keys = consumed_keys & expected_keys
+    return bridge_signatures.liveness_errors(launched_keys, consumed_keys)
 
 
 def bridge_liveness_errors(
     ledger: run_ledger.RunLedger,
     store: manifest_store.Store,
+    *,
+    expected_keys: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> list[str]:
     """Compare launched bridge runs in the ledger to consumed runs in manifests (#388)."""
     launched: set[str] = set()
@@ -520,7 +584,26 @@ def bridge_liveness_errors(
         if isinstance(key, str) and key.strip():
             consumed.add(key)
 
-    return bridge_signatures.liveness_errors(launched, consumed)
+    return _filtered_liveness_errors(
+        launched,
+        consumed,
+        _bridge_key_set(expected_keys),
+    )
+
+
+def _bridge_run_key(evidence: AdvisoryEvidence) -> str:
+    if evidence.runner_receipt is None:
+        return ""
+    return bridge_signatures.bridge_run_key(evidence.runner_receipt)
+
+
+def _external_tokens(evidence: AdvisoryEvidence) -> float | None:
+    if evidence.runner_receipt is None:
+        return None
+    value = evidence.runner_receipt.get("external_tokens")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
 
 
 def _observer_corroborates(
@@ -537,7 +620,7 @@ def _observer_corroborates(
     reading the bundles is observer-NO. The observer never raises -- divergence handling
     (not this predicate) decides what a "no" costs.
     """
-    if _receipt_problems(runner_receipt):
+    if _base_receipt_problems(runner_receipt):
         return False
     try:
         corroboration = _delegation_audit.corroborate(engine_id, since_ts, root=workspace_root)
@@ -727,7 +810,7 @@ def build_dispatch_manifest(
         disposition = pm.Disposition.SUBSTITUTED_ENGINE
         note = _substitution_note(evidence) or ""
     else:
-        receipt_problems = _receipt_problems(evidence.runner_receipt)
+        receipt_problems = _base_receipt_problems(evidence.runner_receipt)
         if receipt_problems:
             disposition = pm.Disposition.UNPROVEN
             note = "no schema-valid bridge_receipt.v1: " + "; ".join(receipt_problems)
@@ -848,7 +931,13 @@ def adjudicate_manifest(
     return adjudicated
 
 
-def satisfy_gate(evidence: AdvisoryEvidence, manifest: pm.Manifest | None = None) -> None:
+def satisfy_gate(
+    evidence: AdvisoryEvidence,
+    manifest: pm.Manifest | None = None,
+    *,
+    ledger: run_ledger.RunLedger | None = None,
+    store: manifest_store.Store | None = None,
+) -> None:
     """Require Claude verification before advisory evidence can satisfy a gate.
 
     R11 extension (U3): when a typed manifest accompanies the evidence, a gated verdict
@@ -874,6 +963,10 @@ def satisfy_gate(evidence: AdvisoryEvidence, manifest: pm.Manifest | None = None
     plan approved can never satisfy a gate as-approved, regardless of how well-corroborated its
     (wrong-engine) evidence is.
 
+    Bridge liveness (#388 U5): when the gate caller has both the run ledger and manifest store,
+    the producer/consumer bridge-run join must be contradiction-free. A launched run that was never
+    consumed, or a consumed manifest whose run was never launched, blocks the gate.
+
     Advisory-reviewer refusal (#382): reviewer-role external evidence is report-only. Even when
     Claude verifies the evidence and the observer corroborates the run, it cannot satisfy a gate or
     move Team Execution consensus threshold math.
@@ -898,12 +991,29 @@ def satisfy_gate(evidence: AdvisoryEvidence, manifest: pm.Manifest | None = None
             f"manifest disposition is {manifest.disposition.value!r} -- "
             f"{manifest.disposition_note}"
         )
+    proof_errors = _proof_integrity_problems(evidence)
+    if proof_errors:
+        raise DispatchError(
+            "proof-integrity failure can never satisfy a gate (#388): " + "; ".join(proof_errors)
+        )
     if manifest is not None and manifest.disposition is pm.Disposition.PROOF_INTEGRITY:
         raise DispatchError(
             "proof-integrity failure can never satisfy a gate (#388): the "
             f"manifest disposition is {manifest.disposition.value!r} -- "
             f"{manifest.disposition_note}"
         )
+    if (ledger is None) != (store is None):
+        raise DispatchError(
+            "bridge liveness gate requires both run ledger and manifest store (#388)"
+        )
+    if ledger is not None and store is not None:
+        liveness_errors = bridge_liveness_errors(
+            ledger,
+            store,
+            expected_keys=_gate_bridge_keys(evidence, manifest),
+        )
+        if liveness_errors:
+            raise DispatchError("bridge liveness failure (#388): " + "; ".join(liveness_errors))
     if manifest is None or manifest.claim_provenance is None:
         return
     for claim in manifest.claim_provenance.claims:

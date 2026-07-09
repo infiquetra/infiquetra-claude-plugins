@@ -122,6 +122,28 @@ def test_missing_signature_fields_become_proof_integrity() -> None:
     assert "missing required field output_attestation" in manifest.disposition_note
 
 
+def test_malformed_proof_extension_becomes_proof_integrity() -> None:
+    receipt = _receipt()
+    receipt["output_attestation"]["sha256"] = "not-a-valid-digest"
+
+    manifest = _manifest(receipt)
+
+    assert manifest.disposition is PM.Disposition.PROOF_INTEGRITY
+    assert "output_attestation sha256" in manifest.disposition_note
+
+
+def test_receipt_identity_mismatch_becomes_proof_integrity() -> None:
+    receipt = _receipt()
+    receipt["engine_id"] = "agy"
+    receipt["variant"] = "gemini-3.1-pro-high"
+
+    manifest = _manifest(receipt)
+
+    assert manifest.disposition is PM.Disposition.PROOF_INTEGRITY
+    assert "receipt-engine-mismatch" in manifest.disposition_note
+    assert "receipt-variant-mismatch" in manifest.disposition_note
+
+
 def test_substituted_engine_still_outranks_proof_integrity() -> None:
     evidence = D.dispatch(
         _resolution(),
@@ -161,3 +183,33 @@ def test_satisfy_gate_refuses_proof_integrity_manifest() -> None:
 
     with pytest.raises(D.DispatchError, match="proof-integrity"):
         D.satisfy_gate(dataclasses.replace(evidence, verified_by_claude=True), manifest)
+
+
+def test_satisfy_gate_refuses_proof_integrity_evidence_without_manifest() -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="external finding",
+        provenance={"status": "ok", "observer_corroborated": True},
+        verified_by_claude=True,
+        runner_receipt=_receipt(tokens=0),
+    )
+
+    with pytest.raises(D.DispatchError, match="zero-external-token"):
+        D.satisfy_gate(evidence)
+
+
+def test_satisfy_gate_refuses_cross_engine_receipt_without_manifest() -> None:
+    receipt = _receipt()
+    receipt["engine_id"] = "agy"
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="external finding",
+        provenance={"status": "ok", "observer_corroborated": True},
+        verified_by_claude=True,
+        runner_receipt=receipt,
+    )
+
+    with pytest.raises(D.DispatchError, match="receipt-engine-mismatch"):
+        D.satisfy_gate(evidence)

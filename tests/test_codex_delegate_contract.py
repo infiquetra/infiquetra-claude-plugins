@@ -446,6 +446,8 @@ def test_supervised_malformed_jsonl_degrades_token_accounting(tmp_path) -> None:
     assert payload["token_usage"]["input_tokens"] == 3
     assert payload["token_usage"]["output_tokens"] == 4
     assert payload["token_usage"]["total_tokens"] is None
+    receipt = json.loads((bundle / "bridge-receipt.json").read_text())
+    assert receipt["external_tokens"] == 0
     # Raw transcript preserved as durable fallback, malformed lines and all.
     transcript = (bundle / "transcript.jsonl").read_text()
     assert "not json at all" in transcript

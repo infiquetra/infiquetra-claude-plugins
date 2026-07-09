@@ -308,12 +308,12 @@ def _supervised_receipt(
 
 
 def _codex_external_tokens(
-    token_usage: dict[str, int | None], run_result: SupervisedRunResult
+    token_usage: dict[str, int | None], _run_result: SupervisedRunResult
 ) -> int:
     total = token_usage.get("total_tokens")
     if isinstance(total, int) and not isinstance(total, bool) and total > 0:
         return total
-    return max(run_result.stdout_bytes + run_result.stderr_bytes, 0)
+    return 0
 
 
 def _read_attestation_artifact(path: Path) -> str:

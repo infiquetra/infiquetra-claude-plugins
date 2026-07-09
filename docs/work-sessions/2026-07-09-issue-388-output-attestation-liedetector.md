@@ -85,7 +85,36 @@ Additional checks:
 - `uv run python scripts/sync_marketplace.py --check` — passed.
 - `COVERAGE_FILE=.coverage.release-388 uv run pytest tests/test_saga_plugin.py tests/test_agy_plugin.py tests/test_codex_plugin.py -v` — 45 passed.
 
+## Code Review Follow-Up
+
+Additional review findings fixed before PR:
+
+- P1: `satisfy_gate()` could accept proof-integrity-failed evidence when no manifest was passed. The
+  gate now checks receipt proof-integrity directly from `AdvisoryEvidence`.
+- P1: malformed proof-extension fields, such as invalid `output_attestation` digests, were classified
+  as `UNPROVEN` through base receipt validation. Dispatch now keeps base receipt failures as
+  `UNPROVEN` and classifies proof-extension failures as `PROOF_INTEGRITY`.
+- P1: a receipt for a different engine or variant could satisfy proof checks for the dispatched
+  evidence. Dispatch now rejects receipt engine/variant mismatches as proof-integrity failures.
+- P2: the liveness gate initially compared the repo-wide ledger against one saga manifest store without
+  scoping. Gate enforcement now filters liveness to the evidence/manifest bridge key being accepted.
+- P2: Codex receipt `external_tokens` fell back to stdout/stderr bytes when parsed token usage was
+  absent. Codex now emits `0` without parsed positive token usage, letting the zero-token proof gate
+  fail closed.
+
+Additional checks:
+
+- `COVERAGE_FILE=.coverage.issue388-main-* uv run pytest tests/test_output_attestation.py tests/test_bridge_signatures.py tests/test_engine_dispatch_attestation.py tests/test_engine_dispatch_ledger.py tests/test_chaperone_liveness.py tests/test_bridge_lie_detector.py tests/test_saga_engine_dispatch.py tests/test_engine_bridge_http.py tests/test_agy_delegate_contract.py tests/test_codex_delegate_contract.py -v` — 166 passed.
+- `COVERAGE_FILE=.coverage.issue388-drift-* uv run pytest tests/test_bridge_receipt_drift.py tests/test_fleet_commons_resolution.py tests/test_provenance_manifest.py tests/test_manifest_reader.py tests/test_run_ledger.py tests/test_manifest_consumer_matrix.py -v` — 85 passed.
+- `COVERAGE_FILE=.coverage.issue388-release-* uv run pytest tests/test_saga_plugin.py tests/test_agy_plugin.py tests/test_codex_plugin.py -v` — 45 passed.
+- `uv run python scripts/sync_marketplace.py --check` — passed.
+- `uv run python scripts/check_release_surface_parity.py` — passed.
+- `uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports` — passed.
+- `uv run ruff check .` — passed.
+- `uv run ruff format --check .` — passed.
+- `git diff --check` — passed.
+
 ## Next Step
 
-Commit the round-1 fixes, run Saga code-review round 2 against the fixed commit, then push/open PR
-issue #388.
+Commit the review follow-up fixes, run Saga code-review round 2 against the fixed commit, then
+push/open PR issue #388.

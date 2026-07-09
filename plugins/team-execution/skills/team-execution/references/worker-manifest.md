@@ -107,3 +107,9 @@ existing reviewer/validator consensus machinery.
 A `rejected-offload` record is a recovered review signal, not a passing worker result. Its typed
 reconciliation projection is delivered to both reviewer and validator evidence inputs, but neither
 the note nor its `dropped` item may satisfy a gate.
+
+The associated reconciliation result retains the unit's canonical intent. `offload`,
+`second-opinion`, and `divergence` each select exactly one Saga recipe; a manifest disposition does
+not replace or reinterpret that intent. Reconcile/apply facts and `/retro`'s
+`approval_required` recipe-update proposals remain typed advisory evidence. They never grant the
+manifest, an external engine, a panel member, or a proposal gate authority.

@@ -34,6 +34,10 @@ scope.
   tiering drift.
 - U5 manifest: `worker-retro-reader-U5` in the `issue-393` manifest store, disposition
   `ran-as-requested`.
+- U6 worker: `worker-release-closure`, resolved effort `medium`, Agent-path effort rider reconciled
+  with no tiering drift.
+- U6 manifest: `worker-release-closure-U6` in the `issue-393` manifest store, disposition
+  `ran-as-requested`.
 
 ## Completed Work
 
@@ -53,6 +57,29 @@ Checks:
 - Narrow Ruff over U1 implementation and tests
   - passed
 - `uv run mypy plugins/saga/scripts/reconcile.py --follow-imports=skip`
+  - passed
+- `git diff --check`
+  - passed
+
+### U6: Documentation, decision record, and release closure
+
+- Documented typed reconciliation facts, rejected-offload evidence, three-intent recipes,
+  `PANEL_N_CAP`, and read-only retro proposals across the run-fact and Team Execution contracts.
+- Recorded the binding intent-to-recipe decision, external-engine authority boundary, approval-only
+  learning rule, and fourth-intent revisit condition in the engineering journal.
+- Bumped fleet-core to `0.8.4`, Saga to `0.75.17`, and Team Execution to `2.14.3`, with synchronized
+  changelogs and marketplace metadata.
+- Updated version drift guard tests for the released contracts.
+
+Checks:
+
+- Full focused reconciliation matrix
+  - 485 passed
+- Release/package matrix
+  - 71 passed
+- Marketplace sync check
+  - passed
+- Release-surface parity
   - passed
 - `git diff --check`
   - passed
@@ -140,5 +167,5 @@ Checks:
 
 ## Next Step
 
-Execute U6 to close documentation, engineering-journal, release metadata, marketplace, and release
-guard surfaces for fleet-core, saga, and team-execution.
+Run Team Execution reviewer consensus against a pointerized snapshot, remediate every requested fix,
+then run the selected validators and repository quality gates.

@@ -3,7 +3,8 @@
 This document is the wrapper contract R12 names as missing: how a team-execution worker can be
 an external engine (agy, codex) instead of a Claude agent, without team-execution growing a
 second executor kind. It closes #283's deferred U12 leg and activates the dispositions
-`worker-manifest.md` reserved (`fell-back-to-claude` / `substituted-engine`).
+`worker-manifest.md` reserves (`fell-back-to-claude` / `substituted-engine` /
+`rejected-offload`).
 
 > **Dispatch-adapter contract, generic HTTP bridge, and `bridge_receipt.v1`:** how a
 > `transport: http` registry row dispatches through the shared generic HTTP bridge with zero
@@ -47,6 +48,22 @@ Advisory-reviewer evidence is report-only. `engine_dispatch.satisfy_gate()` refu
 corroborated the run. The only consumer is the Claude-vs-external convergence report described in
 `consensus-protocol.md`.
 
+## Intent and typed reconciliation
+
+Every chaperone unit carries exactly one fleet-core-owned `engine_intent`: `offload`,
+`second-opinion`, or `divergence` (omission defaults to `offload`). Saga's closed recipe registry maps
+each intent exactly once: offload accounts for accepted, dropped, and overridden engine findings;
+second-opinion makes Claude independently adjudicate every review finding; divergence treats both
+agreement and disagreement as findings requiring explicit Claude review. Unknown intents and registry
+drift fail closed rather than falling back to offload.
+
+All three paths produce a ready typed `ReconciliationResult` before gate evaluation. Reconcile and
+apply events are append-only `run_fact.v1` reconciliation facts; rejected offloads project their
+mandatory note as a typed `dropped` item for reviewer and validator evidence. `/retro` may derive an
+`approval_required` recipe-update proposal from those facts, but neither it nor a chaperone edits the
+registry. Typed results, rejection notes, panel output, and proposals are advisory evidence only:
+Claude remains verifier-of-record and `satisfy_gate()` remains the sole authority boundary.
+
 ## Advisory-jury panel (Claude foreman)
 
 The rare hardest-call jury starts from an explicit
@@ -80,9 +97,10 @@ At residency spawn (Step B1's wave scheduling), the coordinator hands the chaper
 package carrying:
 
 A package may contain one unit or a homogeneous same-engine batch. Batching amortizes the
-chaperone's context load only: it never merges unit manifests, never turns batch success into
-per-unit `verified_by_claude=True`, never lets the engine join wave scheduling, and never lets the engine touch the working tree. Mixed selectors, `second-opinion` intent, incompatible sandbox/write
-handling, or incompatible test-oracle handling stay as separate one-unit packages.
+chaperone's context load only: it never merges unit manifests or turns batch success into per-unit
+`verified_by_claude=True`; it never lets the engine touch the working tree. Mixed selectors, mixed
+intents, incompatible sandbox/write handling, or incompatible test-oracle handling stay as separate
+one-unit packages.
 
 | Field | Source | Purpose |
 |---|---|---|
@@ -90,7 +108,7 @@ handling, or incompatible test-oracle handling stay as separate one-unit package
 | `unit_contexts[]` | one record per unit id | per-unit scope that stays distinct inside a batch: `unit_id`, `selector`, `intent`, `verifiability`, `write_set`, `test_oracle`, and `manifest_identity` |
 | `plan_pointer` | plan doc path | authoritative spec, read once, not re-transcribed |
 | `selector` | the unit's `engine` or `capability` field (`execution_spec.py` `Unit.engine`/`Unit.capability`, mutually exclusive — `_validate_external_engine_selector`, `execution_spec.py:241-265`) | what `engine_resolver.resolve()` is called with |
-| `intent` | the unit's `engine_intent` (`offload` / `second-opinion`, defaults `offload` — U3) | carried for provenance/audit; the operational effect (chaperone tier) was already locked at plan time via the KTD2 tier-table recommendation (`plugins/saga/skills/plan/SKILL.md:295-305`) |
+| `intent` | the unit's `engine_intent` (`offload` / `second-opinion` / `divergence`, defaults `offload`) | selects the exhaustive typed reconciliation recipe and is carried for provenance/audit; the operational effect (chaperone tier) was already locked at plan time via the tier-table recommendation (`plugins/saga/skills/plan/SKILL.md`) |
 | `verifiability` | the unit's `verifiability` (`test-gated` / `unverifiable`; absent means `unverifiable`) | selects ratify-only vs full-review chaperoning; batch members must match |
 | `test_oracle` | the unit's declared tests, output contract, or plan verification note | what a `test-gated` unit asks the chaperone to ratify before accepting the external evidence |
 | `plan_time_resolution_preview` | the tier-table recommendation row the operator approved (U2): `{"engine_id": "<key>", "variant": "<key>"}` for a capability-routed unit; absent/null for an explicit-engine unit (R26 makes substitution unreachable there — see §4) | the baseline §4 compares the run-time resolution against |

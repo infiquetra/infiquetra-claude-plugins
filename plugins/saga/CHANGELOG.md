@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.75.17] - 2026-07-09
+
+### Added - typed external-engine reconciliation (#393)
+
+- Add an exhaustive intent-to-recipe registry and typed finding reconciliation, recording
+  `reconcile` and `apply` events in the existing hash-chained `run_fact.v1` ledger.
+- Preserve rejected offloads as non-gating reviewer/validator evidence and add a bounded
+  `PANEL_N_CAP = 7` advisory-jury path that persists only Claude-foreman results.
+- Derive approval-gated `/retro` recipe-review proposals without mutating the ledger or registry.
+
 ## [0.75.16] - 2026-07-09
 
 ### Added - provider onboarding, conformance, and probation standing (#455)

@@ -1,8 +1,9 @@
 # Run-fact ledger (`run_fact.v1`)
 
 One append-only, hash-chained, **leaf-produced** ledger of realized-run facts — spend, cache,
-engine-usage, delegation — that the fleet's telemetry writers all append into, so there is one canonical
-format instead of N. Implemented in `plugins/saga/scripts/run_ledger.py` (#401, objective #338).
+engine-usage, delegation, and typed reconciliation — that the fleet's telemetry writers all append
+into, so there is one canonical format instead of N. Implemented in
+`plugins/saga/scripts/run_ledger.py` (#401, objective #338) and extended for reconciliation by #393.
 
 ## Where it lives
 
@@ -19,7 +20,7 @@ Each line is one JSON object. Common fields on every fact:
 | Field | Meaning |
 |-------|---------|
 | `schema` | `"run_fact.v1"` |
-| `kind` | one of `spend` \| `cache` \| `engine` \| `delegation` |
+| `kind` | one of `spend` \| `cache` \| `engine` \| `delegation` \| `reconciliation` |
 | `subplot_id` | the **producing leaf** (facts are leaf-produced, KTD4) |
 | `at` | ISO timestamp, caller-supplied (the ledger never reads the clock — deterministic) |
 | `prev_hash` | the previous record's `this_hash` (`""` for the genesis record) — chain link |
@@ -34,6 +35,11 @@ Per-kind payload fields (build with `build_fact(kind, subplot_id=, at=, **fields
   `engine_tokens_avoided`, `chaperone_tokens_spent`, `net_savings_tokens`,
   `net_savings_status`, and `external_cost_usd`
 - **delegation** — `evidence` (a **pointer/reference**, never inlined bytes), `engine`
+- **reconciliation** — stable `reconciliation_id`, source `execution_id`, canonical `intent`,
+  exhaustive `recipe_id`, Claude `adjudicator_id`, `action` (`reconcile` or `apply`), canonical
+  `result_hash`, and the bounded typed `result`. Each result item names its source finding, status
+  (`reconciled`, `dropped`, or `overridden`), Claude adjudicator, and non-empty rationale. The
+  reconciliation reader, rather than generic ledger code, validates this kind-specific schema.
 
 `build_fact` rejects an unknown `kind`, an empty `subplot_id`, and any attempt to set the reserved
 `prev_hash`/`this_hash` fields.
@@ -83,6 +89,18 @@ Writers already wired (v1): `engine_dispatch.dispatch(..., ledger=, subplot_id=,
 **telemetry only, never a gate** (`{#external-engines-never-gatekeepers}`); omitting the ledger args is a
 no-op. `lifecycle_state.recommend_execution_backend(..., ledger=)` surfaces a `last_n_prior` "last N runs
 averaged X tokens" prior, additively (the `prior` key appears only when there is data).
+
+`reconcile.append_reconciliation_fact(...)` records separate `reconcile` and `apply` facts for one
+typed result after `ReconciliationResult.require_ready()` succeeds. The closed recipe registry maps
+each fleet-core intent exactly once: `offload` accounts for accepted, dropped, or overridden work;
+`second-opinion` independently adjudicates every review finding; and `divergence` requires explicit
+review of agreement as well as disagreement. Advisory-panel members are bounded by
+`PANEL_N_CAP = 7`; only their Claude-foreman reconciliation is recorded, never raw member output.
+
+`reconcile.derive_recipe_update_proposal(...)` verifies the complete chain, validates reconciliation
+facts, and derives a `recipe_update_proposal.v1` view. A populated proposal always carries
+`approval_required: true`; reading it never edits either the append-only ledger or the recipe registry.
+This proposal is review input only and cannot satisfy a gate.
 
 **Not yet migrated (deferred):** `outcome_costs.py` keeps its own cost records for now (KTD7); porting it
 and adopting the remaining wave-1 writers are follow-up work. This substrate lands empty of most

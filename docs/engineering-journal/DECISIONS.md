@@ -2,6 +2,34 @@
 
 ## 2026-07-09
 
+### Typed reconciliation reuses the run-fact ledger and keeps policy changes approval-only {#typed-second-opinion-reconciliation-393}
+
+**Context.** Issue #393 adds intent-specific reconciliation, rejected-offload recovery,
+bounded advisory juries, and retro learning. The issue's early parallel-ledger premise is obsolete:
+`run_fact.v1` already supplies the append-only, hash-chained local evidence store.
+
+- **KTD1 - one closed intent-to-recipe registry.** Fleet-core owns the canonical `ENGINE_INTENTS`
+  vocabulary: `offload`, `second-opinion`, and `divergence`. Saga maps each intent to exactly one
+  data-defined recipe and fails closed on missing, duplicate, or unknown mappings. Offload accounts
+  for accepted/dropped/overridden work; second-opinion independently adjudicates review findings;
+  divergence makes agreement as well as disagreement an explicit review outcome.
+- **KTD2 - reconciliation extends `run_fact.v1`.** Separate `reconcile` and `apply` events append
+  bounded typed reconciliation results to the existing ledger. They do not create a parallel store,
+  mutate earlier records, or persist raw advisory-panel output.
+- **KTD3 - rejected offloads and panels are evidence, never authority.** A rejected offload requires
+  a non-empty manifest note projected as a typed `dropped` item. Advisory panels hard-fail above
+  `PANEL_N_CAP = 7` before dispatch and persist only a Claude-foreman result. Neither may satisfy a
+  gate; the standing [external engines are never gatekeepers](#external-engines-never-gatekeepers)
+  rule remains binding and Claude remains verifier-of-record.
+- **KTD4 - retro proposals are approval-only.** `/retro` verifies the ledger and derives a typed
+  `approval_required` recipe-update proposal. It never edits the registry or ledger, and a proposal
+  itself is advisory evidence that cannot approve or gate anything.
+
+**Revisit when.** Add or change a fourth intent only when recorded reconciliation outcomes produce an
+approval-gated retro proposal and the operator explicitly approves it. That follow-up must update the
+fleet-core vocabulary and tier posture, Saga recipe registry and tests, team-execution guidance, and
+all affected release surfaces together; telemetry alone never self-modifies policy.
+
 ### Provider onboarding targets the generic HTTP bridge and earns advisory standing explicitly {#provider-onboarding-455}
 
 **Context.** Issue #455 joins provider scaffolding, registry-to-dispatch conformance, and probationary standing. Since the issue was written, the generic HTTP bridge landed with an explicit zero-provider-branch contract, and the run-fact ledger gained proof-integrity telemetry.

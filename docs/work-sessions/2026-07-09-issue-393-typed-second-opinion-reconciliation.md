@@ -30,6 +30,10 @@ scope.
   no tiering drift.
 - U4 manifest: `worker-panel-foreman-U4` in the `issue-393` manifest store, disposition
   `ran-as-requested`.
+- U5 worker: `worker-retro-reader`, resolved effort `high`, Agent-path effort rider reconciled with no
+  tiering drift.
+- U5 manifest: `worker-retro-reader-U5` in the `issue-393` manifest store, disposition
+  `ran-as-requested`.
 
 ## Completed Work
 
@@ -49,6 +53,28 @@ Checks:
 - Narrow Ruff over U1 implementation and tests
   - passed
 - `uv run mypy plugins/saga/scripts/reconcile.py --follow-imports=skip`
+  - passed
+- `git diff --check`
+  - passed
+
+### U5: Read-only retro proposal view
+
+- Added a chain-verified, reconciliation-schema-validated derive-on-read proposal view.
+- Deduplicated reconcile/apply facts by stable reconciliation identity while retaining action and
+  ledger-hash evidence.
+- Emitted explicit `no-proposal` output for an empty ledger and `approval_required: true` for every
+  recipe-review proposal.
+- Preserved the torn-tail tolerance and made non-trailing corruption, chain failure, and invalid
+  reconciliation records visible failures.
+- Documented `/retro`'s terminal, advisory, propose-diff-and-wait boundary.
+
+Checks:
+
+- Focused U5 pytest matrix
+  - 25 passed
+- Targeted Ruff format and lint
+  - passed
+- Focused mypy with skipped imports
   - passed
 - `git diff --check`
   - passed
@@ -114,5 +140,5 @@ Checks:
 
 ## Next Step
 
-Execute U5 to derive approval-gated retro proposals from verified reconciliation facts without
-mutating the ledger or recipe registry.
+Execute U6 to close documentation, engineering-journal, release metadata, marketplace, and release
+guard surfaces for fleet-core, saga, and team-execution.

@@ -266,6 +266,59 @@ def test_reader_refuses_corrupt_chain(tmp_path: Path) -> None:
         RC.read_reconciliation_facts(ledger)
 
 
+def test_retro_reader_refuses_non_trailing_corruption(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    result = _result()
+    RC.append_reconciliation_fact(ledger, result, action="reconcile", subplot_id="leaf", at="t1")
+    RC.append_reconciliation_fact(ledger, result, action="apply", subplot_id="leaf", at="t2")
+    lines = ledger.path.read_text().splitlines()
+    ledger.path.write_text("{torn-middle\n" + lines[1] + "\n")
+
+    with pytest.raises(RL.RunLedgerError, match="not the trailing line"):
+        RC.derive_recipe_update_proposal(ledger)
+
+
+def test_retro_reader_tolerates_only_torn_trailing_line(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    RC.append_reconciliation_fact(ledger, _result(), action="reconcile", subplot_id="leaf", at="t")
+    ledger.path.write_bytes(ledger.path.read_bytes() + b'{"schema":"run_fact.v1"')
+
+    proposal = RC.derive_recipe_update_proposal(ledger)
+
+    assert proposal["status"] == "proposal"
+    assert proposal["proposed_updates"][0]["reconciliation_count"] == 1
+
+
+def test_retro_reader_refuses_invalid_reconciliation_fact(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    result = _result()
+    invalid_result = {
+        **result.to_dict(),
+        "items": [{**result.to_dict()["items"][0], "status": "accepted"}],
+    }
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "reconciliation",
+            subplot_id="leaf",
+            at="t",
+            reconciliation_id=result.reconciliation_id,
+            execution_id=result.execution_id,
+            intent=result.intent,
+            recipe_id=result.recipe_id,
+            adjudicator_id=result.adjudicator_id,
+            action="reconcile",
+            result_hash=hashlib.sha256(
+                json.dumps(invalid_result, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            result=invalid_result,
+        ),
+    )
+
+    with pytest.raises(RC.ReconciliationError, match="invalid reconciliation status"):
+        RC.derive_recipe_update_proposal(ledger)
+
+
 def test_panel_evidence_deduplicates_output_and_preserves_empty_member() -> None:
     evidence = RC.gather_panel_evidence(
         (

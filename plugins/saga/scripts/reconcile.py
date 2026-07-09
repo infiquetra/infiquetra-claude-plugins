@@ -45,6 +45,7 @@ _RECONCILIATION_FACT_FIELDS = {
     "result_hash",
     "result",
 }
+RECIPE_UPDATE_PROPOSAL_SCHEMA = "recipe_update_proposal.v1"
 
 
 class ReconciliationError(ValueError):
@@ -547,3 +548,87 @@ def read_reconciliation_facts(ledger: run_ledger.RunLedger) -> list[dict[str, An
             )
         validated.append(fact)
     return validated
+
+
+def derive_recipe_update_proposal(ledger: run_ledger.RunLedger) -> dict[str, Any]:
+    """Derive an approval-gated recipe-review proposal from valid reconciliation facts.
+
+    The reconciliation reader verifies the complete ledger chain and validates every selected fact
+    before this function aggregates anything. Reconcile/apply facts for the same stable
+    ``reconciliation_id`` are one outcome: their actions and fact hashes remain available as evidence,
+    but their result contributes to the aggregate exactly once. This function performs no append and
+    never changes :data:`RECIPE_REGISTRY`.
+    """
+    facts = read_reconciliation_facts(ledger)
+    if not facts:
+        return {
+            "schema": RECIPE_UPDATE_PROPOSAL_SCHEMA,
+            "status": "no-proposal",
+            "approval_required": False,
+            "reason": "no reconciliation facts",
+            "proposed_updates": [],
+            "evidence": [],
+        }
+
+    evidence_by_identity: dict[str, dict[str, Any]] = {}
+    results_by_identity: dict[str, ReconciliationResult] = {}
+    for fact in facts:
+        result = ReconciliationResult.from_dict(cast(Mapping[str, Any], fact["result"]))
+        identity = result.reconciliation_id
+        evidence = evidence_by_identity.get(identity)
+        if evidence is None:
+            results_by_identity[identity] = result
+            evidence = {
+                "reconciliation_id": identity,
+                "execution_id": result.execution_id,
+                "intent": result.intent,
+                "recipe_id": result.recipe_id,
+                "result_hash": fact["result_hash"],
+                "actions": [],
+                "ledger_fact_hashes": [],
+            }
+            evidence_by_identity[identity] = evidence
+        action = cast(str, fact["action"])
+        if action not in evidence["actions"]:
+            evidence["actions"].append(action)
+        fact_hash = cast(str, fact["this_hash"])
+        if fact_hash not in evidence["ledger_fact_hashes"]:
+            evidence["ledger_fact_hashes"].append(fact_hash)
+
+    aggregates: dict[str, dict[str, Any]] = {}
+    for identity, result in results_by_identity.items():
+        aggregate = aggregates.setdefault(
+            result.intent,
+            {
+                "intent": result.intent,
+                "current_recipe_id": result.recipe_id,
+                "recommended_action": "review-intent-recipe",
+                "reconciliation_count": 0,
+                "finding_status_counts": {status.value: 0 for status in ReconciliationStatus},
+                "evidence_reconciliation_ids": [],
+            },
+        )
+        aggregate["reconciliation_count"] += 1
+        aggregate["evidence_reconciliation_ids"].append(identity)
+        for item in result.items:
+            aggregate["finding_status_counts"][item.status.value] += 1
+
+    proposed_updates = []
+    for aggregate in aggregates.values():
+        counts = aggregate["finding_status_counts"]
+        aggregate["reason"] = (
+            f"Review {aggregate['current_recipe_id']} using "
+            f"{aggregate['reconciliation_count']} deduplicated reconciliation outcome(s): "
+            f"{counts['reconciled']} reconciled, {counts['dropped']} dropped, and "
+            f"{counts['overridden']} overridden finding(s)."
+        )
+        proposed_updates.append(aggregate)
+
+    return {
+        "schema": RECIPE_UPDATE_PROPOSAL_SCHEMA,
+        "status": "proposal",
+        "approval_required": True,
+        "reason": "validated reconciliation outcomes are available for recipe review",
+        "proposed_updates": proposed_updates,
+        "evidence": list(evidence_by_identity.values()),
+    }

@@ -4,6 +4,14 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.14.1] - 2026-07-09
+
+### Changed - validator findings reference engine-output trust boundary (#385)
+
+- `skills/team-execution/references/validator-registry.md` and `validator-criteria.md`: clarify that
+  advisory validator and reviewer finding text is opaque untrusted data governed by Saga's
+  `engine-output-trust-boundary.md`, not a command, path, or gate token source.
+
 ## [2.14.0] - 2026-07-09
 
 ### Added — non-scoring external advisory consensus seat (#382)

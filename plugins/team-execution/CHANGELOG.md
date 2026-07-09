@@ -4,6 +4,19 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.14.0] - 2026-07-09
+
+### Added — non-scoring external advisory consensus seat (#382)
+
+- `skills/team-execution/scripts/consensus_advisory.py`: adds a small executable helper for
+  gated-vs-advisory reviewer consensus math and key-based Claude-vs-external convergence reports.
+- `skills/team-execution/references/consensus-protocol.md`: documents the external advisory seat as
+  always excluded from `>= 9.0` acceptance, `< 7.0` blocking-stop, and re-review math, while attaching
+  a convergence report with `converged`, `Claude-only`, `external-only`, and `conflicting` buckets.
+- `skills/team-execution/references/reviewer-registry.md` and `external-engine-workers.md`: register
+  the advisory seat outside base/optional Claude reviewer tables and bind it to
+  `role_kind="advisory-reviewer"` halt-not-fallback chaperone dispatch.
+
 ## [2.13.1] - 2026-07-09
 
 ### Changed — batch-aware external-engine chaperone contract (#381)

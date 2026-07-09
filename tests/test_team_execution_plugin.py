@@ -61,12 +61,16 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
-    assert plugin_json["version"] == "2.13.1"  # batch-aware chaperone context contract (#381)
+    assert plugin_json["version"] == "2.14.0"  # external advisory consensus seat (#382)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()
+    assert "advisory" in plugin_json["description"].lower()
+    assert "convergence" in plugin_json["description"].lower()
     assert "nonprod" in plugin_json["description"].lower()
-    assert {"validators", "automation", "nonprod"} <= set(plugin_json["keywords"])
+    assert {"validators", "automation", "nonprod", "advisory", "convergence"} <= set(
+        plugin_json["keywords"]
+    )
 
 
 def test_validator_agents_and_base_reviewers_are_packaged() -> None:

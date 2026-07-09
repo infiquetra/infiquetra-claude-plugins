@@ -24,6 +24,7 @@ _delegation_audit = fleet_commons_shim.load("delegation_audit")
 _delegation_state = fleet_commons_shim.load("delegation_state")
 
 FAILURE_STATUSES = frozenset({"timeout", "no-output", "error", "malformed", "clone-failed"})
+NON_GATING_ROLE_KINDS = frozenset({"advisory-reviewer", "panel"})
 
 # A runner result carrying any of these keys is attempting to set/override a gate verdict --
 # structurally rejected, not policy-rejected (R6, plan U6, binding decision
@@ -47,6 +48,7 @@ class AdvisoryEvidence:
     evidence: str
     provenance: dict[str, Any]
     verified_by_claude: bool = False
+    role_kind: str = "worker"
     halt: str | None = None
     # The runner's ``bridge_receipt.v1`` proof-of-execution, threaded from ``result["receipt"]``
     # by :func:`dispatch` (plan U5, KTD8). Additive and defaulted (R11) -- receipt-less runners
@@ -660,7 +662,15 @@ def satisfy_gate(evidence: AdvisoryEvidence, manifest: pm.Manifest | None = None
     ``SUBSTITUTED_ENGINE`` is refused outright -- a run that executed a different engine than the
     plan approved can never satisfy a gate as-approved, regardless of how well-corroborated its
     (wrong-engine) evidence is.
+
+    Advisory-reviewer refusal (#382): reviewer-role external evidence is report-only. Even when
+    Claude verifies the evidence and the observer corroborates the run, it cannot satisfy a gate or
+    move Team Execution consensus threshold math.
     """
+    if evidence.role_kind in NON_GATING_ROLE_KINDS:
+        raise DispatchError(
+            f"{evidence.role_kind} evidence is advisory-only and can never satisfy a gate"
+        )
     if evidence.verified_by_claude is not True:
         raise DispatchError(
             "external advisory evidence must be verified by Claude before satisfying a gate"

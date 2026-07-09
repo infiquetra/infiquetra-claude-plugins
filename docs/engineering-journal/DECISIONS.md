@@ -2,6 +2,30 @@
 
 ## 2026-07-09
 
+### Consensus external advisory seat is typed non-gating reviewer evidence {#consensus-advisory-seat-382}
+
+**Context.** Issue #382 adds a Team Execution consensus-panel seat for an external-engine
+second opinion, but the fleet invariant remains that external engines never satisfy gates.
+
+- **KTD1 — executable helper over prose-only contract.** Add a small Team Execution consensus helper
+  that computes gated reviewer consensus and convergence buckets, then keep the docs as the
+  operator-facing protocol. Documentation drift guards alone are not enough for the score-invariant.
+- **KTD2 — seat authority is explicit.** Model reviewer results as gated or advisory seats. Advisory
+  results are available for reporting but excluded from the denominator, the `< 7.0` blocking rule,
+  and reviewer re-run selection.
+- **KTD3 — convergence matching is key-based first.** Use stable finding keys or fingerprints for
+  converged/diverged buckets; defer fuzzy semantic matching because false convergence would weaken
+  the audit trail.
+- **KTD4 — Saga gate refusal owns reviewer-role evidence.** Add advisory-reviewer role provenance to
+  external-engine evidence and make `satisfy_gate()` reject it even when verified and observer
+  corroborated.
+- **KTD5 — advisory absence is no-op, not fallback.** `role_kind="advisory-reviewer"` uses the
+  existing halt-not-fallback role posture; unavailable external engines leave the Claude-only panel
+  unchanged.
+
+**Revisit when.** Team Execution gains a machine-owned consensus artifact writer or a semantic
+finding-normalization layer with explicit Claude adjudication.
+
 ### Outcome/objective execution loop lives in a repo narrative {#objective-execution-loop}
 
 **Context.** Objective-backed work in this repo repeatedly needs the same

@@ -30,6 +30,23 @@ An external-engine worker's diff still goes through the same reviewer consensus 
 gates as any other worker's diff (`SKILL.md` Step B2/B3); this contract only changes *who wrote
 the diff*, not what clears it for merge.
 
+## Advisory-reviewer seat (non-scoring)
+
+The consensus panel may also request an external-engine second opinion with
+`role_kind="advisory-reviewer"`. This uses the same chaperone posture — Claude resolves, dispatches,
+reads, verifies, and reports the external synthesis — but the result is reviewer evidence only. It is
+not a worker package, not a resident teammate, not a wave-scheduled executor, and never touches git.
+
+`role_kind="advisory-reviewer"` is a halt-not-fallback role in `engine_resolver.py`: if the selected
+engine is unavailable or fails preflight, the advisory seat is recorded as absent/halted rather than
+substituted with Claude. That absence is a no-op for the Team Execution gate; the Claude reviewer
+panel continues with its existing score math.
+
+Advisory-reviewer evidence is report-only. `engine_dispatch.satisfy_gate()` refuses
+`role_kind="advisory-reviewer"` evidence even when Claude has verified it and the observer
+corroborated the run. The only consumer is the Claude-vs-external convergence report described in
+`consensus-protocol.md`.
+
 ## 1. Context package (coordinator → chaperone)
 
 At residency spawn (Step B1's wave scheduling), the coordinator hands the chaperone a context

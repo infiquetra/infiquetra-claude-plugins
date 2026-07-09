@@ -517,7 +517,7 @@ error, record a non-blocking note and continue with the Claude-only frame-agent 
 `/ideate`, do not create a partial-failure state, and do not ask Phase 3 to compensate for the missing
 lane.
 
-**After all frame agents return:**
+**After all available generator lanes return:**
 
 1. **Merge and dedupe** every frame agent's candidates into one master candidate list, keeping
    sub-agent (frame) attribution. For candidates produced by the external-engine generator lane, also

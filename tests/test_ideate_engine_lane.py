@@ -37,7 +37,7 @@ def test_dispatch_contract_adds_one_external_lane_with_identical_prompt_inputs()
     lane = _between(
         text,
         "**External-engine generator lane (additive, blind, best-effort).**",
-        "**After all frame agents return:**",
+        "**After all available generator lanes return:**",
     )
     compact_lane = _compact(lane)
 
@@ -62,7 +62,7 @@ def test_dispatch_contract_adds_one_external_lane_with_identical_prompt_inputs()
 def test_blind_isolation_holds_until_merge_boundary() -> None:
     text = _read(IDEATE_SKILL)
     lane_start = text.index("**External-engine generator lane")
-    merge_start = text.index("**After all frame agents return:**")
+    merge_start = text.index("**After all available generator lanes return:**")
     lane = text[lane_start:merge_start]
     compact_lane = _compact(lane)
 
@@ -74,7 +74,7 @@ def test_blind_isolation_holds_until_merge_boundary() -> None:
 
 def test_tag_application_records_engine_generated_provenance_only() -> None:
     skill_text = _read(IDEATE_SKILL)
-    merge = _between(skill_text, "**After all frame agents return:**", "**Checkpoint")
+    merge = _between(skill_text, "**After all available generator lanes return:**", "**Checkpoint")
     artifact = _read(ARTIFACT)
 
     assert "tag the candidate provenance `engine-generated`" in merge
@@ -111,7 +111,7 @@ def test_graceful_degrade_keeps_ideate_claude_only_when_lane_unavailable() -> No
     lane = _between(
         text,
         "**External-engine generator lane (additive, blind, best-effort).**",
-        "**After all frame agents return:**",
+        "**After all available generator lanes return:**",
     )
     compact_lane = _compact(lane)
 

@@ -95,6 +95,64 @@ run-fact ledger -> exact-variant promotion assessment -> operator-reviewed PR
 
 No onboarding or promotion command invokes an external engine. Dispatch remains the only provider-call surface, and external output remains advisory under `{#external-engines-never-gatekeepers}`.
 
+### Provider Spec Contract
+
+The scaffolder command is `tools/add-engine.sh --spec <provider.json> [--registry <path>] [--apply]`. It defaults to dry-run, uses the checked-in registry when `--registry` is omitted, and only writes when `--apply` is present.
+
+The v1 provider spec has this exact shape:
+
+```json
+{
+  "transport": "http",
+  "engine_id": "fixture-http",
+  "variant": "fixture-chat",
+  "base_url": "https://api.example.com/v1",
+  "model": "fixture-chat",
+  "auth_key_env": "FIXTURE_API_KEY",
+  "context_window": 32768,
+  "cost_speed_rank": 99,
+  "cost_class": "metered",
+  "cost_per_token": {
+    "input_usd": 0.000001,
+    "output_usd": 0.000002
+  },
+  "budget_ceiling_usd": 5.0,
+  "latency_class": "standard",
+  "model_identity": "fixture-chat",
+  "last_validated": "2026-07-09",
+  "capability_profile": {
+    "code-generation": {
+      "rating": "MODERATE",
+      "note": "fixture provider onboarding proof"
+    }
+  },
+  "prompting_protocol": [
+    "Return advisory evidence only."
+  ],
+  "sources": [
+    {
+      "claim": "OpenAI-compatible endpoint and model id",
+      "url": "https://api.example.com/docs",
+      "date": "2026-07-09",
+      "tag": "OFFICIAL",
+      "corroboration": "STRONG"
+    }
+  ]
+}
+```
+
+`transport` must be exactly `http`; `base_url` must be an absolute HTTPS URL with a host and no embedded credentials, query, or fragment; and `auth_key_env` is an environment-variable name, never a credential value. Free rows omit `budget_ceiling_usd` and carry zero input/output prices; metered rows require a non-negative ceiling.
+
+The scaffolder derives `substrate: external`, `egress_policy: networked`, `trust_tier: probation`, `write_capable: false`, `transport: http`, `invocation.via: engine-bridge-http`, `invocation.effort: default`, bearer auth, and `receipt_emitter: http-bridge`. `default_for_engine` is `true` for the first row of an engine id and `false` for later variants, leaving the existing default unchanged.
+
+Promotion assessment is a separate read-only command: `python3 plugins/saga/scripts/engine_promotion.py <engine>/<variant> [--registry <path>] [--ledger <path>] [--json]`. It exits nonzero for invalid input or corrupt evidence, but an evidence-valid ineligible result is a successful assessment with `eligible: false`.
+
+### Prerequisites and Sequencing
+
+All hard prerequisites are merged on current `main`: the generic HTTP bridge and receipt contract via PR #516 (issues #383/#387), the run-fact ledger via PR #489 (issue #401), the first-party Codex emitter via PR #518 (issue #476), provider-auth preflight via PR #537 (issue #389), registry schema/currency via PR #543 (issue #452), and proof-integrity telemetry via PR #547 (issue #388).
+
+No external credential, provider account, live endpoint, infrastructure, or cross-repository change is required. Outcome leaves #393 and #394 have no authored dependency on #455 and may remain dispatched independently; this plan does not make their progress a prerequisite.
+
 ---
 
 ## Implementation Units
@@ -109,7 +167,7 @@ Make probation a first-class, fail-closed routing constraint without changing of
 
 **Dependencies:** None.
 
-**Files:** `plugins/saga/scripts/engine_registry.py`, `plugins/saga/scripts/engine_resolver.py`, `plugins/saga/scripts/engine_registry_cli.py`, `plugins/saga/references/engine-registry.yaml`, `tests/test_saga_engine_registry.py`, `tests/test_saga_engine_resolver.py`, `tests/test_engine_registry_cli.py`.
+**Files:** `plugins/saga/scripts/engine_registry.py`, `plugins/saga/scripts/engine_resolver.py`, `plugins/saga/scripts/engine_registry_cli.py`, `plugins/saga/references/engine-registry.yaml`, `tests/test_saga_engine_registry.py`, `tests/test_saga_engine_resolver.py`, `tests/test_engine_registry_cli.py`, `tests/test_engine_registry_lint.py`, `tests/test_saga_engine_dispatch.py`, `tests/test_engine_recommend.py`.
 
 **Approach:** Add `TRUST_TIERS`, parse a required field into `EngineEntry`, and require role members to reference advisory rows. Make capability decisions role-aware, include `role_kind` in `RunMemo` capability keys, skip probationary candidates for advisory roles, and retain exact-key halts as defense in depth. Keep `worker` and `generator` behavior unchanged.
 
@@ -131,7 +189,7 @@ Prove schema-valid rows can actually reach the dispatch invocation seam before a
 
 **Files:** `plugins/saga/scripts/engine_registry_conformance.py`, `tests/test_engine_registry_conformance.py`, `.github/workflows/ci.yml`.
 
-**Approach:** For each row, verify exact-key identity, candidate membership for every advertised capability, role/trust consistency, and successful synthetic invocation materialization through `engine_dispatch` without preflight. Return all row-scoped errors in one report and provide a CLI exit code for CI. Keep bridge source-emission proof in `tests/test_bridge_receipt_drift.py` rather than duplicating its AST contract.
+**Approach:** For each row, verify exact-key identity, candidate membership for every advertised capability, role/trust consistency, successful synthetic invocation materialization through `engine_dispatch` without preflight, and membership of `receipt_emitter` in `bridge_signatures.load_registry()`. Return all row-scoped errors in one report and provide a CLI exit code for CI. Keep bridge source-emission proof in `tests/test_bridge_receipt_drift.py` rather than duplicating its AST contract.
 
 **Patterns to follow:** Error-collecting lint CLI in `plugins/saga/scripts/check_engine_registry.py`; hermetic bridge accounting in `tests/test_bridge_receipt_drift.py`; transport-keyed invocation construction in `plugins/saga/scripts/engine_dispatch.py:1070`.
 
@@ -258,6 +316,8 @@ In scope:
 - Read-only promotion eligibility from the existing run-fact ledger.
 - Operator docs, Saga release surfaces, tests, and durable lifecycle evidence.
 
+One-PR rationale: the three issue facets intentionally share one `EngineEntry` contract. The scaffolder must emit the probation field that the resolver enforces and must pass the same conformance function CI runs; separating them would create an interval where the generator, runtime, and gate disagree about a valid provider.
+
 Out of scope:
 
 - Generating a provider-specific HTTP bridge or adding provider branches to `engine_bridge_http.py`.
@@ -286,6 +346,7 @@ Deferred to follow-up work:
 | Promotion counts weak or unrelated telemetry | Unproven provider gains advisory standing | Exact variant, last-five window, successful status, proof integrity, and bridge run key are all mandatory |
 | Promotion mutates authored policy from machine-local state | Local telemetry silently changes shared trust | Assessment is read-only; promotion remains a reviewed PR |
 | Issue text assumes a bridge stub that current architecture forbids | Literal implementation would add dead code | Record the generic-bridge correction in plan, journal, docs, and doc-review evidence |
+| Offline conformance is mistaken for live provider compatibility | A syntactically reachable row may still point at a changed third-party API | Name the offline boundary explicitly and keep availability-gated live smoke tests as provider-specific follow-up |
 
 ---
 
@@ -317,6 +378,8 @@ Deferred to follow-up work:
 - `plugins/saga/references/run-fact-ledger.md:15` - hash-chained telemetry schema and derive-on-read posture.
 - `tests/test_bridge_receipt_drift.py:170` - existing receipt-emitter accounting boundary.
 - `.github/workflows/ci.yml:78` - existing schema/currency CI gate that conformance remains distinct from.
+- `docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T2.json` - source facets T2-F1-5, T2-F4-3, and T2-F5-4.
+- `docs/plans/plugin-fleet-ideation-2026-07-03/issue-map-final.json` - consolidation rationale for one provider-onboarding path.
 - `docs/engineering-journal/DECISIONS.md#external-engines-never-gatekeepers` - external output remains advisory.
 - `docs/engineering-journal/DECISIONS.md#provider-auth-preflight-389` - registry-auth and preflight remain the credential boundary.
 
@@ -327,7 +390,7 @@ Deferred to follow-up work:
 Focused behavior and contract checks:
 
 ```bash
-uv run pytest tests/test_engine_onboarding.py tests/test_engine_registry_conformance.py tests/test_engine_promotion.py tests/test_saga_engine_registry.py tests/test_saga_engine_resolver.py tests/test_engine_registry_cli.py -v
+uv run pytest tests/test_engine_onboarding.py tests/test_engine_registry_conformance.py tests/test_engine_promotion.py tests/test_saga_engine_registry.py tests/test_saga_engine_resolver.py tests/test_engine_registry_cli.py tests/test_engine_registry_lint.py tests/test_saga_engine_dispatch.py tests/test_engine_recommend.py -v
 uv run pytest tests/test_bridge_receipt_drift.py tests/test_saga_engine_dispatch.py tests/test_engine_registry_lint.py -v
 uv run ruff format --check plugins/saga/scripts/engine_onboarding.py plugins/saga/scripts/engine_registry_conformance.py plugins/saga/scripts/engine_promotion.py plugins/saga/scripts/engine_registry.py plugins/saga/scripts/engine_resolver.py tests/test_engine_onboarding.py tests/test_engine_registry_conformance.py tests/test_engine_promotion.py
 uv run ruff check plugins/saga/scripts/engine_onboarding.py plugins/saga/scripts/engine_registry_conformance.py plugins/saga/scripts/engine_promotion.py plugins/saga/scripts/engine_registry.py plugins/saga/scripts/engine_resolver.py tests/test_engine_onboarding.py tests/test_engine_registry_conformance.py tests/test_engine_promotion.py
@@ -362,6 +425,6 @@ uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports
 
 Destination: merge.
 
-Recommended and selected execution backend: `team-execution`. The backend recommender selected review consensus and gates for five implementation units spanning 25 unique implementation/evidence paths near dispatch trust policy. The active host has no callable delegated-agent surface, so execution uses the skill's serial fallback and user-local evidence state; `inline` was the surfaced alternative.
+Recommended and selected execution backend: `team-execution`. The backend recommender selected review consensus and gates for five implementation units spanning 28 unique implementation/evidence paths near dispatch trust policy. The active host has no callable delegated-agent surface, so execution uses the skill's serial fallback and user-local evidence state; `inline` was the surfaced alternative.
 
 Next command: `/doc-review docs/plans/2026-07-09-issue-455-provider-onboarding-plan.md`.

@@ -33,7 +33,7 @@ R6. Advisory-jury panel requests have a named hard cap, reject over-cap input, a
 
 R7. Reconcile and apply events append `reconciliation` facts to the existing hash-chained `run_fact.v1` ledger; `/retro` derives approval-gated recipe-update proposals from those facts and never mutates the registry itself.
 
-R8. Both affected plugin release surfaces, documentation, journal decision, metadata parity checks, and focused tests ship in the same implementation change.
+R8. All three affected plugin release surfaces (`fleet-core`, `saga`, and `team-execution`), documentation, journal decision, metadata parity checks, and focused tests ship in the same implementation change.
 
 ---
 
@@ -186,19 +186,19 @@ Turn recorded reconciliation outcomes into approval-gated learning without self-
 
 Make the installed plugins and durable records tell the same story as the implementation.
 
-**Goal:** Update the external-worker and manifest references, run-fact schema guidance, engineering decision record, both plugin versions/changelogs, marketplace entry, and release-surface checks.
+**Goal:** Update the external-worker and manifest references, run-fact schema guidance, engineering decision record, all three plugin versions/changelogs, marketplace entries, and release-surface checks.
 
 **Requirements:** R3, R4, R5, R6, R7, R8.
 
 **Dependencies:** U1, U2, U3, U4, U5.
 
-**Files:** `docs/engineering-journal/DECISIONS.md`; `plugins/saga/references/run-fact-ledger.md`; `plugins/saga/.claude-plugin/plugin.json`; `plugins/team-execution/.claude-plugin/plugin.json`; `.claude-plugin/marketplace.json`; `plugins/saga/CHANGELOG.md`; `plugins/team-execution/CHANGELOG.md`; `tests/test_saga_plugin.py`; release-surface drift guard inputs as required by current checks.
+**Files:** `docs/engineering-journal/DECISIONS.md`; `plugins/saga/references/run-fact-ledger.md`; `plugins/fleet-core/.claude-plugin/plugin.json`; `plugins/saga/.claude-plugin/plugin.json`; `plugins/team-execution/.claude-plugin/plugin.json`; `.claude-plugin/marketplace.json`; `plugins/fleet-core/CHANGELOG.md`; `plugins/saga/CHANGELOG.md`; `plugins/team-execution/CHANGELOG.md`; `tests/test_saga_plugin.py`; `tests/test_sync_marketplace.py`; `tests/test_release_surface_parity.py`; `tests/test_release_surface_diff_guard.py`.
 
-**Approach:** Record the intent-to-recipe registry decision with its fourth-intent revisit condition and correct the issue's obsolete parallel-ledger assumption. Regenerate marketplace metadata through the repository tool, keep version literals synchronized, and avoid changing unrelated fleet-core release policy unless a current guard proves that cross-plugin release metadata is required.
+**Approach:** Record the intent-to-recipe registry decision with its fourth-intent revisit condition and correct the issue's obsolete parallel-ledger assumption. Because U2 changes the fleet-core-owned `ENGINE_INTENTS` behavior, bump `fleet-core` alongside `saga` and `team-execution`; regenerate marketplace metadata through the repository tool and keep each plugin's `plugin.json`, marketplace entry, and top dated changelog version synchronized.
 
-**Patterns to follow:** `docs/engineering-journal/DECISIONS.md:3115-3156` for the binding gatekeeper/chaperone decisions; `docs/plans/2026-07-05-run-fact-ledger-401-plan.md` for run-fact release closure; `.github/workflows/ci.yml:146-194` for repository quality gates.
+**Patterns to follow:** `docs/engineering-journal/DECISIONS.md:3115-3156` for the binding gatekeeper/chaperone decisions; `docs/plans/2026-07-05-run-fact-ledger-401-plan.md` for run-fact release closure; `scripts/check_release_surface_parity.py:50-76` for the per-plugin tri-lock; `tools/release_surface_diff_guard.py:74-86` for the non-doc plugin bump requirement; `.github/workflows/ci.yml:105-125` for repository release-surface gates.
 
-**Test scenarios:** Release metadata and marketplace entries agree for both plugins; changelog headings and version literals pass their drift guards; documentation names all three intents and the panel cap; the journal decision states that external engines remain advisory; the full focused reconciliation suite remains green after release-surface changes.
+**Test scenarios:** Release metadata and marketplace entries agree for `fleet-core`, `saga`, and `team-execution`; all three changelog headings and version literals pass the tri-lock and diff-aware drift guards; documentation names all three intents and the panel cap; the journal decision states that external engines remain advisory; the full focused reconciliation suite remains green after release-surface changes.
 
 **Verification:** Metadata parity, marketplace sync check, release-surface diff guard, focused tests, and `git diff --check` all pass.
 
@@ -272,7 +272,7 @@ This is a deep, gated consensus job: it spans more than 20 planned files across 
 | `security-reviewer` | Confirm untrusted engine output remains opaque advisory data and cannot become gate authority. | yes |
 | `architecture-reviewer` | Check registry/ledger/module boundaries, shared-vocabulary ownership, and dependency order. | yes |
 | `testing-reviewer` | Challenge failure-path and integration coverage for reconciliation, manifests, caps, and retro reads. | yes |
-| `clarity-reviewer` | Verify the two plugin contracts, plan tier table, journal, and release guidance remain aligned. | yes |
+| `clarity-reviewer` | Verify the three plugin contracts, plan tier table, journal, and release guidance remain aligned. | yes |
 
 ### Validators
 
@@ -364,6 +364,8 @@ git diff --check
 - `docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T1.json`.
 - `plugins/saga/scripts/run_ledger.py:40-197` and `plugins/saga/scripts/engine_dispatch.py:663-722`.
 - `plugins/fleet-core/scripts/fleet_commons/tier_palette.py:98-101` and `plugins/saga/scripts/execution_spec.py:88-92,152-159`.
+- `plugins/fleet-core/.claude-plugin/plugin.json`, `plugins/fleet-core/CHANGELOG.md`, and `.claude-plugin/marketplace.json:201-204`.
+- `scripts/check_release_surface_parity.py:50-76` and `tools/release_surface_diff_guard.py:74-86`.
 - `plugins/saga/scripts/provenance_manifest.py:54-76,396-475` and `plugins/saga/scripts/engine_dispatch.py:769-1015`.
 - `plugins/team-execution/skills/team-execution/references/worker-manifest.md:63-88` and `plugins/team-execution/skills/team-execution/references/external-engine-workers.md:207-233`.
 - `docs/engineering-journal/DECISIONS.md:3115-3156` and `docs/engineering-journal/LEARNINGS.md:2124-2132`.

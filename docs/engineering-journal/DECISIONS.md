@@ -2,6 +2,18 @@
 
 ## 2026-07-09
 
+### Shared engine offer helper owns lifecycle-stage offer policy {#engine-offer-helper-451}
+
+**Context.** Issue #451 adds a shared `engine_offer` primitive so `ideate`, `brainstorm`, `work`, `doc-review`, and `code-review` do not each invent their own external-engine offer policy.
+
+- **KTD1 - advisory-only helper.** `engine_offer.py` may recommend `none`, `offload`, or `second-opinion` plus model/effort tier, but it never dispatches an engine and never satisfies a gate.
+- **KTD2 - stage-owned prompting.** The helper returns prompt-ready choices; markdown-driven stage skills keep their existing blocking-question or channel-inline conventions and call back to persist a selected preference.
+- **KTD3 - repo-local remembered preferences.** `.saga/engine-prefs.json` stores schema-versioned per-stage choices under the repo root. Malformed JSON fails loudly instead of silently discarding an operator preference.
+- **KTD4 - conservative mechanical defaults.** Explicit unit shape wins. Text fallback defaults to offload only for scaffold/deterministic-transform signals and must not classify judgment or review work as mechanical offload.
+- **KTD5 - literal tier vocabulary.** Offers return `model` and `effort` as separate existing Saga vocabulary values, not compound tier strings.
+
+**Revisit when.** A stage gains real runtime engine dispatch ownership, the tier vocabulary moves again, or the preference store needs multi-repo/outcome scope instead of repo/stage scope.
+
 ### Consensus external advisory seat is typed non-gating reviewer evidence {#consensus-advisory-seat-382}
 
 **Context.** Issue #382 adds a Team Execution consensus-panel seat for an external-engine

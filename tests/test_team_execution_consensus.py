@@ -15,6 +15,12 @@ ARCHITECTURE_REVIEWER = PLUGIN_ROOT / "agents" / "architecture-reviewer.md"
 CONSENSUS_PROTOCOL = (
     PLUGIN_ROOT / "skills" / "team-execution" / "references" / "consensus-protocol.md"
 )
+REVIEWER_REGISTRY = (
+    PLUGIN_ROOT / "skills" / "team-execution" / "references" / "reviewer-registry.md"
+)
+EXTERNAL_ENGINE_WORKERS = (
+    PLUGIN_ROOT / "skills" / "team-execution" / "references" / "external-engine-workers.md"
+)
 
 
 def _read(path: Path) -> str:
@@ -85,3 +91,46 @@ def test_dimension_granular_exclusion_still_scores_remaining_dimensions() -> Non
         "Convention Adherence",
     ):
         assert dimension in doc
+
+
+def test_external_advisory_seat_is_distinct_from_reviewer_tables() -> None:
+    doc = _read(REVIEWER_REGISTRY)
+    advisory_section = doc.split("## External Advisory Seat (Non-Scoring)", 1)[1]
+    base_and_optional = doc.split("## External Advisory Seat (Non-Scoring)", 1)[0]
+
+    assert 'role_kind="advisory-reviewer"' in advisory_section
+    assert "excluded from reviewer selection counts" in advisory_section
+    assert "Claude-only reviewer flow proceeds unchanged" in advisory_section
+    assert "external-advisory" not in base_and_optional
+    assert "advisory-reviewer" not in base_and_optional
+
+
+def test_external_advisory_seat_is_always_excluded_from_consensus_gate() -> None:
+    doc = _read(CONSENSUS_PROTOCOL)
+
+    assert "External Advisory Seat: report-only" in doc
+    assert "ALL gated Claude reviewer scores >= 9.0" in doc
+    assert "always-excluded" in doc
+    assert "external advisory seat" in doc
+    assert "`>= 9.0` pass threshold" in doc
+    assert "`< 7.0` blocking-stop rule" in doc
+    assert "cannot add itself to" in doc
+    assert "re-review set" in doc
+
+
+def test_convergence_report_buckets_are_documented() -> None:
+    doc = _read(CONSENSUS_PROTOCOL)
+
+    for bucket in ("`converged`", "`Claude-only`", "`external-only`", "`conflicting`"):
+        assert bucket in doc
+    assert "key/fingerprint based" in doc
+    assert "Absence is not a panel failure" in doc
+
+
+def test_external_engine_worker_contract_names_advisory_reviewer_role() -> None:
+    doc = _read(EXTERNAL_ENGINE_WORKERS)
+
+    assert 'role_kind="advisory-reviewer"' in doc
+    assert "halt-not-fallback role" in doc
+    assert "recorded as absent/halted" in doc
+    assert "satisfy_gate()` refuses" in doc

@@ -48,6 +48,18 @@ These reviewers are suggested when the plan involves documentation, specificatio
 
 ---
 
+## External Advisory Seat (Non-Scoring)
+
+This is not a base reviewer and not an optional Claude reviewer. When configured, the Team Lead may
+dispatch one external-engine `role_kind="advisory-reviewer"` seat through the chaperone contract in
+`external-engine-workers.md`; the seat returns advisory synthesis for the convergence report only.
+
+The external advisory seat is excluded from reviewer selection counts, consensus denominator math,
+`>= 9.0` acceptance, `< 7.0` blocking-stop behavior, and re-review scoping. If the external engine is
+absent, halted, or fails preflight, the Claude-only reviewer flow proceeds unchanged.
+
+---
+
 ## Plan Type Classification
 
 Classify the plan into one of three types before reviewer selection:

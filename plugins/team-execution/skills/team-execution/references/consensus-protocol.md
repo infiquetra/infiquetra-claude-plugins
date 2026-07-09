@@ -45,8 +45,10 @@ For iteration 1..3:
         Security Reviewer:     9.2/10 — ACCEPT
         Architecture Reviewer: 9.4/10 — ACCEPT
         [Optional reviewers if spawned...]
+        External Advisory Seat: report-only — PARTICIPATED/HALTED/ABSENT (excluded from gate)
+        Claude-vs-external convergence: converged / Claude-only / external-only / conflicting
 
-  B3d. If ALL >= 9.0 → consensus reached → proceed to Step B4
+  B3d. If ALL gated Claude reviewer scores >= 9.0 → consensus reached → proceed to Step B4
 
   B3e. Else:
         - Consolidate fix requests from ALL reviewers scoring < 9.0
@@ -106,6 +108,27 @@ Example: a repo with no `docs/adrs/` and no observable architectural patterns sc
 precondition-independent dimensions and excludes Architecture Documentation Coverage; the
 overall is the average of those 4, named as such ("avg of 4 applicable") rather than folding
 a fabricated N/A default into a 5-dimension average.
+
+## External advisory seat (always excluded)
+
+The external advisory seat is a report-only participant. It is never a base reviewer, never an
+optional Claude reviewer, and never part of the consensus denominator. It is an always-excluded
+external advisory seat: its score, verdict, halt, absence, or divergent recommendation cannot move
+the `>= 9.0` pass threshold, cannot trigger the `< 7.0` blocking-stop rule, and cannot add itself to
+the re-review set.
+
+When it participates, the Team Lead attaches a Claude-vs-external convergence report to the verdict
+artifact. The first version is key/fingerprint based and has exactly four buckets:
+
+| Bucket | Meaning |
+| --- | --- |
+| `converged` | Claude and the external seat reported the same keyed finding. |
+| `Claude-only` | The Claude panel reported the finding and the external seat did not. |
+| `external-only` | The external seat reported the finding and the Claude panel did not. |
+| `conflicting` | Both reported the same key but disagreed on summary, severity, or recommendation. |
+
+If the external engine is unavailable, fails preflight, or halts, record the advisory seat as absent
+or halted and run the Claude-only consensus flow unchanged. Absence is not a panel failure.
 
 ---
 

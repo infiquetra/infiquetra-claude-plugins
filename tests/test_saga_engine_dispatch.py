@@ -171,6 +171,25 @@ def test_satisfy_gate_requires_claude_verification() -> None:
     assert D.satisfy_gate(verified) is None
 
 
+def test_satisfy_gate_rejects_advisory_reviewer_evidence_even_when_verified() -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="Claude verified reviewer finding",
+        provenance={
+            "engine": "codex",
+            "variant": "gpt-5.5-xhigh",
+            "status": "ok",
+            "observer_corroborated": True,
+        },
+        verified_by_claude=True,
+        role_kind="advisory-reviewer",
+    )
+
+    with pytest.raises(D.DispatchError, match="advisory-only"):
+        D.satisfy_gate(evidence)
+
+
 def test_dispatch_returns_advisory_evidence_without_tree_mutation_surface() -> None:
     payload = "Change plugins/saga/scripts/example.py.\n\nReturn the patch as evidence."
 

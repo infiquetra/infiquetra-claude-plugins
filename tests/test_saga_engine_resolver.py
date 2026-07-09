@@ -586,6 +586,82 @@ def test_resolve_role_halts_panel_when_member_unavailable(
     assert "agy" in halt
 
 
+def test_resolve_role_accepts_exact_panel_cap_before_preflight(
+    registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    role = registry.by_role("cross-family-review-panel")
+    role.members[:] = [role.members[0]] * R.PANEL_N_CAP
+    preflights = 0
+
+    def available(_engine_id: str, **_kwargs: object) -> dict[str, bool | str]:
+        nonlocal preflights
+        preflights += 1
+        return {"available": True, "reason": "available"}
+
+    monkeypatch.setattr(R, "preflight", available)
+    resolutions = R.resolve_role("cross-family-review-panel", registry=registry)
+
+    assert len(resolutions) == R.PANEL_N_CAP
+    assert preflights == R.PANEL_N_CAP
+
+
+@pytest.mark.parametrize("member_count", [0, R.PANEL_N_CAP + 1])
+def test_resolve_role_rejects_invalid_member_count_before_preflight(
+    registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    member_count: int,
+) -> None:
+    role = registry.by_role("cross-family-review-panel")
+    role.members[:] = ["codex/gpt-5.5-xhigh"] * member_count
+    preflights = 0
+
+    def preflight(_engine_id: str, **_kwargs: object) -> dict[str, bool | str]:
+        nonlocal preflights
+        preflights += 1
+        return {"available": True, "reason": "available"}
+
+    monkeypatch.setattr(R, "preflight", preflight)
+    message = "zero members" if member_count == 0 else "PANEL_N_CAP"
+    with pytest.raises(REG.RegistryError, match=message):
+        R.resolve_role("cross-family-review-panel", registry=registry)
+    assert preflights == 0
+
+
+def test_resolve_role_rejects_malformed_name_before_preflight(
+    registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflights = 0
+
+    def preflight(_engine_id: str, **_kwargs: object) -> dict[str, bool | str]:
+        nonlocal preflights
+        preflights += 1
+        return {"available": True, "reason": "available"}
+
+    monkeypatch.setattr(R, "preflight", preflight)
+    with pytest.raises(REG.RegistryError, match="normalized kebab-case"):
+        R.resolve_role("Bad Role", registry=registry)
+    assert preflights == 0
+
+
+def test_resolve_role_rejects_unknown_name_before_preflight(
+    registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflights = 0
+
+    def preflight(_engine_id: str, **_kwargs: object) -> dict[str, bool | str]:
+        nonlocal preflights
+        preflights += 1
+        return {"available": True, "reason": "available"}
+
+    monkeypatch.setattr(R, "preflight", preflight)
+    with pytest.raises(REG.RegistryError, match="unknown role"):
+        R.resolve_role("missing-panel", registry=registry)
+    assert preflights == 0
+
+
 # ---- U4: transport-aware preflight (KTD4) + RunMemo (KTD5, R5/R11) -----------
 
 

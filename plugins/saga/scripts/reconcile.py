@@ -63,6 +63,35 @@ class ReconciliationAction(StrEnum):
 
 
 @dataclass(frozen=True)
+class PanelMemberEvidence:
+    """One unique advisory-panel output presented to the Claude foreman.
+
+    Duplicate non-empty output is one finding with every producing member retained. Empty output
+    is member-specific so every silent member remains an explicit reconciliation obligation.
+    The raw ``output`` is in-memory foreman input only; reconciliation ledger facts contain only
+    the resulting typed finding IDs and adjudications.
+    """
+
+    source_finding_id: str
+    member_ids: tuple[str, ...]
+    output: str
+    empty: bool
+
+    def __post_init__(self) -> None:
+        _require_id(self.source_finding_id, "source_finding_id")
+        if not self.member_ids:
+            raise ReconciliationError("panel evidence requires at least one member identity")
+        if len(self.member_ids) != len(set(self.member_ids)):
+            raise ReconciliationError("panel evidence member identities must be unique")
+        for member_id in self.member_ids:
+            _require_id(member_id, "panel member identity")
+        if not isinstance(self.output, str):
+            raise ReconciliationError("panel member output must be a string")
+        if self.empty is not (not self.output.strip()):
+            raise ReconciliationError("panel evidence empty marker disagrees with member output")
+
+
+@dataclass(frozen=True)
 class ReconciliationRecipe:
     intent: str
     recipe_id: str
@@ -308,6 +337,67 @@ def build_result(
         source_finding_ids=tuple(source_finding_ids),
         items=tuple(items),
     )
+
+
+def gather_panel_evidence(
+    member_outputs: Iterable[tuple[str, str]],
+) -> tuple[PanelMemberEvidence, ...]:
+    """Deduplicate advisory member output while preserving explicit empty-member evidence."""
+    gathered: dict[str, tuple[list[str], str, bool]] = {}
+    for member_id, output in member_outputs:
+        member = _require_id(member_id, "panel member identity")
+        if not isinstance(output, str):
+            raise ReconciliationError("panel member output must be a string")
+        empty = not output.strip()
+        if empty:
+            digest = hashlib.sha256(member.encode()).hexdigest()
+            finding_id = f"panel-empty:{digest}"
+        else:
+            digest = hashlib.sha256(output.encode()).hexdigest()
+            finding_id = f"panel-evidence:{digest}"
+
+        existing = gathered.get(finding_id)
+        if existing is None:
+            gathered[finding_id] = ([member], output, empty)
+            continue
+        members, prior_output, prior_empty = existing
+        if prior_output != output or prior_empty != empty:
+            raise ReconciliationError("panel evidence digest collision")
+        if member not in members:
+            members.append(member)
+
+    return tuple(
+        PanelMemberEvidence(
+            source_finding_id=finding_id,
+            member_ids=tuple(members),
+            output=output,
+            empty=empty,
+        )
+        for finding_id, (members, output, empty) in gathered.items()
+    )
+
+
+def validate_panel_reconciliation(
+    result: ReconciliationResult,
+    *,
+    execution_id: str,
+    intent: str,
+    evidence: Iterable[PanelMemberEvidence],
+) -> ReconciliationResult:
+    """Require the Claude foreman's typed result to account for exactly the gathered evidence."""
+    if not isinstance(result, ReconciliationResult):
+        raise ReconciliationError("Claude panel foreman must return a typed reconciliation result")
+    result.require_ready()
+    if result.execution_id != execution_id:
+        raise ReconciliationError("panel reconciliation execution_id disagrees with the request")
+    if result.intent != intent:
+        raise ReconciliationError("panel reconciliation intent disagrees with the request")
+    expected_ids = tuple(item.source_finding_id for item in evidence)
+    if set(result.source_finding_ids) != set(expected_ids):
+        raise ReconciliationError(
+            "panel reconciliation must account for exactly the gathered member evidence"
+        )
+    return result
 
 
 def normalize_rejection_note(note: Any) -> str:

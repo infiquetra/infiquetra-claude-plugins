@@ -47,6 +47,33 @@ Advisory-reviewer evidence is report-only. `engine_dispatch.satisfy_gate()` refu
 corroborated the run. The only consumer is the Claude-vs-external convergence report described in
 `consensus-protocol.md`.
 
+## Advisory-jury panel (Claude foreman)
+
+The rare hardest-call jury starts from an explicit
+`AdvisoryPanelRequest(role=<registered-role>)`. It is not a unit's `verify` object: `Verify` bounds
+Claude verifier calls over one unit result, while the advisory jury expands a named external-engine
+composing role.
+`PANEL_N_CAP = 7` is the independent hard bound for this external member multiplicity.
+
+The chaperone validates the role name, advisory verdict, Claude verifier, and resolved member count
+before any member preflight. Zero-member, malformed, unknown, or over-cap roles halt with no member
+preflight, dispatch, or ledger append. It then calls `engine_resolver.resolve_role()` once, checks
+the complete returned list with `panel_halt()`, and only starts member dispatch when every member is
+available. It must not call `resolve({role_kind: "panel"})`; that API remains the resolver's existing
+single-resolution role policy, not a fan-out request.
+
+Member output stays in-memory advisory evidence. Duplicate non-empty output becomes one source
+finding while retaining all producing member identities; an empty response becomes an explicit,
+member-specific source finding. Claude's foreman must return a ready typed `ReconciliationResult`
+that accounts for exactly those source finding IDs. Only after that validation may
+`dispatch_advisory_panel()` append the typed `reconcile` and `apply` facts. Raw member output is never
+written to the run-fact ledger, and a failed foreman result writes neither fact.
+
+Successful reconciliation grants no authority. Every member evidence record is stamped
+`role_kind="panel"`, which remains in `NON_GATING_ROLE_KINDS`; `satisfy_gate()` therefore refuses it
+regardless of Claude verification or observer corroboration. The panel does not join wave scheduling,
+reviewer score math, or any merge/deploy gate.
+
 ## 1. Context package (coordinator → chaperone)
 
 At residency spawn (Step B1's wave scheduling), the coordinator hands the chaperone a context

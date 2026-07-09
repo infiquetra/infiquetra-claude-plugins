@@ -1526,3 +1526,139 @@ def test_dispatch_copies_resolution_warnings_without_satisfying_gate() -> None:
     assert evidence.provenance["warnings"] == ["stale registry row"]
     with pytest.raises(D.DispatchError, match="verified"):
         D.satisfy_gate(evidence, reconciliation=_ready_reconciliation())
+
+
+def _panel_resolutions() -> list[Any]:
+    return [
+        _resolution(variant="panel-one"),
+        _resolution(variant="panel-two"),
+        _resolution(variant="panel-three"),
+    ]
+
+
+def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolutions = _panel_resolutions()
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", lambda *_args, **_kwargs: resolutions)
+    outputs = iter(("same advisory finding", "same advisory finding", ""))
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+
+    def foreman(evidence: tuple[Any, ...]) -> Any:
+        assert len(evidence) == 2
+        assert evidence[0].member_ids == ("codex/panel-one", "codex/panel-two")
+        assert evidence[1].empty is True
+        return RC.build_result(
+            reconciliation_id="panel-reconciliation",
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            source_finding_ids=tuple(item.source_finding_id for item in evidence),
+            items=tuple(
+                RC.ReconciliationItem(
+                    source_finding_id=item.source_finding_id,
+                    status=RC.ReconciliationStatus.RECONCILED,
+                    adjudicator_id="claude/foreman",
+                    rationale=(
+                        "Claude explicitly accounted for the empty member response."
+                        if item.empty
+                        else "Claude verified the duplicate advisory finding once."
+                    ),
+                )
+                for item in evidence
+            ),
+        )
+
+    result = D.dispatch_advisory_panel(
+        D.AdvisoryPanelRequest("cross-family-review-panel"),
+        registry=object(),
+        runner=lambda _invocation: {"status": "ok", "output": next(outputs)},
+        foreman=foreman,
+        execution_id="panel-execution",
+        intent="second-opinion",
+        ledger=ledger,
+        subplot_id="issue-393",
+        at="2026-07-09T00:00:00Z",
+    )
+
+    facts = RC.read_reconciliation_facts(ledger)
+    assert [fact["action"] for fact in facts] == ["reconcile", "apply"]
+    assert all(evidence.role_kind == "panel" for evidence in result.member_evidence)
+    assert result.advisory is True
+    assert "same advisory finding" not in ledger.path.read_text(encoding="utf-8")
+
+    verified = dataclasses.replace(
+        result.member_evidence[0],
+        verified_by_claude=True,
+        provenance={**result.member_evidence[0].provenance, "observer_corroborated": True},
+    )
+    with pytest.raises(D.DispatchError, match="advisory-only"):
+        D.satisfy_gate(verified, reconciliation=result.reconciliation)
+
+
+def test_advisory_panel_unavailable_member_blocks_all_dispatch_and_append(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolutions = [_resolution(), _resolution(variant="unavailable", halt="not configured")]
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", lambda *_args, **_kwargs: resolutions)
+    calls = 0
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        return {"status": "ok", "output": "must not run"}
+
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="before dispatch"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=runner,
+            foreman=lambda _evidence: _ready_reconciliation(),
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+    assert calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_failed_panel_foreman_writes_no_apply_fact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+
+    def failed_foreman(evidence: tuple[Any, ...]) -> Any:
+        return RC.build_result(
+            reconciliation_id="panel-reconciliation",
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            source_finding_ids=tuple(item.source_finding_id for item in evidence),
+            items=(),
+        )
+
+    with pytest.raises(D.DispatchError, match="foreman reconciliation failed"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: {"status": "ok", "output": "finding"},
+            foreman=failed_foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert [fact["action"] for fact in RC.read_reconciliation_facts(ledger)] == []

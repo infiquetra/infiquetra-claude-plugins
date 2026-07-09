@@ -26,6 +26,10 @@ scope.
   with no tiering drift.
 - U3 manifest: `worker-manifest-signal-U3` in the `issue-393` manifest store, disposition
   `ran-as-requested`.
+- U4 worker: `worker-panel-foreman`, resolved effort `high`, Agent-path effort rider reconciled with
+  no tiering drift.
+- U4 manifest: `worker-panel-foreman-U4` in the `issue-393` manifest store, disposition
+  `ran-as-requested`.
 
 ## Completed Work
 
@@ -45,6 +49,27 @@ Checks:
 - Narrow Ruff over U1 implementation and tests
   - passed
 - `uv run mypy plugins/saga/scripts/reconcile.py --follow-imports=skip`
+  - passed
+- `git diff --check`
+  - passed
+
+### U4: Bounded advisory-jury panel and foreman reconciliation
+
+- Added a separate `AdvisoryPanelRequest` contract and `PANEL_N_CAP = 7`.
+- Validated normalized role names, advisory/Claude-foreman role posture, zero membership, cap
+  overflow, and all-member availability before the first dispatch.
+- Reused `resolve_role()` and `panel_halt()` while preserving the existing single-resolution panel
+  role policy.
+- Deduplicated identical non-empty member evidence, retained explicit per-member empty evidence, and
+  required an exact typed Claude-foreman reconciliation before ledger append.
+- Persisted only typed reconcile/apply facts; raw member output remains transient and panel evidence
+  remains structurally non-gating.
+
+Checks:
+
+- Focused U4 pytest matrix
+  - 249 passed
+- Repository Ruff and targeted Ruff rerun
   - passed
 - `git diff --check`
   - passed
@@ -89,4 +114,5 @@ Checks:
 
 ## Next Step
 
-Execute U4 to add the cap-bounded advisory-jury panel and Claude foreman reconciliation boundary.
+Execute U5 to derive approval-gated retro proposals from verified reconciliation facts without
+mutating the ledger or recipe registry.

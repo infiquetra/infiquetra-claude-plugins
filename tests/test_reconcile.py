@@ -264,3 +264,41 @@ def test_reader_refuses_corrupt_chain(tmp_path: Path) -> None:
     ledger.path.write_text(json.dumps(record) + "\n")
     with pytest.raises(RC.ReconciliationError, match="chain verification failed"):
         RC.read_reconciliation_facts(ledger)
+
+
+def test_panel_evidence_deduplicates_output_and_preserves_empty_member() -> None:
+    evidence = RC.gather_panel_evidence(
+        (
+            ("codex/one", "same advisory finding"),
+            ("agy/two", "same advisory finding"),
+            ("ollama/three", "  "),
+        )
+    )
+
+    assert len(evidence) == 2
+    duplicate, empty = evidence
+    assert duplicate.member_ids == ("codex/one", "agy/two")
+    assert duplicate.empty is False
+    assert empty.member_ids == ("ollama/three",)
+    assert empty.empty is True
+    assert empty.source_finding_id.startswith("panel-empty:")
+
+
+def test_panel_foreman_must_account_for_exact_gathered_evidence() -> None:
+    evidence = RC.gather_panel_evidence((("codex/one", "finding"),))
+    result = RC.build_result(
+        reconciliation_id="panel-reconciliation",
+        execution_id="panel-execution",
+        intent="second-opinion",
+        adjudicator_id="claude/foreman",
+        source_finding_ids=(),
+        items=(),
+    )
+
+    with pytest.raises(RC.ReconciliationError, match="exactly the gathered"):
+        RC.validate_panel_reconciliation(
+            result,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            evidence=evidence,
+        )

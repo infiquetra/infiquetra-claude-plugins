@@ -7,7 +7,7 @@ import contextlib
 import hashlib
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import bridge_signatures  # noqa: E402
 import chaperone_economics as ce  # noqa: E402
+import engine_resolver  # noqa: E402
 import fleet_commons_shim  # noqa: E402
 import manifest_store  # noqa: E402
 import provenance_manifest as pm  # noqa: E402
 import reconcile  # noqa: E402
 import run_ledger  # noqa: E402
-from engine_resolver import Resolution  # noqa: E402
+from engine_resolver import Resolution, RunMemo  # noqa: E402
+from execution_spec import AdvisoryPanelRequest  # noqa: E402
 
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
 _delegation_audit = fleet_commons_shim.load("delegation_audit")
@@ -36,6 +38,9 @@ NON_GATING_ROLE_KINDS = frozenset({"advisory-reviewer", "panel"})
 _GATEKEEPER_KEYS = frozenset({"verdict", "gate_status", "adjudicated"})
 
 Runner = Callable[[dict[str, Any]], dict[str, Any]]
+PanelForeman = Callable[
+    [tuple[reconcile.PanelMemberEvidence, ...]], reconcile.ReconciliationResult
+]
 
 
 class DispatchError(ValueError):
@@ -76,6 +81,19 @@ class RequeueDisposition:
     attempt: int
     evidence: AdvisoryEvidence
     disposition: str = "requeue"
+
+
+@dataclass(frozen=True)
+class PanelDispatchResult:
+    """Advisory-only result of a fully reconciled external-engine panel."""
+
+    role_name: str
+    member_evidence: tuple[AdvisoryEvidence, ...]
+    gathered_evidence: tuple[reconcile.PanelMemberEvidence, ...]
+    reconciliation: reconcile.ReconciliationResult
+    reconcile_fact: dict[str, Any]
+    apply_fact: dict[str, Any]
+    advisory: bool = True
 
 
 # Consecutive gated-divergence attempt counter (KTD7 re-queue-once-then-HALT), keyed by
@@ -391,6 +409,103 @@ def dispatch(
 
     _record_advisory_facts(ledger, invocation, evidence, result, subplot_id=subplot_id, at=at)
     return evidence
+
+
+def dispatch_advisory_panel(
+    request: AdvisoryPanelRequest,
+    *,
+    registry: Any,
+    runner: Runner,
+    foreman: PanelForeman,
+    execution_id: str,
+    intent: str,
+    ledger: run_ledger.RunLedger,
+    subplot_id: str,
+    at: str,
+    task_context: dict[str, Any] | None = None,
+    memo: RunMemo | None = None,
+) -> PanelDispatchResult:
+    """Resolve, dispatch, and Claude-reconcile one bounded advisory jury.
+
+    ``resolve_role`` validates the normalized role and member count before it performs any
+    member preflight. All resolutions are then checked with ``panel_halt`` before the first
+    dispatch, so an unavailable member cannot create partial work. Member dispatches receive no
+    ledger: raw panel output is in-memory foreman input only. The validated typed foreman result
+    is the sole panel content appended to the run-fact ledger.
+    """
+    if not isinstance(request, AdvisoryPanelRequest):
+        raise DispatchError("advisory panel dispatch requires an AdvisoryPanelRequest")
+    role_name = request.role
+    try:
+        resolutions = engine_resolver.resolve_role(
+            role_name,
+            registry=registry,
+            task_context=task_context,
+            memo=memo,
+        )
+    except engine_resolver.RegistryError as exc:
+        raise DispatchError(f"advisory panel request rejected: {exc}") from exc
+
+    halt = engine_resolver.panel_halt(resolutions)
+    if halt is not None:
+        raise DispatchError(f"advisory panel halted before dispatch: {halt}")
+
+    member_evidence: list[AdvisoryEvidence] = []
+    for resolution in resolutions:
+        dispatched = dispatch(resolution, runner=runner)
+        if isinstance(dispatched, RequeueDisposition):
+            raise DispatchError("advisory panel dispatch unexpectedly requested a gated requeue")
+        panel_evidence = replace(dispatched, role_kind="panel")
+        if panel_evidence.halt is not None:
+            raise DispatchError(
+                "advisory panel member failed; no reconciliation fact was written: "
+                f"{panel_evidence.engine_id}/{panel_evidence.variant}: {panel_evidence.halt}"
+            )
+        member_evidence.append(panel_evidence)
+
+    try:
+        gathered = reconcile.gather_panel_evidence(
+            (
+                f"{evidence.engine_id}/{evidence.variant}",
+                evidence.evidence,
+            )
+            for evidence in member_evidence
+        )
+        foreman_result = foreman(gathered)
+    except Exception as exc:  # noqa: BLE001 - foreman failure is a named no-append boundary
+        raise DispatchError(f"Claude panel foreman failed before ledger append: {exc}") from exc
+    try:
+        result = reconcile.validate_panel_reconciliation(
+            foreman_result,
+            execution_id=execution_id,
+            intent=intent,
+            evidence=gathered,
+        )
+    except reconcile.ReconciliationError as exc:
+        raise DispatchError(f"Claude panel foreman reconciliation failed: {exc}") from exc
+
+    reconcile_fact = reconcile.append_reconciliation_fact(
+        ledger,
+        result,
+        action=reconcile.ReconciliationAction.RECONCILE,
+        subplot_id=subplot_id,
+        at=at,
+    )
+    apply_fact = reconcile.append_reconciliation_fact(
+        ledger,
+        result,
+        action=reconcile.ReconciliationAction.APPLY,
+        subplot_id=subplot_id,
+        at=at,
+    )
+    return PanelDispatchResult(
+        role_name=role_name,
+        member_evidence=tuple(member_evidence),
+        gathered_evidence=gathered,
+        reconciliation=result,
+        reconcile_fact=reconcile_fact,
+        apply_fact=apply_fact,
+    )
 
 
 def _offload_economics_metadata(

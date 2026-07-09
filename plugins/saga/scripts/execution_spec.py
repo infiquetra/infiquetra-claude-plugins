@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
@@ -153,6 +154,15 @@ TIER_ENFORCEABLE_BY_BACKEND: dict[str, frozenset[str]] = {
 # the bound directly guards the rate-limit overcorrection (R3: the 22/23-judges panel that
 # tripped the concurrency cap). N <= CAP is allowed; a soft warn band starts at WARN below.
 VERIFY_N_CAP = 7
+
+# Hard upper bound on an external-engine advisory jury. This is deliberately separate from
+# ``VERIFY_N_CAP``: ``Verify`` bounds Claude verifier calls over a unit result, while an
+# ``AdvisoryPanelRequest`` expands one named registry role into external-engine evidence that a
+# Claude foreman must reconcile. Keeping distinct constants and types prevents either multiplicity
+# contract from silently inheriting the other's runtime semantics (#393 KTD6).
+PANEL_N_CAP = 7
+
+_PANEL_ROLE_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 
 # Soft threshold: a panel size in (WARN, CAP] validates but emits a stderr warning -- big
 # panels are legal but smell like the overcorrection, so they are surfaced, not silently run.
@@ -477,6 +487,37 @@ def _validate_external_engine_selector(
             raise SpecError(f"{where}: unknown engine variant {engine!r}")
 
 
+def _validate_advisory_panel_role(where: str, role_name: str) -> None:
+    """Validate one named panel role without preflighting or dispatching any member."""
+    if not _PANEL_ROLE_RE.fullmatch(role_name):
+        raise SpecError(
+            f"{where}: advisory panel role {role_name!r} must be normalized kebab-case"
+        )
+
+    registry_module = _engine_registry_module()
+    registry_path = _engine_registry_path()
+    if not registry_path.exists():
+        return
+    try:
+        registry = registry_module.Registry.load(registry_path)
+        role = registry.by_role(role_name)
+    except registry_module.RegistryError as exc:
+        raise SpecError(f"{where}: invalid advisory panel role: {exc}") from exc
+
+    member_count = len(role.members)
+    if member_count == 0:
+        raise SpecError(f"{where}: advisory panel role {role_name!r} has zero members")
+    if member_count > PANEL_N_CAP:
+        raise SpecError(
+            f"{where}: advisory panel role {role_name!r} resolves to {member_count} members, "
+            f"exceeding PANEL_N_CAP={PANEL_N_CAP}"
+        )
+    if role.verdict != "advisory":
+        raise SpecError(f"{where}: advisory panel role {role_name!r} must have advisory verdict")
+    if role.verifier.lower() != "claude":
+        raise SpecError(f"{where}: advisory panel role {role_name!r} must name Claude as foreman")
+
+
 @dataclass(frozen=True)
 class Tier:
     """A per-unit ``{model, effort}`` tier (R2(b))."""
@@ -582,6 +623,30 @@ class Verify:
             "iterate_to_consensus": self.iterate_to_consensus,
             "max_iterations": self.max_iterations,
         }
+
+
+@dataclass(frozen=True)
+class AdvisoryPanelRequest:
+    """A named external-engine advisory jury, distinct from a ``Verify`` panel (#393)."""
+
+    role: str
+
+    def validate(self, where: str) -> None:
+        _validate_advisory_panel_role(where, self.role)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], where: str) -> AdvisoryPanelRequest:
+        if set(data) != {"role"}:
+            raise SpecError(f"{where}: advisory_panel needs exactly one 'role' field")
+        role = data.get("role")
+        if not isinstance(role, str):
+            raise SpecError(f"{where}: advisory panel role must be a string")
+        request = cls(role=role)
+        request.validate(where)
+        return request
+
+    def to_dict(self) -> dict[str, str]:
+        return {"role": self.role}
 
 
 @dataclass(frozen=True)

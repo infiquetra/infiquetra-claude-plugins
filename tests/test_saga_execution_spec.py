@@ -175,6 +175,54 @@ def test_engine_intent_omitted_from_to_dict_for_plain_claude_unit() -> None:
     assert "engine_intent" not in spec.units[0].to_dict()
 
 
+def test_advisory_panel_request_is_separate_from_verify_and_round_trips() -> None:
+    request = ES.AdvisoryPanelRequest.from_dict(
+        {"role": "cross-family-review-panel"},
+        "advisory panel",
+    )
+
+    assert request == ES.AdvisoryPanelRequest("cross-family-review-panel")
+    assert request.to_dict() == {"role": "cross-family-review-panel"}
+    assert not hasattr(request, "n")
+
+
+def test_advisory_panel_rejects_malformed_role_name() -> None:
+    with pytest.raises(ES.SpecError, match="normalized kebab-case"):
+        ES.AdvisoryPanelRequest.from_dict({"role": "Bad Role"}, "advisory panel")
+
+
+def test_advisory_panel_rejects_over_cap_role_at_spec_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeRegistryError(ValueError):
+        pass
+
+    class FakeRole:
+        members = ["codex/variant"] * (ES.PANEL_N_CAP + 1)
+        verdict = "advisory"
+        verifier = "claude"
+
+    class FakeRegistry:
+        @classmethod
+        def load(cls, _path: Path) -> FakeRegistry:
+            return cls()
+
+        def by_role(self, _role_name: str) -> FakeRole:
+            return FakeRole()
+
+    fake_module = ModuleType("fake_engine_registry")
+    fake_module.Registry = FakeRegistry
+    fake_module.RegistryError = FakeRegistryError
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text("test-only", encoding="utf-8")
+    monkeypatch.setattr(ES, "_engine_registry_module", lambda: fake_module)
+    monkeypatch.setattr(ES, "_engine_registry_path", lambda: registry_path)
+
+    with pytest.raises(ES.SpecError, match="PANEL_N_CAP"):
+        ES.AdvisoryPanelRequest("cross-family-review-panel").validate("unit U1")
+
+
 def test_engine_verifiability_round_trips_and_emits_external_engine_option() -> None:
     spec = ES.ExecutionSpec.from_dict(
         _spec_dict(engine="codex/gpt-5.5-xhigh", verifiability="test-gated")

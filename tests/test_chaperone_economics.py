@@ -125,3 +125,124 @@ def test_escalation_thresholds_and_provenance_are_serializable() -> None:
     assert provenance["cache_status"] == "hit"
     assert provenance["unit_ids"] == ["U1"]
     assert provenance["selector"] == {"kind": "engine", "value": "codex/gpt-5.5-xhigh"}
+
+
+def _offload_input(**overrides: object) -> object:
+    data: dict[str, object] = {
+        "engine_id": "codex",
+        "cost_class": "metered",
+        "estimated_external_cost_usd": 0.004,
+        "provider_budget_ceiling_usd": 25.0,
+        "prior_provider_spend_usd": 5.0,
+        "claude_inline_tokens_estimate": 1_000,
+        "chaperone_tokens_estimate": 200,
+        "inline_fallback": "inline",
+    }
+    data.update(overrides)
+    return C.OffloadEconomicsInput(**data)
+
+
+def test_metered_offload_economics_proceeds_with_positive_net_savings() -> None:
+    decision = C.decide_offload_economics(_offload_input())
+
+    assert decision.status == "proceed"
+    assert decision.proceed is True
+    assert decision.net_savings.to_dict() == {
+        "engine_tokens_avoided": 1000,
+        "chaperone_tokens_spent": 200,
+        "net_savings_tokens": 800,
+        "net_savings_status": "positive",
+        "external_cost_usd": 0.004,
+    }
+    assert decision.projected_provider_spend_usd == 5.004
+    assert decision.preview == (
+        "offload codex: save 800 tokens (inline 1000 - chaperone 200); "
+        "external cost $0.0040; budget $5.0040/$25.0000"
+    )
+
+
+def test_free_class_offload_skips_break_even_and_ceiling_checks() -> None:
+    decision = C.decide_offload_economics(
+        _offload_input(
+            engine_id="ollama-cloud",
+            cost_class="free",
+            estimated_external_cost_usd=None,
+            provider_budget_ceiling_usd=None,
+            claude_inline_tokens_estimate=None,
+            chaperone_tokens_estimate=None,
+        )
+    )
+
+    assert decision.status == "free-class-proceed"
+    assert decision.proceed is True
+    assert decision.net_savings.external_cost_usd == 0.0
+    assert decision.net_savings.net_savings_status == "zero"
+    assert decision.preview == (
+        "offload ollama-cloud: free provider class; net 0 tokens, external cost $0.0000"
+    )
+
+
+def test_break_even_halt_uses_token_savings_only() -> None:
+    decision = C.decide_offload_economics(
+        _offload_input(claude_inline_tokens_estimate=1_000, chaperone_tokens_estimate=1_000)
+    )
+
+    assert decision.status == "break-even-halt"
+    assert decision.proceed is False
+    assert decision.net_savings.net_savings_status == "zero"
+    assert decision.reason == "chaperone tokens 1000 >= inline tokens 1000"
+    assert decision.preview == "offload codex: halt; chaperone 1000 tokens >= inline 1000; use inline"
+
+
+def test_budget_ceiling_halt_uses_provider_spend_only() -> None:
+    decision = C.decide_offload_economics(
+        _offload_input(
+            estimated_external_cost_usd=0.25,
+            provider_budget_ceiling_usd=5.20,
+            prior_provider_spend_usd=5.0,
+        )
+    )
+
+    assert decision.status == "budget-ceiling-halt"
+    assert decision.proceed is False
+    assert decision.projected_provider_spend_usd == 5.25
+    assert "exceeds ceiling $5.2000 by $0.0500" in decision.reason
+    assert decision.preview == (
+        "offload codex: halt; provider spend $5.2500/$5.2000 would exceed "
+        "ceiling by $0.0500"
+    )
+
+
+def test_missing_metered_estimates_halt_without_exception() -> None:
+    decision = C.decide_offload_economics(
+        _offload_input(estimated_external_cost_usd=None, chaperone_tokens_estimate=None)
+    )
+
+    assert decision.status == "economics-missing-halt"
+    assert decision.proceed is False
+    assert decision.missing_fields == ("estimated_external_cost_usd", "chaperone_tokens_estimate")
+    assert decision.net_savings.to_dict() == {
+        "engine_tokens_avoided": 1000,
+        "chaperone_tokens_spent": 0,
+        "net_savings_tokens": 1000,
+        "net_savings_status": "positive",
+    }
+
+
+def test_offload_economics_rejects_negative_estimates() -> None:
+    with pytest.raises(C.ChaperonePolicyError, match="estimated_external_cost_usd"):
+        _offload_input(estimated_external_cost_usd=-0.01)
+
+    with pytest.raises(C.ChaperonePolicyError, match="chaperone_tokens_estimate"):
+        _offload_input(chaperone_tokens_estimate=-1)
+
+
+def test_offload_economics_preview_and_provenance_are_stable() -> None:
+    input_data = _offload_input()
+
+    first = C.decide_offload_economics(input_data)
+    second = C.decide_offload_economics(input_data)
+
+    assert first.preview == second.preview
+    assert first.to_provenance() == second.to_provenance()
+    assert first.to_provenance()["net_savings"]["net_savings_tokens"] == 800

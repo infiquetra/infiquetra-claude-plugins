@@ -24,6 +24,7 @@ RATINGS = ("WEAK", "MODERATE", "STRONG")
 _RATING_SCORE = {rating: index for index, rating in enumerate(RATINGS, start=1)}
 
 TRANSPORTS = ("cli", "http")
+AUTH_MODES = ("files", "env", "bearer", "secret-ref")
 
 
 class RegistryError(ValueError):
@@ -155,9 +156,9 @@ def _validate_invocation_transport(
 ) -> None:
     """KTD2: http-conditional required invocation fields.
 
-    ``transport: http`` rows must carry ``base_url``, ``model``, an ``auth`` mapping with
-    ``mode``, ``auth.key_env`` when ``auth.mode`` is ``bearer``, and an explicit ``effort``.
-    ``transport: cli`` rows are unaffected -- existing shape stays byte-identical (R11).
+    ``transport: http`` rows must carry ``base_url``, ``model``, and explicit ``effort``.
+    Auth validation is shared across transports in ``_parse_auth`` so CLI rows can use the
+    same row-authored credential contract.
     """
     if transport != "http":
         return
@@ -166,13 +167,53 @@ def _validate_invocation_transport(
     _require_string(invocation, "model", f"{where}: invocation")
     _require_field(invocation, "effort", f"{where}: invocation")
 
-    auth = _require_mapping(
-        _require_field(invocation, "auth", f"{where}: invocation"),
-        f"{where}: invocation.auth",
+    if "auth" not in invocation:
+        raise RegistryError(f"{where}: invocation missing required field 'auth'")
+
+
+def _parse_auth(invocation: dict[str, Any], transport: str, where: str) -> dict[str, Any]:
+    """Normalize row-authored credential availability metadata."""
+    if "auth" not in invocation:
+        if transport == "http":
+            raise RegistryError(f"{where}: invocation missing required field 'auth'")
+        return {}
+
+    if transport == "cli":
+        _require_string(invocation, "cli", f"{where}: invocation")
+
+    auth = dict(
+        _require_mapping(
+            _require_field(invocation, "auth", f"{where}: invocation"),
+            f"{where}: invocation.auth",
+        )
     )
     mode = _require_string(auth, "mode", f"{where}: invocation.auth")
-    if mode == "bearer":
+    if mode not in AUTH_MODES:
+        raise RegistryError(
+            f"{where}: invocation.auth mode {mode!r} not in closed vocabulary {AUTH_MODES}"
+        )
+    if transport == "http" and mode != "bearer":
+        raise RegistryError(f"{where}: http transport currently requires auth.mode 'bearer'")
+
+    if mode == "files":
+        paths = _require_list(
+            _require_field(auth, "paths", f"{where}: invocation.auth"),
+            f"{where}: invocation.auth.paths",
+        )
+        if not paths:
+            raise RegistryError(f"{where}: invocation.auth.paths must not be empty")
+        for index, path in enumerate(paths):
+            if not isinstance(path, str) or not path:
+                raise RegistryError(
+                    f"{where}: invocation.auth.paths[{index}] must be a non-empty string"
+                )
+        auth["paths"] = list(paths)
+    elif mode in {"env", "bearer"}:
         _require_string(auth, "key_env", f"{where}: invocation.auth")
+    elif mode == "secret-ref":
+        _require_string(auth, "ref", f"{where}: invocation.auth")
+
+    return auth
 
 
 def _parse_sources(data: dict[str, Any], where: str) -> list[dict[str, Any]]:
@@ -208,6 +249,7 @@ class EngineEntry:
     sources: list[dict[str, Any]]
     registry_order: int
     receipt_emitter: str
+    auth: dict[str, Any]
     transport: str = "cli"
 
     @property
@@ -235,6 +277,7 @@ class EngineEntry:
         _require_string(invocation, "recipe", f"{where}: invocation")
         _require_bool(invocation, "write_capable", f"{where}: invocation")
         _validate_invocation_transport(invocation, transport, where)
+        auth = _parse_auth(invocation, transport, where)
 
         if "cost_speed_rank" not in data:
             raise RegistryError(f"{where}: missing cost_speed_rank")
@@ -266,6 +309,7 @@ class EngineEntry:
             sources=_parse_sources(data, where),
             registry_order=registry_order,
             receipt_emitter=receipt_emitter,
+            auth=auth,
             transport=transport,
         )
 

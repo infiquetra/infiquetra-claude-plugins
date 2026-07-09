@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.75.5] - 2026-07-09
+
+### Added — registry-authored provider credential preflight (#389)
+
+- `plugins/saga/scripts/engine_registry.py`: `EngineEntry` now exposes normalized
+  `invocation.auth` metadata for `files`, `env`, `bearer`, and `secret-ref` credential probes;
+  HTTP bridge rows remain bearer-only until the bridge can consume another credential mode.
+- `plugins/saga/scripts/engine_resolver.py`: CLI preflight now reads executable and credential
+  requirements from registry rows, keeps legacy no-entry callers working, and caches row-backed
+  preflight by row identity instead of only `engine_id`.
+- `plugins/saga/references/engine-registry.yaml`: codex and agy CLI rows now declare `invocation.cli`
+  plus file-backed auth probes, matching the existing HTTP bearer-row contract.
+
 ## [0.75.4] - 2026-07-08
 
 ### Fixed — refute-N verifier panels fail loudly instead of passing under-strength (#519)

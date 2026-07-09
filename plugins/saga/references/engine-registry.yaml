@@ -27,6 +27,12 @@ engines:
       via: codex:delegate
       recipe: "codex exec -s read-only -c model_reasoning_effort=high"
       write_capable: false            # evidence-only default (R23)
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
     context_window: 400000            # R25 -- Codex CLI ChatGPT-account limit
     cost_speed_rank: 2
     model_identity: gpt-5.5
@@ -58,6 +64,12 @@ engines:
       via: codex:delegate
       recipe: "codex exec -s read-only -c model_reasoning_effort=xhigh"
       write_capable: false
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
     context_window: 400000
     cost_speed_rank: 3                 # xhigh is the cost multiplier -- pricier than high
     model_identity: gpt-5.5
@@ -86,6 +98,12 @@ engines:
       recipe: "agy delegate --mode no-write --model 'Gemini 3.5 Flash (High)'"
       write_capable: false
       model: "Gemini 3.5 Flash (High)"   # verbatim canonical --model string (agy forwards it byte-for-byte)
+      cli: agy
+      auth:
+        mode: files
+        paths:
+          - "~/.config/agy/config.json"
+          - "~/.gemini/settings.json"
     context_window: 1000000
     cost_speed_rank: 1                 # cheapest + fastest (STRONG)
     model_identity: gemini-3.5-flash
@@ -117,6 +135,12 @@ engines:
       recipe: "agy delegate --mode no-write --model 'Gemini 3.1 Pro (High)'"
       write_capable: false
       model: "Gemini 3.1 Pro (High)"     # verbatim canonical --model string
+      cli: agy
+      auth:
+        mode: files
+        paths:
+          - "~/.config/agy/config.json"
+          - "~/.gemini/settings.json"
     context_window: 1000000
     cost_speed_rank: 4                 # largest / priciest / slowest of the seed set
     model_identity: gemini-3.1-pro

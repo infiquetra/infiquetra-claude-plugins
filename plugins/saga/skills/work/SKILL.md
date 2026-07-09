@@ -72,6 +72,15 @@ Use repo-relative paths in every generated document. Absolute paths break portab
 and worktrees. (The one exception is the saga `--review-paths` value passed through to `/code-review`,
 which mirrors that skill's convention.)
 
+## Engine Offer
+
+Before offering external-engine help for a work unit, run
+`python3 plugins/saga/scripts/engine_offer.py offer --stage work --repo-root . --attended`.
+Pass explicit unit shape or fingerprint text when available so mechanical/scaffold work can default to
+offload while judgment work stays advisory. If the helper reports `prompt_required`, `/work` owns the
+operator prompt and persists the selected preference with `engine_offer.py remember`. The offer never
+dispatches by itself, never replaces `/work`'s backend choice, and never satisfies a gate.
+
 ---
 
 ## Phase 0 — Enter, scan the saga, triage, detect round-N

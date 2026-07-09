@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.75.8] - 2026-07-09
+
+### Added - shared lifecycle-stage engine offer helper (#451)
+
+- `plugins/saga/scripts/engine_offer.py`: adds an advisory-only offer helper with
+  stage/shape intent-tier resolution, repo-local `.saga/engine-prefs.json`
+  preferences, conservative mechanical offload defaults, and a CLI facade for
+  markdown-driven skills.
+- `ideate`, `brainstorm`, `work`, `doc-review`, and `code-review` now document a
+  shared helper call site with drift-guard coverage.
+
 ## [0.75.7] - 2026-07-09
 
 ### Fixed - advisory consensus evidence remains outside Saga completion gates (#382)

@@ -37,6 +37,12 @@ Reject an idea for any of:
   changes to the whole platform when the operator asked about one flow, plugin, or stage). Allowed
   only when the basis explicitly justifies the expansion; default is reject or downgrade.
 
+**Provenance is not a gate criterion.** A candidate tagged `engine-generated` is evaluated by the same
+rejection criteria and the same survivor scoring rubric as every Claude frame-agent, user-seed,
+interview, or combined candidate. The tag is informational provenance only; it does not relax basis
+strength, change the survivor target, create a separate review path, or supply authority outside the
+written `direct:` / `external:` / `reasoned:` basis.
+
 ### Survivor scoring rubric (verbatim-adapted)
 
 Score every survivor on a consistent rubric weighing:
@@ -96,6 +102,8 @@ this shape:
   - **basis** — tagged exactly one of `direct:` (quoted file/line/issue/user-context), `external:`
     (named prior art / source), or `reasoned:` (written-out first-principles argument). This is the
     same basis contract the frame agents carried in Phase 2.
+  - **source** — provenance only: `frame-agent`, `user-seed`, `interview`, `combined`, or
+    `engine-generated`. Omit only when provenance is unknown.
   - **confidence** — 0-100.
   - **complexity** — Low / Med / High.
   - **axis** — the topic axis this idea targets. Include this row only when Phase 1.5 produced an axis

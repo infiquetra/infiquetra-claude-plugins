@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.75.12] - 2026-07-09
+
+### Added - blind external-engine divergent generator lane (#454)
+
+- `plugins/saga/skills/ideate/SKILL.md`: documents an additive, best-effort external-engine generator
+  lane for `/ideate` Phase 2 using the same frame-agent prompt contract as Claude frame agents.
+- `plugins/saga/skills/ideate/references/convergence-and-partnership.md` and
+  `plugins/saga/skills/ideate/references/ideation-artifact.md`: record `engine-generated` as
+  provenance only, with the existing basis gate and survivor scoring applied unchanged.
+
 ## [0.75.11] - 2026-07-09
 
 ### Added - engines route explain visibility (#453)

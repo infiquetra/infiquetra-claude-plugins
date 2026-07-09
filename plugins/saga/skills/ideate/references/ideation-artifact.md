@@ -57,6 +57,7 @@ when Phase 1.5 was skipped. Omit this section entirely if not applicable.]
 | field | value |
 |-------|-------|
 | basis | [`direct:` quoted file/line/issue/user-context \| `external:` named prior art/source \| `reasoned:` written-out first-principles argument] |
+| source | [`frame-agent` \| `user-seed` \| `interview` \| `combined` \| `engine-generated`; provenance only, not a scoring rule] |
 | confidence | [0-100] |
 | complexity | [Low \| Med \| High] |
 | axis | [Topic axis this idea targets — omit this row when decomposition was skipped] |
@@ -93,9 +94,10 @@ dropped.
 | user-seed | Phase 0 | <operator's seed idea> | survived as #2 (built on by frame 4) |
 | user-seed | Phase 6 co-ideate | <added mid-run> | cut → R4 (basis did not support the move) |
 | frame-agent | Phase 2 | <generated idea> | survived as #1 |
+| engine-generated | Phase 2 | <external-engine generator idea> | survived as #3 (same basis gate) |
 | interview | Phase 6 | <drawn-out idea> | cut → R6 (below ambition floor) |
 
-[source is one of: user-seed | frame-agent | interview. `entered` notes where it joined the run.
+[source is one of: user-seed | frame-agent | engine-generated | interview | combined. `entered` notes where it joined the run.
 `outcome` records the survivor rank or the revivable `R#` and reason.]
 ```
 

@@ -2,6 +2,30 @@
 
 ## 2026-07-09
 
+### Output attestation proves bridge output, not just bridge launch {#output-attestation-liedetector-388}
+
+**Context.** Issue #388 closes the remaining silent-no-op gap below the existing external-engine
+receipt, observer, substitution, and economics gates. #383/#384/#390/#386 already require schema-valid
+receipts, observer corroboration, substituted-engine refusal, and economics records; #388 adds proof
+that the accepted output and token accounting came from the bridge run.
+
+- **KTD1 - bridge signatures drive proof requirements.** `receipt_emitter` values in the engine
+  registry map to `bridge-signatures.json` rows; dispatch must not branch directly on `engine_id`.
+- **KTD2 - output attestation lives in fleet-commons.** Agy, Codex, and HTTP bridges emit a shared
+  `output_attestation.v1` through their existing shims so installed plugin layouts stay valid.
+- **KTD3 - proof-integrity is its own failure class.** Empty output, hash mismatch, zero external
+  tokens, and producer/consumer liveness contradictions are distinct from `UNPROVEN`, ordinary
+  fallback, `SUBSTITUTED_ENGINE`, and `DELEGATION_INTEGRITY`.
+- **KTD4 - ledger de-duplicates by bridge run key.** Run-ledger append remains hash-chained and
+  append-only; exactly-once external-token facts are achieved by skipping an already-recorded
+  `bridge_run_key` before append.
+- **KTD5 - producer and consumer liveness are joined.** A launch receipt alone does not prove accepted
+  output, and a manifest alone does not prove a bridge ran; both sides must carry the same bridge run
+  key.
+
+**Revisit when.** Bridge output needs cryptographic signatures beyond local SHA-256 artifact binding,
+or provider billing APIs become authoritative enough to replace bridge-emitted external-token proof.
+
 ### Offload economics compare tokens and provider spend separately {#offload-economics-guards-386}
 
 **Context.** Issue #386 adds break-even halts, provider budget ceilings, cost-delta previews, and

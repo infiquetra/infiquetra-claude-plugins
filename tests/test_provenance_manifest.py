@@ -171,6 +171,15 @@ def test_manifest_economics_record_round_trips_and_rejects_unknown_keys() -> Non
     with pytest.raises(pm.ManifestError, match="unknown keys"):
         pm.Manifest.from_dict(bad)
 
+    mismatched_status = dict(data)
+    mismatched_status["economics"] = {
+        **data["economics"],
+        "net_savings_tokens": -800,
+        "net_savings_status": "positive",
+    }
+    with pytest.raises(pm.ManifestError, match="net_savings_status"):
+        pm.Manifest.from_dict(mismatched_status)
+
 
 def test_manifest_envelope_rejects_wrong_schema_version() -> None:
     data = _manifest().to_dict()

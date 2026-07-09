@@ -363,10 +363,19 @@ class EconomicsRecord:
         status = data.get("net_savings_status", "")
         if status not in {"positive", "zero", "negative"}:
             raise ManifestError("economics requires net_savings_status positive|zero|negative")
+        net_savings_tokens = _required_int(data, "net_savings_tokens", "economics")
+        if net_savings_tokens > 0:
+            expected_status = "positive"
+        elif net_savings_tokens == 0:
+            expected_status = "zero"
+        else:
+            expected_status = "negative"
+        if status != expected_status:
+            raise ManifestError("economics net_savings_status must match net_savings_tokens")
         return cls(
             engine_tokens_avoided=_required_int(data, "engine_tokens_avoided", "economics"),
             chaperone_tokens_spent=_required_int(data, "chaperone_tokens_spent", "economics"),
-            net_savings_tokens=_required_int(data, "net_savings_tokens", "economics"),
+            net_savings_tokens=net_savings_tokens,
             net_savings_status=str(status),
             external_cost_usd=_optional_number(data.get("external_cost_usd"), "external_cost_usd"),
         )

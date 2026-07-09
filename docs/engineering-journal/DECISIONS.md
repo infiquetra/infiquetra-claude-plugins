@@ -12,7 +12,10 @@
 - **KTD4 - preserve registry authorship during apply.** The scaffolder validates a candidate in memory, anchors insertion with parsed YAML node marks, rechecks the source hash, and atomically inserts only the row. It does not rewrite the full file or erase comments.
 - **KTD5 - promotion is a read-only evidence assessment.** A probationary exact variant becomes eligible only when its five most recent engine facts are successful, proof-integrity valid, and bridge-run keyed. Telemetry never edits the registry; promotion remains an explicit reviewed PR.
 
-**Status.** Planned in `docs/plans/2026-07-09-issue-455-provider-onboarding-plan.md` for issue #455. Binding decisions `{#external-engines-never-gatekeepers}` and `{#external-engine-chaperone-dispatch}` remain unchanged.
+**Status.** Implemented in Saga 0.75.16 for issue #455. The shipped path includes offline
+conformance, parser-anchored atomic onboarding, role-aware probation enforcement, and read-only
+promotion assessment. Binding decisions `{#external-engines-never-gatekeepers}` and
+`{#external-engine-chaperone-dispatch}` remain unchanged.
 
 **Revisit when.** A non-OpenAI-compatible or CLI provider needs onboarding, parser-anchored insertion proves too fragile for the authored registry, or observed promotion evidence shows the five-consecutive-run threshold is mis-sized.
 

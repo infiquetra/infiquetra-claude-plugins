@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.75.16] - 2026-07-09
+
+### Added - provider onboarding, conformance, and probation standing (#455)
+
+- Add `trust_tier` enforcement across the registry and resolver: probationary rows can serve worker
+  and generator offload but cannot serve advisory-reviewer or composing-panel roles.
+- Add a named offline registry conformance gate and `tools/add-engine.sh`, which validates and
+  atomically inserts OpenAI-compatible HTTP rows through the existing generic bridge.
+- Add read-only, hash-chain-verified promotion assessment over the five most recent exact-variant
+  bridge runs, plus the operator guide at `docs/adding-a-provider.md`.
+
 ## [0.75.15] - 2026-07-09
 
 ### Added - task provider recommendation primitive (#391)

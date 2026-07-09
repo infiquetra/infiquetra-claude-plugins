@@ -90,15 +90,17 @@ Create the domain controller that makes reconciliation and audit records explici
 
 **Dependencies:** None.
 
-**Files:** `plugins/saga/scripts/reconcile.py` (new); `plugins/saga/scripts/run_ledger.py`; `plugins/saga/references/run-fact-ledger.md`; `tests/test_reconcile.py` (new); `tests/test_run_ledger.py`.
+**Files:** `plugins/saga/scripts/reconcile.py` (new); `plugins/saga/scripts/run_ledger.py`; `plugins/saga/scripts/engine_dispatch.py`; `plugins/saga/references/run-fact-ledger.md`; `tests/test_reconcile.py` (new); `tests/test_run_ledger.py`; `tests/test_saga_engine_dispatch.py`.
 
-**Approach:** Make recipes data rather than branch-local prose. The controller accepts typed raw findings and Claude adjudications, rejects malformed/duplicate finding identifiers, requires a rationale for `dropped` and `overridden`, and fails verification readiness when a net-new engine finding is absent from the result. Extend `FACT_KINDS` with `reconciliation`; append one fact per reconcile/apply action through `run_ledger.append_fact`, retaining the hash-chain and torn-tail behavior rather than handling files directly.
+**Approach:** Make recipes data rather than branch-local prose. The typed result has a stable `reconciliation_id`, the source `execution_id`, `intent`, `recipe_id`, Claude `adjudicator_id`, and items with `source_finding_id`, `status`, and `rationale`; reject malformed or duplicate finding IDs, duplicate results, and missing adjudicator or required rationale. Bind that result to the existing `engine_dispatch.satisfy_gate()` seam for every chaperone result, so an absent or not-ready reconciliation rejects before the current Claude-verification, observer, and non-gating-role checks; this adds a completeness prerequisite without relaxing any existing gate authority.
+
+Extend `FACT_KINDS` with `reconciliation`; append separate `reconcile` and `apply` event facts through `run_ledger.append_fact`, each carrying the stable reconciliation identity, execution identity, recipe identity, action, and a canonical-result hash or pointer rather than unbounded engine prose. Retain the hash-chain and torn-tail behavior rather than handling files directly. The controller/retro reader, not generic `read_facts()` or `verify_chain()`, validates the reconciliation-specific action, IDs, statuses, and recipe because the generic ledger currently only validates a caller-built kind and chain links.
 
 **Patterns to follow:** `plugins/saga/scripts/run_ledger.py:40-197` for closed fact vocabulary and append/read/verify behavior; `plugins/saga/scripts/engine_dispatch.py:663-722` for telemetry-only fact recording; `tests/test_run_ledger.py:91-158` for chain-integrity coverage.
 
-**Test scenarios:** A normal offload with all findings accounted for yields typed reconciled items and one valid ledger fact; a net-new finding omitted from Claude's accepted output fails readiness until an explicit `dropped` or `overridden` item supplies rationale; empty findings yield an empty typed result without a crash; duplicate finding IDs and missing adjudicator/rationale reject before append; repeated reconcile/apply events append separate facts without mutating prior records; a corrupted or unknown reconciliation fact fails loudly under the existing ledger rules.
+**Test scenarios:** A normal offload with all findings accounted for yields typed reconciled items and valid reconcile/apply ledger facts; a net-new finding omitted from Claude's accepted output makes `satisfy_gate()` reject until an explicit `dropped` or `overridden` item supplies rationale; empty findings yield an empty typed result without a crash; duplicate finding IDs, duplicate reconciliation identities, and missing adjudicator/rationale reject before append; repeated reconcile/apply events append separate facts without mutating prior records; malformed reconciliation actions, statuses, recipes, or result hashes fail loudly in the reconciliation reader, while `run_ledger.build_fact()` still rejects an unknown kind and `verify_chain()` detects chain corruption.
 
-**Verification:** Registry parity and reconciliation tests prove each fact is valid `run_fact.v1`, chain verification still passes after normal writes, and an unaccounted net-new finding cannot be declared verified.
+**Verification:** Registry parity and reconciliation tests prove each fact is valid `run_fact.v1`, chain verification still passes after normal writes, reconciliation-specific records are validated before derive-on-read, and an unaccounted net-new finding cannot be declared verified at the existing gate seam.
 
 ### U2. Canonical divergence intent and plan-time tier contract
 
@@ -110,13 +112,13 @@ Add `divergence` to the shared intent vocabulary and make its cost posture expli
 
 **Dependencies:** U1.
 
-**Files:** `plugins/fleet-core/scripts/fleet_commons/tier_palette.py`; `plugins/saga/scripts/execution_spec.py`; `plugins/saga/skills/plan/SKILL.md`; `tests/test_saga_execution_spec.py`; any existing tier-registry synchronization test that pins the generated table.
+**Files:** `plugins/fleet-core/scripts/fleet_commons/tier_palette.py`; `plugins/fleet-core/scripts/fleet_commons/tier_policy.json`; `plugins/fleet-core/scripts/fleet_commons/render_tier_table.py`; `plugins/saga/scripts/execution_spec.py`; `plugins/saga/skills/plan/SKILL.md` (generated output); `tests/test_fleet_commons_resolution.py`; `tests/test_tier_resolver.py`; `tests/test_saga_execution_spec.py`; `tests/test_team_emitter.py`; `tests/test_workflow_emitter.py`; `tests/test_chaperone_economics.py`.
 
-**Approach:** Add the intent once to `ENGINE_INTENTS`, retain the existing selector XOR and omitted-intent default, and have U1's exhaustive registry test make a missing recipe a failure. Add the generated tier-table row through its source/generation convention rather than editing a rendered copy if the repository exposes one.
+**Approach:** Add the intent once to `ENGINE_INTENTS`, retain the existing selector XOR and omitted-intent default, and have U1's exhaustive registry test make a missing recipe a failure. Update the generated tier table through the confirmed `tier_policy.json` and `render_tier_table.py` source/generation path, then verify the rendered `plan/SKILL.md` output; do not hand-edit the generated block.
 
 **Patterns to follow:** `plugins/fleet-core/scripts/fleet_commons/tier_palette.py:98-101`; `plugins/saga/scripts/execution_spec.py:88-92`; `tests/test_saga_execution_spec.py:91-151`; `plugins/saga/skills/plan/SKILL.md:301-307`.
 
-**Test scenarios:** An engine-selected and a capability-selected `divergence` unit parse, validate, round-trip, and resolve its high-tier default; an unknown intent still fails; omitted intent still defaults to `offload`; every canonical intent maps to exactly one U1 recipe; a plain Claude unit still serializes without `engine_intent`.
+**Test scenarios:** An engine-selected and a capability-selected `divergence` unit parse, validate, round-trip, and resolve its high-tier default; the tier-policy renderer and skill-registry sync produce the `divergence` row; team/workflow segmentation and chaperone economics preserve the new intent instead of silently collapsing it to `offload` or `second-opinion`; an unknown intent still fails; omitted intent still defaults to `offload`; every canonical intent maps to exactly one U1 recipe; a plain Claude unit still serializes without `engine_intent`.
 
 **Verification:** Focused execution-spec and tier-sync tests demonstrate no fallback or drift between the canonical vocabulary, registry, and user-visible tier table.
 
@@ -144,7 +146,7 @@ Preserve a chaperone rejection as typed advisory review signal rather than a dea
 
 Add an explicit bounded panel path whose output is persisted only after Claude adjudication.
 
-**Goal:** Define `PANEL_N_CAP`, validate typed external-engine panel requests, resolve and dispatch their members through a new bounded path, and require the Claude foreman to reconcile the combined output before ledger append.
+**Goal:** Define `PANEL_N_CAP`, validate named advisory-panel role requests before member dispatch, and require the Claude foreman to reconcile the combined output before ledger append.
 
 **Requirements:** R1, R2, R6, R7.
 
@@ -152,11 +154,11 @@ Add an explicit bounded panel path whose output is persisted only after Claude a
 
 **Files:** `plugins/saga/scripts/execution_spec.py`; `plugins/saga/scripts/engine_resolver.py`; `plugins/saga/scripts/engine_dispatch.py`; `plugins/saga/scripts/reconcile.py`; `plugins/team-execution/skills/team-execution/references/external-engine-workers.md`; `tests/test_saga_execution_spec.py`; `tests/test_saga_engine_resolver.py`; `tests/test_saga_engine_dispatch.py`; `tests/test_reconcile.py`.
 
-**Approach:** Model panel multiplicity separately from the existing `Verify` object and preserve `engine_resolver`'s existing one-`Resolution` API for ordinary callers. Validation hard-fails zero, malformed, unavailable, and over-cap requests; the dispatch path gathers advisory member evidence, requires a Claude foreman reconciliation result, then records only that typed result. It never writes raw panel output directly to the ledger or changes `NON_GATING_ROLE_KINDS`.
+**Approach:** Model advisory-panel multiplicity separately from the existing `Verify` object. Reuse the resolver's existing composing-role seam (`resolve_role()` returning one advisory resolution per registered member and `panel_halt()` for halt-not-fallback), but enforce `PANEL_N_CAP` against the requested role's resolved member count before any member preflight or dispatch; do not overload `resolve({role_kind: "panel"})`, which is the existing single-resolution role policy. Validation hard-fails zero, malformed, unavailable, and over-cap requests with no partial dispatch; the dispatch path gathers advisory member evidence, requires a Claude foreman reconciliation result, then records only that typed result. It never writes raw panel output directly to the ledger or changes `NON_GATING_ROLE_KINDS`.
 
 **Patterns to follow:** `plugins/saga/scripts/execution_spec.py:152-159,524-578` for hard-cap validation; `plugins/saga/scripts/engine_resolver.py:563-647` for panel halt-not-fallback behavior; `plugins/saga/scripts/engine_dispatch.py:28-35,934-1015` for advisory-only authority.
 
-**Test scenarios:** A panel at the cap resolves and records only after foreman reconciliation; an over-cap request, zero count, malformed selector, and unavailable member hard-fail without partial append; empty member output is explicitly reconciled rather than silently ignored; duplicate member evidence is accounted once; a successful panel still cannot satisfy a gate; a failed foreman adjudication writes no apply fact.
+**Test scenarios:** A registered panel role at the cap resolves through `resolve_role()` and records only after foreman reconciliation; an over-cap role, zero-member role, malformed role name, and unavailable member hard-fail without preflight/dispatch or partial append; empty member output is explicitly reconciled rather than silently ignored; duplicate member evidence is accounted once; a successful panel still cannot satisfy a gate; a failed foreman adjudication writes no apply fact.
 
 **Verification:** Focused spec, resolver, dispatch, and reconciliation tests prove the cap is a blocking boundary and the ledger contains no unadjudicated panel output.
 
@@ -172,7 +174,7 @@ Turn recorded reconciliation outcomes into approval-gated learning without self-
 
 **Files:** `plugins/saga/scripts/reconcile.py`; `plugins/saga/skills/retro/SKILL.md`; `tests/test_saga_retro.py` (new); `tests/test_reconcile.py`.
 
-**Approach:** Read only valid `reconciliation` facts, aggregate enough evidence to describe a proposed recipe change, and emit a structured proposal marked `approval_required`. Keep the ledger and registry untouched during the read; malformed/torn facts follow the run-ledger reader's existing integrity behavior, and no-data returns an explicit no-proposal result.
+**Approach:** Verify the ledger chain before selecting `reconciliation` facts, then validate each selected record's reconciliation-specific schema before aggregation. Aggregate enough evidence to describe a proposed recipe change and emit a structured proposal marked `approval_required`; keep the ledger and registry untouched during the read. A malformed non-trailing ledger record or invalid reconciliation record fails visibly rather than becoming recommendation input, a torn tail follows the ledger's existing tolerance, and no data returns an explicit no-proposal result.
 
 **Patterns to follow:** `plugins/saga/scripts/run_ledger.py:141-197` for read/chain verification; `plugins/saga/skills/retro/SKILL.md:27-31,376-383` for the terminal advisory and no-saga-write boundaries.
 
@@ -217,6 +219,14 @@ The change crosses `saga`, `fleet-core`, and `team-execution` inside this reposi
 | Reconciliation may accidentally become a gate bypass. | Keep `satisfy_gate()` unchanged in authority semantics; security review and dedicated negative tests are required. |
 | `/retro` could silently rewrite policy. | Emit approval-gated proposals only; test that registry data is unchanged after reads. |
 
+## Prerequisites and Unlocks
+
+The plan has no open implementation prerequisite once execution is authorized.
+
+The existing run-fact ledger from #401 and chaperone-dispatch/manifest contract from #318 are merged current-source dependencies; this work extends them rather than reimplements either. The existing resolver composing-role API is also present, so U4 adds a cap and foreman-reconciliation boundary without waiting for a new resolver substrate.
+
+Issue #393 is an active leaf in objective #336. It does not declare a separate downstream code dependency; its durable output is the reconciliation contract that later external-engine workflows may consume after this capability lands.
+
 ## Alternatives Considered
 
 **A separate reconciliation ledger:** Rejected because `run_ledger` already supplies the desired append-only, hash-chained local substrate and a second file would fragment audit history.
@@ -239,7 +249,7 @@ The change crosses `saga`, `fleet-core`, and `team-execution` inside this reposi
 
 ## Team Structure
 
-This is a deep, gated consensus job: it spans 20 planned files across six dependency-ordered units, changes a gate-adjacent evidence boundary, and must leave durable review evidence. Execution backend: `team-execution`; destination: `plan-only` until doc review accepts the plan.
+This is a deep, gated consensus job: it spans more than 20 planned files across six dependency-ordered units, changes a gate-adjacent evidence boundary, and must leave durable review evidence. Execution backend: `team-execution`; destination: `plan-only` until doc review accepts the plan.
 
 ### Workers
 
@@ -337,7 +347,7 @@ git diff --check
 Implementation-focused checks:
 
 ```bash
-uv run pytest tests/test_reconcile.py tests/test_saga_execution_spec.py tests/test_saga_engine_resolver.py tests/test_saga_engine_dispatch.py tests/test_provenance_manifest.py tests/test_run_ledger.py tests/test_saga_retro.py -v
+uv run pytest tests/test_reconcile.py tests/test_fleet_commons_resolution.py tests/test_tier_resolver.py tests/test_saga_execution_spec.py tests/test_saga_engine_resolver.py tests/test_saga_engine_dispatch.py tests/test_provenance_manifest.py tests/test_run_ledger.py tests/test_engine_dispatch_ledger.py tests/test_team_emitter.py tests/test_workflow_emitter.py tests/test_chaperone_economics.py tests/test_saga_retro.py -v
 uv run ruff format --check plugins/saga/scripts/reconcile.py plugins/saga/scripts/run_ledger.py plugins/saga/scripts/execution_spec.py plugins/saga/scripts/engine_resolver.py plugins/saga/scripts/engine_dispatch.py plugins/saga/scripts/provenance_manifest.py tests/test_reconcile.py tests/test_saga_execution_spec.py tests/test_saga_engine_resolver.py tests/test_saga_engine_dispatch.py tests/test_provenance_manifest.py tests/test_run_ledger.py tests/test_saga_retro.py
 uv run ruff check plugins/saga/scripts/reconcile.py plugins/saga/scripts/run_ledger.py plugins/saga/scripts/execution_spec.py plugins/saga/scripts/engine_resolver.py plugins/saga/scripts/engine_dispatch.py plugins/saga/scripts/provenance_manifest.py tests/test_reconcile.py tests/test_saga_execution_spec.py tests/test_saga_engine_resolver.py tests/test_saga_engine_dispatch.py tests/test_provenance_manifest.py tests/test_run_ledger.py tests/test_saga_retro.py
 uv run mypy plugins/saga/scripts/ plugins/fleet-core/scripts/fleet_commons/ tests/ --ignore-missing-imports
@@ -360,4 +370,4 @@ git diff --check
 
 ## Handoff
 
-Run `/doc-review docs/plans/2026-07-09-issue-393-typed-second-opinion-reconciliation-plan.md` next. `/work #393` remains blocked on that review and on a subsequent explicit execution authorization.
+After this doc-review artifact clears the plan, await a subsequent explicit execution authorization before `/work #393`; this review-phase commit does not authorize implementation.

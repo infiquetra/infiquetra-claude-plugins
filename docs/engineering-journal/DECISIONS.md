@@ -2,6 +2,32 @@
 
 ## 2026-07-09
 
+### Task provider recommendation stays advisory and egress-explicit {#task-provider-recommend-391}
+
+**Context.** Issue #391 adds a ranked `recommend()` primitive for task-to-provider routing. The
+existing resolver answers a narrower single-selector question, and the registry has cost/rating data
+but no explicit no-egress marker.
+
+- **KTD1 - recommendation is not dispatch.** Add `engine_recommend.py` as an advisory helper that
+  returns ranked candidates; do not overload `engine_resolver.resolve()` or call provider preflight.
+- **KTD2 - sensitivity is row-authored egress policy.** Add a closed `egress_policy` registry field.
+  Do not infer no-egress from `substrate`, because in-repo CLIs can still send content to networked
+  providers.
+- **KTD3 - registry ranking remains the candidate source.** `recommend()` reuses
+  `Registry.ranked_candidates()` before applying policy-specific ordering, so overlays, deprecations,
+  capability ratings, and tie-breaks stay single-source.
+- **KTD4 - policies order viable rows only.** Capability fit, minimum rating, context window, and
+  sensitivity constraints filter candidates before `free-first` or `cheapest-viable` ordering.
+- **KTD5 - no local-only candidate is an explicit halt.** Sensitive tasks with no local-only viable row
+  return an empty/halted recommendation rather than suggesting a network fallback.
+- **KTD6 - cheapest-viable has a deterministic v1 price key.** Use
+  `cost_per_token.input_usd + cost_per_token.output_usd` after viability filtering, with
+  `cost_speed_rank` and `registry_order` as tie-breaks. Default sufficient fit is `MODERATE` or
+  stronger, preserving the resolver's current WEAK-as-no-fit posture.
+
+**Revisit when.** A real local/no-egress engine row is validated, provider telemetry becomes reliable
+enough to adjust ranking dynamically, or lifecycle skills start calling `recommend()` directly.
+
 ### Output attestation proves bridge output, not just bridge launch {#output-attestation-liedetector-388}
 
 **Context.** Issue #388 closes the remaining silent-no-op gap below the existing external-engine

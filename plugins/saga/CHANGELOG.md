@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.75.9] - 2026-07-09
+
+### Added - engine output trust-boundary contract (#385)
+
+- `plugins/saga/references/engine-output-trust-boundary.md`: documents external-engine advisory
+  output as untrusted input, forbidden executable/gate sinks, and opaque-data handling.
+- `tests/test_engine_output_trust_boundary.py`: adds contract anchors, seeded unsafe interpolation
+  guards, and an adversarial `AdvisoryEvidence.evidence` fixture proving malicious advisory text stays
+  inert through `satisfy_gate`.
+
 ## [0.75.8] - 2026-07-09
 
 ### Added - shared lifecycle-stage engine offer helper (#451)

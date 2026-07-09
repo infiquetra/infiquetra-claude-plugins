@@ -78,6 +78,9 @@ jobs:
       - name: Engine Registry
         run: uv run python plugins/saga/scripts/check_engine_registry.py
 
+      - name: Engine Registry Conformance
+        run: uv run python plugins/saga/scripts/engine_registry_conformance.py
+
   release-surfaces:
     name: Release Surface Parity
     runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}

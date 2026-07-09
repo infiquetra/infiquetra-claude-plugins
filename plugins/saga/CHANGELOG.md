@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.75.15] - 2026-07-09
+
+### Added - task provider recommendation primitive (#391)
+
+- `plugins/saga/scripts/engine_recommend.py`: add read-only ranked recommendation ladder
+  over `Registry.ranked_candidates()` with `cheapest-viable`, `free-first`, MODERATE
+  capability floor, token-window filtering, and sensitive-task local-only halts.
+- `plugins/saga/scripts/engine_registry.py` `plugins/saga/references/engine-registry.yaml`:
+  require explicit `egress_policy` (`local-only` or `networked`) per engine row; current
+  seed providers are marked networked, including in-repo agy rows.
+- Add recommendation and registry coverage for price tie-breaks, free-first ordering,
+  sensitivity filtering, side-effect-free behavior, and release metadata parity.
+
 ## [0.75.14] - 2026-07-09
 
 ### Added - output attestation lie detector (#388)

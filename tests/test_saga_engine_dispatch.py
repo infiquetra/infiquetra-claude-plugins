@@ -850,6 +850,7 @@ def _memoization_registry_dict() -> dict[str, Any]:
                 "engine_id": "codex",
                 "variant": "gpt-5.5-xhigh",
                 "substrate": "external",
+                "egress_policy": "networked",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "codex:delegate",

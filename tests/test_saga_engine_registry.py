@@ -38,6 +38,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "engine_id": "codex",
                 "variant": "gpt-5.5-xhigh",
                 "substrate": "external",
+                "egress_policy": "networked",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "codex:delegate",
@@ -81,6 +82,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "engine_id": "agy",
                 "variant": "gemini-3.1-pro-high",
                 "substrate": "in-repo",
+                "egress_policy": "networked",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "agy:delegate",
@@ -304,6 +306,7 @@ def test_shipped_seed_registry_loads_and_resolves() -> None:
         assert isinstance(entry.cost_speed_rank, int)
         assert entry.receipt_emitter
         assert entry.cost_class in M.COST_CLASSES
+        assert entry.egress_policy in M.EGRESS_POLICIES
         if entry.cost_class == "metered":
             assert entry.budget_ceiling_usd is not None
         else:
@@ -322,6 +325,7 @@ def _http_engine_row(**overrides: Any) -> dict[str, Any]:
         "engine_id": "ollama-cloud",
         "variant": "gpt-oss-120b",
         "substrate": "external",
+        "egress_policy": "networked",
         "default_for_engine": True,
         "transport": "http",
         "invocation": {
@@ -622,6 +626,30 @@ def test_cost_policy_metadata_is_required_and_exposed(tmp_path: Path) -> None:
     negative_ceiling["engines"][0]["budget_ceiling_usd"] = -0.01
     with pytest.raises(M.RegistryError, match="non-negative"):
         M.Registry.load(_write_registry(tmp_path, negative_ceiling))
+
+
+def test_egress_policy_metadata_is_required_and_validated(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+
+    registry = M.Registry.load(_write_registry(tmp_path, data))
+    assert registry.by_engine("codex").egress_policy == "networked"
+
+    local_only = deepcopy(data)
+    local_only["engines"][0]["egress_policy"] = "local-only"
+    assert (
+        M.Registry.load(_write_registry(tmp_path, local_only)).by_engine("codex").egress_policy
+        == "local-only"
+    )
+
+    missing = deepcopy(data)
+    del missing["engines"][0]["egress_policy"]
+    with pytest.raises(M.RegistryError, match="egress_policy"):
+        M.Registry.load(_write_registry(tmp_path, missing))
+
+    unknown = deepcopy(data)
+    unknown["engines"][0]["egress_policy"] = "same-room"
+    with pytest.raises(M.RegistryError, match="egress_policy"):
+        M.Registry.load(_write_registry(tmp_path, unknown))
 
 
 def test_free_cost_class_requires_zero_cost_and_no_ceiling(tmp_path: Path) -> None:

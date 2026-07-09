@@ -108,7 +108,7 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.14.1",
+      "version": "2.14.2",
       "description": "Two-phase plan execution with reviewer consensus, non-scoring external advisory convergence diffs, validator gates, chaperone manifests, and guarded nonprod automation.",
       "author": {
         "name": "Infiquetra",

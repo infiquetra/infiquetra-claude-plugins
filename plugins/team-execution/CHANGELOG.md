@@ -4,6 +4,14 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.14.2] - 2026-07-09
+
+### Changed
+
+- `skills/team-execution/references/external-engine-workers.md`: document Saga bridge
+  proof-integrity, output attestation, token proof, and bridge-run liveness as the accepted
+  external-engine worker evidence contract for issue #388.
+
 ## [2.14.1] - 2026-07-09
 
 ### Changed - validator findings reference engine-output trust boundary (#385)

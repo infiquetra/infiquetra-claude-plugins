@@ -2,6 +2,44 @@
 
 ## 2026-07-09
 
+### Outcome/objective execution loop lives in a repo narrative {#objective-execution-loop}
+
+**Context.** Objective-backed work in this repo repeatedly needs the same
+`/plan -> /doc-review -> /work -> /code-review -> PR -> CI -> merge -> issue close -> outcome
+advance` loop, and old chat sessions are not durable enough to be the operator-facing source.
+
+- **KTD1 — repo artifact over transcript archaeology.** Keep the reusable loop at
+  `docs/engineering-journal/narratives/2026-07-09-objective-execution-loop.md`; memory may point to
+  it, but the repo narrative is the canonical reference.
+- **KTD2 — live state still wins.** The loop is an operating contract, not evidence. Every resume must
+  re-read outcome status/report, GitHub issue/PR/CI state, and `origin/main` before acting.
+
+**Revisit when.** `/outcome --loop` or an equivalent first-class command can emit this contract from
+the Saga runtime itself.
+
+### Cheap chaperoning uses explicit verifiability and run-scoped policy helpers {#cheap-chaperoning-381}
+
+**Context.** Issue #381 combines batching, evidence-size escalation, verifiability-keyed tiers,
+acceptance sampling, and payload caching around the external-engine chaperone protocol.
+
+- **KTD1 — pure policy helper.** Put chaperone economics in a small Saga helper module, then thread its
+  decision into dispatch evidence. Do not bury the behavior in prose-only docs or spread policy across
+  unrelated call sites.
+- **KTD2 — explicit `Unit.verifiability`.** Use `test-gated|unverifiable` as an authored signal instead
+  of inferring a test oracle from plan prose. Absent values preserve today's full-review posture.
+- **KTD3 — homogeneous batches only.** Batch key includes engine/variant or selector, intent, review
+  mode, and compatible write/test handling. Mixed or unsafe units stay one-unit packages.
+- **KTD4 — reuse tier vocabulary and one-rung escalation.** Update `tier_policy.json` and generated
+  tables; no hand-edited tier rows and no arbitrary retier outside the existing ladder.
+- **KTD5 — advisory provenance, not gate authority.** Record batch/tier/sampling/cache decisions in
+  advisory evidence provenance, without changing `saga.manifest.v1`. Do not introduce manifest fields
+  named verdict, authority, gate, or equivalent.
+- **KTD6 — run-scoped payload cache.** Cache assembled payloads by `unit_id+protocol-hash+context-hash`
+  inside caller-owned memo state only; no module-global or filesystem cache.
+
+**Revisit when.** team-side worker-cache scheduling lands, or manifest schema v2 is already being minted
+for another evidence subrecord.
+
 ### Provider auth preflight extends `invocation.auth`, not a second auth schema {#provider-auth-preflight-389}
 
 **Context.** Issue #389 asks for registry-driven provider credential resolution. Since the issue was

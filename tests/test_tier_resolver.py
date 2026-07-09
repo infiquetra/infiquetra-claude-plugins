@@ -2,7 +2,7 @@
 
 Asserts `tier_policy.json` parses as JSON, every `default_model` / `default_effort`
 is a member of the canonical `MODELS` / `EFFORTS` vocabulary (tier_palette.py), and
-all five work-shape rows from `plugins/saga/skills/plan/SKILL.md:298-304` are
+all generated work-shape rows from `plugins/saga/skills/plan/SKILL.md:298-304` are
 represented as registry keys.
 """
 
@@ -21,13 +21,14 @@ sys.path.insert(0, str(FLEET_CORE_SCRIPTS))
 
 from fleet_commons.tier_palette import EFFORTS, MODELS  # noqa: E402
 
-# The five work-shape rows authored at plugins/saga/skills/plan/SKILL.md:298-304.
+# The generated work-shape rows authored at plugins/saga/skills/plan/SKILL.md:298-304.
 # "mechanical" splits into two registry keys per R2 (mechanical / purely-mechanical)
 # to preserve the sonnet-vs-haiku distinction the prose table draws within one row.
 SKILL_MD_ROWS = (
     "judgment",
     "mechanical",
     "read-only-survey",
+    "offload-test-gated",
     "offload",
     "second-opinion",
 )
@@ -68,7 +69,7 @@ def test_default_effort_in_efforts(registry: dict[str, dict[str, str]]) -> None:
 
 
 def test_all_skill_md_rows_present(registry: dict[str, dict[str, str]]) -> None:
-    """Every one of the five SKILL.md:298-304 work-shape rows is represented.
+    """Every generated SKILL.md:298-304 work-shape row is represented.
 
     "mechanical" is represented by either the bare `mechanical` key or its
     purely-mechanical split (`mechanical` / `purely-mechanical`).

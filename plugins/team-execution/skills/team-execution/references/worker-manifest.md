@@ -57,6 +57,9 @@ external-engine protocol applies to a Claude-agent worker).
 `identity` carries here, since `identity` attributes the *output*, not the residency slot that
 produced it. Full mechanics in `external-engine-workers.md` §5.
 
+When a chaperone batches multiple homogeneous external-engine units, it still writes distinct per-unit manifests. The batch id and sampling decision belong only in advisory chaperone provenance;
+they do not replace each unit's `manifest_identity`, `output_completeness`, or disposition.
+
 **Disposition (R18):** `ran-as-requested` for a worker (either kind) that completed its assigned
 units as requested. For a chaperone worker, two more dispositions are live (not reserved): the
 engine call itself never runs — `fell-back-to-claude` when the resolver's own capability-no-fit /

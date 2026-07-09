@@ -163,6 +163,7 @@ def dispatch(
     session_id: str = "",
     workspace_root: Path | str | None = None,
     expected_identity: str | None = None,
+    chaperone: dict[str, Any] | None = None,
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Run an external engine adapter and return advisory evidence only.
 
@@ -201,17 +202,24 @@ def dispatch(
     that actually resolved/ran differs from the one the plan previewed. ``None`` (the default)
     stamps nothing and keeps every existing path byte-for-byte -- the resolver/registry seam
     (#388) is never touched.
+
+    ``chaperone`` (#381) is advisory chaperone-economics provenance. When supplied, it is copied
+    under ``provenance["chaperone"]`` for downstream review/work-session evidence. It does not
+    change gate satisfaction or ``saga.manifest.v1``.
     """
     if resolution.halt is not None:
+        provenance: dict[str, Any] = {
+            "engine": resolution.engine_id,
+            "variant": resolution.variant,
+            "status": "halted",
+        }
+        if chaperone is not None:
+            provenance["chaperone"] = dict(chaperone)
         return AdvisoryEvidence(
             engine_id=resolution.engine_id,
             variant=resolution.variant,
             evidence="",
-            provenance={
-                "engine": resolution.engine_id,
-                "variant": resolution.variant,
-                "status": "halted",
-            },
+            provenance=provenance,
             halt=resolution.halt,
         )
 
@@ -259,6 +267,8 @@ def dispatch(
     # SUBSTITUTED_ENGINE. Additive-defaulted: None stamps nothing (byte-for-byte preserved).
     if expected_identity is not None:
         provenance["expected_identity"] = expected_identity
+    if chaperone is not None:
+        provenance["chaperone"] = dict(chaperone)
 
     if status == "ok":
         # Two-signal reconciliation (R4/R6): the engine SAYS ok; the observer signal is the

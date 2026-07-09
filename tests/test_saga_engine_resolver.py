@@ -6,7 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -722,3 +722,109 @@ def test_resolve_with_memo_returns_same_resolution_as_without(registry: Any) -> 
     with_memo = R.resolve(request, mode="dispatch", registry=registry, memo=R.RunMemo())
 
     assert without_memo == with_memo
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_run_memo_payload_cache_reuses_same_unit_protocol_context(
+    registry: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+    original = R._assemble_payload
+
+    def counting_assemble(protocol: list[str], context: str) -> str:
+        nonlocal calls
+        calls += 1
+        return cast(str, original(protocol, context))
+
+    monkeypatch.setattr(R, "_assemble_payload", counting_assemble)
+    memo = R.RunMemo()
+    request = {
+        "capability": "code-generation",
+        "role_kind": "generator",
+        "task_context": {"unit_id": "U1", "context": "Implement bounded change."},
+    }
+
+    first = R.resolve(request, mode="dispatch", registry=registry, memo=memo)
+    assert memo.last_payload_cache_status == "miss"
+    second = R.resolve(request, mode="dispatch", registry=registry, memo=memo)
+
+    assert calls == 1
+    assert second.payload == first.payload
+    assert memo.last_payload_cache_status == "hit"
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_run_memo_payload_cache_separates_unit_id_and_context(
+    registry: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+    original = R._assemble_payload
+
+    def counting_assemble(protocol: list[str], context: str) -> str:
+        nonlocal calls
+        calls += 1
+        return cast(str, original(protocol, context))
+
+    monkeypatch.setattr(R, "_assemble_payload", counting_assemble)
+    memo = R.RunMemo()
+
+    for unit_id, context in (
+        ("U1", "Implement bounded change."),
+        ("U2", "Implement bounded change."),
+        ("U1", "Implement different change."),
+    ):
+        R.resolve(
+            {
+                "capability": "code-generation",
+                "role_kind": "generator",
+                "task_context": {"unit_id": unit_id, "context": context},
+            },
+            mode="dispatch",
+            registry=registry,
+            memo=memo,
+        )
+
+    assert calls == 3
+    assert memo.last_payload_cache_status == "miss"
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_run_memo_payload_cache_requires_unit_id_to_activate(
+    registry: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+    original = R._assemble_payload
+
+    def counting_assemble(protocol: list[str], context: str) -> str:
+        nonlocal calls
+        calls += 1
+        return cast(str, original(protocol, context))
+
+    monkeypatch.setattr(R, "_assemble_payload", counting_assemble)
+    memo = R.RunMemo()
+    request = {
+        "capability": "code-generation",
+        "role_kind": "generator",
+        "task_context": {"context": "Implement bounded change."},
+    }
+
+    R.resolve(request, mode="dispatch", registry=registry, memo=memo)
+    R.resolve(request, mode="dispatch", registry=registry, memo=memo)
+
+    assert calls == 2
+    assert memo.last_payload_cache_status == ""
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_payload_cache_unit_id_must_be_non_empty_string(registry: Any) -> None:
+    with pytest.raises(R.RegistryError, match="unit_id"):
+        R.resolve(
+            {
+                "capability": "code-generation",
+                "role_kind": "generator",
+                "task_context": {"unit_id": "", "context": "Implement bounded change."},
+            },
+            mode="dispatch",
+            registry=registry,
+            memo=R.RunMemo(),
+        )

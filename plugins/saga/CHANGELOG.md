@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.75.6] - 2026-07-09
+
+### Added — cheap external-engine chaperoning economics (#381)
+
+- `plugins/saga/scripts/chaperone_economics.py`: adds pure policy helpers for homogeneous same-engine batching, explicit `test-gated` / `unverifiable` review modes, evidence-size tier escalation, deterministic acceptance sampling, and sampled-defect full-review escalation.
+- `plugins/saga/scripts/execution_spec.py`: adds optional external-engine `Unit.verifiability`, emits it only when authored, and threads it into emitted external-engine call metadata while preserving old specs byte-for-byte.
+- `plugins/saga/scripts/engine_dispatch.py` and `engine_resolver.py`: add optional advisory chaperone provenance and run-scoped payload caching keyed by `unit_id`, protocol hash, and context hash; no manifest schema or gate semantics change.
+- `/plan` tier table now has a registry-rendered `offload` + `verifiability=test-gated` ratify-only row and keeps absent/unverifiable offload on full-review posture.
+
 ## [0.75.5] - 2026-07-09
 
 ### Added — registry-authored provider credential preflight (#389)

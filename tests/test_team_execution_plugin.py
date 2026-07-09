@@ -61,9 +61,7 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
-    assert (
-        plugin_json["version"] == "2.13.0"
-    )  # single-path manifest contract + empty-delivery gate in §5 (#390 U3/U5)
+    assert plugin_json["version"] == "2.13.1"  # batch-aware chaperone context contract (#381)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()
@@ -103,6 +101,34 @@ def test_worker_references_are_packaged_and_linked() -> None:
         assert path.exists(), f"missing worker reference: {path}"
         assert filename in skill_doc
         assert filename in readme
+
+
+def test_external_engine_batch_contract_preserves_per_unit_evidence() -> None:
+    references_dir = PLUGIN_ROOT / "skills" / "team-execution" / "references"
+    worker_doc = _read(references_dir / "external-engine-workers.md")
+    manifest_doc = _read(references_dir / "worker-manifest.md")
+
+    for required in (
+        "homogeneous same-engine batch",
+        "`unit_contexts[]`",
+        "`verifiability`",
+        "`test_oracle`",
+        "`manifest_identity`",
+        "`chaperone`",
+        "cache hit/miss",
+        "sampled defect escalates every unsampled unit",
+        "never merges unit manifests",
+        "never lets the engine touch the working tree",
+    ):
+        assert required in worker_doc
+
+    for required in (
+        "distinct per-unit manifests",
+        "advisory chaperone provenance",
+        "`manifest_identity`",
+        "`output_completeness`",
+    ):
+        assert required in manifest_doc
 
 
 def test_appsec_audit_skill_documents_url_trust_boundaries() -> None:

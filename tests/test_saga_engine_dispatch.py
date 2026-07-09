@@ -1032,5 +1032,34 @@ def test_dispatch_expected_identity_none_leaves_provenance_clean() -> None:
     identical provenance either way — the additive-default preserves today's behavior."""
     evidence = D.dispatch(_resolution(), runner=_ok_runner)
     assert "expected_identity" not in evidence.provenance
+    assert "chaperone" not in evidence.provenance
     explicit_none = D.dispatch(_resolution(), runner=_ok_runner, expected_identity=None)
     assert explicit_none.provenance == evidence.provenance
+
+
+def test_dispatch_stamps_chaperone_provenance_when_supplied() -> None:
+    chaperone = {
+        "batch_id": "batch-1",
+        "review_mode": "ratify-only",
+        "sampled_unit_ids": ["U1"],
+        "cache_status": "hit",
+    }
+
+    evidence = D.dispatch(_resolution(), runner=_ok_runner, chaperone=chaperone)
+
+    assert evidence.provenance["chaperone"] == chaperone
+    assert evidence.provenance["chaperone"] is not chaperone
+
+
+def test_dispatch_halted_resolution_stamps_chaperone_provenance() -> None:
+    evidence = D.dispatch(
+        _resolution(halt="preflight halted"),
+        runner=_ok_runner,
+        chaperone={"batch_id": "batch-1", "review_mode": "full-review"},
+    )
+
+    assert evidence.halt == "preflight halted"
+    assert evidence.provenance["chaperone"] == {
+        "batch_id": "batch-1",
+        "review_mode": "full-review",
+    }

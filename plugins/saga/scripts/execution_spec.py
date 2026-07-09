@@ -47,6 +47,7 @@ from typing import Any, Literal, cast
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
+from chaperone_economics import VERIFIABILITY_VALUES  # noqa: E402
 
 # Tier vocabulary (Epic 0 tier rule R1) is now canonical in fleet-core's
 # ``fleet_commons/tier_palette.py`` (fleet-commons first mover, DECISIONS
@@ -759,6 +760,10 @@ class Unit:
     # from_dict) -- tier itself stays a required field, this is a plan-time recommendation
     # input, not a schema default for tier.
     engine_intent: str | None = None
+    # Explicit oracle signal for external-engine chaperoning (#381). Absent means old specs keep
+    # today's default posture: external-engine output is treated as unverifiable/full-review by the
+    # chaperone layer, but no new key is emitted during round-trip.
+    verifiability: str | None = None
     # Sandbox capability envelope (#287 U1). Absent => ambient x read-write (today's behavior);
     # an absent field emits no new key so existing specs round-trip byte-identical.
     sandbox: Sandbox | None = None
@@ -797,6 +802,14 @@ class Unit:
                 raise SpecError(
                     f"unit {self.unit_id}: engine_intent {self.engine_intent!r} "
                     f"not in {ENGINE_INTENTS}"
+                )
+        if self.verifiability is not None:
+            if self.engine is None and self.capability is None:
+                raise SpecError(f"unit {self.unit_id}: verifiability requires engine or capability")
+            if self.verifiability not in VERIFIABILITY_VALUES:
+                raise SpecError(
+                    f"unit {self.unit_id}: verifiability {self.verifiability!r} "
+                    f"not in {VERIFIABILITY_VALUES}"
                 )
         if self.verify is not None:
             self.verify.validate(f"unit {self.unit_id}")
@@ -889,6 +902,8 @@ class Unit:
         engine_intent = str(engine_intent_raw) if engine_intent_raw is not None else None
         if engine_intent is None and (engine is not None or capability is not None):
             engine_intent = "offload"
+        verifiability_raw = data.get("verifiability")
+        verifiability = str(verifiability_raw) if verifiability_raw is not None else None
         sandbox_raw = data.get("sandbox")
         sandbox = Sandbox.from_dict(sandbox_raw, where) if sandbox_raw else None
         min_tier_raw = data.get("min_tier")
@@ -909,6 +924,7 @@ class Unit:
             engine=engine,
             capability=capability,
             engine_intent=engine_intent,
+            verifiability=verifiability,
             sandbox=sandbox,
             min_tier=min_tier,
             escalate_on_signal=bool(data.get("escalate_on_signal", False)),
@@ -944,6 +960,8 @@ class Unit:
             out["capability"] = self.capability
         if self.engine_intent is not None:
             out["engine_intent"] = self.engine_intent
+        if self.verifiability is not None:
+            out["verifiability"] = self.verifiability
         # Absent sandbox emits no key (existing specs stay byte-identical); a profile-authored
         # sandbox emits its expanded axes -- the canonical form (KTD1).
         if self.sandbox is not None:
@@ -1332,7 +1350,10 @@ def _external_engine_marker(unit: Unit) -> str | None:
     if selector is None:
         return None
     key, value = selector
-    return f"{key}={value}"
+    marker = f"{key}={value}"
+    if unit.verifiability is not None:
+        marker += f" verifiability={unit.verifiability}"
+    return marker
 
 
 def _return_schema(unit: Unit) -> dict[str, object]:
@@ -1361,6 +1382,8 @@ def _agent_opts(unit: Unit) -> list[str]:
         key, value = selector
         opts.append('dispatch: "external-engine"')
         opts.append(f"{key}: {_js_string(value)}")
+        if unit.verifiability is not None:
+            opts.append(f"verifiability: {_js_string(unit.verifiability)}")
     else:
         opts.append(f"model: {_js_string(unit.tier.model)}")
         opts.append(f"effort: {_js_string(unit.tier.effort)}")

@@ -156,6 +156,41 @@ def test_engine_intent_omitted_from_to_dict_for_plain_claude_unit() -> None:
     assert "engine_intent" not in spec.units[0].to_dict()
 
 
+def test_engine_verifiability_round_trips_and_emits_external_engine_option() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(engine="codex/gpt-5.5-xhigh", verifiability="test-gated")
+    )
+    spec.validate()
+
+    unit_dict = spec.units[0].to_dict()
+    script = ES.emit_workflow_script(spec)
+
+    assert unit_dict["verifiability"] == "test-gated"
+    assert "verifiability=test-gated" in script
+    assert 'verifiability: "test-gated"' in script
+
+
+def test_absent_verifiability_emits_no_key_for_external_engine_unit() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(engine="codex/gpt-5.5-xhigh"))
+    spec.validate()
+
+    assert "verifiability" not in spec.units[0].to_dict()
+
+
+def test_engine_verifiability_bad_vocabulary_fails() -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(engine="codex/gpt-5.5-xhigh", verifiability="maybe")
+    )
+    with pytest.raises(ES.SpecError, match="verifiability .* not in"):
+        spec.validate()
+
+
+def test_verifiability_without_external_selector_fails() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(verifiability="test-gated"))
+    with pytest.raises(ES.SpecError, match="verifiability requires engine or capability"):
+        spec.validate()
+
+
 def test_advisory_consensus_routes_to_ultracode_backend() -> None:
     from lifecycle_state import recommend_execution_backend
 

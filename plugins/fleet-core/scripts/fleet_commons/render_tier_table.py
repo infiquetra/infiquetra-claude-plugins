@@ -50,7 +50,11 @@ _ROW_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("read-only-survey",),
     ),
     (
-        "External-engine delegation, `intent=offload` (unit carries `engine`/`capability`, U12)",
+        "External-engine delegation, `intent=offload`, `verifiability=test-gated` (ratify-only)",
+        ("offload-test-gated",),
+    ),
+    (
+        "External-engine delegation, `intent=offload`, `verifiability=unverifiable` or absent",
         ("offload",),
     ),
     (

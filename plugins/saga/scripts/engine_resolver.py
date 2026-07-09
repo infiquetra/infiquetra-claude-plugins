@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import sys
@@ -61,12 +62,15 @@ class RunMemo:
     today's uncached behavior (R5/R11) -- this is strictly opt-in.
 
     Keys: ``engine_id`` for legacy preflight probes, ``entry.key`` for row-backed
-    probes, and ``(capability, token_estimate)`` for capability resolution decisions.
+    probes, ``(capability, token_estimate)`` for capability resolution decisions, and
+    ``(unit_id, protocol_hash, context_hash)`` for assembled dispatch payloads.
     """
 
     def __init__(self) -> None:
         self._preflight: dict[str, dict[str, bool | str]] = {}
         self._capability: dict[tuple[str, int | None], _CapabilityDecision] = {}
+        self._payload: dict[tuple[str, str, str], str] = {}
+        self.last_payload_cache_status: str = ""
 
     def preflight(self, cache_key: str) -> dict[str, bool | str] | None:
         return self._preflight.get(cache_key)
@@ -86,6 +90,20 @@ class RunMemo:
         decision: _CapabilityDecision,
     ) -> None:
         self._capability[(capability, token_estimate)] = decision
+
+    def payload(self, unit_id: str, protocol_hash: str, context_hash: str) -> str | None:
+        cached = self._payload.get((unit_id, protocol_hash, context_hash))
+        self.last_payload_cache_status = "hit" if cached is not None else "miss"
+        return cached
+
+    def store_payload(
+        self,
+        unit_id: str,
+        protocol_hash: str,
+        context_hash: str,
+        payload: str,
+    ) -> None:
+        self._payload[(unit_id, protocol_hash, context_hash)] = payload
 
 
 def preflight(
@@ -414,6 +432,7 @@ def _resolve_capability(
             role_kind=role_kind,
             task_context=task_context,
             reason=decision.no_capability_reason,
+            memo=memo,
         )
 
     if decision.entry is None:
@@ -425,6 +444,7 @@ def _resolve_capability(
             task_context=task_context,
             reason=decision.no_fit_reason,
             entry=decision.entry,
+            memo=memo,
         )
 
     return _resolve_entry(
@@ -466,25 +486,29 @@ def _resolve_entry(
 ) -> Resolution:
     context_halt = _context_window_halt(entry, task_context)
     if context_halt is not None:
-        return _resolution_from_entry(entry, task_context=task_context, halt=context_halt)
+        return _resolution_from_entry(
+            entry, task_context=task_context, halt=context_halt, memo=memo
+        )
 
     if role_kind == "panel":
         panel_halt = _panel_availability_halt(registry, task_context, memo=memo)
         if panel_halt is not None:
-            return _resolution_from_entry(entry, task_context=task_context, halt=panel_halt)
+            return _resolution_from_entry(
+                entry, task_context=task_context, halt=panel_halt, memo=memo
+            )
 
     availability = preflight(entry.engine_id, entry=entry, memo=memo)
     if not bool(availability["available"]):
         reason = f"{entry.key} is unavailable: {availability['reason']}"
         if explicit_engine or role_kind in HALT_ROLE_KINDS:
-            return _resolution_from_entry(entry, task_context=task_context, halt=reason)
+            return _resolution_from_entry(entry, task_context=task_context, halt=reason, memo=memo)
         return _fallback_resolution(
             "external-engine",
             task_context=task_context,
             reason=reason,
         )
 
-    return _resolution_from_entry(entry, task_context=task_context)
+    return _resolution_from_entry(entry, task_context=task_context, memo=memo)
 
 
 def _no_fit_resolution(
@@ -494,13 +518,14 @@ def _no_fit_resolution(
     task_context: dict[str, Any],
     reason: str,
     entry: EngineEntry | None = None,
+    memo: RunMemo | None = None,
 ) -> Resolution:
     if role_kind in FALLBACK_ROLE_KINDS:
         return _fallback_resolution(capability, task_context=task_context, reason=reason)
 
     halt = f"external capability {capability!r} cannot run for {role_kind}: {reason}"
     if entry is not None:
-        return _resolution_from_entry(entry, task_context=task_context, halt=halt)
+        return _resolution_from_entry(entry, task_context=task_context, halt=halt, memo=memo)
     return Resolution(
         engine_id="unresolved",
         variant="unresolved",
@@ -539,9 +564,10 @@ def _resolution_from_entry(
     task_context: dict[str, Any],
     fallback: str | None = None,
     halt: str | None = None,
+    memo: RunMemo | None = None,
 ) -> Resolution:
     protocol = list(entry.prompting_protocol)
-    payload = _assemble_payload(protocol, _context_text(task_context))
+    payload = _assemble_payload_for_unit(protocol, task_context, memo=memo)
     return Resolution(
         engine_id=entry.engine_id,
         variant=entry.variant,
@@ -554,6 +580,32 @@ def _resolution_from_entry(
         halt=halt,
         invocation=dict(entry.invocation),
     )
+
+
+def _assemble_payload_for_unit(
+    protocol: list[str],
+    task_context: Mapping[str, Any],
+    *,
+    memo: RunMemo | None,
+) -> str:
+    context = _context_text(task_context)
+    unit_id = _payload_unit_id(task_context)
+    if memo is None:
+        return _assemble_payload(protocol, context)
+    if unit_id is None:
+        memo.last_payload_cache_status = ""
+        return _assemble_payload(protocol, context)
+
+    protocol_hash = _hash_text("\n".join(protocol))
+    context_hash = _hash_text(context)
+    cached = memo.payload(unit_id, protocol_hash, context_hash)
+    if cached is not None:
+        _assert_protocol_preserved(protocol, cached)
+        return cached
+
+    payload = _assemble_payload(protocol, context)
+    memo.store_payload(unit_id, protocol_hash, context_hash, payload)
+    return payload
 
 
 def _assemble_payload(protocol: list[str], context: str) -> str:
@@ -587,6 +639,19 @@ def _context_text(task_context: Mapping[str, Any]) -> str:
     if not isinstance(raw, str):
         raise RegistryError("task_context['context'] must be a string when supplied")
     return raw
+
+
+def _payload_unit_id(task_context: Mapping[str, Any]) -> str | None:
+    raw = task_context.get("unit_id")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw:
+        raise RegistryError("task_context['unit_id'] must be a non-empty string when supplied")
+    return raw
+
+
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _capability_fit_failure(entry: EngineEntry, capability: str) -> str | None:

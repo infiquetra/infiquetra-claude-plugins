@@ -199,31 +199,40 @@ def test_capability_dispatch_returns_variant_protocol_and_payload(registry: Any)
     assert resolution.halt is None
 
 
+@pytest.mark.parametrize(
+    ("role_kind", "mode", "allowed"),
+    [
+        ("worker", "dispatch", True),
+        ("generator", "dispatch", True),
+        ("advisory-reviewer", "advisory", False),
+        ("panel", "advisory", False),
+    ],
+)
 @pytest.mark.usefixtures("engine_available")
-def test_probationary_explicit_engine_allows_offload_but_halts_advisory(
+def test_probationary_explicit_engine_enforces_each_role_kind(
     tmp_path: Path,
+    role_kind: str,
+    mode: str,
+    allowed: bool,
 ) -> None:
     data = _valid_registry_dict()
     data["roles"] = {}
     data["engines"][0]["trust_tier"] = "probation"
     registry = REG.Registry.load(_write_registry(tmp_path, data))
 
-    worker = R.resolve(
-        {"engine": "codex/gpt-5.5-xhigh", "role_kind": "worker"},
-        mode="dispatch",
-        registry=registry,
-    )
-    reviewer = R.resolve(
-        {"engine": "codex/gpt-5.5-xhigh", "role_kind": "advisory-reviewer"},
-        mode="advisory",
+    resolution = R.resolve(
+        {"engine": "codex/gpt-5.5-xhigh", "role_kind": role_kind},
+        mode=mode,
         registry=registry,
     )
 
-    assert worker.halt is None
-    assert worker.engine_id == "codex"
-    assert reviewer.halt is not None
-    assert "trust_tier 'probation'" in reviewer.halt
-    assert "requires 'advisory' standing" in reviewer.halt
+    assert resolution.engine_id == "codex"
+    if allowed:
+        assert resolution.halt is None
+    else:
+        assert resolution.halt is not None
+        assert "trust_tier 'probation'" in resolution.halt
+        assert "requires 'advisory' standing" in resolution.halt
 
 
 @pytest.mark.usefixtures("engine_available")

@@ -80,6 +80,11 @@ Field rules:
 | `prompting_protocol` | Non-empty list of provider-specific prompting constraints. |
 | `sources` | Non-empty list; each source needs `claim`, `url`, `date`, `tag`, and `corroboration`. |
 
+Supported v1 capability names are `code-generation`, `adversarial-review`, `second-opinion`,
+`debug`, `refactor`, `scaffold`, `long-form-writing`, `bulk-classification`, and
+`structured-extraction`. The registry's `embedding` capability is intentionally excluded because
+the generic v1 bridge calls Chat Completions.
+
 The tool derives the fields operators should not choose per provider: `substrate: external`,
 `egress_policy: networked`, `trust_tier: probation`, `write_capable: false`, bearer auth,
 `invocation.via: engine-bridge-http`, `invocation.effort: default`, and

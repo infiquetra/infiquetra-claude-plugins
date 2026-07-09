@@ -97,7 +97,10 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
         _read(PLUGIN_ROOT / "references" / name)
         for name in ("dispatch-adapter-contract.md", "engine-dispatch.md")
     )
-    assert "../../../docs/adding-a-provider.md" in dispatch_docs
+    assert (
+        "https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/"
+        "docs/adding-a-provider.md"
+    ) in dispatch_docs
     assert "probation" in dispatch_docs
 
 

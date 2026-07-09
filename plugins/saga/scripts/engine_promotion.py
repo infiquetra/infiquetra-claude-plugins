@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import run_ledger  # noqa: E402
@@ -62,7 +64,7 @@ def assess_promotion(
     try:
         registry = Registry.load(registry_path)
         entry = registry.by_key(normalized_key)
-    except RegistryError as exc:
+    except (RegistryError, UnicodeError, yaml.YAMLError) as exc:
         raise PromotionError(str(exc)) from exc
     if entry.trust_tier != "probation":
         raise PromotionError(
@@ -136,7 +138,7 @@ def _read_verified_snapshot(ledger: run_ledger.RunLedger) -> list[dict[str, Any]
         before = run_ledger.read_facts(ledger)
         report = run_ledger.verify_chain(ledger)
         after = run_ledger.read_facts(ledger)
-    except run_ledger.RunLedgerError as exc:
+    except (run_ledger.RunLedgerError, UnicodeError) as exc:
         raise PromotionError(f"run-fact ledger is corrupt: {exc}") from exc
     if before != after:
         raise PromotionError(

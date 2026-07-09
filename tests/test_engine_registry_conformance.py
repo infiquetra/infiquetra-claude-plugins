@@ -137,3 +137,8 @@ def test_cli_passes_live_registry_and_fails_broken_fixture(
     err = capsys.readouterr().err
     assert "deepseek/deepseek-chat" in err
     assert "dispatch-invocation" in err
+
+    malformed = tmp_path / "malformed.yaml"
+    malformed.write_text("engines: [", encoding="utf-8")
+    assert C.main(["--registry", str(malformed)]) == 1
+    assert "engine registry conformance failed" in capsys.readouterr().err

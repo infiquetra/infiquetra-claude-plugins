@@ -115,6 +115,18 @@ def test_apply_inserts_only_row_before_roles_and_registry_loads(tmp_path: Path) 
     assert entry.default_for_engine is True
 
 
+def test_free_provider_omits_budget_ceiling_and_requires_zero_prices(tmp_path: Path) -> None:
+    data = _spec()
+    data["cost_class"] = "free"
+    data["cost_per_token"] = {"input_usd": 0.0, "output_usd": 0.0}
+    data.pop("budget_ceiling_usd")
+
+    result = ONBOARDING.onboard(_write_spec(tmp_path, data), _copy_registry(tmp_path))
+
+    assert result.row["cost_class"] == "free"
+    assert "budget_ceiling_usd" not in result.row
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -162,6 +174,26 @@ def test_embedding_capability_is_rejected_by_chat_completions_scaffolder(tmp_pat
 
     with pytest.raises(ONBOARDING.OnboardingError, match="chat/completions"):
         ONBOARDING.onboard(_write_spec(tmp_path, data), _copy_registry(tmp_path))
+
+
+def test_duplicate_or_non_finite_json_value_is_rejected(tmp_path: Path) -> None:
+    registry = _copy_registry(tmp_path)
+    duplicate = tmp_path / "duplicate.json"
+    duplicate.write_text(
+        json.dumps(_spec()).replace(
+            '"engine_id": "fixture-http"',
+            '"engine_id": "reviewed-safe", "engine_id": "fixture-http"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ONBOARDING.OnboardingError, match="duplicate JSON field 'engine_id'"):
+        ONBOARDING.onboard(duplicate, registry)
+
+    non_finite = _spec()
+    non_finite["cost_per_token"]["input_usd"] = float("inf")
+    with pytest.raises(ONBOARDING.OnboardingError, match="non-finite JSON number"):
+        ONBOARDING.onboard(_write_spec(tmp_path, non_finite), registry)
 
 
 def test_second_apply_rejects_duplicate_and_preserves_first_result(tmp_path: Path) -> None:
@@ -231,3 +263,17 @@ def test_shell_wrapper_forwards_to_python_dry_run(tmp_path: Path) -> None:
     assert completed.returncode == 0
     assert "trust_tier: probation" in completed.stdout
     assert "validated probationary engine row fixture-http/fixture-chat" in completed.stdout
+
+
+def test_cli_main_reports_success_and_invalid_utf8_cleanly(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = _copy_registry(tmp_path)
+    assert ONBOARDING.main(["--spec", str(_write_spec(tmp_path)), "--registry", str(registry)]) == 0
+    assert "validated probationary engine row" in capsys.readouterr().out
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_bytes(b"\xff")
+    assert ONBOARDING.main(["--spec", str(invalid), "--registry", str(registry)]) == 1
+    assert "provider spec must be UTF-8" in capsys.readouterr().err

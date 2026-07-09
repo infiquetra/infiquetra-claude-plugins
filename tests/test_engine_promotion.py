@@ -252,3 +252,36 @@ def test_cli_json_returns_zero_for_valid_but_ineligible_evidence(tmp_path: Path)
     payload = json.loads(completed.stdout)
     assert payload["eligible"] is False
     assert payload["matching_runs"] == 4
+
+
+def test_cli_main_renders_both_dispositions_and_fails_cleanly(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = _registry(tmp_path)
+    ledger = _ledger(tmp_path)
+    for number in range(4):
+        _append(ledger, number, run_key=f"run-{number}")
+    args = [ENGINE_KEY, "--registry", str(registry), "--ledger", str(ledger.path)]
+
+    assert PROMOTION.main(args) == 0
+    output = capsys.readouterr().out
+    assert "promotion not eligible" in output
+    assert "need 5 exact-variant engine facts; found 4" in output
+
+    _append(ledger, 4, run_key="run-4")
+    assert PROMOTION.main(args) == 0
+    output = capsys.readouterr().out
+    assert "promotion eligible" in output
+    assert "reviewed registry PR" in output
+
+    assert PROMOTION.main([*args, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["eligible"] is True
+
+    malformed = tmp_path / "malformed-registry.yaml"
+    malformed.write_text("engines: [", encoding="utf-8")
+    assert (
+        PROMOTION.main([ENGINE_KEY, "--registry", str(malformed), "--ledger", str(ledger.path)])
+        == 1
+    )
+    assert "engine promotion assessment failed" in capsys.readouterr().err

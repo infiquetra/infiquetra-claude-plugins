@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -84,7 +85,10 @@ def onboard(
 ) -> OnboardingResult:
     """Validate a provider spec and optionally insert its row atomically."""
     destination = Path(registry_path)
-    source = destination.read_text(encoding="utf-8")
+    try:
+        source = destination.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise OnboardingError(f"{destination}: registry must be UTF-8") from exc
     source_hash = _sha256(source)
     raw_registry = _load_registry_mapping(source, destination)
     spec = _load_spec(spec_path)
@@ -185,12 +189,33 @@ def render_row(row: dict[str, Any]) -> str:
 def _load_spec(path: Path | str) -> dict[str, Any]:
     spec_path = Path(path)
     try:
-        raw = json.loads(spec_path.read_text(encoding="utf-8"))
+        source = spec_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise OnboardingError(f"{spec_path}: provider spec must be UTF-8") from exc
+    try:
+        raw = json.loads(
+            source,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
     except json.JSONDecodeError as exc:
         raise OnboardingError(f"{spec_path}: malformed JSON: {exc.msg}") from exc
     if not isinstance(raw, dict):
         raise OnboardingError(f"{spec_path}: provider spec must be a JSON object")
     return dict(raw)
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise OnboardingError(f"provider spec has duplicate JSON field {key!r}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> Any:
+    raise OnboardingError(f"provider spec contains non-finite JSON number {value!r}")
 
 
 def _validate_spec(spec: dict[str, Any]) -> None:
@@ -248,7 +273,8 @@ def _validate_base_url(value: Any) -> None:
     url = _require_string(value, "base_url")
     parsed = urlsplit(url)
     if (
-        parsed.scheme != "https"
+        any(character.isspace() for character in url)
+        or parsed.scheme != "https"
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
@@ -325,9 +351,12 @@ def _require_non_negative_int(value: Any, field: str) -> int:
 
 
 def _require_non_negative_number(value: Any, field: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
-        raise OnboardingError(f"{field} must be a non-negative number")
-    return float(value)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise OnboardingError(f"{field} must be a finite non-negative number")
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise OnboardingError(f"{field} must be a finite non-negative number")
+    return number
 
 
 def _load_registry_mapping(source: str, path: Path) -> dict[str, Any]:
@@ -398,7 +427,12 @@ def _atomic_replace_if_unchanged(
         os.chmod(temporary, mode)
         if before_replace is not None:
             before_replace()
-        current = path.read_text(encoding="utf-8")
+        try:
+            current = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise OnboardingError(
+                f"{path}: registry changed to invalid UTF-8 during onboarding"
+            ) from exc
         if _sha256(current) != expected_hash:
             raise OnboardingError(
                 f"{path}: registry changed during onboarding; refusing to overwrite"

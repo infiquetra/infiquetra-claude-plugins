@@ -19,7 +19,7 @@ unchanged). `_build_invocation` (`engine_dispatch.py`) branches on it:
   registry row, not a new code path (#387 AC1).
 
 Add an OpenAI-compatible Chat Completions provider through
-[`tools/add-engine.sh`](../../../docs/adding-a-provider.md). The scaffolder validates a compact JSON
+[`tools/add-engine.sh`](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/docs/adding-a-provider.md). The scaffolder validates a compact JSON
 specification, derives the generic bridge and receipt wiring, inserts only the probationary row, and
 runs offline registry-to-dispatch conformance. Verify the base URL and model id against provider
 documentation, and add an availability-gated smoke test when live proof is warranted. No

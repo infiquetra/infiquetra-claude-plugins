@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import bridge_signatures  # noqa: E402
@@ -164,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         registry = Registry.load(args.registry)
         policies = bridge_signatures.load_registry(args.bridge_signatures)
         report = check_registry(registry, emitter_policies=policies)
-    except (OSError, RegistryError, ValueError) as exc:
+    except (OSError, RegistryError, UnicodeError, ValueError, yaml.YAMLError) as exc:
         print(f"engine registry conformance failed: {exc}", file=sys.stderr)
         return 1
 

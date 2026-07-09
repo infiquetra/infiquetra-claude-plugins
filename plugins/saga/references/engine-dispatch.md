@@ -21,7 +21,8 @@ The adapter dispatches to the wrapper each engine already owns — it does not r
 - **Generic HTTP** (`transport == "http"`) → `engine-bridge-http`. The invocation carries the
   registry row's base URL, model, and bearer environment-variable name into the one generic
   OpenAI-compatible Chat Completions bridge. Provider-specific HTTP branches are forbidden; use the
-  [provider onboarding guide](../../../docs/adding-a-provider.md) to add a probationary row.
+  [provider onboarding guide](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/docs/adding-a-provider.md)
+  to add a probationary row.
 
 All paths are **evidence-only by default** (R23): the engine returns proposed output; it does not
 mutate the working tree. File-mutating external work is deferred until the ideation-R14 sandbox

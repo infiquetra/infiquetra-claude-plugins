@@ -486,12 +486,16 @@ def _resolve_entry(
 ) -> Resolution:
     context_halt = _context_window_halt(entry, task_context)
     if context_halt is not None:
-        return _resolution_from_entry(entry, task_context=task_context, halt=context_halt, memo=memo)
+        return _resolution_from_entry(
+            entry, task_context=task_context, halt=context_halt, memo=memo
+        )
 
     if role_kind == "panel":
         panel_halt = _panel_availability_halt(registry, task_context, memo=memo)
         if panel_halt is not None:
-            return _resolution_from_entry(entry, task_context=task_context, halt=panel_halt, memo=memo)
+            return _resolution_from_entry(
+                entry, task_context=task_context, halt=panel_halt, memo=memo
+            )
 
     availability = preflight(entry.engine_id, entry=entry, memo=memo)
     if not bool(availability["available"]):

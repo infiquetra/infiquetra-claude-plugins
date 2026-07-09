@@ -30,7 +30,7 @@ C = _load("chaperone_economics", HELPER_SCRIPT)
 
 
 def _unit(unit_id: str, **overrides: object) -> object:
-    data = {
+    data: dict[str, object] = {
         "unit_id": unit_id,
         "selector_kind": "engine",
         "selector": "codex/gpt-5.5-xhigh",

@@ -203,7 +203,9 @@ def with_sample_result(
         raise ChaperonePolicyError(
             "defective sample ids were not in the sampled set: " + ", ".join(unknown)
         )
-    unsampled = tuple(unit_id for unit_id in decision.unit_ids if unit_id not in decision.sampled_unit_ids)
+    unsampled = tuple(
+        unit_id for unit_id in decision.unit_ids if unit_id not in decision.sampled_unit_ids
+    )
     return replace(
         decision,
         full_review_unit_ids=tuple(sorted(set(decision.full_review_unit_ids) | set(unsampled))),
@@ -213,9 +215,7 @@ def with_sample_result(
 
 def _validate_verifiability(value: str) -> Verifiability:
     if value not in VERIFIABILITY_VALUES:
-        raise ChaperonePolicyError(
-            f"verifiability {value!r} not in {VERIFIABILITY_VALUES}"
-        )
+        raise ChaperonePolicyError(f"verifiability {value!r} not in {VERIFIABILITY_VALUES}")
     return value  # type: ignore[return-value]
 
 

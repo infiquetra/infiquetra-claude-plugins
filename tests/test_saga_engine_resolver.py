@@ -6,7 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -734,7 +734,7 @@ def test_run_memo_payload_cache_reuses_same_unit_protocol_context(
     def counting_assemble(protocol: list[str], context: str) -> str:
         nonlocal calls
         calls += 1
-        return original(protocol, context)
+        return cast(str, original(protocol, context))
 
     monkeypatch.setattr(R, "_assemble_payload", counting_assemble)
     memo = R.RunMemo()
@@ -763,7 +763,7 @@ def test_run_memo_payload_cache_separates_unit_id_and_context(
     def counting_assemble(protocol: list[str], context: str) -> str:
         nonlocal calls
         calls += 1
-        return original(protocol, context)
+        return cast(str, original(protocol, context))
 
     monkeypatch.setattr(R, "_assemble_payload", counting_assemble)
     memo = R.RunMemo()
@@ -798,7 +798,7 @@ def test_run_memo_payload_cache_requires_unit_id_to_activate(
     def counting_assemble(protocol: list[str], context: str) -> str:
         nonlocal calls
         calls += 1
-        return original(protocol, context)
+        return cast(str, original(protocol, context))
 
     monkeypatch.setattr(R, "_assemble_payload", counting_assemble)
     memo = R.RunMemo()

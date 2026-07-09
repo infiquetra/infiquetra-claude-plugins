@@ -1,5 +1,27 @@
 # Issue #381 Cheap Chaperoning Work Session
 
+## CI Fix Round
+
+- Reformatted the three files named by the CI lint job.
+- Added explicit test typing for the CI mypy scope covering `tests/`.
+- Shortened the Saga manifest description to satisfy the marketplace schema limit.
+- Bumped fleet-core to `0.8.2` because #381 changed non-doc fleet-core tier-policy/rendering files.
+- Synced marketplace metadata from plugin manifests.
+- Added the CI-fix code-review artifact at `docs/code-reviews/2026-07-09-issue-381-cheap-chaperoning-ci-fix-code-review.md`.
+
+### CI Fix Checks
+
+- `uv run ruff check .`
+- `uv run ruff format --check .`
+- `uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports`
+- `uv run pytest -q tests/test_chaperone_economics.py tests/test_saga_engine_resolver.py tests/test_team_execution_plugin.py`
+- `uv run pytest -q --ignore=tests/test_redis_channel_channel.py --ignore=tests/test_redis_channel_notifier.py`
+- `uv run python scripts/validate_plugins.py`
+- `uv run python marketplace/validator/validate.py`
+- `uv run python scripts/sync_marketplace.py --check`
+- `uv run python scripts/check_release_surface_parity.py`
+- `git diff --check`
+
 ## Built
 
 - U1: added `plugins/saga/scripts/chaperone_economics.py` with homogeneous batching,

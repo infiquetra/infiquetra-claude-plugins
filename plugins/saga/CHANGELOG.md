@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.75.11] - 2026-07-09
+
+### Added - engines route explain visibility (#453)
+
+- `plugins/saga/scripts/engine_overlay.py`: adds validated repo-local
+  `.saga/engine-overlay.json` pins and deprecations with atomic writes.
+- `plugins/saga/scripts/engine_registry.py` and
+  `plugins/saga/scripts/engine_resolver.py`: add overlay-aware route explanations
+  and opt-in resolver overlay support while preserving no-overlay behavior.
+- `plugins/saga/scripts/engine_registry_cli.py` and
+  `plugins/saga/commands/engines.md`: add `/engines` listing, pin/deprecate/clear,
+  and read-only `route explain` operator surfaces.
+
 ## [0.75.10] - 2026-07-09
 
 ### Added - engine-registry schema currency (#452)

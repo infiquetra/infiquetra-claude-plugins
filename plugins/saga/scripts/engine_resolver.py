@@ -16,6 +16,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from engine_overlay import EngineOverlay, load_overlay, overlay_fingerprint  # noqa: E402
 from engine_registry import EngineEntry, Registry, RegistryError  # noqa: E402
 
 MODES = ("advisory", "dispatch")
@@ -71,13 +72,14 @@ class RunMemo:
     today's uncached behavior (R5/R11) -- this is strictly opt-in.
 
     Keys: ``engine_id`` for legacy preflight probes, ``entry.key`` for row-backed
-    probes, ``(capability, token_estimate)`` for capability resolution decisions, and
+    probes, ``(capability, token_estimate, overlay_fingerprint)`` for capability
+    resolution decisions, and
     ``(unit_id, protocol_hash, context_hash)`` for assembled dispatch payloads.
     """
 
     def __init__(self) -> None:
         self._preflight: dict[str, dict[str, bool | str]] = {}
-        self._capability: dict[tuple[str, int | None], _CapabilityDecision] = {}
+        self._capability: dict[tuple[str, int | None, str], _CapabilityDecision] = {}
         self._payload: dict[tuple[str, str, str], str] = {}
         self.last_payload_cache_status: str = ""
 
@@ -88,17 +90,21 @@ class RunMemo:
         self._preflight[cache_key] = result
 
     def capability_decision(
-        self, capability: str, token_estimate: int | None
+        self,
+        capability: str,
+        token_estimate: int | None,
+        overlay_key: str = "",
     ) -> _CapabilityDecision | None:
-        return self._capability.get((capability, token_estimate))
+        return self._capability.get((capability, token_estimate, overlay_key))
 
     def store_capability_decision(
         self,
         capability: str,
         token_estimate: int | None,
         decision: _CapabilityDecision,
+        overlay_key: str = "",
     ) -> None:
-        self._capability[(capability, token_estimate)] = decision
+        self._capability[(capability, token_estimate, overlay_key)] = decision
 
     def payload(self, unit_id: str, protocol_hash: str, context_hash: str) -> str | None:
         cached = self._payload.get((unit_id, protocol_hash, context_hash))
@@ -316,6 +322,8 @@ def resolve(
     registry: Registry,
     memo: RunMemo | None = None,
     known_revision_dates: Mapping[str, Any] | None = None,
+    repo_root: Path | str | None = None,
+    overlay: EngineOverlay | None = None,
 ) -> Resolution:
     """Resolve a capability or explicit engine request into the U2 contract."""
     if mode not in MODES:
@@ -329,6 +337,7 @@ def resolve(
     capability, engine = _request_target(request)
 
     if capability is not None:
+        effective_overlay = _effective_overlay(repo_root=repo_root, overlay=overlay)
         return _resolve_capability(
             capability,
             role_kind=role_kind,
@@ -336,6 +345,7 @@ def resolve(
             registry=registry,
             memo=memo,
             known_revision_dates=release_dates,
+            overlay=effective_overlay,
         )
 
     if engine is None:
@@ -434,13 +444,19 @@ def _resolve_capability(
     registry: Registry,
     memo: RunMemo | None = None,
     known_revision_dates: Mapping[str, Any] | None = None,
+    overlay: EngineOverlay | None = None,
 ) -> Resolution:
     token_estimate = _token_estimate(task_context)
-    decision = memo.capability_decision(capability, token_estimate) if memo is not None else None
+    overlay_key = overlay_fingerprint(overlay)
+    decision = (
+        memo.capability_decision(capability, token_estimate, overlay_key)
+        if memo is not None
+        else None
+    )
     if decision is None:
-        decision = _decide_capability(capability, registry)
+        decision = _decide_capability(capability, registry, overlay=overlay)
         if memo is not None:
-            memo.store_capability_decision(capability, token_estimate, decision)
+            memo.store_capability_decision(capability, token_estimate, decision, overlay_key)
 
     if decision.no_capability_reason is not None:
         return _no_fit_resolution(
@@ -474,11 +490,21 @@ def _resolve_capability(
     )
 
 
-def _decide_capability(capability: str, registry: Registry) -> _CapabilityDecision:
+def _decide_capability(
+    capability: str,
+    registry: Registry,
+    *,
+    overlay: EngineOverlay | None = None,
+) -> _CapabilityDecision:
     try:
-        entry = registry.by_capability(capability)
+        entry = registry.explain_capability(capability, overlay=overlay).selected.entry
     except RegistryError as exc:
-        if "no engine variant supports capability" not in str(exc):
+        message = str(exc)
+        no_candidate = (
+            "no engine variant supports capability" in message
+            or "no non-deprecated engine variant supports capability" in message
+        )
+        if not no_candidate:
             raise
         reason = f"no external engine supports capability {capability!r}"
         return _CapabilityDecision(entry=None, no_capability_reason=reason, no_fit_reason=None)
@@ -490,6 +516,18 @@ def _decide_capability(capability: str, registry: Registry) -> _CapabilityDecisi
         )
 
     return _CapabilityDecision(entry=entry, no_capability_reason=None, no_fit_reason=None)
+
+
+def _effective_overlay(
+    *,
+    repo_root: Path | str | None,
+    overlay: EngineOverlay | None,
+) -> EngineOverlay | None:
+    if overlay is not None:
+        return overlay
+    if repo_root is None:
+        return None
+    return load_overlay(repo_root)
 
 
 def _resolve_entry(

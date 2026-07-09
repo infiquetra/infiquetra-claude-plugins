@@ -2,8 +2,8 @@ schema_version: 1
 model_name: saga-comprehensive-documentation
 source_of_truth: Claude Saga in this repository
 command_surface:
-  command_files: 21
-  routable_commands: 20
+  command_files: 22
+  routable_commands: 21
   alias_count: 1
   alias_note: /ceo-review is an alias for /founder-review, not a separate lifecycle node.
 
@@ -665,6 +665,34 @@ commands:
       - Expecting an /outcome work verb (leaf work stays the native verbs).
       - Treating status as stored rather than derived on read.
     example_invocation: /outcome advance ship-feature-x
+  engines:
+    command: /engines
+    phase: utility
+    lifecycle_role: external-engine registry visibility and local route overlay
+    source_refs:
+      - plugins/saga/commands/engines.md
+      - plugins/saga/scripts/engine_registry_cli.py
+      - plugins/saga/scripts/engine_overlay.py
+    purpose: Inspect registry rows, manage repo-local pins/deprecations, and dry-run route decisions without engine dispatch.
+    use_when:
+      - operator wants to see engine capability ratings, cost rank, latency, and stale/current state.
+      - operator wants local route pinning or deprecation for a repo without committing policy.
+      - operator wants to explain a capability route before invoking a lifecycle surface.
+    do_not_use_when:
+      - the task is to dispatch work to an engine.
+      - registry seed ratings or committed policy need to change.
+    inputs: list, pin/deprecate/clear commands, or route explain capability.
+    outputs: deterministic text/JSON listing or explanation; optional local overlay write.
+    durable_artifacts: [.saga/engine-overlay.json]
+    saga_state_behavior: Does not tick saga; overlay is git-ignored repo-local operator state.
+    routes_in: [/work, /code-review, operator inspection]
+    routes_out: [/work, /plan, /code-review]
+    gates: Pin targets must exist, declare the capability, and not be locally deprecated; route explain is read-only.
+    ownership_boundary: Owns local visibility and overlay mutation only; does not dispatch engines, rewrite registry seed data, or file issues.
+    common_mistakes:
+      - Treating route explain as an engine invocation.
+      - Committing local overlay state as shared policy.
+    example_invocation: /engines route explain code-generation
 
 aliases:
   ceo-review:

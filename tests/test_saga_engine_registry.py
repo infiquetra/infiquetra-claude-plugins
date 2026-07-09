@@ -6,7 +6,7 @@ import importlib.util
 import sys
 from copy import deepcopy
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -144,6 +144,85 @@ def test_happy_path_lookups_by_capability_engine_and_role(tmp_path: Path) -> Non
         "codex/gpt-5.5-xhigh",
         "agy/gemini-3.1-pro-high",
     ]
+
+
+def _overlay(
+    *,
+    pins: dict[str, str] | None = None,
+    deprecated: set[str] | frozenset[str] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(pins=pins or {}, deprecated=frozenset(deprecated or set()))
+
+
+def test_valid_overlay_pin_wins_even_when_not_first_ranked(tmp_path: Path) -> None:
+    registry = M.Registry.load(_write_registry(tmp_path, _valid_registry_dict()))
+
+    explanation = registry.explain_capability(
+        "code-generation",
+        overlay=_overlay(pins={"code-generation": "codex/gpt-5.5-xhigh"}),
+    )
+
+    assert explanation.selected.entry.key == "codex/gpt-5.5-xhigh"
+    assert explanation.selected.pinned is True
+    assert explanation.selected.reason == "selected by local overlay pin"
+
+
+def test_overlay_pin_to_row_without_capability_errors(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    third = deepcopy(data["engines"][0])
+    third["engine_id"] = "third"
+    third["variant"] = "debug-only"
+    third["default_for_engine"] = True
+    third["capability_profile"] = {
+        "debug": {"rating": "STRONG", "note": "debug only"},
+    }
+    data["engines"].append(third)
+    registry = M.Registry.load(_write_registry(tmp_path, data))
+
+    with pytest.raises(M.RegistryError, match="does not declare that capability"):
+        registry.explain_capability(
+            "code-generation",
+            overlay=_overlay(pins={"code-generation": "third/debug-only"}),
+        )
+
+
+def test_overlay_deprecated_top_candidate_is_skipped(tmp_path: Path) -> None:
+    registry = M.Registry.load(_write_registry(tmp_path, _valid_registry_dict()))
+
+    explanation = registry.explain_capability(
+        "code-generation",
+        overlay=_overlay(deprecated={"agy/gemini-3.1-pro-high"}),
+    )
+
+    assert explanation.selected.entry.key == "codex/gpt-5.5-xhigh"
+    assert [candidate.entry.key for candidate in explanation.candidates] == ["codex/gpt-5.5-xhigh"]
+    assert explanation.deprecated_keys == ("agy/gemini-3.1-pro-high",)
+
+
+def test_overlay_deprecating_all_candidates_errors(tmp_path: Path) -> None:
+    registry = M.Registry.load(_write_registry(tmp_path, _valid_registry_dict()))
+
+    with pytest.raises(M.RegistryError, match="no non-deprecated engine variant"):
+        registry.explain_capability(
+            "code-generation",
+            overlay=_overlay(
+                deprecated={
+                    "codex/gpt-5.5-xhigh",
+                    "agy/gemini-3.1-pro-high",
+                }
+            ),
+        )
+
+
+def test_explain_capability_names_ranking_tie_breakers(tmp_path: Path) -> None:
+    registry = M.Registry.load(_write_registry(tmp_path, _valid_registry_dict()))
+
+    explanation = registry.explain_capability("code-generation")
+
+    assert explanation.selected.entry.key == "agy/gemini-3.1-pro-high"
+    assert explanation.ranking == "rating desc, cost_speed_rank asc, registry_order asc"
+    assert "cost_speed_rank" in explanation.selected.reason
+    assert "registry_order" in explanation.selected.reason
 
 
 def test_ambiguous_engine_default_errors(tmp_path: Path) -> None:

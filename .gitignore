@@ -61,6 +61,8 @@ Thumbs.db
 .saga-worktrees/
 # Local Saga engine-offer preferences (operator-specific, never committed)
 .saga/engine-prefs.json
+# Local Saga engine routing overlay (operator-specific, never committed)
+.saga/engine-overlay.json
 
 # Local tool state & generated artifacts — regenerated from source each run, never committed
 .neuralmind/

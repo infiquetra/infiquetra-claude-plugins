@@ -192,6 +192,119 @@ def test_capability_dispatch_returns_variant_protocol_and_payload(registry: Any)
 
 
 @pytest.mark.usefixtures("engine_available")
+def test_overlay_pin_changes_capability_resolution_only_when_supplied(registry: Any) -> None:
+    request = {
+        "capability": "code-generation",
+        "role_kind": "generator",
+        "task_context": {"context": "Implement the bounded change."},
+    }
+
+    default = R.resolve(request, mode="dispatch", registry=registry)
+    pinned = R.resolve(
+        request,
+        mode="dispatch",
+        registry=registry,
+        overlay=R.EngineOverlay(pins={"code-generation": "agy/gemini-3.1-pro-high"}),
+    )
+
+    assert default.engine_id == "codex"
+    assert pinned.engine_id == "agy"
+    assert pinned.variant == "gemini-3.1-pro-high"
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_repo_root_overlay_changes_capability_resolution(
+    tmp_path: Path,
+    registry: Any,
+) -> None:
+    overlay_path = tmp_path / ".saga" / "engine-overlay.json"
+    overlay_path.parent.mkdir()
+    overlay_path.write_text(
+        '{"version": 1, "pins": {"code-generation": "agy/gemini-3.1-pro-high"}, '
+        '"deprecated": []}\n',
+        encoding="utf-8",
+    )
+
+    resolution = R.resolve(
+        {
+            "capability": "code-generation",
+            "role_kind": "worker",
+            "task_context": {"context": "Implement a bounded change."},
+        },
+        mode="dispatch",
+        registry=registry,
+        repo_root=tmp_path,
+    )
+
+    assert resolution.engine_id == "agy"
+    assert resolution.variant == "gemini-3.1-pro-high"
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_overlay_deprecated_winner_falls_back_to_next_candidate(registry: Any) -> None:
+    resolution = R.resolve(
+        {
+            "capability": "code-generation",
+            "role_kind": "worker",
+            "task_context": {"context": "Implement a bounded change."},
+        },
+        mode="dispatch",
+        registry=registry,
+        overlay=R.EngineOverlay(deprecated=frozenset({"codex/gpt-5.5-xhigh"})),
+    )
+
+    assert resolution.engine_id == "agy"
+    assert resolution.variant == "gemini-3.1-pro-high"
+
+
+def test_overlay_deprecating_all_candidates_uses_worker_fallback(registry: Any) -> None:
+    resolution = R.resolve(
+        {
+            "capability": "code-generation",
+            "role_kind": "worker",
+            "task_context": {"context": "Implement a bounded change."},
+        },
+        mode="dispatch",
+        registry=registry,
+        overlay=R.EngineOverlay(
+            deprecated=frozenset(
+                {
+                    "codex/gpt-5.5-xhigh",
+                    "agy/gemini-3.1-pro-high",
+                }
+            )
+        ),
+    )
+
+    assert resolution.engine_id == "claude"
+    assert resolution.fallback is not None
+    assert "code-generation" in resolution.fallback
+    assert resolution.halt is None
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_capability_memo_does_not_leak_between_overlays(registry: Any) -> None:
+    memo = R.RunMemo()
+    request = {
+        "capability": "code-generation",
+        "role_kind": "worker",
+        "task_context": {"context": "Implement a bounded change."},
+    }
+
+    pinned = R.resolve(
+        request,
+        mode="dispatch",
+        registry=registry,
+        memo=memo,
+        overlay=R.EngineOverlay(pins={"code-generation": "agy/gemini-3.1-pro-high"}),
+    )
+    default = R.resolve(request, mode="dispatch", registry=registry, memo=memo)
+
+    assert pinned.engine_id == "agy"
+    assert default.engine_id == "codex"
+
+
+@pytest.mark.usefixtures("engine_available")
 def test_engine_advisory_returns_default_variant(registry: Any) -> None:
     resolution = R.resolve(
         {"engine": "codex", "role_kind": "advisory-reviewer"},

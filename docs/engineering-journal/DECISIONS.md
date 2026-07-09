@@ -1,5 +1,35 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-09
+
+### Provider auth preflight extends `invocation.auth`, not a second auth schema {#provider-auth-preflight-389}
+
+**Context.** Issue #389 asks for registry-driven provider credential resolution. Since the issue was
+filed, HTTP transport rows landed with `invocation.auth.mode: bearer` and `auth.key_env`; the remaining
+gap is CLI-row auth still living in resolver constants.
+
+- **KTD1 — `invocation.auth` is the authored registry home.** Add `EngineEntry.auth` as a normalized
+  dataclass field copied from `invocation["auth"]`, but keep YAML auth colocated with invocation data.
+  A top-level `auth` field would split the schema and fight the HTTP bridge contract.
+- **KTD2 — CLI binary and credential requirements move to row data.** CLI rows declare
+  `invocation.cli` and `invocation.auth`; `ENGINE_CONFIG_PATHS` goes away and the resolver no longer
+  needs provider-specific credential maps.
+- **KTD3 — `secret-ref` is a boolean probe seam for now.** No secret backend is adopted in this issue.
+  The resolver accepts an injected resolver that answers whether a ref is resolvable, and default
+  absence is an unavailable preflight reason.
+- **KTD4 — redaction is a resolver-boundary invariant.** Preflight may name env vars, file paths, or
+  secret refs; it must never include env values or resolved secret values in return payloads, reasons,
+  manifests, or logs reached by this path.
+- **KTD5 — preflight memoization is row-aware once auth is row-authored.** `RunMemo` may retain the
+  legacy `engine_id` key only for callers that omit `entry`; row-backed preflight must cache by
+  `entry.key` or an equivalent row/auth fingerprint so variants sharing an engine do not reuse another
+  row's credential result.
+
+**Revisit when.** A concrete secret store is selected, or an operator-facing `/engines` auth-status
+surface wants to explain every row's configured credential state.
+
+---
+
 ## 2026-07-07
 
 ### No silent Claude-fallback (#390): consumer re-grounding, SUBSTITUTED derivation, gate refusal {#no-silent-claude-fallback-390}

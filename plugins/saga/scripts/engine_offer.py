@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import chaperone_economics as ce
 import yaml
 
 STAGES = ("ideate", "brainstorm", "work", "doc-review", "code-review")
@@ -98,6 +99,7 @@ class EngineOffer:
     prompt_required: bool
     choices: tuple[str, ...]
     reason: str
+    cost_delta_preview: str | None = None
     advisory_only: bool = True
 
     def to_json(self) -> dict[str, object]:
@@ -169,6 +171,7 @@ def resolve_offer(
     preferences: EnginePreferences | None = None,
     surface_defaults: SurfaceIntentDefaults | None = None,
     defaults_path: Path | str | None = None,
+    economics: dict[str, Any] | None = None,
 ) -> EngineOffer:
     """Resolve one lifecycle-stage external-engine offer."""
     _validate_stage(stage)
@@ -178,7 +181,7 @@ def resolve_offer(
 
     if loaded_preferences is not None and stage in loaded_preferences.stages:
         preference = loaded_preferences.stages[stage]
-        return _offer_from_preference(stage, preference)
+        return _offer_from_preference(stage, preference, economics=economics)
 
     shape = classify_unit_shape(unit_shape=unit_shape, labels=labels, text=text)
     defaults = surface_defaults
@@ -189,6 +192,7 @@ def resolve_offer(
         shape = defaults.stage_shape_defaults.get(stage, shape)
 
     default = defaults.preference_for_shape(shape)
+    cost_delta_preview = _cost_delta_preview(default, economics)
     return EngineOffer(
         stage=stage,
         intent=default.intent,
@@ -199,6 +203,7 @@ def resolve_offer(
         prompt_required=attended,
         choices=_choices_for(default.intent),
         reason=_reason_for(stage, shape, default),
+        cost_delta_preview=cost_delta_preview,
     )
 
 
@@ -299,7 +304,9 @@ def save_preference(repo_root: Path | str, stage: str, preference: Preference) -
     return prefs_path
 
 
-def _offer_from_preference(stage: str, preference: Preference) -> EngineOffer:
+def _offer_from_preference(
+    stage: str, preference: Preference, *, economics: dict[str, Any] | None = None
+) -> EngineOffer:
     return EngineOffer(
         stage=stage,
         intent=preference.intent,
@@ -310,6 +317,7 @@ def _offer_from_preference(stage: str, preference: Preference) -> EngineOffer:
         prompt_required=False,
         choices=(),
         reason=f"stored preference for {stage}",
+        cost_delta_preview=_cost_delta_preview(preference, economics),
     )
 
 
@@ -328,6 +336,91 @@ def _reason_for(stage: str, shape: UnitShape, preference: Preference) -> str:
 
 def _prefs_path(repo_root: Path | str) -> Path:
     return Path(repo_root) / PREFS_PATH
+
+
+def _cost_delta_preview(
+    preference: Preference, economics: dict[str, Any] | None
+) -> str | None:
+    if preference.intent != "offload" or economics is None:
+        return None
+    if not isinstance(economics, dict):
+        raise EngineOfferError("economics must be an object")
+
+    cost_class = _optional_string(economics.get("cost_class"), "cost_class") or "metered"
+    _validate_cost_class(cost_class)
+    engine_id = _optional_string(economics.get("engine_id"), "engine_id")
+    inline_fallback = (
+        _optional_string(economics.get("inline_fallback"), "inline_fallback") or "inline"
+    )
+
+    external_cost = _optional_non_negative_float(
+        economics.get("estimated_external_cost_usd"), "estimated_external_cost_usd"
+    )
+    budget_ceiling = _optional_non_negative_float(
+        economics.get("provider_budget_ceiling_usd"), "provider_budget_ceiling_usd"
+    )
+    prior_spend = _optional_non_negative_float(
+        economics.get("prior_provider_spend_usd"), "prior_provider_spend_usd"
+    )
+    inline_tokens = _optional_non_negative_int(
+        economics.get("claude_inline_tokens_estimate"), "claude_inline_tokens_estimate"
+    )
+    chaperone_tokens = _optional_non_negative_int(
+        economics.get("chaperone_tokens_estimate"), "chaperone_tokens_estimate"
+    )
+
+    required = [inline_tokens, chaperone_tokens]
+    if cost_class == "metered":
+        required.extend([external_cost, budget_ceiling])
+    if any(value is None for value in required):
+        return None
+
+    try:
+        decision = ce.decide_offload_economics(
+            ce.OffloadEconomicsInput(
+                engine_id=engine_id or preference.model or "offload",
+                cost_class=cast(ce.CostClass, cost_class),
+                estimated_external_cost_usd=external_cost,
+                provider_budget_ceiling_usd=budget_ceiling,
+                prior_provider_spend_usd=prior_spend or 0.0,
+                claude_inline_tokens_estimate=inline_tokens,
+                chaperone_tokens_estimate=chaperone_tokens,
+                inline_fallback=inline_fallback,
+            )
+        )
+    except ce.ChaperonePolicyError as exc:
+        raise EngineOfferError(f"economics: {exc}") from exc
+    return decision.preview
+
+
+def _optional_string(value: Any, name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise EngineOfferError(f"{name} must be a string")
+    if not value:
+        raise EngineOfferError(f"{name} must be non-empty")
+    return value
+
+
+def _optional_non_negative_float(value: Any, name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise EngineOfferError(f"{name} must be a number")
+    if value < 0:
+        raise EngineOfferError(f"{name} must be >= 0")
+    return float(value)
+
+
+def _optional_non_negative_int(value: Any, name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise EngineOfferError(f"{name} must be an integer")
+    if value < 0:
+        raise EngineOfferError(f"{name} must be >= 0")
+    return value
 
 
 def _parse_shape_preferences(raw: Any, path: Path) -> dict[str, Preference]:
@@ -388,6 +481,11 @@ def _validate_model_effort(model: str | None, effort: str | None) -> None:
         raise EngineOfferError(f"effort {effort!r} not in {EFFORTS}")
 
 
+def _validate_cost_class(cost_class: str) -> None:
+    if cost_class not in ce.COST_CLASSES:
+        raise EngineOfferError(f"cost_class {cost_class!r} not in {ce.COST_CLASSES}")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -399,6 +497,14 @@ def _build_parser() -> argparse.ArgumentParser:
     offer.add_argument("--unit-shape", choices=UNIT_SHAPES)
     offer.add_argument("--label", action="append", default=[])
     offer.add_argument("--text", default="")
+    offer.add_argument("--engine-id")
+    offer.add_argument("--cost-class", choices=ce.COST_CLASSES)
+    offer.add_argument("--estimated-external-cost-usd", type=float)
+    offer.add_argument("--provider-budget-ceiling-usd", type=float)
+    offer.add_argument("--prior-provider-spend-usd", type=float)
+    offer.add_argument("--claude-inline-tokens-estimate", type=int)
+    offer.add_argument("--chaperone-tokens-estimate", type=int)
+    offer.add_argument("--inline-fallback")
 
     remember = subparsers.add_parser("remember", help="persist a selected stage preference")
     remember.add_argument("--stage", required=True, choices=STAGES)
@@ -421,6 +527,7 @@ def main(argv: list[str] | None = None) -> int:
                 unit_shape=args.unit_shape,
                 labels=args.label,
                 text=args.text,
+                economics=_economics_from_args(args),
             )
             print(json.dumps(offer.to_json(), sort_keys=True))
             return 0
@@ -432,6 +539,24 @@ def main(argv: list[str] | None = None) -> int:
     except EngineOfferError as exc:
         parser.error(str(exc))
     return 2
+
+
+def _economics_from_args(args: argparse.Namespace) -> dict[str, Any] | None:
+    values = {
+        "engine_id": args.engine_id,
+        "cost_class": args.cost_class,
+        "estimated_external_cost_usd": args.estimated_external_cost_usd,
+        "provider_budget_ceiling_usd": args.provider_budget_ceiling_usd,
+        "prior_provider_spend_usd": args.prior_provider_spend_usd,
+        "claude_inline_tokens_estimate": args.claude_inline_tokens_estimate,
+        "chaperone_tokens_estimate": args.chaperone_tokens_estimate,
+        "inline_fallback": args.inline_fallback,
+    }
+    if all(value is None for value in values.values()):
+        return None
+    values["cost_class"] = values["cost_class"] or "metered"
+    values["inline_fallback"] = values["inline_fallback"] or "inline"
+    return {key: value for key, value in values.items() if value is not None}
 
 
 if __name__ == "__main__":

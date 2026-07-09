@@ -42,6 +42,18 @@ a one-line downgrade/provenance note (R24), and **never** a gated verdict. A `re
 carries a `halt` (an unavailable named engine, an unavailable panel member, or a context-window
 overflow from the resolver) short-circuits: `dispatch()` returns that halt without invoking the runner.
 
+## Offload economics preview vs dispatch stop
+
+`plugins/saga/scripts/engine_offer.py` may include `cost_delta_preview` on an advisory `offload` offer when
+the caller provides complete economics estimates. That preview is operator-facing context only: it must not
+be treated as authorization to spend or as a completion gate.
+
+`dispatch()` remains the hard enforcement point. Metered offload routes require enough economics metadata to
+prove both positive token savings and provider-budget headroom before runner invocation. If the break-even
+or budget-ceiling checks fail, dispatch returns halted `AdvisoryEvidence` before `_build_invocation()` and
+before the runner can spend provider budget. `none` and `second-opinion` offers never attach offload savings
+claims.
+
 ## Provenance and downgrade notes (R24)
 
 Any fallback or substitution emits a visible one-line note (`downgrade_note(engine, reason)`), shaped

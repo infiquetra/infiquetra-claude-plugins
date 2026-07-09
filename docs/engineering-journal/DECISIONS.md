@@ -2,6 +2,27 @@
 
 ## 2026-07-09
 
+### `/ideate` external-engine generator lane stays additive and provenance-only {#ideate-engine-generator-lane-454}
+
+**Context.** Issue #454 adds a blind external-engine divergent-generator lane to `/ideate` Phase 2. The
+lane expands idea-source diversity, but it must not create a second gate or a privileged convergence path.
+
+- **KTD1 - one additive lane, not a frame replacement.** The external-engine generator runs alongside
+  the N Claude frame agents selected by Phase 0.4. Adaptive frame-count logic remains unchanged.
+- **KTD2 - direct chaperone-dispatch target.** This generator lane uses the existing external-engine
+  chaperone model with `offload` / `sonnet-medium`; it does not inherit the generic `ideate`
+  second-opinion offer default.
+- **KTD3 - prompt parity preserves blindness.** The external lane receives the same substituted
+  frame-agent prompt contract as each Claude frame agent and no in-flight candidate pool.
+- **KTD4 - `engine-generated` is provenance only.** The tag may be rendered on candidates and survivors,
+  but Phase 3 basis checks, categorical kills, and survivor scoring do not branch on it.
+- **KTD5 - external failure degrades to Claude-only ideation.** Missing credentials, unavailable CLI, or
+  dispatch errors never block `/ideate`; external engines remain non-gatekeepers.
+
+**Revisit when.** `/ideate` gains a first-class executable frame-dispatch helper, live external-engine
+telemetry justifies a different default tier, or provenance tags become machine-readable enough to need a
+formal schema.
+
 ### Engine visibility overlay stays repo-local and explicit {#engine-visibility-overlay-453}
 
 **Context.** Issue #453 adds `/engines` and `route explain` surfaces so operators can inspect registry

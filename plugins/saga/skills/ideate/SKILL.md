@@ -500,10 +500,29 @@ run is tactical scope):**
 > regardless of basis. When the focus names a slice (one flow, one plugin, one stage), ideate at
 > full ambition *within that slice* — do not widen the surface to the whole product.
 
-**After all frame agents return:**
+**External-engine generator lane (additive, blind, best-effort).** In addition to the N Claude frame
+agents, attempt one chaperoned external-engine generator lane. Use the existing chaperone-dispatch
+posture `offload` with `sonnet/medium`; do not route this generator lane through the stage-offer
+`second-opinion` default. Assign the lane an ordinary Phase 2 frame value: use the next unused frame
+from the ordered frame pool when one exists, otherwise reuse the frame whose lens best fits the focus.
+
+Give the lane the same substituted frame-agent prompt above — frame, grounding summary, focus, topic
+axes, per-agent target, captured user seeds, constraint/background split, and tactical-scope flag. Do
+not add an external-engine-only prompt variant, do not relax the per-idea basis contract, and do not
+include any raw candidates or merged candidate pool in the prompt. The lane is blind by construction:
+its output first meets the Claude frame-agent output at the merge boundary below.
+
+If the external-engine dispatch is unavailable, lacks credentials, times out, or returns an adapter
+error, record a non-blocking note and continue with the Claude-only frame-agent set. Do not halt
+`/ideate`, do not create a partial-failure state, and do not ask Phase 3 to compensate for the missing
+lane.
+
+**After all available generator lanes return:**
 
 1. **Merge and dedupe** every frame agent's candidates into one master candidate list, keeping
-   sub-agent (frame) attribution.
+   sub-agent (frame) attribution. For candidates produced by the external-engine generator lane, also
+   tag the candidate provenance `engine-generated`. Do not apply `engine-generated` to Claude
+   frame-agent, user-seed, interview, or combined candidates.
 2. **Add the user seeds to the pool** as `user-seed` candidates (if not already absorbed by a
    frame agent that built on them). A seed a frame only *challenged* or rejected — rather than
    building into a promoted idea — still enters the pool as its own peer candidate; never drop a

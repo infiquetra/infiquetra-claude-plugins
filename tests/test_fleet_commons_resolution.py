@@ -2,7 +2,7 @@
 
 Oracles pinned here:
 
-* palette — content and ordering byte-match the pre-migration ``execution_spec`` tuples
+* palette — content and ordering match the canonical fleet-core contract
   (strongest-first models, weakest-first efforts — ``{#tier-vocab-ordering}``); rank helpers
   raise on unknown values.
 * ladder — one test per rung (env override, repo walk-up, installed_plugins.json, cache-sibling
@@ -86,7 +86,7 @@ def outside_shim(tmp_path: Path, clean_env: pytest.MonkeyPatch) -> ModuleType:
 # --- canonical tier palette -----------------------------------------------------------------
 
 
-def test_palette_content_and_ordering_match_pre_migration_tuples(
+def test_palette_content_and_ordering_match_canonical_contract(
     clean_env: pytest.MonkeyPatch,
 ) -> None:
     clean_env.setenv("FLEET_COMMONS_ROOT", str(ROOT / "plugins" / "fleet-core"))
@@ -94,7 +94,7 @@ def test_palette_content_and_ordering_match_pre_migration_tuples(
     assert palette.MODELS == ("fable", "opus", "sonnet", "haiku")
     assert palette.EFFORTS == ("low", "medium", "high", "xhigh")
     assert palette.CHEAP_MODELS == ("haiku",)
-    assert palette.ENGINE_INTENTS == ("offload", "second-opinion")
+    assert palette.ENGINE_INTENTS == ("offload", "second-opinion", "divergence")
 
 
 def test_rank_helpers_encode_the_ordering_contract(clean_env: pytest.MonkeyPatch) -> None:

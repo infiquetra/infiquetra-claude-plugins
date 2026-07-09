@@ -31,6 +31,7 @@ SKILL_MD_ROWS = (
     "offload-test-gated",
     "offload",
     "second-opinion",
+    "divergence",
 )
 
 
@@ -121,6 +122,11 @@ def test_resolve_shapes_all_registry_rows() -> None:
         result = resolve(None, work_shape)
         assert result.model == row["default_model"]
         assert result.effort == row["default_effort"]
+
+
+def test_divergence_resolves_to_high_tier_adversarial_chaperone() -> None:
+    result = resolve(None, "divergence")
+    assert (result.model, result.effort) == ("opus", "high")
 
 
 def test_resolve_unknown_work_shape_raises() -> None:

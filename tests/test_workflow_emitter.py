@@ -1377,7 +1377,7 @@ def test_segment_units_engine_and_capability_boundaries() -> None:
 
 def test_segment_units_engine_intent_upgrade_only_max() -> None:
     """When a same-engine segment's members disagree on engine_intent, the segment resolves
-    to "second-opinion" (the more conservative intent) -- never a silent first-unit-wins."""
+    to "divergence" (the strongest posture) -- never a silent first-unit-wins."""
     mod = _load()
     data = {
         "name": "engine-intent-merge-test",
@@ -1399,22 +1399,32 @@ def test_segment_units_engine_intent_upgrade_only_max() -> None:
                 "engine": "agy/gemini-3.1-pro-high",
                 "engine_intent": "second-opinion",
             },
+            {
+                "unit_id": "U3",
+                "label": "agy unit 3",
+                "tier": {"model": "opus", "effort": "high"},
+                "prompt": "agy-3",
+                "engine": "agy/gemini-3.1-pro-high",
+                "engine_intent": "divergence",
+            },
         ],
     }
     spec = mod.ExecutionSpec.from_dict(data)
     segments = mod.segment_units(spec)
 
     assert len(segments) == 1
-    assert segments[0].unit_ids == ["U1", "U2"]
-    assert segments[0].engine_intent == "second-opinion"
+    assert segments[0].unit_ids == ["U1", "U2", "U3"]
+    assert segments[0].engine_intent == "divergence"
 
 
-def test_segment_units_engine_intent_agreement_does_not_spuriously_upgrade() -> None:
-    """Members that all agree on "offload" must stay "offload" -- max-of-indices must
-    not be misread as "any second unit upgrades", and the result must not depend on
-    which member is listed first."""
+def test_segment_units_engine_intent_order_is_stable() -> None:
+    """Intent merging follows the canonical order, including the unchanged offload floor."""
     mod = _load()
-    for first, second in (("offload", "offload"), ("second-opinion", "offload")):
+    for first, second, expected in (
+        ("offload", "offload", "offload"),
+        ("second-opinion", "offload", "second-opinion"),
+        ("divergence", "second-opinion", "divergence"),
+    ):
         data = {
             "name": "engine-intent-agreement-test",
             "description": "same-engine members that agree (or reverse order) resolve correctly",
@@ -1440,7 +1450,6 @@ def test_segment_units_engine_intent_agreement_does_not_spuriously_upgrade() -> 
         spec = mod.ExecutionSpec.from_dict(data)
         segments = mod.segment_units(spec)
         assert len(segments) == 1
-        expected = "second-opinion" if "second-opinion" in (first, second) else "offload"
         assert segments[0].engine_intent == expected
 
 

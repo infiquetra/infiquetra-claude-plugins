@@ -18,6 +18,10 @@ scope.
   no tiering drift.
 - U1 manifest: `worker-reconcile-core-U1` in the `issue-393` manifest store, disposition
   `ran-as-requested`.
+- U2 worker: `worker-intent-contract`, resolved effort `high`, Agent-path effort rider reconciled with
+  no tiering drift.
+- U2 manifest: `worker-intent-contract-U2` in the `issue-393` manifest store, disposition
+  `ran-as-requested`.
 
 ## Completed Work
 
@@ -41,6 +45,24 @@ Checks:
 - `git diff --check`
   - passed
 
+### U2: Canonical divergence intent and plan-time tier contract
+
+- Added `divergence` to the fleet-core-owned canonical intent vocabulary.
+- Added the `opus / high` divergence policy and regenerated the plan skill's tier table from the
+  renderer.
+- Preserved omitted-intent `offload` behavior, selector XOR validation, plain-Claude serialization,
+  and upgrade-only segment intent ordering.
+- Added execution-spec, renderer, resolver, team/workflow emitter, and chaperone-economics coverage.
+
+Checks:
+
+- Focused U2 pytest matrix
+  - 338 passed
+- Narrow Ruff over U2 implementation and tests
+  - passed
+- `git diff --check`
+  - passed
+
 ## Next Step
 
-Execute U2 to add the canonical `divergence` intent and regenerate the plan-tier contract.
+Execute U3 to preserve rejected offloads as typed advisory manifest and reconciliation evidence.

@@ -95,10 +95,12 @@ _EFFORT_CEILINGS = _derive_effort_ceilings(_REGISTRY, EFFORTS)
 # ``_CHEAP_MODELS`` alias.
 CHEAP_MODELS = ("haiku",)
 
-# Delegation-intent vocabulary for an engine/capability unit: ``offload`` wants a
-# cheap chaperone (the delegation is net-negative otherwise); ``second-opinion``
-# wants an expensive one (adversarial verification IS the product).
-ENGINE_INTENTS = ("offload", "second-opinion")
+# Delegation-intent vocabulary for an engine/capability unit, ordered from the
+# cheapest reconciliation posture to the strongest. ``offload`` wants a cheap
+# chaperone (the delegation is net-negative otherwise); ``second-opinion`` and
+# ``divergence`` want an expensive one (adversarial verification IS the product).
+# The ordering is consumed upgrade-only when same-engine units share a segment.
+ENGINE_INTENTS = ("offload", "second-opinion", "divergence")
 
 
 def model_rank(model: str) -> int:

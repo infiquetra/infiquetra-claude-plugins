@@ -151,6 +151,25 @@ def test_engine_intent_explicit_value_round_trips() -> None:
     assert round_tripped.units[0].engine_intent == "second-opinion"
 
 
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"engine": "codex/gpt-5.5-xhigh"},
+        {"capability": "code-generation"},
+    ],
+    ids=("engine", "capability"),
+)
+def test_divergence_intent_selector_forms_validate_and_round_trip(
+    selector: dict[str, str],
+) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(**selector, engine_intent="divergence"))
+    spec.validate()
+
+    unit_dict = spec.units[0].to_dict()
+    assert unit_dict["engine_intent"] == "divergence"
+    assert ES.ExecutionSpec.from_dict(spec.to_dict()).units[0].engine_intent == "divergence"
+
+
 def test_engine_intent_omitted_from_to_dict_for_plain_claude_unit() -> None:
     spec = ES.ExecutionSpec.from_dict(_spec_dict())
     assert "engine_intent" not in spec.units[0].to_dict()

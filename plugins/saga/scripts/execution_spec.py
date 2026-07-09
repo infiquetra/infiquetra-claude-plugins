@@ -87,7 +87,7 @@ PASS_RULES = ("majority", "unanimous")
 
 # Delegation-intent vocabulary for an engine/capability unit (KTD2, U12). ``offload``
 # wants a cheap chaperone (the delegation is net-negative otherwise); ``second-opinion``
-# wants an expensive one (adversarial verification IS the product).
+# and ``divergence`` want an expensive one (adversarial verification IS the product).
 ENGINE_INTENTS = _tier_palette.ENGINE_INTENTS
 
 # Sandbox capability axes (issue #287 R1-R3) -- a delegated leaf's declared containment,
@@ -2494,9 +2494,10 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
                 ),
             )
 
-        # Resolve engine_intent the same way: upgrade-only max ("second-opinion" beats
-        # "offload") when a same-engine segment's members disagree, rather than silently
-        # taking the first unit's value (KTD1/U12 -- a chaperone is one resident worker, so
+        # Resolve engine_intent the same way: upgrade-only max ("divergence" beats
+        # "second-opinion", which beats "offload") when a same-engine segment's members
+        # disagree, rather than silently taking the first unit's value (KTD1/U12 -- a
+        # chaperone is one resident worker, so
         # the more conservative intent should govern its tier recommendation).
         seg_intents = [u.engine_intent for u in units if u.engine_intent is not None]
         seg_engine_intent = (

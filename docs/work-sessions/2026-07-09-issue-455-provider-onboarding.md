@@ -35,23 +35,34 @@ Branch: `work/455-provider-onboarding`
 - `53fae75` - provider onboarding scaffolder and atomic apply.
 - `0d57320` - run-ledger promotion assessment.
 - `0dccb26` - reject embedding claims from the Chat Completions scaffolder.
+- `afb5b1e` - harden provider/evidence inputs from Team Execution review.
 
 ## Checks Run
 
 - U1 focused suites: `177 passed`.
-- `uv run pytest tests/test_engine_onboarding.py -q`: `15 passed`.
-- `uv run pytest tests/test_engine_promotion.py -q`: `19 passed`.
+- `uv run pytest tests/test_engine_onboarding.py -q`: `18 passed`.
+- `uv run pytest tests/test_engine_promotion.py -q`: `20 passed`.
 - Combined U1-U4 focused gate: `216 passed`.
+- Post-remediation behavior and package gate: `260 passed`.
+- New-module coverage: onboarding `86%`, promotion `98%`, conformance `91%`.
 - Focused Ruff format/check passed for onboarding, conformance, promotion, and their tests.
 - Isolated mypy passed for onboarding/promotion and their tests with `--follow-imports=skip`.
+- Registry lint, conformance CLI, marketplace sync, release parity, and release diff guard passed.
 - The planned transitive mypy command reached pre-existing errors in `engine_overlay.py`,
   `fleet_commons_shim.py`, and `engine_dispatch.py`; no unrelated baseline fix was made.
 
 ## Review State
 
 - Doc review resolved all two P1, two P2, and one P3 findings before implementation.
-- Team Execution serial reviewers, validators, and the code-review gate remain pending.
+- Team Execution serial consensus reached in cycle 2: Devil's Advocate `9.4`, Security `9.6`,
+  Architecture `9.8`, Testing `9.4`, and Clarity `9.6`. Serial mode is explicitly not independent
+  delegated review.
+- Security scanner: pass on changed scope. The broad scan's unchanged `board_progression.py` SHA-1
+  filename-key finding remains a baseline warning.
+- Scenario tester: pass with `260 passed` plus registry and release checks.
+- Evidence root: `~/.codex/team-execution/state/infiquetra-claude-plugins/issue-455/`.
+- GitHub Actions monitor and the Saga code-review gate remain pending.
 
 ## Next Step
 
-Run Team Execution serial reviewer consensus and required validators, then the Saga code-review gate.
+Run the Saga code-review gate, then push the branch and monitor required GitHub Actions checks.

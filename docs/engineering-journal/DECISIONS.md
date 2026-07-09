@@ -2,6 +2,17 @@
 
 ## 2026-07-09
 
+### Engine output trust boundary treats advisory text as hostile data {#engine-output-trust-boundary-385}
+
+**Context.** Issue #385 closes the content-channel injection gap for external-engine advisory text before it reaches gate or executable contexts.
+
+- **KTD1 - contract plus guard, not sanitizer SDK.** Ship a precise trust-boundary reference, structural lint, and adversarial fixture over current advisory text surfaces; do not create a general-purpose sanitization library.
+- **KTD2 - AST-backed seeded guard.** The CI guard should inspect the named call sites and prove red behavior with synthetic unsafe fixtures for subprocess-style and gate-token sinks.
+- **KTD3 - advisory evidence stays content-blind for gates.** `satisfy_gate` continues to depend on Claude verification, observer corroboration, and manifest adjudication; payload text never becomes a verdict source.
+- **KTD4 - Team Execution doc changes imply Team Execution release bump.** If validator reference docs cross-reference the new contract, bump Team Execution release surfaces alongside Saga.
+
+**Revisit when.** New advisory text-bearing fields land, a real sanitizer library becomes warranted, or Team Execution gains a machine-readable validator evidence schema that replaces free-text findings.
+
 ### Shared engine offer helper owns lifecycle-stage offer policy {#engine-offer-helper-451}
 
 **Context.** Issue #451 adds a shared `engine_offer` primitive so `ideate`, `brainstorm`, `work`, `doc-review`, and `code-review` do not each invent their own external-engine offer policy.

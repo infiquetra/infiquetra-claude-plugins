@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import yaml
+
 STAGES = ("ideate", "brainstorm", "work", "doc-review", "code-review")
 INTENTS = ("none", "offload", "second-opinion")
 UNIT_SHAPES = ("unknown", "mechanical", "judgment")
@@ -22,6 +24,9 @@ EFFORTS: tuple[str, ...] = _tier_palette.EFFORTS
 
 PREFS_VERSION = 1
 PREFS_PATH = Path(".saga") / "engine-prefs.json"
+DEFAULT_SURFACE_INTENT_DEFAULTS = (
+    Path(__file__).resolve().parent.parent / "references" / "surface_intent_defaults.yaml"
+)
 
 MECHANICAL_TERMS = frozenset(
     {
@@ -47,8 +52,6 @@ JUDGMENT_TERMS = frozenset(
         "tradeoff",
     }
 )
-JUDGMENT_DEFAULT_STAGES = frozenset({"ideate", "brainstorm", "doc-review", "code-review"})
-
 Intent = Literal["none", "offload", "second-opinion"]
 UnitShape = Literal["unknown", "mechanical", "judgment"]
 OfferSource = Literal["default", "stored"]
@@ -116,6 +119,20 @@ class EnginePreferences:
         }
 
 
+@dataclass(frozen=True)
+class SurfaceIntentDefaults:
+    """Data-authored engine-offer defaults for lifecycle stages and unit shapes."""
+
+    shape_preferences: dict[str, Preference]
+    stage_shape_defaults: dict[str, UnitShape]
+
+    def preference_for_shape(self, shape: UnitShape) -> Preference:
+        try:
+            return self.shape_preferences[shape]
+        except KeyError as exc:
+            raise EngineOfferError(f"surface defaults missing shape {shape!r}") from exc
+
+
 def classify_unit_shape(
     *,
     unit_shape: str | None = None,
@@ -150,6 +167,8 @@ def resolve_offer(
     labels: list[str] | tuple[str, ...] = (),
     text: str = "",
     preferences: EnginePreferences | None = None,
+    surface_defaults: SurfaceIntentDefaults | None = None,
+    defaults_path: Path | str | None = None,
 ) -> EngineOffer:
     """Resolve one lifecycle-stage external-engine offer."""
     _validate_stage(stage)
@@ -162,10 +181,14 @@ def resolve_offer(
         return _offer_from_preference(stage, preference)
 
     shape = classify_unit_shape(unit_shape=unit_shape, labels=labels, text=text)
-    if shape == "unknown" and stage in JUDGMENT_DEFAULT_STAGES:
-        shape = "judgment"
+    defaults = surface_defaults
+    if defaults is None:
+        defaults = load_surface_intent_defaults(defaults_path or DEFAULT_SURFACE_INTENT_DEFAULTS)
 
-    default = _default_preference_for_shape(shape)
+    if shape == "unknown":
+        shape = defaults.stage_shape_defaults.get(stage, shape)
+
+    default = defaults.preference_for_shape(shape)
     return EngineOffer(
         stage=stage,
         intent=default.intent,
@@ -176,6 +199,35 @@ def resolve_offer(
         prompt_required=attended,
         choices=_choices_for(default.intent),
         reason=_reason_for(stage, shape, default),
+    )
+
+
+def load_surface_intent_defaults(
+    path: Path | str = DEFAULT_SURFACE_INTENT_DEFAULTS,
+) -> SurfaceIntentDefaults:
+    """Load data-authored lifecycle-stage intent defaults."""
+    defaults_path = Path(path)
+    try:
+        raw = yaml.safe_load(defaults_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise EngineOfferError(
+            f"{defaults_path}: cannot read surface intent defaults: {exc}"
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise EngineOfferError(
+            f"{defaults_path}: malformed surface intent defaults: {exc}"
+        ) from exc
+
+    if not isinstance(raw, dict) or raw.get("version") != 1:
+        raise EngineOfferError(f"{defaults_path}: expected surface intent defaults version 1")
+
+    shape_preferences = _parse_shape_preferences(raw.get("defaults"), defaults_path)
+    stage_shape_defaults = _parse_stage_shape_defaults(
+        raw.get("stage_shape_defaults", {}), defaults_path
+    )
+    return SurfaceIntentDefaults(
+        shape_preferences=shape_preferences,
+        stage_shape_defaults=stage_shape_defaults,
     )
 
 
@@ -261,14 +313,6 @@ def _offer_from_preference(stage: str, preference: Preference) -> EngineOffer:
     )
 
 
-def _default_preference_for_shape(shape: UnitShape) -> Preference:
-    if shape == "mechanical":
-        return Preference(intent="offload", model="sonnet", effort="medium")
-    if shape == "judgment":
-        return Preference(intent="second-opinion", model="opus", effort="high")
-    return Preference(intent="none")
-
-
 def _choices_for(default_intent: Intent) -> tuple[str, ...]:
     ordered = [default_intent, *[intent for intent in INTENTS if intent != default_intent]]
     return tuple(ordered)
@@ -284,6 +328,47 @@ def _reason_for(stage: str, shape: UnitShape, preference: Preference) -> str:
 
 def _prefs_path(repo_root: Path | str) -> Path:
     return Path(repo_root) / PREFS_PATH
+
+
+def _parse_shape_preferences(raw: Any, path: Path) -> dict[str, Preference]:
+    if not isinstance(raw, dict):
+        raise EngineOfferError(f"{path}: 'defaults' must be an object")
+
+    preferences: dict[str, Preference] = {}
+    for shape in UNIT_SHAPES:
+        data = raw.get(shape)
+        if not isinstance(data, dict):
+            raise EngineOfferError(f"{path}: defaults for shape {shape!r} must be an object")
+        preferences[shape] = _preference_from_mapping(data, path, f"defaults.{shape}")
+    return preferences
+
+
+def _parse_stage_shape_defaults(raw: Any, path: Path) -> dict[str, UnitShape]:
+    if not isinstance(raw, dict):
+        raise EngineOfferError(f"{path}: 'stage_shape_defaults' must be an object")
+
+    defaults: dict[str, UnitShape] = {}
+    for stage, shape in raw.items():
+        if not isinstance(stage, str):
+            raise EngineOfferError(f"{path}: stage name {stage!r} must be a string")
+        _validate_stage(stage)
+        if not isinstance(shape, str) or shape not in UNIT_SHAPES:
+            raise EngineOfferError(f"{path}: stage {stage!r} shape {shape!r} not in {UNIT_SHAPES}")
+        defaults[stage] = cast(UnitShape, shape)
+    return defaults
+
+
+def _preference_from_mapping(data: dict[str, Any], path: Path, where: str) -> Preference:
+    intent = data.get("intent")
+    model = data.get("model")
+    effort = data.get("effort")
+    if not isinstance(intent, str):
+        raise EngineOfferError(f"{path}: {where} missing string intent")
+    if model is not None and not isinstance(model, str):
+        raise EngineOfferError(f"{path}: {where} model must be a string")
+    if effort is not None and not isinstance(effort, str):
+        raise EngineOfferError(f"{path}: {where} effort must be a string")
+    return Preference(intent=cast(Intent, intent), model=model, effort=effort)
 
 
 def _validate_stage(stage: str) -> None:

@@ -2,6 +2,25 @@
 
 ## 2026-07-09
 
+### Engine registry schema currency stays data-first {#engine-registry-schema-currency-452}
+
+**Context.** Issue #452 consolidates capability vocabulary, model-family profile inheritance, authored
+cost metadata, registry staleness, and surface-intent defaults into one registry/loader change.
+
+- **KTD1 - additive vocabulary, stable winners.** Widen `CAPABILITIES` for local/Ollama-class work while
+  preserving existing `Registry.by_capability` rating and `cost_speed_rank` precedence.
+- **KTD2 - family defaults materialize before validation.** `model_identity` defaults reduce authoring
+  duplication, but the merged row still passes the same strict capability-profile parser.
+- **KTD3 - cost metadata is authored, not telemetry.** Store structured `cost_per_token` and
+  `latency_class` values for routing visibility without introducing runtime measurement collection.
+- **KTD4 - one staleness mechanism, two severities.** CI fails stale registry rows; dispatch records a
+  warning only and never treats staleness as gate authority.
+- **KTD5 - surface intent defaults are data.** Lifecycle-stage offer defaults move beside the registry
+  and are read by `engine_offer.py`, with repo-local preferences still overriding data defaults.
+
+**Revisit when.** Real usage telemetry exists, capability ranking should become price-aware, or
+external-engine routing moves from advisory offers into a dedicated router service.
+
 ### Engine output trust boundary treats advisory text as hostile data {#engine-output-trust-boundary-385}
 
 **Context.** Issue #385 closes the content-channel injection gap for external-engine advisory text before it reaches gate or executable contexts.

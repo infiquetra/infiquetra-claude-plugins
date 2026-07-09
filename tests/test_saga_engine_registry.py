@@ -46,6 +46,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 },
                 "context_window": 400000,
                 "cost_speed_rank": 2,
+                "cost_per_token": {"input_usd": 0.000005, "output_usd": 0.000015},
+                "latency_class": "standard",
                 "model_identity": "gpt-5.5",
                 "last_validated": "2026-06-27",
                 "receipt_emitter": "codex-bridge",
@@ -86,6 +88,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 },
                 "context_window": 1000000,
                 "cost_speed_rank": 1,
+                "cost_per_token": {"input_usd": 0.0000035, "output_usd": 0.0000105},
+                "latency_class": "standard",
                 "model_identity": "gemini-3.1-pro",
                 "last_validated": "2026-06-20",
                 "receipt_emitter": "agy-delegate",
@@ -243,6 +247,8 @@ def _http_engine_row(**overrides: Any) -> dict[str, Any]:
         },
         "context_window": 128000,
         "cost_speed_rank": 5,
+        "cost_per_token": {"input_usd": 0.0, "output_usd": 0.0},
+        "latency_class": "standard",
         "model_identity": "gpt-oss-120b",
         "last_validated": "2026-07-06",
         "receipt_emitter": "http-bridge",
@@ -407,9 +413,76 @@ def test_by_capability_routing_stability_regression_shipped_registry_winners_unc
         assert registry.by_capability(capability).key == expected_key, capability
 
 
+def test_shipped_registry_resolves_new_schema_currency_capabilities() -> None:
+    registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
+
+    assert registry.by_capability("bulk-classification").key == "ollama-cloud/gpt-oss-120b"
+    assert registry.by_capability("structured-extraction").key == "ollama-cloud/gpt-oss-120b"
+    assert registry.by_capability("embedding").key == "ollama-cloud/nomic-embed-text"
+
+
+def test_shipped_registry_materializes_codex_family_defaults() -> None:
+    registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
+    codex_rows = [entry for entry in registry.engines if entry.model_identity == "gpt-5.5"]
+
+    assert len(codex_rows) == 2
+    for entry in codex_rows:
+        assert entry.capability_profile["adversarial-review"]["rating"] == "STRONG"
+        assert entry.capability_profile["refactor"]["rating"] == "MODERATE"
+
+
+def test_family_defaults_merge_before_validation(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    data["model_families"] = {
+        "gpt-5.5": {
+            "capability_profile": {
+                "debug": {"rating": "MODERATE", "note": "family default"},
+                "refactor": {"rating": "WEAK", "note": "family default"},
+            }
+        }
+    }
+    del data["engines"][0]["capability_profile"]["debug"]
+    data["engines"][0]["capability_profile"]["refactor"] = {
+        "rating": "STRONG",
+        "note": "row override",
+    }
+
+    entry = M.Registry.load(_write_registry(tmp_path, data)).by_engine("codex")
+
+    assert entry.capability_profile["debug"]["note"] == "family default"
+    assert entry.capability_profile["refactor"]["rating"] == "STRONG"
+    assert entry.capability_profile["refactor"]["note"] == "row override"
+
+
+def test_cost_and_latency_metadata_are_required_and_validated(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+
+    registry = M.Registry.load(_write_registry(tmp_path, data))
+    assert registry.by_engine("codex").cost_per_token == {
+        "input_usd": 0.000005,
+        "output_usd": 0.000015,
+    }
+    assert registry.by_engine("codex").latency_class == "standard"
+
+    missing = deepcopy(data)
+    del missing["engines"][0]["cost_per_token"]
+    with pytest.raises(M.RegistryError, match="cost_per_token"):
+        M.Registry.load(_write_registry(tmp_path, missing))
+
+    negative = deepcopy(data)
+    negative["engines"][0]["cost_per_token"]["input_usd"] = -1
+    with pytest.raises(M.RegistryError, match="non-negative"):
+        M.Registry.load(_write_registry(tmp_path, negative))
+
+    bad_latency = deepcopy(data)
+    bad_latency["engines"][0]["latency_class"] = "instant"
+    with pytest.raises(M.RegistryError, match="latency_class"):
+        M.Registry.load(_write_registry(tmp_path, bad_latency))
+
+
 def test_shipped_registry_http_rows_parse_and_are_advisory_only(tmp_path: Path) -> None:
     """The new ollama-cloud/deepseek rows load as transport=http with receipt_emitter set,
-    conservative (<= MODERATE) seed ratings, and cost_speed_rank in the 5-6 range (KTD3)."""
+    conservative legacy seed ratings, and cost_speed_rank in the 5-6 range (KTD3)."""
     registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
 
     for engine_id in ("ollama-cloud", "deepseek"):
@@ -417,7 +490,12 @@ def test_shipped_registry_http_rows_parse_and_are_advisory_only(tmp_path: Path) 
         assert entry.transport == "http"
         assert entry.receipt_emitter == "http-bridge"
         assert entry.cost_speed_rank in (5, 6)
-        for claim in entry.capability_profile.values():
+        legacy_claims = {
+            capability: claim
+            for capability, claim in entry.capability_profile.items()
+            if capability not in {"bulk-classification", "structured-extraction", "embedding"}
+        }
+        for claim in legacy_claims.values():
             assert claim["rating"] in ("WEAK", "MODERATE")
 
 

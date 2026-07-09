@@ -215,6 +215,7 @@ def dispatch(
             "variant": resolution.variant,
             "status": "halted",
         }
+        _copy_resolution_warnings(provenance, resolution)
         if chaperone is not None:
             provenance["chaperone"] = dict(chaperone)
         return AdvisoryEvidence(
@@ -256,6 +257,7 @@ def dispatch(
         "variant": resolution.variant,
         "status": status,
     }
+    _copy_resolution_warnings(provenance, resolution)
     # A runner may hand back a ``bridge_receipt.v1`` proving what actually ran (HTTP bridge does;
     # CLI adapters don't yet). Thread it through verbatim -- never fabricated here, and a secret
     # can never ride it because the bridge never puts one in (KTD8; see engine_bridge_http).
@@ -355,6 +357,11 @@ def dispatch(
 
     _record_advisory_facts(ledger, invocation, evidence, result, subplot_id=subplot_id, at=at)
     return evidence
+
+
+def _copy_resolution_warnings(provenance: dict[str, Any], resolution: Resolution) -> None:
+    if resolution.warnings:
+        provenance["warnings"] = list(resolution.warnings)
 
 
 def _receipt_problems(runner_receipt: dict[str, Any] | None) -> list[str]:

@@ -49,6 +49,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 },
                 "context_window": 400000,
                 "cost_speed_rank": 2,
+                "cost_per_token": {"input_usd": 0.000005, "output_usd": 0.000015},
+                "latency_class": "standard",
                 "model_identity": "gpt-5.5",
                 "last_validated": "2026-06-27",
                 "receipt_emitter": "codex-bridge",
@@ -97,6 +99,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 },
                 "context_window": 1000000,
                 "cost_speed_rank": 1,
+                "cost_per_token": {"input_usd": 0.0000035, "output_usd": 0.0000105},
+                "latency_class": "standard",
                 "model_identity": "gemini-3.1-pro",
                 "last_validated": "2026-06-20",
                 "receipt_emitter": "agy-delegate",
@@ -396,6 +400,8 @@ def _http_engine_row(**overrides: Any) -> dict[str, Any]:
         },
         "context_window": 128000,
         "cost_speed_rank": 5,
+        "cost_per_token": {"input_usd": 0.0, "output_usd": 0.0},
+        "latency_class": "standard",
         "model_identity": "gpt-oss-120b",
         "last_validated": "2026-07-06",
         "receipt_emitter": "http-bridge",
@@ -436,6 +442,8 @@ def _cli_engine_row(**overrides: Any) -> dict[str, Any]:
         },
         "context_window": 128000,
         "cost_speed_rank": 7,
+        "cost_per_token": {"input_usd": 0.000001, "output_usd": 0.000002},
+        "latency_class": "standard",
         "model_identity": "third-model",
         "last_validated": "2026-07-09",
         "receipt_emitter": "third-bridge",
@@ -828,3 +836,42 @@ def test_payload_cache_unit_id_must_be_non_empty_string(registry: Any) -> None:
             registry=registry,
             memo=R.RunMemo(),
         )
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_resolution_exposes_cost_latency_and_estimated_input_cost(registry: Any) -> None:
+    resolution = R.resolve(
+        {
+            "capability": "code-generation",
+            "role_kind": "generator",
+            "task_context": {"context": "Implement bounded change.", "token_estimate": 1200},
+        },
+        mode="dispatch",
+        registry=registry,
+        known_revision_dates={"gpt-5.5": "2026-06-27"},
+    )
+
+    assert resolution.cost_per_token == {"input_usd": 0.000005, "output_usd": 0.000015}
+    assert resolution.latency_class == "standard"
+    assert resolution.estimated_input_cost_usd == pytest.approx(0.006)
+    assert resolution.warnings == ()
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_resolution_warns_when_registry_row_predates_known_model_release(registry: Any) -> None:
+    resolution = R.resolve(
+        {
+            "capability": "code-generation",
+            "role_kind": "generator",
+            "task_context": {"context": "Implement bounded change."},
+        },
+        mode="dispatch",
+        registry=registry,
+        known_revision_dates={"gpt-5.5": "2026-06-28"},
+    )
+
+    assert len(resolution.warnings) == 1
+    warning = resolution.warnings[0]
+    assert "stale" in warning
+    assert "last_validated=2026-06-27" in warning
+    assert "predates known model release 2026-06-28" in warning

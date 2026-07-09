@@ -421,6 +421,46 @@ def _http_entry(**overrides: Any) -> Any:
     return REG.EngineEntry.from_dict(_http_engine_row(**overrides), registry_order=0)
 
 
+def _cli_engine_row(**overrides: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "engine_id": "third",
+        "variant": "default",
+        "substrate": "external",
+        "default_for_engine": True,
+        "invocation": {
+            "via": "third:delegate",
+            "recipe": "third delegate --mode no-write",
+            "write_capable": False,
+            "cli": "third-cli",
+            "auth": {"mode": "env", "key_env": "THIRD_API_KEY"},
+        },
+        "context_window": 128000,
+        "cost_speed_rank": 7,
+        "model_identity": "third-model",
+        "last_validated": "2026-07-09",
+        "receipt_emitter": "third-bridge",
+        "capability_profile": {
+            "code-generation": {"rating": "MODERATE", "note": "fixture rating"},
+        },
+        "prompting_protocol": ["Use the fixture protocol."],
+        "sources": [
+            {
+                "claim": "fixture source",
+                "url": "https://example.invalid/third",
+                "date": "2026-07-09",
+                "tag": "LOCAL",
+                "corroboration": "MODERATE",
+            }
+        ],
+    }
+    row.update(overrides)
+    return row
+
+
+def _cli_entry(**overrides: Any) -> Any:
+    return REG.EngineEntry.from_dict(_cli_engine_row(**overrides), registry_order=0)
+
+
 def test_preflight_http_transport_never_touches_which_or_config_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -448,25 +488,122 @@ def test_preflight_http_transport_unavailable_when_bearer_key_env_absent(
     assert "OLLAMA_API_KEY" in str(result["reason"])
 
 
-def test_preflight_http_transport_available_when_auth_not_bearer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entry = _http_entry(
+def test_preflight_third_cli_engine_uses_registry_cli_and_file_auth_without_code_change() -> None:
+    entry = _cli_entry(
+        engine_id="third-engine",
         invocation={
-            "via": "engine-bridge-http",
-            "recipe": "POST https://ollama.com/v1/chat/completions",
+            "via": "third:delegate",
+            "recipe": "third delegate --mode no-write",
             "write_capable": False,
-            "base_url": "https://ollama.com/v1",
-            "model": "gpt-oss:120b",
-            "effort": "default",
-            "auth": {"mode": "none"},
-        }
+            "cli": "third-cli",
+            "auth": {"mode": "files", "paths": ["/tmp/third-auth.json"]},
+        },
+    )
+    seen_cli: list[str] = []
+
+    def which(cli: str) -> str:
+        seen_cli.append(cli)
+        return f"/usr/bin/{cli}"
+
+    result = R.preflight(
+        "third-engine",
+        entry=entry,
+        which=which,
+        file_exists=lambda path: path == "/tmp/third-auth.json",
     )
 
-    result = R.preflight("ollama-cloud", entry=entry)
-
     assert result["available"] is True
-    assert "no live API call" in str(result["reason"])
+    assert seen_cli == ["third-cli"]
+    assert "/tmp/third-auth.json" in str(result["reason"])
+
+
+def test_preflight_cli_env_auth_reports_present_and_absent_without_value_leak() -> None:
+    token_value = "do-not-leak-this-token"
+    entry = _cli_entry()
+
+    present = R.preflight(
+        "third",
+        entry=entry,
+        which=lambda cli: f"/usr/bin/{cli}",
+        env_get=lambda key: token_value if key == "THIRD_API_KEY" else None,
+    )
+    absent = R.preflight(
+        "third",
+        entry=entry,
+        which=lambda cli: f"/usr/bin/{cli}",
+        env_get=lambda _key: None,
+    )
+
+    assert present["available"] is True
+    assert absent["available"] is False
+    assert "THIRD_API_KEY" in str(absent["reason"])
+    assert token_value not in repr(present)
+    assert token_value not in repr(absent)
+
+
+def test_preflight_cli_secret_ref_auth_uses_boolean_resolver_only() -> None:
+    secret_value = "resolved-secret-value"
+    entry = _cli_entry(
+        invocation={
+            "via": "third:delegate",
+            "recipe": "third delegate --mode no-write",
+            "write_capable": False,
+            "cli": "third-cli",
+            "auth": {"mode": "secret-ref", "ref": "op://infiquetra/third/api-key"},
+        },
+    )
+
+    no_resolver = R.preflight("third", entry=entry, which=lambda cli: f"/usr/bin/{cli}")
+    unresolved = R.preflight(
+        "third",
+        entry=entry,
+        which=lambda cli: f"/usr/bin/{cli}",
+        secret_ref_resolves=lambda _ref: False,
+    )
+    resolved = R.preflight(
+        "third",
+        entry=entry,
+        which=lambda cli: f"/usr/bin/{cli}",
+        secret_ref_resolves=lambda _ref: bool(secret_value),
+    )
+
+    assert no_resolver["available"] is False
+    assert unresolved["available"] is False
+    assert resolved["available"] is True
+    assert "op://infiquetra/third/api-key" in str(resolved["reason"])
+    assert secret_value not in repr(no_resolver)
+    assert secret_value not in repr(unresolved)
+    assert secret_value not in repr(resolved)
+
+
+def test_capability_worker_missing_row_auth_falls_back_but_advisory_halts(
+    tmp_path: Path,
+) -> None:
+    data = _valid_registry_dict()
+    data["engines"][0]["invocation"]["cli"] = "bash"
+    data["engines"][0]["invocation"]["auth"] = {"mode": "env", "key_env": "MISSING_CODEX_KEY"}
+    registry = REG.Registry.load(_write_registry(tmp_path, data))
+
+    worker = R.resolve(
+        {
+            "capability": "code-generation",
+            "role_kind": "worker",
+            "task_context": {"context": "Implement a bounded change."},
+        },
+        mode="dispatch",
+        registry=registry,
+    )
+    reviewer = R.resolve(
+        {"engine": "codex", "role_kind": "advisory-reviewer"},
+        mode="advisory",
+        registry=registry,
+    )
+
+    assert worker.engine_id == "claude"
+    assert worker.fallback is not None
+    assert "MISSING_CODEX_KEY" in worker.fallback
+    assert reviewer.halt is not None
+    assert "MISSING_CODEX_KEY" in reviewer.halt
 
 
 def test_preflight_cli_transport_unaffected_by_entry_default(
@@ -502,6 +639,57 @@ def test_run_memo_caches_preflight_result_per_engine_id() -> None:
         assert result["available"] is True
 
     assert len(calls) == 1
+
+
+def test_run_memo_caches_row_preflight_by_entry_key_not_engine_id() -> None:
+    memo = R.RunMemo()
+    first = _cli_entry(
+        engine_id="shared",
+        variant="first",
+        invocation={
+            "via": "third:delegate",
+            "recipe": "third delegate --mode no-write",
+            "write_capable": False,
+            "cli": "shared-cli",
+            "auth": {"mode": "env", "key_env": "FIRST_KEY"},
+        },
+    )
+    second = _cli_entry(
+        engine_id="shared",
+        variant="second",
+        default_for_engine=False,
+        invocation={
+            "via": "third:delegate",
+            "recipe": "third delegate --mode no-write",
+            "write_capable": False,
+            "cli": "shared-cli",
+            "auth": {"mode": "env", "key_env": "SECOND_KEY"},
+        },
+    )
+    env_keys: list[str] = []
+
+    def env_get(key: str) -> str | None:
+        env_keys.append(key)
+        return "configured" if key == "FIRST_KEY" else None
+
+    first_result = R.preflight(
+        "shared",
+        entry=first,
+        which=lambda cli: f"/usr/bin/{cli}",
+        env_get=env_get,
+        memo=memo,
+    )
+    second_result = R.preflight(
+        "shared",
+        entry=second,
+        which=lambda cli: f"/usr/bin/{cli}",
+        env_get=env_get,
+        memo=memo,
+    )
+
+    assert first_result["available"] is True
+    assert second_result["available"] is False
+    assert env_keys == ["FIRST_KEY", "SECOND_KEY"]
 
 
 def test_run_memo_none_probes_every_call_byte_identical_to_no_memo() -> None:

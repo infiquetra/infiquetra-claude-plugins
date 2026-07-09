@@ -20,22 +20,6 @@ ROLE_KINDS = ("worker", "generator", "advisory-reviewer", "panel")
 FALLBACK_ROLE_KINDS = frozenset({"worker", "generator"})
 HALT_ROLE_KINDS = frozenset({"advisory-reviewer", "panel"})
 
-ENGINE_CLI = {
-    "agy": "agy",
-    "codex": "codex",
-}
-
-ENGINE_CONFIG_PATHS = {
-    "agy": (
-        Path.home() / ".config" / "agy" / "config.json",
-        Path.home() / ".gemini" / "settings.json",
-    ),
-    "codex": (
-        Path.home() / ".codex" / "auth.json",
-        Path.home() / ".codex" / "config.toml",
-    ),
-}
-
 
 @dataclass(frozen=True)
 class Resolution:
@@ -76,19 +60,19 @@ class RunMemo:
     Threading ``memo=None`` (the default everywhere) is byte-identical to
     today's uncached behavior (R5/R11) -- this is strictly opt-in.
 
-    Keys: ``engine_id`` for preflight probes; ``(capability, token_estimate)``
-    for capability resolution decisions.
+    Keys: ``engine_id`` for legacy preflight probes, ``entry.key`` for row-backed
+    probes, and ``(capability, token_estimate)`` for capability resolution decisions.
     """
 
     def __init__(self) -> None:
         self._preflight: dict[str, dict[str, bool | str]] = {}
         self._capability: dict[tuple[str, int | None], _CapabilityDecision] = {}
 
-    def preflight(self, engine_id: str) -> dict[str, bool | str] | None:
-        return self._preflight.get(engine_id)
+    def preflight(self, cache_key: str) -> dict[str, bool | str] | None:
+        return self._preflight.get(cache_key)
 
-    def store_preflight(self, engine_id: str, result: dict[str, bool | str]) -> None:
-        self._preflight[engine_id] = result
+    def store_preflight(self, cache_key: str, result: dict[str, bool | str]) -> None:
+        self._preflight[cache_key] = result
 
     def capability_decision(
         self, capability: str, token_estimate: int | None
@@ -109,34 +93,52 @@ def preflight(
     *,
     which: Callable[[str], str | None] = shutil.which,
     config_exists: Callable[[str], bool] | None = None,
+    file_exists: Callable[[str], bool] | None = None,
+    env_get: Callable[[str], str | None] | None = None,
+    secret_ref_resolves: Callable[[str], bool] | None = None,
     entry: EngineEntry | None = None,
     memo: RunMemo | None = None,
 ) -> dict[str, bool | str]:
     """Return cheap engine availability without making live API calls.
 
-    Transport-aware (KTD4): ``cli`` (the default, and the case when ``entry``
-    is not supplied) keeps the existing ``shutil.which`` + config-file checks.
-    ``http`` rows check only that the configured auth env var is present (when
-    ``auth.mode`` is ``bearer``) and that the row is well-formed -- reachability
-    is proven only by the availability-gated smoke test, never here.
+    Row-backed calls use ``entry.invocation["cli"]`` and ``entry.auth``.
+    Legacy callers that omit ``entry`` keep the old CLI + ``config_exists`` seam.
 
-    When ``memo`` is supplied, the probe runs at most once per ``engine_id``
-    for the memo's lifetime (R5); ``memo=None`` performs the probe on every
-    call, identical to pre-U4 behavior.
+    When ``memo`` is supplied, row-backed calls cache by ``entry.key`` while legacy
+    calls cache by ``engine_id``; ``memo=None`` performs the probe on every call.
     """
+    cache_key = _preflight_cache_key(engine_id, entry)
     if memo is not None:
-        cached = memo.preflight(engine_id)
+        cached = memo.preflight(cache_key)
         if cached is not None:
             return cached
 
     if entry is not None and entry.transport == "http":
-        result = _http_preflight(engine_id, entry)
+        result = _http_preflight(
+            engine_id,
+            entry,
+            file_exists=file_exists,
+            env_get=env_get,
+            secret_ref_resolves=secret_ref_resolves,
+        )
     else:
-        result = _cli_preflight(engine_id, which=which, config_exists=config_exists)
+        result = _cli_preflight(
+            engine_id,
+            which=which,
+            config_exists=config_exists,
+            file_exists=file_exists,
+            env_get=env_get,
+            secret_ref_resolves=secret_ref_resolves,
+            entry=entry,
+        )
 
     if memo is not None:
-        memo.store_preflight(engine_id, result)
+        memo.store_preflight(cache_key, result)
     return result
+
+
+def _preflight_cache_key(engine_id: str, entry: EngineEntry | None) -> str:
+    return entry.key if entry is not None else engine_id
 
 
 def _cli_preflight(
@@ -144,14 +146,43 @@ def _cli_preflight(
     *,
     which: Callable[[str], str | None],
     config_exists: Callable[[str], bool] | None,
+    file_exists: Callable[[str], bool] | None,
+    env_get: Callable[[str], str | None] | None,
+    secret_ref_resolves: Callable[[str], bool] | None,
+    entry: EngineEntry | None,
 ) -> dict[str, bool | str]:
-    cli = ENGINE_CLI.get(engine_id, engine_id)
+    cli = _cli_name(engine_id, entry)
     if which(cli) is None:
         return {
             "available": False,
             "reason": f"{engine_id} is not installed: {cli!r} not found",
         }
 
+    if entry is not None and entry.auth:
+        return _auth_preflight(
+            engine_id,
+            entry.auth,
+            file_exists=file_exists,
+            env_get=env_get,
+            secret_ref_resolves=secret_ref_resolves,
+        )
+
+    return _legacy_config_preflight(engine_id, config_exists=config_exists)
+
+
+def _cli_name(engine_id: str, entry: EngineEntry | None) -> str:
+    if entry is not None:
+        cli = entry.invocation.get("cli")
+        if isinstance(cli, str) and cli:
+            return cli
+    return engine_id
+
+
+def _legacy_config_preflight(
+    engine_id: str,
+    *,
+    config_exists: Callable[[str], bool] | None,
+) -> dict[str, bool | str]:
     exists = config_exists or _default_config_exists
     if not exists(engine_id):
         return {
@@ -165,26 +196,89 @@ def _cli_preflight(
     }
 
 
-def _http_preflight(engine_id: str, entry: EngineEntry) -> dict[str, bool | str]:
-    auth = entry.invocation.get("auth") or {}
-    mode = auth.get("mode")
-    if mode != "bearer":
+def _http_preflight(
+    engine_id: str,
+    entry: EngineEntry,
+    *,
+    file_exists: Callable[[str], bool] | None,
+    env_get: Callable[[str], str | None] | None,
+    secret_ref_resolves: Callable[[str], bool] | None,
+) -> dict[str, bool | str]:
+    if not entry.auth:
         return {
             "available": True,
             "reason": f"{engine_id} available: http row well-formed; no live API call made",
         }
+    return _auth_preflight(
+        engine_id,
+        entry.auth,
+        file_exists=file_exists,
+        env_get=env_get,
+        secret_ref_resolves=secret_ref_resolves,
+    )
 
-    key_env = auth.get("key_env")
-    if key_env and os.environ.get(key_env):
+
+def _auth_preflight(
+    engine_id: str,
+    auth: Mapping[str, Any],
+    *,
+    file_exists: Callable[[str], bool] | None,
+    env_get: Callable[[str], str | None] | None,
+    secret_ref_resolves: Callable[[str], bool] | None,
+) -> dict[str, bool | str]:
+    mode = auth.get("mode")
+    if mode == "files":
+        paths = [str(path) for path in auth.get("paths", [])]
+        exists = file_exists or _default_file_exists
+        if any(exists(path) for path in paths):
+            return {
+                "available": True,
+                "reason": (
+                    f"{engine_id} available: credential file path present among {paths!r}; "
+                    "no live API call made"
+                ),
+            }
         return {
-            "available": True,
-            "reason": (
-                f"{engine_id} available: bearer key env {key_env!r} present; no live API call made"
-            ),
+            "available": False,
+            "reason": f"{engine_id} is not configured: credential file paths {paths!r} absent",
         }
+
+    if mode in {"env", "bearer"}:
+        key_env = str(auth.get("key_env", ""))
+        get_env = env_get or os.environ.get
+        if key_env and get_env(key_env):
+            return {
+                "available": True,
+                "reason": (
+                    f"{engine_id} available: {mode} key env {key_env!r} present; "
+                    "no live API call made"
+                ),
+            }
+        return {
+            "available": False,
+            "reason": f"{engine_id} is not configured: {mode} key env {key_env!r} absent",
+        }
+
+    if mode == "secret-ref":
+        ref = str(auth.get("ref", ""))
+        if secret_ref_resolves is None:
+            return {
+                "available": False,
+                "reason": f"{engine_id} is not configured: secret ref {ref!r} has no resolver",
+            }
+        if secret_ref_resolves(ref):
+            return {
+                "available": True,
+                "reason": f"{engine_id} available: secret ref {ref!r} resolvable; no live API call made",
+            }
+        return {
+            "available": False,
+            "reason": f"{engine_id} is not configured: secret ref {ref!r} unresolved",
+        }
+
     return {
         "available": False,
-        "reason": f"{engine_id} is not configured: bearer key env {key_env!r} absent",
+        "reason": f"{engine_id} is not configured: auth mode {mode!r} is unsupported",
     }
 
 
@@ -259,8 +353,11 @@ def panel_halt(resolutions: list[Resolution]) -> str | None:
 
 
 def _default_config_exists(engine_id: str) -> bool:
-    paths = ENGINE_CONFIG_PATHS.get(engine_id, (Path.home() / f".{engine_id}" / "config",))
-    return any(path.exists() for path in paths)
+    return (Path.home() / f".{engine_id}" / "config").exists()
+
+
+def _default_file_exists(path: str) -> bool:
+    return Path(path).expanduser().exists()
 
 
 def _role_kind(request: Mapping[str, Any]) -> str:
@@ -319,7 +416,8 @@ def _resolve_capability(
             reason=decision.no_capability_reason,
         )
 
-    assert decision.entry is not None
+    if decision.entry is None:
+        raise RegistryError(f"capability decision for {capability!r} has no engine entry")
     if decision.no_fit_reason is not None:
         return _no_fit_resolution(
             capability,

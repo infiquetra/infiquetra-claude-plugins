@@ -274,6 +274,7 @@ def test_transport_defaults_to_cli_for_existing_shape_rows(tmp_path: Path) -> No
     registry = M.Registry.load(_write_registry(tmp_path, _valid_registry_dict()))
     for entry in registry.engines:
         assert entry.transport == "cli"
+        assert entry.auth == {}
 
 
 def test_transport_http_row_parses_with_required_invocation_fields(tmp_path: Path) -> None:
@@ -284,6 +285,58 @@ def test_transport_http_row_parses_with_required_invocation_fields(tmp_path: Pat
     assert entry.transport == "http"
     assert entry.invocation["base_url"] == "https://ollama.com/v1"
     assert entry.invocation["auth"]["key_env"] == "OLLAMA_API_KEY"
+    assert entry.auth == {"mode": "bearer", "key_env": "OLLAMA_API_KEY"}
+
+
+@pytest.mark.parametrize(
+    "auth",
+    [
+        {"mode": "files", "paths": ["~/.codex/auth.json", "~/.codex/config.toml"]},
+        {"mode": "env", "key_env": "CODEX_API_KEY"},
+        {"mode": "bearer", "key_env": "CODEX_API_KEY"},
+        {"mode": "secret-ref", "ref": "op://infiquetra/codex/api-key"},
+    ],
+)
+def test_auth_modes_parse_to_engine_entry_auth(tmp_path: Path, auth: dict[str, Any]) -> None:
+    data = _valid_registry_dict()
+    data["engines"][0]["invocation"]["cli"] = "codex"
+    data["engines"][0]["invocation"]["auth"] = auth
+
+    registry = M.Registry.load(_write_registry(tmp_path, data))
+
+    assert registry.by_engine("codex").auth == auth
+
+
+@pytest.mark.parametrize(
+    ("auth", "match"),
+    [
+        ({"mode": "carrier"}, "mode"),
+        ({"mode": "files", "paths": []}, "paths"),
+        ({"mode": "files", "paths": [""]}, "paths"),
+        ({"mode": "env"}, "key_env"),
+        ({"mode": "bearer"}, "key_env"),
+        ({"mode": "secret-ref"}, "ref"),
+    ],
+)
+def test_malformed_auth_modes_error(
+    tmp_path: Path,
+    auth: dict[str, Any],
+    match: str,
+) -> None:
+    data = _valid_registry_dict()
+    data["engines"][0]["invocation"]["cli"] = "codex"
+    data["engines"][0]["invocation"]["auth"] = auth
+
+    with pytest.raises(M.RegistryError, match=match):
+        M.Registry.load(_write_registry(tmp_path, data))
+
+
+def test_cli_row_with_auth_requires_cli_field(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    data["engines"][0]["invocation"]["auth"] = {"mode": "env", "key_env": "CODEX_API_KEY"}
+
+    with pytest.raises(M.RegistryError, match="cli"):
+        M.Registry.load(_write_registry(tmp_path, data))
 
 
 @pytest.mark.parametrize("missing_field", ["base_url", "model", "effort", "auth"])
@@ -304,6 +357,15 @@ def test_http_row_bearer_auth_missing_key_env_errors(tmp_path: Path) -> None:
     data = _registry_with_extra_engine(row)
 
     with pytest.raises(M.RegistryError, match="key_env"):
+        M.Registry.load(_write_registry(tmp_path, data))
+
+
+def test_http_row_rejects_auth_modes_the_bridge_cannot_consume(tmp_path: Path) -> None:
+    row = _http_engine_row()
+    row["invocation"]["auth"] = {"mode": "env", "key_env": "OLLAMA_API_KEY"}
+    data = _registry_with_extra_engine(row)
+
+    with pytest.raises(M.RegistryError, match="bearer"):
         M.Registry.load(_write_registry(tmp_path, data))
 
 
@@ -357,3 +419,14 @@ def test_shipped_registry_http_rows_parse_and_are_advisory_only(tmp_path: Path) 
         assert entry.cost_speed_rank in (5, 6)
         for claim in entry.capability_profile.values():
             assert claim["rating"] in ("WEAK", "MODERATE")
+
+
+def test_shipped_registry_rows_expose_auth_and_cli_rows_have_cli() -> None:
+    registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
+
+    for entry in registry.engines:
+        assert entry.auth
+        if entry.transport == "cli":
+            assert entry.invocation["cli"] in {"codex", "agy"}
+            assert entry.auth["mode"] == "files"
+            assert entry.auth["paths"]

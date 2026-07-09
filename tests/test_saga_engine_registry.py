@@ -39,6 +39,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "variant": "gpt-5.5-xhigh",
                 "substrate": "external",
                 "egress_policy": "networked",
+                "trust_tier": "advisory",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "codex:delegate",
@@ -83,6 +84,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "variant": "gemini-3.1-pro-high",
                 "substrate": "in-repo",
                 "egress_policy": "networked",
+                "trust_tier": "advisory",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "agy:delegate",
@@ -326,6 +328,7 @@ def _http_engine_row(**overrides: Any) -> dict[str, Any]:
         "variant": "gpt-oss-120b",
         "substrate": "external",
         "egress_policy": "networked",
+        "trust_tier": "advisory",
         "default_for_engine": True,
         "transport": "http",
         "invocation": {
@@ -650,6 +653,42 @@ def test_egress_policy_metadata_is_required_and_validated(tmp_path: Path) -> Non
     unknown["engines"][0]["egress_policy"] = "same-room"
     with pytest.raises(M.RegistryError, match="egress_policy"):
         M.Registry.load(_write_registry(tmp_path, unknown))
+
+
+def test_trust_tier_metadata_is_required_and_validated(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+
+    registry = M.Registry.load(_write_registry(tmp_path, data))
+    assert registry.by_engine("codex").trust_tier == "advisory"
+
+    probation = deepcopy(data)
+    probation["roles"] = {}
+    probation["engines"][0]["trust_tier"] = "probation"
+    assert (
+        M.Registry.load(_write_registry(tmp_path, probation)).by_engine("codex").trust_tier
+        == "probation"
+    )
+
+    missing = deepcopy(data)
+    del missing["engines"][0]["trust_tier"]
+    with pytest.raises(M.RegistryError, match="trust_tier"):
+        M.Registry.load(_write_registry(tmp_path, missing))
+
+    unknown = deepcopy(data)
+    unknown["engines"][0]["trust_tier"] = "trusted-ish"
+    with pytest.raises(M.RegistryError, match="trust_tier"):
+        M.Registry.load(_write_registry(tmp_path, unknown))
+
+
+def test_composing_role_rejects_probationary_member(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    data["engines"][0]["trust_tier"] = "probation"
+
+    with pytest.raises(
+        M.RegistryError,
+        match=r"cross-family-review-panel.*codex/gpt-5\.5-xhigh.*probation",
+    ):
+        M.Registry.load(_write_registry(tmp_path, data))
 
 
 def test_free_cost_class_requires_zero_cost_and_no_ceiling(tmp_path: Path) -> None:

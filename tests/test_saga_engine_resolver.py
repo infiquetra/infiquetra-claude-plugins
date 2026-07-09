@@ -42,6 +42,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "variant": "gpt-5.5-xhigh",
                 "substrate": "external",
                 "egress_policy": "networked",
+                "trust_tier": "advisory",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "codex:delegate",
@@ -94,6 +95,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "variant": "gemini-3.1-pro-high",
                 "substrate": "in-repo",
                 "egress_policy": "networked",
+                "trust_tier": "advisory",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "agy:delegate",
@@ -195,6 +197,83 @@ def test_capability_dispatch_returns_variant_protocol_and_payload(registry: Any)
     assert resolution.write_capable is False
     assert resolution.fallback is None
     assert resolution.halt is None
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_probationary_explicit_engine_allows_offload_but_halts_advisory(
+    tmp_path: Path,
+) -> None:
+    data = _valid_registry_dict()
+    data["roles"] = {}
+    data["engines"][0]["trust_tier"] = "probation"
+    registry = REG.Registry.load(_write_registry(tmp_path, data))
+
+    worker = R.resolve(
+        {"engine": "codex/gpt-5.5-xhigh", "role_kind": "worker"},
+        mode="dispatch",
+        registry=registry,
+    )
+    reviewer = R.resolve(
+        {"engine": "codex/gpt-5.5-xhigh", "role_kind": "advisory-reviewer"},
+        mode="advisory",
+        registry=registry,
+    )
+
+    assert worker.halt is None
+    assert worker.engine_id == "codex"
+    assert reviewer.halt is not None
+    assert "trust_tier 'probation'" in reviewer.halt
+    assert "requires 'advisory' standing" in reviewer.halt
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_capability_advisory_skips_stronger_probationary_candidate(
+    tmp_path: Path,
+) -> None:
+    data = _valid_registry_dict()
+    data["roles"] = {}
+    data["engines"][0]["trust_tier"] = "probation"
+    registry = REG.Registry.load(_write_registry(tmp_path, data))
+
+    worker = R.resolve(
+        {"capability": "code-generation", "role_kind": "worker"},
+        mode="dispatch",
+        registry=registry,
+    )
+    reviewer = R.resolve(
+        {"capability": "code-generation", "role_kind": "advisory-reviewer"},
+        mode="advisory",
+        registry=registry,
+    )
+
+    assert worker.engine_id == "codex"
+    assert reviewer.engine_id == "agy"
+    assert reviewer.halt is None
+
+
+@pytest.mark.usefixtures("engine_available")
+def test_capability_memo_is_isolated_by_role_kind(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    data["roles"] = {}
+    data["engines"][0]["trust_tier"] = "probation"
+    registry = REG.Registry.load(_write_registry(tmp_path, data))
+    memo = R.RunMemo()
+
+    worker = R.resolve(
+        {"capability": "code-generation", "role_kind": "worker"},
+        mode="dispatch",
+        registry=registry,
+        memo=memo,
+    )
+    reviewer = R.resolve(
+        {"capability": "code-generation", "role_kind": "advisory-reviewer"},
+        mode="advisory",
+        registry=registry,
+        memo=memo,
+    )
+
+    assert worker.engine_id == "codex"
+    assert reviewer.engine_id == "agy"
 
 
 @pytest.mark.usefixtures("engine_available")
@@ -507,6 +586,7 @@ def _http_engine_row(**overrides: Any) -> dict[str, Any]:
         "variant": "gpt-oss-120b",
         "substrate": "external",
         "egress_policy": "networked",
+        "trust_tier": "advisory",
         "default_for_engine": True,
         "transport": "http",
         "invocation": {
@@ -554,6 +634,7 @@ def _cli_engine_row(**overrides: Any) -> dict[str, Any]:
         "variant": "default",
         "substrate": "external",
         "egress_policy": "networked",
+        "trust_tier": "advisory",
         "default_for_engine": True,
         "invocation": {
             "via": "third:delegate",

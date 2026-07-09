@@ -32,6 +32,7 @@ engines:
     variant: gpt-5.5-high
     substrate: external
     egress_policy: networked
+    trust_tier: advisory
     default_for_engine: true          # engine-only "use codex" resolves here (R1/R6); xhigh reserved
     invocation:
       via: codex:delegate
@@ -72,6 +73,7 @@ engines:
     variant: gpt-5.5-xhigh
     substrate: external
     egress_policy: networked
+    trust_tier: advisory
     default_for_engine: false
     invocation:
       via: codex:delegate
@@ -108,6 +110,7 @@ engines:
     variant: gemini-3.5-flash-high
     substrate: in-repo
     egress_policy: networked
+    trust_tier: advisory
     default_for_engine: true          # engine-only "use agy" resolves here (cheapest/fastest default)
     invocation:
       via: agy:delegate
@@ -150,6 +153,7 @@ engines:
     variant: gemini-3.1-pro-high
     substrate: in-repo
     egress_policy: networked
+    trust_tier: advisory
     default_for_engine: false
     invocation:
       via: agy:delegate
@@ -195,6 +199,7 @@ engines:
     variant: gpt-oss-120b
     substrate: external
     egress_policy: networked
+    trust_tier: advisory
     default_for_engine: true
     transport: http
     invocation:
@@ -234,6 +239,7 @@ engines:
     variant: nomic-embed-text
     substrate: external
     egress_policy: networked
+    trust_tier: advisory
     default_for_engine: false
     transport: http
     invocation:
@@ -269,6 +275,7 @@ engines:
     variant: deepseek-chat
     substrate: external
     egress_policy: networked
+    trust_tier: advisory
     default_for_engine: true
     transport: http
     invocation:

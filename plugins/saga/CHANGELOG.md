@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.75.7] - 2026-07-09
+
+### Fixed - advisory consensus evidence remains outside Saga completion gates (#382)
+
+- `plugins/saga/scripts/engine_dispatch.py`: classify consensus advisory reviewers as
+  non-gating evidence so panel/advisory receipts cannot satisfy completion gates even when
+  verified or corroborated.
+
 ## [0.75.6] - 2026-07-09
 
 ### Added — cheap external-engine chaperoning economics (#381)

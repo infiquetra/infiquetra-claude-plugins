@@ -31,6 +31,7 @@ TRANSPORTS = ("cli", "http")
 AUTH_MODES = ("files", "env", "bearer", "secret-ref")
 LATENCY_CLASSES = ("fast", "standard", "slow", "batch")
 COST_CLASSES = ("metered", "free")
+EGRESS_POLICIES = ("local-only", "networked")
 
 
 class RegistryError(ValueError):
@@ -173,6 +174,13 @@ def _parse_cost_class(data: dict[str, Any], where: str) -> str:
     value = _require_string(data, "cost_class", where)
     if value not in COST_CLASSES:
         raise RegistryError(f"{where}: cost_class {value!r} not in {COST_CLASSES}")
+    return value
+
+
+def _parse_egress_policy(data: dict[str, Any], where: str) -> str:
+    value = _require_string(data, "egress_policy", where)
+    if value not in EGRESS_POLICIES:
+        raise RegistryError(f"{where}: egress_policy {value!r} not in {EGRESS_POLICIES}")
     return value
 
 
@@ -326,6 +334,7 @@ class EngineEntry:
     engine_id: str
     variant: str
     substrate: str
+    egress_policy: str
     default_for_engine: bool
     invocation: dict[str, Any]
     context_window: int
@@ -386,6 +395,7 @@ class EngineEntry:
             engine_id=engine_id,
             variant=variant,
             substrate=_require_string(data, "substrate", where),
+            egress_policy=_parse_egress_policy(data, where),
             default_for_engine=_require_bool(data, "default_for_engine", where),
             invocation=dict(invocation),
             context_window=_require_int(data, "context_window", where),

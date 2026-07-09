@@ -41,6 +41,7 @@ def _registry_dict(*, last_validated: str = "2026-07-06") -> dict[str, Any]:
                 "engine_id": "codex",
                 "variant": "gpt-5.5-high",
                 "substrate": "external",
+                "egress_policy": "networked",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "codex:delegate",

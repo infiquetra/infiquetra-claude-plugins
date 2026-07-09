@@ -50,6 +50,7 @@ def _row(
         "engine_id": engine_id,
         "variant": variant,
         "substrate": "external",
+        "egress_policy": "networked",
         "default_for_engine": True,
         "invocation": {
             "via": f"{engine_id}:delegate",

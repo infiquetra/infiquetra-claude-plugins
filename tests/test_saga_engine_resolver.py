@@ -41,6 +41,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "engine_id": "codex",
                 "variant": "gpt-5.5-xhigh",
                 "substrate": "external",
+                "egress_policy": "networked",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "codex:delegate",
@@ -92,6 +93,7 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "engine_id": "agy",
                 "variant": "gemini-3.1-pro-high",
                 "substrate": "in-repo",
+                "egress_policy": "networked",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "agy:delegate",
@@ -504,6 +506,7 @@ def _http_engine_row(**overrides: Any) -> dict[str, Any]:
         "engine_id": "ollama-cloud",
         "variant": "gpt-oss-120b",
         "substrate": "external",
+        "egress_policy": "networked",
         "default_for_engine": True,
         "transport": "http",
         "invocation": {
@@ -550,6 +553,7 @@ def _cli_engine_row(**overrides: Any) -> dict[str, Any]:
         "engine_id": "third",
         "variant": "default",
         "substrate": "external",
+        "egress_policy": "networked",
         "default_for_engine": True,
         "invocation": {
             "via": "third:delegate",

@@ -13,6 +13,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import chaperone_economics as ce  # noqa: E402
 import fleet_commons_shim  # noqa: E402
 import manifest_store  # noqa: E402
 import provenance_manifest as pm  # noqa: E402
@@ -166,6 +167,7 @@ def dispatch(
     workspace_root: Path | str | None = None,
     expected_identity: str | None = None,
     chaperone: dict[str, Any] | None = None,
+    economics: dict[str, Any] | None = None,
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Run an external engine adapter and return advisory evidence only.
 
@@ -226,6 +228,32 @@ def dispatch(
             halt=resolution.halt,
         )
 
+    economics_metadata = _offload_economics_metadata(chaperone, economics)
+    economics_decision: ce.OffloadEconomicsDecision | None = None
+    if economics_metadata is not None:
+        economics_decision = _decide_offload_economics(
+            resolution,
+            economics_metadata,
+            ledger=ledger,
+        )
+        if not economics_decision.proceed:
+            provenance = {
+                "engine": resolution.engine_id,
+                "variant": resolution.variant,
+                "status": "halted",
+                "economics": economics_decision.to_provenance(),
+            }
+            _copy_resolution_warnings(provenance, resolution)
+            if chaperone is not None:
+                provenance["chaperone"] = dict(chaperone)
+            return AdvisoryEvidence(
+                engine_id=resolution.engine_id,
+                variant=resolution.variant,
+                evidence="",
+                provenance=provenance,
+                halt=economics_decision.status,
+            )
+
     invocation = _build_invocation(resolution, model=model, sandbox=sandbox, write_set=write_set)
 
     # Arm the delegation-liveness marker BEFORE the adapter runs (KTD4: arming authority is
@@ -273,6 +301,8 @@ def dispatch(
         provenance["expected_identity"] = expected_identity
     if chaperone is not None:
         provenance["chaperone"] = dict(chaperone)
+    if economics_decision is not None:
+        provenance["economics"] = economics_decision.to_provenance()
 
     if status == "ok":
         # Two-signal reconciliation (R4/R6): the engine SAYS ok; the observer signal is the
@@ -357,6 +387,70 @@ def dispatch(
 
     _record_advisory_facts(ledger, invocation, evidence, result, subplot_id=subplot_id, at=at)
     return evidence
+
+
+def _offload_economics_metadata(
+    chaperone: dict[str, Any] | None,
+    economics: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if economics is not None:
+        return dict(economics)
+    if chaperone is None:
+        return None
+    raw = chaperone.get("economics")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise DispatchError("chaperone economics metadata must be a mapping")
+    return dict(raw)
+
+
+def _decide_offload_economics(
+    resolution: Resolution,
+    metadata: dict[str, Any],
+    *,
+    ledger: run_ledger.RunLedger | None,
+) -> ce.OffloadEconomicsDecision:
+    prior_spend = metadata.get("prior_provider_spend_usd")
+    if prior_spend is None:
+        prior_spend = _provider_spend_usd(ledger, resolution.engine_id)
+    estimated_cost = metadata.get("estimated_external_cost_usd")
+    if estimated_cost is None:
+        estimated_cost = resolution.estimated_input_cost_usd
+    cost_class = metadata.get("cost_class") or resolution.cost_class
+    if cost_class is None:
+        cost_class = "metered"
+    try:
+        return ce.decide_offload_economics(
+            ce.OffloadEconomicsInput(
+                engine_id=resolution.engine_id,
+                cost_class=cost_class,
+                estimated_external_cost_usd=estimated_cost,
+                provider_budget_ceiling_usd=metadata.get(
+                    "provider_budget_ceiling_usd", resolution.budget_ceiling_usd
+                ),
+                prior_provider_spend_usd=prior_spend,
+                claude_inline_tokens_estimate=metadata.get("claude_inline_tokens_estimate"),
+                chaperone_tokens_estimate=metadata.get("chaperone_tokens_estimate"),
+                inline_fallback=str(metadata.get("inline_fallback", "inline")),
+            )
+        )
+    except ce.ChaperonePolicyError as exc:
+        raise DispatchError(f"invalid offload economics input: {exc}") from exc
+
+
+def _provider_spend_usd(ledger: run_ledger.RunLedger | None, engine_id: str) -> float:
+    if ledger is None:
+        return 0.0
+    total = 0.0
+    for fact in run_ledger.read_facts(ledger):
+        if fact.get("kind") != "engine" or fact.get("engine") != engine_id:
+            continue
+        cost = fact.get("cost")
+        if isinstance(cost, bool) or not isinstance(cost, int | float):
+            continue
+        total += float(cost)
+    return total
 
 
 def _copy_resolution_warnings(provenance: dict[str, Any], resolution: Resolution) -> None:
@@ -451,12 +545,15 @@ def _record_advisory_facts(
             "engine",
             subplot_id=subplot_id,
             at=at,
-            engine=evidence.engine_id,
-            variant=evidence.variant,
-            status=str(evidence.provenance.get("status", "")),
-            cost=_num(result.get("cost")),
-            latency_seconds=_num(result.get("latency_seconds")),
-            tokens=_num(result.get("tokens")),
+            **{
+                "engine": evidence.engine_id,
+                "variant": evidence.variant,
+                "status": str(evidence.provenance.get("status", "")),
+                "cost": _num(result.get("cost")),
+                "latency_seconds": _num(result.get("latency_seconds")),
+                "tokens": _num(result.get("tokens")),
+                **_economics_fact_fields(evidence),
+            },
         ),
     )
     if isinstance(invocation, dict) and invocation.get("schema") == "agy.delegation.v1":
@@ -470,6 +567,33 @@ def _record_advisory_facts(
                 engine=evidence.engine_id,
             ),
         )
+
+
+def _economics_fact_fields(evidence: AdvisoryEvidence) -> dict[str, Any]:
+    economics = evidence.provenance.get("economics")
+    if not isinstance(economics, dict):
+        return {}
+    net_savings = economics.get("net_savings")
+    if not isinstance(net_savings, dict):
+        return {}
+    fields: dict[str, Any] = {}
+    for name in (
+        "engine_tokens_avoided",
+        "chaperone_tokens_spent",
+        "net_savings_tokens",
+        "net_savings_status",
+        "external_cost_usd",
+    ):
+        if name in net_savings:
+            fields[name] = net_savings[name]
+    return fields
+
+
+def _manifest_economics_record(evidence: AdvisoryEvidence) -> pm.EconomicsRecord | None:
+    fields = _economics_fact_fields(evidence)
+    if not fields:
+        return None
+    return pm.EconomicsRecord.from_dict(fields)
 
 
 def _substitution_note(evidence: AdvisoryEvidence) -> str | None:
@@ -551,6 +675,7 @@ def build_dispatch_manifest(
     # fallback naming the disposition rather than an empty note.
     if disposition is not pm.Disposition.RAN_AS_REQUESTED and not str(note).strip():
         note = f"{disposition.value}: reason unspecified"
+    economics = _manifest_economics_record(evidence)
     return pm.Manifest(
         execution_id=execution_id,
         saga_ref=saga_ref,
@@ -565,6 +690,7 @@ def build_dispatch_manifest(
         disposition_note=str(note),
         created_at=created_at,
         claim_provenance=claim_provenance,
+        economics=economics,
     )
 
 
@@ -639,6 +765,7 @@ def adjudicate_manifest(
         created_at=manifest.created_at,
         output_completeness=manifest.output_completeness,
         claim_provenance=pm.ClaimProvenance(claims=tuple(updated_claims)),
+        economics=manifest.economics,
     )
     manifest_store.write_manifest(store, execution_id, adjudicated.to_dict())
     return adjudicated

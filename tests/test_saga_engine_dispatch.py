@@ -190,6 +190,222 @@ def test_satisfy_gate_rejects_advisory_reviewer_evidence_even_when_verified() ->
         D.satisfy_gate(evidence)
 
 
+def _economics_resolution(**overrides: object) -> Any:
+    values: dict[str, object] = {
+        "cost_class": "metered",
+        "budget_ceiling_usd": 25.0,
+        "estimated_input_cost_usd": 0.004,
+    }
+    values.update(overrides)
+    return dataclasses.replace(_resolution(), **values)
+
+
+def test_metered_offload_economics_proceed_invokes_runner_and_stamps_provenance() -> None:
+    calls: list[dict[str, Any]] = []
+
+    def runner(invocation: dict[str, Any]) -> dict[str, Any]:
+        calls.append(invocation)
+        return {"status": "ok", "output": "external finding"}
+
+    evidence = D.dispatch(
+        _economics_resolution(),
+        runner=runner,
+        economics={
+            "claude_inline_tokens_estimate": 1000,
+            "chaperone_tokens_estimate": 200,
+        },
+    )
+
+    assert len(calls) == 1
+    assert evidence.evidence == "external finding"
+    assert evidence.provenance["economics"]["status"] == "proceed"
+    assert evidence.provenance["economics"]["net_savings"]["net_savings_tokens"] == 800
+
+
+def test_dispatch_manifest_records_net_savings_economics() -> None:
+    evidence = D.dispatch(
+        _economics_resolution(),
+        runner=_ok_runner,
+        economics={
+            "claude_inline_tokens_estimate": 1000,
+            "chaperone_tokens_estimate": 200,
+        },
+    )
+
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id="exec-economics",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+
+    assert manifest.economics is not None
+    assert manifest.economics.engine_tokens_avoided == 1000
+    assert manifest.economics.chaperone_tokens_spent == 200
+    assert manifest.economics.net_savings_tokens == 800
+    assert manifest.economics.net_savings_status == "positive"
+    assert manifest.economics.external_cost_usd == 0.004
+    assert PM.Manifest.from_dict(manifest.to_dict()).economics == manifest.economics
+
+
+def test_dispatch_engine_fact_records_net_savings_economics(tmp_path: Path) -> None:
+    ledger = RL.RunLedger(path=tmp_path / "run-facts.jsonl")
+
+    D.dispatch(
+        _economics_resolution(),
+        runner=_metric_runner(cost=0.004, tokens=200),
+        ledger=ledger,
+        subplot_id="s1",
+        at="2026-07-09T00:00:00Z",
+        economics={
+            "claude_inline_tokens_estimate": 1000,
+            "chaperone_tokens_estimate": 200,
+        },
+    )
+
+    fact = RL.read_facts(ledger)[0]
+    assert fact["engine_tokens_avoided"] == 1000
+    assert fact["chaperone_tokens_spent"] == 200
+    assert fact["net_savings_tokens"] == 800
+    assert fact["net_savings_status"] == "positive"
+    assert fact["external_cost_usd"] == 0.004
+
+
+def test_break_even_economics_halt_does_not_invoke_runner() -> None:
+    called = False
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        raise AssertionError("runner must not be called for break-even halt")
+
+    evidence = D.dispatch(
+        _economics_resolution(),
+        runner=runner,
+        economics={
+            "claude_inline_tokens_estimate": 1000,
+            "chaperone_tokens_estimate": 1000,
+        },
+    )
+
+    assert called is False
+    assert evidence.halt == "break-even-halt"
+    assert evidence.provenance["status"] == "halted"
+    assert evidence.provenance["economics"]["status"] == "break-even-halt"
+
+
+def test_budget_ceiling_economics_halt_reads_prior_provider_spend(tmp_path: Path) -> None:
+    ledger = RL.RunLedger(path=tmp_path / "run-facts.jsonl")
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "engine",
+            subplot_id="prior",
+            at="2026-07-05T00:00:00Z",
+            engine="codex",
+            variant="gpt-5.5-xhigh",
+            status="ok",
+            cost=5.0,
+        ),
+    )
+
+    called = False
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        raise AssertionError("runner must not be called for ceiling halt")
+
+    evidence = D.dispatch(
+        _economics_resolution(budget_ceiling_usd=5.2, estimated_input_cost_usd=0.25),
+        runner=runner,
+        ledger=ledger,
+        economics={
+            "claude_inline_tokens_estimate": 1000,
+            "chaperone_tokens_estimate": 100,
+        },
+    )
+
+    assert called is False
+    assert evidence.halt == "budget-ceiling-halt"
+    assert evidence.provenance["economics"]["prior_provider_spend_usd"] == 5.0
+    assert evidence.provenance["economics"]["projected_provider_spend_usd"] == 5.25
+
+
+def test_missing_metered_economics_halt_does_not_invoke_runner() -> None:
+    called = False
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        raise AssertionError("runner must not be called for missing economics")
+
+    evidence = D.dispatch(
+        _economics_resolution(estimated_input_cost_usd=None),
+        runner=runner,
+        economics={"claude_inline_tokens_estimate": 1000},
+    )
+
+    assert called is False
+    assert evidence.halt == "economics-missing-halt"
+    assert evidence.provenance["economics"]["missing_fields"] == [
+        "estimated_external_cost_usd",
+        "chaperone_tokens_estimate",
+    ]
+
+
+def test_free_class_economics_runs_without_estimates() -> None:
+    calls: list[dict[str, Any]] = []
+
+    def runner(invocation: dict[str, Any]) -> dict[str, Any]:
+        calls.append(invocation)
+        return {"status": "ok", "output": "free output"}
+
+    evidence = D.dispatch(
+        _economics_resolution(
+            engine_id="ollama-cloud",
+            cost_class="free",
+            budget_ceiling_usd=None,
+            estimated_input_cost_usd=None,
+            invocation={
+                "via": "engine-bridge-http",
+                "base_url": "https://ollama.com/v1",
+                "model": "gpt-oss:120b",
+                "effort": "default",
+                "auth": {"mode": "bearer", "key_env": "OLLAMA_API_KEY"},
+            },
+        ),
+        runner=runner,
+        economics={},
+    )
+
+    assert len(calls) == 1
+    assert evidence.evidence == "free output"
+    assert evidence.provenance["economics"]["status"] == "free-class-proceed"
+
+
+def test_resolution_halt_precedes_economics_and_runner() -> None:
+    called = False
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        raise AssertionError("runner must not be called for resolution halt")
+
+    evidence = D.dispatch(
+        _economics_resolution(halt="preflight halted"),
+        runner=runner,
+        economics={
+            "claude_inline_tokens_estimate": 1000,
+            "chaperone_tokens_estimate": 1000,
+        },
+    )
+
+    assert called is False
+    assert evidence.halt == "preflight halted"
+    assert "economics" not in evidence.provenance
+
+
 def test_dispatch_returns_advisory_evidence_without_tree_mutation_surface() -> None:
     payload = "Change plugins/saga/scripts/example.py.\n\nReturn the patch as evidence."
 
@@ -635,6 +851,8 @@ def _memoization_registry_dict() -> dict[str, Any]:
                 "context_window": 400000,
                 "cost_speed_rank": 2,
                 "cost_per_token": {"input_usd": 0.000005, "output_usd": 0.000015},
+                "cost_class": "metered",
+                "budget_ceiling_usd": 25.0,
                 "latency_class": "standard",
                 "model_identity": "gpt-5.5",
                 "last_validated": "2026-07-06",

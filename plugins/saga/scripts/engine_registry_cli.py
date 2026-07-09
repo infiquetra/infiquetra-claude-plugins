@@ -161,6 +161,8 @@ def _row_payload(
         "variant": entry.variant,
         "capabilities": capabilities,
         "cost_speed_rank": entry.cost_speed_rank,
+        "cost_class": entry.cost_class,
+        "budget_ceiling_usd": entry.budget_ceiling_usd,
         "latency_class": entry.latency_class,
         "stale": registry.stale(entry, dict(releases)),
         "overlay": {
@@ -172,7 +174,8 @@ def _row_payload(
 
 def _format_rows(rows: list[dict[str, object]]) -> str:
     lines = [
-        "key | capabilities | cost_speed_rank | latency_class | currency | overlay",
+        "key | capabilities | cost_speed_rank | cost_class | budget_ceiling_usd | "
+        "latency_class | currency | overlay",
     ]
     for row in rows:
         capabilities = row["capabilities"]
@@ -189,9 +192,12 @@ def _format_rows(rows: list[dict[str, object]]) -> str:
             overlay_parts.append("deprecated")
         overlay_text = ",".join(overlay_parts) if overlay_parts else "active"
         currency = "stale" if row["stale"] else "current"
+        budget = row["budget_ceiling_usd"]
+        budget_text = f"{budget:.2f}" if isinstance(budget, int | float) else "none"
         lines.append(
             f"{row['key']} | {capability_text} | {row['cost_speed_rank']} | "
-            f"{row['latency_class']} | {currency} | {overlay_text}"
+            f"{row['cost_class']} | {budget_text} | {row['latency_class']} | "
+            f"{currency} | {overlay_text}"
         )
     return "\n".join(lines)
 

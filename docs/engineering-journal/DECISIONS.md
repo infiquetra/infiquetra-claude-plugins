@@ -2,6 +2,28 @@
 
 ## 2026-07-09
 
+### Offload economics compare tokens and provider spend separately {#offload-economics-guards-386}
+
+**Context.** Issue #386 adds break-even halts, provider budget ceilings, cost-delta previews, and
+net-savings records for external-engine `offload`. A July 6 issue comment corrected the stale premise:
+`run_ledger.py` already exists, so this is ledger-backed logic, not a new meter.
+
+- **KTD1 - run-fact ledger is the telemetry substrate.** #386 reads and writes
+  `run_fact.v1` records instead of creating a second spend ledger.
+- **KTD2 - token savings and provider spend stay separate.** Break-even compares resident-Claude
+  inline tokens avoided against chaperone tokens spent; provider budget ceilings use registry-authored
+  external USD estimates. Do not compare tokens, ordinal tier-spend, and dollars as one unit.
+- **KTD3 - explicit cost class beats inference.** Registry rows declare `cost_class` (`metered` or
+  `free`) and metered budget ceilings; zero `cost_per_token` alone is not treated as a free-class proof.
+- **KTD4 - dispatch is the hard stop.** Operator previews are advisory, but uneconomic offload halts
+  before `runner(invocation)` inside `engine_dispatch.dispatch()`.
+- **KTD5 - manifest economics is schema-owned.** `net_savings` data belongs in typed
+  `saga.manifest.v1` and run facts, not unstructured provenance blobs.
+
+**Revisit when.** Claude inline pricing becomes first-class USD metadata, provider billing APIs are
+available, or `/retro` needs cross-provider savings rollups richer than token-savings plus provider
+ceiling checks.
+
 ### `/ideate` external-engine generator lane stays additive and provenance-only {#ideate-engine-generator-lane-454}
 
 **Context.** Issue #454 adds a blind external-engine divergent-generator lane to `/ideate` Phase 2. The

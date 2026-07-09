@@ -327,6 +327,61 @@ class ClaimProvenance:
 
 
 @dataclass(frozen=True)
+class EconomicsRecord:
+    """Typed net-savings economics record for an external-engine dispatch (#386)."""
+
+    engine_tokens_avoided: int
+    chaperone_tokens_spent: int
+    net_savings_tokens: int
+    net_savings_status: str
+    external_cost_usd: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "engine_tokens_avoided": self.engine_tokens_avoided,
+            "chaperone_tokens_spent": self.chaperone_tokens_spent,
+            "net_savings_tokens": self.net_savings_tokens,
+            "net_savings_status": self.net_savings_status,
+        }
+        if self.external_cost_usd is not None:
+            data["external_cost_usd"] = self.external_cost_usd
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EconomicsRecord:
+        _reject_unknown_keys(
+            data,
+            {
+                "engine_tokens_avoided",
+                "chaperone_tokens_spent",
+                "net_savings_tokens",
+                "net_savings_status",
+                "external_cost_usd",
+            },
+            "economics",
+        )
+        status = data.get("net_savings_status", "")
+        if status not in {"positive", "zero", "negative"}:
+            raise ManifestError("economics requires net_savings_status positive|zero|negative")
+        net_savings_tokens = _required_int(data, "net_savings_tokens", "economics")
+        if net_savings_tokens > 0:
+            expected_status = "positive"
+        elif net_savings_tokens == 0:
+            expected_status = "zero"
+        else:
+            expected_status = "negative"
+        if status != expected_status:
+            raise ManifestError("economics net_savings_status must match net_savings_tokens")
+        return cls(
+            engine_tokens_avoided=_required_int(data, "engine_tokens_avoided", "economics"),
+            chaperone_tokens_spent=_required_int(data, "chaperone_tokens_spent", "economics"),
+            net_savings_tokens=net_savings_tokens,
+            net_savings_status=str(status),
+            external_cost_usd=_optional_number(data.get("external_cost_usd"), "external_cost_usd"),
+        )
+
+
+@dataclass(frozen=True)
 class Manifest:
     """The saga.manifest.v1 envelope — one per delegated execution (R1).
 
@@ -341,6 +396,7 @@ class Manifest:
     disposition_note: str = ""
     output_completeness: OutputCompleteness | None = None
     claim_provenance: ClaimProvenance | None = None
+    economics: EconomicsRecord | None = None
     schema: str = field(default=SCHEMA_VERSION)
 
     def to_dict(self) -> dict[str, Any]:
@@ -358,6 +414,7 @@ class Manifest:
             "claim_provenance": (
                 self.claim_provenance.to_dict() if self.claim_provenance else None
             ),
+            "economics": self.economics.to_dict() if self.economics else None,
         }
 
     @classmethod
@@ -374,6 +431,7 @@ class Manifest:
                 "created_at",
                 "output_completeness",
                 "claim_provenance",
+                "economics",
             },
             "manifest",
         )
@@ -395,6 +453,7 @@ class Manifest:
             raise ManifestError(f"manifest requires a valid disposition (R18): {exc}") from exc
         oc_raw = data.get("output_completeness")
         cp_raw = data.get("claim_provenance")
+        economics_raw = data.get("economics")
         return cls(
             execution_id=execution_id,
             saga_ref=str(data.get("saga_ref", "") or ""),
@@ -404,6 +463,7 @@ class Manifest:
             created_at=str(data.get("created_at", "") or ""),
             output_completeness=OutputCompleteness.from_dict(oc_raw) if oc_raw else None,
             claim_provenance=ClaimProvenance.from_dict(cp_raw) if cp_raw else None,
+            economics=EconomicsRecord.from_dict(economics_raw) if economics_raw else None,
         )
 
 
@@ -461,7 +521,11 @@ def parroting_count(manifest: Manifest) -> int:
 
 def tier_of(manifest: Manifest) -> Tier:
     """Derive the payload tier: full when any subrecord is present, else lightweight."""
-    if manifest.output_completeness is not None or manifest.claim_provenance is not None:
+    if (
+        manifest.output_completeness is not None
+        or manifest.claim_provenance is not None
+        or manifest.economics is not None
+    ):
         return Tier.FULL
     return Tier.LIGHTWEIGHT
 
@@ -501,9 +565,32 @@ def _reject_unknown_keys(data: dict[str, Any], allowed: set[str], where: str) ->
         raise ManifestError(f"{where} has unknown keys: {', '.join(unknown)}")
 
 
+def _required_int(data: dict[str, Any], field_name: str, where: str) -> int:
+    value = data.get(field_name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ManifestError(f"{where}.{field_name} must be an integer")
+    return value
+
+
+def _optional_number(value: Any, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ManifestError(f"economics.{field_name} must be a number")
+    return float(value)
+
+
 def _no_verdict_surface() -> list[str]:
     """Introspection helper for R20 tests: field names across all schema dataclasses."""
     names: list[str] = []
-    for cls in (Manifest, Attribution, Adjudication, Claim, OutputCompleteness, ClaimProvenance):
+    for cls in (
+        Manifest,
+        Attribution,
+        Adjudication,
+        Claim,
+        OutputCompleteness,
+        ClaimProvenance,
+        EconomicsRecord,
+    ):
         names.extend(f.name for f in fields(cls))
     return names

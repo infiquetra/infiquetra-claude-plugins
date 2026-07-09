@@ -29,7 +29,10 @@ Per-kind payload fields (build with `build_fact(kind, subplot_id=, at=, **fields
 
 - **spend** — `tokens`, `tokens_cached`, `tokens_fresh`, `wall_seconds`
 - **cache** — cache-hit counts (`cached`, `fresh`) for a reuse view
-- **engine** — `engine`, `variant`, `status`, `cost`, `latency_seconds`, `tokens` (advisory-call usage)
+- **engine** — `engine`, `variant`, `status`, `cost`, `latency_seconds`, `tokens`
+  (advisory-call usage), plus optional offload economics fields
+  `engine_tokens_avoided`, `chaperone_tokens_spent`, `net_savings_tokens`,
+  `net_savings_status`, and `external_cost_usd`
 - **delegation** — `evidence` (a **pointer/reference**, never inlined bytes), `engine`
 
 `build_fact` rejects an unknown `kind`, an empty `subplot_id`, and any attempt to set the reserved

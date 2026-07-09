@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.75.13] - 2026-07-09
+
+### Added - offload economics guards (#386)
+
+- `plugins/saga/scripts/engine_registry.py` and
+  `plugins/saga/references/engine-registry.yaml`: add explicit cost-class and
+  budget-ceiling metadata with lint coverage for metered and free providers.
+- `plugins/saga/scripts/chaperone_economics.py`,
+  `plugins/saga/scripts/engine_dispatch.py`, and
+  `plugins/saga/scripts/provenance_manifest.py`: enforce break-even and budget-ceiling
+  offload checks before dispatch, then record typed net-savings evidence in manifests
+  and run-ledger facts.
+- `plugins/saga/scripts/engine_offer.py` and
+  `plugins/saga/references/engine-dispatch.md`: add advisory offload cost-delta
+  previews while keeping dispatch as the hard spending stop.
+
 ## [0.75.12] - 2026-07-09
 
 ### Added - blind external-engine divergent generator lane (#454)

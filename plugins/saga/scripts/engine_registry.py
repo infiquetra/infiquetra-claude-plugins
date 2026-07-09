@@ -30,6 +30,7 @@ _RATING_SCORE = {rating: index for index, rating in enumerate(RATINGS, start=1)}
 TRANSPORTS = ("cli", "http")
 AUTH_MODES = ("files", "env", "bearer", "secret-ref")
 LATENCY_CLASSES = ("fast", "standard", "slow", "batch")
+COST_CLASSES = ("metered", "free")
 
 
 class RegistryError(ValueError):
@@ -166,6 +167,22 @@ def _parse_latency_class(data: dict[str, Any], where: str) -> str:
     if value not in LATENCY_CLASSES:
         raise RegistryError(f"{where}: latency_class {value!r} not in {LATENCY_CLASSES}")
     return value
+
+
+def _parse_cost_class(data: dict[str, Any], where: str) -> str:
+    value = _require_string(data, "cost_class", where)
+    if value not in COST_CLASSES:
+        raise RegistryError(f"{where}: cost_class {value!r} not in {COST_CLASSES}")
+    return value
+
+
+def _parse_budget_ceiling_usd(data: dict[str, Any], cost_class: str, where: str) -> float | None:
+    if cost_class == "metered":
+        return _require_number(data, "budget_ceiling_usd", where)
+
+    if "budget_ceiling_usd" in data:
+        raise RegistryError(f"{where}: free cost_class must not declare budget_ceiling_usd")
+    return None
 
 
 def _parse_model_families(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -314,6 +331,8 @@ class EngineEntry:
     context_window: int
     cost_speed_rank: int
     cost_per_token: dict[str, float]
+    cost_class: str
+    budget_ceiling_usd: float | None
     latency_class: str
     model_identity: str
     last_validated: date
@@ -355,6 +374,8 @@ class EngineEntry:
         if "cost_speed_rank" not in data:
             raise RegistryError(f"{where}: missing cost_speed_rank")
         cost_speed_rank = _require_int(data, "cost_speed_rank", where)
+        cost_class = _parse_cost_class(data, where)
+        budget_ceiling_usd = _parse_budget_ceiling_usd(data, cost_class, where)
 
         if "last_validated" not in data:
             raise RegistryError(f"{where}: missing last_validated")
@@ -370,6 +391,8 @@ class EngineEntry:
             context_window=_require_int(data, "context_window", where),
             cost_speed_rank=cost_speed_rank,
             cost_per_token=_parse_cost_per_token(data, where),
+            cost_class=cost_class,
+            budget_ceiling_usd=budget_ceiling_usd,
             latency_class=_parse_latency_class(data, where),
             model_identity=_require_string(data, "model_identity", where),
             last_validated=_parse_date(data["last_validated"], f"{where}: last_validated"),
@@ -508,6 +531,11 @@ class Registry:
                     raise RegistryError(
                         f"{entry.key}: capability {capability!r} not declared in registry"
                     )
+            if entry.cost_class == "free" and (
+                entry.cost_per_token["input_usd"] != 0.0
+                or entry.cost_per_token["output_usd"] != 0.0
+            ):
+                raise RegistryError(f"{entry.key}: free cost_class requires zero cost_per_token")
 
         for engine_id, entries in by_engine.items():
             defaults = [entry for entry in entries if entry.default_for_engine]
@@ -517,6 +545,15 @@ class Registry:
                 raise RegistryError(
                     f"engine {engine_id!r}: ambiguous default; set one default_for_engine variant"
                 )
+            cost_classes = {entry.cost_class for entry in entries}
+            if len(cost_classes) > 1:
+                raise RegistryError(f"engine {engine_id!r}: mixed cost_class values")
+            if cost_classes == {"metered"}:
+                ceilings = {entry.budget_ceiling_usd for entry in entries}
+                if len(ceilings) > 1:
+                    raise RegistryError(
+                        f"engine {engine_id!r}: inconsistent budget_ceiling_usd values"
+                    )
 
         for role in self.roles.values():
             for member in role.members:

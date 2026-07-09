@@ -10,6 +10,15 @@ from typing import Any, Literal
 VERIFIABILITY_VALUES = ("test-gated", "unverifiable")
 REVIEW_MODES = ("ratify-only", "full-review")
 SAMPLE_RATINGS = ("WEAK", "MODERATE", "STRONG")
+COST_CLASSES = ("metered", "free")
+OFFLOAD_ECONOMICS_STATUSES = (
+    "proceed",
+    "free-class-proceed",
+    "break-even-halt",
+    "budget-ceiling-halt",
+    "economics-missing-halt",
+)
+NET_SAVINGS_STATUSES = ("positive", "zero", "negative")
 
 EVIDENCE_ESCALATION_BYTES = 32_768
 BATCH_ESCALATION_UNITS = 5
@@ -22,6 +31,15 @@ SAMPLE_FRACTIONS = {
 Verifiability = Literal["test-gated", "unverifiable"]
 ReviewMode = Literal["ratify-only", "full-review"]
 SampleRating = Literal["WEAK", "MODERATE", "STRONG"]
+CostClass = Literal["metered", "free"]
+OffloadEconomicsStatus = Literal[
+    "proceed",
+    "free-class-proceed",
+    "break-even-halt",
+    "budget-ceiling-halt",
+    "economics-missing-halt",
+]
+NetSavingsStatus = Literal["positive", "zero", "negative"]
 
 
 class ChaperonePolicyError(ValueError):
@@ -113,6 +131,236 @@ class ChaperoneDecision:
         if self.defective_sample_unit_ids:
             data["defective_sample_unit_ids"] = list(self.defective_sample_unit_ids)
         return data
+
+
+@dataclass(frozen=True)
+class NetSavingsRecord:
+    """Unit-safe token savings record for one offload decision."""
+
+    engine_tokens_avoided: int
+    chaperone_tokens_spent: int
+    net_savings_tokens: int
+    net_savings_status: NetSavingsStatus
+    external_cost_usd: float | None = None
+
+    @classmethod
+    def from_estimates(
+        cls,
+        *,
+        engine_tokens_avoided: int,
+        chaperone_tokens_spent: int,
+        external_cost_usd: float | None = None,
+    ) -> NetSavingsRecord:
+        avoided = _validate_non_negative_int(engine_tokens_avoided, "engine_tokens_avoided")
+        spent = _validate_non_negative_int(chaperone_tokens_spent, "chaperone_tokens_spent")
+        external_cost = _validate_optional_non_negative_float(
+            external_cost_usd, "external_cost_usd"
+        )
+        net = avoided - spent
+        if net > 0:
+            status: NetSavingsStatus = "positive"
+        elif net == 0:
+            status = "zero"
+        else:
+            status = "negative"
+        return cls(
+            engine_tokens_avoided=avoided,
+            chaperone_tokens_spent=spent,
+            net_savings_tokens=net,
+            net_savings_status=status,
+            external_cost_usd=external_cost,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "engine_tokens_avoided": self.engine_tokens_avoided,
+            "chaperone_tokens_spent": self.chaperone_tokens_spent,
+            "net_savings_tokens": self.net_savings_tokens,
+            "net_savings_status": self.net_savings_status,
+        }
+        if self.external_cost_usd is not None:
+            data["external_cost_usd"] = self.external_cost_usd
+        return data
+
+
+@dataclass(frozen=True)
+class OffloadEconomicsInput:
+    """Inputs needed to decide whether an offload is economically safe to run."""
+
+    engine_id: str
+    cost_class: CostClass
+    estimated_external_cost_usd: float | None = None
+    provider_budget_ceiling_usd: float | None = None
+    prior_provider_spend_usd: float = 0.0
+    claude_inline_tokens_estimate: int | None = None
+    chaperone_tokens_estimate: int | None = None
+    inline_fallback: str = "inline"
+
+    def __post_init__(self) -> None:
+        if not self.engine_id:
+            raise ChaperonePolicyError("engine_id must be non-empty")
+        _validate_cost_class(self.cost_class)
+        _validate_optional_non_negative_float(
+            self.estimated_external_cost_usd, "estimated_external_cost_usd"
+        )
+        _validate_optional_non_negative_float(
+            self.provider_budget_ceiling_usd, "provider_budget_ceiling_usd"
+        )
+        _validate_non_negative_float(self.prior_provider_spend_usd, "prior_provider_spend_usd")
+        _validate_optional_non_negative_int(
+            self.claude_inline_tokens_estimate, "claude_inline_tokens_estimate"
+        )
+        _validate_optional_non_negative_int(
+            self.chaperone_tokens_estimate, "chaperone_tokens_estimate"
+        )
+        if not self.inline_fallback:
+            raise ChaperonePolicyError("inline_fallback must be non-empty")
+
+
+@dataclass(frozen=True)
+class OffloadEconomicsDecision:
+    """A dispatch-ready offload economics decision and preview."""
+
+    engine_id: str
+    cost_class: CostClass
+    status: OffloadEconomicsStatus
+    proceed: bool
+    preview: str
+    net_savings: NetSavingsRecord
+    reason: str = ""
+    missing_fields: tuple[str, ...] = ()
+    provider_budget_ceiling_usd: float | None = None
+    prior_provider_spend_usd: float = 0.0
+    projected_provider_spend_usd: float | None = None
+    inline_fallback: str = "inline"
+
+    def to_provenance(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "engine_id": self.engine_id,
+            "cost_class": self.cost_class,
+            "status": self.status,
+            "proceed": self.proceed,
+            "preview": self.preview,
+            "net_savings": self.net_savings.to_dict(),
+            "prior_provider_spend_usd": self.prior_provider_spend_usd,
+            "inline_fallback": self.inline_fallback,
+        }
+        if self.reason:
+            data["reason"] = self.reason
+        if self.missing_fields:
+            data["missing_fields"] = list(self.missing_fields)
+        if self.provider_budget_ceiling_usd is not None:
+            data["provider_budget_ceiling_usd"] = self.provider_budget_ceiling_usd
+        if self.projected_provider_spend_usd is not None:
+            data["projected_provider_spend_usd"] = self.projected_provider_spend_usd
+        return data
+
+
+def decide_offload_economics(input_data: OffloadEconomicsInput) -> OffloadEconomicsDecision:
+    """Return the dispatch-time economics decision for one ``offload`` route."""
+    if input_data.cost_class == "free":
+        record = NetSavingsRecord.from_estimates(
+            engine_tokens_avoided=input_data.claude_inline_tokens_estimate or 0,
+            chaperone_tokens_spent=input_data.chaperone_tokens_estimate or 0,
+            external_cost_usd=0.0,
+        )
+        return _offload_decision(
+            input_data,
+            status="free-class-proceed",
+            proceed=True,
+            net_savings=record,
+            projected_provider_spend_usd=input_data.prior_provider_spend_usd,
+            preview=(
+                f"offload {input_data.engine_id}: free provider class; "
+                f"net {record.net_savings_tokens} tokens, external cost $0.0000"
+            ),
+        )
+
+    missing = _missing_metered_fields(input_data)
+    if missing:
+        record = NetSavingsRecord.from_estimates(
+            engine_tokens_avoided=input_data.claude_inline_tokens_estimate or 0,
+            chaperone_tokens_spent=input_data.chaperone_tokens_estimate or 0,
+            external_cost_usd=input_data.estimated_external_cost_usd,
+        )
+        return _offload_decision(
+            input_data,
+            status="economics-missing-halt",
+            proceed=False,
+            net_savings=record,
+            reason="missing required metered economics estimates: " + ", ".join(missing),
+            missing_fields=missing,
+            preview=(
+                f"offload {input_data.engine_id}: halt; missing metered economics "
+                f"estimates: {', '.join(missing)}"
+            ),
+        )
+
+    assert input_data.estimated_external_cost_usd is not None
+    assert input_data.provider_budget_ceiling_usd is not None
+    assert input_data.claude_inline_tokens_estimate is not None
+    assert input_data.chaperone_tokens_estimate is not None
+
+    record = NetSavingsRecord.from_estimates(
+        engine_tokens_avoided=input_data.claude_inline_tokens_estimate,
+        chaperone_tokens_spent=input_data.chaperone_tokens_estimate,
+        external_cost_usd=input_data.estimated_external_cost_usd,
+    )
+    if input_data.chaperone_tokens_estimate >= input_data.claude_inline_tokens_estimate:
+        return _offload_decision(
+            input_data,
+            status="break-even-halt",
+            proceed=False,
+            net_savings=record,
+            projected_provider_spend_usd=(
+                input_data.prior_provider_spend_usd + input_data.estimated_external_cost_usd
+            ),
+            reason=(
+                f"chaperone tokens {input_data.chaperone_tokens_estimate} >= "
+                f"inline tokens {input_data.claude_inline_tokens_estimate}"
+            ),
+            preview=(
+                f"offload {input_data.engine_id}: halt; chaperone "
+                f"{input_data.chaperone_tokens_estimate} tokens >= inline "
+                f"{input_data.claude_inline_tokens_estimate}; use "
+                f"{input_data.inline_fallback}"
+            ),
+        )
+
+    projected_spend = input_data.prior_provider_spend_usd + input_data.estimated_external_cost_usd
+    if projected_spend > input_data.provider_budget_ceiling_usd:
+        overshoot = projected_spend - input_data.provider_budget_ceiling_usd
+        return _offload_decision(
+            input_data,
+            status="budget-ceiling-halt",
+            proceed=False,
+            net_savings=record,
+            projected_provider_spend_usd=projected_spend,
+            reason=(
+                f"projected provider spend ${projected_spend:.4f} exceeds ceiling "
+                f"${input_data.provider_budget_ceiling_usd:.4f} by ${overshoot:.4f}"
+            ),
+            preview=(
+                f"offload {input_data.engine_id}: halt; provider spend "
+                f"${projected_spend:.4f}/${input_data.provider_budget_ceiling_usd:.4f} "
+                f"would exceed ceiling by ${overshoot:.4f}"
+            ),
+        )
+
+    return _offload_decision(
+        input_data,
+        status="proceed",
+        proceed=True,
+        net_savings=record,
+        projected_provider_spend_usd=projected_spend,
+        preview=(
+            f"offload {input_data.engine_id}: save {record.net_savings_tokens} tokens "
+            f"(inline {record.engine_tokens_avoided} - chaperone "
+            f"{record.chaperone_tokens_spent}); external cost "
+            f"${input_data.estimated_external_cost_usd:.4f}; budget "
+            f"${projected_spend:.4f}/${input_data.provider_budget_ceiling_usd:.4f}"
+        ),
+    )
 
 
 def review_mode_for(verifiability: str) -> ReviewMode:
@@ -223,6 +471,77 @@ def _validate_sample_rating(value: str) -> SampleRating:
     if value not in SAMPLE_RATINGS:
         raise ChaperonePolicyError(f"sample rating {value!r} not in {SAMPLE_RATINGS}")
     return value  # type: ignore[return-value]
+
+
+def _validate_cost_class(value: str) -> CostClass:
+    if value not in COST_CLASSES:
+        raise ChaperonePolicyError(f"cost_class {value!r} not in {COST_CLASSES}")
+    return value  # type: ignore[return-value]
+
+
+def _validate_non_negative_int(value: int, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ChaperonePolicyError(f"{name} must be an integer")
+    if value < 0:
+        raise ChaperonePolicyError(f"{name} must be >= 0")
+    return value
+
+
+def _validate_optional_non_negative_int(value: int | None, name: str) -> int | None:
+    if value is None:
+        return None
+    return _validate_non_negative_int(value, name)
+
+
+def _validate_non_negative_float(value: float, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ChaperonePolicyError(f"{name} must be a number")
+    if value < 0:
+        raise ChaperonePolicyError(f"{name} must be >= 0")
+    return float(value)
+
+
+def _validate_optional_non_negative_float(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    return _validate_non_negative_float(value, name)
+
+
+def _missing_metered_fields(input_data: OffloadEconomicsInput) -> tuple[str, ...]:
+    fields = (
+        ("estimated_external_cost_usd", input_data.estimated_external_cost_usd),
+        ("provider_budget_ceiling_usd", input_data.provider_budget_ceiling_usd),
+        ("claude_inline_tokens_estimate", input_data.claude_inline_tokens_estimate),
+        ("chaperone_tokens_estimate", input_data.chaperone_tokens_estimate),
+    )
+    return tuple(name for name, value in fields if value is None)
+
+
+def _offload_decision(
+    input_data: OffloadEconomicsInput,
+    *,
+    status: OffloadEconomicsStatus,
+    proceed: bool,
+    net_savings: NetSavingsRecord,
+    preview: str,
+    reason: str = "",
+    missing_fields: tuple[str, ...] = (),
+    projected_provider_spend_usd: float | None = None,
+) -> OffloadEconomicsDecision:
+    return OffloadEconomicsDecision(
+        engine_id=input_data.engine_id,
+        cost_class=input_data.cost_class,
+        status=status,
+        proceed=proceed,
+        preview=preview,
+        net_savings=net_savings,
+        reason=reason,
+        missing_fields=missing_fields,
+        provider_budget_ceiling_usd=input_data.provider_budget_ceiling_usd,
+        prior_provider_spend_usd=input_data.prior_provider_spend_usd,
+        projected_provider_spend_usd=projected_provider_spend_usd,
+        inline_fallback=input_data.inline_fallback,
+    )
 
 
 def _escalation_reason(total_evidence: int, batch_size: int) -> str:

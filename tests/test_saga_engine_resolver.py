@@ -50,6 +50,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "context_window": 400000,
                 "cost_speed_rank": 2,
                 "cost_per_token": {"input_usd": 0.000005, "output_usd": 0.000015},
+                "cost_class": "metered",
+                "budget_ceiling_usd": 25.0,
                 "latency_class": "standard",
                 "model_identity": "gpt-5.5",
                 "last_validated": "2026-06-27",
@@ -100,6 +102,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                 "context_window": 1000000,
                 "cost_speed_rank": 1,
                 "cost_per_token": {"input_usd": 0.0000035, "output_usd": 0.0000105},
+                "cost_class": "metered",
+                "budget_ceiling_usd": 25.0,
                 "latency_class": "standard",
                 "model_identity": "gemini-3.1-pro",
                 "last_validated": "2026-06-20",
@@ -514,6 +518,7 @@ def _http_engine_row(**overrides: Any) -> dict[str, Any]:
         "context_window": 128000,
         "cost_speed_rank": 5,
         "cost_per_token": {"input_usd": 0.0, "output_usd": 0.0},
+        "cost_class": "free",
         "latency_class": "standard",
         "model_identity": "gpt-oss-120b",
         "last_validated": "2026-07-06",
@@ -556,6 +561,8 @@ def _cli_engine_row(**overrides: Any) -> dict[str, Any]:
         "context_window": 128000,
         "cost_speed_rank": 7,
         "cost_per_token": {"input_usd": 0.000001, "output_usd": 0.000002},
+        "cost_class": "metered",
+        "budget_ceiling_usd": 25.0,
         "latency_class": "standard",
         "model_identity": "third-model",
         "last_validated": "2026-07-09",
@@ -965,6 +972,8 @@ def test_resolution_exposes_cost_latency_and_estimated_input_cost(registry: Any)
     )
 
     assert resolution.cost_per_token == {"input_usd": 0.000005, "output_usd": 0.000015}
+    assert resolution.cost_class == "metered"
+    assert resolution.budget_ceiling_usd == 25.0
     assert resolution.latency_class == "standard"
     assert resolution.estimated_input_cost_usd == pytest.approx(0.006)
     assert resolution.warnings == ()

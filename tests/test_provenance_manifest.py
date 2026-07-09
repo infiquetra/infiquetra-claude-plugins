@@ -136,6 +136,51 @@ def test_manifest_envelope_requires_attribution_and_disposition() -> None:
         pm.Manifest.from_dict(bad_dispo)
 
 
+def test_manifest_economics_record_round_trips_and_rejects_unknown_keys() -> None:
+    economics = pm.EconomicsRecord(
+        engine_tokens_avoided=1000,
+        chaperone_tokens_spent=200,
+        net_savings_tokens=800,
+        net_savings_status="positive",
+        external_cost_usd=0.004,
+    )
+    manifest = _manifest(economics=economics)
+
+    data = manifest.to_dict()
+    assert data["economics"] == {
+        "engine_tokens_avoided": 1000,
+        "chaperone_tokens_spent": 200,
+        "net_savings_tokens": 800,
+        "net_savings_status": "positive",
+        "external_cost_usd": 0.004,
+    }
+    assert pm.Manifest.from_dict(data).economics == economics
+    assert pm.tier_of(manifest) is pm.Tier.FULL
+
+    negative = dict(data)
+    negative["economics"] = {
+        "engine_tokens_avoided": 100,
+        "chaperone_tokens_spent": 250,
+        "net_savings_tokens": -150,
+        "net_savings_status": "negative",
+    }
+    assert pm.Manifest.from_dict(negative).economics.net_savings_status == "negative"
+
+    bad = dict(data)
+    bad["economics"] = {**data["economics"], "provider_budget": 25.0}
+    with pytest.raises(pm.ManifestError, match="unknown keys"):
+        pm.Manifest.from_dict(bad)
+
+    mismatched_status = dict(data)
+    mismatched_status["economics"] = {
+        **data["economics"],
+        "net_savings_tokens": -800,
+        "net_savings_status": "positive",
+    }
+    with pytest.raises(pm.ManifestError, match="net_savings_status"):
+        pm.Manifest.from_dict(mismatched_status)
+
+
 def test_manifest_envelope_rejects_wrong_schema_version() -> None:
     data = _manifest().to_dict()
     data["schema"] = "saga.manifest.v0"

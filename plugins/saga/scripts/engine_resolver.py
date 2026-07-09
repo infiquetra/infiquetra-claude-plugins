@@ -44,6 +44,8 @@ class Resolution:
     # stay byte-identical; ``transport: http`` dispatch reads it in ``engine_dispatch._build_invocation``.
     invocation: dict[str, Any] | None = None
     cost_per_token: dict[str, float] | None = None
+    cost_class: str | None = None
+    budget_ceiling_usd: float | None = None
     latency_class: str | None = None
     estimated_input_cost_usd: float | None = None
     warnings: tuple[str, ...] = ()
@@ -653,6 +655,8 @@ def _resolution_from_entry(
         halt=halt,
         invocation=dict(entry.invocation),
         cost_per_token=dict(entry.cost_per_token),
+        cost_class=entry.cost_class,
+        budget_ceiling_usd=entry.budget_ceiling_usd,
         latency_class=entry.latency_class,
         estimated_input_cost_usd=_estimated_input_cost(entry, token_estimate),
         warnings=_registry_warnings(entry, known_revision_dates or {}),

@@ -39,6 +39,21 @@ def _load(name: str, path: Path) -> ModuleType:
 E = _load("engine_offer", HELPER_SCRIPT)
 
 
+def _complete_economics(**overrides: object) -> dict[str, object]:
+    economics: dict[str, object] = {
+        "engine_id": "codex",
+        "cost_class": "metered",
+        "estimated_external_cost_usd": 0.004,
+        "provider_budget_ceiling_usd": 25.0,
+        "prior_provider_spend_usd": 5.0,
+        "claude_inline_tokens_estimate": 1_000,
+        "chaperone_tokens_estimate": 200,
+        "inline_fallback": "inline",
+    }
+    economics.update(overrides)
+    return economics
+
+
 def test_intent_tier_resolution_uses_existing_model_effort_vocabulary() -> None:
     execution_spec = _load("execution_spec_for_engine_offer", EXECUTION_SPEC_SCRIPT)
 
@@ -57,6 +72,72 @@ def test_intent_tier_resolution_uses_existing_model_effort_vocabulary() -> None:
     assert judgment.effort in execution_spec.EFFORTS
     assert mechanical.model in execution_spec.MODELS
     assert mechanical.effort in execution_spec.EFFORTS
+
+
+def test_offload_offer_includes_cost_delta_preview_when_estimates_are_complete() -> None:
+    offer = E.resolve_offer(
+        "work",
+        unit_shape="mechanical",
+        economics=_complete_economics(),
+    )
+
+    assert offer.intent == "offload"
+    assert offer.cost_delta_preview == (
+        "offload codex: save 800 tokens (inline 1000 - chaperone 200); "
+        "external cost $0.0040; budget $5.0040/$25.0000"
+    )
+    assert offer.to_json()["cost_delta_preview"] == offer.cost_delta_preview
+
+
+def test_offload_offer_preview_names_inline_fallback_when_uneconomic() -> None:
+    offer = E.resolve_offer(
+        "work",
+        unit_shape="mechanical",
+        economics=_complete_economics(
+            claude_inline_tokens_estimate=1_000,
+            chaperone_tokens_estimate=1_000,
+            inline_fallback="manual-inline",
+        ),
+    )
+
+    assert offer.cost_delta_preview == (
+        "offload codex: halt; chaperone 1000 tokens >= inline 1000; use manual-inline"
+    )
+
+
+def test_non_offload_offers_do_not_claim_cost_delta_preview() -> None:
+    no_offer = E.resolve_offer("work", unit_shape="unknown", economics=_complete_economics())
+    second_opinion = E.resolve_offer("work", unit_shape="judgment", economics=_complete_economics())
+
+    assert no_offer.intent == "none"
+    assert no_offer.cost_delta_preview is None
+    assert second_opinion.intent == "second-opinion"
+    assert second_opinion.cost_delta_preview is None
+
+
+def test_incomplete_offload_economics_omits_preview_without_fabricating() -> None:
+    offer = E.resolve_offer(
+        "work",
+        unit_shape="mechanical",
+        economics={"claude_inline_tokens_estimate": 1_000},
+    )
+
+    assert offer.intent == "offload"
+    assert offer.cost_delta_preview is None
+
+
+@pytest.mark.parametrize(
+    "economics",
+    [
+        {"estimated_external_cost_usd": -0.01},
+        {"claude_inline_tokens_estimate": 1.2},
+        {"engine_id": ""},
+        {"cost_class": "unknown"},
+    ],
+)
+def test_malformed_offload_economics_fail_loudly(economics: dict[str, object]) -> None:
+    with pytest.raises(E.EngineOfferError):
+        E.resolve_offer("work", unit_shape="mechanical", economics=economics)
 
 
 def test_unsupported_stage_fails_loudly() -> None:
@@ -125,6 +206,43 @@ def test_saving_same_stage_preference_twice_leaves_valid_json(tmp_path: Path) ->
     raw = json.loads(second_path.read_text(encoding="utf-8"))
     assert raw == {"version": 1, "stages": {"work": {"intent": "none"}}}
     assert E.resolve_offer("work", repo_root=tmp_path, unit_shape="mechanical").intent == "none"
+
+
+def test_cli_offer_can_include_cost_delta_preview(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        E.main(
+            [
+                "offer",
+                "--stage",
+                "work",
+                "--repo-root",
+                str(tmp_path),
+                "--unit-shape",
+                "mechanical",
+                "--engine-id",
+                "codex",
+                "--estimated-external-cost-usd",
+                "0.004",
+                "--provider-budget-ceiling-usd",
+                "25.0",
+                "--prior-provider-spend-usd",
+                "5.0",
+                "--claude-inline-tokens-estimate",
+                "1000",
+                "--chaperone-tokens-estimate",
+                "200",
+            ]
+        )
+        == 0
+    )
+
+    offer = json.loads(capsys.readouterr().out)
+    assert offer["cost_delta_preview"] == (
+        "offload codex: save 800 tokens (inline 1000 - chaperone 200); "
+        "external cost $0.0040; budget $5.0040/$25.0000"
+    )
 
 
 def test_malformed_preferences_fail_loudly(tmp_path: Path) -> None:

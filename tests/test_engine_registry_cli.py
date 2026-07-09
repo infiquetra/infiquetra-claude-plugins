@@ -59,6 +59,8 @@ def _row(
         "context_window": 400000,
         "cost_speed_rank": cost_speed_rank,
         "cost_per_token": {"input_usd": 0.000001, "output_usd": 0.000002},
+        "cost_class": "metered",
+        "budget_ceiling_usd": 25.0,
         "latency_class": "standard",
         "model_identity": f"{engine_id}-{variant}",
         "last_validated": "2026-07-09",
@@ -119,9 +121,24 @@ def test_list_includes_rows_metadata_currency_and_overlay_state(
     assert "codex/gpt-5.5-xhigh" in out
     assert "agy/gemini-3.1-pro-high" in out
     assert "cost_speed_rank" in out
+    assert "cost_class" in out
+    assert "budget_ceiling_usd" in out
     assert "latency_class" in out
     assert "current" in out
     assert "active" in out
+
+
+def test_list_json_includes_cost_policy_fields(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = _write_registry(tmp_path)
+
+    assert C.main(_args(tmp_path, registry, "engines", "list", "--json")) == 0
+
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["cost_class"] == "metered"
+    assert rows[0]["budget_ceiling_usd"] == 25.0
 
 
 def test_pin_writes_overlay_and_explain_shows_pinned_route(

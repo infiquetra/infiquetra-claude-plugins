@@ -665,6 +665,7 @@ def test_resolve_memoization_ten_resolves_probe_once_with_memo(
         *,
         which: Any,
         config_exists: Any,
+        **_kwargs: Any,
     ) -> dict[str, bool | str]:
         probe_calls.append(engine_id)
         return {"available": True, "reason": f"{engine_id} available"}
@@ -698,6 +699,7 @@ def test_resolve_memoization_ten_resolves_without_memo_probes_every_time(
         *,
         which: Any,
         config_exists: Any,
+        **_kwargs: Any,
     ) -> dict[str, bool | str]:
         probe_calls.append(engine_id)
         return {"available": True, "reason": f"{engine_id} available"}

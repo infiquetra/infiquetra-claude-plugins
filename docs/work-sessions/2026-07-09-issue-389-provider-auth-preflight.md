@@ -43,6 +43,14 @@ status: complete
 - `tests/test_saga_engine_resolver.py`
 - `tests/test_saga_plugin.py`
 
+## CI Follow-up
+
+- PR #537 CI failed `Tests (Python 3.12)` because the dispatch memoization tests monkeypatched
+  `_cli_preflight` with the old keyword-only helper shape after resolver preflight gained row-auth
+  seams (`file_exists`, `env_get`, `secret_ref_resolves`, `entry`).
+- Updated the local test helpers in `tests/test_saga_engine_dispatch.py` to accept future private
+  `_cli_preflight` keyword additions while keeping the call-count assertion scoped to `engine_id`.
+
 ## Checks
 
 - `uv run pytest tests/test_saga_engine_resolver.py tests/test_saga_engine_registry.py tests/test_saga_plugin.py::test_infiquetra_lifecycle_metadata_and_marketplace_entry_match -q` - 57 passed.

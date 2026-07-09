@@ -634,6 +634,8 @@ def _memoization_registry_dict() -> dict[str, Any]:
                 },
                 "context_window": 400000,
                 "cost_speed_rank": 2,
+                "cost_per_token": {"input_usd": 0.000005, "output_usd": 0.000015},
+                "latency_class": "standard",
                 "model_identity": "gpt-5.5",
                 "last_validated": "2026-07-06",
                 "receipt_emitter": "codex-bridge",
@@ -1082,3 +1084,13 @@ def test_dispatch_halted_resolution_stamps_chaperone_provenance() -> None:
         "batch_id": "batch-1",
         "review_mode": "full-review",
     }
+
+
+def test_dispatch_copies_resolution_warnings_without_satisfying_gate() -> None:
+    resolution = dataclasses.replace(_resolution(), warnings=("stale registry row",))
+
+    evidence = D.dispatch(resolution, runner=_ok_runner)
+
+    assert evidence.provenance["warnings"] == ["stale registry row"]
+    with pytest.raises(D.DispatchError, match="verified"):
+        D.satisfy_gate(evidence)

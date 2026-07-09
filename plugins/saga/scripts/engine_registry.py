@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -18,6 +19,9 @@ CAPABILITIES = (
     "refactor",
     "scaffold",
     "long-form-writing",
+    "bulk-classification",
+    "structured-extraction",
+    "embedding",
 )
 
 RATINGS = ("WEAK", "MODERATE", "STRONG")
@@ -25,6 +29,7 @@ _RATING_SCORE = {rating: index for index, rating in enumerate(RATINGS, start=1)}
 
 TRANSPORTS = ("cli", "http")
 AUTH_MODES = ("files", "env", "bearer", "secret-ref")
+LATENCY_CLASSES = ("fast", "standard", "slow", "batch")
 
 
 class RegistryError(ValueError):
@@ -68,6 +73,15 @@ def _require_int(data: dict[str, Any], field: str, where: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise RegistryError(f"{where}: {field} {value!r} is not an integer")
     return int(value)
+
+
+def _require_number(data: dict[str, Any], field: str, where: str) -> float:
+    value = _require_field(data, field, where)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise RegistryError(f"{where}: {field} {value!r} is not a number")
+    if value < 0:
+        raise RegistryError(f"{where}: {field} must be non-negative")
+    return float(value)
 
 
 def _parse_date(value: Any, where: str) -> date:
@@ -134,6 +148,63 @@ def _parse_capability_profile(
         profile[capability]["rating"] = rating
 
     return profile
+
+
+def _parse_cost_per_token(data: dict[str, Any], where: str) -> dict[str, float]:
+    raw = _require_mapping(
+        _require_field(data, "cost_per_token", where),
+        f"{where}: cost_per_token",
+    )
+    return {
+        "input_usd": _require_number(raw, "input_usd", f"{where}: cost_per_token"),
+        "output_usd": _require_number(raw, "output_usd", f"{where}: cost_per_token"),
+    }
+
+
+def _parse_latency_class(data: dict[str, Any], where: str) -> str:
+    value = _require_string(data, "latency_class", where)
+    if value not in LATENCY_CLASSES:
+        raise RegistryError(f"{where}: latency_class {value!r} not in {LATENCY_CLASSES}")
+    return value
+
+
+def _parse_model_families(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = data.get("model_families", {})
+    families = _require_mapping(raw, "registry model_families")
+    parsed: dict[str, dict[str, Any]] = {}
+    for model_identity, raw_family in families.items():
+        if not isinstance(model_identity, str) or not model_identity:
+            raise RegistryError(
+                f"registry model_families: model identity {model_identity!r} must be a string"
+            )
+        family = _require_mapping(raw_family, f"model family {model_identity}")
+        profile = _require_mapping(
+            _require_field(family, "capability_profile", f"model family {model_identity}"),
+            f"model family {model_identity}: capability_profile",
+        )
+        _parse_capability_profile(profile, f"model family {model_identity}")
+        parsed[model_identity] = {"capability_profile": deepcopy(profile)}
+    return parsed
+
+
+def _materialize_family_defaults(
+    data: dict[str, Any],
+    model_families: dict[str, dict[str, Any]],
+    where: str,
+) -> dict[str, Any]:
+    model_identity = _require_string(data, "model_identity", where)
+    family = model_families.get(model_identity)
+    if family is None:
+        return dict(data)
+
+    materialized = dict(data)
+    merged_profile = deepcopy(family["capability_profile"])
+    row_profile = data.get("capability_profile", {})
+    row_profile = _require_mapping(row_profile, f"{where}: capability_profile")
+    for capability, claim in row_profile.items():
+        merged_profile[capability] = claim
+    materialized["capability_profile"] = merged_profile
+    return materialized
 
 
 def _parse_prompting_protocol(data: dict[str, Any], where: str) -> list[str]:
@@ -242,6 +313,8 @@ class EngineEntry:
     invocation: dict[str, Any]
     context_window: int
     cost_speed_rank: int
+    cost_per_token: dict[str, float]
+    latency_class: str
     model_identity: str
     last_validated: date
     capability_profile: dict[str, dict[str, Any]]
@@ -296,6 +369,8 @@ class EngineEntry:
             invocation=dict(invocation),
             context_window=_require_int(data, "context_window", where),
             cost_speed_rank=cost_speed_rank,
+            cost_per_token=_parse_cost_per_token(data, where),
+            latency_class=_parse_latency_class(data, where),
             model_identity=_require_string(data, "model_identity", where),
             last_validated=_parse_date(data["last_validated"], f"{where}: last_validated"),
             capability_profile=_parse_capability_profile(
@@ -365,15 +440,20 @@ class Registry:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Registry:
         capabilities = _parse_capabilities(data)
+        model_families = _parse_model_families(data)
 
         raw_engines = _require_list(_require_field(data, "engines", "registry"), "registry engines")
         if not raw_engines:
             raise RegistryError("registry engines: needs at least one engine")
         engines: list[EngineEntry] = []
         for index, raw_entry in enumerate(raw_engines):
-            engines.append(
-                EngineEntry.from_dict(_require_mapping(raw_entry, f"engine[{index}]"), index)
+            entry_data = _require_mapping(raw_entry, f"engine[{index}]")
+            materialized = _materialize_family_defaults(
+                entry_data,
+                model_families,
+                f"engine {entry_data.get('engine_id', '<unknown>')}/{entry_data.get('variant', '<unknown>')}",
             )
+            engines.append(EngineEntry.from_dict(materialized, index))
 
         raw_roles = _require_mapping(_require_field(data, "roles", "registry"), "registry roles")
         roles: dict[str, Role] = {}

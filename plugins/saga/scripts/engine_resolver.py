@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from engine_registry import EngineEntry, Registry, RegistryError  # noqa: E402
@@ -20,6 +22,9 @@ MODES = ("advisory", "dispatch")
 ROLE_KINDS = ("worker", "generator", "advisory-reviewer", "panel")
 FALLBACK_ROLE_KINDS = frozenset({"worker", "generator"})
 HALT_ROLE_KINDS = frozenset({"advisory-reviewer", "panel"})
+DEFAULT_MODEL_RELEASES = (
+    Path(__file__).resolve().parent.parent / "references" / "model-releases.yaml"
+)
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,10 @@ class Resolution:
     # Additive and defaulted (R11): existing callers/tests that construct a Resolution without it
     # stay byte-identical; ``transport: http`` dispatch reads it in ``engine_dispatch._build_invocation``.
     invocation: dict[str, Any] | None = None
+    cost_per_token: dict[str, float] | None = None
+    latency_class: str | None = None
+    estimated_input_cost_usd: float | None = None
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -306,6 +315,7 @@ def resolve(
     mode: str,
     registry: Registry,
     memo: RunMemo | None = None,
+    known_revision_dates: Mapping[str, Any] | None = None,
 ) -> Resolution:
     """Resolve a capability or explicit engine request into the U2 contract."""
     if mode not in MODES:
@@ -313,6 +323,9 @@ def resolve(
 
     role_kind = _role_kind(request)
     task_context = _task_context(request)
+    release_dates = (
+        dict(known_revision_dates) if known_revision_dates is not None else _load_release_dates()
+    )
     capability, engine = _request_target(request)
 
     if capability is not None:
@@ -322,6 +335,7 @@ def resolve(
             task_context=task_context,
             registry=registry,
             memo=memo,
+            known_revision_dates=release_dates,
         )
 
     if engine is None:
@@ -335,6 +349,7 @@ def resolve(
         registry=registry,
         explicit_engine=True,
         memo=memo,
+        known_revision_dates=release_dates,
     )
 
 
@@ -418,6 +433,7 @@ def _resolve_capability(
     task_context: dict[str, Any],
     registry: Registry,
     memo: RunMemo | None = None,
+    known_revision_dates: Mapping[str, Any] | None = None,
 ) -> Resolution:
     token_estimate = _token_estimate(task_context)
     decision = memo.capability_decision(capability, token_estimate) if memo is not None else None
@@ -454,6 +470,7 @@ def _resolve_capability(
         registry=registry,
         explicit_engine=False,
         memo=memo,
+        known_revision_dates=known_revision_dates,
     )
 
 
@@ -483,11 +500,16 @@ def _resolve_entry(
     registry: Registry,
     explicit_engine: bool,
     memo: RunMemo | None = None,
+    known_revision_dates: Mapping[str, Any] | None = None,
 ) -> Resolution:
     context_halt = _context_window_halt(entry, task_context)
     if context_halt is not None:
         return _resolution_from_entry(
-            entry, task_context=task_context, halt=context_halt, memo=memo
+            entry,
+            task_context=task_context,
+            halt=context_halt,
+            memo=memo,
+            known_revision_dates=known_revision_dates,
         )
 
     if role_kind == "panel":
@@ -501,14 +523,25 @@ def _resolve_entry(
     if not bool(availability["available"]):
         reason = f"{entry.key} is unavailable: {availability['reason']}"
         if explicit_engine or role_kind in HALT_ROLE_KINDS:
-            return _resolution_from_entry(entry, task_context=task_context, halt=reason, memo=memo)
+            return _resolution_from_entry(
+                entry,
+                task_context=task_context,
+                halt=reason,
+                memo=memo,
+                known_revision_dates=known_revision_dates,
+            )
         return _fallback_resolution(
             "external-engine",
             task_context=task_context,
             reason=reason,
         )
 
-    return _resolution_from_entry(entry, task_context=task_context, memo=memo)
+    return _resolution_from_entry(
+        entry,
+        task_context=task_context,
+        memo=memo,
+        known_revision_dates=known_revision_dates,
+    )
 
 
 def _no_fit_resolution(
@@ -565,9 +598,11 @@ def _resolution_from_entry(
     fallback: str | None = None,
     halt: str | None = None,
     memo: RunMemo | None = None,
+    known_revision_dates: Mapping[str, Any] | None = None,
 ) -> Resolution:
     protocol = list(entry.prompting_protocol)
     payload = _assemble_payload_for_unit(protocol, task_context, memo=memo)
+    token_estimate = _token_estimate(task_context)
     return Resolution(
         engine_id=entry.engine_id,
         variant=entry.variant,
@@ -579,6 +614,40 @@ def _resolution_from_entry(
         fallback=fallback,
         halt=halt,
         invocation=dict(entry.invocation),
+        cost_per_token=dict(entry.cost_per_token),
+        latency_class=entry.latency_class,
+        estimated_input_cost_usd=_estimated_input_cost(entry, token_estimate),
+        warnings=_registry_warnings(entry, known_revision_dates or {}),
+    )
+
+
+def _estimated_input_cost(entry: EngineEntry, token_estimate: int | None) -> float | None:
+    if token_estimate is None:
+        return None
+    return float(token_estimate) * float(entry.cost_per_token["input_usd"])
+
+
+def _load_release_dates(path: Path = DEFAULT_MODEL_RELEASES) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return {}
+    releases = data.get("model_releases", data)
+    if not isinstance(releases, dict):
+        return {}
+    return dict(releases)
+
+
+def _registry_warnings(
+    entry: EngineEntry, known_revision_dates: Mapping[str, Any]
+) -> tuple[str, ...]:
+    if not Registry.stale(entry, dict(known_revision_dates)):
+        return ()
+    known = known_revision_dates.get(entry.model_identity)
+    return (
+        f"{entry.key} registry row is stale: last_validated={entry.last_validated.isoformat()} "
+        f"predates known model release {known!s}",
     )
 
 

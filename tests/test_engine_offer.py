@@ -200,6 +200,57 @@ def test_judgment_shape_does_not_default_to_offload() -> None:
     assert offer.intent != "offload"
 
 
+def test_surface_intent_defaults_are_data_driven(tmp_path: Path) -> None:
+    defaults_path = tmp_path / "surface_intent_defaults.yaml"
+    defaults_path.write_text(
+        """
+version: 1
+defaults:
+  unknown:
+    intent: none
+  mechanical:
+    intent: offload
+    model: sonnet
+    effort: medium
+  judgment:
+    intent: second-opinion
+    model: opus
+    effort: high
+stage_shape_defaults:
+  work: judgment
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    offer = E.resolve_offer("work", defaults_path=defaults_path)
+
+    assert offer.unit_shape == "judgment"
+    assert offer.intent == "second-opinion"
+    assert offer.model == "opus"
+    assert offer.effort == "high"
+
+
+def test_missing_surface_intent_defaults_fail_loudly(tmp_path: Path) -> None:
+    with pytest.raises(E.EngineOfferError, match="cannot read surface intent defaults"):
+        E.resolve_offer("work", defaults_path=tmp_path / "missing.yaml")
+
+
+def test_invalid_surface_intent_defaults_fail_loudly(tmp_path: Path) -> None:
+    defaults_path = tmp_path / "surface_intent_defaults.yaml"
+    defaults_path.write_text("version: 1\ndefaults: []\n", encoding="utf-8")
+
+    with pytest.raises(E.EngineOfferError, match="'defaults' must be an object"):
+        E.resolve_offer("work", defaults_path=defaults_path)
+
+
+def test_surface_defaults_have_no_stage_shape_hardcoding_in_helper() -> None:
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+
+    assert "surface_intent_defaults.yaml" in helper
+    assert "JUDGMENT_DEFAULT_STAGES" not in helper
+    assert "_default_preference_for_shape" not in helper
+
+
 def test_drift_guard_stage_skills_reference_shared_engine_offer_helper() -> None:
     for stage, path in STAGE_SKILLS.items():
         text = path.read_text(encoding="utf-8")

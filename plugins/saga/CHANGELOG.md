@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.75.10] - 2026-07-09
+
+### Added - engine-registry schema currency (#452)
+
+- `plugins/saga/references/engine-registry.yaml`: adds capability vocabulary for
+  bulk classification, structured extraction, and embeddings, materialized GPT-5.5
+  family capability defaults, per-row cost/latency metadata, and an embeddings-only
+  Ollama Cloud row.
+- `plugins/saga/references/model-releases.yaml` and
+  `plugins/saga/scripts/check_engine_registry.py`: add authored model-release
+  currency data plus a named CI lint gate for stale registry rows.
+- `plugins/saga/references/surface_intent_defaults.yaml` and
+  `plugins/saga/scripts/engine_offer.py`: move lifecycle engine-offer intent
+  defaults into data while preserving repo-local preference overrides.
+
 ## [0.75.9] - 2026-07-09
 
 ### Added - engine output trust-boundary contract (#385)

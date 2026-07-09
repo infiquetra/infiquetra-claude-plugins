@@ -16,6 +16,15 @@ capabilities:
   - refactor
   - scaffold
   - long-form-writing
+  - bulk-classification
+  - structured-extraction
+  - embedding
+
+model_families:
+  gpt-5.5:
+    capability_profile:
+      adversarial-review: {rating: STRONG, note: "top composite reasoning; repo-access verification"}
+      refactor: {rating: MODERATE, note: "multi-file terminal-oriented"}
 
 engines:
   # ---- Codex / gpt-5.5 (external marketplace plugin; codex CLI) --------------------------------
@@ -35,15 +44,15 @@ engines:
           - "~/.codex/config.toml"
     context_window: 400000            # R25 -- Codex CLI ChatGPT-account limit
     cost_speed_rank: 2
+    cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
+    latency_class: standard
     model_identity: gpt-5.5
     last_validated: 2026-07-06
     receipt_emitter: codex-bridge      # R9/KTD9 -- #476 tracks the codex-side emit wiring
     capability_profile:
       code-generation: {rating: MODERATE, note: "multi-file refactor, structured-output fidelity"}
-      adversarial-review: {rating: STRONG, note: "top composite reasoning; repo-access verification"}
       second-opinion: {rating: MODERATE, note: "cross-family; refuter behavior still unmapped"}
       debug: {rating: MODERATE, note: "tool-orchestrated; give it tools to iterate"}
-      refactor: {rating: MODERATE, note: "multi-file terminal-oriented"}
       scaffold: {rating: WEAK, note: "greenfield architecture is a caution area"}
       long-form-writing: {rating: WEAK, note: "route expert prose to Claude"}
     prompting_protocol:
@@ -72,14 +81,14 @@ engines:
           - "~/.codex/config.toml"
     context_window: 400000
     cost_speed_rank: 3                 # xhigh is the cost multiplier -- pricier than high
+    cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
+    latency_class: slow
     model_identity: gpt-5.5
     last_validated: 2026-07-06
     receipt_emitter: codex-bridge      # R9/KTD9 -- #476 tracks the codex-side emit wiring
     capability_profile:
       code-generation: {rating: STRONG, note: "hardest bounded implementation; reserve for the tough unit"}
-      adversarial-review: {rating: STRONG, note: "deepest reasoning pass"}
       debug: {rating: STRONG, note: "tool-orchestrated root-cause"}
-      refactor: {rating: MODERATE, note: "multi-file"}
     prompting_protocol:
       - "Run read-only when generating against the repo."
       - "Give it tools to iterate when debugging (quality drops in pure-chat mode)."
@@ -106,6 +115,8 @@ engines:
           - "~/.gemini/settings.json"
     context_window: 1000000
     cost_speed_rank: 1                 # cheapest + fastest (STRONG)
+    cost_per_token: {input_usd: 0.0000005, output_usd: 0.000002}
+    latency_class: fast
     model_identity: gemini-3.5-flash
     last_validated: 2026-06-27
     receipt_emitter: agy-delegate      # R9/KTD9
@@ -143,6 +154,8 @@ engines:
           - "~/.gemini/settings.json"
     context_window: 1000000
     cost_speed_rank: 4                 # largest / priciest / slowest of the seed set
+    cost_per_token: {input_usd: 0.0000035, output_usd: 0.0000105}
+    latency_class: standard
     model_identity: gemini-3.1-pro
     last_validated: 2026-06-27
     receipt_emitter: agy-delegate      # R9/KTD9
@@ -183,6 +196,8 @@ engines:
         key_env: OLLAMA_API_KEY
     context_window: 128000
     cost_speed_rank: 5                 # conservative seed rank -- ties always lose to rank 1-4
+    cost_per_token: {input_usd: 0.0, output_usd: 0.0}
+    latency_class: standard
     model_identity: gpt-oss-120b
     last_validated: 2026-07-06
     receipt_emitter: http-bridge
@@ -190,6 +205,8 @@ engines:
       code-generation: {rating: MODERATE, note: "$0-marginal subscription offload; seed rating, availability-gated smoke only"}
       debug: {rating: MODERATE, note: "seed rating pending live-dispatch corroboration"}
       second-opinion: {rating: WEAK, note: "seed rating; cheap cross-family sanity pass at most"}
+      bulk-classification: {rating: STRONG, note: "local/Ollama-class batch classification lane"}
+      structured-extraction: {rating: STRONG, note: "local/Ollama-class JSON/data extraction lane"}
     prompting_protocol:
       - "Resolve the bearer token from OLLAMA_API_KEY at request-build time only; never log it."
       - "Availability-gated: skip (never fail) when OLLAMA_API_KEY is absent or endpoint unreachable."
@@ -197,6 +214,37 @@ engines:
     sources:
       - {claim: "OpenAI-compatible base URL https://ollama.com/v1; bearer auth via OLLAMA_API_KEY", url: "https://docs.ollama.com/api/openai-compatibility", date: 2026-07-06, tag: OFFICIAL, corroboration: STRONG}
       - {claim: "gpt-oss:120b is a current Ollama Cloud model id", url: "https://docs.ollama.com/cloud", date: 2026-07-06, tag: OFFICIAL, corroboration: MODERATE}
+
+  # ---- Ollama / nomic-embed-text (embeddings-only model) --------------------------------------
+  - engine_id: ollama-cloud
+    variant: nomic-embed-text
+    substrate: external
+    default_for_engine: false
+    transport: http
+    invocation:
+      via: engine-bridge-http
+      recipe: "POST https://ollama.com/v1/embeddings (nomic-embed-text)"
+      write_capable: false
+      base_url: "https://ollama.com/v1"
+      model: "nomic-embed-text"
+      effort: default
+      auth:
+        mode: bearer
+        key_env: OLLAMA_API_KEY
+    context_window: 2048
+    cost_speed_rank: 1
+    cost_per_token: {input_usd: 0.0, output_usd: 0.0}
+    latency_class: batch
+    model_identity: nomic-embed-text
+    last_validated: 2026-07-09
+    receipt_emitter: http-bridge
+    capability_profile:
+      embedding: {rating: STRONG, note: "Ollama model library identifies this as embeddings-only"}
+    prompting_protocol:
+      - "Use only for embedding generation; do not route chat/completion work here."
+      - "Advisory only -- never a gate/verdict source."
+    sources:
+      - {claim: "nomic-embed-text is an embeddings-only model", url: "https://ollama.com/library/nomic-embed-text", date: 2026-07-09, tag: OFFICIAL, corroboration: STRONG}
 
   # ---- DeepSeek / deepseek-chat (generic OpenAI-compatible HTTP bridge, R4) ---------------------
   # Base URL + model id verified against https://api-docs.deepseek.com/ on 2026-07-06 (U3
@@ -218,6 +266,8 @@ engines:
         key_env: DEEPSEEK_API_KEY
     context_window: 64000
     cost_speed_rank: 6                 # conservative seed rank -- ties always lose to rank 1-4
+    cost_per_token: {input_usd: 0.00000014, output_usd: 0.00000028}
+    latency_class: standard
     model_identity: deepseek-chat
     last_validated: 2026-07-06
     receipt_emitter: http-bridge

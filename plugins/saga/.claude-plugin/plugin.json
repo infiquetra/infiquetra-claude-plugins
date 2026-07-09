@@ -1,7 +1,7 @@
 {
   "name": "saga",
-  "version": "0.75.5",
-  "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome outcome-DAG orchestration and fail-loud external-engine delegation provenance.",
+  "version": "0.75.6",
+  "description": "Infiquetra engineering lifecycle plugin (Think, Plan, execute, Review, Improve & route) plus /outcome outcome-DAG orchestration, fail-loud external-engine delegation provenance, and chaperone economics.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

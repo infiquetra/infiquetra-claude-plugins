@@ -2,6 +2,21 @@
 
 ## 2026-07-09
 
+### Outcome/objective execution loop lives in a repo narrative {#objective-execution-loop}
+
+**Context.** Objective-backed work in this repo repeatedly needs the same
+`/plan -> /doc-review -> /work -> /code-review -> PR -> CI -> merge -> issue close -> outcome
+advance` loop, and old chat sessions are not durable enough to be the operator-facing source.
+
+- **KTD1 — repo artifact over transcript archaeology.** Keep the reusable loop at
+  `docs/engineering-journal/narratives/2026-07-09-objective-execution-loop.md`; memory may point to
+  it, but the repo narrative is the canonical reference.
+- **KTD2 — live state still wins.** The loop is an operating contract, not evidence. Every resume must
+  re-read outcome status/report, GitHub issue/PR/CI state, and `origin/main` before acting.
+
+**Revisit when.** `/outcome --loop` or an equivalent first-class command can emit this contract from
+the Saga runtime itself.
+
 ### Cheap chaperoning uses explicit verifiability and run-scoped policy helpers {#cheap-chaperoning-381}
 
 **Context.** Issue #381 combines batching, evidence-size escalation, verifiability-keyed tiers,

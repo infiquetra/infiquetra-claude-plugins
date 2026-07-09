@@ -301,7 +301,8 @@ tier from the work-shape heuristic (R10). Surface the tier table for operator ov
 | Judgment, design, adversarial review, architectural decisions | `opus / high` | Judgment, design, adversarial review, architectural decisions — deep reasoning needed; cost-justified. |
 | Mechanical, deterministic, scripted transforms, scaffolding | `sonnet / medium` (or `haiku / low` for purely mechanical) | Mechanical, deterministic, scripted transforms, scaffolding — bounded output, predictable steps.; Purely mechanical work within the mechanical work-shape — cheapest tier still safe for bounded, predictable steps. |
 | Read-only survey, search, grep, sampling, census | `sonnet / low` | Read-only survey, search, grep, sampling, census — low-effort read, no write risk. |
-| External-engine delegation, `intent=offload` (unit carries `engine`/`capability`, U12) | `sonnet / medium` | External-engine delegation, intent=offload — chaperone is mechanical verify-apply-test; a heavier chaperone erases the token savings that motivated the delegation (KTD2). |
+| External-engine delegation, `intent=offload`, `verifiability=test-gated` (ratify-only) | `haiku / low` | External-engine delegation, intent=offload, verifiability=test-gated — chaperone ratifies the declared test oracle and provenance; keep the chaperone cheap unless evidence size escalates. |
+| External-engine delegation, `intent=offload`, `verifiability=unverifiable` or absent | `sonnet / medium` | External-engine delegation, intent=offload, verifiability=unverifiable or absent — chaperone performs full review; a heavier default would erase the token savings that motivated delegation (KTD2). |
 | External-engine delegation, `intent=second-opinion` (U12) | `opus / high` | External-engine delegation, intent=second-opinion — adversarial verification IS the product; extra spend assumed; fable/xhigh available as a per-unit override, never a default (KTD2). |
 <!-- END GENERATED TIER TABLE -->
 

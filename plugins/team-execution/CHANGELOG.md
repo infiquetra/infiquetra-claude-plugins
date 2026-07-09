@@ -4,6 +4,13 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.13.1] - 2026-07-09
+
+### Changed — batch-aware external-engine chaperone contract (#381)
+
+- `skills/team-execution/references/external-engine-workers.md`: documents homogeneous same-engine batching as chaperone context amortization only, with per-unit `unit_contexts[]`, `verifiability`, `test_oracle`, `manifest_identity`, sampling, escalation, and cache hit/miss provenance.
+- `skills/team-execution/references/worker-manifest.md`: clarifies that batched external-engine units still write distinct per-unit manifests; batch id and sampling state remain advisory provenance only.
+
 ## [2.13.0] - 2026-07-07
 
 ### Changed — single-path manifest contract + empty-delivery gate in §5 (#390 U3/U5)

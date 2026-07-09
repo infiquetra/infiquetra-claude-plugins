@@ -19,10 +19,15 @@
     "default_effort": "low",
     "rationale": "Read-only survey, search, grep, sampling, census — low-effort read, no write risk."
   },
+  "offload-test-gated": {
+    "default_model": "haiku",
+    "default_effort": "low",
+    "rationale": "External-engine delegation, intent=offload, verifiability=test-gated — chaperone ratifies the declared test oracle and provenance; keep the chaperone cheap unless evidence size escalates."
+  },
   "offload": {
     "default_model": "sonnet",
     "default_effort": "medium",
-    "rationale": "External-engine delegation, intent=offload — chaperone is mechanical verify-apply-test; a heavier chaperone erases the token savings that motivated the delegation (KTD2)."
+    "rationale": "External-engine delegation, intent=offload, verifiability=unverifiable or absent — chaperone performs full review; a heavier default would erase the token savings that motivated delegation (KTD2)."
   },
   "second-opinion": {
     "default_model": "opus",

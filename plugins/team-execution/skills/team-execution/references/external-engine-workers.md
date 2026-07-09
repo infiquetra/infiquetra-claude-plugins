@@ -35,17 +35,29 @@ the diff*, not what clears it for merge.
 At residency spawn (Step B1's wave scheduling), the coordinator hands the chaperone a context
 package carrying:
 
+A package may contain one unit or a homogeneous same-engine batch. Batching amortizes the
+chaperone's context load only: it never merges unit manifests, never turns batch success into
+per-unit `verified_by_claude=True`, never lets the engine join wave scheduling, and never lets the engine touch the working tree. Mixed selectors, `second-opinion` intent, incompatible sandbox/write
+handling, or incompatible test-oracle handling stay as separate one-unit packages.
+
 | Field | Source | Purpose |
 |---|---|---|
 | `unit_ids` | the plan's Implementation Units assigned to this segment | scope — same as any resident worker (SKILL.md Step B1) |
+| `unit_contexts[]` | one record per unit id | per-unit scope that stays distinct inside a batch: `unit_id`, `selector`, `intent`, `verifiability`, `write_set`, `test_oracle`, and `manifest_identity` |
 | `plan_pointer` | plan doc path | authoritative spec, read once, not re-transcribed |
 | `selector` | the unit's `engine` or `capability` field (`execution_spec.py` `Unit.engine`/`Unit.capability`, mutually exclusive — `_validate_external_engine_selector`, `execution_spec.py:241-265`) | what `engine_resolver.resolve()` is called with |
 | `intent` | the unit's `engine_intent` (`offload` / `second-opinion`, defaults `offload` — U3) | carried for provenance/audit; the operational effect (chaperone tier) was already locked at plan time via the KTD2 tier-table recommendation (`plugins/saga/skills/plan/SKILL.md:295-305`) |
+| `verifiability` | the unit's `verifiability` (`test-gated` / `unverifiable`; absent means `unverifiable`) | selects ratify-only vs full-review chaperoning; batch members must match |
+| `test_oracle` | the unit's declared tests, output contract, or plan verification note | what a `test-gated` unit asks the chaperone to ratify before accepting the external evidence |
 | `plan_time_resolution_preview` | the tier-table recommendation row the operator approved (U2): `{"engine_id": "<key>", "variant": "<key>"}` for a capability-routed unit; absent/null for an explicit-engine unit (R26 makes substitution unreachable there — see §4) | the baseline §4 compares the run-time resolution against |
 | `write_set` | the unit's declared `files` (Create/Modify) | scopes what the **chaperone's own apply step** may touch — not the engine's; the wrapper envelope's own `write_set` stays `[]` at v1 (R23) regardless of this value |
+| `chaperone` | `chaperone_economics.ChaperoneDecision.to_provenance()` when batching/sampling applies | advisory provenance: batch id, review mode, sampled units, full-review units, tier escalation recommendation, and cache hit/miss |
 
 No other context crosses the boundary. The chaperone does not forward its own system prompt,
 prior conversation, or other units' state to the engine — only what §2 assembles.
+
+Sampling is advisory cost control, not acceptance. A sampled defect escalates every unsampled unit in
+the same batch to `full-review`; no unit may inherit a sampled sibling's passing result.
 
 ## 2. Resolve
 

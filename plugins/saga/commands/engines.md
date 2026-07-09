@@ -39,6 +39,8 @@ it never dispatches to an external engine and `route explain` is read-only.
 ## Behavior
 
 - Overlay state is repo-local at `.saga/engine-overlay.json` and is never committed.
+- List output includes each row's authored `trust_tier`. Probation rows remain eligible for worker
+  and generator offload but cannot serve advisory-reviewer or composing-panel roles.
 - Valid pins override registry ranking only when the target row exists, is not deprecated, and declares
   the requested capability.
 - Deprecated rows are filtered before ranking.

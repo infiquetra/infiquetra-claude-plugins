@@ -4,8 +4,7 @@ How a registry row's `transport` field selects an invocation-building adapter in
 `engine_dispatch.py`, how the generic HTTP bridge (`engine_bridge_http.py`) fits beside the
 existing CLI adapters, and how every adapter — CLI or HTTP — proves it actually ran by emitting a
 `bridge_receipt.v1`. This reference governs the *contract*; `plugins/saga/references/engine-dispatch.md`
-covers the pre-existing CLI-only dispatch policy (Codex/agy wrappers, advisory evidence, override
-semantics) and is unchanged by this pair (#387, #383).
+covers dispatch policy, advisory evidence, trust standing, and override semantics.
 
 ## Transport is a closed-vocab registry field, not a bridge decision
 
@@ -19,9 +18,16 @@ unchanged). `_build_invocation` (`engine_dispatch.py`) branches on it:
   is zero per-provider branching inside the bridge itself — a new HTTP-transport provider is a new
   registry row, not a new code path (#387 AC1).
 
-Adding a provider therefore means: author a registry row with the required HTTP fields and a
-`receipt_emitter`, verify its base URL / model id against the provider's docs, and add an
-availability-gated smoke test if you want live proof. No `engine_dispatch.py` change is needed.
+Add an OpenAI-compatible Chat Completions provider through
+[`tools/add-engine.sh`](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/docs/adding-a-provider.md). The scaffolder validates a compact JSON
+specification, derives the generic bridge and receipt wiring, inserts only the probationary row, and
+runs offline registry-to-dispatch conformance. Verify the base URL and model id against provider
+documentation, and add an availability-gated smoke test when live proof is warranted. No
+`engine_dispatch.py` change or provider-specific HTTP bridge is needed.
+
+The offline conformance gate proves exact-key and capability-candidate reachability, real invocation
+materialization, and receipt-emitter registration for every row. It deliberately does not call
+provider preflight, read credentials, or perform network I/O.
 
 ## The generic HTTP bridge (`engine_bridge_http.py`)
 

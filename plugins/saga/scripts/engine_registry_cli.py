@@ -159,6 +159,7 @@ def _row_payload(
         "key": entry.key,
         "engine_id": entry.engine_id,
         "variant": entry.variant,
+        "trust_tier": entry.trust_tier,
         "capabilities": capabilities,
         "cost_speed_rank": entry.cost_speed_rank,
         "cost_class": entry.cost_class,
@@ -174,7 +175,7 @@ def _row_payload(
 
 def _format_rows(rows: list[dict[str, object]]) -> str:
     lines = [
-        "key | capabilities | cost_speed_rank | cost_class | budget_ceiling_usd | "
+        "key | trust_tier | capabilities | cost_speed_rank | cost_class | budget_ceiling_usd | "
         "latency_class | currency | overlay",
     ]
     for row in rows:
@@ -195,7 +196,8 @@ def _format_rows(rows: list[dict[str, object]]) -> str:
         budget = row["budget_ceiling_usd"]
         budget_text = f"{budget:.2f}" if isinstance(budget, int | float) else "none"
         lines.append(
-            f"{row['key']} | {capability_text} | {row['cost_speed_rank']} | "
+            f"{row['key']} | {row['trust_tier']} | {capability_text} | "
+            f"{row['cost_speed_rank']} | "
             f"{row['cost_class']} | {budget_text} | {row['latency_class']} | "
             f"{currency} | {overlay_text}"
         )

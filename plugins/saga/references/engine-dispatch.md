@@ -7,7 +7,7 @@ mechanism lives in `plugins/saga/scripts/engine_dispatch.py`.
 The rule that governs everything here: **Claude is verifier-of-record (R13). An external engine never
 holds a gated verdict.** Dispatch produces *advisory evidence*, never a decision.
 
-## The two dispatch paths
+## The three dispatch paths
 
 The adapter dispatches to the wrapper each engine already owns — it does not re-implement containment.
 
@@ -18,11 +18,28 @@ The adapter dispatches to the wrapper each engine already owns — it does not r
   `agy.delegation.v1` envelope with `mode: no-write` (R23), `task` = `resolution.payload`, and `model`
   set to the registry entry's **verbatim canonical string** (e.g. `Gemini 3.1 Pro (High)`), forwarded
   byte-for-byte because agy's `--model` is passed through unmodified.
+- **Generic HTTP** (`transport == "http"`) → `engine-bridge-http`. The invocation carries the
+  registry row's base URL, model, and bearer environment-variable name into the one generic
+  OpenAI-compatible Chat Completions bridge. Provider-specific HTTP branches are forbidden; use the
+  [provider onboarding guide](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/docs/adding-a-provider.md)
+  to add a probationary row.
 
-Both paths are **evidence-only by default** (R23): the engine returns proposed output; it does not
+All paths are **evidence-only by default** (R23): the engine returns proposed output; it does not
 mutate the working tree. File-mutating external work is deferred until the ideation-R14 sandbox
 profile exists — until then an external worker asked to change files returns the proposed change as
 evidence, not an edit (AE7).
+
+## Trust standing and promotion
+
+Every row has an authored `trust_tier` of `probation` or `advisory`. A probationary row can serve
+`worker` and `generator` offload, but advisory capability selection skips it, explicit
+`advisory-reviewer` resolution halts, and composing roles reject it. This check is role-aware and is
+independent of transport.
+
+`engine_promotion.py <engine>/<variant>` verifies the run-fact ledger and assesses the five most
+recent exact-variant engine facts. Eligibility requires five successful, proof-integrity-valid,
+distinct bridge runs. The command is read-only; changing standing remains an operator-reviewed
+registry pull request, and advisory standing still does not grant gate authority.
 
 ## The advisory-evidence result type (R13 enforcement)
 

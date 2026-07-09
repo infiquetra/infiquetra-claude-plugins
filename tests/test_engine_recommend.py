@@ -51,6 +51,7 @@ def _row(
         "variant": variant,
         "substrate": "external",
         "egress_policy": egress_policy,
+        "trust_tier": "advisory",
         "default_for_engine": True,
         "invocation": {
             "via": f"{engine_id}:delegate",

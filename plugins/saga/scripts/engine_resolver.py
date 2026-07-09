@@ -74,14 +74,14 @@ class RunMemo:
     today's uncached behavior (R5/R11) -- this is strictly opt-in.
 
     Keys: ``engine_id`` for legacy preflight probes, ``entry.key`` for row-backed
-    probes, ``(capability, token_estimate, overlay_fingerprint)`` for capability
+    probes, ``(capability, token_estimate, role_kind, overlay_fingerprint)`` for capability
     resolution decisions, and
     ``(unit_id, protocol_hash, context_hash)`` for assembled dispatch payloads.
     """
 
     def __init__(self) -> None:
         self._preflight: dict[str, dict[str, bool | str]] = {}
-        self._capability: dict[tuple[str, int | None, str], _CapabilityDecision] = {}
+        self._capability: dict[tuple[str, int | None, str, str], _CapabilityDecision] = {}
         self._payload: dict[tuple[str, str, str], str] = {}
         self.last_payload_cache_status: str = ""
 
@@ -95,18 +95,20 @@ class RunMemo:
         self,
         capability: str,
         token_estimate: int | None,
+        role_kind: str,
         overlay_key: str = "",
     ) -> _CapabilityDecision | None:
-        return self._capability.get((capability, token_estimate, overlay_key))
+        return self._capability.get((capability, token_estimate, role_kind, overlay_key))
 
     def store_capability_decision(
         self,
         capability: str,
         token_estimate: int | None,
         decision: _CapabilityDecision,
+        role_kind: str,
         overlay_key: str = "",
     ) -> None:
-        self._capability[(capability, token_estimate, overlay_key)] = decision
+        self._capability[(capability, token_estimate, role_kind, overlay_key)] = decision
 
     def payload(self, unit_id: str, protocol_hash: str, context_hash: str) -> str | None:
         cached = self._payload.get((unit_id, protocol_hash, context_hash))
@@ -451,14 +453,25 @@ def _resolve_capability(
     token_estimate = _token_estimate(task_context)
     overlay_key = overlay_fingerprint(overlay)
     decision = (
-        memo.capability_decision(capability, token_estimate, overlay_key)
+        memo.capability_decision(capability, token_estimate, role_kind, overlay_key)
         if memo is not None
         else None
     )
     if decision is None:
-        decision = _decide_capability(capability, registry, overlay=overlay)
+        decision = _decide_capability(
+            capability,
+            registry,
+            role_kind=role_kind,
+            overlay=overlay,
+        )
         if memo is not None:
-            memo.store_capability_decision(capability, token_estimate, decision, overlay_key)
+            memo.store_capability_decision(
+                capability,
+                token_estimate,
+                decision,
+                role_kind,
+                overlay_key,
+            )
 
     if decision.no_capability_reason is not None:
         return _no_fit_resolution(
@@ -496,10 +509,11 @@ def _decide_capability(
     capability: str,
     registry: Registry,
     *,
+    role_kind: str,
     overlay: EngineOverlay | None = None,
 ) -> _CapabilityDecision:
     try:
-        entry = registry.explain_capability(capability, overlay=overlay).selected.entry
+        candidates = registry.ranked_candidates(capability, overlay=overlay)
     except RegistryError as exc:
         message = str(exc)
         no_candidate = (
@@ -510,6 +524,20 @@ def _decide_capability(
             raise
         reason = f"no external engine supports capability {capability!r}"
         return _CapabilityDecision(entry=None, no_capability_reason=reason, no_fit_reason=None)
+
+    eligible = [
+        candidate.entry
+        for candidate in candidates
+        if _trust_tier_allows_role(candidate.entry, role_kind)
+    ]
+    if not eligible:
+        reason = (
+            f"no advisory-standing external engine supports capability {capability!r}"
+            if role_kind in HALT_ROLE_KINDS
+            else f"no external engine supports capability {capability!r}"
+        )
+        return _CapabilityDecision(entry=None, no_capability_reason=reason, no_fit_reason=None)
+    entry = eligible[0]
 
     fit_failure = _capability_fit_failure(entry, capability)
     if fit_failure is not None:
@@ -542,6 +570,16 @@ def _resolve_entry(
     memo: RunMemo | None = None,
     known_revision_dates: Mapping[str, Any] | None = None,
 ) -> Resolution:
+    trust_halt = _trust_tier_halt(entry, role_kind)
+    if trust_halt is not None:
+        return _resolution_from_entry(
+            entry,
+            task_context=task_context,
+            halt=trust_halt,
+            memo=memo,
+            known_revision_dates=known_revision_dates,
+        )
+
     context_halt = _context_window_halt(entry, task_context)
     if context_halt is not None:
         return _resolution_from_entry(
@@ -581,6 +619,19 @@ def _resolve_entry(
         task_context=task_context,
         memo=memo,
         known_revision_dates=known_revision_dates,
+    )
+
+
+def _trust_tier_allows_role(entry: EngineEntry, role_kind: str) -> bool:
+    return role_kind in FALLBACK_ROLE_KINDS or entry.trust_tier == "advisory"
+
+
+def _trust_tier_halt(entry: EngineEntry, role_kind: str) -> str | None:
+    if _trust_tier_allows_role(entry, role_kind):
+        return None
+    return (
+        f"{entry.key} has trust_tier {entry.trust_tier!r}; "
+        f"role_kind {role_kind!r} requires 'advisory' standing"
     )
 
 

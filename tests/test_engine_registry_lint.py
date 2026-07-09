@@ -42,6 +42,7 @@ def _registry_dict(*, last_validated: str = "2026-07-06") -> dict[str, Any]:
                 "variant": "gpt-5.5-high",
                 "substrate": "external",
                 "egress_policy": "networked",
+                "trust_tier": "advisory",
                 "default_for_engine": True,
                 "invocation": {
                     "via": "codex:delegate",

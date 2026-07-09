@@ -45,13 +45,63 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.75.15"  # task provider recommendation primitive (#391)
+    assert plugin_json["version"] == "0.75.16"  # provider onboarding and probation (#455)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
     assert {"lifecycle", "strategy", "handoff", "doc-review", "code-review"} <= set(
         plugin_json["keywords"]
     )
+
+
+def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
+    guide = _read(ROOT / "docs" / "adding-a-provider.md")
+    match = re.search(r"```json\n(.*?)\n```", guide, flags=re.DOTALL)
+    assert match is not None
+    example = json.loads(match.group(1))
+    assert set(example) == {
+        "transport",
+        "engine_id",
+        "variant",
+        "base_url",
+        "model",
+        "auth_key_env",
+        "context_window",
+        "cost_speed_rank",
+        "cost_class",
+        "cost_per_token",
+        "budget_ceiling_usd",
+        "latency_class",
+        "model_identity",
+        "last_validated",
+        "capability_profile",
+        "prompting_protocol",
+        "sources",
+    }
+    assert set(example["cost_per_token"]) == {"input_usd", "output_usd"}
+    for required in (
+        "tools/add-engine.sh --spec provider.json",
+        "engine-bridge-http",
+        "http-bridge",
+        "trust_tier: probation",
+        "engine_registry_conformance.py",
+        "engine_promotion.py fixture-http/fixture-chat --json",
+        "reviewed pull request",
+    ):
+        assert required in guide
+
+    for script in ("engine_onboarding.py", "engine_registry_conformance.py", "engine_promotion.py"):
+        assert (PLUGIN_ROOT / "scripts" / script).exists()
+
+    dispatch_docs = "\n".join(
+        _read(PLUGIN_ROOT / "references" / name)
+        for name in ("dispatch-adapter-contract.md", "engine-dispatch.md")
+    )
+    assert (
+        "https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/"
+        "docs/adding-a-provider.md"
+    ) in dispatch_docs
+    assert "probation" in dispatch_docs
 
 
 def test_infiquetra_lifecycle_commands_are_packaged() -> None:

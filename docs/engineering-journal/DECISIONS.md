@@ -2,6 +2,23 @@
 
 ## 2026-07-09
 
+### Provider onboarding targets the generic HTTP bridge and earns advisory standing explicitly {#provider-onboarding-455}
+
+**Context.** Issue #455 joins provider scaffolding, registry-to-dispatch conformance, and probationary standing. Since the issue was written, the generic HTTP bridge landed with an explicit zero-provider-branch contract, and the run-fact ledger gained proof-integrity telemetry.
+
+- **KTD1 - scaffold a row, not a provider-specific bridge.** Version 1 accepts OpenAI-compatible HTTP providers and derives `engine-bridge-http` / `http-bridge` wiring. CLI providers halt with a clear unsupported boundary until a real wrapper exists.
+- **KTD2 - authored standing is required and fail-closed.** `trust_tier` is a required `probation|advisory` row field. Existing incumbents are explicitly advisory; scaffolded rows are probationary. Capability advisory selection, explicit advisory resolution, and composing roles all enforce standing while worker/generator offload remains available.
+- **KTD3 - conformance proves actual invocation reachability offline.** A distinct CI gate calls the real dispatch invocation builder for every row without preflight, credentials, or network. Existing schema/currency and receipt-emitter guards retain their narrower ownership.
+- **KTD4 - preserve registry authorship during apply.** The scaffolder validates a candidate in memory, anchors insertion with parsed YAML node marks, rechecks the source hash, and atomically inserts only the row. It does not rewrite the full file or erase comments.
+- **KTD5 - promotion is a read-only evidence assessment.** A probationary exact variant becomes eligible only when its five most recent engine facts are successful, proof-integrity valid, and bridge-run keyed. Telemetry never edits the registry; promotion remains an explicit reviewed PR.
+
+**Status.** Implemented in Saga 0.75.16 for issue #455. The shipped path includes offline
+conformance, parser-anchored atomic onboarding, role-aware probation enforcement, and read-only
+promotion assessment. Binding decisions `{#external-engines-never-gatekeepers}` and
+`{#external-engine-chaperone-dispatch}` remain unchanged.
+
+**Revisit when.** A non-OpenAI-compatible or CLI provider needs onboarding, parser-anchored insertion proves too fragile for the authored registry, or observed promotion evidence shows the five-consecutive-run threshold is mis-sized.
+
 ### Task provider recommendation stays advisory and egress-explicit {#task-provider-recommend-391}
 
 **Context.** Issue #391 adds a ranked `recommend()` primitive for task-to-provider routing. The

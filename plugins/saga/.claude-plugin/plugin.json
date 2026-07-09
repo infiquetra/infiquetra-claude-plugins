@@ -1,7 +1,7 @@
 {
   "name": "saga",
-  "version": "0.75.15",
-  "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, external-engine provenance, chaperone economics, proof-integrity attestation.",
+  "version": "0.75.16",
+  "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, trust-gated external-engine onboarding, provenance, and attestation.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

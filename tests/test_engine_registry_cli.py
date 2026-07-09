@@ -51,6 +51,7 @@ def _row(
         "variant": variant,
         "substrate": "external",
         "egress_policy": "networked",
+        "trust_tier": "advisory",
         "default_for_engine": True,
         "invocation": {
             "via": f"{engine_id}:delegate",
@@ -125,6 +126,8 @@ def test_list_includes_rows_metadata_currency_and_overlay_state(
     assert "cost_class" in out
     assert "budget_ceiling_usd" in out
     assert "latency_class" in out
+    assert "trust_tier" in out
+    assert "advisory" in out
     assert "current" in out
     assert "active" in out
 
@@ -140,6 +143,7 @@ def test_list_json_includes_cost_policy_fields(
     rows = json.loads(capsys.readouterr().out)
     assert rows[0]["cost_class"] == "metered"
     assert rows[0]["budget_ceiling_usd"] == 25.0
+    assert rows[0]["trust_tier"] == "advisory"
 
 
 def test_pin_writes_overlay_and_explain_shows_pinned_route(

@@ -32,6 +32,7 @@ AUTH_MODES = ("files", "env", "bearer", "secret-ref")
 LATENCY_CLASSES = ("fast", "standard", "slow", "batch")
 COST_CLASSES = ("metered", "free")
 EGRESS_POLICIES = ("local-only", "networked")
+TRUST_TIERS = ("probation", "advisory")
 
 
 class RegistryError(ValueError):
@@ -181,6 +182,13 @@ def _parse_egress_policy(data: dict[str, Any], where: str) -> str:
     value = _require_string(data, "egress_policy", where)
     if value not in EGRESS_POLICIES:
         raise RegistryError(f"{where}: egress_policy {value!r} not in {EGRESS_POLICIES}")
+    return value
+
+
+def _parse_trust_tier(data: dict[str, Any], where: str) -> str:
+    value = _require_string(data, "trust_tier", where)
+    if value not in TRUST_TIERS:
+        raise RegistryError(f"{where}: trust_tier {value!r} not in {TRUST_TIERS}")
     return value
 
 
@@ -335,6 +343,7 @@ class EngineEntry:
     variant: str
     substrate: str
     egress_policy: str
+    trust_tier: str
     default_for_engine: bool
     invocation: dict[str, Any]
     context_window: int
@@ -396,6 +405,7 @@ class EngineEntry:
             variant=variant,
             substrate=_require_string(data, "substrate", where),
             egress_policy=_parse_egress_policy(data, where),
+            trust_tier=_parse_trust_tier(data, where),
             default_for_engine=_require_bool(data, "default_for_engine", where),
             invocation=dict(invocation),
             context_window=_require_int(data, "context_window", where),
@@ -529,11 +539,13 @@ class Registry:
 
     def validate(self) -> None:
         seen_keys: set[str] = set()
+        entries_by_key: dict[str, EngineEntry] = {}
         by_engine: dict[str, list[EngineEntry]] = {}
         for entry in self.engines:
             if entry.key in seen_keys:
                 raise RegistryError(f"duplicate engine variant {entry.key!r}")
             seen_keys.add(entry.key)
+            entries_by_key[entry.key] = entry
             by_engine.setdefault(entry.engine_id, []).append(entry)
 
             for capability in entry.capability_profile:
@@ -570,6 +582,11 @@ class Registry:
                 if member not in seen_keys:
                     raise RegistryError(
                         f"role {role.name}: member {member!r} references a non-existent variant"
+                    )
+                if entries_by_key[member].trust_tier != "advisory":
+                    raise RegistryError(
+                        f"role {role.name}: member {member!r} has trust_tier "
+                        f"{entries_by_key[member].trust_tier!r}; composing roles require 'advisory'"
                     )
 
     def by_capability(self, capability: str) -> EngineEntry:

@@ -250,6 +250,20 @@ def test_satisfy_gate_rejects_advisory_reviewer_evidence_even_when_verified() ->
         D.satisfy_gate(evidence, reconciliation=_ready_reconciliation())
 
 
+def test_satisfy_gate_rejects_panel_evidence_even_when_verified() -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="Claude verified panel synthesis",
+        provenance={"status": "ok", "observer_corroborated": True},
+        verified_by_claude=True,
+        role_kind="panel",
+    )
+
+    with pytest.raises(D.DispatchError, match="advisory-only"):
+        D.satisfy_gate(evidence, reconciliation=_ready_reconciliation())
+
+
 def _economics_resolution(**overrides: object) -> Any:
     values: dict[str, object] = {
         "cost_class": "metered",
@@ -625,9 +639,7 @@ def test_satisfy_gate_refuses_claimed_only_manifest(tmp_path: Path) -> None:
             )
         },
     )
-    assert (
-        D.satisfy_gate(verified, adjudicated, reconciliation=_ready_reconciliation()) is None
-    )
+    assert D.satisfy_gate(verified, adjudicated, reconciliation=_ready_reconciliation()) is None
 
     # verified_by_claude is still required even with a fully adjudicated manifest.
     with pytest.raises(D.DispatchError):
@@ -1174,6 +1186,155 @@ def test_manifest_round_trips_unproven_disposition(tmp_path: Path) -> None:
     assert round_tripped.disposition is PM.Disposition.UNPROVEN
 
 
+def _evidence(
+    *,
+    engine_id: str = "codex",
+    variant: str = "gpt-5.5-xhigh",
+    provenance: dict[str, Any] | None = None,
+    halt: str | None = None,
+    runner_receipt: dict[str, Any] | None = None,
+) -> Any:
+    prov: dict[str, Any] = {"status": "ok"} if provenance is None else provenance
+    return D.AdvisoryEvidence(
+        engine_id=engine_id,
+        variant=variant,
+        evidence="external finding",
+        provenance=prov,
+        halt=halt,
+        runner_receipt=runner_receipt,
+    )
+
+
+def test_rejected_offload_manifest_and_reconciliation_preserve_exact_note() -> None:
+    note = "Patch omitted the required failure-path test."
+    evidence = D.reject_offload(D.dispatch(_resolution(), runner=_ok_runner), note)
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id="exec-rejected",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+
+    assert manifest.disposition is PM.Disposition.REJECTED_OFFLOAD
+    assert manifest.disposition_note == note
+    assert PM.Manifest.from_dict(manifest.to_dict()) == manifest
+
+    result = D.rejected_offload_reconciliation(
+        manifest,
+        reconciliation_id="recon-rejected",
+        adjudicator_id="claude/opus",
+    )
+    visible = RC.reviewer_validator_evidence(result)
+    assert visible["result"]["items"][0]["rationale"] == note
+
+
+@pytest.mark.parametrize("note", ["", " ", "\n\t"])
+def test_reject_offload_requires_non_empty_note(note: str) -> None:
+    with pytest.raises(D.DispatchError, match="non-empty rejection note"):
+        D.reject_offload(D.dispatch(_resolution(), runner=_ok_runner), note)
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected"),
+    [
+        (
+            _evidence(
+                provenance={
+                    "status": "halted",
+                    "rejected_offload_note": "rejected",
+                    "note": "fallback",
+                },
+                halt="fallback",
+            ),
+            PM.Disposition.FELL_BACK_TO_CLAUDE,
+        ),
+        (
+            _evidence(
+                provenance={
+                    "status": "ok",
+                    "expected_identity": "agy/gemini",
+                    "rejected_offload_note": "rejected",
+                },
+                runner_receipt=_valid_receipt(),
+            ),
+            PM.Disposition.SUBSTITUTED_ENGINE,
+        ),
+        (
+            _evidence(
+                provenance={
+                    "status": "ok",
+                    "integrity": PM.Disposition.DELEGATION_INTEGRITY.value,
+                    "rejected_offload_note": "rejected",
+                },
+                runner_receipt=_valid_receipt(),
+            ),
+            PM.Disposition.DELEGATION_INTEGRITY,
+        ),
+        (
+            _evidence(
+                provenance={"status": "ok", "rejected_offload_note": "rejected"},
+                runner_receipt={**_valid_receipt(), "external_tokens": 0},
+            ),
+            PM.Disposition.PROOF_INTEGRITY,
+        ),
+        (
+            _evidence(
+                provenance={"status": "ok", "rejected_offload_note": "rejected"},
+            ),
+            PM.Disposition.UNPROVEN,
+        ),
+        (
+            _evidence(
+                provenance={"status": "ok", "rejected_offload_note": "rejected"},
+                runner_receipt=_valid_receipt(),
+            ),
+            PM.Disposition.REJECTED_OFFLOAD,
+        ),
+        (
+            _evidence(provenance={"status": "ok"}, runner_receipt=_valid_receipt()),
+            PM.Disposition.RAN_AS_REQUESTED,
+        ),
+    ],
+)
+def test_rejected_offload_extends_existing_manifest_precedence(
+    evidence: Any, expected: Any
+) -> None:
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id="exec-precedence",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+    assert manifest.disposition is expected
+
+
+def test_rejected_offload_advisory_evidence_cannot_satisfy_gate() -> None:
+    evidence = D.reject_offload(
+        D.dispatch(_resolution(), runner=_ok_runner), "Rejected after review."
+    )
+    verified = dataclasses.replace(
+        evidence,
+        verified_by_claude=True,
+        provenance={**evidence.provenance, "observer_corroborated": True},
+    )
+    manifest = D.build_dispatch_manifest(
+        verified,
+        execution_id="exec-rejected-gate",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+    result = D.rejected_offload_reconciliation(
+        manifest,
+        reconciliation_id="recon-rejected-gate",
+        adjudicator_id="claude",
+    )
+
+    with pytest.raises(D.DispatchError, match="can never satisfy a gate"):
+        D.satisfy_gate(verified, manifest, reconciliation=result)
+    with pytest.raises(D.DispatchError, match="can never satisfy a gate"):
+        D.satisfy_gate(verified, reconciliation=result)
+
+
 @pytest.mark.parametrize("gatekeeper_key", ["verdict", "gate_status", "adjudicated"])
 def test_never_gatekeeper_guard_rejects_gate_fields(gatekeeper_key: str) -> None:
     """R6/#283 `{#external-engines-never-gatekeepers}`: a runner result carrying any
@@ -1197,25 +1358,6 @@ def test_never_gatekeeper_guard_allows_clean_result() -> None:
 
 # --- U2: SUBSTITUTED_ENGINE auto-derivation + gate refusal + note invariant (R2/R3/R4) -----
 # selectors: substituted_disposition, fallback_reason
-
-
-def _evidence(
-    *,
-    engine_id: str = "codex",
-    variant: str = "gpt-5.5-xhigh",
-    provenance: dict[str, Any] | None = None,
-    halt: str | None = None,
-    runner_receipt: dict[str, Any] | None = None,
-) -> Any:
-    prov: dict[str, Any] = {"status": "ok"} if provenance is None else provenance
-    return D.AdvisoryEvidence(
-        engine_id=engine_id,
-        variant=variant,
-        evidence="external finding",
-        provenance=prov,
-        halt=halt,
-        runner_receipt=runner_receipt,
-    )
 
 
 def test_substituted_disposition_when_expected_differs_from_resolved() -> None:

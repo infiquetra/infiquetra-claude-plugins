@@ -22,6 +22,10 @@ scope.
   no tiering drift.
 - U2 manifest: `worker-intent-contract-U2` in the `issue-393` manifest store, disposition
   `ran-as-requested`.
+- U3 worker: `worker-manifest-signal`, resolved effort `high`, Agent-path effort rider reconciled
+  with no tiering drift.
+- U3 manifest: `worker-manifest-signal-U3` in the `issue-393` manifest store, disposition
+  `ran-as-requested`.
 
 ## Completed Work
 
@@ -41,6 +45,26 @@ Checks:
 - Narrow Ruff over U1 implementation and tests
   - passed
 - `uv run mypy plugins/saga/scripts/reconcile.py --follow-imports=skip`
+  - passed
+- `git diff --check`
+  - passed
+
+### U3: Rejected-offload disposition and manifest evidence wiring
+
+- Added the `rejected-offload` disposition with a mandatory normalized non-empty note.
+- Extended the single manifest-builder precedence while preserving fallback, substitution,
+  delegation-integrity, unproven, proof-integrity, and requested-result ordering.
+- Projected rejection notes into typed dropped reconciliation items and explicit advisory
+  reviewer/validator evidence.
+- Preserved the structural rule that rejected, panel, or other advisory evidence cannot satisfy a
+  gate.
+- Updated the worker-manifest and external-engine chaperone contracts.
+
+Checks:
+
+- Focused U3 pytest matrix
+  - 108 passed
+- Targeted Ruff format and lint
   - passed
 - `git diff --check`
   - passed
@@ -65,4 +89,4 @@ Checks:
 
 ## Next Step
 
-Execute U3 to preserve rejected offloads as typed advisory manifest and reconciliation evidence.
+Execute U4 to add the cap-bounded advisory-jury panel and Claude foreman reconciliation boundary.

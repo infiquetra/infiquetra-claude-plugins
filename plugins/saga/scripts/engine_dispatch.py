@@ -789,6 +789,9 @@ def build_dispatch_manifest(
     ``FELL_BACK_TO_CLAUDE`` (nothing fell back). Engine output claims enter the claimed layer
     only — adjudication is written later by the driving session (Claude) via
     :func:`adjudicate_manifest`, never by the engine (D5, #external-engines-never-gatekeepers).
+    A chaperone rejection is stamped on ``evidence.provenance['rejected_offload_note']`` after
+    review. It enters this same precedence chain below dispatch/substitution/integrity proof
+    failures and above the normal requested disposition; no second manifest path exists.
     """
     if evidence.provenance.get("integrity") == pm.Disposition.DELEGATION_INTEGRITY.value:
         # Two-signal divergence (#384 U5/KTD6): the engine said "ok" but the observer signal
@@ -820,6 +823,14 @@ def build_dispatch_manifest(
             if proof_errors:
                 disposition = pm.Disposition.PROOF_INTEGRITY
                 note = "; ".join(proof_errors)
+            elif "rejected_offload_note" in evidence.provenance:
+                disposition = pm.Disposition.REJECTED_OFFLOAD
+                try:
+                    note = reconcile.normalize_rejection_note(
+                        evidence.provenance["rejected_offload_note"]
+                    )
+                except reconcile.ReconciliationError as exc:
+                    raise DispatchError(str(exc)) from exc
             else:
                 disposition = pm.Disposition.RAN_AS_REQUESTED
                 note = ""
@@ -852,6 +863,46 @@ def build_dispatch_manifest(
         economics=economics,
         bridge_run_key=_bridge_run_key(evidence),
     )
+
+
+def reject_offload(evidence: AdvisoryEvidence, rejection_note: str) -> AdvisoryEvidence:
+    """Mark reviewed engine output as rejected without mutating the source evidence."""
+    if evidence.halt is not None:
+        raise DispatchError("cannot reject an offload that did not produce reviewable output")
+    try:
+        note = reconcile.normalize_rejection_note(rejection_note)
+    except reconcile.ReconciliationError as exc:
+        raise DispatchError(str(exc)) from exc
+    return AdvisoryEvidence(
+        engine_id=evidence.engine_id,
+        variant=evidence.variant,
+        evidence=evidence.evidence,
+        provenance={**evidence.provenance, "rejected_offload_note": note},
+        verified_by_claude=evidence.verified_by_claude,
+        role_kind=evidence.role_kind,
+        halt=evidence.halt,
+        runner_receipt=evidence.runner_receipt,
+    )
+
+
+def rejected_offload_reconciliation(
+    manifest: pm.Manifest,
+    *,
+    reconciliation_id: str,
+    adjudicator_id: str,
+) -> reconcile.ReconciliationResult:
+    """Turn a rejected-offload manifest note into typed reviewer/validator evidence."""
+    if manifest.disposition is not pm.Disposition.REJECTED_OFFLOAD:
+        raise DispatchError("rejected-offload reconciliation requires a rejected-offload manifest")
+    try:
+        return reconcile.build_rejected_offload_signal(
+            reconciliation_id=reconciliation_id,
+            execution_id=manifest.execution_id,
+            adjudicator_id=adjudicator_id,
+            rejection_note=manifest.disposition_note,
+        )
+    except reconcile.ReconciliationError as exc:
+        raise DispatchError(str(exc)) from exc
 
 
 def record_dispatch_manifest(
@@ -987,6 +1038,11 @@ def satisfy_gate(
         raise DispatchError(
             f"{evidence.role_kind} evidence is advisory-only and can never satisfy a gate"
         )
+    if "rejected_offload_note" in evidence.provenance:
+        raise DispatchError(
+            "rejected-offload evidence is advisory reviewer/validator signal and can never "
+            f"satisfy a gate: {evidence.provenance['rejected_offload_note']}"
+        )
     if evidence.verified_by_claude is not True:
         raise DispatchError(
             "external advisory evidence must be verified by Claude before satisfying a gate"
@@ -1002,6 +1058,11 @@ def satisfy_gate(
             "substituted evidence can never satisfy a gate as-approved (#390 U2/KTD5): the "
             f"manifest disposition is {manifest.disposition.value!r} -- "
             f"{manifest.disposition_note}"
+        )
+    if manifest is not None and manifest.disposition is pm.Disposition.REJECTED_OFFLOAD:
+        raise DispatchError(
+            "rejected-offload evidence is advisory reviewer/validator signal and can never "
+            f"satisfy a gate: {manifest.disposition_note}"
         )
     proof_errors = _proof_integrity_problems(evidence)
     if proof_errors:

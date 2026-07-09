@@ -74,6 +74,10 @@ class Disposition(StrEnum):
     # producer/consumer liveness contradiction. This is distinct from `UNPROVEN` because the
     # bridge did emit a receipt; the receipt's proof claims are not trustworthy.
     PROOF_INTEGRITY = "proof-integrity"
+    # The engine ran, but Claude's chaperone rejected its output after review. The rejection
+    # remains advisory evidence for reviewers/validators; it is neither a dispatch fallback nor
+    # an accepted run. Every such manifest must carry a normalized non-empty disposition note.
+    REJECTED_OFFLOAD = "rejected-offload"
 
 
 class ClaimedStatus(StrEnum):
@@ -404,6 +408,23 @@ class Manifest:
     economics: EconomicsRecord | None = None
     bridge_run_key: str = ""
     schema: str = field(default=SCHEMA_VERSION)
+
+    def __post_init__(self) -> None:
+        if self.disposition is not Disposition.REJECTED_OFFLOAD:
+            return
+        if not isinstance(self.disposition_note, str):
+            raise ManifestError("rejected-offload disposition requires a string disposition_note")
+        normalized = " ".join(self.disposition_note.split())
+        if not normalized:
+            raise ManifestError(
+                "rejected-offload disposition requires a non-empty disposition_note"
+            )
+        if any(ord(char) < 32 for char in normalized):
+            raise ManifestError(
+                "rejected-offload disposition_note must not contain control characters"
+            )
+        if self.disposition_note != normalized:
+            raise ManifestError("rejected-offload disposition_note must be normalized whitespace")
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {

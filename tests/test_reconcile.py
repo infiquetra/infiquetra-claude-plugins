@@ -48,7 +48,9 @@ def _item(
     )
 
 
-def _result(*, source_ids: tuple[str, ...] = ("finding-1",), items: tuple[Any, ...] | None = None) -> Any:
+def _result(
+    *, source_ids: tuple[str, ...] = ("finding-1",), items: tuple[Any, ...] | None = None
+) -> Any:
     return RC.build_result(
         reconciliation_id="recon-exec-1",
         execution_id="exec-1",
@@ -74,7 +76,9 @@ def test_all_findings_accounted_and_empty_findings_are_ready() -> None:
         source_ids=("accepted", "omitted", "superseded"),
         items=(
             _item("accepted"),
-            _item("omitted", RC.ReconciliationStatus.DROPPED, "Not supported by repository source."),
+            _item(
+                "omitted", RC.ReconciliationStatus.DROPPED, "Not supported by repository source."
+            ),
             _item(
                 "superseded",
                 RC.ReconciliationStatus.OVERRIDDEN,
@@ -129,6 +133,36 @@ def test_missing_adjudicator_and_rationale_reject() -> None:
         )
     with pytest.raises(RC.ReconciliationError, match="rationale"):
         _item("finding", rationale="  ")
+
+
+def test_rejected_offload_signal_is_typed_visible_and_advisory() -> None:
+    result = RC.build_rejected_offload_signal(
+        reconciliation_id="recon-rejected-1",
+        execution_id="exec-rejected-1",
+        adjudicator_id="claude/opus",
+        rejection_note="  Patch contradicted   repository source.\n",
+    )
+
+    assert result.ready
+    assert result.intent == "offload"
+    assert result.items[0].status is RC.ReconciliationStatus.DROPPED
+    assert result.items[0].rationale == "Patch contradicted repository source."
+
+    evidence = RC.reviewer_validator_evidence(result)
+    assert evidence["advisory"] is True
+    assert evidence["audiences"] == ["reviewer", "validator"]
+    assert evidence["result"]["items"][0]["rationale"] == result.items[0].rationale
+
+
+@pytest.mark.parametrize("note", ["", "  ", "\n\t", "bad\x00note"])
+def test_rejected_offload_signal_requires_note(note: str) -> None:
+    with pytest.raises(RC.ReconciliationError, match="rejection note"):
+        RC.build_rejected_offload_signal(
+            reconciliation_id="recon-rejected-1",
+            execution_id="exec-rejected-1",
+            adjudicator_id="claude",
+            rejection_note=note,
+        )
 
 
 def test_reconcile_and_apply_append_separate_valid_facts(tmp_path: Path) -> None:

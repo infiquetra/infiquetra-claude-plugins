@@ -66,10 +66,13 @@ engine call itself never runs — `fell-back-to-claude` when the resolver's own 
 preflight-unavailable path routes the unit to the chaperone as Claude, carrying the fallback
 reason as `disposition_note`; the engine ran but wasn't the one the operator approved —
 `substituted-engine` when run-time capability routing resolved a different engine/variant than the
-plan-time preview the tier table recorded (KTD4). A Claude-agent worker (no `engine`/`capability`
-selector) only ever writes `ran-as-requested` — the other two dispositions require a resolution to
-diverge from. Trigger conditions and the halt path (R25/R26 — a halt writes no manifest at all,
-nothing ran) are in `external-engine-workers.md` §2 and §4.
+plan-time preview the tier table recorded (KTD4); `rejected-offload` when the requested engine ran
+but Claude's chaperone rejected its output after review. A rejected offload requires a normalized,
+non-empty `disposition_note`; that exact note is also the rationale of a typed `dropped`
+reconciliation item passed to reviewers and validators as advisory evidence. A Claude-agent worker
+(no `engine`/`capability` selector) only ever writes `ran-as-requested` — the other dispositions
+require an external-engine resolution. Trigger conditions and the halt path (R25/R26 — a halt writes
+no manifest at all, nothing ran) are in `external-engine-workers.md` §2, §4, and §5.
 
 **Output completeness (R3):** one `OutputCompleteness` per unit the worker owned, derived the same
 way `completeness_gate.Contract.from_unit` + `classify()` already do for spec-driven runs:
@@ -100,3 +103,7 @@ A worker that halts, is reassigned, or produces a partial result records that ho
 `disposition` + a `disposition_note` — never silently. The manifest records what happened; it
 never decides whether the wave proceeds. That decision stays with the coordinator and the
 existing reviewer/validator consensus machinery.
+
+A `rejected-offload` record is a recovered review signal, not a passing worker result. Its typed
+reconciliation projection is delivered to both reviewer and validator evidence inputs, but neither
+the note nor its `dropped` item may satisfy a gate.

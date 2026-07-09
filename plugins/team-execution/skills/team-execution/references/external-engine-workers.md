@@ -187,7 +187,9 @@ here.
 1. **Verify.** The chaperone reads `evidence.evidence` (the engine's returned patch/output) and
    reviews it itself — never self-attested. Only after review does the chaperone set
    `evidence.verified_by_claude = True`; this is the bit `satisfy_gate()` requires (§ "Never a
-   gatekeeper").
+   gatekeeper"). If review rejects an otherwise dispatched offload, the chaperone calls
+   `engine_dispatch.reject_offload(evidence, rejection_note)` with its normalized, non-empty
+   reason. It does not apply the rejected patch.
 2. **Apply.** The chaperone applies the reviewed patch — the engine never touches the working
    tree (KTD6/R23). The chaperone **owns the commit**, but the commit itself happens only after
    Test (step 3) and the empty-delivery check (step 3a) pass — apply and commit are distinct
@@ -204,10 +206,11 @@ here.
    itself never commits and mints no new auto-commit machinery (none exists in this repo — `/optimize`
    deliberately shed its own). This is a distinct axis from `manifest_store.py`'s `missing-output`
    trip (`manifest_store.py:249-363`), which checks the returned-value axis, not file delivery.
-4. **Manifest.** One path, for every disposition — `ran-as-requested`, `fell-back-to-claude`, and
-   `substituted-engine` alike. The chaperone never branches on §4's `substituted` result and never
-   constructs `provenance_manifest.Manifest` directly; it always calls the existing builder,
-   forwarding the same `expected_identity` it passed to `dispatch()` in §3:
+4. **Manifest and rejected-offload evidence.** One path, for every disposition —
+   `ran-as-requested`, `fell-back-to-claude`, `substituted-engine`, and `rejected-offload` alike.
+   The chaperone never branches into a second manifest constructor and never constructs
+   `provenance_manifest.Manifest` directly; it always calls the existing builder, forwarding the
+   same `expected_identity` it passed to `dispatch()` in §3:
    ```python
    engine_dispatch.record_dispatch_manifest(
        store, evidence,
@@ -215,16 +218,26 @@ here.
        effort=resolution.effort, protocol="\n".join(resolution.protocol),
    )
    ```
-   `build_dispatch_manifest` (`engine_dispatch.py:473-576`) derives the disposition from the
+   `build_dispatch_manifest` derives the disposition from the
    evidence alone: `evidence.halt is not None` → `FELL_BACK_TO_CLAUDE` (carrying the
    halt/downgrade note as `disposition_note`); otherwise, when the evidence's provenance carries
    an `expected_identity` that differs from `f"{evidence.engine_id}/{evidence.variant}"` →
    `SUBSTITUTED_ENGINE` (`_substitution_note`, `engine_dispatch.py:456-470`, naming both the
-   previewed and the resolved engine/variant); otherwise `RAN_AS_REQUESTED`. Attribution is always
+   previewed and the resolved engine/variant); receipt/proof integrity dispositions retain their
+   existing precedence; then a `rejected_offload_note` stamped by `reject_offload()` →
+   `REJECTED_OFFLOAD`; otherwise `RAN_AS_REQUESTED`. Attribution is always
    `kind=EXTERNAL_ENGINE`, `identity=f"{evidence.engine_id}/{evidence.variant}"` — the same
-   identity format the builder always emits. There is no second, hand-built manifest path for the
-   substitution case; `record_dispatch_manifest` is the only manifest-construction call this
-   contract documents (R5).
+   identity format the builder always emits. There is no second, hand-built manifest path;
+   `record_dispatch_manifest` is the only manifest-construction call this contract documents.
+
+   For `REJECTED_OFFLOAD`, the chaperone calls
+   `engine_dispatch.rejected_offload_reconciliation(...)`, then passes
+   `reconcile.reviewer_validator_evidence(result)` to both the reviewer and validator evidence
+   inputs. The result contains one typed `dropped` item whose rationale is the manifest's exact
+   rejection note. This recovers the failed quality check as second-opinion signal without giving
+   it authority: `satisfy_gate()` refuses `REJECTED_OFFLOAD` even when Claude verification and
+   observer corroboration are both present, and panel/advisory-reviewer restrictions remain
+   unchanged.
 
    The fail-loud discriminator this feeds (#392): a substituted run is not a passing external
    result. `satisfy_gate()` (`engine_dispatch.py:664`) refuses a manifest whose disposition is

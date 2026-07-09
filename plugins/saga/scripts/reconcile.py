@@ -118,7 +118,9 @@ def validate_registry(intents: Iterable[str] | None = None) -> None:
             "reconciliation recipe registry does not exactly match canonical ENGINE_INTENTS"
         )
     if any(intent != recipe.intent for intent, recipe in RECIPE_REGISTRY.items()):
-        raise ReconciliationError("reconciliation recipe registry keys disagree with recipe intents")
+        raise ReconciliationError(
+            "reconciliation recipe registry keys disagree with recipe intents"
+        )
     if len({recipe.recipe_id for recipe in RECIPE_REGISTRY.values()}) != len(RECIPE_REGISTRY):
         raise ReconciliationError("reconciliation recipe IDs must be unique")
 
@@ -179,7 +181,9 @@ class ReconciliationItem:
         try:
             status = ReconciliationStatus(data["status"])
         except (TypeError, ValueError) as exc:
-            raise ReconciliationError(f"invalid reconciliation status {data.get('status')!r}") from exc
+            raise ReconciliationError(
+                f"invalid reconciliation status {data.get('status')!r}"
+            ) from exc
         return cls(
             source_finding_id=data["source_finding_id"],
             status=status,
@@ -211,7 +215,9 @@ class ReconciliationResult:
             raise ReconciliationError("source_finding_ids and items must be immutable tuples")
         if not all(isinstance(item, ReconciliationItem) for item in self.items):
             raise ReconciliationError("items must contain only ReconciliationItem values")
-        source_ids = tuple(_require_id(value, "source_finding_id") for value in self.source_finding_ids)
+        source_ids = tuple(
+            _require_id(value, "source_finding_id") for value in self.source_finding_ids
+        )
         if len(source_ids) != len(set(source_ids)):
             raise ReconciliationError("duplicate source finding IDs are not allowed")
         item_ids = tuple(item.source_finding_id for item in self.items)
@@ -219,14 +225,18 @@ class ReconciliationResult:
             raise ReconciliationError("duplicate reconciliation item finding IDs are not allowed")
         unknown = set(item_ids) - set(source_ids)
         if unknown:
-            raise ReconciliationError(f"reconciliation items name unknown findings: {sorted(unknown)}")
+            raise ReconciliationError(
+                f"reconciliation items name unknown findings: {sorted(unknown)}"
+            )
         if any(item.adjudicator_id != adjudicator for item in self.items):
             raise ReconciliationError("item adjudicator_id must match the result adjudicator_id")
 
     @property
     def unaccounted_finding_ids(self) -> tuple[str, ...]:
         accounted = {item.source_finding_id for item in self.items}
-        return tuple(finding_id for finding_id in self.source_finding_ids if finding_id not in accounted)
+        return tuple(
+            finding_id for finding_id in self.source_finding_ids if finding_id not in accounted
+        )
 
     @property
     def ready(self) -> bool:
@@ -298,6 +308,61 @@ def build_result(
         source_finding_ids=tuple(source_finding_ids),
         items=tuple(items),
     )
+
+
+def normalize_rejection_note(note: Any) -> str:
+    """Return the single-line advisory note required for a rejected offload."""
+    if not isinstance(note, str):
+        raise ReconciliationError("rejected offload requires a string rejection note")
+    normalized = " ".join(note.split())
+    if not normalized:
+        raise ReconciliationError("rejected offload requires a non-empty rejection note")
+    if any(ord(char) < 32 for char in normalized):
+        raise ReconciliationError("rejected offload rejection note contains control characters")
+    return normalized
+
+
+def build_rejected_offload_signal(
+    *,
+    reconciliation_id: str,
+    execution_id: str,
+    adjudicator_id: str,
+    rejection_note: str,
+) -> ReconciliationResult:
+    """Account for a chaperone rejection as one typed, dropped advisory finding.
+
+    The engine output was considered and explicitly rejected, so ``DROPPED`` is the honest
+    reconciliation status. The rationale is the normalized rejection note that downstream
+    reviewers and validators receive; this function grants it no gate authority.
+    """
+    note = normalize_rejection_note(rejection_note)
+    finding_id = f"rejected-offload:{_require_id(execution_id, 'execution_id')}"
+    return build_result(
+        reconciliation_id=reconciliation_id,
+        execution_id=execution_id,
+        intent="offload",
+        adjudicator_id=adjudicator_id,
+        source_finding_ids=(finding_id,),
+        items=(
+            ReconciliationItem(
+                source_finding_id=finding_id,
+                status=ReconciliationStatus.DROPPED,
+                adjudicator_id=adjudicator_id,
+                rationale=note,
+            ),
+        ),
+    )
+
+
+def reviewer_validator_evidence(result: ReconciliationResult) -> dict[str, Any]:
+    """Project a ready result into the advisory reviewer/validator evidence contract."""
+    result.require_ready()
+    return {
+        "kind": "typed-reconciliation",
+        "audiences": ["reviewer", "validator"],
+        "advisory": True,
+        "result": result.to_dict(),
+    }
 
 
 def canonical_result_hash(result: ReconciliationResult) -> str:

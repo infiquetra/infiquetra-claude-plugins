@@ -15,6 +15,7 @@ Review: docs/reviews/2026-07-09-issue-391-task-provider-recommend-plan-review.md
   filtering, sensitive local-only filtering, and explicit halted result when no local-only candidate
   exists.
 - U4: Bumped Saga release metadata to `0.75.15` and added changelog coverage.
+- Code review: tightened `RecommendationTask` runtime validation before final review artifact.
 
 ## Key Decisions
 
@@ -53,6 +54,9 @@ Review: docs/reviews/2026-07-09-issue-391-task-provider-recommend-plan-review.md
 - `uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports`
 - `git diff --check`
 - `uv run pytest --ignore=tests/test_redis_channel_channel.py --ignore=tests/test_redis_channel_notifier.py`
+- `uv run pytest tests/test_engine_recommend.py -q`
+- `uv run pytest tests/test_engine_recommend.py tests/test_saga_engine_registry.py tests/test_engine_registry_lint.py tests/test_saga_engine_resolver.py tests/test_engine_registry_cli.py tests/test_saga_engine_dispatch.py tests/test_saga_plugin.py::test_infiquetra_lifecycle_metadata_and_marketplace_entry_match -q`
+- `docs/code-reviews/2026-07-09-issue-391-task-provider-recommend-code-review.md`: no P0/P1/P2/P3 findings.
 
 ## Checks Not Run
 
@@ -61,4 +65,4 @@ Review: docs/reviews/2026-07-09-issue-391-task-provider-recommend-plan-review.md
 
 ## Next Step
 
-Run `/code-review`, address any findings, then open the PR.
+Open the PR and monitor CI.

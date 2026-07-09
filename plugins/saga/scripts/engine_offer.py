@@ -338,9 +338,7 @@ def _prefs_path(repo_root: Path | str) -> Path:
     return Path(repo_root) / PREFS_PATH
 
 
-def _cost_delta_preview(
-    preference: Preference, economics: dict[str, Any] | None
-) -> str | None:
+def _cost_delta_preview(preference: Preference, economics: dict[str, Any] | None) -> str | None:
     if preference.intent != "offload" or economics is None:
         return None
     if not isinstance(economics, dict):

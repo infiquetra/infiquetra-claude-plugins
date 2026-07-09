@@ -107,9 +107,7 @@ def test_offload_offer_preview_names_inline_fallback_when_uneconomic() -> None:
 
 def test_non_offload_offers_do_not_claim_cost_delta_preview() -> None:
     no_offer = E.resolve_offer("work", unit_shape="unknown", economics=_complete_economics())
-    second_opinion = E.resolve_offer(
-        "work", unit_shape="judgment", economics=_complete_economics()
-    )
+    second_opinion = E.resolve_offer("work", unit_shape="judgment", economics=_complete_economics())
 
     assert no_offer.intent == "none"
     assert no_offer.cost_delta_preview is None

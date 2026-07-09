@@ -586,6 +586,7 @@ here may be absent from the `provenance_manifest.py` dataclasses (drift, both di
 | `output_completeness.produced_keys` | `manifest_store.py` (`record-completeness`) | `/work` SKILL.md post-run step | live |
 | `output_completeness.produced_count` | `manifest_store.py` (`record-completeness`) | `/work` SKILL.md post-run step | live |
 | `output_completeness.missing_keys` | `manifest_store.py` (`record-completeness`) | `/work` SKILL.md post-run step (missing-output trip, R10) | live |
+| `economics` | `engine_dispatch.py` (`build_dispatch_manifest`, net-savings copy from dispatch provenance) | `manifest_reader.py`, `/work` and `/code-review` evidence summaries (offload net-savings audit) | live |
 | `claim_provenance` / `claims` | `engine_dispatch.py` (claimed-layer at dispatch; adjudicated layer written by Claude via a `manifest_store` update helper, D5) | `manifest_reader.py` (parroting count, verified ratio); `code-review/SKILL.md` B.0 (skip re-verify) | live |
 | `claims[].text` | `engine_dispatch.py` | `manifest_reader.py` | live |
 | `claims[].claimed` | `engine_dispatch.py` | `manifest_reader.py`, gate adjudication ranking (KTD4) | live |

@@ -191,7 +191,9 @@ def test_break_even_halt_uses_token_savings_only() -> None:
     assert decision.proceed is False
     assert decision.net_savings.net_savings_status == "zero"
     assert decision.reason == "chaperone tokens 1000 >= inline tokens 1000"
-    assert decision.preview == "offload codex: halt; chaperone 1000 tokens >= inline 1000; use inline"
+    assert (
+        decision.preview == "offload codex: halt; chaperone 1000 tokens >= inline 1000; use inline"
+    )
 
 
 def test_budget_ceiling_halt_uses_provider_spend_only() -> None:
@@ -208,8 +210,7 @@ def test_budget_ceiling_halt_uses_provider_spend_only() -> None:
     assert decision.projected_provider_spend_usd == 5.25
     assert "exceeds ceiling $5.2000 by $0.0500" in decision.reason
     assert decision.preview == (
-        "offload codex: halt; provider spend $5.2500/$5.2000 would exceed "
-        "ceiling by $0.0500"
+        "offload codex: halt; provider spend $5.2500/$5.2000 would exceed ceiling by $0.0500"
     )
 
 

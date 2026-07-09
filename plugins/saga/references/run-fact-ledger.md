@@ -87,3 +87,18 @@ averaged X tokens" prior, additively (the `prior` key appears only when there is
 **Not yet migrated (deferred):** `outcome_costs.py` keeps its own cost records for now (KTD7); porting it
 and adopting the remaining wave-1 writers are follow-up work. This substrate lands empty of most
 consumers on purpose so the format is fixed once.
+
+## Engine bridge proof fields (#388)
+
+`engine_dispatch.dispatch(..., ledger=, subplot_id=, at=)` now records bridge proof metadata on
+`engine` facts when a receipt is present:
+
+- `bridge_run_key` — stable key from receipt `run_id`, falling back to a receipt hash.
+- `external_tokens` — numeric token proof emitted by the bridge receipt.
+- `proof_integrity_status` — `ok`, `failed`, or `unproven`.
+- `proof_integrity_errors` — present only when the receipt fails output-attestation, token, or
+  liveness proof checks.
+
+Before appending an `engine` fact, dispatch checks for an existing `engine` fact with the same
+`bridge_run_key` and skips the duplicate. The ledger remains append-only; exactly-once accounting is
+enforced by the writer before append rather than by mutating existing facts.

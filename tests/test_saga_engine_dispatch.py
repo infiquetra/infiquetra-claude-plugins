@@ -435,6 +435,10 @@ def test_dispatch_returns_advisory_evidence_without_tree_mutation_surface() -> N
 def _valid_receipt(*, engine_id: str = "codex", variant: str = "gpt-5.5-xhigh") -> dict[str, Any]:
     """A schema-valid ``bridge_receipt.v1`` (cli-shaped) for tests exercising the RAN_AS_REQUESTED
     path (U6/KTD8): receipt-gating means a bare ``ok`` runner result is no longer sufficient."""
+    output_attestation = D.fleet_commons_shim.load("output_attestation").emit_attestation(
+        artifact="evidence",
+        content="external finding",
+    )
     return cast(
         "dict[str, Any]",
         D._bridge_receipt.emit_receipt(
@@ -444,6 +448,10 @@ def _valid_receipt(*, engine_id: str = "codex", variant: str = "gpt-5.5-xhigh") 
             wall_time_s=0.5,
             bytes_produced=17,
             runner={"pid": 4242, "argv": ["codex", "run"], "exit_code": 0},
+            receipt_emitter="codex-bridge",
+            run_id="test-run-1",
+            external_tokens=42,
+            output_attestation=output_attestation,
         ),
     )
 

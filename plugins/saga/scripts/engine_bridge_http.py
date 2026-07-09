@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
 
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
+_output_attestation = fleet_commons_shim.load("output_attestation")
 
 Runner = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -152,6 +153,13 @@ def _invoke(
         wall_time_s=latency,
         bytes_produced=len(output.encode("utf-8")),
         runner={"url": url, "status_code": status_code, "model": model},
+        receipt_emitter="http-bridge",
+        run_id=f"http:{engine_id}:{variant}:{started:.9f}",
+        external_tokens=tokens,
+        output_attestation=_output_attestation.emit_attestation(
+            artifact="evidence",
+            content=output,
+        ),
     )
     return {
         "status": STATUS_OK,

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.75.14] - 2026-07-09
+
+### Added - output attestation lie detector (#388)
+
+- `plugins/saga/scripts/bridge_signatures.py` and
+  `plugins/saga/references/bridge-signatures.json`: add emitter-keyed bridge proof policy for
+  output attestation, external-token proof, run keys, and liveness joins.
+- `plugins/saga/scripts/engine_dispatch.py` and
+  `plugins/saga/scripts/provenance_manifest.py`: classify missing attestation, hash mismatch,
+  zero external tokens, and bridge-run proof contradictions as `proof-integrity`, never
+  `RAN_AS_REQUESTED`, and record idempotent `bridge_run_key` token facts in the run ledger.
+- Add focused lie-detector, liveness, ledger, attestation, and signature drift tests proving
+  Claude-only or zero-call delegated-output disguises fail loud.
+
 ## [0.75.13] - 2026-07-09
 
 ### Added - offload economics guards (#386)

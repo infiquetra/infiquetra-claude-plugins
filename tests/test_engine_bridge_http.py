@@ -143,6 +143,13 @@ class FakeHttpRunner:
             wall_time_s=0.01,
             bytes_produced=len(self.content.encode("utf-8")),
             runner={"url": url, "status_code": 200, "model": invocation["model"]},
+            receipt_emitter="http-bridge",
+            run_id=f"fake-http:{len(self.requests)}",
+            external_tokens=float(self.tokens),
+            output_attestation=BRIDGE._output_attestation.emit_attestation(
+                artifact="evidence",
+                content=self.content,
+            ),
         )
         return {
             "status": "ok",

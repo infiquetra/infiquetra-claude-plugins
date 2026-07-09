@@ -1,7 +1,7 @@
 {
   "name": "codex",
-  "version": "0.1.0",
-  "description": "First-party guarded synchronous codex delegation bridge with evidence bundles, mirroring the agy wrapper's shape.",
+  "version": "0.1.1",
+  "description": "First-party guarded synchronous codex delegation bridge with evidence bundles and output-attested receipts, mirroring agy wrapper's shape.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

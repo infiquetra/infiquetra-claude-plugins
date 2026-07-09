@@ -280,3 +280,17 @@ plugin changes; the enforcement already runs underneath every dispatch a chapero
 No behavior in team-execution's own dispatch, consensus, or validator-cap code changes as a
 result of this section — it is documentation of mechanics saga/fleet-core already enforce
 underneath every chaperone dispatch call.
+
+## 5b. Output-attestation and bridge-run liveness contract (#388)
+
+The chaperone continues to call `engine_dispatch.record_dispatch_manifest(...)`; it must not build
+`provenance_manifest.Manifest` directly. The builder now records `bridge_run_key` when a bridge
+receipt provides it and may classify a successful-looking run as `proof-integrity` when the
+registered bridge signature is missing output attestation, nonzero external-token proof, or the
+producer/consumer liveness join fails.
+
+A wired chaperone path requires both halves to name the same bridge run key: the producer side
+launches and receipts the run, and the consumer side manifests that same run. A launched-but-
+unconsumed run and a consumed-but-unlaunched result are both proof-integrity failures. As with
+`substituted-engine`, the chaperone must surface this as HALT evidence to the coordinator; it must
+not count the run as `ran-as-requested` or paper over the failure with a Claude-only answer.

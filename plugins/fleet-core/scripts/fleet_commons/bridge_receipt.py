@@ -25,7 +25,34 @@ them through ``emit_receipt`` (see plan's "no receipts/telemetry ever carry a re
 
 from __future__ import annotations
 
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
 from typing import Any
+
+
+def _load_sibling(name: str) -> ModuleType:
+    try:
+        module = __import__(f"{__package__}.{name}", fromlist=[name]) if __package__ else None
+    except ImportError:
+        module = None
+    if module is not None:
+        return module
+    cache_key = f"_fleet_commons_{name}"
+    if cache_key in sys.modules:
+        return sys.modules[cache_key]
+    path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(cache_key, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load fleet-commons sibling module {name!r}")
+    loaded = importlib.util.module_from_spec(spec)
+    sys.modules[cache_key] = loaded
+    spec.loader.exec_module(loaded)
+    return loaded
+
+
+output_attestation = _load_sibling("output_attestation")
 
 SCHEMA_NAME = "bridge_receipt.v1"
 SCHEMA_VERSIONS = (SCHEMA_NAME,)
@@ -59,6 +86,10 @@ def emit_receipt(
     wall_time_s: float,
     bytes_produced: int,
     runner: dict[str, Any],
+    receipt_emitter: str = "",
+    run_id: str = "",
+    external_tokens: int | float | None = None,
+    output_attestation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a schema-valid ``bridge_receipt.v1`` dict.
 
@@ -74,7 +105,7 @@ def emit_receipt(
     if transport not in TRANSPORTS:
         raise ValueError(f"unknown transport {transport!r}; expected one of {TRANSPORTS}")
 
-    return {
+    receipt: dict[str, Any] = {
         "schema": SCHEMA_NAME,
         "engine_id": engine_id,
         "variant": variant,
@@ -83,6 +114,15 @@ def emit_receipt(
         "bytes_produced": bytes_produced,
         "runner": dict(runner),
     }
+    if receipt_emitter:
+        receipt["receipt_emitter"] = receipt_emitter
+    if run_id:
+        receipt["run_id"] = run_id
+    if external_tokens is not None:
+        receipt["external_tokens"] = external_tokens
+    if output_attestation is not None:
+        receipt["output_attestation"] = dict(output_attestation)
+    return receipt
 
 
 def validate_receipt(receipt: dict[str, Any]) -> list[str]:
@@ -136,5 +176,28 @@ def validate_receipt(receipt: dict[str, Any]) -> list[str]:
                 f"runner section looks like {other_transport!r} shape but transport is "
                 f"{transport!r}: found {sorted(present_other_only)}, missing {missing}"
             )
+
+    receipt_emitter = receipt.get("receipt_emitter")
+    if receipt_emitter is not None and (
+        not isinstance(receipt_emitter, str) or not receipt_emitter.strip()
+    ):
+        errors.append("receipt_emitter must be a non-empty string when present")
+
+    run_id = receipt.get("run_id")
+    if run_id is not None and (not isinstance(run_id, str) or not run_id.strip()):
+        errors.append("run_id must be a non-empty string when present")
+
+    external_tokens = receipt.get("external_tokens")
+    if external_tokens is not None and (
+        isinstance(external_tokens, bool) or not isinstance(external_tokens, (int, float))
+    ):
+        errors.append("external_tokens must be numeric when present")
+
+    attestation = receipt.get("output_attestation")
+    if attestation is not None:
+        if not isinstance(attestation, dict):
+            errors.append(f"output_attestation must be a dict, got {type(attestation).__name__}")
+        else:
+            errors.extend(output_attestation.validate_attestation(attestation))
 
     return errors

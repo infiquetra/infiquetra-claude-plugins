@@ -76,3 +76,19 @@ team-execution dispatch (R10/R12) is **deferred** — it needs an external-engin
 slot that does not exist yet (`plugins/team-execution/skills/team-execution/SKILL.md`). Because external
 engines are never gatekeepers (R13/R15), they are off team-execution's critical path, so this deferral
 costs nothing today.
+
+## Proof-integrity attestation (#388)
+
+Every registered receipt emitter (`codex-bridge`, `agy-delegate`, `http-bridge`) must satisfy
+`plugins/saga/references/bridge-signatures.json` before a successful dispatch can become
+`ran-as-requested`. A schema-valid `bridge_receipt.v1` is necessary but no longer sufficient:
+the receipt must carry `receipt_emitter`, `run_id`, nonzero `external_tokens`, and an
+`output_attestation.v1` record. When the attestation binds the manifest evidence text
+(`artifact: evidence`), dispatch checks the SHA-256 and byte count against the evidence it is
+about to manifest.
+
+Missing signature fields, empty required output, hash mismatch, zero external tokens, and
+bridge-run liveness contradictions are classified as `proof-integrity` instead of
+`ran-as-requested`. This does not grant engines verifier authority; it only prevents untrusted
+or unproven bridge output from satisfying a gate. Claude remains verifier-of-record, and existing
+`substituted-engine` and `delegation-integrity` dispositions keep their higher-precedence meanings.

@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fleet_commons_shim  # noqa: E402
 
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
+_output_attestation = fleet_commons_shim.load("output_attestation")
 
 SCHEMA = "codex.delegation.v1"
 
@@ -271,7 +272,12 @@ class SupervisedRunResult:
 
 
 def _supervised_receipt(
-    run_result: SupervisedRunResult, *, envelope: Envelope
+    run_result: SupervisedRunResult,
+    *,
+    envelope: Envelope,
+    run_id: str,
+    external_tokens: int,
+    output_attestation: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Build a ``bridge_receipt.v1`` for a run that actually launched ``codex``.
 
@@ -294,7 +300,27 @@ def _supervised_receipt(
             "argv": run_result.argv,
             "exit_code": run_result.return_code,
         },
+        receipt_emitter="codex-bridge",
+        run_id=run_id,
+        external_tokens=external_tokens,
+        output_attestation=output_attestation,
     )
+
+
+def _codex_external_tokens(
+    token_usage: dict[str, int | None], _run_result: SupervisedRunResult
+) -> int:
+    total = token_usage.get("total_tokens")
+    if isinstance(total, int) and not isinstance(total, bool) and total > 0:
+        return total
+    return 0
+
+
+def _read_attestation_artifact(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 @dataclass(frozen=True)
@@ -1394,7 +1420,16 @@ def create_supervised_bundle(
         }
         _write_json(bundle_path / "command.json", command_payload)
 
-        receipt = _supervised_receipt(run_result, envelope=envelope)
+        receipt = _supervised_receipt(
+            run_result,
+            envelope=envelope,
+            run_id=resolved_run_id,
+            external_tokens=_codex_external_tokens(token_usage, run_result),
+            output_attestation=_output_attestation.emit_attestation(
+                artifact="last-message.txt",
+                content=_read_attestation_artifact(last_message_path),
+            ),
+        )
         if receipt is not None:
             _write_json(bundle_path / "bridge-receipt.json", receipt)
 

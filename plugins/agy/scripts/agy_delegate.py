@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fleet_commons_shim  # noqa: E402
 
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
+_output_attestation = fleet_commons_shim.load("output_attestation")
 
 SCHEMA = "agy.delegation.v1"
 
@@ -1395,7 +1396,12 @@ def _decode_timeout_output(value: bytes | str | None) -> str:
 
 
 def _supervised_receipt(
-    run_result: SupervisedRunResult, *, envelope: Envelope
+    run_result: SupervisedRunResult,
+    *,
+    envelope: Envelope,
+    run_id: str,
+    external_tokens: int,
+    output_attestation: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Build a ``bridge_receipt.v1`` for a run that actually launched ``agy``.
 
@@ -1417,7 +1423,15 @@ def _supervised_receipt(
             "argv": run_result.argv,
             "exit_code": run_result.return_code,
         },
+        receipt_emitter="agy-delegate",
+        run_id=run_id,
+        external_tokens=external_tokens,
+        output_attestation=output_attestation,
     )
+
+
+def _agy_external_tokens(run_result: SupervisedRunResult) -> int:
+    return max(run_result.stdout_bytes + run_result.stderr_bytes, 0)
 
 
 _PASSING_STATUSES = frozenset({"success", "patch_ready", "applied"})
@@ -1474,7 +1488,16 @@ def _result_payload(
         "checks_path": str(checks_path),
         "summary": summary,
     }
-    receipt = _supervised_receipt(run_result, envelope=envelope)
+    receipt = _supervised_receipt(
+        run_result,
+        envelope=envelope,
+        run_id=run_id,
+        external_tokens=_agy_external_tokens(run_result),
+        output_attestation=_output_attestation.emit_attestation(
+            artifact="summary",
+            content=summary,
+        ),
+    )
     if receipt is not None:
         payload["receipt"] = receipt
     if run_result.error is not None:

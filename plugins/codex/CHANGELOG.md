@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-09
+
+### Added - output-attested bridge receipts (#388)
+
+- `plugins/codex/scripts/codex_delegate.py`: bridge receipts now include `receipt_emitter`,
+  `run_id`, parsed or byte-derived `external_tokens`, and `output_attestation.v1` over
+  `last-message.txt` so Saga can reject zero-token or unattested Codex output as
+  `proof-integrity`.
+
 ## [0.1.0] - 2026-07-06
 
 ### Added

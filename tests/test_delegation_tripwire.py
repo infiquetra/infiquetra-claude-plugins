@@ -508,14 +508,23 @@ def _resolution(engine_id: str = "agy", variant: str = "gemini-3.1-pro-high") ->
 
 
 def _valid_agy_receipt() -> dict[str, Any]:
+    output = "external finding"
+    output_attestation = _D.fleet_commons_shim.load("output_attestation")
     return dict(
         _D._bridge_receipt.emit_receipt(
             engine_id="agy",
             variant="gemini-3.1-pro-high",
             transport="cli",
             wall_time_s=0.5,
-            bytes_produced=17,
+            bytes_produced=len(output),
             runner={"pid": 4242, "argv": ["agy", "run"], "exit_code": 0},
+            receipt_emitter="agy-delegate",
+            run_id="agy-run-1",
+            external_tokens=17,
+            output_attestation=output_attestation.emit_attestation(
+                artifact="evidence",
+                content=output,
+            ),
         )
     )
 
@@ -706,11 +715,18 @@ class TestTwoSignalAcceptanceMatrix:
         evidence = _D.dispatch(_resolution(), runner=_ok_runner_with_receipt, model="opus")
         assert isinstance(evidence, _D.AdvisoryEvidence)
         assert evidence.halt is None
-        assert evidence.provenance == {
+        assert {
+            key: evidence.provenance[key]
+            for key in ("engine", "variant", "status", "bridge_run_key")
+        } == {
             "engine": "agy",
             "variant": "gemini-3.1-pro-high",
             "status": "ok",
+            "bridge_run_key": "agy-run-1",
         }
+        assert "observer_corroborated" not in evidence.provenance
+        assert "integrity" not in evidence.provenance
+        assert "note" not in evidence.provenance
 
     def test_delegation_integrity_disposition_round_trips(self, tmp_path: Path) -> None:
         _write_bundle(tmp_path, "run-rt", payload={"status": "ok", "agy_launched": False})

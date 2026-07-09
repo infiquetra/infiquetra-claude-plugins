@@ -25,6 +25,29 @@
 
 ---
 
+## 2026-07-09
+
+### Release-surface bumps must update metadata and drift-guard expectations {#release-guard-version-expectation-drift}
+
+**Context.** PR #547 bumped `team-execution` to `2.14.2` after release-surface parity caught
+external-worker proof-doc changes, but the full CI suite still failed on
+`tests/test_team_execution_plugin.py::test_team_execution_metadata_is_v2_and_marketplace_matches`.
+**Evidence.** GitHub Actions run `29043436988` failed on the hardcoded
+`plugin_json["version"] == "2.14.1"` expectation while the PR head and fetched merge ref both had
+`plugins/team-execution/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` at
+`2.14.2`.
+**Mechanism.** The source metadata and marketplace were in parity; the contract test's expected
+plugin version was the stale release surface. Local parity scripts cannot catch a stale test oracle
+when the metadata itself is already synchronized.
+**Fix.** PR #547 updates the drift-guard expectation in `tests/test_team_execution_plugin.py` to
+`2.14.2`.
+**Validation.** `uv run pytest tests/test_team_execution_plugin.py -v`,
+`uv run python scripts/sync_marketplace.py --check`,
+`uv run python scripts/check_release_surface_parity.py`,
+`uv run ruff check tests/test_team_execution_plugin.py`, and `git diff --check` pass locally.
+**Generalizable rule.** A plugin release bump has three synchronized version surfaces: plugin
+metadata, marketplace metadata, and any hardcoded drift-guard expectation.
+
 ## 2026-07-08
 
 ### Unit workflow agents need schema at the call boundary, not only prose return contracts {#unit-agent-schema-boundary}

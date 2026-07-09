@@ -229,3 +229,30 @@ def test_rollup_aggregates_numeric_fields_no_committed_summary(tmp_path: Path) -
     assert roll["wall_seconds"]["sum"] == 6.0
     # derive-on-read: nothing is persisted as a summary — the ledger file holds only the 2 facts.
     assert len(ledger.path.read_text().splitlines()) == 2
+
+
+def test_rollup_includes_engine_net_savings_fields(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "engine",
+            subplot_id="s1",
+            at="2026-07-09T00:00:00Z",
+            engine="codex",
+            cost=0.004,
+            engine_tokens_avoided=1000,
+            chaperone_tokens_spent=200,
+            net_savings_tokens=800,
+            net_savings_status="positive",
+            external_cost_usd=0.004,
+        ),
+    )
+
+    roll = RL.rollup(ledger, "engine")
+
+    assert roll["engine_tokens_avoided"]["sum"] == 1000.0
+    assert roll["chaperone_tokens_spent"]["sum"] == 200.0
+    assert roll["net_savings_tokens"]["sum"] == 800.0
+    assert roll["external_cost_usd"]["sum"] == 0.004
+    assert "net_savings_status" not in roll

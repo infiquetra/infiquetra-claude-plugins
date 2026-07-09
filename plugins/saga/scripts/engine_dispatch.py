@@ -545,12 +545,15 @@ def _record_advisory_facts(
             "engine",
             subplot_id=subplot_id,
             at=at,
-            engine=evidence.engine_id,
-            variant=evidence.variant,
-            status=str(evidence.provenance.get("status", "")),
-            cost=_num(result.get("cost")),
-            latency_seconds=_num(result.get("latency_seconds")),
-            tokens=_num(result.get("tokens")),
+            **{
+                "engine": evidence.engine_id,
+                "variant": evidence.variant,
+                "status": str(evidence.provenance.get("status", "")),
+                "cost": _num(result.get("cost")),
+                "latency_seconds": _num(result.get("latency_seconds")),
+                "tokens": _num(result.get("tokens")),
+                **_economics_fact_fields(evidence),
+            },
         ),
     )
     if isinstance(invocation, dict) and invocation.get("schema") == "agy.delegation.v1":
@@ -564,6 +567,33 @@ def _record_advisory_facts(
                 engine=evidence.engine_id,
             ),
         )
+
+
+def _economics_fact_fields(evidence: AdvisoryEvidence) -> dict[str, Any]:
+    economics = evidence.provenance.get("economics")
+    if not isinstance(economics, dict):
+        return {}
+    net_savings = economics.get("net_savings")
+    if not isinstance(net_savings, dict):
+        return {}
+    fields: dict[str, Any] = {}
+    for name in (
+        "engine_tokens_avoided",
+        "chaperone_tokens_spent",
+        "net_savings_tokens",
+        "net_savings_status",
+        "external_cost_usd",
+    ):
+        if name in net_savings:
+            fields[name] = net_savings[name]
+    return fields
+
+
+def _manifest_economics_record(evidence: AdvisoryEvidence) -> pm.EconomicsRecord | None:
+    fields = _economics_fact_fields(evidence)
+    if not fields:
+        return None
+    return pm.EconomicsRecord.from_dict(fields)
 
 
 def _substitution_note(evidence: AdvisoryEvidence) -> str | None:
@@ -645,6 +675,7 @@ def build_dispatch_manifest(
     # fallback naming the disposition rather than an empty note.
     if disposition is not pm.Disposition.RAN_AS_REQUESTED and not str(note).strip():
         note = f"{disposition.value}: reason unspecified"
+    economics = _manifest_economics_record(evidence)
     return pm.Manifest(
         execution_id=execution_id,
         saga_ref=saga_ref,
@@ -659,6 +690,7 @@ def build_dispatch_manifest(
         disposition_note=str(note),
         created_at=created_at,
         claim_provenance=claim_provenance,
+        economics=economics,
     )
 
 
@@ -733,6 +765,7 @@ def adjudicate_manifest(
         created_at=manifest.created_at,
         output_completeness=manifest.output_completeness,
         claim_provenance=pm.ClaimProvenance(claims=tuple(updated_claims)),
+        economics=manifest.economics,
     )
     manifest_store.write_manifest(store, execution_id, adjudicated.to_dict())
     return adjudicated

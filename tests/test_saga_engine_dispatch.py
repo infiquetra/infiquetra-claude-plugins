@@ -222,6 +222,55 @@ def test_metered_offload_economics_proceed_invokes_runner_and_stamps_provenance(
     assert evidence.provenance["economics"]["net_savings"]["net_savings_tokens"] == 800
 
 
+def test_dispatch_manifest_records_net_savings_economics() -> None:
+    evidence = D.dispatch(
+        _economics_resolution(),
+        runner=_ok_runner,
+        economics={
+            "claude_inline_tokens_estimate": 1000,
+            "chaperone_tokens_estimate": 200,
+        },
+    )
+
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id="exec-economics",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+
+    assert manifest.economics is not None
+    assert manifest.economics.engine_tokens_avoided == 1000
+    assert manifest.economics.chaperone_tokens_spent == 200
+    assert manifest.economics.net_savings_tokens == 800
+    assert manifest.economics.net_savings_status == "positive"
+    assert manifest.economics.external_cost_usd == 0.004
+    assert PM.Manifest.from_dict(manifest.to_dict()).economics == manifest.economics
+
+
+def test_dispatch_engine_fact_records_net_savings_economics(tmp_path: Path) -> None:
+    ledger = RL.RunLedger(path=tmp_path / "run-facts.jsonl")
+
+    D.dispatch(
+        _economics_resolution(),
+        runner=_metric_runner(cost=0.004, tokens=200),
+        ledger=ledger,
+        subplot_id="s1",
+        at="2026-07-09T00:00:00Z",
+        economics={
+            "claude_inline_tokens_estimate": 1000,
+            "chaperone_tokens_estimate": 200,
+        },
+    )
+
+    fact = RL.read_facts(ledger)[0]
+    assert fact["engine_tokens_avoided"] == 1000
+    assert fact["chaperone_tokens_spent"] == 200
+    assert fact["net_savings_tokens"] == 800
+    assert fact["net_savings_status"] == "positive"
+    assert fact["external_cost_usd"] == 0.004
+
+
 def test_break_even_economics_halt_does_not_invoke_runner() -> None:
     called = False
 

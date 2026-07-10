@@ -242,6 +242,32 @@ Checks:
 - `git diff --check`
   - passed
 
+## Team Execution Review Cycle 2
+
+The same five reviewers re-read the epoch-2 remediation delta. Consensus remained open on typed
+per-finding evidence, non-mutating torn-tail reads, rejected-note custody, and exact panel binding.
+
+### Core remediation
+
+- Added immutable ordered `SourceFinding` records with content-derived IDs and digests.
+- Required typed runner finding envelopes for `second-opinion` and `divergence`; retained the
+  explicitly opaque singleton form only for `offload`.
+- Proved a two-finding response cannot pass until both findings are explicitly adjudicated.
+- Made ordinary ledger snapshots non-healing and byte-preserving; torn-tail repair now occurs only
+  under the locked append path.
+- Capped rejected summaries at 1024 UTF-8 bytes, derived all rejection bindings from supplied
+  evidence, removed the default intent for evidence-less construction, and protected manifest files
+  with mode `0600`.
+
+Checks:
+
+- Focused reconciliation, dispatch, manifest, ledger, retro, and legacy gate matrix
+  - 293 passed
+- Targeted Ruff and scoped mypy
+  - passed
+- `git diff --check`
+  - passed
+
 ## Next Step
 
-Re-engage only the five failed reviewers against the remediated current SHA.
+Close ordered panel foreman binding, then re-engage only the five failed reviewers.

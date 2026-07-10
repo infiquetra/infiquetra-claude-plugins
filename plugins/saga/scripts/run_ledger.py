@@ -190,9 +190,9 @@ def _snapshot_unlocked(ledger: RunLedger, *, heal: bool) -> LedgerSnapshot:
 
 
 def read_snapshot(ledger: RunLedger) -> LedgerSnapshot:
-    """Return one healed, verified, lock-consistent in-memory snapshot."""
+    """Return one strictly non-mutating, verified, lock-consistent in-memory snapshot."""
     with _locked(ledger):
-        return _snapshot_unlocked(ledger, heal=True)
+        return _snapshot_unlocked(ledger, heal=False)
 
 
 def append_fact_atomic(

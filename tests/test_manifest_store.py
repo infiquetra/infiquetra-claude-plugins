@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import stat
 import subprocess
 import sys
 from collections.abc import Callable
@@ -78,6 +80,7 @@ def test_manifest_store_write_read_round_trip(tmp_path: Path) -> None:
     path = M.write_manifest(store, "exec-1", manifest)
 
     assert path.exists()
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert list(tmp_path.rglob("*.tmp")) == []
     assert M.read_manifest(store, "exec-1") == manifest
 

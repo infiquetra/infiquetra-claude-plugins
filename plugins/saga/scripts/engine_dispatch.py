@@ -64,6 +64,7 @@ class AdvisoryEvidence:
     intent: str = "offload"
     evidence_digest: str = ""
     source_finding_ids: tuple[str, ...] = ()
+    source_findings: tuple[reconcile.SourceFinding, ...] = ()
     verified_by_claude: bool = False
     role_kind: str = "worker"
     halt: str | None = None
@@ -81,11 +82,23 @@ class AdvisoryEvidence:
         digest = reconcile.evidence_digest(self.evidence)
         if self.evidence_digest and self.evidence_digest != digest:
             raise DispatchError("advisory evidence digest disagrees with its immutable content")
-        expected_ids = reconcile.source_finding_ids_for_evidence(self.evidence)
+        if not isinstance(self.source_findings, tuple) or not all(
+            isinstance(finding, reconcile.SourceFinding) for finding in self.source_findings
+        ):
+            raise DispatchError("advisory source findings must be an immutable typed collection")
+        findings = self.source_findings
+        if not findings and self.evidence:
+            if self.intent != "offload":
+                raise DispatchError(
+                    f"non-empty {self.intent} evidence requires a typed runner findings envelope"
+                )
+            findings = (reconcile.SourceFinding.from_content(self.evidence, 0, opaque=True),)
+        expected_ids = tuple(finding.source_finding_id for finding in findings)
         if self.source_finding_ids and self.source_finding_ids != expected_ids:
             raise DispatchError("advisory source-finding identities disagree with its content")
         object.__setattr__(self, "evidence_digest", digest)
         object.__setattr__(self, "source_finding_ids", expected_ids)
+        object.__setattr__(self, "source_findings", findings)
 
 
 @dataclass(frozen=True)
@@ -334,6 +347,14 @@ def dispatch(
     _reject_gatekeeper_keys(result)
     status = _string_result(result.get("status"), default="malformed")
     output = _string_result(result.get("output"), default="")
+    try:
+        source_findings = (
+            reconcile.parse_source_findings(result["findings"])
+            if "findings" in result
+            else ()
+        )
+    except reconcile.ReconciliationError as exc:
+        raise DispatchError(f"runner findings envelope is malformed: {exc}") from exc
     provenance: dict[str, Any] = {
         "engine": resolution.engine_id,
         "variant": resolution.variant,
@@ -431,6 +452,7 @@ def dispatch(
             provenance=provenance,
             execution_id=execution_id,
             intent=intent,
+            source_findings=source_findings,
             runner_receipt=runner_receipt,
         )
     elif status not in FAILURE_STATUSES:
@@ -1065,6 +1087,7 @@ def reject_offload(evidence: AdvisoryEvidence, rejection_note: str) -> AdvisoryE
         intent=evidence.intent,
         evidence_digest=evidence.evidence_digest,
         source_finding_ids=evidence.source_finding_ids,
+        source_findings=evidence.source_findings,
         verified_by_claude=evidence.verified_by_claude,
         role_kind=evidence.role_kind,
         halt=evidence.halt,
@@ -1077,17 +1100,31 @@ def rejected_offload_reconciliation(
     *,
     reconciliation_id: str,
     adjudicator_id: str,
-    intent: str = "offload",
+    intent: str | None = None,
     evidence: AdvisoryEvidence | None = None,
 ) -> reconcile.ReconciliationResult:
     """Turn a rejected-offload manifest note into typed reviewer/validator evidence."""
     if manifest.disposition is not pm.Disposition.REJECTED_OFFLOAD:
         raise DispatchError("rejected-offload reconciliation requires a rejected-offload manifest")
+    if evidence is not None:
+        if manifest.execution_id != evidence.execution_id:
+            raise DispatchError(
+                "rejected-offload manifest execution_id does not match dispatched evidence"
+            )
+        if intent is not None and intent != evidence.intent:
+            raise DispatchError("explicit rejected-offload intent disagrees with dispatched evidence")
+        execution_id = evidence.execution_id
+        resolved_intent = evidence.intent
+    else:
+        if intent is None:
+            raise DispatchError("rejected-offload reconciliation without evidence requires intent")
+        execution_id = manifest.execution_id
+        resolved_intent = intent
     try:
         return reconcile.build_rejected_offload_signal(
             reconciliation_id=reconciliation_id,
-            execution_id=manifest.execution_id,
-            intent=intent,
+            execution_id=execution_id,
+            intent=resolved_intent,
             adjudicator_id=adjudicator_id,
             rejection_note=manifest.disposition_note,
             bound_evidence_digest=evidence.evidence_digest if evidence is not None else None,

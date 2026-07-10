@@ -39,11 +39,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -74,7 +75,7 @@ def _safe_name(name: str, *, what: str = "id") -> str:
     ``_atomic_write``), translated into this store's error type.
     """
     try:
-        return outcome_store._safe_name(name, what=what)
+        return cast(str, outcome_store._safe_name(name, what=what))
     except outcome_store.OutcomeStoreError as exc:
         raise ManifestStoreError(str(exc)) from exc
 
@@ -125,6 +126,7 @@ def write_manifest(store: Store, execution_id: str, manifest: dict[str, Any]) ->
     path = store.manifest_path(execution_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     outcome_store._atomic_write(path, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    os.chmod(path, 0o600)
     return path
 
 

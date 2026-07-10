@@ -52,6 +52,8 @@ MAX_ID_BYTES = 256
 MAX_ITEMS = 256
 MAX_RATIONALE_BYTES = 4096
 MAX_RESULT_BYTES = 65536
+MAX_SOURCE_FINDING_BYTES = 1024 * 1024
+MAX_REJECTION_NOTE_BYTES = 1024
 
 
 class ReconciliationError(ValueError):
@@ -67,6 +69,56 @@ class ReconciliationStatus(StrEnum):
 class ReconciliationAction(StrEnum):
     RECONCILE = "reconcile"
     APPLY = "apply"
+
+
+@dataclass(frozen=True)
+class SourceFinding:
+    """One ordered external finding, identified only by stable content metadata."""
+
+    source_finding_id: str
+    digest: str
+
+    def __post_init__(self) -> None:
+        _require_id(self.source_finding_id, "source_finding_id")
+        _require_digest(self.digest, "source finding digest")
+        parts = self.source_finding_id.split(":")
+        if (
+            len(parts) != 3
+            or parts[0] not in {"external-finding", "opaque-artifact"}
+            or not parts[1].isdigit()
+            or parts[2] != self.digest
+        ):
+            raise ReconciliationError(
+                "source_finding_id must encode its kind, ordinal, and content digest"
+            )
+
+    @classmethod
+    def from_content(cls, content: str, index: int, *, opaque: bool = False) -> SourceFinding:
+        if not isinstance(content, str) or not content:
+            raise ReconciliationError("source finding content must be a non-empty string")
+        if len(content.encode("utf-8")) > MAX_SOURCE_FINDING_BYTES:
+            raise ReconciliationError(
+                f"source finding content exceeds {MAX_SOURCE_FINDING_BYTES} bytes"
+            )
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise ReconciliationError("source finding index must be a non-negative integer")
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        kind = "opaque-artifact" if opaque else "external-finding"
+        return cls(f"{kind}:{index}:{digest}", digest)
+
+
+def parse_source_findings(raw: Any) -> tuple[SourceFinding, ...]:
+    """Validate the runner's ordered ``findings`` envelope without retaining its prose."""
+    if not isinstance(raw, list):
+        raise ReconciliationError("runner findings must be an ordered array")
+    findings: list[SourceFinding] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, Mapping) or set(item) != {"content"}:
+            raise ReconciliationError(
+                "each runner finding must be an object containing only string content"
+            )
+        findings.append(SourceFinding.from_content(item["content"], index))
+    return tuple(findings)
 
 
 @dataclass(frozen=True)
@@ -211,8 +263,7 @@ def evidence_digest(evidence: str) -> str:
 
 
 def source_finding_ids_for_evidence(evidence: str) -> tuple[str, ...]:
-    digest = evidence_digest(evidence)
-    return (f"external-evidence:{digest}",) if evidence else ()
+    return (SourceFinding.from_content(evidence, 0, opaque=True).source_finding_id,) if evidence else ()
 
 
 def _require_digest(value: Any, field: str = "evidence_digest") -> str:
@@ -317,6 +368,9 @@ class ReconciliationResult:
             raise ReconciliationError(
                 f"reconciliation items name unknown findings: {sorted(unknown)}"
             )
+        expected_item_order = tuple(source_id for source_id in source_ids if source_id in item_ids)
+        if item_ids != expected_item_order:
+            raise ReconciliationError("reconciliation items must preserve source finding order")
         if any(item.adjudicator_id != adjudicator for item in self.items):
             raise ReconciliationError("item adjudicator_id must match the result adjudicator_id")
         if len(self._unbounded_dict_json()) > MAX_RESULT_BYTES:
@@ -485,7 +539,7 @@ def validate_panel_reconciliation(
 
 
 def normalize_rejection_note(note: Any) -> str:
-    """Return the single-line advisory note required for a rejected offload."""
+    """Return the concise single-line chaperone summary required for a rejected offload."""
     if not isinstance(note, str):
         raise ReconciliationError("rejected offload requires a string rejection note")
     normalized = " ".join(note.split())
@@ -493,6 +547,10 @@ def normalize_rejection_note(note: Any) -> str:
         raise ReconciliationError("rejected offload requires a non-empty rejection note")
     if any(ord(char) < 32 for char in normalized):
         raise ReconciliationError("rejected offload rejection note contains control characters")
+    if len(normalized.encode("utf-8")) > MAX_REJECTION_NOTE_BYTES:
+        raise ReconciliationError(
+            f"rejected offload rejection note exceeds {MAX_REJECTION_NOTE_BYTES} bytes"
+        )
     return normalized
 
 

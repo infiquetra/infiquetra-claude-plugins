@@ -210,6 +210,16 @@ def test_typed_item_and_result_deserialization_fail_loudly() -> None:
         RC.ReconciliationResult.from_dict({**payload, "items": ["bad"]})
 
 
+def test_source_finding_ids_are_content_derived_and_ordered() -> None:
+    findings = RC.parse_source_findings([{"content": "same"}, {"content": "same"}])
+    assert findings[0].digest == findings[1].digest
+    assert findings[0].source_finding_id != findings[1].source_finding_id
+    assert findings[0].source_finding_id.startswith("external-finding:0:")
+    assert findings[1].source_finding_id.startswith("external-finding:1:")
+    with pytest.raises(RC.ReconciliationError, match="encode its kind"):
+        RC.SourceFinding("forged", "0" * 64)
+
+
 def test_result_type_recipe_and_adjudicator_invariants() -> None:
     result = _result()
     with pytest.raises(RC.ReconciliationError, match="does not match intent"):
@@ -519,11 +529,13 @@ def test_retro_reader_tolerates_only_torn_trailing_line(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     RC.append_reconciliation_fact(ledger, _result(), action="reconcile", subplot_id="leaf", at="t")
     ledger.path.write_bytes(ledger.path.read_bytes() + b'{"schema":"run_fact.v1"')
+    before = ledger.path.read_bytes()
 
     proposal = RC.derive_recipe_update_proposal(ledger)
 
     assert proposal["status"] == "proposal"
     assert proposal["proposed_updates"][0]["reconciliation_count"] == 1
+    assert ledger.path.read_bytes() == before
 
 
 def test_retro_reader_refuses_invalid_reconciliation_fact(tmp_path: Path) -> None:

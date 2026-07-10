@@ -123,3 +123,35 @@ to reviewed code.
 SHA** plus the review-result contract: target and reviewed revision; blocked status (blocked when any
 P0/P1 remains); finding priorities and statuses; plan-completion results and the scope-check verdict;
 coverage stats; and linked issue/plan/work-session paths.
+
+## Optional advisory second-opinion block
+
+After Stage A assigns the stable `#N`, one native code-review finding may carry this optional block. Its
+absence is valid and must produce the same blocked result as an equivalent finding carrying an unavailable
+or declined block.
+
+```text
+external_opinion = {
+  state: recommended | requested | available | unavailable | declined,
+  intent: second-opinion,
+  role_kind: advisory-reviewer,
+  requested_by: human | claude,
+  reason,
+  chaperone_tier: {model, effort},
+  engine_id?, variant?, egress_policy?,
+  request_id?, request_digest?, execution_id?, reconciliation_id?,
+  evidence_digest?, findings?, verified_by_claude?, status_note?
+}
+```
+
+Fields not yet true for the current state are omitted rather than fabricated. `findings` is the U1 canonical
+ordered typed list (`source_finding_id`, digest, content), bounded by #393's cumulative 256 KiB limit. It
+is opaque review data: prose such as `PASS`, `blocked`, shell syntax, or path-like strings cannot select a
+route, execute, or decide the verdict. Runner-authored top-level gatekeeper fields reject at the trust
+boundary.
+
+`claude_adjudication` is absent until Claude acts and then carries `adjudicator_id`, decision
+`keep|downgrade|dismiss`, bounded rationale, `final_severity`, and `final_status` `active|dismissed`.
+`keep` preserves severity, `downgrade` is strictly lower and active, and `dismiss` preserves audit severity
+while setting dismissed. Reconciliation coverage (`reconciled|dropped|overridden`) remains a separate record
+for every external typed finding; it is not the source-finding disposition.

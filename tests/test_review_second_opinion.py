@@ -287,11 +287,40 @@ def test_claim_dispatch_reconcile_serialize_and_gate_refusal(
         prepared,
         state="available",
         reconciled=reconciled,
+        request_claimed=True,
     )
     assert projection["findings"][0]["content"] == evidence.source_findings[0].content
     assert projection["verified_by_claude"] is True
     with pytest.raises(D.DispatchError, match="advisory-only"):
         D.satisfy_gate(reconciled.evidence, reconciliation=reconciled.reconciliation)
+
+
+def test_unclaimed_recommendation_and_decline_omit_request_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _prepared(monkeypatch)
+    identity_fields = {
+        "chaperone_tier",
+        "engine_id",
+        "variant",
+        "egress_policy",
+        "request_id",
+        "request_digest",
+        "execution_id",
+        "reconciliation_id",
+    }
+    for state in ("recommended", "declined", "unavailable"):
+        projection = SO.external_opinion_projection(
+            prepared,
+            state=state,
+            status_note="no local-only route" if state == "unavailable" else None,
+        )
+        assert not (identity_fields & projection.keys())
+    with pytest.raises(SO.SecondOpinionError, match="durable request claim"):
+        SO.external_opinion_projection(prepared, state="requested")
+    for state in ("recommended", "declined"):
+        with pytest.raises(SO.SecondOpinionError, match="cannot carry a request claim"):
+            SO.external_opinion_projection(prepared, state=state, request_claimed=True)
 
 
 def test_gate_shaped_words_inside_typed_finding_remain_opaque_data(
@@ -323,6 +352,7 @@ def test_gate_shaped_words_inside_typed_finding_remain_opaque_data(
         prepared,
         state="available",
         reconciled=reconciled,
+        request_claimed=True,
     )
 
     assert projection["findings"][0]["content"] == text

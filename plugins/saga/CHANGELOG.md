@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.75.22] - 2026-07-10
+
+### Added - operator-confirmed, advisory-only second-opinion triggers (#394)
+
+- Added one typed Saga coordinator for bounded single-finding external review. It uses the existing
+  resolver/dispatch/reconciliation seams with `intent=second-opinion` and
+  `role_kind=advisory-reviewer`; Codex and agy wrappers retain reviewer read-only/no-write posture, and
+  external content cannot satisfy a gate.
+- Added a durable pre-dispatch claim, conservative credential/customer/tenant egress classification,
+  malformed-output degradation, and the ordered `reconcile` -> enriched artifact -> `available` -> `apply`
+  recovery path. Metadata-only state stores fixed failure categories, never runner prose.
+- Added `/work`'s bounded atomic `saga.work-second-opinion.v1` sidecar with target-specific three-fix
+  debounce, reset/expiry semantics, and no replay after an unavailable outcome. `/code-review` and
+  `/doc-review` now define native stable-finding point-outs and share the closed optional advisory projection
+  while preserving Claude-owned final status/severity and report-only no-dispatch behavior.
+
 ## [0.75.21] - 2026-07-10
 
 ### Fixed - pull-cord schema still 400'd in 0.75.19; the top-level `oneOf` had to go entirely (#364)

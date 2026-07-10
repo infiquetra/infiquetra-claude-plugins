@@ -46,6 +46,20 @@ engine derives `next_round = max(rounds_seen) + 1` at save time (saga-spec §6.1
 `next_round` directly**; it is a derived field. Each round re-enters Phases 2-5 with the incremented round
 and re-runs the test + review gates from scratch (re-verify, don't trust the prior round's evidence).
 
+## Repeated-failure second-opinion sidecar
+
+When a plan enables the `/work` repeated-failure trigger, its
+`saga.work-second-opinion.v1` sidecar is part of the current work-session pair, not the Saga tick and not a
+PR-loop counter. A new work round uses a new sidecar round/epoch; never carry an old offer key across the
+round bump. The sidecar's `attempt_id` represents one applied fix and its following test run, so CI reruns
+or repeated local test commands must reuse the same ID and cannot advance a streak.
+
+On resume, load and validate the sidecar before another fix or dispatch. An existing accepted/requested
+identity is a replay guard, not permission to rerun the wrapper: recover a missing raw artifact as visible
+unavailable, or, when the enriched artifact is durable, complete only its missing `available`/`apply`
+transition. A declined or unattended offer remains per-offer evidence and never becomes a stored global
+preference.
+
 ## Between-rounds tier escalation proposal (#364, gated)
 
 Before re-executing round N+1 after a **failure row** (CHANGES_REQUESTED, red checks, a refuted

@@ -59,6 +59,11 @@ single-finding dispatch in both review surfaces, and a durable Claude re-adjudic
 
 **Plan.** `docs/plans/2026-07-10-issue-394-second-opinion-triggers-plan.md`.
 
+**Status.** Shipped in Saga 0.75.22. The implementation adds the bounded typed coordinator, atomic
+requested/available claim flow, deterministic sensitive-content classification, `/work` sidecar debounce,
+and native code-review/doc-review point-out contracts. External output remains advisory and opaque; only
+Claude's final finding state can affect a gate.
+
 **Revisit when.** A later objective wants automatic dispatch, cross-stage shared finding-schema
 unification, or aggregate usefulness measurement. Each is separately scoped and must preserve the
 binding [external engines are never gatekeepers](#external-engines-never-gatekeepers) rule.

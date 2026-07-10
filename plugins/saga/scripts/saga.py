@@ -584,13 +584,23 @@ def _materialize(value: ListOrAbsent) -> list[Any]:
     return [] if isinstance(value, _Absent) else list(value)
 
 
-def _merge(prior: Saga | None, incoming: Saga, now: datetime) -> Saga:
+def _merge(
+    prior: Saga | None,
+    incoming: Saga,
+    now: datetime,
+    explicit_fields: frozenset[str] = frozenset(),
+) -> Saga:
     """Full-snapshot merge: lists in ``incoming`` REPLACE prior; ABSENT carries forward.
 
     Scalar fields left at their dataclass default carry forward from the prior
-    tick. List fields never union: an incoming populated list replaces, ``[]``
-    clears, and the ``ABSENT`` sentinel carries the prior tick's list forward.
-    The persisted result always holds concrete lists (never ``ABSENT``).
+    tick — UNLESS named in ``explicit_fields``, in which case the incoming value
+    wins even when it equals the default. Default-equality alone cannot tell an
+    omitted flag from an operator explicitly re-asserting the default value
+    (e.g. ``--status active`` reactivating a paused saga), so the CLI passes the
+    set of flags that were actually provided. List fields never union: an
+    incoming populated list replaces, ``[]`` clears, and the ``ABSENT`` sentinel
+    carries the prior tick's list forward. The persisted result always holds
+    concrete lists (never ``ABSENT``).
     """
     created = prior.created_at if prior and prior.created_at else (incoming.created_at or "")
     if not created:
@@ -617,8 +627,10 @@ def _merge(prior: Saga | None, incoming: Saga, now: datetime) -> Saga:
         if prior is None:
             data[name] = inc_value
             continue
-        # Scalar carry-forward: if incoming left the default, inherit prior.
-        if inc_value == defaults.get(name):
+        # Scalar carry-forward: if incoming left the default, inherit prior —
+        # unless the caller marked the field explicit (a provided value that
+        # happens to equal the default must win, not be read as "omitted").
+        if name not in explicit_fields and inc_value == defaults.get(name):
             data[name] = getattr(prior, name)
         else:
             data[name] = inc_value
@@ -738,6 +750,7 @@ def save(
     *,
     now: datetime | None = None,
     runner: Callable[..., Any] = subprocess.run,
+    explicit_fields: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Persist a new immutable tick + refresh the derived index.
 
@@ -745,10 +758,13 @@ def save(
     carry-forward), captures git state (guarded), writes a new immutable
     ``sagas/<saga_id>/<YYYYMMDD-HHMMSS>.md`` (``-N`` suffix on same-second
     collision), and atomically rewrites ``state.json`` via ``update_index``.
+    Scalar fields named in ``explicit_fields`` bypass the default-equality
+    carry-forward in ``_merge`` (the caller vouches they were provided, not
+    merely left at their default).
     """
     moment = now or _utc_now()
     prior = restore(root, saga.saga_id)
-    merged = _merge(prior, saga, moment)
+    merged = _merge(prior, saga, moment, explicit_fields)
 
     git = current_git_state(root, runner=runner)
     # ``branch`` refreshes from live git on EVERY save (issue #480), not just the first, so a saga
@@ -1301,8 +1317,31 @@ def _split_int_list(value: str | None) -> ListOrAbsent:
     return [int(item) for item in parsed]
 
 
-def _build_save_saga(args: argparse.Namespace) -> Saga:
+# Scalar save flags whose meaningful value-space INCLUDES the dataclass default.
+# Each argparse default is None so an omitted flag (carry the prior tick's value
+# forward in _merge) stays distinguishable from an explicit value that happens to
+# equal the default — e.g. ``--status active`` reactivating a paused saga, which
+# a default of "active" silently swallowed (reproduced 2026-07-09, issue-157).
+# Maps flag dest -> the dataclass default substituted when the flag is omitted.
+_SAVE_SCALAR_DEFAULTS: dict[str, Any] = {
+    "lifecycle_phase": "ideation",
+    "phase_status": "pending",
+    "status": "active",
+    "destination": "plan-only",
+    "phase": 0,
+    "round": 0,
+    "progress_pct": 0,
+}
+
+
+def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
+    """Build the incoming tick + the set of scalar fields the operator explicitly set."""
     saga_id = args.saga_id or derive_saga_id(args.kind, args.id)
+    explicit = {name for name in _SAVE_SCALAR_DEFAULTS if getattr(args, name) is not None}
+    scalars = {
+        name: default if getattr(args, name) is None else getattr(args, name)
+        for name, default in _SAVE_SCALAR_DEFAULTS.items()
+    }
     # operator_choice = the AUTHORITATIVE operator pick; mode = the EFFECTIVE backend.
     # --orchestration-mode defaults to None (NOT "inline") so a progress tick that passes
     # NO orchestration signal leaves BOTH mode and operator_choice at their dataclass
@@ -1318,13 +1357,19 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
     orchestration_operator_choice = args.orchestration_operator_choice or (
         args.orchestration_mode if mode_explicit else ""
     )
+    if mode_explicit:
+        # An explicit mode wins in _merge even when it equals the "inline" dataclass
+        # default: re-asserting inline over a richer prior tier is a real operator
+        # action, and without this the carried-forward prior mode diverges from the
+        # freshly stamped operator_choice and trips the provenance guard.
+        explicit.add("orchestration_mode")
     return Saga(
         saga_id=saga_id,
         kind=args.kind,
         id=str(args.id),
-        lifecycle_phase=args.lifecycle_phase,
-        phase_status=args.phase_status,
-        status=args.status,
+        lifecycle_phase=scalars["lifecycle_phase"],
+        phase_status=scalars["phase_status"],
+        status=scalars["status"],
         next_step=args.next_step,
         orchestration_mode=orchestration_mode,
         orchestration_ref=args.orchestration_ref,
@@ -1332,10 +1377,10 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         orchestration_operator_choice=orchestration_operator_choice,
         orchestration_downgrade=args.orchestration_downgrade,
         issue_ref=args.issue_ref,
-        destination=args.destination,
-        round=args.round or 0,
-        phase=args.phase,
-        progress_pct=args.progress_pct,
+        destination=scalars["destination"],
+        round=scalars["round"],
+        phase=scalars["phase"],
+        progress_pct=scalars["progress_pct"],
         plan_path=args.plan_path,
         work_session_paths=_split_list(args.work_session_paths),
         review_paths=_split_list(args.review_paths),
@@ -1358,7 +1403,7 @@ def _build_save_saga(args: argparse.Namespace) -> Saga:
         decisions=args.decisions,
         remaining=args.remaining,
         notes=args.notes,
-    )
+    ), frozenset(explicit)
 
 
 def _add_save_parser(sub: Any) -> None:
@@ -1366,15 +1411,19 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--saga-id", default="", help="Override derived saga id")
     p.add_argument("--kind", choices=["issue", "task"], default="issue")
     p.add_argument("--id", required=True, help="Issue number or task slug")
-    p.add_argument("--lifecycle-phase", choices=list(LIFECYCLE_PHASES), default="ideation")
-    p.add_argument("--status", choices=list(STATUSES), default="active", help="thread disposition")
+    # Scalar state flags default to None (NOT their dataclass defaults) so an omitted
+    # flag carries the prior tick's value forward while an EXPLICIT value equal to the
+    # default (e.g. --status active on a paused saga) still wins in _merge. Omission
+    # resolves to the _SAVE_SCALAR_DEFAULTS value in _build_save_saga for a new saga.
+    p.add_argument("--lifecycle-phase", choices=list(LIFECYCLE_PHASES), default=None)
+    p.add_argument("--status", choices=list(STATUSES), default=None, help="thread disposition")
     p.add_argument(
-        "--phase-status", choices=list(PHASE_STATUSES), default="pending", help="phase completion"
+        "--phase-status", choices=list(PHASE_STATUSES), default=None, help="phase completion"
     )
-    p.add_argument("--phase", type=int, default=0)
-    p.add_argument("--round", type=int, default=0)
-    p.add_argument("--progress-pct", type=int, default=0)
-    p.add_argument("--destination", choices=list(DESTINATIONS), default="plan-only")
+    p.add_argument("--phase", type=int, default=None)
+    p.add_argument("--round", type=int, default=None)
+    p.add_argument("--progress-pct", type=int, default=None)
+    p.add_argument("--destination", choices=list(DESTINATIONS), default=None)
     # default=None (not "inline") so a save with NO --orchestration-mode leaves the mode at
     # its dataclass default and carries the prior tick's mode/operator_choice forward (see
     # _build_save_saga); only an explicit flag stamps a new orchestration decision.
@@ -1482,7 +1531,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "save":
         try:
-            result = save(root, _build_save_saga(args))
+            incoming, explicit_fields = _build_save_saga(args)
+            result = save(root, incoming, explicit_fields=explicit_fields)
         except SagaSaveError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2

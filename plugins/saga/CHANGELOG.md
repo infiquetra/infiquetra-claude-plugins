@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.75.18] - 2026-07-10
+
+### Fixed - explicit save flags equal to their defaults were swallowed by carry-forward
+
+- `saga.py save --status active` on a `paused` saga now actually reactivates it. The argparse
+  default for `--status` was `"active"`, and `_merge`'s scalar carry-forward treats an incoming
+  value equal to the dataclass default as "not provided", so an explicit `--status active` was
+  indistinguishable from an omitted flag and the prior `paused` carried forward (reproduced
+  2026-07-09 in team-norns on saga issue-157: two consecutive reactivation saves both persisted
+  `paused`).
+- Same-class fixes for every scalar save flag whose meaningful value-space includes its dataclass
+  default: `--lifecycle-phase ideation`, `--phase-status pending`, `--destination plan-only`,
+  `--phase 0`, `--round 0`, `--progress-pct 0`, and `--orchestration-mode inline` (which
+  previously manufactured a mode/operator-choice divergence the save-time provenance guard
+  rejected). All now argparse-default to `None`; `_build_save_saga` resolves omissions to the
+  dataclass default and reports the explicitly provided fields, and `_merge`/`save()` accept an
+  `explicit_fields` set that bypasses default-equality carry-forward for those fields. Omitted
+  flags carry forward exactly as before; programmatic `save()` callers are unaffected.
+
 ## [0.75.17] - 2026-07-09
 
 ### Added - typed external-engine reconciliation (#393)

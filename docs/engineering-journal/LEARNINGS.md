@@ -25,6 +25,41 @@
 
 ---
 
+## 2026-07-10
+
+### Default-equality carry-forward swallows explicit values that equal the default {#save-explicit-vs-default-ambiguity}
+
+**Context.** `saga.py save` merges each tick with the prior one: scalar fields "left at their
+dataclass default" carry the prior tick's value forward so a progress tick doesn't have to restate
+everything. Explicitness was inferred by comparing the incoming value to the dataclass default.
+**Evidence.** Reproduced 2026-07-09 in team-norns on saga issue-157: two consecutive
+`save --kind issue --id 157 --status active` calls on a paused saga both persisted
+`status: paused`. Root cause at `plugins/saga/scripts/saga.py` — `_merge`'s scalar rule plus
+`--status` argparse-defaulting to `"active"` (the dataclass default).
+**Mechanism.** Default-equality is a lossy proxy for "flag omitted": whenever the argparse default
+equals a meaningful user-passable value, an explicit re-assertion of the default is
+indistinguishable from omission and silently loses to carry-forward. The same class hit every
+scalar save flag (`--phase-status pending`, `--lifecycle-phase ideation`, `--destination
+plan-only`, `--phase/--round/--progress-pct 0`) and even `--orchestration-mode inline`, where the
+carried-forward richer prior mode diverged from the freshly stamped operator choice and the
+provenance guard rejected the save outright.
+**Fix.** All scalar state flags now argparse-default to `None`; `_build_save_saga` resolves
+omissions to the dataclass default and returns the set of explicitly provided fields;
+`_merge`/`save()` take an `explicit_fields` set that bypasses default-equality carry-forward.
+Regression tests pin reactivation, omitted-flag carry-forward, phase-status reset, and
+explicit-inline over a richer tier (`tests/test_saga_saga.py`). saga 0.75.18.
+**What surprised.** The codebase had already solved this exact ambiguity twice — the `ABSENT`
+sentinel for list fields and `--orchestration-mode`'s `None` default — but each solution stayed
+local to the field that hurt first instead of becoming the rule for the whole flag surface.
+**Generalizable rule.** "Incoming == default means not provided" is only sound when the default is
+outside the meaningful value-space. For CLI-to-merge pipelines, capture explicitness at the parse
+boundary (default `None` / sentinel) and thread it through — never re-derive it from value
+equality downstream. Residual known gaps, deliberately unfixed here: scalar string flags
+defaulting `""` cannot express "clear this field" (omit and explicit-empty both carry forward),
+and `--kind`'s argparse default `"issue"` stamps over a prior `task` kind when `--saga-id` is
+passed explicitly (no dataclass default, so incoming always wins).
+**Refs.** saga CHANGELOG 0.75.18.
+
 ## 2026-07-09
 
 ### Canonicalization does not validate untrusted review output {#review-output-canonicalization-gap}

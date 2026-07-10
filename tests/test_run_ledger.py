@@ -48,7 +48,7 @@ def _spend(sub: str, *, tokens: int, cached: int, fresh: int, wall: float = 1.0)
 # --------------------------------------------------------------------------- U1: schema
 
 
-def test_schema_covers_all_four_kinds(tmp_path: Path) -> None:
+def test_schema_covers_all_five_kinds(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     RL.append_fact(ledger, _spend("s1", tokens=100, cached=60, fresh=40))
     RL.append_fact(ledger, RL.build_fact("cache", subplot_id="s1", at="t", cached=3, fresh=1))
@@ -70,8 +70,18 @@ def test_schema_covers_all_four_kinds(tmp_path: Path) -> None:
             "delegation", subplot_id="s1", at="t", evidence="ptr://run/abc", engine="agy"
         ),
     )
+    RL.append_fact(
+        ledger,
+        RL.build_fact("reconciliation", subplot_id="s1", at="t", reconciliation_id="recon-1"),
+    )
     facts = RL.read_facts(ledger)
-    assert [f["kind"] for f in facts] == ["spend", "cache", "engine", "delegation"]
+    assert [f["kind"] for f in facts] == [
+        "spend",
+        "cache",
+        "engine",
+        "delegation",
+        "reconciliation",
+    ]
     assert all(f["schema"] == "run_fact.v1" for f in facts)
     assert facts[2]["engine"] == "gemini" and facts[3]["evidence"] == "ptr://run/abc"
 
@@ -155,10 +165,39 @@ def test_torn_trailing_line_is_tolerated_not_a_chain_break(tmp_path: Path) -> No
     assert RL.verify_chain(ledger).ok and len(RL.read_facts(ledger)) == 2
 
 
+def test_read_only_snapshot_of_absent_ledger_creates_no_parent_or_lock(tmp_path: Path) -> None:
+    ledger = RL.RunLedger(tmp_path / "missing" / "run-facts.jsonl")
+
+    assert RL.read_snapshot(ledger).records == ()
+    assert RL.read_facts(ledger) == []
+    assert RL.verify_chain(ledger).ok
+    assert not ledger.path.parent.exists()
+    assert not ledger.path.exists()
+    assert not RL._lock_path(ledger).exists()
+
+
+def test_read_only_torn_tail_snapshot_never_repairs_or_creates_lock(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    RL.append_fact(ledger, _spend("s0", tokens=10, cached=5, fresh=5))
+    lock_path = RL._lock_path(ledger)
+    lock_path.unlink()
+    with ledger.path.open("a", encoding="utf-8") as handle:
+        handle.write('{"schema": "run_fact.v1", "kind": "spend"')
+    before = ledger.path.read_bytes()
+
+    assert len(RL.read_snapshot(ledger).records) == 1
+    assert len(RL.read_facts(ledger)) == 1
+    assert RL.verify_chain(ledger).ok
+    assert ledger.path.read_bytes() == before
+    assert not lock_path.exists()
+
+
 def test_empty_and_absent_ledger(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     assert RL.read_facts(ledger) == []
     assert RL.verify_chain(ledger).ok  # vacuously
+    assert not ledger.path.exists()
+    assert not ledger.path.with_suffix(f"{ledger.path.suffix}.lock").exists()
 
 
 def test_corrupt_non_trailing_line_raises_not_silently_skipped(tmp_path: Path) -> None:

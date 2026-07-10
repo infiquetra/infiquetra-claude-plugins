@@ -43,12 +43,51 @@ registry pull request, and advisory standing still does not grant gate authority
 
 ## The advisory-evidence result type (R13 enforcement)
 
-`dispatch()` returns an `AdvisoryEvidence` — a value that carries `evidence`, `provenance`, a
-`verified_by_claude` flag (default `False`), and an optional `halt`. It carries **no gated-verdict
-field**. The structural guard is `satisfy_gate(evidence)`: it raises unless `verified_by_claude` is
-`True`. So external evidence cannot satisfy a gated return until a distinct Claude verification step
-has stamped it — a workflow cannot wire raw external output into a gate even by mistake. This is R13
-made structural rather than merely asserted.
+`dispatch()` returns an `AdvisoryEvidence` — a value that carries `evidence`, `provenance`, immutable
+dispatch `execution_id` and canonical `intent`, a SHA-256 digest of the full evidence artifact, an
+ordered tuple of typed `SourceFinding` metadata, its ordered IDs, a `verified_by_claude` flag (default
+`False`), and an optional `halt`. It carries **no gated-verdict field**.
+
+A runner's optional `findings` field is an ordered array of `{"content": <string>}` objects.
+Dispatch retains each bounded content string in-memory with immutable
+`external-finding:<ordinal>:<sha256(content)>` metadata; it never persists that prose to a manifest
+or run fact. For `second-opinion` and `divergence`, non-empty `output` must equal
+`reconcile.render_source_findings(findings)` exactly. That canonical ordered envelope prevents the
+runner from hiding output outside the findings Claude must adjudicate. Only `offload` may omit the
+envelope; a non-empty unstructured offload then becomes one explicit
+`opaque-artifact:0:<sha256(evidence)>` source. Typed offloads remain separate ordered sources. The
+runner envelope is capped at 256 findings and 256 KiB cumulative UTF-8 content before construction.
+
+The canonical guard call is:
+
+```python
+satisfy_gate(
+    evidence,
+    manifest,
+    reconciliation=result,
+    ledger=ledger,
+    store=store,
+)
+```
+
+`manifest` is optional only when no manifest exists; a caller that has one must pass it. `ledger` and
+`store` are an optional pair for bridge-liveness checking: pass both or neither. The same exact
+in-memory `result` that Claude built and that the worker recorded is passed as `reconciliation`.
+
+Before any older authority check, `satisfy_gate` requires that result to be ready and unused, and
+binds it exactly to the dispatch: the evidence has a non-empty `execution_id`; result and evidence
+match on `execution_id`, canonical `intent`, canonical recipe, evidence digest, and the ordered source
+finding IDs; every source is accounted for by a typed item in that same order; and non-empty evidence
+has at least one typed item. Multi-finding evidence cannot pass through a singleton reconciliation.
+A supplied manifest must name that same execution. Replaying an already-satisfied evidence/result
+pair is refused.
+
+Those binding checks do not replace the standing refusals. The function still rejects panel and
+advisory-reviewer roles, rejected-offload evidence, missing Claude verification, missing observer
+corroboration, substituted/rejected/proof-integrity manifests, proof-integrity failures, bridge-
+liveness contradictions, and producer-claimed-only manifest claims. External evidence therefore
+cannot satisfy a gated return until a distinct Claude adjudication produces a bound typed result and
+all existing authority checks pass. This is R13 made structural rather than merely asserted.
 
 ## Failure modes → halt + provenance
 
@@ -88,11 +127,11 @@ Degradation is durable, never silent.
 
 ## Backends
 
-Inline and cc-workflows dispatch are in scope: a wrapper subagent shells out to the engine's CLI.
-team-execution dispatch (R10/R12) is **deferred** — it needs an external-engine worker context-package
-slot that does not exist yet (`plugins/team-execution/skills/team-execution/SKILL.md`). Because external
-engines are never gatekeepers (R13/R15), they are off team-execution's critical path, so this deferral
-costs nothing today.
+Inline and cc-workflows dispatch use the same adapter. Team Execution routes an external-engine unit
+through a resident Claude chaperone using the context-package contract in
+`plugins/team-execution/skills/team-execution/references/external-engine-workers.md`. The engine still
+never joins residency or owns a gate; the chaperone dispatches, reconciles, calls the structural gate,
+applies as sole committer, tests, and writes the manifest.
 
 ## Proof-integrity attestation (#388)
 
@@ -100,9 +139,9 @@ Every registered receipt emitter (`codex-bridge`, `agy-delegate`, `http-bridge`)
 `plugins/saga/references/bridge-signatures.json` before a successful dispatch can become
 `ran-as-requested`. A schema-valid `bridge_receipt.v1` is necessary but no longer sufficient:
 the receipt must carry `receipt_emitter`, `run_id`, nonzero `external_tokens`, and an
-`output_attestation.v1` record. When the attestation binds the manifest evidence text
-(`artifact: evidence`), dispatch checks the SHA-256 and byte count against the evidence it is
-about to manifest.
+`output_attestation.v1` record. Dispatch checks its SHA-256 and byte count against the raw runner
+output; review intents first require that raw output to equal the canonical findings envelope, so the
+receipt and Claude's reconciliation bind the same complete artifact.
 
 Missing signature fields, empty required output, hash mismatch, zero external tokens, and
 bridge-run liveness contradictions are classified as `proof-integrity` instead of

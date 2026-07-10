@@ -27,6 +27,25 @@
 
 ## 2026-07-09
 
+### Canonicalization does not validate untrusted review output {#review-output-canonicalization-gap}
+
+**Context.** Issue #393 declared typed findings authoritative for second-opinion and divergence
+reconciliation, but the dispatch boundary also accepted an independent raw-output summary.
+**Evidence.** The bounded review in
+`docs/code-reviews/2026-07-09-issue-393-typed-second-opinion-reconciliation-code-review.md`
+reproduced `satisfy_gate()` accepting one declared finding while raw output contained another.
+**Mechanism.** `AdvisoryEvidence` rendered the declared findings and replaced the raw output before
+comparing them. The replacement made downstream evidence internally consistent by discarding the
+very discrepancy the trust boundary needed to reject.
+**Fix.** Successful `second-opinion` and `divergence` evidence now requires raw output to exactly
+match `render_source_findings(source_findings)`; panel dispatch fails before foreman or ledger access
+on a mismatch.
+**Validation.** The direct mismatch regressions cover both review intents, the panel regression proves
+zero foreman calls and zero ledger facts, and the 394-test reconciliation matrix passes.
+**Generalizable rule.** At an untrusted structured-output boundary, compare the raw and declared
+representations before canonicalization; canonical replacement alone can erase evidence of omission.
+**Refs.** [Typed reconciliation decision](DECISIONS.md#typed-second-opinion-reconciliation-393).
+
 ### Release-surface bumps must update metadata and drift-guard expectations {#release-guard-version-expectation-drift}
 
 **Context.** PR #547 bumped `team-execution` to `2.14.2` after release-surface parity caught

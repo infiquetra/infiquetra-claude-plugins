@@ -61,6 +61,10 @@ _ROW_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "External-engine delegation, `intent=second-opinion` (U12)",
         ("second-opinion",),
     ),
+    (
+        "External-engine delegation, `intent=divergence` (adversarial review)",
+        ("divergence",),
+    ),
 )
 
 

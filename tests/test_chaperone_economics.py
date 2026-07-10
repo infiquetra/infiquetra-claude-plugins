@@ -68,6 +68,15 @@ def test_mixed_engine_or_intent_units_do_not_share_batch() -> None:
     assert [[unit.unit_id for unit in group] for group in groups] == [["U1"], ["U2"], ["U3"]]
 
 
+def test_divergence_intent_stays_distinct_and_unbatched() -> None:
+    groups = C.group_same_engine_batches(
+        [_unit("U1", intent="divergence"), _unit("U2", intent="divergence")]
+    )
+
+    assert [[unit.unit_id for unit in group] for group in groups] == [["U1"], ["U2"]]
+    assert [group[0].intent for group in groups] == ["divergence", "divergence"]
+
+
 def test_unverifiable_units_keep_full_review() -> None:
     decision = C.decide_batch([_unit("U1", verifiability="unverifiable")], sample_rating="STRONG")
 

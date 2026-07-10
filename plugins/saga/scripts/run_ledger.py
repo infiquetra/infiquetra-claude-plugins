@@ -24,11 +24,13 @@ Design (KTD1-KTD7 of the #401 plan):
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import outcome_store  # noqa: E402  (after the sys.path shim, by design)
 
 RUN_FACT_SCHEMA = "run_fact.v1"
-FACT_KINDS = frozenset({"spend", "cache", "engine", "delegation"})
+FACT_KINDS = frozenset({"spend", "cache", "engine", "delegation", "reconciliation"})
 
 # Fields set by the ledger itself (chain links) — never part of a caller-supplied fact payload.
 _CHAIN_FIELDS = ("prev_hash", "this_hash")
@@ -73,6 +75,14 @@ class ChainReport:
     ok: bool
     break_index: int | None
     reason: str
+
+
+@dataclass(frozen=True)
+class LedgerSnapshot:
+    """One lock-consistent read of the complete ledger and its chain verdict."""
+
+    records: tuple[dict[str, Any], ...]
+    report: ChainReport
 
 
 # --------------------------------------------------------------------------- schema
@@ -113,38 +123,43 @@ def _hash(record_without_this_hash: dict[str, Any]) -> str:
 # --------------------------------------------------------------------------- append / read / verify
 
 
-def append_fact(ledger: RunLedger, fact: dict[str, Any]) -> dict[str, Any]:
-    """Chain ``fact`` onto the ledger and append it. Returns the written record (with chain fields).
+def _lock_path(ledger: RunLedger) -> Path:
+    return ledger.path.with_suffix(ledger.path.suffix + ".lock")
 
-    ``prev_hash`` is the current tail's ``this_hash`` (``""`` for the genesis record); ``this_hash``
-    covers the whole record incl. ``prev_hash``. Reuses ``outcome_store``'s O_APPEND + torn-tail
-    discipline so a concurrent or post-crash append never bricks the file.
-    """
-    prev_hash = _tail_hash(ledger)
-    record = {k: v for k, v in fact.items() if k not in _CHAIN_FIELDS}
-    record["prev_hash"] = prev_hash
-    record["this_hash"] = _hash(record)
 
+@contextmanager
+def _write_locked(ledger: RunLedger) -> Iterator[None]:
+    """Serialize ledger repair and writes with one creating exclusive advisory lock."""
     ledger.path.parent.mkdir(parents=True, exist_ok=True)
-    outcome_store._heal_torn_tail(ledger.path)
-    payload = memoryview((_canonical(record) + "\n").encode("utf-8"))
-    fd = os.open(ledger.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    lock_path = _lock_path(ledger)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    os.fchmod(fd, 0o600)
     try:
-        while payload:
-            written = os.write(fd, payload)
-            payload = payload[written:]
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
     finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
-    return record
 
 
-def read_facts(ledger: RunLedger) -> list[dict[str, Any]]:
-    """Every well-formed fact, tolerating a single torn **trailing** line (an incomplete append).
+@contextmanager
+def _read_locked(ledger: RunLedger) -> Iterator[None]:
+    """Take a shared lock when one exists without creating any durable read-side state."""
+    try:
+        fd = os.open(_lock_path(ledger), os.O_RDONLY)
+    except FileNotFoundError:
+        # No writer lock exists yet. A lock-free snapshot is a valid pre-write/prefix view.
+        yield
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
-    A non-trailing corrupt/non-object line raises — the tolerance is precise, not "skip bad lines"
-    (mirrors ``outcome_store.read_ledger``). A torn tail is a dropped incomplete write, **not** a chain
-    break — ``verify_chain`` runs over the healed prefix.
-    """
+
+def _read_unlocked(ledger: RunLedger) -> list[dict[str, Any]]:
     try:
         raw = ledger.path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -159,7 +174,7 @@ def read_facts(ledger: RunLedger) -> list[dict[str, Any]]:
             obj = json.loads(line)
         except (json.JSONDecodeError, ValueError) as exc:
             if i == last:
-                break  # torn trailing line — tolerated
+                break
             raise RunLedgerError(f"corrupt run-fact line {i + 1} (not the trailing line)") from exc
         if not isinstance(obj, dict):
             if i == last:
@@ -169,9 +184,88 @@ def read_facts(ledger: RunLedger) -> list[dict[str, Any]]:
     return records
 
 
+def _verify_records(records: Iterable[dict[str, Any]]) -> ChainReport:
+    expected_prev = ""
+    for i, rec in enumerate(records):
+        stored = rec.get("this_hash")
+        if not isinstance(stored, str) or not stored:
+            return ChainReport(False, i, "record missing this_hash")
+        recomputed = _hash({k: v for k, v in rec.items() if k != "this_hash"})
+        if recomputed != stored:
+            return ChainReport(False, i, "this_hash mismatch — record was mutated in place")
+        if str(rec.get("prev_hash", "")) != expected_prev:
+            return ChainReport(False, i, "prev_hash link broken — record reordered or deleted")
+        expected_prev = stored
+    return ChainReport(True, None, "ok")
+
+
+def _snapshot_unlocked(ledger: RunLedger, *, heal: bool) -> LedgerSnapshot:
+    if heal:
+        outcome_store._heal_torn_tail(ledger.path)
+    records = tuple(_read_unlocked(ledger))
+    return LedgerSnapshot(records=records, report=_verify_records(records))
+
+
+def read_snapshot(ledger: RunLedger) -> LedgerSnapshot:
+    """Return one strictly non-mutating, verified, lock-consistent in-memory snapshot."""
+    with _read_locked(ledger):
+        return _snapshot_unlocked(ledger, heal=False)
+
+
+def append_fact_atomic(
+    ledger: RunLedger,
+    fact: dict[str, Any],
+    *,
+    validate_snapshot: Callable[[LedgerSnapshot], None] | None = None,
+) -> dict[str, Any]:
+    """Validate state and append while holding the same lock and verified snapshot."""
+    with _write_locked(ledger):
+        snapshot = _snapshot_unlocked(ledger, heal=True)
+        if not snapshot.report.ok:
+            raise RunLedgerError(
+                f"refusing append to broken run-fact chain: {snapshot.report.reason}"
+            )
+        if validate_snapshot is not None:
+            validate_snapshot(snapshot)
+        prev_hash = str(snapshot.records[-1].get("this_hash", "")) if snapshot.records else ""
+        record = {k: v for k, v in fact.items() if k not in _CHAIN_FIELDS}
+        record["prev_hash"] = prev_hash
+        record["this_hash"] = _hash(record)
+        payload = memoryview((_canonical(record) + "\n").encode("utf-8"))
+        fd = os.open(ledger.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.fchmod(fd, 0o600)
+        try:
+            while payload:
+                written = os.write(fd, payload)
+                payload = payload[written:]
+        finally:
+            os.close(fd)
+        return record
+
+
+def append_fact(ledger: RunLedger, fact: dict[str, Any]) -> dict[str, Any]:
+    """Chain ``fact`` onto the ledger and append it. Returns the written record (with chain fields).
+
+    ``prev_hash`` is the current tail's ``this_hash`` (``""`` for the genesis record); ``this_hash``
+    covers the whole record incl. ``prev_hash``. Reuses ``outcome_store``'s O_APPEND + torn-tail
+    discipline so a concurrent or post-crash append never bricks the file.
+    """
+    return append_fact_atomic(ledger, fact)
+
+
+def read_facts(ledger: RunLedger) -> list[dict[str, Any]]:
+    """Every well-formed fact, tolerating a single torn **trailing** line (an incomplete append).
+
+    A non-trailing corrupt/non-object line raises — the tolerance is precise, not "skip bad lines"
+    (mirrors ``outcome_store.read_ledger``). A torn tail is a dropped incomplete write, **not** a chain
+    break — ``verify_chain`` runs over the healed prefix.
+    """
+    return list(read_snapshot(ledger).records)
+
+
 def _tail_hash(ledger: RunLedger) -> str:
     """The current tail record's ``this_hash`` (``""`` when the ledger is empty/absent)."""
-    records = read_facts(ledger)
+    records = read_snapshot(ledger).records
     return str(records[-1].get("this_hash", "")) if records else ""
 
 
@@ -183,18 +277,7 @@ def verify_chain(ledger: RunLedger) -> ChainReport:
     line is already dropped by :func:`read_facts` and is not a break. Trailing truncation of whole
     records is **not** detected (a valid prefix is a valid chain — the documented threat-model bound).
     """
-    expected_prev = ""
-    for i, rec in enumerate(read_facts(ledger)):
-        stored = rec.get("this_hash")
-        if not isinstance(stored, str) or not stored:
-            return ChainReport(False, i, "record missing this_hash")
-        recomputed = _hash({k: v for k, v in rec.items() if k != "this_hash"})
-        if recomputed != stored:
-            return ChainReport(False, i, "this_hash mismatch — record was mutated in place")
-        if str(rec.get("prev_hash", "")) != expected_prev:
-            return ChainReport(False, i, "prev_hash link broken — record reordered or deleted")
-        expected_prev = stored
-    return ChainReport(True, None, "ok")
+    return read_snapshot(ledger).report
 
 
 # --------------------------------------------------------------------------- derive-on-read views

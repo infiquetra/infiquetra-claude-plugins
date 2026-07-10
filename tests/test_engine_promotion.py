@@ -201,8 +201,15 @@ def test_ledger_change_during_assessment_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    snapshots = iter([[], [], [{"kind": "engine"}]])
-    monkeypatch.setattr(RUN_LEDGER, "read_facts", lambda _ledger: next(snapshots))
+    clean_report = RUN_LEDGER.ChainReport(ok=True, break_index=None, reason="ok")
+    snapshots = iter(
+        [
+            RUN_LEDGER.LedgerSnapshot(records=(), report=clean_report),
+            RUN_LEDGER.LedgerSnapshot(records=(), report=clean_report),
+            RUN_LEDGER.LedgerSnapshot(records=({"kind": "engine"},), report=clean_report),
+        ]
+    )
+    monkeypatch.setattr(RUN_LEDGER, "read_snapshot", lambda _ledger: next(snapshots))
 
     with pytest.raises(PROMOTION.PromotionError, match="changed during assessment"):
         _assess(tmp_path, _ledger(tmp_path))

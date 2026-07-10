@@ -826,6 +826,32 @@ def test_second_opinion_chaperone_excluded_keeps_opus_high() -> None:
     assert "resolved-by=chaperone-intent:second-opinion" in result
 
 
+def test_divergence_chaperone_preserves_intent_and_opus_high() -> None:
+    """Divergence remains distinct while using the adversarial chaperone posture."""
+    es_mod = _load_execution_spec()
+    te_mod = _load_team_emitter()
+    data = _valid_spec_dict()
+    data["units"] = [
+        {
+            "unit_id": "U1",
+            "label": "external divergence review",
+            "tier": {"model": "opus", "effort": "high"},
+            "prompt": "find and reconcile disagreement",
+            "returns": ["verdict"],
+            "capability": "code-generation",
+            "engine_intent": "divergence",
+        },
+    ]
+    spec = es_mod.ExecutionSpec.from_dict(data)
+    result = te_mod.emit_team_structure(spec)
+
+    assert (
+        "| `worker-code-generation` | U1 | opus/high | bypassPermissions | — "
+        "| cap:code-generation | divergence |" in result
+    )
+    assert "resolved-by=chaperone-intent:divergence" in result
+
+
 # --- U5 (R9, KTD7): post-run reconciliation against the emitted worker-manifest effort ---
 #
 # The emitter renders each worker's tier cell as ``<model>/<effort>`` (e.g. ``sonnet/medium``,

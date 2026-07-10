@@ -66,10 +66,13 @@ engine call itself never runs — `fell-back-to-claude` when the resolver's own 
 preflight-unavailable path routes the unit to the chaperone as Claude, carrying the fallback
 reason as `disposition_note`; the engine ran but wasn't the one the operator approved —
 `substituted-engine` when run-time capability routing resolved a different engine/variant than the
-plan-time preview the tier table recorded (KTD4). A Claude-agent worker (no `engine`/`capability`
-selector) only ever writes `ran-as-requested` — the other two dispositions require a resolution to
-diverge from. Trigger conditions and the halt path (R25/R26 — a halt writes no manifest at all,
-nothing ran) are in `external-engine-workers.md` §2 and §4.
+plan-time preview the tier table recorded (KTD4); `rejected-offload` when the requested engine ran
+but Claude's chaperone rejected its output after review. A rejected offload requires a normalized,
+non-empty `disposition_note`; that exact note is also the rationale of a typed `dropped`
+reconciliation item passed to reviewers and validators as advisory evidence. A Claude-agent worker
+(no `engine`/`capability` selector) only ever writes `ran-as-requested` — the other dispositions
+require an external-engine resolution. Trigger conditions and the halt path (R25/R26 — a halt writes
+no manifest at all, nothing ran) are in `external-engine-workers.md` §2, §4, and §5.
 
 **Output completeness (R3):** one `OutputCompleteness` per unit the worker owned, derived the same
 way `completeness_gate.Contract.from_unit` + `classify()` already do for spec-driven runs:
@@ -100,3 +103,36 @@ A worker that halts, is reassigned, or produces a partial result records that ho
 `disposition` + a `disposition_note` — never silently. The manifest records what happened; it
 never decides whether the wave proceeds. That decision stays with the coordinator and the
 existing reviewer/validator consensus machinery.
+
+A `rejected-offload` record is a recovered review signal, not a passing worker result. Its typed
+reconciliation projection is delivered to both reviewer and validator evidence inputs, but neither
+the note nor its `dropped` item may satisfy a gate. Its `disposition_note` is a concise normalized
+single-line chaperone summary capped at 1024 UTF-8 bytes and bound back to the rejected evidence; it is
+not unbounded engine prose. A fail-open delegation arming error uses the separately bounded
+`tripwire_note` field and never alters that evidence-bound rejection summary. The manifest store writes
+a `0600` temporary file before atomic replacement, so neither temporary nor final manifest is exposed.
+
+The associated reconciliation result retains the unit's canonical intent. `offload`,
+`second-opinion`, and `divergence` each select exactly one Saga recipe; a manifest disposition does
+not replace or reinterpret that intent. The dispatch/result/manifest chain is bound to one non-empty
+execution id, canonical intent and recipe, immutable evidence digest, and ordered content-derived
+source-finding IDs. Each typed runner finding has an ordinal-bearing ID and per-content digest;
+second-opinion/divergence require the runner output to exactly equal that ordered envelope, while
+offload alone may synthesize one opaque artifact source when no envelope exists. Multi-finding evidence
+requires exact ordered item coverage. Rejected-offload evidence retains those same bindings and its
+original unit intent.
+
+The typed result is bounded to 256 UTF-8 bytes per identifier, 256 findings, 4096 bytes per rationale,
+and 65536 canonical bytes. Run-fact persistence is a smaller structural projection: identities,
+digest, statuses, and canonical result hash only — no raw engine/panel output or rationale text. Each
+reconcile/apply transition is appended from a verified snapshot under the per-ledger exclusive lock;
+ledger and writer-created lock files are mode `0600`, and transition order is exactly reconcile then at
+most one apply. Ordinary read snapshots take a shared lock only when one already exists and never
+create a parent, ledger, or lock file or repair a torn tail.
+
+Advisory-jury policy comes from the shared lower-level Saga engine registry, including
+`PANEL_N_CAP = 7`, advisory verdict, and Claude foreman. Dispatch adds 64 KiB per-member and 256 KiB
+cumulative UTF-8 output caps before the foreman runs. The foreman result binds the exact ordered
+gathered source IDs and the canonical gathered-evidence digest. Reconcile/apply facts and `/retro`'s
+`approval_required` recipe-update proposals remain typed advisory evidence. They never grant the
+manifest, an external engine, a panel member, or a proposal gate authority.

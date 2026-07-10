@@ -151,9 +151,62 @@ def test_engine_intent_explicit_value_round_trips() -> None:
     assert round_tripped.units[0].engine_intent == "second-opinion"
 
 
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"engine": "codex/gpt-5.5-xhigh"},
+        {"capability": "code-generation"},
+    ],
+    ids=("engine", "capability"),
+)
+def test_divergence_intent_selector_forms_validate_and_round_trip(
+    selector: dict[str, str],
+) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(**selector, engine_intent="divergence"))
+    spec.validate()
+
+    unit_dict = spec.units[0].to_dict()
+    assert unit_dict["engine_intent"] == "divergence"
+    assert ES.ExecutionSpec.from_dict(spec.to_dict()).units[0].engine_intent == "divergence"
+
+
 def test_engine_intent_omitted_from_to_dict_for_plain_claude_unit() -> None:
     spec = ES.ExecutionSpec.from_dict(_spec_dict())
     assert "engine_intent" not in spec.units[0].to_dict()
+
+
+def test_advisory_panel_request_is_separate_from_verify_and_round_trips() -> None:
+    request = ES.AdvisoryPanelRequest.from_dict(
+        {"role": "cross-family-review-panel"},
+        "advisory panel",
+    )
+
+    assert request == ES.AdvisoryPanelRequest("cross-family-review-panel")
+    assert request.to_dict() == {"role": "cross-family-review-panel"}
+    assert not hasattr(request, "n")
+    assert ES.PANEL_N_CAP == ES._engine_registry_module().PANEL_N_CAP
+
+
+def test_advisory_panel_rejects_malformed_role_name() -> None:
+    with pytest.raises(ES.SpecError, match="normalized kebab-case"):
+        ES.AdvisoryPanelRequest.from_dict({"role": "Bad Role"}, "advisory panel")
+
+
+def test_advisory_panel_rejects_over_cap_role_at_spec_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry_module = ES._engine_registry_module()
+    registry = registry_module.Registry.load(ES._engine_registry_path())
+    role = registry.by_role("cross-family-review-panel")
+    role.members[:] = [role.members[0]] * (ES.PANEL_N_CAP + 1)
+    monkeypatch.setattr(
+        registry_module.Registry,
+        "load",
+        classmethod(lambda _cls, _path: registry),
+    )
+
+    with pytest.raises(ES.SpecError, match="PANEL_N_CAP"):
+        ES.AdvisoryPanelRequest("cross-family-review-panel").validate("unit U1")
 
 
 def test_engine_verifiability_round_trips_and_emits_external_engine_option() -> None:

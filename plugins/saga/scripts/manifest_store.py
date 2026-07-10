@@ -38,12 +38,15 @@ only leaves are never tripped (R10/AE3), matching ``classify()``'s existing sema
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -74,7 +77,7 @@ def _safe_name(name: str, *, what: str = "id") -> str:
     ``_atomic_write``), translated into this store's error type.
     """
     try:
-        return outcome_store._safe_name(name, what=what)
+        return cast(str, outcome_store._safe_name(name, what=what))
     except outcome_store.OutcomeStoreError as exc:
         raise ManifestStoreError(str(exc)) from exc
 
@@ -124,8 +127,29 @@ def write_manifest(store: Store, execution_id: str, manifest: dict[str, Any]) ->
     """
     path = store.manifest_path(execution_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    outcome_store._atomic_write(path, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    _atomic_write_manifest(path, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return path
+
+
+def _atomic_write_manifest(path: Path, content: str) -> None:
+    """Publish a manifest atomically without any pre-replace world-readable window."""
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp_path = Path(temp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        payload = memoryview(content.encode("utf-8"))
+        while payload:
+            written = os.write(fd, payload)
+            payload = payload[written:]
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.replace(temp_path, path)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        with contextlib.suppress(FileNotFoundError):
+            temp_path.unlink()
 
 
 def read_manifest(store: Store, execution_id: str) -> dict[str, Any] | None:

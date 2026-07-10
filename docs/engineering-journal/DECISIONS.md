@@ -2,6 +2,53 @@
 
 ## 2026-07-09
 
+### Typed reconciliation reuses the run-fact ledger and keeps policy changes approval-only {#typed-second-opinion-reconciliation-393}
+
+**Context.** Issue #393 adds intent-specific reconciliation, rejected-offload recovery,
+bounded advisory juries, and retro learning. The issue's early parallel-ledger premise is obsolete:
+`run_fact.v1` already supplies the append-only, hash-chained local evidence store.
+
+- **KTD1 - one closed intent-to-recipe registry.** Fleet-core owns the canonical `ENGINE_INTENTS`
+  vocabulary: `offload`, `second-opinion`, and `divergence`. Saga maps each intent to exactly one
+  data-defined recipe and fails closed on missing, duplicate, or unknown mappings. Offload accounts
+  for accepted/dropped/overridden work; second-opinion independently adjudicates review findings;
+  divergence makes agreement as well as disagreement an explicit review outcome.
+  Runner findings are immutable ordered envelopes with ordinal-bearing content IDs and SHA-256
+  digests; their bounded prose remains in memory only, never in a manifest or run fact. Non-empty
+  second-opinion/divergence output must exactly equal the canonical ordered envelope, so a runner
+  cannot omit a finding from the data Claude sees and adjudicates. Only offload may synthesize one
+  opaque artifact source. Typed multi-finding evidence requires exact ordered item coverage.
+- **KTD2 - reconciliation extends `run_fact.v1` with bound, locked structural facts.** The in-memory
+  result is bound to dispatch execution id, canonical intent/recipe, immutable evidence digest, and
+  ordered source IDs, with explicit identifier/finding/rationale/result byte limits. Each helper call
+  appends one transition from a verified snapshot under the same exclusive lock: `reconcile`, then at
+  most one `apply`. Ledger/lock files are mode `0600`; facts persist only identities, digest, statuses,
+  and canonical hash, never rationale or raw engine/panel output.
+  Ordinary snapshots are non-healing/read-only: they take a shared lock when one already exists, but
+  an absent-ledger read creates no parent, lock, or durable state. Only the append path repairs a torn
+  tail while holding the exclusive lock before validation and append.
+- **KTD3 - rejected offloads and panels are evidence, never authority.** A rejected offload retains
+  the unit's canonical intent and dispatch bindings and requires a non-empty manifest note projected
+  as a typed `dropped` item. Shared lower-level `engine_registry` policy enforces normalized role,
+  advisory verdict, Claude foreman, and `PANEL_N_CAP = 7`; dispatch adds 64 KiB per-member and 256 KiB
+  cumulative UTF-8 caps before foreman reconciliation. Neither path may satisfy a gate; the standing
+  [external engines are never gatekeepers](#external-engines-never-gatekeepers) rule remains binding
+  and Claude remains verifier-of-record.
+  A panel foreman result binds the exact ordered gathered IDs and canonical gathered-evidence digest;
+  each typed member finding remains individually accountable, including repeated content at distinct
+  ordinals. Rejected-offload projection requires the original dispatched evidence and checks both its
+  execution identity and rejection note. Rejection notes are evidence-bound, normalized summaries
+  capped at 1024 UTF-8 bytes; fail-open tripwire diagnostics use a separate bounded `tripwire_note`.
+  Manifest temporary and final files are mode `0600`.
+- **KTD4 - retro proposals are approval-only.** `/retro` verifies the ledger and derives a typed
+  `approval_required` recipe-update proposal. It never edits the registry or ledger, and a proposal
+  itself is advisory evidence that cannot approve or gate anything.
+
+**Revisit when.** Add or change a fourth intent only when recorded reconciliation outcomes produce an
+approval-gated retro proposal and the operator explicitly approves it. That follow-up must update the
+fleet-core vocabulary and tier posture, Saga recipe registry and tests, team-execution guidance, and
+all affected release surfaces together; telemetry alone never self-modifies policy.
+
 ### Provider onboarding targets the generic HTTP bridge and earns advisory standing explicitly {#provider-onboarding-455}
 
 **Context.** Issue #455 joins provider scaffolding, registry-to-dispatch conformance, and probationary standing. Since the issue was written, the generic HTTP bridge landed with an explicit zero-provider-branch contract, and the run-fact ledger gained proof-integrity telemetry.

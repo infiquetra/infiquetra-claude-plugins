@@ -17,7 +17,15 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from engine_overlay import EngineOverlay, load_overlay, overlay_fingerprint  # noqa: E402
-from engine_registry import EngineEntry, Registry, RegistryError  # noqa: E402
+from engine_registry import (
+    PANEL_N_CAP as PANEL_N_CAP,
+)
+from engine_registry import (  # noqa: E402
+    EngineEntry,
+    Registry,
+    RegistryError,
+    validate_panel_role,
+)
 
 MODES = ("advisory", "dispatch")
 ROLE_KINDS = ("worker", "generator", "advisory-reviewer", "panel")
@@ -381,7 +389,8 @@ def resolve_role(
     the caller halts the whole panel when ``panel_halt`` is non-None. The role's
     verdict stays advisory and Claude remains verifier-of-record (R13/R15).
     """
-    role = registry.by_role(role_name)
+    role = validate_panel_role(role_name, registry=registry)
+    assert role is not None
     resolutions: list[Resolution] = []
     for member in role.members:
         request: dict[str, Any] = {"engine": member, "role_kind": "advisory-reviewer"}

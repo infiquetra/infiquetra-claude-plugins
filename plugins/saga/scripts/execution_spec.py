@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
 from chaperone_economics import VERIFIABILITY_VALUES  # noqa: E402
+from engine_registry import PANEL_N_CAP as PANEL_N_CAP  # noqa: E402
 
 # Tier vocabulary (Epic 0 tier rule R1) is now canonical in fleet-core's
 # ``fleet_commons/tier_palette.py`` (fleet-commons first mover, DECISIONS
@@ -87,7 +88,7 @@ PASS_RULES = ("majority", "unanimous")
 
 # Delegation-intent vocabulary for an engine/capability unit (KTD2, U12). ``offload``
 # wants a cheap chaperone (the delegation is net-negative otherwise); ``second-opinion``
-# wants an expensive one (adversarial verification IS the product).
+# and ``divergence`` want an expensive one (adversarial verification IS the product).
 ENGINE_INTENTS = _tier_palette.ENGINE_INTENTS
 
 # Sandbox capability axes (issue #287 R1-R3) -- a delegated leaf's declared containment,
@@ -477,6 +478,17 @@ def _validate_external_engine_selector(
             raise SpecError(f"{where}: unknown engine variant {engine!r}")
 
 
+def _validate_advisory_panel_role(where: str, role_name: str) -> None:
+    """Validate one named panel role without preflighting or dispatching any member."""
+    registry_module = _engine_registry_module()
+    registry_path = _engine_registry_path()
+    try:
+        registry = registry_module.Registry.load(registry_path) if registry_path.exists() else None
+        registry_module.validate_panel_role(role_name, registry=registry)
+    except registry_module.RegistryError as exc:
+        raise SpecError(f"{where}: invalid advisory panel role: {exc}") from exc
+
+
 @dataclass(frozen=True)
 class Tier:
     """A per-unit ``{model, effort}`` tier (R2(b))."""
@@ -582,6 +594,30 @@ class Verify:
             "iterate_to_consensus": self.iterate_to_consensus,
             "max_iterations": self.max_iterations,
         }
+
+
+@dataclass(frozen=True)
+class AdvisoryPanelRequest:
+    """A named external-engine advisory jury, distinct from a ``Verify`` panel (#393)."""
+
+    role: str
+
+    def validate(self, where: str) -> None:
+        _validate_advisory_panel_role(where, self.role)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], where: str) -> AdvisoryPanelRequest:
+        if set(data) != {"role"}:
+            raise SpecError(f"{where}: advisory_panel needs exactly one 'role' field")
+        role = data.get("role")
+        if not isinstance(role, str):
+            raise SpecError(f"{where}: advisory panel role must be a string")
+        request = cls(role=role)
+        request.validate(where)
+        return request
+
+    def to_dict(self) -> dict[str, str]:
+        return {"role": self.role}
 
 
 @dataclass(frozen=True)
@@ -2494,9 +2530,10 @@ def segment_units(spec: ExecutionSpec) -> list[Segment]:
                 ),
             )
 
-        # Resolve engine_intent the same way: upgrade-only max ("second-opinion" beats
-        # "offload") when a same-engine segment's members disagree, rather than silently
-        # taking the first unit's value (KTD1/U12 -- a chaperone is one resident worker, so
+        # Resolve engine_intent the same way: upgrade-only max ("divergence" beats
+        # "second-opinion", which beats "offload") when a same-engine segment's members
+        # disagree, rather than silently taking the first unit's value (KTD1/U12 -- a
+        # chaperone is one resident worker, so
         # the more conservative intent should govern its tier recommendation).
         seg_intents = [u.engine_intent for u in units if u.engine_intent is not None]
         seg_engine_intent = (

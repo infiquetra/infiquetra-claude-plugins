@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -37,6 +38,27 @@ D = _load("engine_dispatch", DISPATCH_SCRIPT)
 # enum classes and break `is` identity checks).
 MS = D.manifest_store
 PM = D.pm
+RC = D.reconcile
+
+
+def _ready_reconciliation(evidence: Any) -> Any:
+    return RC.build_result(
+        reconciliation_id=f"test-reconciliation-{id(evidence)}",
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
+        adjudicator_id="claude",
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
+        items=tuple(
+            RC.ReconciliationItem(
+                source_finding_id=finding_id,
+                status=RC.ReconciliationStatus.RECONCILED,
+                adjudicator_id="claude",
+                rationale="Claude accounted for the advisory finding.",
+            )
+            for finding_id in evidence.source_finding_ids
+        ),
+    )
 
 
 def _resolution(
@@ -57,6 +79,17 @@ def _resolution(
         fallback=None,
         halt=halt,
     )
+
+
+def _review_payload(*findings: str) -> dict[str, Any]:
+    """Build the exact, canonical review-output envelope required at the dispatch boundary."""
+    rows = [{"content": finding} for finding in findings]
+    typed = RC.parse_source_findings(rows)
+    return {
+        "status": "ok",
+        "output": RC.render_source_findings(typed),
+        "findings": rows,
+    }
 
 
 def test_codex_invocation_preserves_payload_byte_for_byte_and_read_only() -> None:
@@ -138,10 +171,11 @@ def test_satisfy_gate_requires_claude_verification() -> None:
         variant="gpt-5.5-xhigh",
         evidence="external finding",
         provenance={"engine": "codex", "variant": "gpt-5.5-xhigh", "status": "ok"},
+        execution_id="unverified-execution",
     )
 
     with pytest.raises(D.DispatchError):
-        D.satisfy_gate(unverified)
+        D.satisfy_gate(unverified, reconciliation=_ready_reconciliation(unverified))
 
     # #384 U5/R6 (deliberate acceptance change): Claude verification alone is no longer
     # sufficient -- the gate also requires the observer_corroborated mark dispatch stamps.
@@ -150,10 +184,14 @@ def test_satisfy_gate_requires_claude_verification() -> None:
         variant="gpt-5.5-xhigh",
         evidence="Claude verified external finding",
         provenance={"engine": "codex", "variant": "gpt-5.5-xhigh", "status": "ok"},
+        execution_id="uncorroborated-execution",
         verified_by_claude=True,
     )
     with pytest.raises(D.DispatchError, match="observer corroboration"):
-        D.satisfy_gate(verified_uncorroborated)
+        D.satisfy_gate(
+            verified_uncorroborated,
+            reconciliation=_ready_reconciliation(verified_uncorroborated),
+        )
 
     verified = D.AdvisoryEvidence(
         engine_id="codex",
@@ -165,10 +203,418 @@ def test_satisfy_gate_requires_claude_verification() -> None:
             "status": "ok",
             "observer_corroborated": True,
         },
+        execution_id="verified-execution",
         verified_by_claude=True,
     )
 
-    assert D.satisfy_gate(verified) is None
+    assert D.satisfy_gate(verified, reconciliation=_ready_reconciliation(verified)) is None
+
+
+def test_satisfy_gate_requires_ready_reconciliation_before_existing_checks() -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="Claude verified external finding",
+        provenance={"status": "ok", "observer_corroborated": True},
+        execution_id="test-execution",
+        verified_by_claude=True,
+    )
+    with pytest.raises(D.DispatchError, match="typed reconciliation result is required"):
+        D.satisfy_gate(evidence)
+
+    incomplete = RC.build_result(
+        reconciliation_id="incomplete-reconciliation",
+        execution_id="test-execution",
+        intent="offload",
+        adjudicator_id="claude",
+        source_finding_ids=("net-new",),
+        items=(),
+    )
+    with pytest.raises(D.DispatchError, match="net-new"):
+        D.satisfy_gate(evidence, reconciliation=incomplete)
+
+    dropped = RC.build_result(
+        reconciliation_id="complete-reconciliation",
+        execution_id="test-execution",
+        intent="offload",
+        adjudicator_id="claude",
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
+        items=(
+            RC.ReconciliationItem(
+                source_finding_id=evidence.source_finding_ids[0],
+                status=RC.ReconciliationStatus.DROPPED,
+                adjudicator_id="claude",
+                rationale="Claude found no source support for the advisory finding.",
+            ),
+        ),
+    )
+    assert D.satisfy_gate(evidence, reconciliation=dropped) is None
+
+
+@pytest.mark.parametrize(
+    ("intent", "output", "status"),
+    [
+        ("offload", "patch candidate", RC.ReconciliationStatus.RECONCILED),
+        ("second-opinion", "independent finding", RC.ReconciliationStatus.OVERRIDDEN),
+        ("divergence", "agreement: both analyses match", RC.ReconciliationStatus.RECONCILED),
+        ("divergence", "disagreement: engine disputes Claude", RC.ReconciliationStatus.DROPPED),
+    ],
+)
+def test_dispatch_reconcile_gate_integration_for_every_intent(
+    intent: str, output: str, status: Any
+) -> None:
+    execution_id = f"integration-{intent}-{status.value}"
+    dispatched = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: (
+            _review_payload(output)
+            if intent in {"second-opinion", "divergence"}
+            else {"status": "ok", "output": output}
+        ),
+        execution_id=execution_id,
+        intent=intent,
+    )
+    assert isinstance(dispatched, D.AdvisoryEvidence)
+    verified = dataclasses.replace(
+        dispatched,
+        verified_by_claude=True,
+        provenance={**dispatched.provenance, "observer_corroborated": True},
+    )
+    reconciliation = RC.build_result(
+        reconciliation_id=f"recon-{execution_id}",
+        execution_id=verified.execution_id,
+        intent=verified.intent,
+        adjudicator_id="claude",
+        evidence_digest=verified.evidence_digest,
+        source_finding_ids=verified.source_finding_ids,
+        items=(
+            RC.ReconciliationItem(
+                source_finding_id=verified.source_finding_ids[0],
+                status=status,
+                adjudicator_id="claude",
+                rationale="Claude explicitly adjudicated agreement or disagreement.",
+            ),
+        ),
+    )
+    assert D.satisfy_gate(verified, reconciliation=reconciliation) is None
+
+
+def test_typed_runner_findings_are_stable_ordered_and_required_by_review_intents() -> None:
+    payload = _review_payload("first", "second")
+    evidence = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: payload,
+        execution_id="typed-findings",
+        intent="second-opinion",
+    )
+    assert isinstance(evidence, D.AdvisoryEvidence)
+    assert len(evidence.source_findings) == 2
+    assert evidence.source_finding_ids == tuple(
+        finding.source_finding_id for finding in evidence.source_findings
+    )
+    assert evidence.source_findings[0].digest != evidence.source_findings[1].digest
+    assert tuple(finding.content for finding in evidence.source_findings) == ("first", "second")
+    assert json.loads(evidence.evidence) == ["first", "second"]
+    assert evidence.runner_output_digest == RC.evidence_digest(payload["output"])
+    repeated = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: payload,
+        execution_id="typed-findings-repeat",
+        intent="second-opinion",
+    )
+    assert isinstance(repeated, D.AdvisoryEvidence)
+    assert repeated.source_finding_ids == evidence.source_finding_ids
+
+    for intent in ("second-opinion", "divergence"):
+        with pytest.raises(D.DispatchError, match="typed runner findings envelope"):
+            D.dispatch(
+                _resolution(),
+                runner=lambda _invocation: {"status": "ok", "output": "untyped"},
+                execution_id=f"missing-{intent}",
+                intent=intent,
+            )
+
+    opaque = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: {"status": "ok", "output": "opaque patch"},
+        execution_id="opaque-offload",
+        intent="offload",
+    )
+    assert isinstance(opaque, D.AdvisoryEvidence)
+    assert opaque.source_finding_ids[0].startswith("opaque-artifact:0:")
+
+
+@pytest.mark.parametrize("intent", ["second-opinion", "divergence"])
+def test_review_output_must_exactly_match_declared_findings(intent: str) -> None:
+    findings = [{"content": "visible one"}, {"content": "visible two"}]
+    with pytest.raises(D.DispatchError, match="exactly match the canonical ordered findings"):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: {
+                "status": "ok",
+                "output": '["visible one","visible two","hidden finding"]',
+                "findings": findings,
+            },
+            execution_id=f"canonical-mismatch-{intent}",
+            intent=intent,
+        )
+
+
+def test_direct_divergence_rejects_opaque_artifact_finding() -> None:
+    opaque = RC.SourceFinding.from_content("opaque", 0, opaque=True)
+    with pytest.raises(D.DispatchError, match="allowed only for explicit offload"):
+        D.AdvisoryEvidence(
+            engine_id="codex",
+            variant="gpt-5.5-xhigh",
+            evidence=RC.render_source_findings((opaque,)),
+            provenance={"status": "ok"},
+            execution_id="opaque-divergence",
+            intent="divergence",
+            source_findings=(opaque,),
+        )
+    noncontiguous = RC.SourceFinding.from_content("finding", 1)
+    with pytest.raises(D.DispatchError, match="contiguous ordered ordinals"):
+        D.AdvisoryEvidence(
+            engine_id="codex",
+            variant="gpt-5.5-xhigh",
+            evidence=RC.render_source_findings((noncontiguous,)),
+            provenance={"status": "ok"},
+            execution_id="noncontiguous-divergence",
+            intent="divergence",
+            source_findings=(noncontiguous,),
+        )
+
+
+def test_finding_content_is_in_memory_only_never_ledger_or_manifest(tmp_path: Path) -> None:
+    marker = "SECRET-FINDING-CONTENT-never-persist"
+    evidence = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: _review_payload(marker),
+        execution_id="non-persistence",
+        intent="second-opinion",
+    )
+    assert isinstance(evidence, D.AdvisoryEvidence)
+    assert evidence.source_findings[0].content == marker
+    result = RC.build_result(
+        reconciliation_id="non-persistence",
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
+        adjudicator_id="claude",
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
+        items=(
+            RC.ReconciliationItem(
+                evidence.source_finding_ids[0],
+                RC.ReconciliationStatus.RECONCILED,
+                "claude",
+                "Claude reviewed the in-memory finding.",
+            ),
+        ),
+    )
+    ledger = RC.run_ledger.RunLedger(tmp_path / "facts.jsonl")
+    RC.append_reconciliation_fact(ledger, result, action="reconcile", subplot_id="leaf", at="t")
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id=evidence.execution_id,
+        saga_ref="saga",
+        created_at="t",
+    )
+    assert marker not in ledger.path.read_text(encoding="utf-8")
+    assert marker not in json.dumps(manifest.to_dict())
+
+
+@pytest.mark.parametrize(
+    ("findings", "match"),
+    [
+        (
+            [{"content": "x"}] * (RC.MAX_ITEMS + 1),
+            "count exceeds MAX_ITEMS",
+        ),
+        (
+            [
+                {"content": "x" * (RC.MAX_SOURCE_FINDINGS_TOTAL_BYTES // 2 + 1)},
+                {"content": "y" * (RC.MAX_SOURCE_FINDINGS_TOTAL_BYTES // 2 + 1)},
+            ],
+            "MAX_SOURCE_FINDINGS_TOTAL_BYTES",
+        ),
+    ],
+)
+def test_findings_bounds_reject_before_evidence_construction(
+    findings: list[dict[str, str]], match: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    constructions = 0
+    original = D.AdvisoryEvidence
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        nonlocal constructions
+        constructions += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(D, "AdvisoryEvidence", counted)
+    with pytest.raises(D.DispatchError, match=match):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: {
+                "status": "ok",
+                "output": "summary",
+                "findings": findings,
+            },
+            execution_id="bounded-findings",
+            intent="second-opinion",
+        )
+    assert constructions == 0
+
+
+def test_two_finding_omission_blocks_until_second_is_explicitly_dropped() -> None:
+    dispatched = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: _review_payload("accepted", "net-new"),
+        execution_id="two-findings",
+        intent="divergence",
+    )
+    assert isinstance(dispatched, D.AdvisoryEvidence)
+    evidence = dataclasses.replace(
+        dispatched,
+        verified_by_claude=True,
+        provenance={**dispatched.provenance, "observer_corroborated": True},
+    )
+    first = RC.ReconciliationItem(
+        source_finding_id=evidence.source_finding_ids[0],
+        status=RC.ReconciliationStatus.RECONCILED,
+        adjudicator_id="claude",
+        rationale="Claude accepted the first finding.",
+    )
+    incomplete = RC.build_result(
+        reconciliation_id="two-findings-incomplete",
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
+        adjudicator_id="claude",
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
+        items=(first,),
+    )
+    with pytest.raises(D.DispatchError, match="net-new|unaccounted"):
+        D.satisfy_gate(evidence, reconciliation=incomplete)
+
+    complete = RC.build_result(
+        reconciliation_id="two-findings-complete",
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
+        adjudicator_id="claude",
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
+        items=(
+            first,
+            RC.ReconciliationItem(
+                source_finding_id=evidence.source_finding_ids[1],
+                status=RC.ReconciliationStatus.DROPPED,
+                adjudicator_id="claude",
+                rationale="Claude explicitly dropped the unsupported second finding.",
+            ),
+        ),
+    )
+    assert D.satisfy_gate(evidence, reconciliation=complete) is None
+
+
+@pytest.mark.parametrize(
+    "findings",
+    ["not-an-array", [{"content": "ok", "id": "forged"}], [{"content": 1}]],
+)
+def test_runner_findings_envelope_rejects_malformed_rows(findings: Any) -> None:
+    with pytest.raises(D.DispatchError, match="findings envelope is malformed"):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: {
+                "status": "ok",
+                "output": "review",
+                "findings": findings,
+            },
+            execution_id="malformed-findings",
+            intent="second-opinion",
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ("execution", "execution_id"),
+        ("intent", "intent"),
+        ("recipe", "recipe"),
+        ("digest", "digest"),
+        ("sources", "source findings"),
+        ("empty", "empty reconciliation"),
+    ],
+)
+def test_satisfy_gate_rejects_every_reconciliation_binding_mismatch(
+    mutation: str, match: str
+) -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="bound finding",
+        provenance={"status": "ok", "observer_corroborated": True},
+        execution_id="bound-execution",
+        intent="offload",
+        verified_by_claude=True,
+    )
+    result = _ready_reconciliation(evidence)
+    if mutation == "execution":
+        result = dataclasses.replace(result, execution_id="wrong-execution")
+    elif mutation == "intent":
+        result = dataclasses.replace(
+            result,
+            intent="second-opinion",
+            recipe_id=RC.recipe_for_intent("second-opinion").recipe_id,
+        )
+    elif mutation == "recipe":
+        object.__setattr__(result, "recipe_id", "forged-recipe")
+    elif mutation == "digest":
+        result = dataclasses.replace(result, evidence_digest="0" * 64)
+    elif mutation == "sources":
+        result = RC.build_result(
+            reconciliation_id="wrong-sources",
+            execution_id=evidence.execution_id,
+            intent=evidence.intent,
+            adjudicator_id="claude",
+            evidence_digest=evidence.evidence_digest,
+            source_finding_ids=("other-source",),
+            items=(
+                RC.ReconciliationItem(
+                    source_finding_id="other-source",
+                    status=RC.ReconciliationStatus.RECONCILED,
+                    adjudicator_id="claude",
+                    rationale="Wrong source for binding test.",
+                ),
+            ),
+        )
+    else:
+        result = RC.build_result(
+            reconciliation_id="empty",
+            execution_id=evidence.execution_id,
+            intent=evidence.intent,
+            adjudicator_id="claude",
+            evidence_digest=evidence.evidence_digest,
+            source_finding_ids=(),
+            items=(),
+        )
+    with pytest.raises(D.DispatchError, match=match):
+        D.satisfy_gate(evidence, reconciliation=result)
+
+
+def test_satisfy_gate_rejects_exact_replay() -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="one-shot finding",
+        provenance={"status": "ok", "observer_corroborated": True},
+        execution_id="one-shot-execution",
+        verified_by_claude=True,
+    )
+    result = _ready_reconciliation(evidence)
+    assert D.satisfy_gate(evidence, reconciliation=result) is None
+    with pytest.raises(D.DispatchError, match="replay"):
+        D.satisfy_gate(evidence, reconciliation=result)
 
 
 def test_satisfy_gate_rejects_advisory_reviewer_evidence_even_when_verified() -> None:
@@ -182,12 +628,28 @@ def test_satisfy_gate_rejects_advisory_reviewer_evidence_even_when_verified() ->
             "status": "ok",
             "observer_corroborated": True,
         },
+        execution_id="reviewer-execution",
         verified_by_claude=True,
         role_kind="advisory-reviewer",
     )
 
     with pytest.raises(D.DispatchError, match="advisory-only"):
-        D.satisfy_gate(evidence)
+        D.satisfy_gate(evidence, reconciliation=_ready_reconciliation(evidence))
+
+
+def test_satisfy_gate_rejects_panel_evidence_even_when_verified() -> None:
+    evidence = D.AdvisoryEvidence(
+        engine_id="codex",
+        variant="gpt-5.5-xhigh",
+        evidence="Claude verified panel synthesis",
+        provenance={"status": "ok", "observer_corroborated": True},
+        execution_id="panel-execution",
+        verified_by_claude=True,
+        role_kind="panel",
+    )
+
+    with pytest.raises(D.DispatchError, match="advisory-only"):
+        D.satisfy_gate(evidence, reconciliation=_ready_reconciliation(evidence))
 
 
 def _economics_resolution(**overrides: object) -> Any:
@@ -432,12 +894,17 @@ def test_dispatch_returns_advisory_evidence_without_tree_mutation_surface() -> N
 # --- U3: typed manifests (claim_provenance, attribution, disposition) + R11 gate ----------
 
 
-def _valid_receipt(*, engine_id: str = "codex", variant: str = "gpt-5.5-xhigh") -> dict[str, Any]:
+def _valid_receipt(
+    *,
+    engine_id: str = "codex",
+    variant: str = "gpt-5.5-xhigh",
+    content: str = "external finding",
+) -> dict[str, Any]:
     """A schema-valid ``bridge_receipt.v1`` (cli-shaped) for tests exercising the RAN_AS_REQUESTED
     path (U6/KTD8): receipt-gating means a bare ``ok`` runner result is no longer sufficient."""
     output_attestation = D.fleet_commons_shim.load("output_attestation").emit_attestation(
         artifact="evidence",
-        content="external finding",
+        content=content,
     )
     return cast(
         "dict[str, Any]",
@@ -446,7 +913,7 @@ def _valid_receipt(*, engine_id: str = "codex", variant: str = "gpt-5.5-xhigh") 
             variant=variant,
             transport="cli",
             wall_time_s=0.5,
-            bytes_produced=17,
+            bytes_produced=len(content.encode("utf-8")),
             runner={"pid": 4242, "argv": ["codex", "run"], "exit_code": 0},
             receipt_emitter="codex-bridge",
             run_id="test-run-1",
@@ -466,7 +933,7 @@ def _store(tmp_path: Path) -> Any:
 
 def test_dispatch_emits_manifest_with_attribution(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    evidence = D.dispatch(_resolution(), runner=_ok_runner)
+    evidence = D.dispatch(_resolution(), runner=_ok_runner, execution_id="exec-claims")
 
     manifest = D.record_dispatch_manifest(
         store,
@@ -518,7 +985,7 @@ def test_halted_dispatch_records_disposition_note(tmp_path: Path) -> None:
 
 def test_satisfy_gate_refuses_claimed_only_manifest(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    evidence = D.dispatch(_resolution(), runner=_ok_runner)
+    evidence = D.dispatch(_resolution(), runner=_ok_runner, execution_id="exec-claims")
     claims = PM.ClaimProvenance(
         claims=(
             PM.Claim(
@@ -543,12 +1010,14 @@ def test_satisfy_gate_refuses_claimed_only_manifest(tmp_path: Path) -> None:
         evidence=evidence.evidence,
         # #384 U5/R6 deliberate update: the gate now also requires the observer mark.
         provenance={**evidence.provenance, "observer_corroborated": True},
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
         verified_by_claude=True,
     )
 
     # Claimed-`verified` without adjudication cannot satisfy a gate (R11/AE1).
     with pytest.raises(D.DispatchError):
-        D.satisfy_gate(verified, manifest)
+        D.satisfy_gate(verified, manifest, reconciliation=_ready_reconciliation(verified))
 
     # After the driving session adjudicates every claim, the gate opens.
     adjudicated = D.adjudicate_manifest(
@@ -565,11 +1034,14 @@ def test_satisfy_gate_refuses_claimed_only_manifest(tmp_path: Path) -> None:
             )
         },
     )
-    assert D.satisfy_gate(verified, adjudicated) is None
+    assert (
+        D.satisfy_gate(verified, adjudicated, reconciliation=_ready_reconciliation(verified))
+        is None
+    )
 
     # verified_by_claude is still required even with a fully adjudicated manifest.
     with pytest.raises(D.DispatchError):
-        D.satisfy_gate(evidence, adjudicated)
+        D.satisfy_gate(evidence, adjudicated, reconciliation=_ready_reconciliation(evidence))
 
 
 def test_adjudicated_refuted_counts_as_parroting(tmp_path: Path) -> None:
@@ -659,6 +1131,37 @@ def test_adjudicate_manifest_keys_same_text_claims_independently(tmp_path: Path)
     by_source = {c.source_ref: c for c in adjudicated.claim_provenance.claims}
     assert by_source["tests/test_a.py"].adjudicated is PM.AdjudicatedStatus.VERIFIED
     assert by_source["tests/test_b.py"].adjudicated is PM.AdjudicatedStatus.REFUTED
+
+
+def test_adjudicate_manifest_preserves_separate_tripwire_note(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    evidence = D.dispatch(_resolution(), runner=_ok_runner, execution_id="exec-tripwire")
+    evidence = dataclasses.replace(
+        evidence,
+        provenance={**evidence.provenance, "tripwire": "tripwire_unarmed: observer unavailable"},
+    )
+    claims = PM.ClaimProvenance(
+        claims=(
+            PM.Claim(
+                text="all tests pass",
+                claimed=PM.ClaimedStatus.VERIFIED,
+                source_ref="tests/test_example.py",
+            ),
+        )
+    )
+    manifest = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-tripwire",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+        claim_provenance=claims,
+    )
+
+    adjudicated = D.adjudicate_manifest(store, "exec-tripwire", {})
+
+    assert manifest.tripwire_note == "tripwire_unarmed: observer unavailable"
+    assert adjudicated.tripwire_note == manifest.tripwire_note
 
 
 # --------------------------------------------------------- sandbox write-ceiling lift (U5)
@@ -1112,6 +1615,240 @@ def test_manifest_round_trips_unproven_disposition(tmp_path: Path) -> None:
     assert round_tripped.disposition is PM.Disposition.UNPROVEN
 
 
+def _evidence(
+    *,
+    engine_id: str = "codex",
+    variant: str = "gpt-5.5-xhigh",
+    provenance: dict[str, Any] | None = None,
+    halt: str | None = None,
+    runner_receipt: dict[str, Any] | None = None,
+) -> Any:
+    prov: dict[str, Any] = {"status": "ok"} if provenance is None else provenance
+    return D.AdvisoryEvidence(
+        engine_id=engine_id,
+        variant=variant,
+        evidence="external finding",
+        provenance=prov,
+        halt=halt,
+        runner_receipt=runner_receipt,
+    )
+
+
+def test_rejected_offload_manifest_and_reconciliation_preserve_exact_note() -> None:
+    note = "Patch omitted the required failure-path test."
+    evidence = D.reject_offload(
+        D.dispatch(
+            _resolution(),
+            runner=_ok_runner,
+            execution_id="exec-rejected",
+        ),
+        note,
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id="exec-rejected",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+
+    assert manifest.disposition is PM.Disposition.REJECTED_OFFLOAD
+    assert manifest.disposition_note == note
+    assert PM.Manifest.from_dict(manifest.to_dict()) == manifest
+
+    result = D.rejected_offload_reconciliation(
+        manifest,
+        reconciliation_id="recon-rejected",
+        adjudicator_id="claude/opus",
+        evidence=evidence,
+    )
+    visible = RC.reviewer_validator_evidence(result)
+    assert visible["result"]["items"][0]["rationale"] == note
+
+
+@pytest.mark.parametrize("note", ["", " ", "\n\t"])
+def test_reject_offload_requires_non_empty_note(note: str) -> None:
+    with pytest.raises(D.DispatchError, match="non-empty rejection note"):
+        D.reject_offload(D.dispatch(_resolution(), runner=_ok_runner), note)
+
+
+def test_reject_offload_requires_concise_bounded_summary() -> None:
+    with pytest.raises(D.DispatchError, match="exceeds"):
+        D.reject_offload(
+            D.dispatch(_resolution(), runner=_ok_runner),
+            "x" * (RC.MAX_REJECTION_NOTE_BYTES + 1),
+        )
+
+
+def test_rejected_offload_binding_derives_from_evidence_and_rejects_mismatch() -> None:
+    review_payload = _review_payload("finding-one", "finding-two")
+    dispatched = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: {
+            **review_payload,
+            "receipt": _valid_receipt(content=review_payload["output"]),
+        },
+        execution_id="rejected-divergence",
+        intent="divergence",
+    )
+    assert isinstance(dispatched, D.AdvisoryEvidence)
+    evidence = D.reject_offload(dispatched, "Concise rejection summary.")
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id=evidence.execution_id,
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+    result = D.rejected_offload_reconciliation(
+        manifest,
+        reconciliation_id="bound-rejection",
+        adjudicator_id="claude",
+        evidence=evidence,
+    )
+    assert result.execution_id == evidence.execution_id
+    assert result.intent == "divergence"
+    assert result.evidence_digest == evidence.evidence_digest
+    assert result.source_finding_ids == evidence.source_finding_ids
+
+    mismatched = dataclasses.replace(manifest, execution_id="wrong-execution")
+    with pytest.raises(D.DispatchError, match="execution_id does not match"):
+        D.rejected_offload_reconciliation(
+            mismatched,
+            reconciliation_id="bad-binding",
+            adjudicator_id="claude",
+            evidence=evidence,
+        )
+    with pytest.raises(D.DispatchError, match="requires dispatched AdvisoryEvidence"):
+        D.rejected_offload_reconciliation(
+            manifest,
+            reconciliation_id="missing-intent",
+            adjudicator_id="claude",
+            evidence=cast(Any, None),
+        )
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected"),
+    [
+        (
+            _evidence(
+                provenance={
+                    "status": "halted",
+                    "rejected_offload_note": "rejected",
+                    "note": "fallback",
+                },
+                halt="fallback",
+            ),
+            PM.Disposition.FELL_BACK_TO_CLAUDE,
+        ),
+        (
+            _evidence(
+                provenance={
+                    "status": "ok",
+                    "expected_identity": "agy/gemini",
+                    "rejected_offload_note": "rejected",
+                },
+                runner_receipt=_valid_receipt(),
+            ),
+            PM.Disposition.SUBSTITUTED_ENGINE,
+        ),
+        (
+            _evidence(
+                provenance={
+                    "status": "ok",
+                    "integrity": PM.Disposition.DELEGATION_INTEGRITY.value,
+                    "rejected_offload_note": "rejected",
+                },
+                runner_receipt=_valid_receipt(),
+            ),
+            PM.Disposition.DELEGATION_INTEGRITY,
+        ),
+        (
+            _evidence(
+                provenance={"status": "ok", "rejected_offload_note": "rejected"},
+                runner_receipt={**_valid_receipt(), "external_tokens": 0},
+            ),
+            PM.Disposition.PROOF_INTEGRITY,
+        ),
+        (
+            _evidence(
+                provenance={"status": "ok", "rejected_offload_note": "rejected"},
+            ),
+            PM.Disposition.UNPROVEN,
+        ),
+        (
+            _evidence(
+                provenance={"status": "ok", "rejected_offload_note": "rejected"},
+                runner_receipt=_valid_receipt(),
+            ),
+            PM.Disposition.REJECTED_OFFLOAD,
+        ),
+        (
+            _evidence(provenance={"status": "ok"}, runner_receipt=_valid_receipt()),
+            PM.Disposition.RAN_AS_REQUESTED,
+        ),
+    ],
+)
+def test_rejected_offload_extends_existing_manifest_precedence(
+    evidence: Any, expected: Any
+) -> None:
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id="exec-precedence",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+    assert manifest.disposition is expected
+
+
+def test_rejected_offload_tripwire_note_stays_separate_from_bound_summary() -> None:
+    evidence = _evidence(
+        provenance={
+            "status": "ok",
+            "rejected_offload_note": "Claude rejected the patch.",
+            "tripwire": "tripwire_unarmed: observer unavailable",
+        },
+        runner_receipt=_valid_receipt(),
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id="exec-rejected-tripwire",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+    assert manifest.disposition is PM.Disposition.REJECTED_OFFLOAD
+    assert manifest.disposition_note == "Claude rejected the patch."
+    assert manifest.tripwire_note == "tripwire_unarmed: observer unavailable"
+
+
+def test_rejected_offload_advisory_evidence_cannot_satisfy_gate() -> None:
+    evidence = D.reject_offload(
+        D.dispatch(_resolution(), runner=_ok_runner, execution_id="exec-rejected-gate"),
+        "Rejected after review.",
+    )
+    verified = dataclasses.replace(
+        evidence,
+        verified_by_claude=True,
+        provenance={**evidence.provenance, "observer_corroborated": True},
+    )
+    manifest = D.build_dispatch_manifest(
+        verified,
+        execution_id="exec-rejected-gate",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+    )
+    result = D.rejected_offload_reconciliation(
+        manifest,
+        reconciliation_id="recon-rejected-gate",
+        adjudicator_id="claude",
+        evidence=verified,
+    )
+
+    with pytest.raises(D.DispatchError, match="can never satisfy a gate"):
+        D.satisfy_gate(verified, manifest, reconciliation=result)
+    with pytest.raises(D.DispatchError, match="can never satisfy a gate"):
+        D.satisfy_gate(verified, reconciliation=result)
+
+
 @pytest.mark.parametrize("gatekeeper_key", ["verdict", "gate_status", "adjudicated"])
 def test_never_gatekeeper_guard_rejects_gate_fields(gatekeeper_key: str) -> None:
     """R6/#283 `{#external-engines-never-gatekeepers}`: a runner result carrying any
@@ -1135,25 +1872,6 @@ def test_never_gatekeeper_guard_allows_clean_result() -> None:
 
 # --- U2: SUBSTITUTED_ENGINE auto-derivation + gate refusal + note invariant (R2/R3/R4) -----
 # selectors: substituted_disposition, fallback_reason
-
-
-def _evidence(
-    *,
-    engine_id: str = "codex",
-    variant: str = "gpt-5.5-xhigh",
-    provenance: dict[str, Any] | None = None,
-    halt: str | None = None,
-    runner_receipt: dict[str, Any] | None = None,
-) -> Any:
-    prov: dict[str, Any] = {"status": "ok"} if provenance is None else provenance
-    return D.AdvisoryEvidence(
-        engine_id=engine_id,
-        variant=variant,
-        evidence="external finding",
-        provenance=prov,
-        halt=halt,
-        runner_receipt=runner_receipt,
-    )
 
 
 def test_substituted_disposition_when_expected_differs_from_resolved() -> None:
@@ -1230,6 +1948,7 @@ def test_satisfy_gate_refuses_substituted_manifest() -> None:
         variant="gpt-5.5-xhigh",
         evidence="Claude verified external finding",
         provenance={"status": "ok", "observer_corroborated": True},
+        execution_id="e-gate",
         verified_by_claude=True,
     )
     substituted = D.build_dispatch_manifest(
@@ -1240,7 +1959,7 @@ def test_satisfy_gate_refuses_substituted_manifest() -> None:
     )
     assert substituted.disposition is PM.Disposition.SUBSTITUTED_ENGINE
     with pytest.raises(D.DispatchError, match="substitut"):
-        D.satisfy_gate(evidence, substituted)
+        D.satisfy_gate(evidence, substituted, reconciliation=_ready_reconciliation(evidence))
 
 
 def test_fallback_reason_invariant_fills_empty_note_for_non_ran() -> None:
@@ -1263,6 +1982,7 @@ def test_dispatch_stamps_expected_identity_into_provenance() -> None:
         _resolution(),
         runner=_ok_runner,
         expected_identity="agy/gemini-3.1-pro-high",
+        execution_id="e-thread",
     )
     assert evidence.provenance["expected_identity"] == "agy/gemini-3.1-pro-high"
     manifest = D.build_dispatch_manifest(
@@ -1273,7 +1993,7 @@ def test_dispatch_stamps_expected_identity_into_provenance() -> None:
     verified = dataclasses.replace(evidence, verified_by_claude=True)
     verified.provenance["observer_corroborated"] = True
     with pytest.raises(D.DispatchError, match="substituted"):
-        D.satisfy_gate(verified, manifest)
+        D.satisfy_gate(verified, manifest, reconciliation=_ready_reconciliation(verified))
 
 
 def test_dispatch_expected_identity_none_leaves_provenance_clean() -> None:
@@ -1317,8 +2037,530 @@ def test_dispatch_halted_resolution_stamps_chaperone_provenance() -> None:
 def test_dispatch_copies_resolution_warnings_without_satisfying_gate() -> None:
     resolution = dataclasses.replace(_resolution(), warnings=("stale registry row",))
 
-    evidence = D.dispatch(resolution, runner=_ok_runner)
+    evidence = D.dispatch(resolution, runner=_ok_runner, execution_id="warning-execution")
 
     assert evidence.provenance["warnings"] == ["stale registry row"]
     with pytest.raises(D.DispatchError, match="verified"):
-        D.satisfy_gate(evidence)
+        D.satisfy_gate(evidence, reconciliation=_ready_reconciliation(evidence))
+
+
+def _panel_resolutions() -> list[Any]:
+    return [
+        _resolution(variant="panel-one"),
+        _resolution(variant="panel-two"),
+        _resolution(variant="panel-three"),
+    ]
+
+
+def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolutions = _panel_resolutions()
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", lambda *_args, **_kwargs: resolutions)
+    outputs = iter(("same advisory finding", "same advisory finding", ""))
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+
+    def foreman(evidence: tuple[Any, ...]) -> Any:
+        assert len(evidence) == 2
+        assert evidence[0].member_ids == ("codex/panel-one", "codex/panel-two")
+        assert evidence[1].empty is True
+        return RC.build_panel_reconciliation_result(
+            reconciliation_id="panel-reconciliation",
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            evidence=evidence,
+            items=tuple(
+                RC.ReconciliationItem(
+                    source_finding_id=item.source_finding_id,
+                    status=RC.ReconciliationStatus.RECONCILED,
+                    adjudicator_id="claude/foreman",
+                    rationale=(
+                        "Claude explicitly accounted for the empty member response."
+                        if item.empty
+                        else "Claude verified the duplicate advisory finding once."
+                    ),
+                )
+                for item in evidence
+            ),
+        )
+
+    result = D.dispatch_advisory_panel(
+        D.AdvisoryPanelRequest("cross-family-review-panel"),
+        registry=object(),
+        runner=lambda _invocation: (
+            _review_payload(output) if (output := next(outputs)) else _review_payload()
+        ),
+        foreman=foreman,
+        execution_id="panel-execution",
+        intent="second-opinion",
+        ledger=ledger,
+        subplot_id="issue-393",
+        at="2026-07-09T00:00:00Z",
+    )
+
+    facts = RC.read_reconciliation_facts(ledger)
+    assert [fact["action"] for fact in facts] == ["reconcile", "apply"]
+    assert all(evidence.role_kind == "panel" for evidence in result.member_evidence)
+    assert result.advisory is True
+    assert "same advisory finding" not in ledger.path.read_text(encoding="utf-8")
+
+    verified = dataclasses.replace(
+        result.member_evidence[0],
+        verified_by_claude=True,
+        provenance={**result.member_evidence[0].provenance, "observer_corroborated": True},
+    )
+    with pytest.raises(D.DispatchError, match="advisory-only"):
+        D.satisfy_gate(verified, reconciliation=_ready_reconciliation(verified))
+
+
+def test_advisory_panel_unavailable_member_blocks_all_dispatch_and_append(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolutions = [_resolution(), _resolution(variant="unavailable", halt="not configured")]
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", lambda *_args, **_kwargs: resolutions)
+    calls = 0
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        return {"status": "ok", "output": "must not run"}
+
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="before dispatch"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=runner,
+            foreman=lambda _evidence: None,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+    assert calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_failed_panel_foreman_writes_no_apply_fact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+
+    def failed_foreman(evidence: tuple[Any, ...]) -> Any:
+        return RC.build_panel_reconciliation_result(
+            reconciliation_id="panel-reconciliation",
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            evidence=evidence,
+            items=(),
+        )
+
+    with pytest.raises(D.DispatchError, match="foreman reconciliation failed"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: _review_payload("finding"),
+            foreman=failed_foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert [fact["action"] for fact in RC.read_reconciliation_facts(ledger)] == []
+
+
+def test_panel_flattens_member_findings_and_omission_appends_no_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    foreman_calls = 0
+
+    def foreman(evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        assert tuple(item.output for item in evidence) == ("finding one", "finding two")
+        assert all(item.member_ids == ("codex/panel-one",) for item in evidence)
+        assert all("summary only" not in item.output for item in evidence)
+        return RC.build_panel_reconciliation_result(
+            reconciliation_id="panel-reconciliation",
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            evidence=evidence,
+            items=(
+                RC.ReconciliationItem(
+                    evidence[0].source_finding_id,
+                    RC.ReconciliationStatus.RECONCILED,
+                    "claude/foreman",
+                    "Claude adjudicated only the first finding.",
+                ),
+            ),
+        )
+
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="unaccounted external finding"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: _review_payload("finding one", "finding two"),
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert foreman_calls == 1
+    assert RC.read_reconciliation_facts(ledger) == []
+
+
+def test_panel_rejects_hidden_raw_finding_before_foreman_or_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    foreman_calls = 0
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="exactly match the canonical ordered findings"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: {
+                "status": "ok",
+                "output": '["visible finding","hidden finding"]',
+                "findings": [{"content": "visible finding"}],
+            },
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("reorder", "exact ordered"),
+        ("digest", "evidence_digest"),
+    ],
+)
+def test_panel_binding_mismatch_appends_neither_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+    message: str,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [
+            _resolution(variant="panel-one"),
+            _resolution(variant="panel-two"),
+        ],
+    )
+    outputs = iter(("finding one", "finding two"))
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+
+    def foreman(evidence: tuple[Any, ...]) -> Any:
+        items = tuple(
+            RC.ReconciliationItem(
+                item.source_finding_id,
+                RC.ReconciliationStatus.RECONCILED,
+                "claude/foreman",
+                "Claude accounted for this panel evidence.",
+            )
+            for item in evidence
+        )
+        bound = RC.build_panel_reconciliation_result(
+            reconciliation_id="panel-reconciliation",
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            evidence=evidence,
+            items=items,
+        )
+        if mutation == "digest":
+            return dataclasses.replace(bound, evidence_digest="0" * 64)
+        return RC.build_result(
+            reconciliation_id="panel-reordered",
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            evidence_digest=bound.evidence_digest,
+            source_finding_ids=tuple(reversed(bound.source_finding_ids)),
+            items=tuple(reversed(items)),
+        )
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+        output = next(outputs)
+        return _review_payload(output)
+
+    with pytest.raises(D.DispatchError, match=message):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=runner,
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert RC.read_reconciliation_facts(ledger) == []
+
+
+@pytest.mark.parametrize(
+    ("execution_id", "intent", "subplot_id", "at", "message"),
+    [
+        (
+            "panel-execution",
+            "unknown-intent",
+            "issue-393",
+            "2026-07-09T00:00:00Z",
+            "unknown reconciliation intent",
+        ),
+        ("", "second-opinion", "issue-393", "2026-07-09T00:00:00Z", "execution_id"),
+        (
+            " panel-execution ",
+            "second-opinion",
+            "issue-393",
+            "2026-07-09T00:00:00Z",
+            "execution_id",
+        ),
+        ("panel-execution", "second-opinion", "", "2026-07-09T00:00:00Z", "subplot_id"),
+        ("panel-execution", "second-opinion", "issue-393", "", "panel at"),
+    ],
+)
+def test_invalid_panel_metadata_has_no_preflight_dispatch_or_fact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    execution_id: str,
+    intent: str,
+    subplot_id: str,
+    at: str,
+    message: str,
+) -> None:
+    preflights = 0
+    runner_calls = 0
+    foreman_calls = 0
+
+    def resolve_role(*_args: object, **_kwargs: object) -> list[Any]:
+        nonlocal preflights
+        preflights += 1
+        return [_resolution(variant="must-not-resolve")]
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        nonlocal runner_calls
+        runner_calls += 1
+        return {"status": "ok", "output": "must not run"}
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", resolve_role)
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match=message):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=runner,
+            foreman=foreman,
+            execution_id=execution_id,
+            intent=intent,
+            ledger=ledger,
+            subplot_id=subplot_id,
+            at=at,
+        )
+
+    assert preflights == 0
+    assert runner_calls == 0
+    assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_later_panel_member_runtime_halt_skips_foreman_and_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [
+            _resolution(variant="panel-one"),
+            _resolution(variant="panel-two"),
+        ],
+    )
+    results = iter(
+        (
+            _review_payload("first finding"),
+            {"status": "error", "output": "runtime failed"},
+        )
+    )
+    foreman_calls = 0
+    runner_calls = 0
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        nonlocal runner_calls
+        runner_calls += 1
+        return next(results)
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="panel member failed"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=runner,
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert foreman_calls == 0
+    assert runner_calls == 2
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_thrown_panel_foreman_exception_appends_neither_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        raise RuntimeError("foreman crashed")
+
+    with pytest.raises(D.DispatchError, match="foreman failed before ledger append"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: _review_payload("finding"),
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_panel_member_utf8_output_overflow_fails_without_foreman_or_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    foreman_calls = 0
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    output = "💥" * (D.PANEL_MEMBER_OUTPUT_BYTES_CAP // 4 + 1)
+    assert len(output) < D.PANEL_MEMBER_OUTPUT_BYTES_CAP
+    assert len(output.encode("utf-8")) > D.PANEL_MEMBER_OUTPUT_BYTES_CAP
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="PANEL_MEMBER_OUTPUT_BYTES_CAP"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: _review_payload(output),
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_panel_cumulative_output_overflow_fails_without_foreman_or_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolutions = [_resolution(variant=f"panel-{index}") for index in range(5)]
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", lambda *_args, **_kwargs: resolutions)
+    foreman_calls = 0
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    output = "x" * (D.PANEL_TOTAL_OUTPUT_BYTES_CAP // len(resolutions) + 1)
+    assert len(output.encode("utf-8")) < D.PANEL_MEMBER_OUTPUT_BYTES_CAP
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="PANEL_TOTAL_OUTPUT_BYTES_CAP"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: _review_payload(output),
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []

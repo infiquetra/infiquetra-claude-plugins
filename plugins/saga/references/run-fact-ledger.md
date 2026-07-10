@@ -1,8 +1,9 @@
 # Run-fact ledger (`run_fact.v1`)
 
 One append-only, hash-chained, **leaf-produced** ledger of realized-run facts — spend, cache,
-engine-usage, delegation — that the fleet's telemetry writers all append into, so there is one canonical
-format instead of N. Implemented in `plugins/saga/scripts/run_ledger.py` (#401, objective #338).
+engine-usage, delegation, and typed reconciliation — that the fleet's telemetry writers all append
+into, so there is one canonical format instead of N. Implemented in
+`plugins/saga/scripts/run_ledger.py` (#401, objective #338) and extended for reconciliation by #393.
 
 ## Where it lives
 
@@ -19,7 +20,7 @@ Each line is one JSON object. Common fields on every fact:
 | Field | Meaning |
 |-------|---------|
 | `schema` | `"run_fact.v1"` |
-| `kind` | one of `spend` \| `cache` \| `engine` \| `delegation` |
+| `kind` | one of `spend` \| `cache` \| `engine` \| `delegation` \| `reconciliation` |
 | `subplot_id` | the **producing leaf** (facts are leaf-produced, KTD4) |
 | `at` | ISO timestamp, caller-supplied (the ledger never reads the clock — deterministic) |
 | `prev_hash` | the previous record's `this_hash` (`""` for the genesis record) — chain link |
@@ -34,6 +35,12 @@ Per-kind payload fields (build with `build_fact(kind, subplot_id=, at=, **fields
   `engine_tokens_avoided`, `chaperone_tokens_spent`, `net_savings_tokens`,
   `net_savings_status`, and `external_cost_usd`
 - **delegation** — `evidence` (a **pointer/reference**, never inlined bytes), `engine`
+- **reconciliation** — stable `reconciliation_id`, source `execution_id`, canonical `intent`,
+  exhaustive `recipe_id`, Claude `adjudicator_id`, bound `evidence_digest`, `action` (`reconcile` or
+  `apply`), canonical `result_hash`, ordered `source_finding_ids`, and a bounded structural `items`
+  projection containing only `source_finding_id` + status (`reconciled`, `dropped`, or `overridden`).
+  Raw engine/panel output and reconciliation rationales are deliberately absent. The reconciliation
+  reader, rather than generic ledger code, validates this kind-specific schema and transition order.
 
 `build_fact` rejects an unknown `kind`, an empty `subplot_id`, and any attempt to set the reserved
 `prev_hash`/`this_hash` fields.
@@ -46,7 +53,11 @@ first break. It **fails** on:
 - an **in-place mutation** of any record field (the recomputed `this_hash` no longer matches), and
 - a **reorder or middle-deletion** (a record's `prev_hash` no longer equals its predecessor's `this_hash`).
 
-A torn trailing line (an incomplete append) is dropped by `read_facts` and is **not** a chain break.
+A torn trailing line (an incomplete append) is ignored in the returned in-memory prefix and is **not**
+a chain break. Ordinary `read_snapshot`, `read_facts`, and `verify_chain` calls are strictly
+non-healing: when a writer lock already exists they take a shared lock, otherwise they return a valid
+pre-write/prefix snapshot without creating a parent, ledger, or lock file. Only a later append may
+repair that tail.
 
 **Threat-model bound — tamper-*evidence*, not tamper-*resistance*.** A writer with full file access can
 recompute a fresh, internally-consistent chain, and trailing truncation of whole records yields a valid
@@ -83,6 +94,38 @@ Writers already wired (v1): `engine_dispatch.dispatch(..., ledger=, subplot_id=,
 **telemetry only, never a gate** (`{#external-engines-never-gatekeepers}`); omitting the ledger args is a
 no-op. `lifecycle_state.recommend_execution_backend(..., ledger=)` surfaces a `last_n_prior` "last N runs
 averaged X tokens" prior, additively (the `prior` key appears only when there is data).
+
+Each `reconcile.append_reconciliation_fact(...)` invocation appends exactly **one** transition. The
+caller invokes it once with `action="reconcile"`, then once with `action="apply"`; the helper does not
+write both facts in one call or one transaction. For each invocation, one exclusive per-ledger lock
+covers torn-tail healing, the verified snapshot, result-identity/transition validation, tail-hash
+selection, and the append. `apply` requires exactly one prior `reconcile` for the same identity and
+result hash; duplicate reconcile/apply and apply-before-reconcile fail closed. A crash between calls
+honestly leaves a reconcile-only outcome rather than inventing an apply.
+
+The in-memory `ReconciliationResult` is bound and bounded before projection: identifiers are at most
+256 UTF-8 bytes, there are at most 256 sources/items, each rationale is at most 4096 bytes, and the
+canonical result is at most 65536 bytes. The ledger stores only the structural projection plus its
+canonical hash, evidence digest, and identities. Ledger and writer-created lock files are forced to
+mode `0600`; ordinary reads acquire a shared lock only if it already exists, so absent-ledger reads
+stay non-mutating while existing writer activity remains serialized. Reads pass `heal=False`.
+Torn-tail healing is mutation and occurs only inside the locked
+append path before its verified snapshot.
+
+The closed recipe registry maps each fleet-core intent exactly once: `offload` accounts for accepted,
+dropped, or overridden work; `second-opinion` independently adjudicates every review finding; and
+`divergence` requires explicit review of agreement as well as disagreement. Advisory-panel shape is
+validated by the shared lower-level `engine_registry` policy: `PANEL_N_CAP = 7`, advisory verdict,
+Claude foreman, and normalized role. Dispatch additionally caps output at 64 KiB per member and
+256 KiB cumulatively. The foreman result must bind both the exact ordered gathered finding IDs and a
+canonical SHA-256 digest over the ordered gathered-evidence metadata (member identities, source ID,
+content digest, and empty marker). Only the bounded structural foreman projection is recorded, never
+raw member output.
+
+`reconcile.derive_recipe_update_proposal(...)` verifies the complete chain, validates reconciliation
+facts, and derives a `recipe_update_proposal.v1` view. A populated proposal always carries
+`approval_required: true`; reading it never edits either the append-only ledger or the recipe registry.
+This proposal is review input only and cannot satisfy a gate.
 
 **Not yet migrated (deferred):** `outcome_costs.py` keeps its own cost records for now (KTD7); porting it
 and adopting the remaining wave-1 writers are follow-up work. This substrate lands empty of most

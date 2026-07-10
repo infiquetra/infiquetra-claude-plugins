@@ -37,6 +37,7 @@ from enum import StrEnum
 from typing import Any
 
 SCHEMA_VERSION = "saga.manifest.v1"
+MAX_OPERATIONAL_NOTE_BYTES = 1024
 
 
 class ManifestError(ValueError):
@@ -74,6 +75,10 @@ class Disposition(StrEnum):
     # producer/consumer liveness contradiction. This is distinct from `UNPROVEN` because the
     # bridge did emit a receipt; the receipt's proof claims are not trustworthy.
     PROOF_INTEGRITY = "proof-integrity"
+    # The engine ran, but Claude's chaperone rejected its output after review. The rejection
+    # remains advisory evidence for reviewers/validators; it is neither a dispatch fallback nor
+    # an accepted run. Every such manifest must carry a normalized non-empty disposition note.
+    REJECTED_OFFLOAD = "rejected-offload"
 
 
 class ClaimedStatus(StrEnum):
@@ -386,6 +391,25 @@ class EconomicsRecord:
         )
 
 
+def _validate_normalized_note(note: Any, *, field: str, required: bool) -> None:
+    """Validate bounded operational text before it can enter a durable manifest."""
+    if not isinstance(note, str):
+        raise ManifestError(f"{field} must be a string")
+    normalized = " ".join(note.split())
+    if required and not normalized:
+        raise ManifestError(f"{field} requires a non-empty disposition_note")
+    if not normalized:
+        if note:
+            raise ManifestError(f"{field} must use normalized whitespace")
+        return
+    if any(ord(char) < 32 for char in normalized):
+        raise ManifestError(f"{field} must not contain control characters")
+    if len(normalized.encode("utf-8")) > MAX_OPERATIONAL_NOTE_BYTES:
+        raise ManifestError(f"{field} exceeds {MAX_OPERATIONAL_NOTE_BYTES} bytes")
+    if note != normalized:
+        raise ManifestError(f"{field} must use normalized whitespace")
+
+
 @dataclass(frozen=True)
 class Manifest:
     """The saga.manifest.v1 envelope — one per delegated execution (R1).
@@ -403,7 +427,22 @@ class Manifest:
     claim_provenance: ClaimProvenance | None = None
     economics: EconomicsRecord | None = None
     bridge_run_key: str = ""
+    tripwire_note: str = ""
     schema: str = field(default=SCHEMA_VERSION)
+
+    def __post_init__(self) -> None:
+        if self.disposition is Disposition.REJECTED_OFFLOAD:
+            _validate_normalized_note(
+                self.disposition_note,
+                field="rejected-offload disposition_note",
+                required=True,
+            )
+        if self.tripwire_note:
+            _validate_normalized_note(
+                self.tripwire_note,
+                field="tripwire_note",
+                required=False,
+            )
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -424,6 +463,8 @@ class Manifest:
         }
         if self.bridge_run_key:
             data["bridge_run_key"] = self.bridge_run_key
+        if self.tripwire_note:
+            data["tripwire_note"] = self.tripwire_note
         return data
 
     @classmethod
@@ -442,6 +483,7 @@ class Manifest:
                 "claim_provenance",
                 "economics",
                 "bridge_run_key",
+                "tripwire_note",
             },
             "manifest",
         )
@@ -475,6 +517,7 @@ class Manifest:
             claim_provenance=ClaimProvenance.from_dict(cp_raw) if cp_raw else None,
             economics=EconomicsRecord.from_dict(economics_raw) if economics_raw else None,
             bridge_run_key=str(data.get("bridge_run_key", "") or ""),
+            tripwire_note=str(data.get("tripwire_note", "") or ""),
         )
 
 

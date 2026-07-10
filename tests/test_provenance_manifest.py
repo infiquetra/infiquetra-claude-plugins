@@ -106,6 +106,36 @@ def test_manifest_envelope_round_trip() -> None:
         pm.Manifest.from_dict(bad_sub)
 
 
+def test_rejected_offload_manifest_round_trip_requires_normalized_note() -> None:
+    rejected = _manifest(
+        disposition=pm.Disposition.REJECTED_OFFLOAD,
+        disposition_note="Claude rejected an unsupported patch.",
+    )
+    assert pm.Manifest.from_dict(rejected.to_dict()) == rejected
+
+    missing = rejected.to_dict()
+    missing.pop("disposition_note")
+    with pytest.raises(pm.ManifestError, match="non-empty disposition_note"):
+        pm.Manifest.from_dict(missing)
+
+    for invalid_note in ("", "   ", " not normalized ", "two\nlines", "bad\x00note"):
+        payload = rejected.to_dict()
+        payload["disposition_note"] = invalid_note
+        with pytest.raises(pm.ManifestError, match="disposition_note"):
+            pm.Manifest.from_dict(payload)
+
+
+def test_manifest_round_trips_separate_bounded_tripwire_note() -> None:
+    manifest = _manifest(tripwire_note="tripwire_unarmed: observer unavailable")
+    assert pm.Manifest.from_dict(manifest.to_dict()) == manifest
+
+    for invalid_note in (" not normalized ", "two\nlines", "bad\x00note"):
+        with pytest.raises(pm.ManifestError, match="tripwire_note"):
+            _manifest(tripwire_note=invalid_note)
+    with pytest.raises(pm.ManifestError, match="exceeds"):
+        _manifest(tripwire_note="x" * (pm.MAX_OPERATIONAL_NOTE_BYTES + 1))
+
+
 def test_manifest_envelope_requires_attribution_and_disposition() -> None:
     """Envelope invalid without R2 attribution and R18 disposition fields."""
     good = _manifest().to_dict()

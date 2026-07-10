@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.75.16",
+      "version": "0.75.17",
       "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, trust-gated external-engine onboarding, provenance, and attestation.",
       "author": {
         "name": "Infiquetra",
@@ -108,7 +108,7 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.14.2",
+      "version": "2.14.3",
       "description": "Two-phase plan execution with reviewer consensus, non-scoring external advisory convergence diffs, validator gates, chaperone manifests, and guarded nonprod automation.",
       "author": {
         "name": "Infiquetra",
@@ -200,7 +200,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.8.3",
+      "version": "0.8.4",
       "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives, bridge receipts, output attestations, and the vendored resolution shim. Scripts-only \u2014 no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",

@@ -3,7 +3,8 @@
 This document is the wrapper contract R12 names as missing: how a team-execution worker can be
 an external engine (agy, codex) instead of a Claude agent, without team-execution growing a
 second executor kind. It closes #283's deferred U12 leg and activates the dispositions
-`worker-manifest.md` reserved (`fell-back-to-claude` / `substituted-engine`).
+`worker-manifest.md` reserves (`fell-back-to-claude` / `substituted-engine` /
+`rejected-offload`).
 
 > **Dispatch-adapter contract, generic HTTP bridge, and `bridge_receipt.v1`:** how a
 > `transport: http` registry row dispatches through the shared generic HTTP bridge with zero
@@ -22,13 +23,15 @@ chaperone consumes (R23) — never write-capable in this contract.
 
 ## Never a gatekeeper (R13/R15, restated)
 
-Nothing in this document lets an external engine satisfy a gate. `engine_dispatch.satisfy_gate()`
-(`plugins/saga/scripts/engine_dispatch.py:238-258`) hard-requires `evidence.verified_by_claude is
-True` before advisory evidence counts toward any verdict, and — when a typed manifest carries
-`claim_provenance` — every gate-relevant claim must already be Claude-adjudicated (R11 extension).
-An external-engine worker's diff still goes through the same reviewer consensus and validator
-gates as any other worker's diff (`SKILL.md` Step B2/B3); this contract only changes *who wrote
-the diff*, not what clears it for merge.
+Nothing in this document lets an external engine satisfy a gate. The canonical call is
+`engine_dispatch.satisfy_gate(evidence, reconciliation=result, ...)`: before the existing authority
+checks, the ready typed result must bind exactly to the dispatch execution id, canonical intent and
+recipe, evidence digest, and ordered source-finding IDs. The guard then still requires
+`evidence.verified_by_claude is True`, observer corroboration, and any supplied manifest's matching
+execution and adjudicated claims; it refuses panel/advisory-reviewer roles, rejected offloads,
+substitutions, proof-integrity failures, and liveness contradictions. An external-engine worker's diff
+still goes through the same reviewer consensus and validator gates as any other worker's diff
+(`SKILL.md` Step B2/B3); this contract only changes *who wrote the diff*, not what clears it for merge.
 
 ## Advisory-reviewer seat (non-scoring)
 
@@ -47,15 +50,75 @@ Advisory-reviewer evidence is report-only. `engine_dispatch.satisfy_gate()` refu
 corroborated the run. The only consumer is the Claude-vs-external convergence report described in
 `consensus-protocol.md`.
 
+## Intent and typed reconciliation
+
+Every chaperone unit carries exactly one fleet-core-owned `engine_intent`: `offload`,
+`second-opinion`, or `divergence` (omission defaults to `offload`). Saga's closed recipe registry maps
+each intent exactly once: offload accounts for accepted, dropped, and overridden engine findings;
+second-opinion makes Claude independently adjudicate every review finding; divergence treats both
+agreement and disagreement as findings requiring explicit Claude review. Unknown intents and registry
+drift fail closed rather than falling back to offload.
+
+The engine runner returns findings as an ordered array of `{"content": <string>}` records. Dispatch
+retains each bounded content string in-memory with immutable `SourceFinding` metadata: an
+ordinal-bearing per-content ID and SHA-256 digest. For non-empty `second-opinion` and `divergence`,
+the runner's `output` must equal `reconcile.render_source_findings(findings)` exactly; no summary or
+extra prose can sit outside the ordered envelope Claude must adjudicate. `offload` alone may omit the
+envelope and receive one explicit opaque-artifact source for the whole output. Typed multi-finding
+offloads retain every separate source. Reconciliation must cover the exact ordered ID tuple with one
+ordered item per source; no intent may collapse typed multi-finding output into an opaque singleton.
+
+All three paths produce a ready typed `ReconciliationResult` before gate evaluation. Reconcile and
+apply events are append-only `run_fact.v1` reconciliation facts; rejected offloads project their
+mandatory note as a typed `dropped` item for reviewer and validator evidence. `/retro` may derive an
+`approval_required` recipe-update proposal from those facts, but neither it nor a chaperone edits the
+registry. Typed results, rejection notes, panel output, and proposals are advisory evidence only:
+Claude remains verifier-of-record and `satisfy_gate()` remains the sole authority boundary.
+
+## Advisory-jury panel (Claude foreman)
+
+The rare hardest-call jury starts from an explicit
+`AdvisoryPanelRequest(role=<registered-role>)`. It is not a unit's `verify` object: `Verify` bounds
+Claude verifier calls over one unit result, while the advisory jury expands a named external-engine
+composing role.
+`PANEL_N_CAP = 7` is the independent hard bound for this external member multiplicity. The constant
+and the normalized-role/advisory-verdict/Claude-foreman checks live in the lower-level Saga
+`engine_registry` policy shared by spec validation and runtime resolution, not in either caller.
+
+The chaperone validates the role name, advisory verdict, Claude verifier, and resolved member count
+before any member preflight. Zero-member, malformed, unknown, or over-cap roles halt with no member
+preflight, dispatch, or ledger append. It then calls `engine_resolver.resolve_role()` once, checks
+the complete returned list with `panel_halt()`, and only starts member dispatch when every member is
+available. It must not call `resolve({role_kind: "panel"})`; that API remains the resolver's existing
+single-resolution role policy, not a fan-out request.
+
+Member findings stay in-memory advisory evidence. Each typed finding becomes a panel source; identical
+content at the same source ordinal is deduplicated while retaining all producing member identities,
+but duplicate content at distinct ordinals remains separately accountable. An empty response becomes
+an explicit, member-specific source finding. Claude's foreman must return a ready typed
+`ReconciliationResult` that matches both the exact ordered source finding IDs and the canonical
+SHA-256 digest of the ordered gathered-evidence metadata. Only after that validation may
+`dispatch_advisory_panel()` append the typed `reconcile` and `apply` facts. Raw member output is never
+written to the run-fact ledger, and a failed foreman result writes neither fact. Dispatch rejects a
+member above 64 KiB or cumulative UTF-8 panel output above 256 KiB before the foreman runs; the ledger
+stores only the bounded structural item-id/status projection and its hashes, never raw output or
+rationale prose.
+
+Successful reconciliation grants no authority. Every member evidence record is stamped
+`role_kind="panel"`, which remains in `NON_GATING_ROLE_KINDS`; `satisfy_gate()` therefore refuses it
+regardless of Claude verification or observer corroboration. The panel does not join wave scheduling,
+reviewer score math, or any merge/deploy gate.
+
 ## 1. Context package (coordinator → chaperone)
 
 At residency spawn (Step B1's wave scheduling), the coordinator hands the chaperone a context
 package carrying:
 
 A package may contain one unit or a homogeneous same-engine batch. Batching amortizes the
-chaperone's context load only: it never merges unit manifests, never turns batch success into
-per-unit `verified_by_claude=True`, never lets the engine join wave scheduling, and never lets the engine touch the working tree. Mixed selectors, `second-opinion` intent, incompatible sandbox/write
-handling, or incompatible test-oracle handling stay as separate one-unit packages.
+chaperone's context load only: it never merges unit manifests or turns batch success into per-unit
+`verified_by_claude=True`; it never lets the engine touch the working tree. Mixed selectors, mixed
+intents, incompatible sandbox/write handling, or incompatible test-oracle handling stay as separate
+one-unit packages.
 
 | Field | Source | Purpose |
 |---|---|---|
@@ -63,7 +126,7 @@ handling, or incompatible test-oracle handling stay as separate one-unit package
 | `unit_contexts[]` | one record per unit id | per-unit scope that stays distinct inside a batch: `unit_id`, `selector`, `intent`, `verifiability`, `write_set`, `test_oracle`, and `manifest_identity` |
 | `plan_pointer` | plan doc path | authoritative spec, read once, not re-transcribed |
 | `selector` | the unit's `engine` or `capability` field (`execution_spec.py` `Unit.engine`/`Unit.capability`, mutually exclusive — `_validate_external_engine_selector`, `execution_spec.py:241-265`) | what `engine_resolver.resolve()` is called with |
-| `intent` | the unit's `engine_intent` (`offload` / `second-opinion`, defaults `offload` — U3) | carried for provenance/audit; the operational effect (chaperone tier) was already locked at plan time via the KTD2 tier-table recommendation (`plugins/saga/skills/plan/SKILL.md:295-305`) |
+| `intent` | the unit's `engine_intent` (`offload` / `second-opinion` / `divergence`, defaults `offload`) | selects the exhaustive typed reconciliation recipe and is carried for provenance/audit; the operational effect (chaperone tier) was already locked at plan time via the tier-table recommendation (`plugins/saga/skills/plan/SKILL.md`) |
 | `verifiability` | the unit's `verifiability` (`test-gated` / `unverifiable`; absent means `unverifiable`) | selects ratify-only vs full-review chaperoning; batch members must match |
 | `test_oracle` | the unit's declared tests, output contract, or plan verification note | what a `test-gated` unit asks the chaperone to ratify before accepting the external evidence |
 | `plan_time_resolution_preview` | the tier-table recommendation row the operator approved (U2): `{"engine_id": "<key>", "variant": "<key>"}` for a capability-routed unit; absent/null for an explicit-engine unit (R26 makes substitution unreachable there — see §4) | the baseline §4 compares the run-time resolution against |
@@ -121,6 +184,7 @@ invocation = (
 )
 evidence = engine_dispatch.dispatch(
     resolution, runner=runner, model=model, sandbox=unit_sandbox, write_set=unit_files,
+    execution_id=f"{worker_id}-{unit_id}", intent=unit_intent,
     expected_identity=(
         f"{plan_time_resolution_preview['engine_id']}/{plan_time_resolution_preview['variant']}"
         if plan_time_resolution_preview is not None
@@ -182,20 +246,60 @@ the one the operator approved in the tier table. This is the only reachable subs
 shared builder derives it itself from `expected_identity` (§3/§5), it is never hand-constructed
 here.
 
-## 5. Verify → apply → test → manifest
+## 5. Verify → reconcile → gate → apply → test → manifest
 
 1. **Verify.** The chaperone reads `evidence.evidence` (the engine's returned patch/output) and
    reviews it itself — never self-attested. Only after review does the chaperone set
    `evidence.verified_by_claude = True`; this is the bit `satisfy_gate()` requires (§ "Never a
-   gatekeeper").
-2. **Apply.** The chaperone applies the reviewed patch — the engine never touches the working
+   gatekeeper"). If review rejects an otherwise dispatched offload, the chaperone calls
+   `engine_dispatch.reject_offload(evidence, rejection_note)` with its normalized, non-empty
+   reason. It does not apply the rejected patch.
+2. **Build and record the normal reconciliation.** This step is mandatory for accepted `offload`,
+   `second-opinion`, and `divergence` units. `dispatch()` in §3 receives the unit's stable
+   `execution_id` and canonical `intent`; the returned immutable evidence carries its canonical
+   envelope digest plus ordered typed source findings and IDs. For non-empty `second-opinion` and
+   `divergence`, the runner must have supplied an `output` exactly equal to that ordered findings
+   envelope. Only an unstructured `offload` may carry the synthesized opaque singleton. Claude builds one typed
+   `ReconciliationItem` per source in source order (including explicit dropped/overridden outcomes),
+   then builds a ready result with those exact bindings. Typed multi-finding evidence therefore needs
+   exact multi-item coverage. The caller records one transition per helper call, in order, and passes
+   that same result object to the gate:
+   ```python
+   result = reconcile.build_result(
+       reconciliation_id=reconciliation_id,
+       execution_id=evidence.execution_id,
+       intent=evidence.intent,
+       adjudicator_id="claude/<variant>",
+       evidence_digest=evidence.evidence_digest,
+       source_finding_ids=evidence.source_finding_ids,
+       items=typed_items,
+   )
+   reconcile.append_reconciliation_fact(
+       ledger, result, action="reconcile", subplot_id=subplot_id, at=reconciled_at,
+   )
+   engine_dispatch.satisfy_gate(
+       evidence, manifest, reconciliation=result, ledger=ledger, store=store,
+   )
+   ```
+   `manifest` is passed whenever it exists, and the `ledger`/`store` liveness pair is passed
+   together.
+3. **Apply.** Only after the gate accepts the bound result does the chaperone apply the reviewed patch
+   — the engine never touches the working
    tree (KTD6/R23). The chaperone **owns the commit**, but the commit itself happens only after
-   Test (step 3) and the empty-delivery check (step 3a) pass — apply and commit are distinct
+   Test (step 4) and the empty-delivery check (step 4a) pass — apply and commit are distinct
    steps of the same chaperone-owned sequence. This is the same file-edit scope every
    team-execution worker already has (`worker-manifest.md` "grants no privilege... workers keep
-   today's file-edit scope").
-3. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
-3a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
+   today's file-edit scope"). After the reviewed patch is applied, record the matching transition:
+   ```python
+   reconcile.append_reconciliation_fact(
+       ledger, result, action="apply", subplot_id=subplot_id, at=applied_at,
+   )
+   ```
+   Each append is independently lock-atomic, and `apply` requires exactly one matching prior
+   `reconcile`. The fact records the chaperone-controlled apply event; it never claims that the
+   external engine wrote the worktree.
+4. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
+4a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
    chaperone runs `check_empty_delivery.check_empty_delivery()` (or its CLI,
    `plugins/saga/scripts/check_empty_delivery.py --claims-delivery`) against the working tree. A
    unit whose evidence claims delivery but changed zero paths gets a HALT verdict — the chaperone
@@ -204,10 +308,11 @@ here.
    itself never commits and mints no new auto-commit machinery (none exists in this repo — `/optimize`
    deliberately shed its own). This is a distinct axis from `manifest_store.py`'s `missing-output`
    trip (`manifest_store.py:249-363`), which checks the returned-value axis, not file delivery.
-4. **Manifest.** One path, for every disposition — `ran-as-requested`, `fell-back-to-claude`, and
-   `substituted-engine` alike. The chaperone never branches on §4's `substituted` result and never
-   constructs `provenance_manifest.Manifest` directly; it always calls the existing builder,
-   forwarding the same `expected_identity` it passed to `dispatch()` in §3:
+5. **Manifest and rejected-offload evidence.** One path, for every disposition —
+   `ran-as-requested`, `fell-back-to-claude`, `substituted-engine`, and `rejected-offload` alike.
+   The chaperone never branches into a second manifest constructor and never constructs
+   `provenance_manifest.Manifest` directly; it always calls the existing builder, forwarding the
+   same `expected_identity` it passed to `dispatch()` in §3:
    ```python
    engine_dispatch.record_dispatch_manifest(
        store, evidence,
@@ -215,16 +320,29 @@ here.
        effort=resolution.effort, protocol="\n".join(resolution.protocol),
    )
    ```
-   `build_dispatch_manifest` (`engine_dispatch.py:473-576`) derives the disposition from the
+   `build_dispatch_manifest` derives the disposition from the
    evidence alone: `evidence.halt is not None` → `FELL_BACK_TO_CLAUDE` (carrying the
    halt/downgrade note as `disposition_note`); otherwise, when the evidence's provenance carries
    an `expected_identity` that differs from `f"{evidence.engine_id}/{evidence.variant}"` →
    `SUBSTITUTED_ENGINE` (`_substitution_note`, `engine_dispatch.py:456-470`, naming both the
-   previewed and the resolved engine/variant); otherwise `RAN_AS_REQUESTED`. Attribution is always
+   previewed and the resolved engine/variant); receipt/proof integrity dispositions retain their
+   existing precedence; then a `rejected_offload_note` stamped by `reject_offload()` →
+   `REJECTED_OFFLOAD`; otherwise `RAN_AS_REQUESTED`. Attribution is always
    `kind=EXTERNAL_ENGINE`, `identity=f"{evidence.engine_id}/{evidence.variant}"` — the same
-   identity format the builder always emits. There is no second, hand-built manifest path for the
-   substitution case; `record_dispatch_manifest` is the only manifest-construction call this
-   contract documents (R5).
+   identity format the builder always emits. There is no second, hand-built manifest path;
+   `record_dispatch_manifest` is the only manifest-construction call this contract documents.
+
+   For `REJECTED_OFFLOAD`, the chaperone calls
+   `engine_dispatch.rejected_offload_reconciliation(..., evidence=evidence)`, then passes
+   `reconcile.reviewer_validator_evidence(result)` to both the reviewer and validator evidence
+   inputs. Passing the evidence retains the unit's canonical intent, immutable digest, and source
+   IDs; the result contains one typed `dropped` item per source whose rationale is the manifest's
+   concise normalized rejection summary. The summary is evidence-bound, single-line, and capped at
+   1024 UTF-8 bytes; it is never a copy of unbounded engine output. Final manifest JSON is written
+   atomically and forced to mode `0600`. This recovers the failed quality check as review signal
+   without giving it authority or writing raw engine output to the ledger: `satisfy_gate()` refuses
+   `REJECTED_OFFLOAD` even when Claude verification and observer corroboration are both present, and
+   panel/advisory-reviewer restrictions remain unchanged.
 
    The fail-loud discriminator this feeds (#392): a substituted run is not a passing external
    result. `satisfy_gate()` (`engine_dispatch.py:664`) refuses a manifest whose disposition is

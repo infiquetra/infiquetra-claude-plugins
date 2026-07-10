@@ -304,6 +304,7 @@ tier from the work-shape heuristic (R10). Surface the tier table for operator ov
 | External-engine delegation, `intent=offload`, `verifiability=test-gated` (ratify-only) | `haiku / low` | External-engine delegation, intent=offload, verifiability=test-gated — chaperone ratifies the declared test oracle and provenance; keep the chaperone cheap unless evidence size escalates. |
 | External-engine delegation, `intent=offload`, `verifiability=unverifiable` or absent | `sonnet / medium` | External-engine delegation, intent=offload, verifiability=unverifiable or absent — chaperone performs full review; a heavier default would erase the token savings that motivated delegation (KTD2). |
 | External-engine delegation, `intent=second-opinion` (U12) | `opus / high` | External-engine delegation, intent=second-opinion — adversarial verification IS the product; extra spend assumed; fable/xhigh available as a per-unit override, never a default (KTD2). |
+| External-engine delegation, `intent=divergence` (adversarial review) | `opus / high` | External-engine delegation, intent=divergence — agreement and disagreement are both explicit adversarial-review outcomes; use the high-tier chaperone posture. |
 <!-- END GENERATED TIER TABLE -->
 
 Apply the heuristic per unit, then present the full tier table (U-ID, label, proposed tier, rationale)

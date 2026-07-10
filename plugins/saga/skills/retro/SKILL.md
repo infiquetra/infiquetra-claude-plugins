@@ -268,6 +268,25 @@ This surfaces three R7/R16/R18 signals:
 verbatim, never fabricate a rate. This pass is **read-only and advisory-only** (R8/R12): a low
 verified ratio or a nonzero parroting count is signal for the interview, never a gate.
 
+**1.9 Reconciliation recipe proposals (read-only, issue #393).** Resolve the repository's
+`run_ledger.RunLedger`, then call `reconcile.derive_recipe_update_proposal(ledger)`. The reader verifies
+the hash chain before selecting reconciliation facts, validates every selected typed result, and
+deduplicates reconcile/apply events by stable `reconciliation_id`. Its structured
+`recipe_update_proposal.v1` output contains:
+
+- `status`: `proposal` or the explicit zero-data result `no-proposal`;
+- `approval_required`: `true` for every proposal (a proposal is never an authorization to edit);
+- `proposed_updates`: per-intent current recipe, deduplicated outcome count, finding-status counts,
+  evidence identities, and the requested `review-intent-recipe` action;
+- `evidence`: reconciliation/execution/result identities plus the source ledger fact hashes.
+
+Treat any chain break, non-trailing corruption, or invalid reconciliation fact as a visible evidence
+failure; only the ledger's existing torn trailing-line tolerance is allowed. This pass is derive-on-read:
+it does not append to the ledger, rewrite `RECIPE_REGISTRY`, or apply a recipe change. Carry proposals
+into the interview and retro doc as **PROPOSE-DIFF-AND-WAIT** input. `/retro` remains terminal and
+advisory: it writes no saga tick, and even an approved recipe proposal must be handed to a separate
+authorized implementation path.
+
 ---
 
 ## Phase 2 — Structured interview

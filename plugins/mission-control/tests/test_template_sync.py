@@ -111,7 +111,7 @@ def test_actionable_template_labels_match_canonical_yaml() -> None:
 
 
 def test_non_actionable_template_labels_match_canonical_yaml() -> None:
-    """Non-actionable docs must not present objective/exploration/context-update as tasks."""
+    """Non-actionable docs must not present exploration/context-update as tasks."""
     markdown = sync_template_docs.render_reference()
 
     for template_name in sync_template_docs.NON_ACTIONABLE_TEMPLATES:

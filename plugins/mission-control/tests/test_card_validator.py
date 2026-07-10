@@ -322,8 +322,6 @@ def test_recommended_tier_band_field() -> None:
         "effort": "medium",
     }
     assert sdlc_manager.derive_tier_band("exploration") == {"model": "sonnet", "effort": "low"}
-    # Parent tracking cards carry no execution tier of their own.
-    assert sdlc_manager.derive_tier_band("objective") is None
     assert sdlc_manager.derive_tier_band("nonsense-type") is None
 
 
@@ -336,13 +334,6 @@ def test_tier_band_stamped_on_compiled_body() -> None:
     # Idempotent: re-compiling a body that already carries the band does not double-stamp.
     restamped = sdlc_manager._append_tier_band(body, "defect")
     assert restamped.count("### Recommended Tier Band") == 1
-
-    # No band for objective (parent card).
-    obj_body = sdlc_manager._source_to_issue_body(
-        "Track the initiative", "objective", "campps", "infiquetra/widgets", None, None
-    )
-    assert "### Recommended Tier Band" not in obj_body
-
 
 def test_tier_band_stamp_not_suppressed_by_mention() -> None:
     """Verifier P1: a prose or code-fence MENTION of the header must not suppress the stamp."""

@@ -1,106 +1,65 @@
 # Issue Types Reference
 
-Complete guide to all 6 Infiquetra SDLC issue types. This replaces the traditional
+Complete guide to all five Infiquetra SDLC issue types. This replaces the traditional
 Epic/Feature/Story/Task hierarchy with types optimized for AI-assisted development.
+
+An Objective is not an issue type. It is an `Objective` project-field option
+plus an Outcome Scorecard doc. Capabilities carry the field value and are
+top-level by default.
 
 ---
 
 ## Decision Tree
 
 ```
-Is this coordinating multiple capabilities with a target date?
-+- Yes -> OBJECTIVE
+Is it broken functionality?
++- Yes -> DEFECT
 +- No
-   +- Is it broken in production?
-      +- Yes -> DEFECT
+   +- Is it new functionality?
+      +- Yes
+      |  +- Is it end-to-end and deployable independently?
+      |     +- Yes -> CAPABILITY
+      |     +- No -> ENHANCEMENT (or break down if too large)
       +- No
-         +- Is it new functionality?
-            +- Yes
-            |  +- Is it end-to-end and deployable independently?
-            |     +- Yes -> CAPABILITY
-            |     +- No -> ENHANCEMENT (or break down if too large)
+         +- Are you improving existing functionality?
+            +- Yes -> ENHANCEMENT
             +- No
-               +- Are you improving existing functionality?
-                  +- Yes -> ENHANCEMENT
+               +- Are you researching or investigating?
+                  +- Yes -> EXPLORATION
                   +- No
-                     +- Are you researching or investigating?
-                        +- Yes -> EXPLORATION
-                        +- No
-                           +- Are you updating documentation?
-                              +- Yes -> CONTEXT UPDATE
-                              +- No -> Reconsider what you're trying to accomplish
+                     +- Are you updating documentation?
+                        +- Yes -> CONTEXT UPDATE
+                        +- No -> Reconsider what you're trying to accomplish
 ```
 
 ---
 
 ## Comparison Table
 
-| Attribute | Objective | Capability | Enhancement | Defect | Exploration | Context Update |
-|-----------|-----------|------------|-------------|--------|-------------|----------------|
-| **Duration** | 2-8 weeks | 1-4 weeks | 2-5 days | Hours-2 days | 1-3 days | Hours-1 day |
-| **AI Usage** | N/A | 60-80% | 50-70% | 30-50% | 20-40% | 40-60% |
-| **Review Required** | Stakeholder | 2 reviewers | 1 reviewer | 1 reviewer | 1 reviewer | 1 reviewer |
-| **Test Coverage** | N/A | 90%+ | 85%+ | 90%+ | N/A | N/A |
-| **Contains** | 3-10 Capabilities | N/A | N/A | N/A | N/A | N/A |
+| Attribute | Capability | Enhancement | Defect | Exploration | Context Update |
+|-----------|------------|-------------|--------|-------------|----------------|
+| **Duration** | 1-4 weeks | 2-5 days | Hours-2 days | 1-3 days | Hours-1 day |
+| **AI Usage** | 60-80% | 50-70% | 30-50% | 20-40% | 40-60% |
+| **Review Required** | 2 reviewers | 1 reviewer | 1 reviewer | 1 reviewer | 1 reviewer |
+| **Test Coverage** | 90%+ | 85%+ | 90%+ | N/A | N/A |
 
 ---
 
-## 1. Objective
+## Objective Representation
 
-**Definition**: A time-bounded deliverable set that coordinates multiple Capabilities toward a common goal.
-Used for Pilots, MVPs, Releases, and Program milestones.
+Use an Objective when several Capabilities contribute to one time-bounded
+delivery target. Create or select the board's `Objective` field option, maintain
+the Outcome Scorecard in the owning context library, and assign that field value
+to every Capability and child card. Do not create an Objective issue or apply an
+`objective` type label.
 
-### When to Use
-- Coordinating time-bounded pilot or customer validation
-- Planning MVP or release with a specific target date
-- Tracking OKR or program milestone
-- Multiple Capabilities must deliver together
-- Executive visibility required
-
-### When NOT to Use
-- Single Capability (assign Capability directly to Initiative instead)
-- Ongoing work without a specific delivery target
-- Informal team coordination
-
-### Size / Duration
-2-8 weeks. Contains 3-10 Capabilities:
-
-| Size | Duration | Capabilities |
-|------|----------|--------------|
-| Small | 2-4 weeks | 3-5 capabilities |
-| Medium | 4-6 weeks | 5-8 capabilities |
-| Large | 6-8 weeks | 8-10 capabilities |
-
-If > 10 Capabilities: consider breaking into multiple Objectives or extending the timeline.
-
-### Objective Types
-| Type | When to Use | Example |
-|------|-------------|---------|
-| **Pilot** | Customer validation with specific participants | "Pilot: Platform Launch with 5 early adopters" |
-| **MVP** | Minimum viable product for initial launch | "MVP: Core Auth Integration" |
-| **Release** | Versioned delivery requiring coordination | "Release: Olympus v1.0" |
-| **Program** | OKR milestone or initiative phase | "Program: Q1 KR1 - User Adoption" |
-
-### Template Labels and Project Fields
-- Current template labels: `objective`, `hermes-not-actionable`
-- Use the board's `Initiative` and `Objective` project fields for strategic grouping.
-- Do not apply `initiative:*` or `objective:*` labels to new work; those are legacy convention
-  labels only.
-- See `templates-reference.md` for the generated label and field contract.
-
-### Examples
-**Good**:
-- "Pilot: Platform Launch with 5 early adopters by March 15, 2026"
-- "Release: Olympus v1.0 general availability by April 30, 2026"
-- "MVP: Core auth integration complete by Feb 28"
-
-**Not an Objective**:
-- "Improve platform performance" — too vague, no target date
-- "Add logging to services" — single Capability or Enhancement, not a coordinated set
+Native parent links are independent of Objective grouping. A Capability has no
+parent by default. Add a parent only when it is a real decomposition child, or
+when a long-lived initiative board explicitly uses Outcome proof cards.
 
 ---
 
-## 2. Capability
+## 1. Capability
 
 **Definition**: A complete, deployable piece of system functionality that delivers meaningful business
 or technical value. The primary unit of work in AI-native development.
@@ -149,7 +108,7 @@ or technical value. The primary unit of work in AI-native development.
 
 ---
 
-## 3. Enhancement
+## 2. Enhancement
 
 **Definition**: Improves an existing capability without adding fundamentally new functionality.
 For optimization, refinement, refactoring, and incremental improvements.
@@ -194,7 +153,7 @@ For optimization, refinement, refactoring, and incremental improvements.
 
 ---
 
-## 4. Defect
+## 3. Defect
 
 **Definition**: A bug or issue in production that requires fixing. Defects have the highest priority
 and shortest cycle time targets.
@@ -240,7 +199,7 @@ Hours to 2 days. Priority determines SLA:
 
 ---
 
-## 5. Exploration
+## 4. Exploration
 
 **Definition**: Research, proof-of-concept, or architectural investigation that informs future
 decisions. Produces knowledge, not production code.
@@ -281,7 +240,7 @@ decisions. Produces knowledge, not production code.
 
 ---
 
-## 6. Context Update
+## 5. Context Update
 
 **Definition**: Maintains the Blueprint Repository's accuracy and completeness. Essential for
 AI effectiveness — Claude Code relies on up-to-date context in the blueprint repo.

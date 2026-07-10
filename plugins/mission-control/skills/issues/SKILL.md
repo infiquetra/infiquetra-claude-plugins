@@ -1,16 +1,16 @@
 ---
 name: issues
 description: |
-  Create and manage SDLC issues in Infiquetra GitHub repositories using the 6-type issue
-  taxonomy: capability, enhancement, defect, exploration, context-update, and objective.
+  Create and manage SDLC issues in Infiquetra GitHub repositories using the 5-type issue
+  taxonomy: capability, enhancement, defect, exploration, and context-update.
   Handles issue type selection, template-guided creation, Hermes label application, project
   board assignment, and milestone linking.
 when_to_use: |
   Use this skill when the user wants to:
 
   Direct issue creation:
-  - "create a capability", "create a defect for this bug", "let's create an objective",
-    "file an enhancement", "open an exploration", "create a context update"
+  - "create a capability", "create a defect for this bug", "file an enhancement",
+    "open an exploration", "create a context update"
   - "create an issue in infiquetra-core", "file a bug against the auth service"
   - "create an issue of type capability", "I need to open a defect"
 
@@ -40,7 +40,7 @@ when_to_use: |
 
 # SDLC Issues
 
-Create and manage SDLC issues across Infiquetra repositories using the 6-type taxonomy.
+Create and manage SDLC issues across Infiquetra repositories using the 5-type taxonomy.
 Handles type selection, template-guided creation, Hermes label application, and project board
 assignment.
 
@@ -54,16 +54,21 @@ $INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/mission-control/scrip
 
 ## Issue Types
 
-Six issue types cover all Infiquetra work:
+Five issue types cover all Infiquetra issue-backed work:
 
 | Type | Hermes Actionable | Duration | When to Use |
 |------|-------------------|----------|-------------|
 | **capability** | Yes | 1-4 weeks | New end-to-end deployable functionality |
 | **enhancement** | Yes | 2-5 days | Improving existing functionality |
 | **defect** | Yes | Hours-2 days | Broken functionality that an agent can fix |
-| **objective** | No | 2-8 weeks | Coordinating multiple capabilities with a target date |
 | **exploration** | No | 1-3 days | Research, POC, or architectural investigation |
 | **context-update** | No | Hours-1 day | Updating Blueprint repository documentation |
+
+An Objective is an `Objective` project-field option plus an Outcome Scorecard
+doc, not an issue type. Capabilities are top-level by default and carry the
+Objective field value. Add a native parent only for real decomposition, such as
+a Capability's executable child or an Outcome proof card on a board that
+explicitly uses that tier.
 
 See `references/issue-types.md` for the complete guide and decision tree.
 See `references/templates-reference.md` for the generated template field and label reference.
@@ -95,7 +100,7 @@ Hermes validation expects these semantics:
 - `Lifecycle Origin` is auto-populated by prepared handoff flows, not author supplied.
 - `### Recommended Tier Band` is auto-stamped at issue creation from the issue type
   (defect/capability→`opus/high`, enhancement/context-update→`sonnet/medium`,
-  exploration→`sonnet/low`; objective carries none) — a coarse seed saga's `/plan` pre-fills its tier
+  exploration→`sonnet/low`) — a coarse seed saga's `/plan` pre-fills its tier
   table from (repo `.saga/tier-defaults.json` overrides win). Auto-populated, not author supplied;
   never double-stamped on recompile.
 - Empty placeholder sections such as `_No response_` are invalid.
@@ -105,9 +110,9 @@ Optional actionable sections include `Notes / conventions`. Capability cards als
 
 ## Non-actionable Templates
 
-Objective, Exploration, and Context Update templates carry `hermes-not-actionable`. Do not present
-these as Hermes task cards or dispatch them directly to agents. Use them for coordination,
-research, or documentation context.
+Exploration and Context Update templates carry `hermes-not-actionable`. Do not present these as
+Hermes task cards or dispatch them directly to agents. Use them for research or documentation
+context.
 
 ## Core Operations
 
@@ -202,7 +207,6 @@ After template creation, apply labels and add to the project board where applica
 
 **Non-actionable templates**:
 
-- `objective` -> `objective`, `hermes-not-actionable`
 - `exploration` -> `exploration`, `research`, `hermes-not-actionable`
 - `context-update` -> `context-update`, `documentation`, `hermes-not-actionable`
 
@@ -309,10 +313,15 @@ python3 sdlc_manager.py board add --repo <repo> --number <N>
 
 Issue starts in **Backlog** unless the current project workflow moves it elsewhere.
 
-### Step 7: Link Parent or Milestone
+### Step 7: Set Objective and Link a Real Decomposition Parent
 
 ```bash
-# If part of an objective, link as a native sub-issue or attach to the objective milestone
+# Group the card by Objective.
+python3 sdlc_manager.py flow set-field \
+  --project <project> --repo <repo> --number <N> \
+  --field Objective --option <objective-name>
+
+# Add a native parent only when this card is a decomposition child.
 python3 sdlc_manager.py flow link-sub-issue \
   --parent-repo <parent-repo> \
   --parent-number <parent-number> \
@@ -320,8 +329,13 @@ python3 sdlc_manager.py flow link-sub-issue \
   --child-number <N>
 ```
 
-When creating an Objective issue, also create a corresponding GitHub Milestone if the workflow
-still uses milestones for that repository.
+If an accidental or retired parent layer exists, remove only the relationship:
+
+```bash
+python3 sdlc_manager.py flow unlink-sub-issue \
+  --parent-repo <parent-repo> --parent-number <parent-number> \
+  --child-repo <repo> --child-number <N>
+```
 
 ## Natural Language Examples
 
@@ -352,8 +366,9 @@ readiness gaps, then use `issue create-prepared`.
 If it improves existing functionality -> enhancement.
 
 **"Create issues for all the capabilities in this objective"**
--> List capabilities from the objective description, create each with `--type capability`, and link
-each to the objective parent or milestone.
+-> List capabilities from the Objective scorecard or source artifact, create each with
+`--type capability`, and set the same `Objective` project-field value on each. Do not create or
+link an Objective parent issue.
 
 **"What type of issue should this be?"**
 -> Present the decision tree from `references/issue-types.md`.
@@ -372,7 +387,6 @@ each to the objective parent or milestone.
 
 | Type | Labels |
 |------|--------|
-| `objective` | `objective`, `hermes-not-actionable` |
 | `exploration` | `exploration`, `research`, `hermes-not-actionable` |
 | `context-update` | `context-update`, `documentation`, `hermes-not-actionable` |
 
@@ -388,6 +402,7 @@ each to the objective parent or milestone.
 
 - **Always confirm issue type** before creating — wrong type causes downstream confusion.
 - **Preserve Hermes actionable/non-actionable distinction** — only capability, enhancement, and defect are Hermes task cards.
+- **Default parent linkage to none** — use native sub-issues only for real decomposition.
 - **Use exact actionable H3 headers** — the Hermes validator matches section header text.
 - **Require checklist acceptance criteria** — at least one `- [ ]` item is mandatory.
 - **Require verification commands** — commands should be copy-pasteable and prove success.
@@ -395,5 +410,5 @@ each to the objective parent or milestone.
 
 ## Reference Documents
 
-- `references/issue-types.md` — Complete guide to all 6 issue types with decision tree
+- `references/issue-types.md` — Complete guide to all 5 issue types with decision tree
 - `references/templates-reference.md` — Generated view of canonical issue templates

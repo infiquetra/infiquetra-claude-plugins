@@ -125,6 +125,8 @@ These labels follow a naming convention and are created on-demand rather than pr
 
 Legacy convention labels that may appear on older issues. New work should use the
 project board's `Initiative` and `Objective` fields directly via `flow set-field`.
+The plain `objective` issue-type label is also retired and must not be deployed
+or applied to new work.
 
 | Pattern | Color | Example |
 |---------|-------|---------|
@@ -162,7 +164,6 @@ template labels, use `../issues/references/templates-reference.md`.
 | `title_contains_defect` | `\[DEFECT\]` in title | `defect`, `needs-triage` |
 | `title_contains_exploration` | `\[EXPLORATION\]` in title | `exploration` |
 | `title_contains_context` | `\[CONTEXT\]` in title | `context-update`, `documentation` |
-| `title_contains_objective` | `\[OBJECTIVE\]` in title | `objective` |
 | `mentions_security` | `security\|vulnerability\|CVE` in title/body | `security` |
 | `mentions_performance` | `performance\|latency\|slow\|timeout` in title/body | `performance` |
 | `mentions_breaking` | `breaking change\|breaking\|backwards incompatible` in title/body | `breaking-change` |

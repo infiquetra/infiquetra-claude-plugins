@@ -2,7 +2,7 @@
 
 These tests focus on the *logic* of the flow helpers — argument validation,
 idempotency handling, error classification — without making real GitHub or
-GraphQL calls. The `_gh`, `_graphql`, `_rest_get`, `_rest_post` helpers are
+GraphQL calls. The `_gh`, `_graphql`, `_rest_get`, `_rest_post`, `_rest_delete` helpers are
 patched at the sdlc_manager-module level.
 
 End-to-end tests (real `gh` calls against a fixture project) are tracked
@@ -93,6 +93,54 @@ def test_link_sub_issue_rejects_missing_child_db_id() -> None:
         mock_get.return_value = {"id": None}
         with pytest.raises(RuntimeError, match="no integer 'id'|Cannot link"):
             sdlc_manager.flow_link_sub_issue("r", 1, "r", 2, fmt="text")
+
+
+# --- flow_unlink_sub_issue --------------------------------------------------
+
+
+def test_unlink_sub_issue_deletes_verified_relationship() -> None:
+    with (
+        patch.object(sdlc_manager, "_rest_get") as mock_get,
+        patch.object(sdlc_manager, "_rest_delete") as mock_delete,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        mock_get.side_effect = [
+            {"id": 12345},
+            {"id": 67890, "title": "parent issue"},
+        ]
+
+        sdlc_manager.flow_unlink_sub_issue("parent", 1, "child", 2, fmt="text")
+
+    mock_delete.assert_called_once_with(
+        "repos/infiquetra/parent/issues/1/sub_issue",
+        {"sub_issue_id": 12345},
+    )
+    assert any("Unlinked child#2 from parent#1" in c.args[0] for c in mock_out.call_args_list)
+
+
+def test_unlink_sub_issue_is_idempotent_after_issue_verification() -> None:
+    with (
+        patch.object(sdlc_manager, "_rest_get") as mock_get,
+        patch.object(sdlc_manager, "_rest_delete") as mock_delete,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        mock_get.side_effect = [{"id": 12345}, {"id": 67890}]
+        mock_delete.side_effect = sdlc_manager.ApiNotFoundError(
+            "relationship absent",
+            status_code=404,
+        )
+
+        sdlc_manager.flow_unlink_sub_issue("parent", 1, "child", 2, fmt="text")
+
+    assert any("Already unlinked" in c.args[0] for c in mock_out.call_args_list)
+
+
+def test_unlink_sub_issue_rejects_missing_child_db_id() -> None:
+    with (
+        patch.object(sdlc_manager, "_rest_get", return_value={"id": None}),
+        pytest.raises(RuntimeError, match="no integer 'id'|Cannot unlink"),
+    ):
+        sdlc_manager.flow_unlink_sub_issue("r", 1, "r", 2, fmt="text")
 
 
 # --- flow_verify_label ------------------------------------------------------
@@ -240,6 +288,32 @@ def test_cli_link_sub_issue_normalizes_parent_and_child_repos() -> None:
         sdlc_manager.main()
 
     link_sub_issue.assert_called_once_with("parent-repo", 1, "child-repo", 2, "text")
+
+
+def test_cli_unlink_sub_issue_normalizes_parent_and_child_repos() -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "unlink-sub-issue",
+                "--parent-repo",
+                "infiquetra/parent-repo",
+                "--parent-number",
+                "1",
+                "--child-repo",
+                "infiquetra/child-repo",
+                "--child-number",
+                "2",
+            ],
+        ),
+        patch.object(sdlc_manager, "flow_unlink_sub_issue") as unlink_sub_issue,
+    ):
+        sdlc_manager.main()
+
+    unlink_sub_issue.assert_called_once_with("parent-repo", 1, "child-repo", 2, "text")
 
 
 def test_field_options_reads_live_from_graphql() -> None:

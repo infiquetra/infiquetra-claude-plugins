@@ -3,7 +3,7 @@ name: flow
 description: |
   Operator-facing GraphQL + REST helpers for the active project boards. Wraps
   the GitHub APIs the orchestrator uses, so Jeff can do per-card work
-  (set Initiative/Objective fields, link sub-issues, validate card bodies,
+  (set Initiative/Objective fields, link or unlink sub-issues, validate card bodies,
   self-heal labels, discover project mappings) without writing GraphQL by
   hand. Each command is idempotent where possible, and surfaces partial
   failures clearly.
@@ -29,6 +29,11 @@ when_to_use: |
   - "Make this a child of campps-context-library#1"
   - "Set up the parent/child relationship between these issues"
 
+  Remove an accidental or retired parent layer:
+  - "Unlink #43 from #42"
+  - "Make this capability top-level again"
+  - "Remove the redundant outcome parent without closing either issue"
+
   Self-heal missing labels (so other operations don't fail mid-flow):
   - "Make sure the high-priority label exists on campps-mvp"
   - "Verify hermes-task is on this repo's label set"
@@ -44,7 +49,7 @@ when_to_use: |
   - Moving cards between Status columns (use `board:move`)
   - General board health (use `board:view`)
 
-  These are *helpers*, not full workflows. The full sub-issue-first
+  These are *helpers*, not full workflows. The full issue-creation and optional-parent
   card-creation workflow is in `infiquetra-sdlc/docs/workflows/blueprint-to-issue.md`;
   this skill provides the building blocks the workflow uses.
 ---
@@ -85,6 +90,11 @@ sdlc_manager.py flow link-sub-issue \
   --parent-repo campps-context-library --parent-number 1 \
   --child-repo campps-mvp --child-number 42
 
+# Remove only the native relationship (cross-repo OK; idempotent)
+sdlc_manager.py flow unlink-sub-issue \
+  --parent-repo campps-context-library --parent-number 1 \
+  --child-repo campps-mvp --child-number 42
+
 # Self-healing label: 404 → create; exists → no-op; other errors raise
 sdlc_manager.py flow verify-label \
   --repo campps-mvp --name high-priority \
@@ -102,23 +112,24 @@ sdlc_manager.py flow validate-card --repo campps-mvp --number 42
 | `field-options` | read-only | Raises if project or field doesn't exist |
 | `discover-project` | read-only | Returns "not mapped" or "excluded" without erroring |
 | `link-sub-issue` | yes (re-POST returns 422 "already exists" → success) | Raises on non-422 errors; rejects PR-as-parent |
+| `unlink-sub-issue` | yes (verified issues + absent relationship returns 404 -> success) | Verifies both issues first; rejects PR-as-parent; propagates auth/rate-limit/server errors |
 | `verify-label` | yes (no-op if exists; create if 404) | Raises on auth/rate-limit/server errors (NOT silently treated as missing) |
 | `validate-card` | read-only | Exits non-zero if card body fails validation |
 
 ## Hard rules
 
-- **Never apply `objective:*` or `initiative:*` colon-prefixed labels.** Both are project FIELDS (decided 2026-05-03; see [DECISIONS](https://github.com/infiquetra/infiquetra-sdlc/blob/main/docs/engineering-journal/DECISIONS.md)). Use `flow set-field` instead.
+- **Objective is a project field plus scorecard, not an issue type or parent requirement.** Never apply a plain `objective` type label or `objective:*` / `initiative:*` colon-prefixed labels. Use `flow set-field` instead.
 - **Field option IDs rotate on rename/recreate.** Never cache them. Every command that reads field state calls `flow field-options` (or its equivalent GraphQL query) at start.
 - **Verify-label distinguishes 404 from other errors.** A 401/403/5xx must NOT be silently treated as missing — that would create labels under the wrong auth context or mask real failures.
-- **Link-sub-issue requires an issue parent.** PRs can't be parents in GitHub's native sub-issue API; the command rejects them with a clear error.
+- **Link only real decomposition.** Capabilities are top-level by default and grouped by the `Objective` field. Both sub-issue commands require an issue parent; PRs are rejected.
 
 ## Where this fits in the broader workflow
 
 The Phase A carry-over #2 decision (Initiative + Objective as project
 fields) made `flow set-field` the canonical mechanism for hierarchy
-assignment. The blueprint-to-issue workflow's Step 8 calls into:
+assignment. The blueprint-to-issue workflow calls into:
 
-- `flow link-sub-issue` (parent/child relationship)
+- `flow link-sub-issue` / `flow unlink-sub-issue` (optional decomposition relationship)
 - `flow set-field` (Initiative + Objective + Status fields)
 
 `validate-card` is the pre-flight check before plan-review fires. If a card
@@ -135,7 +146,7 @@ that file's contract changes, update `validate_card_body` in
 
 ## Related
 
-- `issues` — issue creation flows (will adopt sub-issue-first interactive flow in a follow-up Phase C PR)
+- `issues` — issue creation flows with Objective assignment and optional parent linkage
 - `board` — Status column moves + board view
 - `labels` — bulk label deploy (this skill's `verify-label` is the per-call self-heal)
 - `milestones` — per-repo milestone management (Objective tracking is now project-field-based; milestones are an optional secondary mechanism)

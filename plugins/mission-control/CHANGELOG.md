@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.7.0] - 2026-07-10
+
+### Changed
+- Retire Objective as a creatable issue type across the CLI and guidance. Objectives are project
+  field options plus Outcome Scorecard docs; Capabilities are top-level by default.
+- Make the interactive parent prompt default to no parent and describe native sub-issues as
+  decomposition rather than Objective grouping.
+
+### Added
+- Add idempotent `flow unlink-sub-issue` for removing accidental or retired parent layers without
+  closing either issue.
+
 ## [2.6.3] - 2026-07-08
 
 ### Fixed

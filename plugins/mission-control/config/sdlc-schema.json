@@ -3,7 +3,8 @@
   "migration_notes": [
     "2026-06-13: Added additive saga_lifecycle block derived from the vendored saga-docs-model.yaml snapshot (plugin 0.21.0). At that migration, this was strictly additive and existing consumers (for example, wip_limits.olympus) were unchanged; superseded for Olympus routing by the 2026-06-17 retirement.",
     "2026-06-13.2: Merged hand-authored config/saga-lifecycle-extras.yaml (combinations, reset_edges, gate_classification, phase_board_map, phase_command_map) into the saga_lifecycle block. Strictly additive; snapshot-derived keys and existing consumers unchanged.",
-    "2026-06-17: Retired Mount Olympus as an active board projection. phase_board_map now projects only Jeff Intent, Asgard, and CAMPPS; Project #1 is closed externally and preserved as historical context."
+    "2026-06-17: Retired Mount Olympus as an active board projection. phase_board_map now projects only Jeff Intent, Asgard, and CAMPPS; Project #1 is closed externally and preserved as historical context.",
+    "2026-07-10: Pinned Objective-field membership, Objective-grouped views, top-level-by-default Capabilities, and optional Outcome parents for explicit long-lived initiative-board contracts."
   ],
   "status": "active",
   "description": "Canonical Infiquetra SDLC board, team, routing, review, approval, and deployment-state schema. This file intentionally contains no live GitHub Projects field option IDs; tooling must resolve those from GitHub at runtime.",
@@ -102,18 +103,24 @@
         "kind": "project_field_plus_scorecard",
         "issue_type": false,
         "primary_surface": "Objective project field",
-        "supporting_artifact": "Outcome Scorecard doc in the owning context-library repository"
+        "supporting_artifact": "Outcome Scorecard doc in the owning context-library repository",
+        "membership_rule": "Assign the Objective field value to every contributing Capability and executable child; do not create an Objective parent issue.",
+        "project_view_group_by": "Objective"
       },
       "outcome": {
         "kind": "initiative_board_proof_card",
         "issue_type": false,
         "applies_to": ["long_lived_initiative_board"],
         "example_board": "campps",
+        "required_by_default": false,
         "purpose": "Dated proof tier for initiative-level outcomes when a long-lived initiative board exists."
       },
       "capability": {
         "kind": "cross_service_coordinator",
         "issue_type": "capability",
+        "default_parent_role": null,
+        "allowed_parent_roles": ["outcome"],
+        "parent_policy": "Top-level by default; use an Outcome parent only when the active board contract explicitly requires dated proof cards.",
         "purpose": "Coordinates the end-to-end result across services and names the verification slice that proves completion."
       },
       "component": {

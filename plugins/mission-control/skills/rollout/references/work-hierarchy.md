@@ -1,89 +1,49 @@
 # Work Hierarchy Reference
 
-Practical reference for the Infiquetra work hierarchy. Source of truth:
-`$INFIQUETRA_SDLC_PATH/docs/process/work-hierarchy.md` and
+Practical reference for the Infiquetra work hierarchy. Sources of truth:
+`$INFIQUETRA_SDLC_PATH/docs/process/work-hierarchy.md`,
+`$INFIQUETRA_SDLC_PATH/docs/process/sub-issues.md`, and
 `$INFIQUETRA_SDLC_PATH/config/sdlc-schema.json`.
 
----
+## Default Model
 
-## The Model
-
+```text
+Initiative field (when present)
+  Objective field + Outcome Scorecard doc
+    Capability issue (top-level)
+      Executable child issue (optional native sub-issue)
 ```
-Initiative
-  +-- Objective
-        +-- Capability / Enhancement / Defect / Exploration / Context Update
-```
 
-Initiative and Objective are grouping and reporting fields. Actual execution happens on
-issues, usually under an Objective parent issue or milestone when the work needs a delivery
-target.
+Initiative and Objective are project-field grouping and reporting axes. An
+Objective is not an issue type or native parent. Capabilities are top-level by
+default; native sub-issues represent real decomposition.
 
----
+On a long-lived initiative board whose contract uses dated proof cards, an
+Outcome issue may sit between the Objective field and Capability. Do not add
+that tier to ordinary Operations or Asgard work merely to manufacture a parent.
 
-## Initiative
+## GitHub Constructs
 
-**Definition**: A broad strategic grouping that may span multiple Objectives.
+| Role | Canonical construct | Optional construct |
+|---|---|---|
+| Initiative | Project field option | Owning strategy/context doc |
+| Objective | Project field option + Outcome Scorecard doc | Per-repo Milestone |
+| Outcome | Dated proof issue on an explicit initiative board | Native parent of Capabilities |
+| Capability | Top-level GitHub Issue carrying Objective | Native parent of executable children |
+| Executable child | GitHub Issue / PR-sized card | Cross-repo native sub-issue relationship |
 
-**GitHub construct**: Project field option, not a label by default.
+## Parent Rules
 
-Use an Initiative when:
+- Capability: no parent by default; Outcome only under an explicit
+  initiative-board contract.
+- Enhancement, Defect, Exploration, Context Update: parent the card when one
+  Capability genuinely owns the work; leave it top-level when origin is absent
+  or ambiguous.
+- Use `flow unlink-sub-issue` to remove an accidental or retired parent layer
+  without closing either issue.
 
-- The work groups multiple Objectives.
-- Reporting needs a stable strategic category.
-- The grouping will outlive a single short task.
+## Progress
 
-Do not create an Initiative for one-off work or raw operator intent.
-
----
-
-## Objective
-
-**Definition**: A time-bounded deliverable set with a target date.
-
-**GitHub constructs**:
-
-- Objective issue, when the Objective itself needs discussion and acceptance criteria.
-- Project `Objective` field option for reporting.
-- GitHub Milestone when progress rollup by repo is useful.
-- Native GitHub sub-issues for child work.
-
-Use an Objective when multiple issues must land together or when Jeff needs a progress view.
-
----
-
-## Capability And Other Work Items
-
-Capabilities, enhancements, defects, explorations, and context updates are execution cards.
-They flow through the target board:
-
-| Board | Flow |
-|-------|------|
-| Operations / Asgard | Idea -> Shaping -> Ready -> Active -> Verify -> Done |
-| Olympus | Backlog -> Ready -> Planning -> Assigned -> In Review -> Done / Closed |
-
-Use native GitHub sub-issues for parent/child structure. Do not rely on removed Beads/Dolt
-task state.
-
----
-
-## GitHub Constructs Summary
-
-| Level | Preferred construct | Optional construct |
-|-------|---------------------|--------------------|
-| Initiative | Project field option | Label only when repo-local filtering needs it |
-| Objective | Objective issue + project field option | Milestone for due-date rollup |
-| Work item | GitHub Issue / PR card | Native sub-issue relationship |
-
----
-
-## Common Questions
-
-**Do I need an Objective for every Capability?**
-No. Use Objectives when a time-bounded delivery target or progress rollup is useful.
-
-**Can Enhancements and Defects belong to Objectives?**
-Yes, when they materially affect the Objective. Otherwise leave them outside the Objective.
-
-**How do I track progress toward an Objective?**
-Use the Objective project field, the Objective issue's sub-issue tree, and optional
-GitHub Milestone progress.
+Track Objective progress by filtering the active board on the `Objective`
+field. Track decomposition through Capability sub-issue progress. Use optional
+Milestone progress only for repo-level due-date and PR rollup.

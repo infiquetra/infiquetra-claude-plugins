@@ -98,17 +98,17 @@ Milestone title:
 
 ## Objective Creation Workflow
 
-1. Create the Objective issue.
+1. Create the Objective field option and Outcome Scorecard doc.
 2. Create the GitHub Milestone if due-date rollup is useful.
-3. Add the Objective issue to the target board.
-4. Set `Initiative`, `Objective`, and `Status` project fields when those fields exist.
-5. Create child work items just in time.
-6. Link child issues as native GitHub sub-issues and, when useful, to the milestone.
+3. Create top-level Capability cards and set their `Objective` field value.
+4. Create executable children just in time and give them the same Objective value.
+5. Use native sub-issues only for real Outcome/Capability decomposition.
+6. Link work items to the milestone when one exists.
 
 Example field update:
 
 ```bash
-python3 sdlc_manager.py flow set-field --project mount-olympus \
+python3 sdlc_manager.py flow set-field --project operations \
   --repo <repo> --number <N> \
   --field Objective --option "<Objective name>"
 ```
@@ -143,21 +143,22 @@ For Objectives spanning multiple repositories:
 An Objective is complete when:
 
 - Linked work items are in a terminal workflow status (`Done`, `Closed`, or equivalent).
-- Success criteria in the Objective issue are validated.
+- Success criteria in the Outcome Scorecard are validated.
 - No critical/high defects remain open against the Objective.
 - The GitHub Milestone is closed if one was created.
-- The Objective issue has completion notes and is closed.
+- The Outcome Scorecard records actuals and the pivot/persist/pause decision.
 
 ## Natural Language Examples
 
 **"Create an objective for the platform launch"**
--> Create the Objective issue, create a milestone if useful, add to board, and set fields.
+-> Create the Objective field option and Outcome Scorecard doc, then create a milestone if useful.
 
 **"How's the platform launch going?"**
 -> Find the milestone number and run `milestones progress`.
 
 **"Add capability #42 to the platform-launch objective"**
--> Set the Objective field, link as a sub-issue, and link to the milestone if one exists.
+-> Set the Objective field and link to the milestone if one exists. Add a native parent only when
+the Capability is a real child of an explicit Outcome proof card.
 
 **"Which objectives are at risk?"**
 -> Run progress for each open milestone and check linked board status / WIP age.

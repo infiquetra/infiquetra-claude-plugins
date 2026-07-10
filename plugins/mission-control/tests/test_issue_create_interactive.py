@@ -1,7 +1,7 @@
 """Tests for the rewritten interactive `issue create` flow.
 
-The rewrite (PR 116) makes the flow sub-issue-first, per-project-schema-aware,
-defaults-driven, capability-adaptive, and paired-card capable. These tests
+The flow is per-project-schema-aware, defaults-driven, capability-adaptive,
+paired-card capable, and supports optional decomposition parents. These tests
 exercise the small composable helpers (`_select_issue_type`,
 `_prompt_parent_issue`, `_prompt_choice`, `_prompt_paired_card`,
 `_apply_post_create_metadata`) plus the integration via skip_metadata.
@@ -10,6 +10,8 @@ exercise the small composable helpers (`_select_issue_type`,
 import sys
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
@@ -58,10 +60,10 @@ def test_parent_prompt_yes_then_ref() -> None:
         assert sdlc_manager._prompt_parent_issue() == ("mimir", 7)
 
 
-def test_parent_prompt_blank_then_ref() -> None:
-    """Empty (default-yes) → follow-up for the ref."""
-    with patch("builtins.input", side_effect=["", "campps-mvp#100"]):
-        assert sdlc_manager._prompt_parent_issue() == ("campps-mvp", 100)
+def test_parent_prompt_blank_defaults_to_no_parent() -> None:
+    """Empty input keeps a top-level card top-level."""
+    with patch("builtins.input", return_value=""):
+        assert sdlc_manager._prompt_parent_issue() is None
 
 
 def test_parent_prompt_no_returns_none() -> None:
@@ -223,15 +225,10 @@ def test_metadata_applies_hermes_task_for_actionable_types() -> None:
     assert "hermes-task" in label_call
 
 
-def test_metadata_applies_hermes_not_actionable_for_objective() -> None:
-    """Objective is the explicit non-actionable type."""
-    with (
-        patch.object(sdlc_manager, "_gh") as mock_gh,
-        patch.object(sdlc_manager, "board_add"),
-        patch.object(sdlc_manager, "flow_set_field"),
-        patch.object(sdlc_manager, "flow_link_sub_issue"),
-        patch.object(sdlc_manager, "load_config", return_value={}),
-    ):
+def test_objective_is_not_a_creatable_issue_type() -> None:
+    assert "objective" not in sdlc_manager._ISSUE_TYPES
+
+    with pytest.raises(RuntimeError, match="Unknown or retired issue type 'objective'"):
         sdlc_manager._apply_post_create_metadata(
             repo="campps-context-library",
             issue_number=1,
@@ -241,15 +238,6 @@ def test_metadata_applies_hermes_not_actionable_for_objective() -> None:
             field_values={},
             fmt="text",
         )
-    cmd_calls = [c.args[0] for c in mock_gh.call_args_list]
-    label_call = next(
-        (c for c in cmd_calls if "edit" in c and "hermes-not-actionable" in str(c)),
-        None,
-    )
-    assert label_call is not None
-    # Verify hermes-task is NOT applied to objective
-    actionable_calls = [c for c in cmd_calls if "hermes-task" in str(c)]
-    assert actionable_calls == []
 
 
 def test_metadata_applies_hermes_not_actionable_for_exploration() -> None:

@@ -634,17 +634,18 @@ def test_validate_label_taxonomy_reports_overlong_descriptions() -> None:
 
 
 def test_validate_label_taxonomy_reports_missing_issue_taxonomy_labels() -> None:
-    labels = [
-        label for label in _required_label_defs() if label["name"] not in {"objective", "research"}
-    ]
+    labels = [label for label in _required_label_defs() if label["name"] != "research"]
 
     with pytest.raises(RuntimeError) as exc:
         sdlc_manager._validate_label_taxonomy(labels)
 
     message = str(exc.value)
     assert "missing required issue taxonomy labels" in message
-    assert "objective" in message
     assert "research" in message
+
+
+def test_objective_is_not_a_required_issue_taxonomy_label() -> None:
+    assert "objective" not in sdlc_manager._required_issue_taxonomy_labels()
 
 
 def test_labels_deploy_validates_taxonomy_before_gh_mutation() -> None:

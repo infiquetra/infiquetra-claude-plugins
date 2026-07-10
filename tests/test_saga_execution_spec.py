@@ -438,18 +438,15 @@ def _return_schema_fragment(keys: tuple[str, ...] = ("result",), *, cheap: bool 
         "additionalProperties": True,
     }
     if cheap:
-        # #364 pull-cord union: top-level type/properties with oneOf carrying only the
-        # alternative required sets -- a bare top-level oneOf is a 400 at agent dispatch.
+        # #364 pull-cord shape: a FLAT typed object -- returns keys plus an optional pull_cord
+        # string, no required alternation. The API rejects any top-level combinator (oneOf/allOf/
+        # anyOf), so the either/or is enforced by __gate + the RETURN CONTRACT, not the schema.
         properties: dict[str, object] = {key: {} for key in keys}
         properties["pull_cord"] = {"type": "string"}
         return_schema = {
             "type": "object",
             "properties": properties,
             "additionalProperties": True,
-            "oneOf": [
-                {"required": list(keys)},
-                {"required": ["pull_cord"]},
-            ],
         }
     return "schema: " + json.dumps(return_schema, sort_keys=True)
 
@@ -621,11 +618,14 @@ def _extract_agent_schemas(script: str) -> list[dict[str, object]]:
 
 def test_every_emitted_agent_schema_has_toplevel_type() -> None:
     # Regression for the pull-cord schema dispatch failure (#364, reproduced 2026-07-10 in
-    # team-norns run wf_758c9923-c2c): the Anthropic API rejects any tool input_schema without
-    # a top-level "type" (400 tools.N.custom.input_schema.type: Field required), so the unit's
-    # agent dies before running and the gate fails it as missing-output. Sweep EVERY schema
-    # across all emission sites: plain unit, cheap pull-cord union, external-engine dispatch,
-    # refute-N verifier panel, and the iterate-to-consensus loop.
+    # team-norns run wf_758c9923-c2c). The Anthropic API rejects a tool input_schema on TWO
+    # counts, checked in sequence: first if it lacks a top-level "type"
+    # (400 tools.N.custom.input_schema.type: Field required), then if it carries ANY top-level
+    # combinator (400 tools.N.custom.input_schema: input_schema does not support oneOf, allOf,
+    # or anyOf at the top level). The first fix added "type" but kept a top-level oneOf, so it
+    # still 400ed -- this test now asserts BOTH invariants so the second gate can't slip through.
+    # Sweep EVERY schema across all emission sites: plain unit, cheap pull-cord shape,
+    # external-engine dispatch, refute-N verifier panel, and the iterate-to-consensus loop.
     script = _emit_units(
         [
             _verify_unit("plain"),
@@ -643,16 +643,22 @@ def test_every_emitted_agent_schema_has_toplevel_type() -> None:
     assert len(schemas) >= 7
     for schema in schemas:
         assert schema.get("type") == "object", f"schema missing top-level type: {schema}"
-    # The pull-cord union survived the hoist: oneOf now carries only alternative required sets.
-    cheap = [s for s in schemas if "oneOf" in s]
-    assert cheap, "expected at least one cheap-tier pull-cord union schema"
-    for schema in cheap:
+        forbidden = {"oneOf", "allOf", "anyOf"} & schema.keys()
+        assert not forbidden, f"schema has unsupported top-level combinator {forbidden}: {schema}"
+    # The cheap-tier pull-cord shape is a FLAT typed object: pull_cord rides as a top-level
+    # optional property (NOT under a combinator), and there is no `required` alternation. The
+    # returns-XOR-pull_cord contract lives in __gate + the RETURN CONTRACT, not the schema.
+    cheap: list[dict[str, object]] = []
+    for schema in schemas:
         properties = schema.get("properties")
+        if isinstance(properties, dict) and "pull_cord" in properties:
+            cheap.append(schema)
+    assert cheap, "expected at least one cheap-tier pull-cord schema"
+    for schema in cheap:
+        properties = schema["properties"]
         assert isinstance(properties, dict)
         assert properties.get("pull_cord") == {"type": "string"}
-        one_of = schema["oneOf"]
-        assert isinstance(one_of, list)
-        assert {"required": ["pull_cord"]} in one_of
+        assert "oneOf" not in schema and "required" not in schema
 
 
 # ---------------------------------------------------------- enforceability matrix (U3)

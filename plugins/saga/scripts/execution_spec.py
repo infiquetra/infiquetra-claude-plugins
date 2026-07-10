@@ -1403,21 +1403,22 @@ def _return_schema(unit: Unit) -> dict[str, object]:
     if not unit.tier.is_cheap:
         return return_schema
     # #364: cheap-tier units may answer with {"pull_cord": "<reason>"} instead of their declared
-    # returns. The Anthropic API requires a top-level "type" on every tool input_schema -- a bare
-    # {"oneOf": [...]} is rejected at dispatch (400 input_schema.type: Field required) and the
-    # agent dies before running. So hoist type/properties to the top level and keep oneOf only
-    # for the alternative required-key sets. pull_cord is a reserved key (validate() rejects it
-    # in returns), so the property union cannot collide.
+    # returns. The Anthropic API rejects a tool input_schema with ANY top-level combinator -- not
+    # just a bare {"oneOf": [...]} (which first trips 400 input_schema.type: Field required), but
+    # also a fully typed {"type": "object", ..., "oneOf": [...]} (400 input_schema: input_schema
+    # does not support oneOf, allOf, or anyOf at the top level -- verified 2026-07-10 on team-norns
+    # run wf_758c9923-c2c). So the schema must be a FLAT typed object: the union of the declared
+    # returns keys plus an optional pull_cord string, with no required alternation. The either/or
+    # (returns keys XOR pull_cord) is enforced downstream by the emitted __gate (which probes
+    # pull_cord first, then checks emptiness) and by the unit prompt's RETURN CONTRACT, so the
+    # schema does not need to encode it. pull_cord is a reserved key (validate() rejects it in
+    # returns), so the property union cannot collide.
     properties: dict[str, object] = {key: {} for key in unit.returns}
     properties["pull_cord"] = {"type": "string"}
     return {
         "type": "object",
         "properties": properties,
         "additionalProperties": True,
-        "oneOf": [
-            {"required": list(unit.returns)},
-            {"required": ["pull_cord"]},
-        ],
     }
 
 

@@ -60,34 +60,52 @@ Fix identity residuals at the layer that holds the prior (restore/merge), not at
 **Refs.** saga CHANGELOG 0.75.20; supersedes the `--kind` residual noted in
 `{#save-explicit-vs-default-ambiguity}`; issue-157.
 
-### Bare top-level `oneOf` schemas die at agent dispatch, not at emit or validate {#toplevel-oneof-schema-dispatch-400}
+### Anthropic tool schemas reject top-level `oneOf` outright — encode either/or in the gate, not the schema {#toplevel-oneof-schema-dispatch-400}
 
-**Context.** The execution-spec emitter gives pull-cord-capable (cheap-tier) units a union
-StructuredOutput schema: either the unit's declared returns or `{"pull_cord": "<reason>"}` (#364).
-The union was expressed as a bare top-level `{"oneOf": [<returns-shape>, <pull-cord-shape>]}` —
-valid JSON Schema, but with no top-level `type` key.
+> **Corrected 2026-07-10.** The first cut of this entry (saga 0.75.19) concluded the fix was to
+> keep `oneOf` under a top-level `type`. That shape *also* 400s — the API rejects the combinator
+> key itself at the top level. Pre-correction version SUPERSEDED in
+> [`ARCHIVE.md`](ARCHIVE.md#toplevel-oneof-schema-dispatch-400-v1). Corrected fix is saga 0.75.21.
+
+**Context.** The execution-spec emitter gives pull-cord-capable (cheap-tier) units a
+StructuredOutput schema that must admit either the unit's declared returns or
+`{"pull_cord": "<reason>"}` (#364). This was first expressed as a bare top-level
+`{"oneOf": [<returns-shape>, <pull-cord-shape>]}`.
 **Evidence.** Reproduced 2026-07-10 in team-norns workflow run `wf_758c9923-c2c`, unit U3 of
-`docs/plans/2026-07-09-council-dispatch-gate-spec.json` (haiku/low release-prep unit): the API
-rejected dispatch with `400 tools.N.custom.input_schema.type: Field required`. Emitter site:
-`plugins/saga/scripts/execution_spec.py` `_return_schema`.
-**Mechanism.** The Anthropic API requires `input_schema.type` on every tool definition; it does
-not accept the full JSON Schema composition vocabulary at the top level. Because the schema rides
-inside the emitted workflow's `agent()` opts, nothing fails at emit time or spec-validate time —
-the first failing surface is the API call, the unit's agent dies before running a single turn,
-and the workflow gate misreports the failure as missing-output. Every non-cheap schema already
-carried `type: "object"`, so only pull-cord units hit it.
-**Fix.** Hoist `type: "object"` and the union of both branches' `properties` to the top level;
-keep `oneOf` only for the alternative `required` sets (`[<returns keys>]` vs `["pull_cord"]`).
-`pull_cord` is a reserved returns key, so the property union cannot collide. Saga 0.75.19.
-**Validation.** New regression test `test_every_emitted_agent_schema_has_toplevel_type` parses
-every `schema:` blob out of an emission covering all agent sites (plain, pull-cord, external
-engine, verifier panel, iterate loop) and asserts top-level `type: "object"` on each.
-**Generalizable rule.** A tool/StructuredOutput schema is not "valid JSON Schema" — it's the
-API's stricter dialect, and its first enforcement point is dispatch inside someone else's run.
-Any schema the emitter can produce needs a shape test at build time; composition keywords
-(`oneOf`/`anyOf`) belong under a concrete top-level `type`, expressing alternatives as
-`required`-set variants.
-**Refs.** #364 (pull-cord disposition), saga CHANGELOG 0.75.19.
+`docs/plans/2026-07-09-council-dispatch-gate-spec.json` (haiku/low release-prep unit). The API
+enforces schema shape in **two sequential gates**, and the fix must clear both:
+1. Bare `{"oneOf": [...]}` (no `type`) → `400 tools.N.custom.input_schema.type: Field required`.
+2. Adding `type` but keeping `oneOf` → `400 tools.N.custom.input_schema: input_schema does not
+   support oneOf, allOf, or anyOf at the top level` (verified live on the same run).
+Emitter site: `plugins/saga/scripts/execution_spec.py` `_return_schema`.
+**Mechanism.** A tool `input_schema` must be a flat typed object: `type` is required *and* no
+top-level `oneOf`/`allOf`/`anyOf` is permitted, regardless of sibling keys. Fixing only gate 1
+(the 0.75.19 attempt) leaves gate 2 to fail on the next dispatch — and because the schema rides
+inside the emitted workflow's `agent()` opts, nothing surfaces at emit or spec-validate time; the
+first failing surface is the live API call, the unit's agent dies before its first turn, and the
+gate misreports it as missing-output.
+**Fix.** Emit a flat typed object for pull-cord units: the union of the declared returns keys plus
+an optional `pull_cord` string property, with no `required` alternation and no combinator. The
+either/or (returns keys XOR `pull_cord`) is enforced downstream — the emitted `__gate` probes
+`pull_cord` first, then checks emptiness, and the unit prompt's RETURN CONTRACT states it — so the
+schema never needed to encode it. `pull_cord` is a reserved returns key, so the property union
+cannot collide. Saga 0.75.21.
+**Validation.** The regression sweep `test_every_emitted_agent_schema_has_toplevel_type` (across
+plain, pull-cord, external-engine, verifier-panel, iterate-loop sites) now asserts BOTH a
+top-level `type: "object"` AND the absence of any top-level `oneOf`/`allOf`/`anyOf`. The 0.75.19
+version asserted only the former, which is why the still-broken shape passed CI and shipped.
+**What surprised.** The 0.75.19 shape looked API-compliant — fully typed object, `oneOf` only for
+`required` variants — and still 400ed. The constraint is on the *presence of the combinator key*,
+so the fix class is removal, not restructuring; and a green regression test that checks for a
+good property but not the absence of the bad one gives false confidence.
+**Generalizable rule.** A tool/StructuredOutput schema is the API's stricter dialect, not general
+JSON Schema, and its first enforcement point is dispatch inside someone else's run. Keep the top
+level a flat typed object and push either/or semantics into runtime validation (gate functions,
+prompt contracts). When a validator rejects a *class* of construct (any top-level combinator),
+write the regression as "assert the bad thing is absent," not "assert a good thing is present" —
+the latter passes half-fixes.
+**Refs.** #364 (pull-cord disposition), saga CHANGELOG 0.75.19 (first attempt) + 0.75.21
+(correction), ARCHIVE `#toplevel-oneof-schema-dispatch-400-v1`.
 
 ### Default-equality carry-forward swallows explicit values that equal the default {#save-explicit-vs-default-ambiguity}
 

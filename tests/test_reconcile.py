@@ -438,7 +438,7 @@ def test_incomplete_and_conflicting_identity_reject_before_append(tmp_path: Path
 
 def test_reader_rejects_malformed_action_status_recipe_and_hash(tmp_path: Path) -> None:
     result = _result()
-    base = {
+    base: dict[str, Any] = {
         "reconciliation_id": result.reconciliation_id,
         "execution_id": result.execution_id,
         "intent": result.intent,
@@ -448,7 +448,7 @@ def test_reader_rejects_malformed_action_status_recipe_and_hash(tmp_path: Path) 
         "result_hash": RC.canonical_result_hash(result),
         "result": result.to_dict(),
     }
-    mutations = (
+    mutations: tuple[dict[str, Any], ...] = (
         {"action": "publish"},
         {"result_hash": "not-a-hash"},
         {"result": {**result.to_dict(), "recipe_id": "wrong-recipe"}},

@@ -393,6 +393,9 @@ Checks:
   - the first CI run found eight issue-393 files that passed Ruff lint but had not passed Ruff format;
     Ruff formatted only those reported files, the repository format check passed across 296 files,
     and the affected 249-test matrix passed
+- PR #552 CI type-check correction
+  - added explicit heterogeneous-dictionary annotations to one reconciliation test fixture; the exact
+    CI mypy command passed across 182 source files and the 59-test reconciliation suite passed
 
 ## Next Step
 

@@ -49,12 +49,14 @@ ordered tuple of typed `SourceFinding` metadata, its ordered IDs, a `verified_by
 `False`), and an optional `halt`. It carries **no gated-verdict field**.
 
 A runner's optional `findings` field is an ordered array of `{"content": <string>}` objects.
-Dispatch converts each entry into immutable metadata without retaining the finding prose:
-`external-finding:<ordinal>:<sha256(content)>` plus the same content digest. `second-opinion` and
-`divergence` require this typed envelope whenever their output is non-empty. Only `offload` may omit
-it; a non-empty unstructured offload then becomes one explicit
-`opaque-artifact:0:<sha256(evidence)>` source. If an offload supplies typed findings, they remain
-separate ordered sources. Each source is capped at 1 MiB.
+Dispatch retains each bounded content string in-memory with immutable
+`external-finding:<ordinal>:<sha256(content)>` metadata; it never persists that prose to a manifest
+or run fact. For `second-opinion` and `divergence`, non-empty `output` must equal
+`reconcile.render_source_findings(findings)` exactly. That canonical ordered envelope prevents the
+runner from hiding output outside the findings Claude must adjudicate. Only `offload` may omit the
+envelope; a non-empty unstructured offload then becomes one explicit
+`opaque-artifact:0:<sha256(evidence)>` source. Typed offloads remain separate ordered sources. The
+runner envelope is capped at 256 findings and 256 KiB cumulative UTF-8 content before construction.
 
 The canonical guard call is:
 
@@ -137,9 +139,9 @@ Every registered receipt emitter (`codex-bridge`, `agy-delegate`, `http-bridge`)
 `plugins/saga/references/bridge-signatures.json` before a successful dispatch can become
 `ran-as-requested`. A schema-valid `bridge_receipt.v1` is necessary but no longer sufficient:
 the receipt must carry `receipt_emitter`, `run_id`, nonzero `external_tokens`, and an
-`output_attestation.v1` record. When the attestation binds the manifest evidence text
-(`artifact: evidence`), dispatch checks the SHA-256 and byte count against the evidence it is
-about to manifest.
+`output_attestation.v1` record. Dispatch checks its SHA-256 and byte count against the raw runner
+output; review intents first require that raw output to equal the canonical findings envelope, so the
+receipt and Claude's reconciliation bind the same complete artifact.
 
 Missing signature fields, empty required output, hash mismatch, zero external tokens, and
 bridge-run liveness contradictions are classified as `proof-integrity` instead of

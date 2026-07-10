@@ -547,7 +547,7 @@ additionally carry a typed `manifest_ref` pointer in `CompletionEvent.payload["m
 Manifest
 ├── execution_id, saga_ref, schema ("saga.manifest.v1")
 ├── attribution: Attribution {kind, identity, effort, protocol}
-├── disposition: Disposition, disposition_note
+├── disposition: Disposition, disposition_note, tripwire_note (optional)
 ├── created_at
 ├── output_completeness: OutputCompleteness | None
 │   {declared_keys, target_count, produced_keys, produced_count, missing_keys}
@@ -579,6 +579,7 @@ here may be absent from the `provenance_manifest.py` dataclasses (drift, both di
 | `attribution.sandbox` | `engine_dispatch.py` (`build_dispatch_manifest`, #287 R7 pre-hoc scope) | operator/audit prose (declared-vs-actual scope review); `external-engine-workers.md` attribution note | live (optional, absent-tolerant — no `saga.manifest.v1` bump) |
 | `disposition` | `engine_dispatch.py`, `manifest_store.py` | `manifest_reader.py` (R18 disposition rate) | live |
 | `disposition_note` | `engine_dispatch.py` | operator/skill prose (`/work` SKILL.md post-run step) | live |
+| `tripwire_note` | `engine_dispatch.py` (`build_dispatch_manifest`) | `engine_dispatch.py` (`adjudicate_manifest` preservation), operator/audit prose | live (optional, bounded operational note) |
 | `created_at` | `engine_dispatch.py`, `manifest_store.py` | `manifest_store.py` (ordering on list) | live |
 | `output_completeness` | `manifest_store.py` `record-completeness` (U4/KTD7, driver-materialized) | `completeness_gate.py` semantics via `/work` post-run persistence step (R13); `manifest_reader.py` | live |
 | `output_completeness.declared_keys` | `manifest_store.py` (from `Contract.from_unit`) | `/work` SKILL.md post-run step (missing-output trip, R10) | live |

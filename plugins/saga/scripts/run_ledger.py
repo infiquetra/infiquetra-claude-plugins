@@ -128,14 +128,31 @@ def _lock_path(ledger: RunLedger) -> Path:
 
 
 @contextmanager
-def _locked(ledger: RunLedger) -> Iterator[None]:
-    """Serialize all ledger snapshots and writes with one per-ledger advisory lock."""
+def _write_locked(ledger: RunLedger) -> Iterator[None]:
+    """Serialize ledger repair and writes with one creating exclusive advisory lock."""
     ledger.path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = _lock_path(ledger)
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     os.fchmod(fd, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+@contextmanager
+def _read_locked(ledger: RunLedger) -> Iterator[None]:
+    """Take a shared lock when one exists without creating any durable read-side state."""
+    try:
+        fd = os.open(_lock_path(ledger), os.O_RDONLY)
+    except FileNotFoundError:
+        # No writer lock exists yet. A lock-free snapshot is a valid pre-write/prefix view.
+        yield
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH)
         yield
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -191,7 +208,7 @@ def _snapshot_unlocked(ledger: RunLedger, *, heal: bool) -> LedgerSnapshot:
 
 def read_snapshot(ledger: RunLedger) -> LedgerSnapshot:
     """Return one strictly non-mutating, verified, lock-consistent in-memory snapshot."""
-    with _locked(ledger):
+    with _read_locked(ledger):
         return _snapshot_unlocked(ledger, heal=False)
 
 
@@ -202,7 +219,7 @@ def append_fact_atomic(
     validate_snapshot: Callable[[LedgerSnapshot], None] | None = None,
 ) -> dict[str, Any]:
     """Validate state and append while holding the same lock and verified snapshot."""
-    with _locked(ledger):
+    with _write_locked(ledger):
         snapshot = _snapshot_unlocked(ledger, heal=True)
         if not snapshot.report.ok:
             raise RunLedgerError(f"refusing append to broken run-fact chain: {snapshot.report.reason}")

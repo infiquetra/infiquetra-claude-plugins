@@ -55,8 +55,9 @@ first break. It **fails** on:
 
 A torn trailing line (an incomplete append) is ignored in the returned in-memory prefix and is **not**
 a chain break. Ordinary `read_snapshot`, `read_facts`, and `verify_chain` calls are strictly
-non-healing: they hold the ledger lock while reading but leave the file bytes unchanged. Only a later
-append may repair that tail.
+non-healing: when a writer lock already exists they take a shared lock, otherwise they return a valid
+pre-write/prefix snapshot without creating a parent, ledger, or lock file. Only a later append may
+repair that tail.
 
 **Threat-model bound — tamper-*evidence*, not tamper-*resistance*.** A writer with full file access can
 recompute a fresh, internally-consistent chain, and trailing truncation of whole records yields a valid
@@ -105,9 +106,10 @@ honestly leaves a reconcile-only outcome rather than inventing an apply.
 The in-memory `ReconciliationResult` is bound and bounded before projection: identifiers are at most
 256 UTF-8 bytes, there are at most 256 sources/items, each rationale is at most 4096 bytes, and the
 canonical result is at most 65536 bytes. The ledger stores only the structural projection plus its
-canonical hash, evidence digest, and identities. Ledger and lock files are forced to mode `0600`, and
-ordinary read snapshots use the same advisory lock as appends so validation never races another
-writer, but reads pass `heal=False`. Torn-tail healing is mutation and occurs only inside the locked
+canonical hash, evidence digest, and identities. Ledger and writer-created lock files are forced to
+mode `0600`; ordinary reads acquire a shared lock only if it already exists, so absent-ledger reads
+stay non-mutating while existing writer activity remains serialized. Reads pass `heal=False`.
+Torn-tail healing is mutation and occurs only inside the locked
 append path before its verified snapshot.
 
 The closed recipe registry maps each fleet-core intent exactly once: `offload` accounts for accepted,

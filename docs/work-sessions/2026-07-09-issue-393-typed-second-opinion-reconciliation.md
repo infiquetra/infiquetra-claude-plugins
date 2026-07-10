@@ -3,9 +3,9 @@
 ## Scope
 
 Execute U1-U6 from the approved typed second-opinion reconciliation plan on the
-operator-confirmed `team-execution` backend. This work session records local implementation,
-review, and validation evidence only; PR, issue, board, deploy, and outcome receipts remain out of
-scope.
+operator-confirmed `team-execution` backend. It records implementation, review, validation, and the
+authorized #393 PR/CI/merge closeout; outcome coordination and outcome receipt updates remain owned by
+the parent coordinator.
 
 ## Team Execution Evidence
 
@@ -315,31 +315,44 @@ Checks:
 - `git diff --check`
   - passed
 
-## Team Execution Review Cycle 3
+## Team Execution Review Epoch 3
 
-Cycle 3 wave 1 remained below consensus: Devil's Advocate `8.9`, Security `8.0`, and Architecture
-`8.6`, all `needs revision`. Testing and Clarity were held because the blocking first wave reopened
-remediation.
+Epoch 3 compared the dereferenced epoch-2 review tree
+`b5acc70c61cbc5101f22b5d4f031845451b888c9` through tree
+`bc3636852ca75bd5bb058170aee5defb178817ef` (`a3a7da9`). The original resident reviewer handles
+were unavailable after the session restore, so the same three role identities and rubrics were
+re-engaged; all found actionable blockers. Testing and Clarity were deliberately held rather than
+counted as passing once the first wave reopened remediation.
 
-### Core remediation
+| Reviewer | Score | Verdict |
+| --- | ---: | --- |
+| Devil's Advocate | 7.8 | needs revision |
+| Security | 8.6 | needs revision |
+| Architecture | 8.2 | needs revision |
+| Testing | — | not run - first-wave blockers |
+| Clarity | — | not run - first-wave blockers |
 
-- Retained each typed finding's content only in the frozen in-memory envelope and validated its ID and
-  digest against that content.
-- Made ordered findings the canonical review evidence for `second-opinion` and `divergence`, while
-  preserving only runner-summary digest/byte metadata for receipt proof.
-- Added early finding count and 256 KiB cumulative UTF-8 caps, contiguous ordinal checks, and offload-
-  only opaque artifacts.
-- Replaced post-publication manifest chmod with a pre-`0600`, fsynced atomic temporary writer.
+### Epoch-3 remediation
+
+- Retained each typed finding's bounded content only in memory, validated its ID/digest, and capped
+  runner envelopes before construction.
+- Required review-intent raw output to exactly match the canonical ordered findings envelope, so an
+  unlisted net-new finding cannot be hidden in a summary.
+- Flattened every typed panel member finding into an individually accountable foreman obligation,
+  including repeated content at distinct ordinals.
+- Required the original `AdvisoryEvidence` and matching rejected note for rejected-offload projection;
+  separated bounded `tripwire_note` operational text from the evidence-bound rejection summary.
+- Made absent and torn-tail ledger reads non-mutating: read locks are shared only when already present;
+  append remains the sole repair path.
 
 Checks:
 
 - Focused reconciliation, dispatch, manifest, ledger, retro, bridge, and legacy gate matrix
-  - 311 passed
-- Targeted Ruff and scoped mypy
-  - passed
+  - 278 passed
 - `git diff --check`
   - passed
 
 ## Next Step
 
-Flatten typed panel member findings into foreman obligations, then re-engage all five reviewers.
+Commit the epoch-3 remediation, create a fresh review pointer, and re-engage all five original
+reviewer identities to consensus before validators.

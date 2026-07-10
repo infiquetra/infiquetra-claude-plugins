@@ -108,24 +108,27 @@ A `rejected-offload` record is a recovered review signal, not a passing worker r
 reconciliation projection is delivered to both reviewer and validator evidence inputs, but neither
 the note nor its `dropped` item may satisfy a gate. Its `disposition_note` is a concise normalized
 single-line chaperone summary capped at 1024 UTF-8 bytes and bound back to the rejected evidence; it is
-not unbounded engine prose. The manifest store atomically writes the final JSON and forces its mode to
-`0600`.
+not unbounded engine prose. A fail-open delegation arming error uses the separately bounded
+`tripwire_note` field and never alters that evidence-bound rejection summary. The manifest store writes
+a `0600` temporary file before atomic replacement, so neither temporary nor final manifest is exposed.
 
 The associated reconciliation result retains the unit's canonical intent. `offload`,
 `second-opinion`, and `divergence` each select exactly one Saga recipe; a manifest disposition does
 not replace or reinterpret that intent. The dispatch/result/manifest chain is bound to one non-empty
 execution id, canonical intent and recipe, immutable evidence digest, and ordered content-derived
 source-finding IDs. Each typed runner finding has an ordinal-bearing ID and per-content digest;
-second-opinion/divergence require that ordered envelope, while offload alone may synthesize one opaque
-artifact source when no envelope exists. Multi-finding evidence requires exact ordered item coverage.
-Rejected-offload evidence retains those same bindings and its original unit intent.
+second-opinion/divergence require the runner output to exactly equal that ordered envelope, while
+offload alone may synthesize one opaque artifact source when no envelope exists. Multi-finding evidence
+requires exact ordered item coverage. Rejected-offload evidence retains those same bindings and its
+original unit intent.
 
 The typed result is bounded to 256 UTF-8 bytes per identifier, 256 findings, 4096 bytes per rationale,
 and 65536 canonical bytes. Run-fact persistence is a smaller structural projection: identities,
 digest, statuses, and canonical result hash only — no raw engine/panel output or rationale text. Each
 reconcile/apply transition is appended from a verified snapshot under the per-ledger exclusive lock;
-ledger and lock files are mode `0600`, and transition order is exactly reconcile then at most one
-apply.
+ledger and writer-created lock files are mode `0600`, and transition order is exactly reconcile then at
+most one apply. Ordinary read snapshots take a shared lock only when one already exists and never
+create a parent, ledger, or lock file or repair a torn tail.
 
 Advisory-jury policy comes from the shared lower-level Saga engine registry, including
 `PANEL_N_CAP = 7`, advisory verdict, and Claude foreman. Dispatch adds 64 KiB per-member and 256 KiB

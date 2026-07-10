@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -311,19 +311,19 @@ def dispatch(
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"dispatch intent is invalid: {exc}") from exc
     if resolution.halt is not None:
-        provenance: dict[str, Any] = {
+        halted_provenance: dict[str, Any] = {
             "engine": resolution.engine_id,
             "variant": resolution.variant,
             "status": "halted",
         }
-        _copy_resolution_warnings(provenance, resolution)
+        _copy_resolution_warnings(halted_provenance, resolution)
         if chaperone is not None:
-            provenance["chaperone"] = dict(chaperone)
+            halted_provenance["chaperone"] = dict(chaperone)
         return AdvisoryEvidence(
             engine_id=resolution.engine_id,
             variant=resolution.variant,
             evidence="",
-            provenance=provenance,
+            provenance=halted_provenance,
             execution_id=execution_id,
             intent=intent,
             halt=resolution.halt,
@@ -338,20 +338,20 @@ def dispatch(
             ledger=ledger,
         )
         if not economics_decision.proceed:
-            provenance = {
+            economics_provenance = {
                 "engine": resolution.engine_id,
                 "variant": resolution.variant,
                 "status": "halted",
                 "economics": economics_decision.to_provenance(),
             }
-            _copy_resolution_warnings(provenance, resolution)
+            _copy_resolution_warnings(economics_provenance, resolution)
             if chaperone is not None:
-                provenance["chaperone"] = dict(chaperone)
+                economics_provenance["chaperone"] = dict(chaperone)
             return AdvisoryEvidence(
                 engine_id=resolution.engine_id,
                 variant=resolution.variant,
                 evidence="",
-                provenance=provenance,
+                provenance=economics_provenance,
                 execution_id=execution_id,
                 intent=intent,
                 halt=economics_decision.status,
@@ -595,7 +595,7 @@ def dispatch_advisory_panel(
         gathered = reconcile.gather_panel_evidence(
             (
                 f"{evidence.engine_id}/{evidence.variant}",
-                evidence.evidence,
+                evidence.source_findings,
             )
             for evidence in member_evidence
         )
@@ -671,7 +671,7 @@ def _decide_offload_economics(
         return ce.decide_offload_economics(
             ce.OffloadEconomicsInput(
                 engine_id=resolution.engine_id,
-                cost_class=cost_class,
+                cost_class=cast(Literal["metered", "free"], cost_class),
                 estimated_external_cost_usd=estimated_cost,
                 provider_budget_ceiling_usd=metadata.get(
                     "provider_budget_ceiling_usd", resolution.budget_ceiling_usd
@@ -1079,11 +1079,12 @@ def build_dispatch_manifest(
             else:
                 disposition = pm.Disposition.RAN_AS_REQUESTED
                 note = ""
-    # A failed arming attempt (fail-open, #384 U5) is NAMED on the manifest record so a
-    # tripwire-unprotected run is distinguishable from a protected one.
-    tripwire = evidence.provenance.get("tripwire")
-    if tripwire:
-        note = f"{note}; {tripwire}" if note else str(tripwire)
+    # A failed arming attempt (fail-open, #384 U5) stays a separately bounded operational note.
+    # It must not be appended to a rejected-offload summary because that summary is evidence-bound.
+    tripwire = evidence.provenance.get("tripwire", "")
+    if not isinstance(tripwire, str):
+        raise DispatchError("manifest tripwire note must be a string")
+    tripwire_note = " ".join(tripwire.split())
     # R3 invariant (#390 U2): every non-RAN_AS_REQUESTED manifest carries a non-empty,
     # human-readable disposition_note -- a forced fallback must be traceable prose, not a bare
     # enum. A degenerate empty reason (empty halt string, whitespace-only note) gets a fixed
@@ -1107,6 +1108,7 @@ def build_dispatch_manifest(
         claim_provenance=claim_provenance,
         economics=economics,
         bridge_run_key=_bridge_run_key(evidence),
+        tripwire_note=tripwire_note,
     )
 
 
@@ -1142,37 +1144,34 @@ def rejected_offload_reconciliation(
     *,
     reconciliation_id: str,
     adjudicator_id: str,
-    intent: str | None = None,
     evidence: AdvisoryEvidence | None = None,
 ) -> reconcile.ReconciliationResult:
-    """Turn a rejected-offload manifest note into typed reviewer/validator evidence."""
+    """Turn evidence-bound rejected-offload state into typed reviewer/validator evidence."""
     if manifest.disposition is not pm.Disposition.REJECTED_OFFLOAD:
         raise DispatchError("rejected-offload reconciliation requires a rejected-offload manifest")
-    if evidence is not None:
-        if manifest.execution_id != evidence.execution_id:
-            raise DispatchError(
-                "rejected-offload manifest execution_id does not match dispatched evidence"
-            )
-        if intent is not None and intent != evidence.intent:
-            raise DispatchError("explicit rejected-offload intent disagrees with dispatched evidence")
-        execution_id = evidence.execution_id
-        resolved_intent = evidence.intent
-    else:
-        if intent is None:
-            raise DispatchError("rejected-offload reconciliation without evidence requires intent")
-        execution_id = manifest.execution_id
-        resolved_intent = intent
+    if not isinstance(evidence, AdvisoryEvidence):
+        raise DispatchError("rejected-offload reconciliation requires dispatched AdvisoryEvidence")
+    if manifest.execution_id != evidence.execution_id:
+        raise DispatchError("rejected-offload manifest execution_id does not match dispatched evidence")
+    try:
+        evidence_note = reconcile.normalize_rejection_note(
+            evidence.provenance.get("rejected_offload_note")
+        )
+    except reconcile.ReconciliationError as exc:
+        raise DispatchError(
+            "rejected-offload reconciliation requires evidence marked by reject_offload: " f"{exc}"
+        ) from exc
+    if manifest.disposition_note != evidence_note:
+        raise DispatchError("rejected-offload manifest note does not match dispatched evidence")
     try:
         return reconcile.build_rejected_offload_signal(
             reconciliation_id=reconciliation_id,
-            execution_id=execution_id,
-            intent=resolved_intent,
+            execution_id=evidence.execution_id,
+            intent=evidence.intent,
             adjudicator_id=adjudicator_id,
             rejection_note=manifest.disposition_note,
-            bound_evidence_digest=evidence.evidence_digest if evidence is not None else None,
-            bound_source_finding_ids=(
-                evidence.source_finding_ids if evidence is not None else None
-            ),
+            bound_evidence_digest=evidence.evidence_digest,
+            bound_source_finding_ids=evidence.source_finding_ids,
         )
     except reconcile.ReconciliationError as exc:
         raise DispatchError(str(exc)) from exc
@@ -1251,6 +1250,7 @@ def adjudicate_manifest(
         claim_provenance=pm.ClaimProvenance(claims=tuple(updated_claims)),
         economics=manifest.economics,
         bridge_run_key=manifest.bridge_run_key,
+        tripwire_note=manifest.tripwire_note,
     )
     manifest_store.write_manifest(store, execution_id, adjudicated.to_dict())
     return adjudicated

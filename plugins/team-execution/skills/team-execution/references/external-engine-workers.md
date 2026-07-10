@@ -60,12 +60,13 @@ agreement and disagreement as findings requiring explicit Claude review. Unknown
 drift fail closed rather than falling back to offload.
 
 The engine runner returns findings as an ordered array of `{"content": <string>}` records. Dispatch
-replaces the prose with immutable `SourceFinding` metadata: an ordinal-bearing per-content ID and
-SHA-256 digest. Non-empty `second-opinion` and `divergence` output requires this typed envelope;
-`offload` alone may omit it and receive one explicit opaque-artifact source for the whole output.
-Typed multi-finding offloads retain every separate source. Reconciliation must cover the exact ordered
-ID tuple with one ordered item per source; no intent may collapse typed multi-finding output into an
-opaque singleton.
+retains each bounded content string in-memory with immutable `SourceFinding` metadata: an
+ordinal-bearing per-content ID and SHA-256 digest. For non-empty `second-opinion` and `divergence`,
+the runner's `output` must equal `reconcile.render_source_findings(findings)` exactly; no summary or
+extra prose can sit outside the ordered envelope Claude must adjudicate. `offload` alone may omit the
+envelope and receive one explicit opaque-artifact source for the whole output. Typed multi-finding
+offloads retain every separate source. Reconciliation must cover the exact ordered ID tuple with one
+ordered item per source; no intent may collapse typed multi-finding output into an opaque singleton.
 
 All three paths produce a ready typed `ReconciliationResult` before gate evaluation. Reconcile and
 apply events are append-only `run_fact.v1` reconciliation facts; rejected offloads project their
@@ -91,11 +92,12 @@ the complete returned list with `panel_halt()`, and only starts member dispatch 
 available. It must not call `resolve({role_kind: "panel"})`; that API remains the resolver's existing
 single-resolution role policy, not a fan-out request.
 
-Member output stays in-memory advisory evidence. Duplicate non-empty output becomes one source
-finding while retaining all producing member identities; an empty response becomes an explicit,
-member-specific source finding. Claude's foreman must return a ready typed `ReconciliationResult`
-that matches both the exact ordered source finding IDs and the canonical SHA-256 digest of the ordered
-gathered-evidence metadata. Only after that validation may
+Member findings stay in-memory advisory evidence. Each typed finding becomes a panel source; identical
+content at the same source ordinal is deduplicated while retaining all producing member identities,
+but duplicate content at distinct ordinals remains separately accountable. An empty response becomes
+an explicit, member-specific source finding. Claude's foreman must return a ready typed
+`ReconciliationResult` that matches both the exact ordered source finding IDs and the canonical
+SHA-256 digest of the ordered gathered-evidence metadata. Only after that validation may
 `dispatch_advisory_panel()` append the typed `reconcile` and `apply` facts. Raw member output is never
 written to the run-fact ledger, and a failed foreman result writes neither fact. Dispatch rejects a
 member above 64 KiB or cumulative UTF-8 panel output above 256 KiB before the foreman runs; the ledger
@@ -254,10 +256,10 @@ here.
    reason. It does not apply the rejected patch.
 2. **Build and record the normal reconciliation.** This step is mandatory for accepted `offload`,
    `second-opinion`, and `divergence` units. `dispatch()` in §3 receives the unit's stable
-   `execution_id` and canonical `intent`; the returned immutable evidence carries its full-artifact
-   SHA-256 digest plus ordered typed source findings and IDs. For non-empty `second-opinion` and
-   `divergence`, the runner must have supplied the ordered findings envelope. Only an unstructured
-   `offload` may carry the synthesized opaque singleton. Claude builds one typed
+   `execution_id` and canonical `intent`; the returned immutable evidence carries its canonical
+   envelope digest plus ordered typed source findings and IDs. For non-empty `second-opinion` and
+   `divergence`, the runner must have supplied an `output` exactly equal to that ordered findings
+   envelope. Only an unstructured `offload` may carry the synthesized opaque singleton. Claude builds one typed
    `ReconciliationItem` per source in source order (including explicit dropped/overridden outcomes),
    then builds a ready result with those exact bindings. Typed multi-finding evidence therefore needs
    exact multi-item coverage. The caller records one transition per helper call, in order, and passes
@@ -331,8 +333,7 @@ here.
    `record_dispatch_manifest` is the only manifest-construction call this contract documents.
 
    For `REJECTED_OFFLOAD`, the chaperone calls
-   `engine_dispatch.rejected_offload_reconciliation(..., intent=evidence.intent,
-   evidence=evidence)`, then passes
+   `engine_dispatch.rejected_offload_reconciliation(..., evidence=evidence)`, then passes
    `reconcile.reviewer_validator_evidence(result)` to both the reviewer and validator evidence
    inputs. Passing the evidence retains the unit's canonical intent, immutable digest, and source
    IDs; the result contains one typed `dropped` item per source whose rationale is the manifest's

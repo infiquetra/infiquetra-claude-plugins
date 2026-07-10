@@ -569,9 +569,9 @@ def test_retro_reader_refuses_invalid_reconciliation_fact(tmp_path: Path) -> Non
 def test_panel_evidence_deduplicates_output_and_preserves_empty_member() -> None:
     evidence = RC.gather_panel_evidence(
         (
-            ("codex/one", "same advisory finding"),
-            ("agy/two", "same advisory finding"),
-            ("ollama/three", "  "),
+            ("codex/one", RC.parse_source_findings([{"content": "same advisory finding"}])),
+            ("agy/two", RC.parse_source_findings([{"content": "same advisory finding"}])),
+            ("ollama/three", ()),
         )
     )
 
@@ -582,6 +582,31 @@ def test_panel_evidence_deduplicates_output_and_preserves_empty_member() -> None
     assert empty.member_ids == ("ollama/three",)
     assert empty.empty is True
     assert empty.source_finding_id.startswith("panel-empty:")
+
+
+def test_panel_evidence_preserves_duplicate_content_at_distinct_source_ordinals() -> None:
+    repeated = RC.parse_source_findings(
+        [{"content": "same advisory finding"}, {"content": "same advisory finding"}]
+    )
+    evidence = RC.gather_panel_evidence((("codex/one", repeated), ("agy/two", repeated)))
+
+    assert len(evidence) == 2
+    assert [item.output for item in evidence] == ["same advisory finding", "same advisory finding"]
+    assert [item.member_ids for item in evidence] == [
+        ("codex/one", "agy/two"),
+        ("codex/one", "agy/two"),
+    ]
+    assert evidence[0].source_finding_id != evidence[1].source_finding_id
+
+
+def test_panel_evidence_deduplicates_content_across_different_member_orderings() -> None:
+    first = RC.parse_source_findings([{"content": "alpha"}, {"content": "beta"}])
+    second = RC.parse_source_findings([{"content": "beta"}, {"content": "alpha"}])
+
+    evidence = RC.gather_panel_evidence((("codex/one", first), ("agy/two", second)))
+
+    assert [item.output for item in evidence] == ["alpha", "beta"]
+    assert all(item.member_ids == ("codex/one", "agy/two") for item in evidence)
 
 
 @pytest.mark.parametrize(
@@ -603,12 +628,14 @@ def test_panel_evidence_invariants(kwargs: dict[str, Any], match: str) -> None:
     }
     with pytest.raises(RC.ReconciliationError, match=match):
         RC.PanelMemberEvidence(**values)
-    with pytest.raises(RC.ReconciliationError, match="output must be a string"):
+    with pytest.raises(RC.ReconciliationError, match="immutable typed collection"):
         RC.gather_panel_evidence((("member", 1),))
 
 
 def test_panel_foreman_must_account_for_exact_gathered_evidence() -> None:
-    evidence = RC.gather_panel_evidence((("codex/one", "finding"),))
+    evidence = RC.gather_panel_evidence(
+        (("codex/one", RC.parse_source_findings([{"content": "finding"}])),)
+    )
     result = RC.build_result(
         reconciliation_id="panel-reconciliation",
         execution_id="panel-execution",
@@ -630,9 +657,9 @@ def test_panel_foreman_must_account_for_exact_gathered_evidence() -> None:
 def test_panel_result_helper_binds_ordered_evidence_without_raw_output() -> None:
     evidence = RC.gather_panel_evidence(
         (
-            ("codex/one", "duplicate finding"),
-            ("agy/two", "duplicate finding"),
-            ("ollama/three", ""),
+            ("codex/one", RC.parse_source_findings([{"content": "duplicate finding"}])),
+            ("agy/two", RC.parse_source_findings([{"content": "duplicate finding"}])),
+            ("ollama/three", ()),
         )
     )
     result = RC.build_panel_reconciliation_result(
@@ -665,7 +692,10 @@ def test_panel_result_helper_binds_ordered_evidence_without_raw_output() -> None
 
 def test_panel_foreman_rejects_reordered_ids_and_wrong_binding_digest() -> None:
     evidence = RC.gather_panel_evidence(
-        (("codex/one", "finding one"), ("agy/two", "finding two"))
+        (
+            ("codex/one", RC.parse_source_findings([{"content": "finding one"}])),
+            ("agy/two", RC.parse_source_findings([{"content": "finding two"}])),
+        )
     )
     items = tuple(
         RC.ReconciliationItem(
@@ -720,7 +750,9 @@ def test_panel_foreman_rejects_reordered_ids_and_wrong_binding_digest() -> None:
 
 
 def test_panel_foreman_rejects_wrong_type_execution_and_intent() -> None:
-    evidence = RC.gather_panel_evidence((('member', 'finding'),))
+    evidence = RC.gather_panel_evidence(
+        (("member", RC.parse_source_findings([{"content": "finding"}])),)
+    )
     with pytest.raises(RC.ReconciliationError, match="typed reconciliation"):
         RC.validate_panel_reconciliation(None, execution_id="e", intent="offload", evidence=evidence)
     result = RC.build_result(

@@ -106,6 +106,15 @@ def test_empty_ledger_returns_explicit_no_proposal(tmp_path: Path) -> None:
     }
 
 
+def test_absent_ledger_proposal_creates_no_ledger_or_lock(tmp_path: Path) -> None:
+    ledger = RL.RunLedger(tmp_path / "missing" / "run-facts.jsonl")
+
+    assert RC.derive_recipe_update_proposal(ledger)["status"] == "no-proposal"
+    assert not ledger.path.parent.exists()
+    assert not ledger.path.exists()
+    assert not RL._lock_path(ledger).exists()
+
+
 def test_proposal_read_does_not_mutate_ledger_or_recipe_registry(tmp_path: Path) -> None:
     ledger = RL.RunLedger(tmp_path / "run-facts.jsonl")
     result = _result("recon-1", "exec-1", RC.ReconciliationStatus.DROPPED)

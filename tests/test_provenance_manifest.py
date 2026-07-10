@@ -125,6 +125,17 @@ def test_rejected_offload_manifest_round_trip_requires_normalized_note() -> None
             pm.Manifest.from_dict(payload)
 
 
+def test_manifest_round_trips_separate_bounded_tripwire_note() -> None:
+    manifest = _manifest(tripwire_note="tripwire_unarmed: observer unavailable")
+    assert pm.Manifest.from_dict(manifest.to_dict()) == manifest
+
+    for invalid_note in (" not normalized ", "two\nlines", "bad\x00note"):
+        with pytest.raises(pm.ManifestError, match="tripwire_note"):
+            _manifest(tripwire_note=invalid_note)
+    with pytest.raises(pm.ManifestError, match="exceeds"):
+        _manifest(tripwire_note="x" * (pm.MAX_OPERATIONAL_NOTE_BYTES + 1))
+
+
 def test_manifest_envelope_requires_attribution_and_disposition() -> None:
     """Envelope invalid without R2 attribution and R18 disposition fields."""
     good = _manifest().to_dict()

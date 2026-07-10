@@ -158,12 +158,13 @@ def render_source_findings(findings: Iterable[SourceFinding]) -> str:
 
 @dataclass(frozen=True)
 class PanelMemberEvidence:
-    """One unique advisory-panel output presented to the Claude foreman.
+    """One unique advisory-panel finding presented to the Claude foreman.
 
-    Duplicate non-empty output is one finding with every producing member retained. Empty output
-    is member-specific so every silent member remains an explicit reconciliation obligation.
-    The raw ``output`` is in-memory foreman input only; reconciliation ledger facts contain only
-    the resulting typed finding IDs and adjudications.
+    Matching content occurrences across members are one obligation with every producing member
+    retained; repeated content within one member remains distinct. Empty output is member-specific
+    so every silent member remains an explicit reconciliation obligation. The raw ``output``
+    remains in-memory foreman input only; reconciliation ledger facts contain only the resulting
+    typed finding IDs and adjudications.
     """
 
     source_finding_id: str
@@ -513,31 +514,39 @@ def build_result(
 
 
 def gather_panel_evidence(
-    member_outputs: Iterable[tuple[str, str]],
+    member_findings: Iterable[tuple[str, tuple[SourceFinding, ...]]],
 ) -> tuple[PanelMemberEvidence, ...]:
-    """Deduplicate advisory member output while preserving explicit empty-member evidence."""
+    """Flatten typed member findings, deduplicating content and preserving empty members."""
     gathered: dict[str, tuple[list[str], str, bool]] = {}
-    for member_id, output in member_outputs:
+    for member_id, findings in member_findings:
         member = _require_id(member_id, "panel member identity")
-        if not isinstance(output, str):
-            raise ReconciliationError("panel member output must be a string")
-        empty = not output.strip()
-        if empty:
+        if not isinstance(findings, tuple) or not all(
+            isinstance(finding, SourceFinding) for finding in findings
+        ):
+            raise ReconciliationError(
+                "panel member findings must be an immutable typed collection"
+            )
+        if not findings:
             digest = hashlib.sha256(member.encode()).hexdigest()
             finding_id = f"panel-empty:{digest}"
-        else:
-            digest = hashlib.sha256(output.encode()).hexdigest()
-            finding_id = f"panel-evidence:{digest}"
-
-        existing = gathered.get(finding_id)
-        if existing is None:
-            gathered[finding_id] = ([member], output, empty)
+            gathered[finding_id] = ([member], "", True)
             continue
-        members, prior_output, prior_empty = existing
-        if prior_output != output or prior_empty != empty:
-            raise ReconciliationError("panel evidence digest collision")
-        if member not in members:
-            members.append(member)
+
+        content_occurrences: dict[str, int] = {}
+        for finding in findings:
+            digest = finding.digest
+            occurrence = content_occurrences.get(digest, 0)
+            content_occurrences[digest] = occurrence + 1
+            finding_id = f"panel-evidence:{occurrence}:{digest}"
+            existing = gathered.get(finding_id)
+            if existing is None:
+                gathered[finding_id] = ([member], finding.content, False)
+                continue
+            members, prior_output, prior_empty = existing
+            if prior_output != finding.content or prior_empty:
+                raise ReconciliationError("panel evidence digest collision")
+            if member not in members:
+                members.append(member)
 
     return tuple(
         PanelMemberEvidence(

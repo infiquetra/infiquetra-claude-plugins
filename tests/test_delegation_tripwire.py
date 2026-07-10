@@ -702,7 +702,7 @@ class TestTwoSignalAcceptanceMatrix:
 
         manifest = _manifest_for(tmp_path, evidence, "exec-unarmed")
         assert manifest.disposition is _PM.Disposition.RAN_AS_REQUESTED
-        assert "tripwire_unarmed" in manifest.disposition_note
+        assert "tripwire_unarmed" in manifest.tripwire_note
 
     def test_dispatch_arms_during_run_and_disarms_in_finally(self, tmp_path: Path) -> None:
         """KTD4: the marker is live while the adapter runs and gone afterwards -- even when

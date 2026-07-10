@@ -1402,13 +1402,23 @@ def _return_schema(unit: Unit) -> dict[str, object]:
     }
     if not unit.tier.is_cheap:
         return return_schema
-    pull_cord_schema: dict[str, object] = {
+    # #364: cheap-tier units may answer with {"pull_cord": "<reason>"} instead of their declared
+    # returns. The Anthropic API requires a top-level "type" on every tool input_schema -- a bare
+    # {"oneOf": [...]} is rejected at dispatch (400 input_schema.type: Field required) and the
+    # agent dies before running. So hoist type/properties to the top level and keep oneOf only
+    # for the alternative required-key sets. pull_cord is a reserved key (validate() rejects it
+    # in returns), so the property union cannot collide.
+    properties: dict[str, object] = {key: {} for key in unit.returns}
+    properties["pull_cord"] = {"type": "string"}
+    return {
         "type": "object",
-        "properties": {"pull_cord": {"type": "string"}},
-        "required": ["pull_cord"],
+        "properties": properties,
         "additionalProperties": True,
+        "oneOf": [
+            {"required": list(unit.returns)},
+            {"required": ["pull_cord"]},
+        ],
     }
-    return {"oneOf": [return_schema, pull_cord_schema]}
 
 
 def _agent_opts(unit: Unit) -> list[str]:

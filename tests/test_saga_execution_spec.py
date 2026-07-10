@@ -438,13 +438,19 @@ def _return_schema_fragment(keys: tuple[str, ...] = ("result",), *, cheap: bool 
         "additionalProperties": True,
     }
     if cheap:
-        pull_cord_schema: dict[str, object] = {
+        # #364 pull-cord union: top-level type/properties with oneOf carrying only the
+        # alternative required sets -- a bare top-level oneOf is a 400 at agent dispatch.
+        properties: dict[str, object] = {key: {} for key in keys}
+        properties["pull_cord"] = {"type": "string"}
+        return_schema = {
             "type": "object",
-            "properties": {"pull_cord": {"type": "string"}},
-            "required": ["pull_cord"],
+            "properties": properties,
             "additionalProperties": True,
+            "oneOf": [
+                {"required": list(keys)},
+                {"required": ["pull_cord"]},
+            ],
         }
-        return_schema = {"oneOf": [return_schema, pull_cord_schema]}
     return "schema: " + json.dumps(return_schema, sort_keys=True)
 
 
@@ -597,6 +603,56 @@ def test_cheap_tier_schema_preserves_pull_cord_alternative() -> None:
     script = _emit_units([_verify_unit("cheap", tier={"model": "haiku", "effort": "low"})])
     assert _return_schema_fragment(cheap=True) in script
     assert "pull_cord" in script
+
+
+def _extract_agent_schemas(script: str) -> list[dict[str, object]]:
+    """Parse every ``schema: {...}`` JSON blob out of an emitted workflow script."""
+    decoder = json.JSONDecoder()
+    marker = "schema: "
+    schemas: list[dict[str, object]] = []
+    start = script.find(marker)
+    while start != -1:
+        obj, _ = decoder.raw_decode(script, start + len(marker))
+        assert isinstance(obj, dict)
+        schemas.append(obj)
+        start = script.find(marker, start + len(marker))
+    return schemas
+
+
+def test_every_emitted_agent_schema_has_toplevel_type() -> None:
+    # Regression for the pull-cord schema dispatch failure (#364, reproduced 2026-07-10 in
+    # team-norns run wf_758c9923-c2c): the Anthropic API rejects any tool input_schema without
+    # a top-level "type" (400 tools.N.custom.input_schema.type: Field required), so the unit's
+    # agent dies before running and the gate fails it as missing-output. Sweep EVERY schema
+    # across all emission sites: plain unit, cheap pull-cord union, external-engine dispatch,
+    # refute-N verifier panel, and the iterate-to-consensus loop.
+    script = _emit_units(
+        [
+            _verify_unit("plain"),
+            _verify_unit("cheap", tier={"model": "haiku", "effort": "low"}),
+            _verify_unit("ext", capability="code-generation"),
+            _verify_unit("panel", verify={"n": 2, "pass_rule": "majority"}),
+            _verify_unit(
+                "iter",
+                verify={"n": 2, "pass_rule": "majority", "iterate_to_consensus": True},
+            ),
+        ]
+    )
+    schemas = _extract_agent_schemas(script)
+    # 5 unit schemas + 2 panel verifiers + the iterate loop's verifier call at minimum.
+    assert len(schemas) >= 7
+    for schema in schemas:
+        assert schema.get("type") == "object", f"schema missing top-level type: {schema}"
+    # The pull-cord union survived the hoist: oneOf now carries only alternative required sets.
+    cheap = [s for s in schemas if "oneOf" in s]
+    assert cheap, "expected at least one cheap-tier pull-cord union schema"
+    for schema in cheap:
+        properties = schema.get("properties")
+        assert isinstance(properties, dict)
+        assert properties.get("pull_cord") == {"type": "string"}
+        one_of = schema["oneOf"]
+        assert isinstance(one_of, list)
+        assert {"required": ["pull_cord"]} in one_of
 
 
 # ---------------------------------------------------------- enforceability matrix (U3)

@@ -352,7 +352,46 @@ Checks:
 - `git diff --check`
   - passed
 
+## Bounded Saga Code Review and Operator-Gated Remediation
+
+Team Execution stopped at its three-remediation-loop cap. The operator then authorized one bounded
+inline Saga code review with no Team Execution, external engine, or fixer dispatch and a hard stop on
+any surviving P0-P3. That review wrote
+`docs/code-reviews/2026-07-09-issue-393-typed-second-opinion-reconciliation-code-review.md` and
+validated one P1: dispatch replaced raw review output with declared findings without first requiring
+them to match, allowing an undeclared finding to disappear before reconciliation.
+
+After the required operator approval, the focused remediation:
+
+- requires every successful `second-opinion` and `divergence` output to exactly equal the canonical
+  ordered declared-findings envelope;
+- retains the existing halted-run empty-evidence contract and requires an explicit typed findings
+  field even for zero-finding successful reviews;
+- replaces the unsafe summary-independence test with mismatch refusal for both review intents; and
+- proves a panel mismatch reaches neither its Claude foreman nor the run-fact ledger.
+
+Checks:
+
+- Complete dispatch suite
+  - 117 passed
+- Focused reconciliation, ledger, dispatch, manifest, retro, bridge, execution-spec, and resolver
+  matrix
+  - 394 passed
+- Atomic-ledger promotion compatibility suite
+  - 21 passed after moving the stale race fixture from `read_facts()` to the new `read_snapshot()`
+    single source; production behavior was unchanged
+- Full repository suite under the locked Python 3.12 environment
+  - 3021 passed, 1 skipped, 80% coverage
+- Repository Ruff, configured mypy, release-surface parity, changelog lint, and `git diff --check`
+  - passed
+- Direct engine-dispatch mypy
+  - reports only two unchanged `no-any-return` findings at lines 808 and 845
+- Bandit
+  - the repository-wide unconfigured scan has an existing 650-finding baseline; the changed
+    production file adds no flagged pattern and retains one pre-existing low-severity `assert` finding
+
 ## Next Step
 
-Commit the epoch-3 remediation, create a fresh review pointer, and re-engage all five original
-reviewer identities to consensus before validators.
+Run final deterministic repository and release gates, commit the bounded remediation and review
+artifact, then use the standing authorization for PR, CI, merge, issue/board closure, and outcome
+receipt recording. Pause before issue #394.

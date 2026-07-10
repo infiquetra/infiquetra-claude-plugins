@@ -15,6 +15,8 @@
 - Cycle-2 hardening adds immutable ordered per-content finding envelopes with exact multi-finding
   coverage, non-healing ordinary snapshots, 1024-byte evidence-bound rejection summaries, `0600`
   final manifests, and exact ordered-ID plus canonical-digest panel foreman binding.
+- Cycle-3 and bounded-review hardening requires successful review output to exactly match its
+  canonical declared-findings envelope before either direct or panel reconciliation can proceed.
 
 ## [0.75.16] - 2026-07-09
 

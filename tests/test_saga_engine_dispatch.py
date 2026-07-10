@@ -87,7 +87,7 @@ def _review_payload(*findings: str) -> dict[str, Any]:
     typed = RC.parse_source_findings(rows)
     return {
         "status": "ok",
-        "output": RC.render_source_findings(typed) if typed else "",
+        "output": RC.render_source_findings(typed),
         "findings": rows,
     }
 
@@ -345,34 +345,20 @@ def test_typed_runner_findings_are_stable_ordered_and_required_by_review_intents
     assert opaque.source_finding_ids[0].startswith("opaque-artifact:0:")
 
 
-def test_review_findings_are_canonical_independent_of_runner_summary() -> None:
+@pytest.mark.parametrize("intent", ["second-opinion", "divergence"])
+def test_review_output_must_exactly_match_declared_findings(intent: str) -> None:
     findings = [{"content": "visible one"}, {"content": "visible two"}]
-    first = D.dispatch(
-        _resolution(),
-        runner=lambda _invocation: {
-            "status": "ok",
-            "output": "summary A with hidden text",
-            "findings": findings,
-        },
-        execution_id="canonical-a",
-        intent="divergence",
-    )
-    second = D.dispatch(
-        _resolution(),
-        runner=lambda _invocation: {
-            "status": "ok",
-            "output": "independent summary B",
-            "findings": findings,
-        },
-        execution_id="canonical-b",
-        intent="divergence",
-    )
-    assert isinstance(first, D.AdvisoryEvidence)
-    assert isinstance(second, D.AdvisoryEvidence)
-    assert first.evidence == second.evidence == '["visible one","visible two"]'
-    assert first.evidence_digest == second.evidence_digest
-    assert first.runner_output_digest != second.runner_output_digest
-    assert "hidden text" not in first.evidence
+    with pytest.raises(D.DispatchError, match="exactly match the canonical ordered findings"):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: {
+                "status": "ok",
+                "output": '["visible one","visible two","hidden finding"]',
+                "findings": findings,
+            },
+            execution_id=f"canonical-mismatch-{intent}",
+            intent=intent,
+        )
 
 
 def test_direct_divergence_rejects_opaque_artifact_finding() -> None:
@@ -2106,9 +2092,7 @@ def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
         D.AdvisoryPanelRequest("cross-family-review-panel"),
         registry=object(),
         runner=lambda _invocation: (
-            _review_payload(output)
-            if (output := next(outputs))
-            else {"status": "ok", "output": "", "findings": []}
+            _review_payload(output) if (output := next(outputs)) else _review_payload()
         ),
         foreman=foreman,
         execution_id="panel-execution",
@@ -2249,6 +2233,44 @@ def test_panel_flattens_member_findings_and_omission_appends_no_facts(
 
     assert foreman_calls == 1
     assert RC.read_reconciliation_facts(ledger) == []
+
+
+def test_panel_rejects_hidden_raw_finding_before_foreman_or_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    foreman_calls = 0
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="exactly match the canonical ordered findings"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: {
+                "status": "ok",
+                "output": '["visible finding","hidden finding"]',
+                "findings": [{"content": "visible finding"}],
+            },
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
 
 
 @pytest.mark.parametrize(

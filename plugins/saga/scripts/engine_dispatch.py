@@ -106,11 +106,7 @@ class AdvisoryEvidence:
         ):
             raise DispatchError("advisory source findings must be an immutable typed collection")
         findings = self.source_findings
-        if not findings and self.evidence:
-            if self.intent != "offload":
-                raise DispatchError(
-                    f"non-empty {self.intent} evidence requires a typed runner findings envelope"
-                )
+        if not findings and self.evidence and self.intent == "offload":
             findings = (reconcile.SourceFinding.from_content(self.evidence, 0, opaque=True),)
         if findings:
             ordinals = tuple(finding.ordinal for finding in findings)
@@ -118,11 +114,15 @@ class AdvisoryEvidence:
                 raise DispatchError("advisory source findings require contiguous ordered ordinals")
         if self.intent != "offload" and any(finding.opaque for finding in findings):
             raise DispatchError("opaque-artifact findings are allowed only for explicit offload")
-        canonical_evidence = (
-            reconcile.render_source_findings(findings)
-            if self.intent in {"second-opinion", "divergence"} and findings
-            else self.evidence
-        )
+        if self.intent in {"second-opinion", "divergence"} and self.halt is None:
+            canonical_evidence = reconcile.render_source_findings(findings)
+            if self.evidence != canonical_evidence:
+                raise DispatchError(
+                    f"{self.intent} evidence must exactly match the canonical ordered findings "
+                    "envelope"
+                )
+        else:
+            canonical_evidence = self.evidence
         digest = reconcile.evidence_digest(canonical_evidence)
         if self.evidence_digest and self.evidence_digest != digest:
             raise DispatchError("advisory evidence digest disagrees with canonical finding content")
@@ -391,6 +391,8 @@ def dispatch(
         )
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"runner findings envelope is malformed: {exc}") from exc
+    if status == "ok" and intent in {"second-opinion", "divergence"} and "findings" not in result:
+        raise DispatchError(f"{intent} evidence requires a typed runner findings envelope")
     provenance: dict[str, Any] = {
         "engine": resolution.engine_id,
         "variant": resolution.variant,

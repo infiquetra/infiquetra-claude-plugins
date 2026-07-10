@@ -27,6 +27,35 @@
 
 ## 2026-07-10
 
+### Bare top-level `oneOf` schemas die at agent dispatch, not at emit or validate {#toplevel-oneof-schema-dispatch-400}
+
+**Context.** The execution-spec emitter gives pull-cord-capable (cheap-tier) units a union
+StructuredOutput schema: either the unit's declared returns or `{"pull_cord": "<reason>"}` (#364).
+The union was expressed as a bare top-level `{"oneOf": [<returns-shape>, <pull-cord-shape>]}` —
+valid JSON Schema, but with no top-level `type` key.
+**Evidence.** Reproduced 2026-07-10 in team-norns workflow run `wf_758c9923-c2c`, unit U3 of
+`docs/plans/2026-07-09-council-dispatch-gate-spec.json` (haiku/low release-prep unit): the API
+rejected dispatch with `400 tools.N.custom.input_schema.type: Field required`. Emitter site:
+`plugins/saga/scripts/execution_spec.py` `_return_schema`.
+**Mechanism.** The Anthropic API requires `input_schema.type` on every tool definition; it does
+not accept the full JSON Schema composition vocabulary at the top level. Because the schema rides
+inside the emitted workflow's `agent()` opts, nothing fails at emit time or spec-validate time —
+the first failing surface is the API call, the unit's agent dies before running a single turn,
+and the workflow gate misreports the failure as missing-output. Every non-cheap schema already
+carried `type: "object"`, so only pull-cord units hit it.
+**Fix.** Hoist `type: "object"` and the union of both branches' `properties` to the top level;
+keep `oneOf` only for the alternative `required` sets (`[<returns keys>]` vs `["pull_cord"]`).
+`pull_cord` is a reserved returns key, so the property union cannot collide. Saga 0.75.19.
+**Validation.** New regression test `test_every_emitted_agent_schema_has_toplevel_type` parses
+every `schema:` blob out of an emission covering all agent sites (plain, pull-cord, external
+engine, verifier panel, iterate loop) and asserts top-level `type: "object"` on each.
+**Generalizable rule.** A tool/StructuredOutput schema is not "valid JSON Schema" — it's the
+API's stricter dialect, and its first enforcement point is dispatch inside someone else's run.
+Any schema the emitter can produce needs a shape test at build time; composition keywords
+(`oneOf`/`anyOf`) belong under a concrete top-level `type`, expressing alternatives as
+`required`-set variants.
+**Refs.** #364 (pull-cord disposition), saga CHANGELOG 0.75.19.
+
 ### Default-equality carry-forward swallows explicit values that equal the default {#save-explicit-vs-default-ambiguity}
 
 **Context.** `saga.py save` merges each tick with the prior one: scalar fields "left at their

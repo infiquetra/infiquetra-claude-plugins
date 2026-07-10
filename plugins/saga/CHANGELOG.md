@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.75.19] - 2026-07-10
+
+### Fixed - pull-cord unit schemas rejected at agent dispatch (#364)
+
+- The execution-spec emitter built cheap-tier pull-cord-capable unit schemas as a bare top-level
+  `{"oneOf": [<returns-shape>, <pull-cord-shape>]}` with no top-level `"type"` key. The Anthropic
+  API requires `type` on every tool input schema, so dispatch failed with
+  `400 tools.N.custom.input_schema.type: Field required` — the unit's agent died before running
+  and the workflow gate failed it as missing-output (reproduced 2026-07-10 in team-norns run
+  `wf_758c9923-c2c`, unit U3 of the council-dispatch-gate plan). The emitter now hoists
+  `type: "object"` and the union of both branches' `properties` to the top level, keeping `oneOf`
+  only for the alternative `required` sets (declared returns vs `["pull_cord"]`).
+- Regression guard: a new test sweeps every `schema:` blob in an emission covering all agent
+  sites (plain unit, cheap pull-cord union, external-engine dispatch, refute-N verifier panel,
+  iterate-to-consensus loop) and asserts each carries a top-level `"type": "object"`.
+
 ## [0.75.18] - 2026-07-10
 
 ### Fixed - explicit save flags equal to their defaults were swallowed by carry-forward

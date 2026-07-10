@@ -83,7 +83,9 @@ def test_registry_builder_rejects_missing_duplicate_and_surplus_definitions() ->
     extra = RC.ReconciliationRecipe("future", "future", "instruction")
     with pytest.raises(RC.ReconciliationError, match="not canonical intents"):
         RC._build_registry(("offload",), (recipe, extra))
-    with pytest.raises(RC.ReconciliationError, match="canonical ENGINE_INTENTS contains duplicates"):
+    with pytest.raises(
+        RC.ReconciliationError, match="canonical ENGINE_INTENTS contains duplicates"
+    ):
         RC._build_registry(("offload", "offload"), (recipe,))
 
 
@@ -223,9 +225,7 @@ def test_source_finding_ids_are_content_derived_and_ordered() -> None:
 def test_result_type_recipe_and_adjudicator_invariants() -> None:
     result = _result()
     with pytest.raises(RC.ReconciliationError, match="does not match intent"):
-        RC.ReconciliationResult(
-            **{**result.__dict__, "recipe_id": "wrong"}
-        )
+        RC.ReconciliationResult(**{**result.__dict__, "recipe_id": "wrong"})
     with pytest.raises(RC.ReconciliationError, match="immutable tuples"):
         RC.ReconciliationResult(**{**result.__dict__, "source_finding_ids": ["finding-1"]})
     with pytest.raises(RC.ReconciliationError, match="only ReconciliationItem"):
@@ -261,7 +261,9 @@ def test_item_count_and_result_byte_bounds() -> None:
     with pytest.raises(RC.ReconciliationError, match="result exceeds"):
         _result(
             source_ids=large_ids,
-            items=tuple(_item(value, rationale="r" * RC.MAX_RATIONALE_BYTES) for value in large_ids),
+            items=tuple(
+                _item(value, rationale="r" * RC.MAX_RATIONALE_BYTES) for value in large_ids
+            ),
         )
 
 
@@ -485,7 +487,10 @@ def test_reader_rejects_malformed_action_status_recipe_and_hash(tmp_path: Path) 
         ({"source_finding_ids": "wrong"}, "contain arrays"),
         ({"source_finding_ids": ["finding-1", "finding-1"]}, "duplicate source"),
         ({"items": ["wrong"]}, "item projection"),
-        ({"items": [{"source_finding_id": "finding-1", "status": "wrong"}]}, "invalid reconciliation status"),
+        (
+            {"items": [{"source_finding_id": "finding-1", "status": "wrong"}]},
+            "invalid reconciliation status",
+        ),
         ({"items": []}, "account for each source"),
         ({"result_hash": "wrong"}, "result_hash"),
     ],
@@ -498,9 +503,7 @@ def test_projection_validator_covers_malformed_fields(
     record = RL.read_facts(ledger)[0]
     mutated = {**record, **mutation}
     with pytest.raises(RC.ReconciliationError, match=match):
-        RC._validated_reconciliation_facts(
-            (mutated,), RL.ChainReport(True, None, "ok")
-        )
+        RC._validated_reconciliation_facts((mutated,), RL.ChainReport(True, None, "ok"))
 
 
 def test_reader_refuses_corrupt_chain(tmp_path: Path) -> None:
@@ -556,9 +559,7 @@ def test_retro_reader_refuses_invalid_reconciliation_fact(tmp_path: Path) -> Non
             action="reconcile",
             result_hash=RC.canonical_result_hash(result),
             source_finding_ids=list(result.source_finding_ids),
-            items=[
-                {"source_finding_id": result.source_finding_ids[0], "status": "accepted"}
-            ],
+            items=[{"source_finding_id": result.source_finding_ids[0], "status": "accepted"}],
         ),
     )
 
@@ -680,12 +681,15 @@ def test_panel_result_helper_binds_ordered_evidence_without_raw_output() -> None
     )
 
     assert result.source_finding_ids == tuple(item.source_finding_id for item in evidence)
-    assert RC.validate_panel_reconciliation(
-        result,
-        execution_id="panel-execution",
-        intent="second-opinion",
-        evidence=evidence,
-    ) is result
+    assert (
+        RC.validate_panel_reconciliation(
+            result,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            evidence=evidence,
+        )
+        is result
+    )
     serialized = json.dumps(result.to_dict(), sort_keys=True)
     assert "duplicate finding" not in serialized
 
@@ -754,7 +758,9 @@ def test_panel_foreman_rejects_wrong_type_execution_and_intent() -> None:
         (("member", RC.parse_source_findings([{"content": "finding"}])),)
     )
     with pytest.raises(RC.ReconciliationError, match="typed reconciliation"):
-        RC.validate_panel_reconciliation(None, execution_id="e", intent="offload", evidence=evidence)
+        RC.validate_panel_reconciliation(
+            None, execution_id="e", intent="offload", evidence=evidence
+        )
     result = RC.build_result(
         reconciliation_id="panel",
         execution_id="wrong",
@@ -772,6 +778,10 @@ def test_panel_foreman_rejects_wrong_type_execution_and_intent() -> None:
         ),
     )
     with pytest.raises(RC.ReconciliationError, match="execution_id"):
-        RC.validate_panel_reconciliation(result, execution_id="expected", intent="offload", evidence=evidence)
+        RC.validate_panel_reconciliation(
+            result, execution_id="expected", intent="offload", evidence=evidence
+        )
     with pytest.raises(RC.ReconciliationError, match="intent"):
-        RC.validate_panel_reconciliation(result, execution_id="wrong", intent="divergence", evidence=evidence)
+        RC.validate_panel_reconciliation(
+            result, execution_id="wrong", intent="divergence", evidence=evidence
+        )

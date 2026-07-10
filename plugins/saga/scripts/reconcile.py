@@ -299,7 +299,11 @@ def evidence_digest(evidence: str) -> str:
 
 
 def source_finding_ids_for_evidence(evidence: str) -> tuple[str, ...]:
-    return (SourceFinding.from_content(evidence, 0, opaque=True).source_finding_id,) if evidence else ()
+    return (
+        (SourceFinding.from_content(evidence, 0, opaque=True).source_finding_id,)
+        if evidence
+        else ()
+    )
 
 
 def _require_digest(value: Any, field: str = "evidence_digest") -> str:
@@ -331,7 +335,9 @@ class ReconciliationItem:
         if not isinstance(self.rationale, str) or not self.rationale.strip():
             raise ReconciliationError("every reconciliation item requires a non-empty rationale")
         if any(ord(char) < 32 for char in self.rationale):
-            raise ReconciliationError("reconciliation rationale must not contain control characters")
+            raise ReconciliationError(
+                "reconciliation rationale must not contain control characters"
+            )
         if len(self.rationale.encode("utf-8")) > MAX_RATIONALE_BYTES:
             raise ReconciliationError(
                 f"reconciliation rationale exceeds {MAX_RATIONALE_BYTES} bytes"
@@ -498,9 +504,10 @@ def build_result(
 ) -> ReconciliationResult:
     recipe = recipe_for_intent(intent)
     source_ids = tuple(source_finding_ids)
-    bound_digest = evidence_digest or hashlib.sha256(
-        json.dumps(source_ids, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    bound_digest = (
+        evidence_digest
+        or hashlib.sha256(json.dumps(source_ids, separators=(",", ":")).encode("utf-8")).hexdigest()
+    )
     return ReconciliationResult(
         reconciliation_id=reconciliation_id,
         execution_id=execution_id,
@@ -523,9 +530,7 @@ def gather_panel_evidence(
         if not isinstance(findings, tuple) or not all(
             isinstance(finding, SourceFinding) for finding in findings
         ):
-            raise ReconciliationError(
-                "panel member findings must be an immutable typed collection"
-            )
+            raise ReconciliationError("panel member findings must be an immutable typed collection")
         if not findings:
             digest = hashlib.sha256(member.encode()).hexdigest()
             finding_id = f"panel-empty:{digest}"
@@ -815,8 +820,12 @@ def _validated_reconciliation_facts(
                 raise ReconciliationError(
                     f"invalid reconciliation status {item.get('status')!r}"
                 ) from exc
-        if tuple(projected_ids) != normalized_sources or len(projected_ids) != len(set(projected_ids)):
-            raise ReconciliationError("reconciliation fact does not account for each source exactly once")
+        if tuple(projected_ids) != normalized_sources or len(projected_ids) != len(
+            set(projected_ids)
+        ):
+            raise ReconciliationError(
+                "reconciliation fact does not account for each source exactly once"
+            )
         result_hash = fact.get("result_hash")
         if not isinstance(result_hash, str) or not _HASH_RE.fullmatch(result_hash):
             raise ReconciliationError("reconciliation fact result_hash must be lowercase SHA-256")

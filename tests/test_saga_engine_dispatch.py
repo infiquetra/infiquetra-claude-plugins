@@ -413,9 +413,7 @@ def test_finding_content_is_in_memory_only_never_ledger_or_manifest(tmp_path: Pa
         ),
     )
     ledger = RC.run_ledger.RunLedger(tmp_path / "facts.jsonl")
-    RC.append_reconciliation_fact(
-        ledger, result, action="reconcile", subplot_id="leaf", at="t"
-    )
+    RC.append_reconciliation_fact(ledger, result, action="reconcile", subplot_id="leaf", at="t")
     manifest = D.build_dispatch_manifest(
         evidence,
         execution_id=evidence.execution_id,

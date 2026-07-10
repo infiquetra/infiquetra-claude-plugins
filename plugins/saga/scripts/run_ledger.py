@@ -222,12 +222,12 @@ def append_fact_atomic(
     with _write_locked(ledger):
         snapshot = _snapshot_unlocked(ledger, heal=True)
         if not snapshot.report.ok:
-            raise RunLedgerError(f"refusing append to broken run-fact chain: {snapshot.report.reason}")
+            raise RunLedgerError(
+                f"refusing append to broken run-fact chain: {snapshot.report.reason}"
+            )
         if validate_snapshot is not None:
             validate_snapshot(snapshot)
-        prev_hash = (
-            str(snapshot.records[-1].get("this_hash", "")) if snapshot.records else ""
-        )
+        prev_hash = str(snapshot.records[-1].get("this_hash", "")) if snapshot.records else ""
         record = {k: v for k, v in fact.items() if k not in _CHAIN_FIELDS}
         record["prev_hash"] = prev_hash
         record["this_hash"] = _hash(record)

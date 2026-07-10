@@ -389,9 +389,12 @@ Checks:
 - Bandit
   - the repository-wide unconfigured scan has an existing 650-finding baseline; the changed
     production file adds no flagged pattern and retains one pre-existing low-severity `assert` finding
+- PR #552 CI format correction
+  - the first CI run found eight issue-393 files that passed Ruff lint but had not passed Ruff format;
+    Ruff formatted only those reported files, the repository format check passed across 296 files,
+    and the affected 249-test matrix passed
 
 ## Next Step
 
-Run final deterministic repository and release gates, commit the bounded remediation and review
-artifact, then use the standing authorization for PR, CI, merge, issue/board closure, and outcome
-receipt recording. Pause before issue #394.
+Monitor PR #552 after the mechanical format correction, merge on green, verify issue/board closure,
+record the outcome receipt, and pause before issue #394.

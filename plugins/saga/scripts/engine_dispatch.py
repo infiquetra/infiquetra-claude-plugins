@@ -43,9 +43,7 @@ PANEL_TOTAL_OUTPUT_BYTES_CAP = 256 * 1024
 _GATEKEEPER_KEYS = frozenset({"verdict", "gate_status", "adjudicated"})
 
 Runner = Callable[[dict[str, Any]], dict[str, Any]]
-PanelForeman = Callable[
-    [tuple[reconcile.PanelMemberEvidence, ...]], reconcile.ReconciliationResult
-]
+PanelForeman = Callable[[tuple[reconcile.PanelMemberEvidence, ...]], reconcile.ReconciliationResult]
 
 
 class DispatchError(ValueError):
@@ -87,13 +85,10 @@ class AdvisoryEvidence:
                 reconcile._require_digest(self.runner_output_digest, "runner_output_digest")
             except reconcile.ReconciliationError as exc:
                 raise DispatchError(str(exc)) from exc
-        if (
-            self.runner_output_bytes is not None
-            and (
-                not isinstance(self.runner_output_bytes, int)
-                or isinstance(self.runner_output_bytes, bool)
-                or self.runner_output_bytes < 0
-            )
+        if self.runner_output_bytes is not None and (
+            not isinstance(self.runner_output_bytes, int)
+            or isinstance(self.runner_output_bytes, bool)
+            or self.runner_output_bytes < 0
         ):
             raise DispatchError("runner_output_bytes must be a non-negative integer")
         raw_output_bytes = (
@@ -385,9 +380,7 @@ def dispatch(
     output = _string_result(result.get("output"), default="")
     try:
         source_findings = (
-            reconcile.parse_source_findings(result["findings"])
-            if "findings" in result
-            else ()
+            reconcile.parse_source_findings(result["findings"]) if "findings" in result else ()
         )
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"runner findings envelope is malformed: {exc}") from exc
@@ -566,9 +559,7 @@ def dispatch_advisory_panel(
     member_evidence: list[AdvisoryEvidence] = []
     total_output_bytes = 0
     for resolution in resolutions:
-        dispatched = dispatch(
-            resolution, runner=runner, execution_id=execution_id, intent=intent
-        )
+        dispatched = dispatch(resolution, runner=runner, execution_id=execution_id, intent=intent)
         if isinstance(dispatched, RequeueDisposition):
             raise DispatchError("advisory panel dispatch unexpectedly requested a gated requeue")
         panel_evidence = replace(dispatched, role_kind="panel")
@@ -1154,14 +1145,16 @@ def rejected_offload_reconciliation(
     if not isinstance(evidence, AdvisoryEvidence):
         raise DispatchError("rejected-offload reconciliation requires dispatched AdvisoryEvidence")
     if manifest.execution_id != evidence.execution_id:
-        raise DispatchError("rejected-offload manifest execution_id does not match dispatched evidence")
+        raise DispatchError(
+            "rejected-offload manifest execution_id does not match dispatched evidence"
+        )
     try:
         evidence_note = reconcile.normalize_rejection_note(
             evidence.provenance.get("rejected_offload_note")
         )
     except reconcile.ReconciliationError as exc:
         raise DispatchError(
-            "rejected-offload reconciliation requires evidence marked by reject_offload: " f"{exc}"
+            f"rejected-offload reconciliation requires evidence marked by reject_offload: {exc}"
         ) from exc
     if manifest.disposition_note != evidence_note:
         raise DispatchError("rejected-offload manifest note does not match dispatched evidence")
@@ -1316,7 +1309,9 @@ def satisfy_gate(
         reconcile.canonical_result_hash(reconciliation),
     )
     if replay_key in _SATISFIED_RECONCILIATIONS:
-        raise DispatchError("reconciliation replay: this evidence/result pair already satisfied a gate")
+        raise DispatchError(
+            "reconciliation replay: this evidence/result pair already satisfied a gate"
+        )
     if not evidence.execution_id:
         raise DispatchError("gate evidence is missing its authoritative dispatch execution_id")
     if reconciliation.execution_id != evidence.execution_id:

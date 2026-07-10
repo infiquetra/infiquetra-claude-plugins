@@ -72,9 +72,7 @@ def test_schema_covers_all_five_kinds(tmp_path: Path) -> None:
     )
     RL.append_fact(
         ledger,
-        RL.build_fact(
-            "reconciliation", subplot_id="s1", at="t", reconciliation_id="recon-1"
-        ),
+        RL.build_fact("reconciliation", subplot_id="s1", at="t", reconciliation_id="recon-1"),
     )
     facts = RL.read_facts(ledger)
     assert [f["kind"] for f in facts] == [

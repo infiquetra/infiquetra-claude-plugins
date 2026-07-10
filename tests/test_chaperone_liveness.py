@@ -202,6 +202,4 @@ def test_gate_requires_both_liveness_halves(tmp_path: Path) -> None:
 
     evidence = _gate_evidence()
     with pytest.raises(D.DispatchError, match="requires both"):
-        D.satisfy_gate(
-            evidence, reconciliation=_gate_reconciliation(evidence), ledger=ledger
-        )
+        D.satisfy_gate(evidence, reconciliation=_gate_reconciliation(evidence), ledger=ledger)

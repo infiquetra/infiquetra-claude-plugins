@@ -714,9 +714,7 @@ class Registry:
 def validate_panel_role(role_name: str, *, registry: Registry | None = None) -> Role | None:
     """Validate the one advisory-panel role contract before member preflight or dispatch."""
     if not isinstance(role_name, str) or not _PANEL_ROLE_RE.fullmatch(role_name):
-        raise RegistryError(
-            f"panel role {role_name!r} must be a normalized kebab-case role name"
-        )
+        raise RegistryError(f"panel role {role_name!r} must be a normalized kebab-case role name")
     if registry is None:
         return None
     role = registry.by_role(role_name)

@@ -268,6 +268,21 @@ Checks:
 - `git diff --check`
   - passed
 
+### Panel remediation
+
+- Bound foreman results to a canonical digest of the ordered gathered panel evidence.
+- Required exact ordered source finding IDs rather than set equality.
+- Added shared foreman-result construction plus reordered-ID and wrong-digest no-append regressions.
+
+Checks:
+
+- Focused panel/spec/resolver/dispatch/reconcile matrix
+  - 320 passed
+- Repository Ruff
+  - passed
+- `git diff --check`
+  - passed
+
 ## Next Step
 
-Close ordered panel foreman binding, then re-engage only the five failed reviewers.
+Re-engage only the five failed reviewers against the cycle-2 remediation SHA.

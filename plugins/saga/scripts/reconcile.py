@@ -515,6 +515,48 @@ def gather_panel_evidence(
     )
 
 
+def _panel_evidence_binding(
+    evidence: Iterable[PanelMemberEvidence],
+) -> tuple[tuple[str, ...], str]:
+    """Return ordered finding IDs and a canonical digest without persisting raw output."""
+    gathered = tuple(evidence)
+    if not all(isinstance(item, PanelMemberEvidence) for item in gathered):
+        raise ReconciliationError("panel evidence must contain PanelMemberEvidence values")
+    binding = [
+        {
+            "member_ids": list(item.member_ids),
+            "source_finding_id": item.source_finding_id,
+            "content_digest": evidence_digest(item.output),
+            "empty": item.empty,
+        }
+        for item in gathered
+    ]
+    encoded = json.dumps(binding, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return tuple(item.source_finding_id for item in gathered), hashlib.sha256(encoded).hexdigest()
+
+
+def build_panel_reconciliation_result(
+    *,
+    reconciliation_id: str,
+    execution_id: str,
+    intent: str,
+    adjudicator_id: str,
+    evidence: Iterable[PanelMemberEvidence],
+    items: Iterable[ReconciliationItem],
+) -> ReconciliationResult:
+    """Build a foreman result bound to the exact ordered gathered panel evidence."""
+    source_finding_ids, panel_digest = _panel_evidence_binding(evidence)
+    return build_result(
+        reconciliation_id=reconciliation_id,
+        execution_id=execution_id,
+        intent=intent,
+        adjudicator_id=adjudicator_id,
+        evidence_digest=panel_digest,
+        source_finding_ids=source_finding_ids,
+        items=items,
+    )
+
+
 def validate_panel_reconciliation(
     result: ReconciliationResult,
     *,
@@ -530,10 +572,14 @@ def validate_panel_reconciliation(
         raise ReconciliationError("panel reconciliation execution_id disagrees with the request")
     if result.intent != intent:
         raise ReconciliationError("panel reconciliation intent disagrees with the request")
-    expected_ids = tuple(item.source_finding_id for item in evidence)
-    if set(result.source_finding_ids) != set(expected_ids):
+    expected_ids, expected_digest = _panel_evidence_binding(evidence)
+    if result.source_finding_ids != expected_ids:
         raise ReconciliationError(
-            "panel reconciliation must account for exactly the gathered member evidence"
+            "panel reconciliation must preserve the exact ordered gathered finding IDs"
+        )
+    if result.evidence_digest != expected_digest:
+        raise ReconciliationError(
+            "panel reconciliation evidence_digest disagrees with the ordered gathered evidence"
         )
     return result
 

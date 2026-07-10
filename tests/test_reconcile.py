@@ -618,9 +618,101 @@ def test_panel_foreman_must_account_for_exact_gathered_evidence() -> None:
         items=(),
     )
 
-    with pytest.raises(RC.ReconciliationError, match="exactly the gathered"):
+    with pytest.raises(RC.ReconciliationError, match="exact ordered"):
         RC.validate_panel_reconciliation(
             result,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            evidence=evidence,
+        )
+
+
+def test_panel_result_helper_binds_ordered_evidence_without_raw_output() -> None:
+    evidence = RC.gather_panel_evidence(
+        (
+            ("codex/one", "duplicate finding"),
+            ("agy/two", "duplicate finding"),
+            ("ollama/three", ""),
+        )
+    )
+    result = RC.build_panel_reconciliation_result(
+        reconciliation_id="panel-reconciliation",
+        execution_id="panel-execution",
+        intent="second-opinion",
+        adjudicator_id="claude/foreman",
+        evidence=evidence,
+        items=tuple(
+            RC.ReconciliationItem(
+                item.source_finding_id,
+                RC.ReconciliationStatus.RECONCILED,
+                "claude/foreman",
+                "Claude accounted for this panel evidence.",
+            )
+            for item in evidence
+        ),
+    )
+
+    assert result.source_finding_ids == tuple(item.source_finding_id for item in evidence)
+    assert RC.validate_panel_reconciliation(
+        result,
+        execution_id="panel-execution",
+        intent="second-opinion",
+        evidence=evidence,
+    ) is result
+    serialized = json.dumps(result.to_dict(), sort_keys=True)
+    assert "duplicate finding" not in serialized
+
+
+def test_panel_foreman_rejects_reordered_ids_and_wrong_binding_digest() -> None:
+    evidence = RC.gather_panel_evidence(
+        (("codex/one", "finding one"), ("agy/two", "finding two"))
+    )
+    items = tuple(
+        RC.ReconciliationItem(
+            item.source_finding_id,
+            RC.ReconciliationStatus.RECONCILED,
+            "claude",
+            "Claude accounted for this panel evidence.",
+        )
+        for item in evidence
+    )
+    bound = RC.build_panel_reconciliation_result(
+        reconciliation_id="panel-reconciliation",
+        execution_id="panel-execution",
+        intent="second-opinion",
+        adjudicator_id="claude",
+        evidence=evidence,
+        items=items,
+    )
+    reordered = RC.build_result(
+        reconciliation_id="panel-reordered",
+        execution_id="panel-execution",
+        intent="second-opinion",
+        adjudicator_id="claude",
+        evidence_digest=bound.evidence_digest,
+        source_finding_ids=tuple(reversed(bound.source_finding_ids)),
+        items=tuple(reversed(items)),
+    )
+    wrong_digest = RC.build_result(
+        reconciliation_id="panel-wrong-digest",
+        execution_id="panel-execution",
+        intent="second-opinion",
+        adjudicator_id="claude",
+        evidence_digest="0" * 64,
+        source_finding_ids=bound.source_finding_ids,
+        items=items,
+    )
+
+    with pytest.raises(RC.ReconciliationError, match="exact ordered"):
+        RC.validate_panel_reconciliation(
+            reordered,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            evidence=evidence,
+        )
+    with pytest.raises(RC.ReconciliationError, match="evidence_digest"):
+        RC.validate_panel_reconciliation(
+            wrong_digest,
             execution_id="panel-execution",
             intent="second-opinion",
             evidence=evidence,

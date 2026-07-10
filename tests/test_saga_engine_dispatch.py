@@ -1876,12 +1876,12 @@ def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
         assert len(evidence) == 2
         assert evidence[0].member_ids == ("codex/panel-one", "codex/panel-two")
         assert evidence[1].empty is True
-        return RC.build_result(
+        return RC.build_panel_reconciliation_result(
             reconciliation_id="panel-reconciliation",
             execution_id="panel-execution",
             intent="second-opinion",
             adjudicator_id="claude/foreman",
-            source_finding_ids=tuple(item.source_finding_id for item in evidence),
+            evidence=evidence,
             items=tuple(
                 RC.ReconciliationItem(
                     source_finding_id=item.source_finding_id,
@@ -1972,12 +1972,12 @@ def test_failed_panel_foreman_writes_no_apply_fact(
     ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
 
     def failed_foreman(evidence: tuple[Any, ...]) -> Any:
-        return RC.build_result(
+        return RC.build_panel_reconciliation_result(
             reconciliation_id="panel-reconciliation",
             execution_id="panel-execution",
             intent="second-opinion",
             adjudicator_id="claude/foreman",
-            source_finding_ids=tuple(item.source_finding_id for item in evidence),
+            evidence=evidence,
             items=(),
         )
 
@@ -1999,6 +1999,84 @@ def test_failed_panel_foreman_writes_no_apply_fact(
         )
 
     assert [fact["action"] for fact in RC.read_reconciliation_facts(ledger)] == []
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("reorder", "exact ordered"),
+        ("digest", "evidence_digest"),
+    ],
+)
+def test_panel_binding_mismatch_appends_neither_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+    message: str,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [
+            _resolution(variant="panel-one"),
+            _resolution(variant="panel-two"),
+        ],
+    )
+    outputs = iter(("finding one", "finding two"))
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+
+    def foreman(evidence: tuple[Any, ...]) -> Any:
+        items = tuple(
+            RC.ReconciliationItem(
+                item.source_finding_id,
+                RC.ReconciliationStatus.RECONCILED,
+                "claude/foreman",
+                "Claude accounted for this panel evidence.",
+            )
+            for item in evidence
+        )
+        bound = RC.build_panel_reconciliation_result(
+            reconciliation_id="panel-reconciliation",
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            evidence=evidence,
+            items=items,
+        )
+        if mutation == "digest":
+            return dataclasses.replace(bound, evidence_digest="0" * 64)
+        return RC.build_result(
+            reconciliation_id="panel-reordered",
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            evidence_digest=bound.evidence_digest,
+            source_finding_ids=tuple(reversed(bound.source_finding_ids)),
+            items=tuple(reversed(items)),
+        )
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+        output = next(outputs)
+        return {
+            "status": "ok",
+            "output": output,
+            "findings": [{"content": output}],
+        }
+
+    with pytest.raises(D.DispatchError, match=message):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=runner,
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert RC.read_reconciliation_facts(ledger) == []
 
 
 @pytest.mark.parametrize(

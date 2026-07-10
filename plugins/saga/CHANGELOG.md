@@ -12,6 +12,9 @@
 - Cycle-1 hardening binds every result to dispatch identity, intent, evidence digest, and source IDs;
   stores only a bounded structural projection under `0600` locked ledger custody; enforces ordered
   reconcile/apply transitions; and centralizes capped advisory-panel policy below the resolver.
+- Cycle-2 hardening adds immutable ordered per-content finding envelopes with exact multi-finding
+  coverage, non-healing ordinary snapshots, 1024-byte evidence-bound rejection summaries, `0600`
+  final manifests, and exact ordered-ID plus canonical-digest panel foreman binding.
 
 ## [0.75.16] - 2026-07-09
 

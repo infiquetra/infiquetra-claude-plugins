@@ -14,6 +14,9 @@ All notable changes to this plugin are documented here.
   give an external engine, panel, manifest, or proposal gate authority.
 - Add the cycle-1 normal-build reconciliation sequence, immutable dispatch bindings, structural
   ledger projection/lock contract, canonical rejected-intent retention, and shared panel/byte caps.
+- Align cycle-2 chaperone guidance with ordered typed finding envelopes, the offload-only opaque
+  singleton, exact multi-finding coverage, capped evidence-bound rejection summaries, `0600` final
+  manifests, non-healing reads, and exact ordered panel digest binding.
 
 ## [2.14.2] - 2026-07-09
 

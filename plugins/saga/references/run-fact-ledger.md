@@ -53,7 +53,10 @@ first break. It **fails** on:
 - an **in-place mutation** of any record field (the recomputed `this_hash` no longer matches), and
 - a **reorder or middle-deletion** (a record's `prev_hash` no longer equals its predecessor's `this_hash`).
 
-A torn trailing line (an incomplete append) is dropped by `read_facts` and is **not** a chain break.
+A torn trailing line (an incomplete append) is ignored in the returned in-memory prefix and is **not**
+a chain break. Ordinary `read_snapshot`, `read_facts`, and `verify_chain` calls are strictly
+non-healing: they hold the ledger lock while reading but leave the file bytes unchanged. Only a later
+append may repair that tail.
 
 **Threat-model bound — tamper-*evidence*, not tamper-*resistance*.** A writer with full file access can
 recompute a fresh, internally-consistent chain, and trailing truncation of whole records yields a valid
@@ -103,15 +106,19 @@ The in-memory `ReconciliationResult` is bound and bounded before projection: ide
 256 UTF-8 bytes, there are at most 256 sources/items, each rationale is at most 4096 bytes, and the
 canonical result is at most 65536 bytes. The ledger stores only the structural projection plus its
 canonical hash, evidence digest, and identities. Ledger and lock files are forced to mode `0600`, and
-read snapshots use the same advisory lock as appends so validation never races another writer.
+ordinary read snapshots use the same advisory lock as appends so validation never races another
+writer, but reads pass `heal=False`. Torn-tail healing is mutation and occurs only inside the locked
+append path before its verified snapshot.
 
 The closed recipe registry maps each fleet-core intent exactly once: `offload` accounts for accepted,
 dropped, or overridden work; `second-opinion` independently adjudicates every review finding; and
 `divergence` requires explicit review of agreement as well as disagreement. Advisory-panel shape is
 validated by the shared lower-level `engine_registry` policy: `PANEL_N_CAP = 7`, advisory verdict,
 Claude foreman, and normalized role. Dispatch additionally caps output at 64 KiB per member and
-256 KiB cumulatively. Only the bounded structural foreman projection is recorded, never raw member
-output.
+256 KiB cumulatively. The foreman result must bind both the exact ordered gathered finding IDs and a
+canonical SHA-256 digest over the ordered gathered-evidence metadata (member identities, source ID,
+content digest, and empty marker). Only the bounded structural foreman projection is recorded, never
+raw member output.
 
 `reconcile.derive_recipe_update_proposal(...)` verifies the complete chain, validates reconciliation
 facts, and derives a `recipe_update_proposal.v1` view. A populated proposal always carries

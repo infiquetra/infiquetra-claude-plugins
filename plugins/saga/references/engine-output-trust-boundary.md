@@ -33,8 +33,11 @@ Advisory text must never be interpolated into these contexts verbatim:
 `satisfy_gate(evidence, reconciliation=result, ...)`; the result is typed Claude adjudication, not
 engine prose. Before checking authority, the gate requires a ready, non-replayed result bound to the
 same dispatch `execution_id`, canonical intent and recipe, SHA-256 evidence digest, and ordered
-source-finding IDs. Non-empty evidence cannot use an empty item set, and a supplied manifest must name
-the same execution.
+source-finding IDs. Runner findings are immutable ordered metadata envelopes whose IDs encode ordinal
+and content digest. Non-empty `second-opinion` and `divergence` evidence must supply typed findings;
+only `offload` may use one opaque-artifact source when no findings envelope exists. Every source in a
+multi-finding response needs one ordered typed item, so it cannot be collapsed into a singleton or
+partially reconciled. A supplied manifest must name the same execution.
 
 After binding, the existing authority checks still require Claude verification and observer
 corroboration and still refuse panel/advisory-reviewer roles, rejected offloads, substituted,
@@ -55,4 +58,5 @@ as a gate token.
 
 `tests/test_saga_engine_dispatch.py` separately pins the gate contract: missing/not-ready results;
 execution, intent, recipe, digest, source-ID, manifest, and empty-item mismatches; replay refusal; and
-the existing Claude, observer, role, disposition, proof-integrity, liveness, and claim refusals.
+the existing Claude, observer, role, disposition, proof-integrity, liveness, and claim refusals. It
+also pins typed multi-finding coverage and the offload-only opaque singleton exception.

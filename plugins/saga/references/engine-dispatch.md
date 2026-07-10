@@ -44,9 +44,17 @@ registry pull request, and advisory standing still does not grant gate authority
 ## The advisory-evidence result type (R13 enforcement)
 
 `dispatch()` returns an `AdvisoryEvidence` — a value that carries `evidence`, `provenance`, immutable
-dispatch `execution_id` and canonical `intent`, a SHA-256 `evidence_digest`, content-derived
-`source_finding_ids`, a `verified_by_claude` flag (default `False`), and an optional `halt`. It carries
-**no gated-verdict field**.
+dispatch `execution_id` and canonical `intent`, a SHA-256 digest of the full evidence artifact, an
+ordered tuple of typed `SourceFinding` metadata, its ordered IDs, a `verified_by_claude` flag (default
+`False`), and an optional `halt`. It carries **no gated-verdict field**.
+
+A runner's optional `findings` field is an ordered array of `{"content": <string>}` objects.
+Dispatch converts each entry into immutable metadata without retaining the finding prose:
+`external-finding:<ordinal>:<sha256(content)>` plus the same content digest. `second-opinion` and
+`divergence` require this typed envelope whenever their output is non-empty. Only `offload` may omit
+it; a non-empty unstructured offload then becomes one explicit
+`opaque-artifact:0:<sha256(evidence)>` source. If an offload supplies typed findings, they remain
+separate ordered sources. Each source is capped at 1 MiB.
 
 The canonical guard call is:
 
@@ -67,9 +75,10 @@ in-memory `result` that Claude built and that the worker recorded is passed as `
 Before any older authority check, `satisfy_gate` requires that result to be ready and unused, and
 binds it exactly to the dispatch: the evidence has a non-empty `execution_id`; result and evidence
 match on `execution_id`, canonical `intent`, canonical recipe, evidence digest, and the ordered source
-finding IDs; every source is accounted for; and non-empty evidence has at least one typed item. A
-supplied manifest must name that same execution. Replaying an already-satisfied evidence/result pair
-is refused.
+finding IDs; every source is accounted for by a typed item in that same order; and non-empty evidence
+has at least one typed item. Multi-finding evidence cannot pass through a singleton reconciliation.
+A supplied manifest must name that same execution. Replaying an already-satisfied evidence/result
+pair is refused.
 
 Those binding checks do not replace the standing refusals. The function still rejects panel and
 advisory-reviewer roles, rejected-offload evidence, missing Claude verification, missing observer

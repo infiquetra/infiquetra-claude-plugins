@@ -244,8 +244,20 @@ Checks:
 
 ## Team Execution Review Cycle 2
 
-The same five reviewers re-read the epoch-2 remediation delta. Consensus remained open on typed
-per-finding evidence, non-mutating torn-tail reads, rejected-note custody, and exact panel binding.
+Cycle 2 stopped after the first three-reviewer wave found blocking issues. Testing and Clarity were
+not run at epoch 2; they are recorded explicitly rather than treated as omitted or passing. Consensus
+was not reached or claimed.
+
+| Reviewer | Score | Verdict |
+| --- | ---: | --- |
+| Devil's Advocate | 8.3 | needs revision |
+| Security | 7.8 | needs revision |
+| Architecture | 8.4 | needs revision |
+| Testing | — | not run - cycle stopped on blocking wave-1 findings |
+| Clarity | — | not run - cycle stopped on blocking wave-1 findings |
+
+The blocking findings reopened remediation for typed per-finding evidence, non-mutating torn-tail
+reads, rejected-note custody, and exact panel binding.
 
 ### Core remediation
 
@@ -283,6 +295,27 @@ Checks:
 - `git diff --check`
   - passed
 
+### Documentation alignment
+
+- Aligned Saga and Team Execution contracts with immutable ordered `SourceFinding` envelopes,
+  per-content ordinal IDs/digests, exact multi-finding coverage, and the offload-only opaque fallback.
+- Documented non-healing ordinary snapshots, append-only repair under lock, evidence-bound 1024-byte
+  rejection summaries, and final manifest mode `0600`.
+- Bound the documented panel foreman result to both exact ordered gathered IDs and the canonical
+  gathered-evidence digest; updated the existing release/journal surfaces without a version bump.
+
+Checks:
+
+- Saga/Team Execution documentation and package matrix
+  - 85 passed
+- Release guard test matrix
+  - 26 passed
+- Marketplace sync, release parity, and diff-aware release guard
+  - passed
+- `git diff --check`
+  - passed
+
 ## Next Step
 
-Re-engage only the five failed reviewers against the cycle-2 remediation SHA.
+Run the cycle-2 documentation/package and release gates, commit the alignment, then start cycle 3 by
+re-engaging all five reviewers against one current-SHA artifact.

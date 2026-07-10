@@ -792,6 +792,157 @@ def test_resume_reentry_tick_reuses_saga_id_no_mint(
 
 
 # ===========================================================================
+# Engine + CLI: explicit scalar flags vs default carry-forward (issue-157)
+# ===========================================================================
+
+
+def test_cli_save_explicit_status_reactivates_paused_saga(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--status active`` on a paused saga must persist ``active``.
+
+    Regression (2026-07-09, team-norns issue-157): the argparse default was
+    "active", so an explicit ``--status active`` was indistinguishable from an
+    omitted flag and ``_merge`` carried the prior ``paused`` forward — two
+    consecutive reactivation saves both persisted ``paused``.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    saga.save(tmp_path, _make_saga(saga, status="paused"), now=FIXED_NOW)
+
+    later = datetime(2026, 6, 2, 14, 6, 0, tzinfo=UTC)
+    monkeypatch.setattr(saga, "_utc_now", lambda: later)
+    rc, payload = _run_main(
+        saga,
+        ["save", "--kind", "issue", "--id", "42", "--status", "active"],
+        capsys,
+        monkeypatch,
+    )
+
+    assert rc == 0
+    assert payload["status"] == "active"
+    assert saga.restore(tmp_path, "issue-42").status == "active"
+
+
+def test_cli_save_omitted_status_still_carries_prior_forward(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A progress tick with NO --status must keep inheriting the prior disposition."""
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    saga.save(tmp_path, _make_saga(saga, status="paused"), now=FIXED_NOW)
+
+    later = datetime(2026, 6, 2, 14, 6, 0, tzinfo=UTC)
+    monkeypatch.setattr(saga, "_utc_now", lambda: later)
+    rc, payload = _run_main(
+        saga,
+        ["save", "--kind", "issue", "--id", "42", "--next-step", "progress tick"],
+        capsys,
+        monkeypatch,
+    )
+
+    assert rc == 0
+    assert payload["status"] == "paused"
+    assert saga.restore(tmp_path, "issue-42").status == "paused"
+
+
+def test_cli_save_explicit_phase_status_pending_resets_completed_phase(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--phase-status pending`` must override a prior ``complete`` (same bug class).
+
+    Without the explicit-flag signal the carried-forward ``complete`` also kept
+    advancing the derived ``next_phase`` on every subsequent tick.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    saga.save(
+        tmp_path,
+        _make_saga(saga, phase=2, phase_status="complete"),
+        now=FIXED_NOW,
+    )
+
+    later = datetime(2026, 6, 2, 14, 6, 0, tzinfo=UTC)
+    monkeypatch.setattr(saga, "_utc_now", lambda: later)
+    rc, payload = _run_main(
+        saga,
+        ["save", "--kind", "issue", "--id", "42", "--phase", "3", "--phase-status", "pending"],
+        capsys,
+        monkeypatch,
+    )
+
+    assert rc == 0
+    restored = saga.restore(tmp_path, "issue-42")
+    assert restored.phase_status == "pending"
+    assert restored.phase == 3
+    assert payload["next_phase"] == 3  # pending does not advance the derived next phase
+
+
+def test_cli_save_explicit_inline_mode_overrides_richer_prior_tier(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Explicit ``--orchestration-mode inline`` must win over a richer prior mode.
+
+    Same absent-vs-default ambiguity: "inline" is the dataclass default, so the
+    carried-forward prior mode diverged from the freshly stamped operator_choice
+    and the save-time provenance guard rejected the save outright.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    saga.save(
+        tmp_path,
+        _make_saga(
+            saga,
+            orchestration_mode="team-execution",
+            orchestration_operator_choice="team-execution",
+        ),
+        now=FIXED_NOW,
+    )
+
+    later = datetime(2026, 6, 2, 14, 6, 0, tzinfo=UTC)
+    monkeypatch.setattr(saga, "_utc_now", lambda: later)
+    rc, _payload = _run_main(
+        saga,
+        ["save", "--kind", "issue", "--id", "42", "--orchestration-mode", "inline"],
+        capsys,
+        monkeypatch,
+    )
+
+    assert rc == 0
+    restored = saga.restore(tmp_path, "issue-42")
+    assert restored.orchestration_mode == "inline"
+    assert restored.orchestration_operator_choice == "inline"
+
+
+def test_save_explicit_fields_bypass_default_carry_forward(
+    saga: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Engine seam: ``explicit_fields`` makes a default-valued scalar win in _merge."""
+    _stub_no_git(saga, monkeypatch)
+    saga.save(tmp_path, _make_saga(saga, status="paused"), now=FIXED_NOW)
+
+    later = datetime(2026, 6, 2, 14, 6, 0, tzinfo=UTC)
+    # incoming.status is the dataclass default "active"; without explicit_fields
+    # this carries "paused" forward (pinned by the omitted-flag CLI test above).
+    result = saga.save(tmp_path, _make_saga(saga), now=later, explicit_fields=frozenset({"status"}))
+
+    assert result["status"] == "active"
+    assert saga.restore(tmp_path, "issue-42").status == "active"
+
+
+# ===========================================================================
 # Engine: aggregate_context
 # ===========================================================================
 

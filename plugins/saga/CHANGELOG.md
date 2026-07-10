@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.75.21] - 2026-07-10
+
+### Fixed - pull-cord schema still 400'd in 0.75.19; the top-level `oneOf` had to go entirely (#364)
+
+- 0.75.19 fixed the wrong half of the Anthropic API's two-stage schema validation. A bare
+  `{"oneOf": [...]}` first trips `400 tools.N.custom.input_schema.type: Field required`; 0.75.19
+  added the top-level `"type"` but kept `oneOf` for the alternative `required` sets. That shape
+  hits the API's **second** gate: `400 tools.N.custom.input_schema: input_schema does not support
+  oneOf, allOf, or anyOf at the top level` (verified live 2026-07-10 on team-norns run
+  `wf_758c9923-c2c`), so every cheap-tier unit's agent still died before running.
+- `_return_schema` now emits a **flat** typed object for pull-cord units: the union of the unit's
+  declared returns keys plus an optional `pull_cord` string, with no `required` alternation and no
+  top-level combinator. The returns-XOR-pull_cord contract was never the schema's job — it is
+  enforced by the emitted `__gate` (probes `pull_cord` first, then checks emptiness) and by the
+  unit prompt's RETURN CONTRACT, both unchanged since #364.
+- 0.75.19's regression sweep asserted only that every emitted schema carries a top-level `"type"`,
+  which passed on the still-broken shape. That sweep now **also** asserts no emitted schema carries
+  a top-level `oneOf`/`allOf`/`anyOf`, closing the gap that let the second failure ship.
+
 ## [0.75.20] - 2026-07-10
 
 ### Fixed - `save --kind` no longer silently flips a saga's identity kind

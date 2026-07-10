@@ -499,6 +499,31 @@ the Infiquetra command after normal README and marketplace documentation.
 
 ## Superseded
 
+### "Keep `oneOf` under a top-level `type`" (pre-correction of `#toplevel-oneof-schema-dispatch-400`)  {#toplevel-oneof-schema-dispatch-400-v1}
+
+**SUPERSEDED 2026-07-10** (same day it shipped as saga 0.75.19) by the corrected inline
+LEARNINGS entry [#toplevel-oneof-schema-dispatch-400](LEARNINGS.md#toplevel-oneof-schema-dispatch-400)
+and saga 0.75.21.
+
+**Original (pre-correction) Fix + Mechanism claim.** The 0.75.19 diagnosis saw only the first of
+the API's two schema-validation gates. Reproduced on team-norns run `wf_758c9923-c2c`, a bare
+top-level `{"oneOf": [<returns>, <pull-cord>]}` failed with
+`400 tools.N.custom.input_schema.type: Field required`. The entry concluded: "The Anthropic API
+requires `input_schema.type` on every tool definition... Hoist `type: "object"` and the union of
+both branches' `properties` to the top level; keep `oneOf` only for the alternative `required`
+sets," with the generalizable rule that "composition keywords (`oneOf`/`anyOf`) belong under a
+concrete top-level `type`, expressing alternatives as `required`-set variants." The regression
+test `test_every_emitted_agent_schema_has_toplevel_type` asserted only top-level `type: "object"`.
+
+**Why it was wrong.** The typed-`oneOf` shape clears gate 1 but hits gate 2:
+`400 tools.N.custom.input_schema: input_schema does not support oneOf, allOf, or anyOf at the top
+level` (verified live on the same run). The API rejects the combinator key itself at the top
+level, `type` present or not — so `oneOf` cannot be retained at all. The correct fix is a flat
+typed object (returns keys ∪ optional `pull_cord`), with the returns-XOR-pull_cord contract
+enforced by the emitted `__gate` and the prompt's RETURN CONTRACT, not the schema. The regression
+sweep now also asserts the *absence* of any top-level combinator — the assertion whose omission
+let the half-fix ship green.
+
 ### "Malformed non-null verdicts stay in `malformed-output` territory" (pre-correction of `#verify-panel-missing-member-ktds-293`)  {#verify-panel-malformed-verdict-superseded}
 
 **SUPERSEDED 2026-07-03** (same session it shipped) by the inline correction in DECISIONS

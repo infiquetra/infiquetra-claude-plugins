@@ -315,7 +315,31 @@ Checks:
 - `git diff --check`
   - passed
 
+## Team Execution Review Cycle 3
+
+Cycle 3 wave 1 remained below consensus: Devil's Advocate `8.9`, Security `8.0`, and Architecture
+`8.6`, all `needs revision`. Testing and Clarity were held because the blocking first wave reopened
+remediation.
+
+### Core remediation
+
+- Retained each typed finding's content only in the frozen in-memory envelope and validated its ID and
+  digest against that content.
+- Made ordered findings the canonical review evidence for `second-opinion` and `divergence`, while
+  preserving only runner-summary digest/byte metadata for receipt proof.
+- Added early finding count and 256 KiB cumulative UTF-8 caps, contiguous ordinal checks, and offload-
+  only opaque artifacts.
+- Replaced post-publication manifest chmod with a pre-`0600`, fsynced atomic temporary writer.
+
+Checks:
+
+- Focused reconciliation, dispatch, manifest, ledger, retro, bridge, and legacy gate matrix
+  - 311 passed
+- Targeted Ruff and scoped mypy
+  - passed
+- `git diff --check`
+  - passed
+
 ## Next Step
 
-Run the cycle-2 documentation/package and release gates, commit the alignment, then start cycle 3 by
-re-engaging all five reviewers against one current-SHA artifact.
+Flatten typed panel member findings into foreman obligations, then re-engage all five reviewers.

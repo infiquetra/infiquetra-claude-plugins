@@ -63,6 +63,8 @@ class AdvisoryEvidence:
     execution_id: str = ""
     intent: str = "offload"
     evidence_digest: str = ""
+    runner_output_digest: str = ""
+    runner_output_bytes: int | None = None
     source_finding_ids: tuple[str, ...] = ()
     source_findings: tuple[reconcile.SourceFinding, ...] = ()
     verified_by_claude: bool = False
@@ -79,9 +81,26 @@ class AdvisoryEvidence:
             reconcile.recipe_for_intent(self.intent)
         except reconcile.ReconciliationError as exc:
             raise DispatchError(f"advisory evidence has invalid intent: {exc}") from exc
-        digest = reconcile.evidence_digest(self.evidence)
-        if self.evidence_digest and self.evidence_digest != digest:
-            raise DispatchError("advisory evidence digest disagrees with its immutable content")
+        raw_output_digest = self.runner_output_digest or reconcile.evidence_digest(self.evidence)
+        if self.runner_output_digest:
+            try:
+                reconcile._require_digest(self.runner_output_digest, "runner_output_digest")
+            except reconcile.ReconciliationError as exc:
+                raise DispatchError(str(exc)) from exc
+        if (
+            self.runner_output_bytes is not None
+            and (
+                not isinstance(self.runner_output_bytes, int)
+                or isinstance(self.runner_output_bytes, bool)
+                or self.runner_output_bytes < 0
+            )
+        ):
+            raise DispatchError("runner_output_bytes must be a non-negative integer")
+        raw_output_bytes = (
+            self.runner_output_bytes
+            if self.runner_output_bytes is not None
+            else len(self.evidence.encode("utf-8"))
+        )
         if not isinstance(self.source_findings, tuple) or not all(
             isinstance(finding, reconcile.SourceFinding) for finding in self.source_findings
         ):
@@ -93,10 +112,27 @@ class AdvisoryEvidence:
                     f"non-empty {self.intent} evidence requires a typed runner findings envelope"
                 )
             findings = (reconcile.SourceFinding.from_content(self.evidence, 0, opaque=True),)
+        if findings:
+            ordinals = tuple(finding.ordinal for finding in findings)
+            if ordinals != tuple(range(len(findings))):
+                raise DispatchError("advisory source findings require contiguous ordered ordinals")
+        if self.intent != "offload" and any(finding.opaque for finding in findings):
+            raise DispatchError("opaque-artifact findings are allowed only for explicit offload")
+        canonical_evidence = (
+            reconcile.render_source_findings(findings)
+            if self.intent in {"second-opinion", "divergence"} and findings
+            else self.evidence
+        )
+        digest = reconcile.evidence_digest(canonical_evidence)
+        if self.evidence_digest and self.evidence_digest != digest:
+            raise DispatchError("advisory evidence digest disagrees with canonical finding content")
         expected_ids = tuple(finding.source_finding_id for finding in findings)
         if self.source_finding_ids and self.source_finding_ids != expected_ids:
             raise DispatchError("advisory source-finding identities disagree with its content")
+        object.__setattr__(self, "evidence", canonical_evidence)
         object.__setattr__(self, "evidence_digest", digest)
+        object.__setattr__(self, "runner_output_digest", raw_output_digest)
+        object.__setattr__(self, "runner_output_bytes", raw_output_bytes)
         object.__setattr__(self, "source_finding_ids", expected_ids)
         object.__setattr__(self, "source_findings", findings)
 
@@ -453,6 +489,8 @@ def dispatch(
             execution_id=execution_id,
             intent=intent,
             source_findings=source_findings,
+            runner_output_digest=reconcile.evidence_digest(output),
+            runner_output_bytes=len(output.encode("utf-8")),
             runner_receipt=runner_receipt,
         )
     elif status not in FAILURE_STATUSES:
@@ -731,6 +769,8 @@ def _proof_integrity_problems(evidence: AdvisoryEvidence) -> list[str]:
         bridge_signatures.validate_receipt_signature(
             evidence.runner_receipt,
             evidence_text=evidence.evidence,
+            evidence_digest=evidence.runner_output_digest,
+            evidence_bytes=evidence.runner_output_bytes,
         )
     )
     proof_errors.extend(_receipt_identity_problems(evidence))
@@ -1086,6 +1126,8 @@ def reject_offload(evidence: AdvisoryEvidence, rejection_note: str) -> AdvisoryE
         execution_id=evidence.execution_id,
         intent=evidence.intent,
         evidence_digest=evidence.evidence_digest,
+        runner_output_digest=evidence.runner_output_digest,
+        runner_output_bytes=evidence.runner_output_bytes,
         source_finding_ids=evidence.source_finding_ids,
         source_findings=evidence.source_findings,
         verified_by_claude=evidence.verified_by_claude,

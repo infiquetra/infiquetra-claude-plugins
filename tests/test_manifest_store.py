@@ -85,6 +85,41 @@ def test_manifest_store_write_read_round_trip(tmp_path: Path) -> None:
     assert M.read_manifest(store, "exec-1") == manifest
 
 
+def test_manifest_temp_and_final_are_private_at_replace_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = M.Store(root=tmp_path / "manifests").ensure()
+    real_replace = M.os.replace
+    observed: list[tuple[int, int]] = []
+
+    def inspect_replace(source: Any, destination: Any) -> None:
+        temp_mode = stat.S_IMODE(os.stat(source).st_mode)
+        real_replace(source, destination)
+        final_mode = stat.S_IMODE(os.stat(destination).st_mode)
+        observed.append((temp_mode, final_mode))
+
+    monkeypatch.setattr(M.os, "replace", inspect_replace)
+    M.write_manifest(store, "exec-private", _manifest("exec-private"))
+
+    assert observed == [(0o600, 0o600)]
+
+
+def test_manifest_atomic_write_cleans_private_temp_on_replace_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = M.Store(root=tmp_path / "manifests").ensure()
+
+    def fail_replace(_source: Any, _destination: Any) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(M.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="replace failed"):
+        M.write_manifest(store, "exec-fail", _manifest("exec-fail"))
+
+    assert not store.manifest_path("exec-fail").exists()
+    assert list(store.root.glob("*.tmp")) == []
+
+
 def test_manifest_store_resolves_common_dir_from_worktree() -> None:
     # A linked worktree resolves --git-common-dir to the SAME absolute path as the main
     # checkout — the whole point of using it as the shared, cross-worktree carrier (R19).

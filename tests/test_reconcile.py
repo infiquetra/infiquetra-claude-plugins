@@ -217,7 +217,7 @@ def test_source_finding_ids_are_content_derived_and_ordered() -> None:
     assert findings[0].source_finding_id.startswith("external-finding:0:")
     assert findings[1].source_finding_id.startswith("external-finding:1:")
     with pytest.raises(RC.ReconciliationError, match="encode its kind"):
-        RC.SourceFinding("forged", "0" * 64)
+        RC.SourceFinding("forged", RC.evidence_digest("content"), "content")
 
 
 def test_result_type_recipe_and_adjudicator_invariants() -> None:

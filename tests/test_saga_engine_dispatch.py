@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -310,6 +311,9 @@ def test_typed_runner_findings_are_stable_ordered_and_required_by_review_intents
         finding.source_finding_id for finding in evidence.source_findings
     )
     assert evidence.source_findings[0].digest != evidence.source_findings[1].digest
+    assert tuple(finding.content for finding in evidence.source_findings) == ("first", "second")
+    assert json.loads(evidence.evidence) == ["first", "second"]
+    assert evidence.runner_output_digest == RC.evidence_digest("two-finding review")
     repeated = D.dispatch(
         _resolution(),
         runner=lambda _invocation: payload,
@@ -336,6 +340,147 @@ def test_typed_runner_findings_are_stable_ordered_and_required_by_review_intents
     )
     assert isinstance(opaque, D.AdvisoryEvidence)
     assert opaque.source_finding_ids[0].startswith("opaque-artifact:0:")
+
+
+def test_review_findings_are_canonical_independent_of_runner_summary() -> None:
+    findings = [{"content": "visible one"}, {"content": "visible two"}]
+    first = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: {
+            "status": "ok",
+            "output": "summary A with hidden text",
+            "findings": findings,
+        },
+        execution_id="canonical-a",
+        intent="divergence",
+    )
+    second = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: {
+            "status": "ok",
+            "output": "independent summary B",
+            "findings": findings,
+        },
+        execution_id="canonical-b",
+        intent="divergence",
+    )
+    assert isinstance(first, D.AdvisoryEvidence)
+    assert isinstance(second, D.AdvisoryEvidence)
+    assert first.evidence == second.evidence == '["visible one","visible two"]'
+    assert first.evidence_digest == second.evidence_digest
+    assert first.runner_output_digest != second.runner_output_digest
+    assert "hidden text" not in first.evidence
+
+
+def test_direct_divergence_rejects_opaque_artifact_finding() -> None:
+    opaque = RC.SourceFinding.from_content("opaque", 0, opaque=True)
+    with pytest.raises(D.DispatchError, match="allowed only for explicit offload"):
+        D.AdvisoryEvidence(
+            engine_id="codex",
+            variant="gpt-5.5-xhigh",
+            evidence="summary",
+            provenance={"status": "ok"},
+            execution_id="opaque-divergence",
+            intent="divergence",
+            source_findings=(opaque,),
+        )
+    noncontiguous = RC.SourceFinding.from_content("finding", 1)
+    with pytest.raises(D.DispatchError, match="contiguous ordered ordinals"):
+        D.AdvisoryEvidence(
+            engine_id="codex",
+            variant="gpt-5.5-xhigh",
+            evidence="summary",
+            provenance={"status": "ok"},
+            execution_id="noncontiguous-divergence",
+            intent="divergence",
+            source_findings=(noncontiguous,),
+        )
+
+
+def test_finding_content_is_in_memory_only_never_ledger_or_manifest(tmp_path: Path) -> None:
+    marker = "SECRET-FINDING-CONTENT-never-persist"
+    evidence = D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: {
+            "status": "ok",
+            "output": "summary only",
+            "findings": [{"content": marker}],
+        },
+        execution_id="non-persistence",
+        intent="second-opinion",
+    )
+    assert isinstance(evidence, D.AdvisoryEvidence)
+    assert evidence.source_findings[0].content == marker
+    result = RC.build_result(
+        reconciliation_id="non-persistence",
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
+        adjudicator_id="claude",
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
+        items=(
+            RC.ReconciliationItem(
+                evidence.source_finding_ids[0],
+                RC.ReconciliationStatus.RECONCILED,
+                "claude",
+                "Claude reviewed the in-memory finding.",
+            ),
+        ),
+    )
+    ledger = RC.run_ledger.RunLedger(tmp_path / "facts.jsonl")
+    RC.append_reconciliation_fact(
+        ledger, result, action="reconcile", subplot_id="leaf", at="t"
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id=evidence.execution_id,
+        saga_ref="saga",
+        created_at="t",
+    )
+    assert marker not in ledger.path.read_text(encoding="utf-8")
+    assert marker not in json.dumps(manifest.to_dict())
+
+
+@pytest.mark.parametrize(
+    ("findings", "match"),
+    [
+        (
+            [{"content": "x"}] * (RC.MAX_ITEMS + 1),
+            "count exceeds MAX_ITEMS",
+        ),
+        (
+            [
+                {"content": "x" * (RC.MAX_SOURCE_FINDINGS_TOTAL_BYTES // 2 + 1)},
+                {"content": "y" * (RC.MAX_SOURCE_FINDINGS_TOTAL_BYTES // 2 + 1)},
+            ],
+            "MAX_SOURCE_FINDINGS_TOTAL_BYTES",
+        ),
+    ],
+)
+def test_findings_bounds_reject_before_evidence_construction(
+    findings: list[dict[str, str]], match: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    constructions = 0
+    original = D.AdvisoryEvidence
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        nonlocal constructions
+        constructions += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(D, "AdvisoryEvidence", counted)
+    with pytest.raises(D.DispatchError, match=match):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: {
+                "status": "ok",
+                "output": "summary",
+                "findings": findings,
+            },
+            execution_id="bounded-findings",
+            intent="second-opinion",
+        )
+    assert constructions == 0
 
 
 def test_two_finding_omission_blocks_until_second_is_explicitly_dropped() -> None:

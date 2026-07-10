@@ -52,6 +52,8 @@ def validate_receipt_signature(
     receipt: dict[str, Any],
     *,
     evidence_text: str = "",
+    evidence_digest: str | None = None,
+    evidence_bytes: int | None = None,
     registry: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
     """Validate a receipt against its emitter policy. Empty list means proof-integrity OK."""
@@ -88,10 +90,14 @@ def validate_receipt_signature(
             errors.extend(
                 _output_attestation.validate_attestation(
                     attestation,
-                    expected_content=evidence_text,
+                    expected_content=None if evidence_digest is not None else evidence_text,
                     require_non_empty=bool(policy.get("require_non_empty_output")),
                 )
             )
+            if evidence_digest is not None and attestation.get("sha256") != evidence_digest:
+                errors.append("proof-integrity: output-attestation-mismatch")
+            if evidence_bytes is not None and attestation.get("bytes") != evidence_bytes:
+                errors.append("proof-integrity: output-attestation-bytes-mismatch")
 
     return errors
 

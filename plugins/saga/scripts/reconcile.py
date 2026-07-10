@@ -53,6 +53,7 @@ MAX_ITEMS = 256
 MAX_RATIONALE_BYTES = 4096
 MAX_RESULT_BYTES = 65536
 MAX_SOURCE_FINDING_BYTES = 1024 * 1024
+MAX_SOURCE_FINDINGS_TOTAL_BYTES = 256 * 1024
 MAX_REJECTION_NOTE_BYTES = 1024
 
 
@@ -73,14 +74,19 @@ class ReconciliationAction(StrEnum):
 
 @dataclass(frozen=True)
 class SourceFinding:
-    """One ordered external finding, identified only by stable content metadata."""
+    """One ordered external finding; content remains in-memory and never enters run facts."""
 
     source_finding_id: str
     digest: str
+    content: str
 
     def __post_init__(self) -> None:
         _require_id(self.source_finding_id, "source_finding_id")
         _require_digest(self.digest, "source finding digest")
+        if not isinstance(self.content, str) or not self.content:
+            raise ReconciliationError("source finding content must be a non-empty string")
+        if hashlib.sha256(self.content.encode("utf-8")).hexdigest() != self.digest:
+            raise ReconciliationError("source finding digest does not match its content")
         parts = self.source_finding_id.split(":")
         if (
             len(parts) != 3
@@ -104,21 +110,50 @@ class SourceFinding:
             raise ReconciliationError("source finding index must be a non-negative integer")
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
         kind = "opaque-artifact" if opaque else "external-finding"
-        return cls(f"{kind}:{index}:{digest}", digest)
+        return cls(f"{kind}:{index}:{digest}", digest, content)
+
+    @property
+    def ordinal(self) -> int:
+        return int(self.source_finding_id.split(":", 2)[1])
+
+    @property
+    def opaque(self) -> bool:
+        return self.source_finding_id.startswith("opaque-artifact:")
 
 
 def parse_source_findings(raw: Any) -> tuple[SourceFinding, ...]:
-    """Validate the runner's ordered ``findings`` envelope without retaining its prose."""
+    """Validate and retain the bounded ordered runner ``findings`` envelope in memory."""
     if not isinstance(raw, list):
         raise ReconciliationError("runner findings must be an ordered array")
+    if len(raw) > MAX_ITEMS:
+        raise ReconciliationError(f"runner findings count exceeds MAX_ITEMS={MAX_ITEMS}")
     findings: list[SourceFinding] = []
+    total_bytes = 0
     for index, item in enumerate(raw):
         if not isinstance(item, Mapping) or set(item) != {"content"}:
             raise ReconciliationError(
                 "each runner finding must be an object containing only string content"
             )
-        findings.append(SourceFinding.from_content(item["content"], index))
+        content = item["content"]
+        if not isinstance(content, str):
+            raise ReconciliationError("runner finding content must be a string")
+        total_bytes += len(content.encode("utf-8"))
+        if total_bytes > MAX_SOURCE_FINDINGS_TOTAL_BYTES:
+            raise ReconciliationError(
+                "runner findings cumulative content exceeds "
+                f"MAX_SOURCE_FINDINGS_TOTAL_BYTES={MAX_SOURCE_FINDINGS_TOTAL_BYTES}"
+            )
+        findings.append(SourceFinding.from_content(content, index))
     return tuple(findings)
+
+
+def render_source_findings(findings: Iterable[SourceFinding]) -> str:
+    """Deterministically render ordered finding contents as Claude's canonical evidence."""
+    return json.dumps(
+        [finding.content for finding in findings],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 @dataclass(frozen=True)

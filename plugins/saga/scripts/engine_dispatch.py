@@ -31,6 +31,11 @@ _delegation_state = fleet_commons_shim.load("delegation_state")
 FAILURE_STATUSES = frozenset({"timeout", "no-output", "error", "malformed", "clone-failed"})
 NON_GATING_ROLE_KINDS = frozenset({"advisory-reviewer", "panel"})
 
+# Untrusted panel output is fail-closed at the dispatch boundary. Limits are UTF-8 bytes, not
+# characters, and are checked without truncation before output can reach gather/foreman logic.
+PANEL_MEMBER_OUTPUT_BYTES_CAP = 64 * 1024
+PANEL_TOTAL_OUTPUT_BYTES_CAP = 256 * 1024
+
 # A runner result carrying any of these keys is attempting to set/override a gate verdict --
 # structurally rejected, not policy-rejected (R6, plan U6, binding decision
 # `{#external-engines-never-gatekeepers}` #283). An external engine's output is advisory by
@@ -472,6 +477,15 @@ def dispatch_advisory_panel(
     """
     if not isinstance(request, AdvisoryPanelRequest):
         raise DispatchError("advisory panel dispatch requires an AdvisoryPanelRequest")
+    try:
+        reconcile.validate_panel_execution_metadata(
+            execution_id=execution_id,
+            intent=intent,
+            subplot_id=subplot_id,
+            at=at,
+        )
+    except reconcile.ReconciliationError as exc:
+        raise DispatchError(f"advisory panel execution metadata is invalid: {exc}") from exc
     role_name = request.role
     try:
         resolutions = engine_resolver.resolve_role(
@@ -488,6 +502,7 @@ def dispatch_advisory_panel(
         raise DispatchError(f"advisory panel halted before dispatch: {halt}")
 
     member_evidence: list[AdvisoryEvidence] = []
+    total_output_bytes = 0
     for resolution in resolutions:
         dispatched = dispatch(
             resolution, runner=runner, execution_id=execution_id, intent=intent
@@ -499,6 +514,20 @@ def dispatch_advisory_panel(
             raise DispatchError(
                 "advisory panel member failed; no reconciliation fact was written: "
                 f"{panel_evidence.engine_id}/{panel_evidence.variant}: {panel_evidence.halt}"
+            )
+        output_bytes = len(panel_evidence.evidence.encode("utf-8"))
+        if output_bytes > PANEL_MEMBER_OUTPUT_BYTES_CAP:
+            raise DispatchError(
+                "advisory panel member output exceeds "
+                f"PANEL_MEMBER_OUTPUT_BYTES_CAP={PANEL_MEMBER_OUTPUT_BYTES_CAP} bytes: "
+                f"{panel_evidence.engine_id}/{panel_evidence.variant} produced {output_bytes}"
+            )
+        total_output_bytes += output_bytes
+        if total_output_bytes > PANEL_TOTAL_OUTPUT_BYTES_CAP:
+            raise DispatchError(
+                "advisory panel cumulative output exceeds "
+                f"PANEL_TOTAL_OUTPUT_BYTES_CAP={PANEL_TOTAL_OUTPUT_BYTES_CAP} bytes: "
+                f"observed {total_output_bytes}"
             )
         member_evidence.append(panel_evidence)
 

@@ -184,6 +184,7 @@ def test_advisory_panel_request_is_separate_from_verify_and_round_trips() -> Non
     assert request == ES.AdvisoryPanelRequest("cross-family-review-panel")
     assert request.to_dict() == {"role": "cross-family-review-panel"}
     assert not hasattr(request, "n")
+    assert ES.PANEL_N_CAP == ES._engine_registry_module().PANEL_N_CAP
 
 
 def test_advisory_panel_rejects_malformed_role_name() -> None:
@@ -192,32 +193,17 @@ def test_advisory_panel_rejects_malformed_role_name() -> None:
 
 
 def test_advisory_panel_rejects_over_cap_role_at_spec_validation(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeRegistryError(ValueError):
-        pass
-
-    class FakeRole:
-        members = ["codex/variant"] * (ES.PANEL_N_CAP + 1)
-        verdict = "advisory"
-        verifier = "claude"
-
-    class FakeRegistry:
-        @classmethod
-        def load(cls, _path: Path) -> FakeRegistry:
-            return cls()
-
-        def by_role(self, _role_name: str) -> FakeRole:
-            return FakeRole()
-
-    fake_module = ModuleType("fake_engine_registry")
-    fake_module.Registry = FakeRegistry
-    fake_module.RegistryError = FakeRegistryError
-    registry_path = tmp_path / "registry.yaml"
-    registry_path.write_text("test-only", encoding="utf-8")
-    monkeypatch.setattr(ES, "_engine_registry_module", lambda: fake_module)
-    monkeypatch.setattr(ES, "_engine_registry_path", lambda: registry_path)
+    registry_module = ES._engine_registry_module()
+    registry = registry_module.Registry.load(ES._engine_registry_path())
+    role = registry.by_role("cross-family-review-panel")
+    role.members[:] = [role.members[0]] * (ES.PANEL_N_CAP + 1)
+    monkeypatch.setattr(
+        registry_module.Registry,
+        "load",
+        classmethod(lambda _cls, _path: registry),
+    )
 
     with pytest.raises(ES.SpecError, match="PANEL_N_CAP"):
         ES.AdvisoryPanelRequest("cross-family-review-panel").validate("unit U1")

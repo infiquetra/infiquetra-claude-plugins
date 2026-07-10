@@ -200,6 +200,24 @@ Checks:
 - `git diff --check`
   - passed
 
+### Panel remediation
+
+- Centralized panel name, cap, member-count, advisory-verdict, and Claude-foreman policy in the
+  lower-level engine registry and removed the resolver's dependency on execution-spec parsing.
+- Front-loaded canonical intent and normalized execution metadata validation before any role resolve
+  or preflight.
+- Added fail-closed `64 KiB` per-member and `256 KiB` cumulative UTF-8 panel output caps.
+- Added zero-preflight, no-foreman, no-fact, runtime-halt, exception, and byte-overflow regressions.
+
+Checks:
+
+- Focused panel/spec/registry/resolver/dispatch/reconcile matrix
+  - 356 passed
+- Repository Ruff
+  - passed
+- `git diff --check`
+  - passed
+
 ## Next Step
 
-Complete panel-policy and documentation remediation, then re-engage only the five failed reviewers.
+Complete documentation and chronology remediation, then re-engage only the five failed reviewers.

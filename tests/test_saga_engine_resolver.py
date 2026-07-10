@@ -606,6 +606,12 @@ def test_resolve_role_accepts_exact_panel_cap_before_preflight(
     assert preflights == R.PANEL_N_CAP
 
 
+def test_resolver_reexports_lower_level_panel_policy_without_upward_spec_import() -> None:
+    assert R.PANEL_N_CAP == REG.PANEL_N_CAP
+    assert R.validate_panel_role is REG.validate_panel_role
+    assert "from execution_spec" not in RESOLVER_SCRIPT.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("member_count", [0, R.PANEL_N_CAP + 1])
 def test_resolve_role_rejects_invalid_member_count_before_preflight(
     registry: Any,
@@ -659,6 +665,41 @@ def test_resolve_role_rejects_unknown_name_before_preflight(
     monkeypatch.setattr(R, "preflight", preflight)
     with pytest.raises(REG.RegistryError, match="unknown role"):
         R.resolve_role("missing-panel", registry=registry)
+    assert preflights == 0
+
+
+@pytest.mark.parametrize(
+    ("verdict", "verifier", "message"),
+    [
+        ("binding", "claude", "advisory verdict"),
+        ("advisory", "external", "Claude as foreman"),
+    ],
+)
+def test_resolve_role_rejects_invalid_authority_before_preflight(
+    registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: str,
+    verifier: str,
+    message: str,
+) -> None:
+    name = "cross-family-review-panel"
+    prior = registry.by_role(name)
+    registry.roles[name] = REG.Role(
+        name=name,
+        members=list(prior.members),
+        verdict=verdict,
+        verifier=verifier,
+    )
+    preflights = 0
+
+    def preflight(_engine_id: str, **_kwargs: object) -> dict[str, bool | str]:
+        nonlocal preflights
+        preflights += 1
+        return {"available": True, "reason": "available"}
+
+    monkeypatch.setattr(R, "preflight", preflight)
+    with pytest.raises(REG.RegistryError, match=message):
+        R.resolve_role(name, registry=registry)
     assert preflights == 0
 
 

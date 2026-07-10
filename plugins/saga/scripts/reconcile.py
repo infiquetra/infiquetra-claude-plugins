@@ -188,6 +188,22 @@ def _require_id(value: Any, field: str) -> str:
     return value
 
 
+def validate_panel_execution_metadata(
+    *,
+    execution_id: Any,
+    intent: Any,
+    subplot_id: Any,
+    at: Any,
+) -> None:
+    """Validate required panel persistence metadata before resolution can perform preflight."""
+    if not isinstance(intent, str):
+        raise ReconciliationError("panel intent must be a canonical intent string")
+    recipe_for_intent(intent)
+    _require_id(execution_id, "panel execution_id")
+    _require_id(subplot_id, "panel subplot_id")
+    _require_id(at, "panel at")
+
+
 def evidence_digest(evidence: str) -> str:
     if not isinstance(evidence, str):
         raise ReconciliationError("external evidence must be a string")

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import shutil
 import sys
 from collections.abc import Callable, Mapping
@@ -18,8 +17,15 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from engine_overlay import EngineOverlay, load_overlay, overlay_fingerprint  # noqa: E402
-from engine_registry import EngineEntry, Registry, RegistryError, Role  # noqa: E402
-from execution_spec import PANEL_N_CAP  # noqa: E402
+from engine_registry import (
+    PANEL_N_CAP as PANEL_N_CAP,
+)
+from engine_registry import (  # noqa: E402
+    EngineEntry,
+    Registry,
+    RegistryError,
+    validate_panel_role,
+)
 
 MODES = ("advisory", "dispatch")
 ROLE_KINDS = ("worker", "generator", "advisory-reviewer", "panel")
@@ -28,7 +34,6 @@ HALT_ROLE_KINDS = frozenset({"advisory-reviewer", "panel"})
 DEFAULT_MODEL_RELEASES = (
     Path(__file__).resolve().parent.parent / "references" / "model-releases.yaml"
 )
-_PANEL_ROLE_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 
 
 @dataclass(frozen=True)
@@ -385,6 +390,7 @@ def resolve_role(
     verdict stays advisory and Claude remains verifier-of-record (R13/R15).
     """
     role = validate_panel_role(role_name, registry=registry)
+    assert role is not None
     resolutions: list[Resolution] = []
     for member in role.members:
         request: dict[str, Any] = {"engine": member, "role_kind": "advisory-reviewer"}
@@ -392,28 +398,6 @@ def resolve_role(
             request["task_context"] = task_context
         resolutions.append(resolve(request, mode="advisory", registry=registry, memo=memo))
     return resolutions
-
-
-def validate_panel_role(role_name: str, *, registry: Registry) -> Role:
-    """Validate a composing advisory role and its count before any member preflight."""
-    if not isinstance(role_name, str) or not _PANEL_ROLE_RE.fullmatch(role_name):
-        raise RegistryError(
-            f"panel role {role_name!r} must be a normalized kebab-case role name"
-        )
-    role = registry.by_role(role_name)
-    member_count = len(role.members)
-    if member_count == 0:
-        raise RegistryError(f"panel role {role_name!r} has zero members")
-    if member_count > PANEL_N_CAP:
-        raise RegistryError(
-            f"panel role {role_name!r} resolves to {member_count} members, "
-            f"exceeding PANEL_N_CAP={PANEL_N_CAP}"
-        )
-    if role.verdict != "advisory":
-        raise RegistryError(f"panel role {role_name!r} must have advisory verdict")
-    if role.verifier.lower() != "claude":
-        raise RegistryError(f"panel role {role_name!r} must name Claude as foreman")
-    return role
 
 
 def panel_halt(resolutions: list[Resolution]) -> str | None:

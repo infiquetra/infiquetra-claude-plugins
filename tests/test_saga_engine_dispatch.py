@@ -1808,3 +1808,224 @@ def test_failed_panel_foreman_writes_no_apply_fact(
         )
 
     assert [fact["action"] for fact in RC.read_reconciliation_facts(ledger)] == []
+
+
+@pytest.mark.parametrize(
+    ("execution_id", "intent", "subplot_id", "at", "message"),
+    [
+        (
+            "panel-execution",
+            "unknown-intent",
+            "issue-393",
+            "2026-07-09T00:00:00Z",
+            "unknown reconciliation intent",
+        ),
+        ("", "second-opinion", "issue-393", "2026-07-09T00:00:00Z", "execution_id"),
+        (
+            " panel-execution ",
+            "second-opinion",
+            "issue-393",
+            "2026-07-09T00:00:00Z",
+            "execution_id",
+        ),
+        ("panel-execution", "second-opinion", "", "2026-07-09T00:00:00Z", "subplot_id"),
+        ("panel-execution", "second-opinion", "issue-393", "", "panel at"),
+    ],
+)
+def test_invalid_panel_metadata_has_no_preflight_dispatch_or_fact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    execution_id: str,
+    intent: str,
+    subplot_id: str,
+    at: str,
+    message: str,
+) -> None:
+    preflights = 0
+    runner_calls = 0
+    foreman_calls = 0
+
+    def resolve_role(*_args: object, **_kwargs: object) -> list[Any]:
+        nonlocal preflights
+        preflights += 1
+        return [_resolution(variant="must-not-resolve")]
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        nonlocal runner_calls
+        runner_calls += 1
+        return {"status": "ok", "output": "must not run"}
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", resolve_role)
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match=message):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=runner,
+            foreman=foreman,
+            execution_id=execution_id,
+            intent=intent,
+            ledger=ledger,
+            subplot_id=subplot_id,
+            at=at,
+        )
+
+    assert preflights == 0
+    assert runner_calls == 0
+    assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_later_panel_member_runtime_halt_skips_foreman_and_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [
+            _resolution(variant="panel-one"),
+            _resolution(variant="panel-two"),
+        ],
+    )
+    results = iter(
+        (
+            {"status": "ok", "output": "first finding"},
+            {"status": "error", "output": "runtime failed"},
+        )
+    )
+    foreman_calls = 0
+    runner_calls = 0
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        nonlocal runner_calls
+        runner_calls += 1
+        return next(results)
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="panel member failed"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=runner,
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert foreman_calls == 0
+    assert runner_calls == 2
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_thrown_panel_foreman_exception_appends_neither_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        raise RuntimeError("foreman crashed")
+
+    with pytest.raises(D.DispatchError, match="foreman failed before ledger append"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: {"status": "ok", "output": "finding"},
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_panel_member_utf8_output_overflow_fails_without_foreman_or_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    foreman_calls = 0
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    output = "💥" * (D.PANEL_MEMBER_OUTPUT_BYTES_CAP // 4 + 1)
+    assert len(output) < D.PANEL_MEMBER_OUTPUT_BYTES_CAP
+    assert len(output.encode("utf-8")) > D.PANEL_MEMBER_OUTPUT_BYTES_CAP
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="PANEL_MEMBER_OUTPUT_BYTES_CAP"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: {"status": "ok", "output": output},
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_panel_cumulative_output_overflow_fails_without_foreman_or_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolutions = [_resolution(variant=f"panel-{index}") for index in range(5)]
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", lambda *_args, **_kwargs: resolutions)
+    foreman_calls = 0
+
+    def foreman(_evidence: tuple[Any, ...]) -> Any:
+        nonlocal foreman_calls
+        foreman_calls += 1
+        return None
+
+    output = "x" * (D.PANEL_TOTAL_OUTPUT_BYTES_CAP // len(resolutions) + 1)
+    assert len(output.encode("utf-8")) < D.PANEL_MEMBER_OUTPUT_BYTES_CAP
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="PANEL_TOTAL_OUTPUT_BYTES_CAP"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=lambda _invocation: {"status": "ok", "output": output},
+            foreman=foreman,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []

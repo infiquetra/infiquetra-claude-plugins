@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -33,6 +34,11 @@ LATENCY_CLASSES = ("fast", "standard", "slow", "batch")
 COST_CLASSES = ("metered", "free")
 EGRESS_POLICIES = ("local-only", "networked")
 TRUST_TIERS = ("probation", "advisory")
+
+# Shared advisory-jury policy. This lower-level registry contract is consumed by both
+# execution-spec authoring and runtime resolution so cap/name/authority checks cannot drift.
+PANEL_N_CAP = 7
+_PANEL_ROLE_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 
 
 class RegistryError(ValueError):
@@ -703,6 +709,30 @@ class Registry:
             revision,
             f"known revision date for {entry.model_identity}",
         )
+
+
+def validate_panel_role(role_name: str, *, registry: Registry | None = None) -> Role | None:
+    """Validate the one advisory-panel role contract before member preflight or dispatch."""
+    if not isinstance(role_name, str) or not _PANEL_ROLE_RE.fullmatch(role_name):
+        raise RegistryError(
+            f"panel role {role_name!r} must be a normalized kebab-case role name"
+        )
+    if registry is None:
+        return None
+    role = registry.by_role(role_name)
+    member_count = len(role.members)
+    if member_count == 0:
+        raise RegistryError(f"panel role {role_name!r} has zero members")
+    if member_count > PANEL_N_CAP:
+        raise RegistryError(
+            f"panel role {role_name!r} resolves to {member_count} members, "
+            f"exceeding PANEL_N_CAP={PANEL_N_CAP}"
+        )
+    if role.verdict != "advisory":
+        raise RegistryError(f"panel role {role_name!r} must have advisory verdict")
+    if role.verifier.lower() != "claude":
+        raise RegistryError(f"panel role {role_name!r} must name Claude as foreman")
+    return role
 
 
 def _capability_sort_key(entry: EngineEntry, capability: str) -> tuple[int, int, int]:

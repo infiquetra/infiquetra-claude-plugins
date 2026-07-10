@@ -335,6 +335,7 @@ def test_tier_band_stamped_on_compiled_body() -> None:
     restamped = sdlc_manager._append_tier_band(body, "defect")
     assert restamped.count("### Recommended Tier Band") == 1
 
+
 def test_tier_band_stamp_not_suppressed_by_mention() -> None:
     """Verifier P1: a prose or code-fence MENTION of the header must not suppress the stamp."""
     prose = (

@@ -33,6 +33,26 @@ BR = D._bridge_receipt
 OA = D.fleet_commons_shim.load("output_attestation")
 
 
+def _reconciliation(evidence: Any) -> Any:
+    return D.reconcile.build_result(
+        reconciliation_id=f"attestation-{id(evidence)}",
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
+        adjudicator_id="claude",
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
+        items=tuple(
+            D.reconcile.ReconciliationItem(
+                source_finding_id=finding_id,
+                status=D.reconcile.ReconciliationStatus.RECONCILED,
+                adjudicator_id="claude",
+                rationale="Claude reconciled the attested advisory evidence.",
+            )
+            for finding_id in evidence.source_finding_ids
+        ),
+    )
+
+
 def _resolution() -> Any:
     return R.Resolution(
         engine_id="codex",
@@ -171,6 +191,7 @@ def test_satisfy_gate_refuses_proof_integrity_manifest() -> None:
         variant="gpt-5.5-xhigh",
         evidence="external finding",
         provenance={"status": "ok", "observer_corroborated": True},
+        execution_id="exec-gate",
         verified_by_claude=True,
         runner_receipt=_receipt(tokens=0),
     )
@@ -182,7 +203,8 @@ def test_satisfy_gate_refuses_proof_integrity_manifest() -> None:
     )
 
     with pytest.raises(D.DispatchError, match="proof-integrity"):
-        D.satisfy_gate(dataclasses.replace(evidence, verified_by_claude=True), manifest)
+        verified = dataclasses.replace(evidence, verified_by_claude=True)
+        D.satisfy_gate(verified, manifest, reconciliation=_reconciliation(verified))
 
 
 def test_satisfy_gate_refuses_proof_integrity_evidence_without_manifest() -> None:
@@ -191,12 +213,13 @@ def test_satisfy_gate_refuses_proof_integrity_evidence_without_manifest() -> Non
         variant="gpt-5.5-xhigh",
         evidence="external finding",
         provenance={"status": "ok", "observer_corroborated": True},
+        execution_id="proof-without-manifest",
         verified_by_claude=True,
         runner_receipt=_receipt(tokens=0),
     )
 
     with pytest.raises(D.DispatchError, match="zero-external-token"):
-        D.satisfy_gate(evidence)
+        D.satisfy_gate(evidence, reconciliation=_reconciliation(evidence))
 
 
 def test_satisfy_gate_refuses_cross_engine_receipt_without_manifest() -> None:
@@ -207,9 +230,10 @@ def test_satisfy_gate_refuses_cross_engine_receipt_without_manifest() -> None:
         variant="gpt-5.5-xhigh",
         evidence="external finding",
         provenance={"status": "ok", "observer_corroborated": True},
+        execution_id="cross-engine-proof",
         verified_by_claude=True,
         runner_receipt=receipt,
     )
 
     with pytest.raises(D.DispatchError, match="receipt-engine-mismatch"):
-        D.satisfy_gate(evidence)
+        D.satisfy_gate(evidence, reconciliation=_reconciliation(evidence))

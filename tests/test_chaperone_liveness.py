@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import itertools
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -30,6 +31,7 @@ D = _load("engine_dispatch")
 PM = D.pm
 RL = D.run_ledger
 MS = D.manifest_store
+_RECONCILIATION_IDS = itertools.count()
 
 
 def _write_engine_fact(ledger: Any, key: str) -> None:
@@ -68,7 +70,28 @@ def _gate_evidence() -> Any:
         variant="gpt-5.5-xhigh",
         evidence="external finding",
         provenance={"status": "ok", "observer_corroborated": True},
+        execution_id="exec-gate",
         verified_by_claude=True,
+    )
+
+
+def _gate_reconciliation(evidence: Any) -> Any:
+    return D.reconcile.build_result(
+        reconciliation_id=f"liveness-{next(_RECONCILIATION_IDS)}",
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
+        adjudicator_id="claude",
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
+        items=tuple(
+            D.reconcile.ReconciliationItem(
+                source_finding_id=finding_id,
+                status=D.reconcile.ReconciliationStatus.RECONCILED,
+                adjudicator_id="claude",
+                rationale="Claude reconciled the liveness-bound evidence.",
+            )
+            for finding_id in evidence.source_finding_ids
+        ),
     )
 
 
@@ -106,9 +129,14 @@ def test_real_ledger_manifest_liveness_join_passes(tmp_path: Path) -> None:
     _write_manifest(store, "run-1")
 
     assert D.bridge_liveness_errors(ledger, store) == []
+    evidence = _gate_evidence()
     assert (
         D.satisfy_gate(
-            _gate_evidence(), manifest=_gate_manifest("run-1"), ledger=ledger, store=store
+            evidence,
+            manifest=_gate_manifest("run-1"),
+            reconciliation=_gate_reconciliation(evidence),
+            ledger=ledger,
+            store=store,
         )
         is None
     )
@@ -125,17 +153,21 @@ def test_real_ledger_manifest_liveness_join_names_missing_halves(tmp_path: Path)
         "proof-integrity: launched-unconsumed launched-only",
         "proof-integrity: consumed-unlaunched consumed-only",
     ]
+    evidence = _gate_evidence()
     with pytest.raises(D.DispatchError, match="launched-unconsumed launched-only"):
         D.satisfy_gate(
-            _gate_evidence(),
+            evidence,
             manifest=_gate_manifest("launched-only"),
+            reconciliation=_gate_reconciliation(evidence),
             ledger=ledger,
             store=store,
         )
+    evidence = _gate_evidence()
     with pytest.raises(D.DispatchError, match="consumed-unlaunched consumed-only"):
         D.satisfy_gate(
-            _gate_evidence(),
+            evidence,
             manifest=_gate_manifest("consumed-only"),
+            reconciliation=_gate_reconciliation(evidence),
             ledger=ledger,
             store=store,
         )
@@ -152,9 +184,14 @@ def test_liveness_gate_scopes_to_current_bridge_key(tmp_path: Path) -> None:
     assert D.bridge_liveness_errors(ledger, store) == [
         "proof-integrity: launched-unconsumed unrelated-run"
     ]
+    evidence = _gate_evidence()
     assert (
         D.satisfy_gate(
-            _gate_evidence(), manifest=_gate_manifest("run-1"), ledger=ledger, store=store
+            evidence,
+            manifest=_gate_manifest("run-1"),
+            reconciliation=_gate_reconciliation(evidence),
+            ledger=ledger,
+            store=store,
         )
         is None
     )
@@ -163,5 +200,8 @@ def test_liveness_gate_scopes_to_current_bridge_key(tmp_path: Path) -> None:
 def test_gate_requires_both_liveness_halves(tmp_path: Path) -> None:
     ledger = RL.RunLedger(path=tmp_path / "run-facts.jsonl")
 
+    evidence = _gate_evidence()
     with pytest.raises(D.DispatchError, match="requires both"):
-        D.satisfy_gate(_gate_evidence(), ledger=ledger)
+        D.satisfy_gate(
+            evidence, reconciliation=_gate_reconciliation(evidence), ledger=ledger
+        )

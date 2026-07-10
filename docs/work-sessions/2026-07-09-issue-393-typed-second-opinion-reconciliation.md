@@ -165,7 +165,41 @@ Checks:
 - `git diff --check`
   - passed
 
+## Team Execution Review Cycle 1
+
+The required panel reviewed the same verified epoch-1 full-diff pointer in two capacity-bounded
+waves (three reviewers, then two). Consensus was not reached:
+
+| Reviewer | Score | Verdict |
+| --- | ---: | --- |
+| Devil's Advocate | 7.1 | needs revision |
+| Security | 7.0 | needs revision |
+| Architecture | 8.0 | needs revision |
+| Testing | 7.1 | needs revision |
+| Clarity | 7.1 | needs revision |
+
+### Core remediation
+
+- Bound reconciliation to immutable dispatch execution identity, canonical intent, evidence digest,
+  and source-finding identities; rejected replay, mismatch, and empty-result bypasses before existing
+  authority checks.
+- Preserved rejected results under their canonical intent and closed surplus recipe definitions.
+- Replaced raw-result ledger persistence with a bounded structural projection; rationales and engine
+  prose remain outside the JSONL record, and ledger/lock files are mode `0600`.
+- Added one-lock verified snapshot append semantics and enforced `reconcile` then at most one `apply`.
+- Restored all legacy gate suites to their original assertion paths.
+
+Checks:
+
+- Focused core and legacy gate matrix
+  - 218 passed
+- Direct `reconcile.py` branch coverage
+  - 94%
+- Targeted Ruff and scoped mypy
+  - passed
+- `git diff --check`
+  - passed
+
 ## Next Step
 
-Run Team Execution reviewer consensus against a pointerized snapshot, remediate every requested fix,
-then run the selected validators and repository quality gates.
+Complete panel-policy and documentation remediation, then re-engage only the five failed reviewers.

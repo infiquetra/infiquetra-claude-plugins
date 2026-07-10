@@ -637,10 +637,29 @@ class TestTwoSignalAcceptanceMatrix:
             variant=evidence.variant,
             evidence=evidence.evidence,
             provenance=evidence.provenance,
+            execution_id="exec-agree",
+            intent=evidence.intent,
             verified_by_claude=True,
             runner_receipt=evidence.runner_receipt,
         )
-        assert _D.satisfy_gate(verified) is None
+        reconciliation = _D.reconcile.build_result(
+            reconciliation_id="recon-agree",
+            execution_id=verified.execution_id,
+            intent=verified.intent,
+            adjudicator_id="claude",
+            evidence_digest=verified.evidence_digest,
+            source_finding_ids=verified.source_finding_ids,
+            items=tuple(
+                _D.reconcile.ReconciliationItem(
+                    source_finding_id=finding_id,
+                    status=_D.reconcile.ReconciliationStatus.RECONCILED,
+                    adjudicator_id="claude",
+                    rationale="Claude verified the corroborated delegation evidence.",
+                )
+                for finding_id in verified.source_finding_ids
+            ),
+        )
+        assert _D.satisfy_gate(verified, reconciliation=reconciliation) is None
 
     def test_receipt_valid_but_launch_flag_missing_is_observer_no(self, tmp_path: Path) -> None:
         """Conservative observer: a result.json with NO launch flag at all is observer-no."""

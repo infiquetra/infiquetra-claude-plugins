@@ -41,11 +41,17 @@ _RECONCILIATION_FACT_FIELDS = {
     "intent",
     "recipe_id",
     "adjudicator_id",
+    "evidence_digest",
     "action",
     "result_hash",
-    "result",
+    "source_finding_ids",
+    "items",
 }
 RECIPE_UPDATE_PROPOSAL_SCHEMA = "recipe_update_proposal.v1"
+MAX_ID_BYTES = 256
+MAX_ITEMS = 256
+MAX_RATIONALE_BYTES = 4096
+MAX_RESULT_BYTES = 65536
 
 
 class ReconciliationError(ValueError):
@@ -120,9 +126,12 @@ _RECIPE_DEFINITIONS = (
 )
 
 
-def _build_registry(intents: Iterable[str]) -> Mapping[str, ReconciliationRecipe]:
+def _build_registry(
+    intents: Iterable[str],
+    definitions_source: Iterable[ReconciliationRecipe] = _RECIPE_DEFINITIONS,
+) -> Mapping[str, ReconciliationRecipe]:
     definitions: dict[str, ReconciliationRecipe] = {}
-    for recipe in _RECIPE_DEFINITIONS:
+    for recipe in definitions_source:
         if recipe.intent in definitions:
             raise ReconciliationError(f"duplicate reconciliation recipe for {recipe.intent!r}")
         definitions[recipe.intent] = recipe
@@ -133,6 +142,11 @@ def _build_registry(intents: Iterable[str]) -> Mapping[str, ReconciliationRecipe
     if missing:
         raise ReconciliationError(
             f"canonical intent(s) have no reconciliation recipe: {sorted(missing)}"
+        )
+    surplus = set(definitions) - set(canonical)
+    if surplus:
+        raise ReconciliationError(
+            f"reconciliation recipe definition(s) are not canonical intents: {sorted(surplus)}"
         )
     return MappingProxyType({intent: definitions[intent] for intent in canonical})
 
@@ -169,6 +183,25 @@ def _require_id(value: Any, field: str) -> str:
         raise ReconciliationError(f"{field} must be a non-empty normalized string")
     if any(ord(char) < 32 for char in value):
         raise ReconciliationError(f"{field} must not contain control characters")
+    if len(value.encode("utf-8")) > MAX_ID_BYTES:
+        raise ReconciliationError(f"{field} exceeds {MAX_ID_BYTES} bytes")
+    return value
+
+
+def evidence_digest(evidence: str) -> str:
+    if not isinstance(evidence, str):
+        raise ReconciliationError("external evidence must be a string")
+    return hashlib.sha256(evidence.encode("utf-8")).hexdigest()
+
+
+def source_finding_ids_for_evidence(evidence: str) -> tuple[str, ...]:
+    digest = evidence_digest(evidence)
+    return (f"external-evidence:{digest}",) if evidence else ()
+
+
+def _require_digest(value: Any, field: str = "evidence_digest") -> str:
+    if not isinstance(value, str) or not _HASH_RE.fullmatch(value):
+        raise ReconciliationError(f"{field} must be a lowercase SHA-256 digest")
     return value
 
 
@@ -194,6 +227,12 @@ class ReconciliationItem:
         _require_claude_id(self.adjudicator_id)
         if not isinstance(self.rationale, str) or not self.rationale.strip():
             raise ReconciliationError("every reconciliation item requires a non-empty rationale")
+        if any(ord(char) < 32 for char in self.rationale):
+            raise ReconciliationError("reconciliation rationale must not contain control characters")
+        if len(self.rationale.encode("utf-8")) > MAX_RATIONALE_BYTES:
+            raise ReconciliationError(
+                f"reconciliation rationale exceeds {MAX_RATIONALE_BYTES} bytes"
+            )
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -229,6 +268,7 @@ class ReconciliationResult:
     intent: str
     recipe_id: str
     adjudicator_id: str
+    evidence_digest: str
     source_finding_ids: tuple[str, ...]
     items: tuple[ReconciliationItem, ...]
 
@@ -236,6 +276,7 @@ class ReconciliationResult:
         _require_id(self.reconciliation_id, "reconciliation_id")
         _require_id(self.execution_id, "execution_id")
         adjudicator = _require_claude_id(self.adjudicator_id)
+        _require_digest(self.evidence_digest)
         recipe = recipe_for_intent(self.intent)
         if self.recipe_id != recipe.recipe_id:
             raise ReconciliationError(
@@ -245,6 +286,8 @@ class ReconciliationResult:
             raise ReconciliationError("source_finding_ids and items must be immutable tuples")
         if not all(isinstance(item, ReconciliationItem) for item in self.items):
             raise ReconciliationError("items must contain only ReconciliationItem values")
+        if len(self.items) > MAX_ITEMS or len(self.source_finding_ids) > MAX_ITEMS:
+            raise ReconciliationError(f"reconciliation result exceeds {MAX_ITEMS} findings")
         source_ids = tuple(
             _require_id(value, "source_finding_id") for value in self.source_finding_ids
         )
@@ -260,6 +303,21 @@ class ReconciliationResult:
             )
         if any(item.adjudicator_id != adjudicator for item in self.items):
             raise ReconciliationError("item adjudicator_id must match the result adjudicator_id")
+        if len(self._unbounded_dict_json()) > MAX_RESULT_BYTES:
+            raise ReconciliationError(f"reconciliation result exceeds {MAX_RESULT_BYTES} bytes")
+
+    def _unbounded_dict_json(self) -> bytes:
+        data = {
+            "reconciliation_id": self.reconciliation_id,
+            "execution_id": self.execution_id,
+            "intent": self.intent,
+            "recipe_id": self.recipe_id,
+            "adjudicator_id": self.adjudicator_id,
+            "evidence_digest": self.evidence_digest,
+            "source_finding_ids": list(self.source_finding_ids),
+            "items": [item.to_dict() for item in self.items],
+        }
+        return json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     @property
     def unaccounted_finding_ids(self) -> tuple[str, ...]:
@@ -285,6 +343,7 @@ class ReconciliationResult:
             "intent": self.intent,
             "recipe_id": self.recipe_id,
             "adjudicator_id": self.adjudicator_id,
+            "evidence_digest": self.evidence_digest,
             "source_finding_ids": list(self.source_finding_ids),
             "items": [item.to_dict() for item in self.items],
         }
@@ -297,6 +356,7 @@ class ReconciliationResult:
             "intent",
             "recipe_id",
             "adjudicator_id",
+            "evidence_digest",
             "source_finding_ids",
             "items",
         }
@@ -314,6 +374,7 @@ class ReconciliationResult:
             intent=data["intent"],
             recipe_id=data["recipe_id"],
             adjudicator_id=data["adjudicator_id"],
+            evidence_digest=data["evidence_digest"],
             source_finding_ids=tuple(sources),
             items=tuple(ReconciliationItem.from_dict(item) for item in items),
         )
@@ -325,17 +386,23 @@ def build_result(
     execution_id: str,
     intent: str,
     adjudicator_id: str,
+    evidence_digest: str | None = None,
     source_finding_ids: Iterable[str],
     items: Iterable[ReconciliationItem],
 ) -> ReconciliationResult:
     recipe = recipe_for_intent(intent)
+    source_ids = tuple(source_finding_ids)
+    bound_digest = evidence_digest or hashlib.sha256(
+        json.dumps(source_ids, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     return ReconciliationResult(
         reconciliation_id=reconciliation_id,
         execution_id=execution_id,
         intent=intent,
         recipe_id=recipe.recipe_id,
         adjudicator_id=adjudicator_id,
-        source_finding_ids=tuple(source_finding_ids),
+        evidence_digest=bound_digest,
+        source_finding_ids=source_ids,
         items=tuple(items),
     )
 
@@ -417,8 +484,11 @@ def build_rejected_offload_signal(
     *,
     reconciliation_id: str,
     execution_id: str,
+    intent: str,
     adjudicator_id: str,
     rejection_note: str,
+    bound_evidence_digest: str | None = None,
+    bound_source_finding_ids: Iterable[str] | None = None,
 ) -> ReconciliationResult:
     """Account for a chaperone rejection as one typed, dropped advisory finding.
 
@@ -427,19 +497,24 @@ def build_rejected_offload_signal(
     reviewers and validators receive; this function grants it no gate authority.
     """
     note = normalize_rejection_note(rejection_note)
-    finding_id = f"rejected-offload:{_require_id(execution_id, 'execution_id')}"
+    fallback_id = f"rejected-offload:{_require_id(execution_id, 'execution_id')}"
+    source_ids = tuple(bound_source_finding_ids or (fallback_id,))
     return build_result(
         reconciliation_id=reconciliation_id,
         execution_id=execution_id,
-        intent="offload",
+        intent=intent,
         adjudicator_id=adjudicator_id,
-        source_finding_ids=(finding_id,),
+        evidence_digest=bound_evidence_digest or evidence_digest(note),
+        source_finding_ids=source_ids,
         items=(
-            ReconciliationItem(
-                source_finding_id=finding_id,
-                status=ReconciliationStatus.DROPPED,
-                adjudicator_id=adjudicator_id,
-                rationale=note,
+            *(
+                ReconciliationItem(
+                    source_finding_id=finding_id,
+                    status=ReconciliationStatus.DROPPED,
+                    adjudicator_id=adjudicator_id,
+                    rationale=note,
+                )
+                for finding_id in source_ids
             ),
         ),
     )
@@ -475,14 +550,6 @@ def append_reconciliation_fact(
     except ValueError as exc:
         raise ReconciliationError(f"invalid reconciliation action {action!r}") from exc
     result_hash = canonical_result_hash(result)
-    for existing in read_reconciliation_facts(ledger):
-        if (
-            existing["reconciliation_id"] == result.reconciliation_id
-            and existing["result_hash"] != result_hash
-        ):
-            raise ReconciliationError(
-                f"reconciliation identity {result.reconciliation_id!r} already names another result"
-            )
     fact = run_ledger.build_fact(
         "reconciliation",
         subplot_id=subplot_id,
@@ -492,20 +559,49 @@ def append_reconciliation_fact(
         intent=result.intent,
         recipe_id=result.recipe_id,
         adjudicator_id=result.adjudicator_id,
+        evidence_digest=result.evidence_digest,
         action=typed_action.value,
         result_hash=result_hash,
-        result=result.to_dict(),
+        source_finding_ids=list(result.source_finding_ids),
+        items=[
+            {"source_finding_id": item.source_finding_id, "status": item.status.value}
+            for item in result.items
+        ],
     )
-    return cast(dict[str, Any], run_ledger.append_fact(ledger, fact))
+
+    def validate_transition(snapshot: run_ledger.LedgerSnapshot) -> None:
+        existing = _validated_reconciliation_facts(snapshot.records, snapshot.report)
+        same = [row for row in existing if row["reconciliation_id"] == result.reconciliation_id]
+        if same and any(row["result_hash"] != result_hash for row in same):
+            raise ReconciliationError(
+                f"reconciliation identity {result.reconciliation_id!r} already names another result"
+            )
+        actions = [row["action"] for row in same]
+        if typed_action is ReconciliationAction.RECONCILE and actions:
+            raise ReconciliationError("duplicate or out-of-order reconcile transition")
+        if typed_action is ReconciliationAction.APPLY and actions != ["reconcile"]:
+            raise ReconciliationError("apply requires exactly one prior reconcile transition")
+
+    return cast(
+        dict[str, Any],
+        run_ledger.append_fact_atomic(ledger, fact, validate_snapshot=validate_transition),
+    )
 
 
 def read_reconciliation_facts(ledger: run_ledger.RunLedger) -> list[dict[str, Any]]:
-    report = run_ledger.verify_chain(ledger)
+    snapshot = run_ledger.read_snapshot(ledger)
+    return _validated_reconciliation_facts(snapshot.records, snapshot.report)
+
+
+def _validated_reconciliation_facts(
+    records: Iterable[dict[str, Any]], report: run_ledger.ChainReport
+) -> list[dict[str, Any]]:
     if not report.ok:
         raise ReconciliationError(f"run-fact chain verification failed: {report.reason}")
     validated: list[dict[str, Any]] = []
     identities: dict[str, str] = {}
-    for fact in run_ledger.read_facts(ledger):
+    transitions: dict[str, list[str]] = {}
+    for fact in records:
         if fact.get("kind") != "reconciliation":
             continue
         if set(fact) != _STANDARD_FACT_FIELDS | _RECONCILIATION_FACT_FIELDS:
@@ -522,16 +618,6 @@ def read_reconciliation_facts(ledger: run_ledger.RunLedger) -> list[dict[str, An
             ReconciliationAction(raw_action)
         except ValueError as exc:
             raise ReconciliationError(f"invalid reconciliation action {raw_action!r}") from exc
-        raw_result = fact.get("result")
-        if not isinstance(raw_result, Mapping):
-            raise ReconciliationError("reconciliation fact result must be an object")
-        result = ReconciliationResult.from_dict(raw_result)
-        result.require_ready()
-        result_hash = fact.get("result_hash")
-        if not isinstance(result_hash, str) or not _HASH_RE.fullmatch(result_hash):
-            raise ReconciliationError("reconciliation fact result_hash must be lowercase SHA-256")
-        if canonical_result_hash(result) != result_hash:
-            raise ReconciliationError("reconciliation fact result_hash does not match its result")
         for field in (
             "reconciliation_id",
             "execution_id",
@@ -539,13 +625,49 @@ def read_reconciliation_facts(ledger: run_ledger.RunLedger) -> list[dict[str, An
             "recipe_id",
             "adjudicator_id",
         ):
-            if fact.get(field) != getattr(result, field):
-                raise ReconciliationError(f"reconciliation fact {field} disagrees with its result")
-        previous = identities.setdefault(result.reconciliation_id, result_hash)
+            _require_id(fact.get(field), field)
+        recipe = recipe_for_intent(cast(str, fact["intent"]))
+        if fact["recipe_id"] != recipe.recipe_id:
+            raise ReconciliationError("reconciliation fact recipe disagrees with its intent")
+        _require_claude_id(fact["adjudicator_id"])
+        _require_digest(fact.get("evidence_digest"))
+        source_ids = fact.get("source_finding_ids")
+        items = fact.get("items")
+        if not isinstance(source_ids, list) or not isinstance(items, list):
+            raise ReconciliationError("reconciliation structural projection must contain arrays")
+        if len(source_ids) > MAX_ITEMS or len(items) > MAX_ITEMS:
+            raise ReconciliationError(f"reconciliation fact exceeds {MAX_ITEMS} findings")
+        normalized_sources = tuple(_require_id(item, "source_finding_id") for item in source_ids)
+        if len(normalized_sources) != len(set(normalized_sources)):
+            raise ReconciliationError("reconciliation fact contains duplicate source findings")
+        projected_ids: list[str] = []
+        for item in items:
+            if not isinstance(item, Mapping) or set(item) != {"source_finding_id", "status"}:
+                raise ReconciliationError("reconciliation fact item projection is malformed")
+            projected_ids.append(_require_id(item["source_finding_id"], "source_finding_id"))
+            try:
+                ReconciliationStatus(item["status"])
+            except (TypeError, ValueError) as exc:
+                raise ReconciliationError(
+                    f"invalid reconciliation status {item.get('status')!r}"
+                ) from exc
+        if tuple(projected_ids) != normalized_sources or len(projected_ids) != len(set(projected_ids)):
+            raise ReconciliationError("reconciliation fact does not account for each source exactly once")
+        result_hash = fact.get("result_hash")
+        if not isinstance(result_hash, str) or not _HASH_RE.fullmatch(result_hash):
+            raise ReconciliationError("reconciliation fact result_hash must be lowercase SHA-256")
+        identity = cast(str, fact["reconciliation_id"])
+        previous = identities.setdefault(identity, result_hash)
         if previous != result_hash:
             raise ReconciliationError(
-                f"duplicate reconciliation identity {result.reconciliation_id!r} has conflicting results"
+                f"duplicate reconciliation identity {identity!r} has conflicting results"
             )
+        prior_actions = transitions.setdefault(identity, [])
+        if raw_action == "reconcile" and prior_actions:
+            raise ReconciliationError("duplicate or out-of-order reconcile transition")
+        if raw_action == "apply" and prior_actions != ["reconcile"]:
+            raise ReconciliationError("apply requires exactly one prior reconcile transition")
+        prior_actions.append(raw_action)
         validated.append(fact)
     return validated
 
@@ -571,18 +693,17 @@ def derive_recipe_update_proposal(ledger: run_ledger.RunLedger) -> dict[str, Any
         }
 
     evidence_by_identity: dict[str, dict[str, Any]] = {}
-    results_by_identity: dict[str, ReconciliationResult] = {}
+    projections_by_identity: dict[str, dict[str, Any]] = {}
     for fact in facts:
-        result = ReconciliationResult.from_dict(cast(Mapping[str, Any], fact["result"]))
-        identity = result.reconciliation_id
+        identity = cast(str, fact["reconciliation_id"])
         evidence = evidence_by_identity.get(identity)
         if evidence is None:
-            results_by_identity[identity] = result
+            projections_by_identity[identity] = fact
             evidence = {
                 "reconciliation_id": identity,
-                "execution_id": result.execution_id,
-                "intent": result.intent,
-                "recipe_id": result.recipe_id,
+                "execution_id": fact["execution_id"],
+                "intent": fact["intent"],
+                "recipe_id": fact["recipe_id"],
                 "result_hash": fact["result_hash"],
                 "actions": [],
                 "ledger_fact_hashes": [],
@@ -596,12 +717,12 @@ def derive_recipe_update_proposal(ledger: run_ledger.RunLedger) -> dict[str, Any
             evidence["ledger_fact_hashes"].append(fact_hash)
 
     aggregates: dict[str, dict[str, Any]] = {}
-    for identity, result in results_by_identity.items():
+    for identity, projection in projections_by_identity.items():
         aggregate = aggregates.setdefault(
-            result.intent,
+            projection["intent"],
             {
-                "intent": result.intent,
-                "current_recipe_id": result.recipe_id,
+                "intent": projection["intent"],
+                "current_recipe_id": projection["recipe_id"],
                 "recommended_action": "review-intent-recipe",
                 "reconciliation_count": 0,
                 "finding_status_counts": {status.value: 0 for status in ReconciliationStatus},
@@ -610,8 +731,8 @@ def derive_recipe_update_proposal(ledger: run_ledger.RunLedger) -> dict[str, Any
         )
         aggregate["reconciliation_count"] += 1
         aggregate["evidence_reconciliation_ids"].append(identity)
-        for item in result.items:
-            aggregate["finding_status_counts"][item.status.value] += 1
+        for item in projection["items"]:
+            aggregate["finding_status_counts"][item["status"]] += 1
 
     proposed_updates = []
     for aggregate in aggregates.values():

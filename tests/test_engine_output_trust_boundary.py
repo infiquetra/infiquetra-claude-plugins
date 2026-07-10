@@ -65,6 +65,26 @@ def _load(name: str, path: Path) -> ModuleType:
 D = _load("engine_dispatch_for_trust_boundary", DISPATCH_SCRIPT)
 
 
+def _reconciliation(evidence: Any) -> Any:
+    return D.reconcile.build_result(
+        reconciliation_id=f"trust-{id(evidence)}",
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
+        adjudicator_id="claude",
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
+        items=tuple(
+            D.reconcile.ReconciliationItem(
+                source_finding_id=finding_id,
+                status=D.reconcile.ReconciliationStatus.RECONCILED,
+                adjudicator_id="claude",
+                rationale="Claude treated adversarial output as inert data.",
+            )
+            for finding_id in evidence.source_finding_ids
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class TrustBoundaryViolation:
     line: int
@@ -246,10 +266,11 @@ def test_adversarial_fixture_renders_as_data(
         variant="gpt-5.5-xhigh",
         evidence=payload,
         provenance={"engine": "codex", "variant": "gpt-5.5-xhigh", "status": "ok"},
+        execution_id="trust-boundary",
     )
 
     with pytest.raises(D.DispatchError):
-        D.satisfy_gate(unverified)
+        D.satisfy_gate(unverified, reconciliation=_reconciliation(unverified))
 
     verified = D.AdvisoryEvidence(
         engine_id="codex",
@@ -261,10 +282,11 @@ def test_adversarial_fixture_renders_as_data(
             "status": "ok",
             "observer_corroborated": True,
         },
+        execution_id="trust-boundary",
         verified_by_claude=True,
     )
 
-    assert D.satisfy_gate(verified) is None
+    assert D.satisfy_gate(verified, reconciliation=_reconciliation(verified)) is None
     assert verified.evidence == payload
     assert subprocess_calls == []
     assert list(tmp_path.rglob("*")) == []

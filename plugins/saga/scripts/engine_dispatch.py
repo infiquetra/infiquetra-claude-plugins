@@ -55,6 +55,10 @@ class AdvisoryEvidence:
     variant: str
     evidence: str
     provenance: dict[str, Any]
+    execution_id: str = ""
+    intent: str = "offload"
+    evidence_digest: str = ""
+    source_finding_ids: tuple[str, ...] = ()
     verified_by_claude: bool = False
     role_kind: str = "worker"
     halt: str | None = None
@@ -63,6 +67,20 @@ class AdvisoryEvidence:
     # (every CLI adapter today, and any failed dispatch) leave it ``None``. U6 consumes it to gate
     # ``RAN_AS_REQUESTED`` vs ``UNPROVEN``; this unit only lands and populates the field.
     runner_receipt: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        try:
+            reconcile.recipe_for_intent(self.intent)
+        except reconcile.ReconciliationError as exc:
+            raise DispatchError(f"advisory evidence has invalid intent: {exc}") from exc
+        digest = reconcile.evidence_digest(self.evidence)
+        if self.evidence_digest and self.evidence_digest != digest:
+            raise DispatchError("advisory evidence digest disagrees with its immutable content")
+        expected_ids = reconcile.source_finding_ids_for_evidence(self.evidence)
+        if self.source_finding_ids and self.source_finding_ids != expected_ids:
+            raise DispatchError("advisory source-finding identities disagree with its content")
+        object.__setattr__(self, "evidence_digest", digest)
+        object.__setattr__(self, "source_finding_ids", expected_ids)
 
 
 @dataclass(frozen=True)
@@ -100,6 +118,7 @@ class PanelDispatchResult:
 # session + engine. Reset on any corroborated acceptance; a surviving count of 1 means the
 # NEXT divergence for the same key is the second consecutive one and must HALT.
 _INTEGRITY_ATTEMPTS: dict[str, int] = {}
+_SATISFIED_RECONCILIATIONS: set[tuple[str, str, str, str]] = set()
 
 _TRIPWIRE_UNARMED = "tripwire_unarmed"
 _INTEGRITY_REASON = (
@@ -188,6 +207,8 @@ def dispatch(
     expected_identity: str | None = None,
     chaperone: dict[str, Any] | None = None,
     economics: dict[str, Any] | None = None,
+    execution_id: str = "",
+    intent: str = "offload",
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Run an external engine adapter and return advisory evidence only.
 
@@ -231,6 +252,10 @@ def dispatch(
     under ``provenance["chaperone"]`` for downstream review/work-session evidence. It does not
     change gate satisfaction or ``saga.manifest.v1``.
     """
+    try:
+        reconcile.recipe_for_intent(intent)
+    except reconcile.ReconciliationError as exc:
+        raise DispatchError(f"dispatch intent is invalid: {exc}") from exc
     if resolution.halt is not None:
         provenance: dict[str, Any] = {
             "engine": resolution.engine_id,
@@ -245,6 +270,8 @@ def dispatch(
             variant=resolution.variant,
             evidence="",
             provenance=provenance,
+            execution_id=execution_id,
+            intent=intent,
             halt=resolution.halt,
         )
 
@@ -271,6 +298,8 @@ def dispatch(
                 variant=resolution.variant,
                 evidence="",
                 provenance=provenance,
+                execution_id=execution_id,
+                intent=intent,
                 halt=economics_decision.status,
             )
 
@@ -359,6 +388,8 @@ def dispatch(
                     variant=resolution.variant,
                     evidence="",
                     provenance=provenance,
+                    execution_id=execution_id,
+                    intent=intent,
                     halt=reason,
                     runner_receipt=runner_receipt,
                 )
@@ -375,6 +406,8 @@ def dispatch(
                 variant=resolution.variant,
                 evidence="",
                 provenance=provenance,
+                execution_id=execution_id,
+                intent=intent,
                 halt=note,
                 runner_receipt=runner_receipt,
             )
@@ -391,6 +424,8 @@ def dispatch(
             variant=resolution.variant,
             evidence=output,
             provenance=provenance,
+            execution_id=execution_id,
+            intent=intent,
             runner_receipt=runner_receipt,
         )
     elif status not in FAILURE_STATUSES:
@@ -403,6 +438,8 @@ def dispatch(
             variant=resolution.variant,
             evidence="",
             provenance=provenance,
+            execution_id=execution_id,
+            intent=intent,
             halt=note,
             runner_receipt=runner_receipt,
         )
@@ -452,7 +489,9 @@ def dispatch_advisory_panel(
 
     member_evidence: list[AdvisoryEvidence] = []
     for resolution in resolutions:
-        dispatched = dispatch(resolution, runner=runner)
+        dispatched = dispatch(
+            resolution, runner=runner, execution_id=execution_id, intent=intent
+        )
         if isinstance(dispatched, RequeueDisposition):
             raise DispatchError("advisory panel dispatch unexpectedly requested a gated requeue")
         panel_evidence = replace(dispatched, role_kind="panel")
@@ -993,6 +1032,10 @@ def reject_offload(evidence: AdvisoryEvidence, rejection_note: str) -> AdvisoryE
         variant=evidence.variant,
         evidence=evidence.evidence,
         provenance={**evidence.provenance, "rejected_offload_note": note},
+        execution_id=evidence.execution_id,
+        intent=evidence.intent,
+        evidence_digest=evidence.evidence_digest,
+        source_finding_ids=evidence.source_finding_ids,
         verified_by_claude=evidence.verified_by_claude,
         role_kind=evidence.role_kind,
         halt=evidence.halt,
@@ -1005,6 +1048,8 @@ def rejected_offload_reconciliation(
     *,
     reconciliation_id: str,
     adjudicator_id: str,
+    intent: str = "offload",
+    evidence: AdvisoryEvidence | None = None,
 ) -> reconcile.ReconciliationResult:
     """Turn a rejected-offload manifest note into typed reviewer/validator evidence."""
     if manifest.disposition is not pm.Disposition.REJECTED_OFFLOAD:
@@ -1013,8 +1058,13 @@ def rejected_offload_reconciliation(
         return reconcile.build_rejected_offload_signal(
             reconciliation_id=reconciliation_id,
             execution_id=manifest.execution_id,
+            intent=intent,
             adjudicator_id=adjudicator_id,
             rejection_note=manifest.disposition_note,
+            bound_evidence_digest=evidence.evidence_digest if evidence is not None else None,
+            bound_source_finding_ids=(
+                evidence.source_finding_ids if evidence is not None else None
+            ),
         )
     except reconcile.ReconciliationError as exc:
         raise DispatchError(str(exc)) from exc
@@ -1149,6 +1199,30 @@ def satisfy_gate(
         reconciliation.require_ready()
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"reconciliation is not ready: {exc}") from exc
+    replay_key = (
+        evidence.execution_id,
+        reconciliation.reconciliation_id,
+        evidence.evidence_digest,
+        reconcile.canonical_result_hash(reconciliation),
+    )
+    if replay_key in _SATISFIED_RECONCILIATIONS:
+        raise DispatchError("reconciliation replay: this evidence/result pair already satisfied a gate")
+    if not evidence.execution_id:
+        raise DispatchError("gate evidence is missing its authoritative dispatch execution_id")
+    if reconciliation.execution_id != evidence.execution_id:
+        raise DispatchError("reconciliation execution_id does not match dispatched evidence")
+    if reconciliation.intent != evidence.intent:
+        raise DispatchError("reconciliation intent does not match dispatched evidence")
+    if reconciliation.recipe_id != reconcile.recipe_for_intent(evidence.intent).recipe_id:
+        raise DispatchError("reconciliation recipe does not match the canonical dispatch intent")
+    if reconciliation.evidence_digest != evidence.evidence_digest:
+        raise DispatchError("reconciliation evidence digest does not match dispatched evidence")
+    if evidence.evidence and not reconciliation.items:
+        raise DispatchError("non-empty dispatched evidence cannot use an empty reconciliation")
+    if reconciliation.source_finding_ids != evidence.source_finding_ids:
+        raise DispatchError("reconciliation source findings do not match dispatched evidence")
+    if manifest is not None and manifest.execution_id != evidence.execution_id:
+        raise DispatchError("manifest execution_id does not match dispatched evidence")
     if evidence.role_kind in NON_GATING_ROLE_KINDS:
         raise DispatchError(
             f"{evidence.role_kind} evidence is advisory-only and can never satisfy a gate"
@@ -1203,6 +1277,7 @@ def satisfy_gate(
         if liveness_errors:
             raise DispatchError("bridge liveness failure (#388): " + "; ".join(liveness_errors))
     if manifest is None or manifest.claim_provenance is None:
+        _SATISFIED_RECONCILIATIONS.add(replay_key)
         return
     for claim in manifest.claim_provenance.claims:
         if claim.adjudicated is None or claim.adjudication is None:
@@ -1210,6 +1285,7 @@ def satisfy_gate(
                 "gated verdict requires Claude-adjudicated claims (R11): "
                 f"claim {claim.text!r} is producer-claimed only"
             )
+    _SATISFIED_RECONCILIATIONS.add(replay_key)
 
 
 def downgrade_note(engine: str, reason: str) -> str:

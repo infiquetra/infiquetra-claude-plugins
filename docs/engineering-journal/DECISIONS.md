@@ -13,14 +13,19 @@ bounded advisory juries, and retro learning. The issue's early parallel-ledger p
   data-defined recipe and fails closed on missing, duplicate, or unknown mappings. Offload accounts
   for accepted/dropped/overridden work; second-opinion independently adjudicates review findings;
   divergence makes agreement as well as disagreement an explicit review outcome.
-- **KTD2 - reconciliation extends `run_fact.v1`.** Separate `reconcile` and `apply` events append
-  bounded typed reconciliation results to the existing ledger. They do not create a parallel store,
-  mutate earlier records, or persist raw advisory-panel output.
-- **KTD3 - rejected offloads and panels are evidence, never authority.** A rejected offload requires
-  a non-empty manifest note projected as a typed `dropped` item. Advisory panels hard-fail above
-  `PANEL_N_CAP = 7` before dispatch and persist only a Claude-foreman result. Neither may satisfy a
-  gate; the standing [external engines are never gatekeepers](#external-engines-never-gatekeepers)
-  rule remains binding and Claude remains verifier-of-record.
+- **KTD2 - reconciliation extends `run_fact.v1` with bound, locked structural facts.** The in-memory
+  result is bound to dispatch execution id, canonical intent/recipe, immutable evidence digest, and
+  ordered source IDs, with explicit identifier/finding/rationale/result byte limits. Each helper call
+  appends one transition from a verified snapshot under the same exclusive lock: `reconcile`, then at
+  most one `apply`. Ledger/lock files are mode `0600`; facts persist only identities, digest, statuses,
+  and canonical hash, never rationale or raw engine/panel output.
+- **KTD3 - rejected offloads and panels are evidence, never authority.** A rejected offload retains
+  the unit's canonical intent and dispatch bindings and requires a non-empty manifest note projected
+  as a typed `dropped` item. Shared lower-level `engine_registry` policy enforces normalized role,
+  advisory verdict, Claude foreman, and `PANEL_N_CAP = 7`; dispatch adds 64 KiB per-member and 256 KiB
+  cumulative UTF-8 caps before foreman reconciliation. Neither path may satisfy a gate; the standing
+  [external engines are never gatekeepers](#external-engines-never-gatekeepers) rule remains binding
+  and Claude remains verifier-of-record.
 - **KTD4 - retro proposals are approval-only.** `/retro` verifies the ledger and derives a typed
   `approval_required` recipe-update proposal. It never edits the registry or ledger, and a proposal
   itself is advisory evidence that cannot approve or gate anything.

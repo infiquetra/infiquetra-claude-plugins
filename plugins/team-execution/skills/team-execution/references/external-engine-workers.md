@@ -23,13 +23,15 @@ chaperone consumes (R23) — never write-capable in this contract.
 
 ## Never a gatekeeper (R13/R15, restated)
 
-Nothing in this document lets an external engine satisfy a gate. `engine_dispatch.satisfy_gate()`
-(`plugins/saga/scripts/engine_dispatch.py:238-258`) hard-requires `evidence.verified_by_claude is
-True` before advisory evidence counts toward any verdict, and — when a typed manifest carries
-`claim_provenance` — every gate-relevant claim must already be Claude-adjudicated (R11 extension).
-An external-engine worker's diff still goes through the same reviewer consensus and validator
-gates as any other worker's diff (`SKILL.md` Step B2/B3); this contract only changes *who wrote
-the diff*, not what clears it for merge.
+Nothing in this document lets an external engine satisfy a gate. The canonical call is
+`engine_dispatch.satisfy_gate(evidence, reconciliation=result, ...)`: before the existing authority
+checks, the ready typed result must bind exactly to the dispatch execution id, canonical intent and
+recipe, evidence digest, and ordered source-finding IDs. The guard then still requires
+`evidence.verified_by_claude is True`, observer corroboration, and any supplied manifest's matching
+execution and adjudicated claims; it refuses panel/advisory-reviewer roles, rejected offloads,
+substitutions, proof-integrity failures, and liveness contradictions. An external-engine worker's diff
+still goes through the same reviewer consensus and validator gates as any other worker's diff
+(`SKILL.md` Step B2/B3); this contract only changes *who wrote the diff*, not what clears it for merge.
 
 ## Advisory-reviewer seat (non-scoring)
 
@@ -70,7 +72,9 @@ The rare hardest-call jury starts from an explicit
 `AdvisoryPanelRequest(role=<registered-role>)`. It is not a unit's `verify` object: `Verify` bounds
 Claude verifier calls over one unit result, while the advisory jury expands a named external-engine
 composing role.
-`PANEL_N_CAP = 7` is the independent hard bound for this external member multiplicity.
+`PANEL_N_CAP = 7` is the independent hard bound for this external member multiplicity. The constant
+and the normalized-role/advisory-verdict/Claude-foreman checks live in the lower-level Saga
+`engine_registry` policy shared by spec validation and runtime resolution, not in either caller.
 
 The chaperone validates the role name, advisory verdict, Claude verifier, and resolved member count
 before any member preflight. Zero-member, malformed, unknown, or over-cap roles halt with no member
@@ -84,7 +88,10 @@ finding while retaining all producing member identities; an empty response becom
 member-specific source finding. Claude's foreman must return a ready typed `ReconciliationResult`
 that accounts for exactly those source finding IDs. Only after that validation may
 `dispatch_advisory_panel()` append the typed `reconcile` and `apply` facts. Raw member output is never
-written to the run-fact ledger, and a failed foreman result writes neither fact.
+written to the run-fact ledger, and a failed foreman result writes neither fact. Dispatch rejects a
+member above 64 KiB or cumulative UTF-8 panel output above 256 KiB before the foreman runs; the ledger
+stores only the bounded structural item-id/status projection and its hashes, never raw output or
+rationale prose.
 
 Successful reconciliation grants no authority. Every member evidence record is stamped
 `role_kind="panel"`, which remains in `NON_GATING_ROLE_KINDS`; `satisfy_gate()` therefore refuses it
@@ -166,6 +173,7 @@ invocation = (
 )
 evidence = engine_dispatch.dispatch(
     resolution, runner=runner, model=model, sandbox=unit_sandbox, write_set=unit_files,
+    execution_id=f"{worker_id}-{unit_id}", intent=unit_intent,
     expected_identity=(
         f"{plan_time_resolution_preview['engine_id']}/{plan_time_resolution_preview['variant']}"
         if plan_time_resolution_preview is not None
@@ -227,7 +235,7 @@ the one the operator approved in the tier table. This is the only reachable subs
 shared builder derives it itself from `expected_identity` (§3/§5), it is never hand-constructed
 here.
 
-## 5. Verify → apply → test → manifest
+## 5. Verify → reconcile → gate → apply → test → manifest
 
 1. **Verify.** The chaperone reads `evidence.evidence` (the engine's returned patch/output) and
    reviews it itself — never self-attested. Only after review does the chaperone set
@@ -235,14 +243,49 @@ here.
    gatekeeper"). If review rejects an otherwise dispatched offload, the chaperone calls
    `engine_dispatch.reject_offload(evidence, rejection_note)` with its normalized, non-empty
    reason. It does not apply the rejected patch.
-2. **Apply.** The chaperone applies the reviewed patch — the engine never touches the working
+2. **Build and record the normal reconciliation.** This step is mandatory for accepted `offload`,
+   `second-opinion`, and `divergence` units. `dispatch()` in §3 receives the unit's stable
+   `execution_id` and canonical `intent`; the returned immutable evidence carries its SHA-256 digest
+   and content-derived ordered source IDs. Claude builds one typed `ReconciliationItem` per source
+   (including explicit dropped/overridden outcomes), then builds a ready result with those exact
+   bindings. The caller records one transition per helper call, in order, and passes that same result
+   object to the gate:
+   ```python
+   result = reconcile.build_result(
+       reconciliation_id=reconciliation_id,
+       execution_id=evidence.execution_id,
+       intent=evidence.intent,
+       adjudicator_id="claude/<variant>",
+       evidence_digest=evidence.evidence_digest,
+       source_finding_ids=evidence.source_finding_ids,
+       items=typed_items,
+   )
+   reconcile.append_reconciliation_fact(
+       ledger, result, action="reconcile", subplot_id=subplot_id, at=reconciled_at,
+   )
+   engine_dispatch.satisfy_gate(
+       evidence, manifest, reconciliation=result, ledger=ledger, store=store,
+   )
+   ```
+   `manifest` is passed whenever it exists, and the `ledger`/`store` liveness pair is passed
+   together.
+3. **Apply.** Only after the gate accepts the bound result does the chaperone apply the reviewed patch
+   — the engine never touches the working
    tree (KTD6/R23). The chaperone **owns the commit**, but the commit itself happens only after
-   Test (step 3) and the empty-delivery check (step 3a) pass — apply and commit are distinct
+   Test (step 4) and the empty-delivery check (step 4a) pass — apply and commit are distinct
    steps of the same chaperone-owned sequence. This is the same file-edit scope every
    team-execution worker already has (`worker-manifest.md` "grants no privilege... workers keep
-   today's file-edit scope").
-3. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
-3a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
+   today's file-edit scope"). After the reviewed patch is applied, record the matching transition:
+   ```python
+   reconcile.append_reconciliation_fact(
+       ledger, result, action="apply", subplot_id=subplot_id, at=applied_at,
+   )
+   ```
+   Each append is independently lock-atomic, and `apply` requires exactly one matching prior
+   `reconcile`. The fact records the chaperone-controlled apply event; it never claims that the
+   external engine wrote the worktree.
+4. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
+4a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
    chaperone runs `check_empty_delivery.check_empty_delivery()` (or its CLI,
    `plugins/saga/scripts/check_empty_delivery.py --claims-delivery`) against the working tree. A
    unit whose evidence claims delivery but changed zero paths gets a HALT verdict — the chaperone
@@ -251,7 +294,7 @@ here.
    itself never commits and mints no new auto-commit machinery (none exists in this repo — `/optimize`
    deliberately shed its own). This is a distinct axis from `manifest_store.py`'s `missing-output`
    trip (`manifest_store.py:249-363`), which checks the returned-value axis, not file delivery.
-4. **Manifest and rejected-offload evidence.** One path, for every disposition —
+5. **Manifest and rejected-offload evidence.** One path, for every disposition —
    `ran-as-requested`, `fell-back-to-claude`, `substituted-engine`, and `rejected-offload` alike.
    The chaperone never branches into a second manifest constructor and never constructs
    `provenance_manifest.Manifest` directly; it always calls the existing builder, forwarding the
@@ -276,13 +319,15 @@ here.
    `record_dispatch_manifest` is the only manifest-construction call this contract documents.
 
    For `REJECTED_OFFLOAD`, the chaperone calls
-   `engine_dispatch.rejected_offload_reconciliation(...)`, then passes
+   `engine_dispatch.rejected_offload_reconciliation(..., intent=evidence.intent,
+   evidence=evidence)`, then passes
    `reconcile.reviewer_validator_evidence(result)` to both the reviewer and validator evidence
-   inputs. The result contains one typed `dropped` item whose rationale is the manifest's exact
-   rejection note. This recovers the failed quality check as second-opinion signal without giving
-   it authority: `satisfy_gate()` refuses `REJECTED_OFFLOAD` even when Claude verification and
-   observer corroboration are both present, and panel/advisory-reviewer restrictions remain
-   unchanged.
+   inputs. Passing the evidence retains the unit's canonical intent, immutable digest, and source
+   IDs; the result contains one typed `dropped` item per source whose rationale is the manifest's
+   exact rejection note. This recovers the failed quality check as review signal without giving it
+   authority or writing raw engine output to the ledger: `satisfy_gate()` refuses
+   `REJECTED_OFFLOAD` even when Claude verification and observer corroboration are both present, and
+   panel/advisory-reviewer restrictions remain unchanged.
 
    The fail-loud discriminator this feeds (#392): a substituted run is not a passing external
    result. `satisfy_gate()` (`engine_dispatch.py:664`) refuses a manifest whose disposition is

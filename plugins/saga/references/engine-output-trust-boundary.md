@@ -24,14 +24,24 @@ Advisory text must never be interpolated into these contexts verbatim:
 - Render advisory text as data in logs, Markdown, JSON, or review artifacts.
 - Escape only for the target renderer when escaping is needed for display.
 - Reject or refactor code that routes advisory text into a forbidden sink.
-- Derive gate status from typed fields such as `verified_by_claude`, observer corroboration, manifest
-  adjudication, or validator-owned status, never from advisory prose.
+- Derive gate status from a bound, ready typed reconciliation plus `verified_by_claude`, observer
+  corroboration, manifest adjudication, and validator-owned status, never from advisory prose.
 
 ## Current Gate Boundary
 
-`satisfy_gate()` remains content-blind by design. It can accept an `AdvisoryEvidence` value only after
-Claude verification and observer corroboration rules are satisfied. A malicious string inside
-`AdvisoryEvidence.evidence` does not become a verdict.
+`satisfy_gate()` remains content-blind by design. Its canonical call is
+`satisfy_gate(evidence, reconciliation=result, ...)`; the result is typed Claude adjudication, not
+engine prose. Before checking authority, the gate requires a ready, non-replayed result bound to the
+same dispatch `execution_id`, canonical intent and recipe, SHA-256 evidence digest, and ordered
+source-finding IDs. Non-empty evidence cannot use an empty item set, and a supplied manifest must name
+the same execution.
+
+After binding, the existing authority checks still require Claude verification and observer
+corroboration and still refuse panel/advisory-reviewer roles, rejected offloads, substituted,
+rejected, or proof-integrity manifests, bridge-liveness contradictions, and producer-claimed-only
+manifest claims. A malicious string inside `AdvisoryEvidence.evidence` remains inert data and never
+becomes a verdict. Reconciliation structure accounts for the string; it does not interpret the string
+as a gate token.
 
 ## Test Contract
 
@@ -40,4 +50,9 @@ Claude verification and observer corroboration rules are satisfied. A malicious 
 - contract anchors for this reference and Team Execution cross-references;
 - an AST guard over current Python call sites that flags advisory text flowing into forbidden sinks;
 - seeded unsafe fixtures that prove the guard turns red;
-- an adversarial `AdvisoryEvidence.evidence` payload that remains inert data through the gate path.
+- an adversarial `AdvisoryEvidence.evidence` payload that remains inert data through the bound
+  reconciliation gate path.
+
+`tests/test_saga_engine_dispatch.py` separately pins the gate contract: missing/not-ready results;
+execution, intent, recipe, digest, source-ID, manifest, and empty-item mismatches; replay refusal; and
+the existing Claude, observer, role, disposition, proof-integrity, liveness, and claim refusals.

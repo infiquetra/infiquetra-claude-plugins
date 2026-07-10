@@ -61,25 +61,61 @@ Checks:
 - `git diff --check`
   - passed
 
-### U6: Documentation, decision record, and release closure
+### U2: Canonical divergence intent and plan-time tier contract
 
-- Documented typed reconciliation facts, rejected-offload evidence, three-intent recipes,
-  `PANEL_N_CAP`, and read-only retro proposals across the run-fact and Team Execution contracts.
-- Recorded the binding intent-to-recipe decision, external-engine authority boundary, approval-only
-  learning rule, and fourth-intent revisit condition in the engineering journal.
-- Bumped fleet-core to `0.8.4`, Saga to `0.75.17`, and Team Execution to `2.14.3`, with synchronized
-  changelogs and marketplace metadata.
-- Updated version drift guard tests for the released contracts.
+- Added `divergence` to the fleet-core-owned canonical intent vocabulary.
+- Added the `opus / high` divergence policy and regenerated the plan skill's tier table from the
+  renderer.
+- Preserved omitted-intent `offload` behavior, selector XOR validation, plain-Claude serialization,
+  and upgrade-only segment intent ordering.
+- Added execution-spec, renderer, resolver, team/workflow emitter, and chaperone-economics coverage.
 
 Checks:
 
-- Full focused reconciliation matrix
-  - 485 passed
-- Release/package matrix
-  - 71 passed
-- Marketplace sync check
+- Focused U2 pytest matrix
+  - 338 passed
+- Narrow Ruff over U2 implementation and tests
   - passed
-- Release-surface parity
+- `git diff --check`
+  - passed
+
+### U3: Rejected-offload disposition and manifest evidence wiring
+
+- Added the `rejected-offload` disposition with a mandatory normalized non-empty note.
+- Extended the single manifest-builder precedence while preserving fallback, substitution,
+  delegation-integrity, unproven, proof-integrity, and requested-result ordering.
+- Projected rejection notes into typed dropped reconciliation items and explicit advisory
+  reviewer/validator evidence.
+- Preserved the structural rule that rejected, panel, or other advisory evidence cannot satisfy a
+  gate.
+- Updated the worker-manifest and external-engine chaperone contracts.
+
+Checks:
+
+- Focused U3 pytest matrix
+  - 108 passed
+- Targeted Ruff format and lint
+  - passed
+- `git diff --check`
+  - passed
+
+### U4: Bounded advisory-jury panel and foreman reconciliation
+
+- Added a separate `AdvisoryPanelRequest` contract and `PANEL_N_CAP = 7`.
+- Validated normalized role names, advisory/Claude-foreman role posture, zero membership, cap
+  overflow, and all-member availability before the first dispatch.
+- Reused `resolve_role()` and `panel_halt()` while preserving the existing single-resolution panel
+  role policy.
+- Deduplicated identical non-empty member evidence, retained explicit per-member empty evidence, and
+  required an exact typed Claude-foreman reconciliation before ledger append.
+- Persisted only typed reconcile/apply facts; raw member output remains transient and panel evidence
+  remains structurally non-gating.
+
+Checks:
+
+- Focused U4 pytest matrix
+  - 249 passed
+- Repository Ruff and targeted Ruff rerun
   - passed
 - `git diff --check`
   - passed
@@ -106,61 +142,25 @@ Checks:
 - `git diff --check`
   - passed
 
-### U4: Bounded advisory-jury panel and foreman reconciliation
+### U6: Documentation, decision record, and release closure
 
-- Added a separate `AdvisoryPanelRequest` contract and `PANEL_N_CAP = 7`.
-- Validated normalized role names, advisory/Claude-foreman role posture, zero membership, cap
-  overflow, and all-member availability before the first dispatch.
-- Reused `resolve_role()` and `panel_halt()` while preserving the existing single-resolution panel
-  role policy.
-- Deduplicated identical non-empty member evidence, retained explicit per-member empty evidence, and
-  required an exact typed Claude-foreman reconciliation before ledger append.
-- Persisted only typed reconcile/apply facts; raw member output remains transient and panel evidence
-  remains structurally non-gating.
+- Documented typed reconciliation facts, rejected-offload evidence, three-intent recipes,
+  `PANEL_N_CAP`, and read-only retro proposals across the run-fact and Team Execution contracts.
+- Recorded the binding intent-to-recipe decision, external-engine authority boundary, approval-only
+  learning rule, and fourth-intent revisit condition in the engineering journal.
+- Bumped fleet-core to `0.8.4`, Saga to `0.75.17`, and Team Execution to `2.14.3`, with synchronized
+  changelogs and marketplace metadata.
+- Updated version drift guard tests for the released contracts.
 
 Checks:
 
-- Focused U4 pytest matrix
-  - 249 passed
-- Repository Ruff and targeted Ruff rerun
+- Full focused reconciliation matrix
+  - 485 passed
+- Release/package matrix
+  - 71 passed
+- Marketplace sync check
   - passed
-- `git diff --check`
-  - passed
-
-### U3: Rejected-offload disposition and manifest evidence wiring
-
-- Added the `rejected-offload` disposition with a mandatory normalized non-empty note.
-- Extended the single manifest-builder precedence while preserving fallback, substitution,
-  delegation-integrity, unproven, proof-integrity, and requested-result ordering.
-- Projected rejection notes into typed dropped reconciliation items and explicit advisory
-  reviewer/validator evidence.
-- Preserved the structural rule that rejected, panel, or other advisory evidence cannot satisfy a
-  gate.
-- Updated the worker-manifest and external-engine chaperone contracts.
-
-Checks:
-
-- Focused U3 pytest matrix
-  - 108 passed
-- Targeted Ruff format and lint
-  - passed
-- `git diff --check`
-  - passed
-
-### U2: Canonical divergence intent and plan-time tier contract
-
-- Added `divergence` to the fleet-core-owned canonical intent vocabulary.
-- Added the `opus / high` divergence policy and regenerated the plan skill's tier table from the
-  renderer.
-- Preserved omitted-intent `offload` behavior, selector XOR validation, plain-Claude serialization,
-  and upgrade-only segment intent ordering.
-- Added execution-spec, renderer, resolver, team/workflow emitter, and chaperone-economics coverage.
-
-Checks:
-
-- Focused U2 pytest matrix
-  - 338 passed
-- Narrow Ruff over U2 implementation and tests
+- Release-surface parity
   - passed
 - `git diff --check`
   - passed
@@ -218,6 +218,30 @@ Checks:
 - `git diff --check`
   - passed
 
+### Documentation and release-contract remediation
+
+- Replaced stale one-argument gate guidance with the canonical bound reconciliation call and its
+  complete readiness, replay, Claude, observer, manifest, role, disposition, proof, liveness, and
+  claim refusals.
+- Added the normal three-intent chaperone reconciliation sequence and clarified canonical intent
+  retention for rejected offloads and transient raw panel output.
+- Aligned run-fact, worker-manifest, journal, and existing changelog entries with the bounded
+  structural projection, one-call transition semantics, `0600` lock custody, shared lower-level panel
+  policy, and UTF-8 byte caps.
+- Restored Completed Work chronology to U1 through U6 while preserving the review and remediation
+  evidence after the implementation record.
+
+Checks:
+
+- Saga/Team Execution documentation and package matrix
+  - 85 passed
+- Release guard test matrix
+  - 26 passed
+- Marketplace sync, release parity, and diff-aware release guard
+  - passed
+- `git diff --check`
+  - passed
+
 ## Next Step
 
-Complete documentation and chronology remediation, then re-engage only the five failed reviewers.
+Re-engage only the five failed reviewers against the remediated current SHA.

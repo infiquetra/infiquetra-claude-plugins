@@ -36,10 +36,11 @@ Per-kind payload fields (build with `build_fact(kind, subplot_id=, at=, **fields
   `net_savings_status`, and `external_cost_usd`
 - **delegation** — `evidence` (a **pointer/reference**, never inlined bytes), `engine`
 - **reconciliation** — stable `reconciliation_id`, source `execution_id`, canonical `intent`,
-  exhaustive `recipe_id`, Claude `adjudicator_id`, `action` (`reconcile` or `apply`), canonical
-  `result_hash`, and the bounded typed `result`. Each result item names its source finding, status
-  (`reconciled`, `dropped`, or `overridden`), Claude adjudicator, and non-empty rationale. The
-  reconciliation reader, rather than generic ledger code, validates this kind-specific schema.
+  exhaustive `recipe_id`, Claude `adjudicator_id`, bound `evidence_digest`, `action` (`reconcile` or
+  `apply`), canonical `result_hash`, ordered `source_finding_ids`, and a bounded structural `items`
+  projection containing only `source_finding_id` + status (`reconciled`, `dropped`, or `overridden`).
+  Raw engine/panel output and reconciliation rationales are deliberately absent. The reconciliation
+  reader, rather than generic ledger code, validates this kind-specific schema and transition order.
 
 `build_fact` rejects an unknown `kind`, an empty `subplot_id`, and any attempt to set the reserved
 `prev_hash`/`this_hash` fields.
@@ -90,12 +91,27 @@ Writers already wired (v1): `engine_dispatch.dispatch(..., ledger=, subplot_id=,
 no-op. `lifecycle_state.recommend_execution_backend(..., ledger=)` surfaces a `last_n_prior` "last N runs
 averaged X tokens" prior, additively (the `prior` key appears only when there is data).
 
-`reconcile.append_reconciliation_fact(...)` records separate `reconcile` and `apply` facts for one
-typed result after `ReconciliationResult.require_ready()` succeeds. The closed recipe registry maps
-each fleet-core intent exactly once: `offload` accounts for accepted, dropped, or overridden work;
-`second-opinion` independently adjudicates every review finding; and `divergence` requires explicit
-review of agreement as well as disagreement. Advisory-panel members are bounded by
-`PANEL_N_CAP = 7`; only their Claude-foreman reconciliation is recorded, never raw member output.
+Each `reconcile.append_reconciliation_fact(...)` invocation appends exactly **one** transition. The
+caller invokes it once with `action="reconcile"`, then once with `action="apply"`; the helper does not
+write both facts in one call or one transaction. For each invocation, one exclusive per-ledger lock
+covers torn-tail healing, the verified snapshot, result-identity/transition validation, tail-hash
+selection, and the append. `apply` requires exactly one prior `reconcile` for the same identity and
+result hash; duplicate reconcile/apply and apply-before-reconcile fail closed. A crash between calls
+honestly leaves a reconcile-only outcome rather than inventing an apply.
+
+The in-memory `ReconciliationResult` is bound and bounded before projection: identifiers are at most
+256 UTF-8 bytes, there are at most 256 sources/items, each rationale is at most 4096 bytes, and the
+canonical result is at most 65536 bytes. The ledger stores only the structural projection plus its
+canonical hash, evidence digest, and identities. Ledger and lock files are forced to mode `0600`, and
+read snapshots use the same advisory lock as appends so validation never races another writer.
+
+The closed recipe registry maps each fleet-core intent exactly once: `offload` accounts for accepted,
+dropped, or overridden work; `second-opinion` independently adjudicates every review finding; and
+`divergence` requires explicit review of agreement as well as disagreement. Advisory-panel shape is
+validated by the shared lower-level `engine_registry` policy: `PANEL_N_CAP = 7`, advisory verdict,
+Claude foreman, and normalized role. Dispatch additionally caps output at 64 KiB per member and
+256 KiB cumulatively. Only the bounded structural foreman projection is recorded, never raw member
+output.
 
 `reconcile.derive_recipe_update_proposal(...)` verifies the complete chain, validates reconciliation
 facts, and derives a `recipe_update_proposal.v1` view. A populated proposal always carries

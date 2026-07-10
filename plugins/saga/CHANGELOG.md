@@ -9,6 +9,9 @@
 - Preserve rejected offloads as non-gating reviewer/validator evidence and add a bounded
   `PANEL_N_CAP = 7` advisory-jury path that persists only Claude-foreman results.
 - Derive approval-gated `/retro` recipe-review proposals without mutating the ledger or registry.
+- Cycle-1 hardening binds every result to dispatch identity, intent, evidence digest, and source IDs;
+  stores only a bounded structural projection under `0600` locked ledger custody; enforces ordered
+  reconcile/apply transitions; and centralizes capped advisory-panel policy below the resolver.
 
 ## [0.75.16] - 2026-07-09
 

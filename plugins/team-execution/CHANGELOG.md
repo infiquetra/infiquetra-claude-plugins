@@ -12,6 +12,8 @@ All notable changes to this plugin are documented here.
   rejected-offload evidence and the `PANEL_N_CAP = 7` Claude-foreman boundary.
 - Clarify that reconciliation facts and approval-gated retro proposals remain advisory and never
   give an external engine, panel, manifest, or proposal gate authority.
+- Add the cycle-1 normal-build reconciliation sequence, immutable dispatch bindings, structural
+  ledger projection/lock contract, canonical rejected-intent retention, and shared panel/byte caps.
 
 ## [2.14.2] - 2026-07-09
 

@@ -43,12 +43,40 @@ registry pull request, and advisory standing still does not grant gate authority
 
 ## The advisory-evidence result type (R13 enforcement)
 
-`dispatch()` returns an `AdvisoryEvidence` — a value that carries `evidence`, `provenance`, a
-`verified_by_claude` flag (default `False`), and an optional `halt`. It carries **no gated-verdict
-field**. The structural guard is `satisfy_gate(evidence)`: it raises unless `verified_by_claude` is
-`True`. So external evidence cannot satisfy a gated return until a distinct Claude verification step
-has stamped it — a workflow cannot wire raw external output into a gate even by mistake. This is R13
-made structural rather than merely asserted.
+`dispatch()` returns an `AdvisoryEvidence` — a value that carries `evidence`, `provenance`, immutable
+dispatch `execution_id` and canonical `intent`, a SHA-256 `evidence_digest`, content-derived
+`source_finding_ids`, a `verified_by_claude` flag (default `False`), and an optional `halt`. It carries
+**no gated-verdict field**.
+
+The canonical guard call is:
+
+```python
+satisfy_gate(
+    evidence,
+    manifest,
+    reconciliation=result,
+    ledger=ledger,
+    store=store,
+)
+```
+
+`manifest` is optional only when no manifest exists; a caller that has one must pass it. `ledger` and
+`store` are an optional pair for bridge-liveness checking: pass both or neither. The same exact
+in-memory `result` that Claude built and that the worker recorded is passed as `reconciliation`.
+
+Before any older authority check, `satisfy_gate` requires that result to be ready and unused, and
+binds it exactly to the dispatch: the evidence has a non-empty `execution_id`; result and evidence
+match on `execution_id`, canonical `intent`, canonical recipe, evidence digest, and the ordered source
+finding IDs; every source is accounted for; and non-empty evidence has at least one typed item. A
+supplied manifest must name that same execution. Replaying an already-satisfied evidence/result pair
+is refused.
+
+Those binding checks do not replace the standing refusals. The function still rejects panel and
+advisory-reviewer roles, rejected-offload evidence, missing Claude verification, missing observer
+corroboration, substituted/rejected/proof-integrity manifests, proof-integrity failures, bridge-
+liveness contradictions, and producer-claimed-only manifest claims. External evidence therefore
+cannot satisfy a gated return until a distinct Claude adjudication produces a bound typed result and
+all existing authority checks pass. This is R13 made structural rather than merely asserted.
 
 ## Failure modes → halt + provenance
 
@@ -88,11 +116,11 @@ Degradation is durable, never silent.
 
 ## Backends
 
-Inline and cc-workflows dispatch are in scope: a wrapper subagent shells out to the engine's CLI.
-team-execution dispatch (R10/R12) is **deferred** — it needs an external-engine worker context-package
-slot that does not exist yet (`plugins/team-execution/skills/team-execution/SKILL.md`). Because external
-engines are never gatekeepers (R13/R15), they are off team-execution's critical path, so this deferral
-costs nothing today.
+Inline and cc-workflows dispatch use the same adapter. Team Execution routes an external-engine unit
+through a resident Claude chaperone using the context-package contract in
+`plugins/team-execution/skills/team-execution/references/external-engine-workers.md`. The engine still
+never joins residency or owns a gate; the chaperone dispatches, reconciles, calls the structural gate,
+applies as sole committer, tests, and writes the manifest.
 
 ## Proof-integrity attestation (#388)
 

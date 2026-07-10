@@ -110,6 +110,20 @@ the note nor its `dropped` item may satisfy a gate.
 
 The associated reconciliation result retains the unit's canonical intent. `offload`,
 `second-opinion`, and `divergence` each select exactly one Saga recipe; a manifest disposition does
-not replace or reinterpret that intent. Reconcile/apply facts and `/retro`'s
+not replace or reinterpret that intent. The dispatch/result/manifest chain is bound to one non-empty
+execution id, canonical intent and recipe, immutable evidence digest, and ordered content-derived
+source-finding IDs; rejected-offload evidence retains those same bindings and its original unit
+intent.
+
+The typed result is bounded to 256 UTF-8 bytes per identifier, 256 findings, 4096 bytes per rationale,
+and 65536 canonical bytes. Run-fact persistence is a smaller structural projection: identities,
+digest, statuses, and canonical result hash only — no raw engine/panel output or rationale text. Each
+reconcile/apply transition is appended from a verified snapshot under the per-ledger exclusive lock;
+ledger and lock files are mode `0600`, and transition order is exactly reconcile then at most one
+apply.
+
+Advisory-jury policy comes from the shared lower-level Saga engine registry, including
+`PANEL_N_CAP = 7`, advisory verdict, and Claude foreman. Dispatch adds 64 KiB per-member and 256 KiB
+cumulative UTF-8 output caps before the foreman runs. Reconcile/apply facts and `/retro`'s
 `approval_required` recipe-update proposals remain typed advisory evidence. They never grant the
 manifest, an external engine, a panel member, or a proposal gate authority.

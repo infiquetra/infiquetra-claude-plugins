@@ -764,6 +764,20 @@ def save(
     """
     moment = now or _utc_now()
     prior = restore(root, saga.saga_id)
+    # ``kind`` is a sticky identity field with no dataclass default, so _merge's default-equality
+    # carry-forward cannot protect it: an omitted --kind would stamp its resolved value over the
+    # prior tick's kind (issue-157 residual — a save with --saga-id but no --kind flipped a task
+    # saga to "issue"). When kind was not explicitly provided (absent from explicit_fields),
+    # inherit the prior tick's kind; an explicit kind that contradicts the prior is rejected,
+    # because identity is fixed at birth and a save must never silently flip it.
+    if prior is not None:
+        if "kind" not in explicit_fields:
+            saga = _replace(saga, kind=prior.kind)
+        elif saga.kind != prior.kind:
+            raise SagaSaveError(
+                f"--kind {saga.kind!r} contradicts saga {saga.saga_id}'s recorded kind "
+                f"{prior.kind!r}; kind is a sticky identity field fixed at birth"
+            )
     merged = _merge(prior, saga, moment, explicit_fields)
 
     git = current_git_state(root, runner=runner)
@@ -1336,8 +1350,14 @@ _SAVE_SCALAR_DEFAULTS: dict[str, Any] = {
 
 def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
     """Build the incoming tick + the set of scalar fields the operator explicitly set."""
-    saga_id = args.saga_id or derive_saga_id(args.kind, args.id)
+    # kind is a sticky identity field with no dataclass default; an omitted --kind resolves to
+    # "issue" for a NEW saga (needed to derive the id) but is carried forward from the prior tick
+    # for an existing --saga-id (resolved in save() via explicit_fields — issue-157 residual).
+    kind = args.kind if args.kind is not None else "issue"
+    saga_id = args.saga_id or derive_saga_id(kind, args.id)
     explicit = {name for name in _SAVE_SCALAR_DEFAULTS if getattr(args, name) is not None}
+    if args.kind is not None:
+        explicit.add("kind")
     scalars = {
         name: default if getattr(args, name) is None else getattr(args, name)
         for name, default in _SAVE_SCALAR_DEFAULTS.items()
@@ -1365,7 +1385,7 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         explicit.add("orchestration_mode")
     return Saga(
         saga_id=saga_id,
-        kind=args.kind,
+        kind=kind,
         id=str(args.id),
         lifecycle_phase=scalars["lifecycle_phase"],
         phase_status=scalars["phase_status"],
@@ -1409,7 +1429,10 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
 def _add_save_parser(sub: Any) -> None:
     p = sub.add_parser("save", help="Write a new immutable saga tick")
     p.add_argument("--saga-id", default="", help="Override derived saga id")
-    p.add_argument("--kind", choices=["issue", "task"], default="issue")
+    # default None (NOT "issue") so an omitted --kind on an existing --saga-id carries the prior
+    # tick's kind forward in save() instead of stamping "issue" over a task saga (issue-157
+    # residual). A new saga (no --saga-id) with no --kind resolves to "issue" in _build_save_saga.
+    p.add_argument("--kind", choices=["issue", "task"], default=None)
     p.add_argument("--id", required=True, help="Issue number or task slug")
     # Scalar state flags default to None (NOT their dataclass defaults) so an omitted
     # flag carries the prior tick's value forward while an EXPLICIT value equal to the

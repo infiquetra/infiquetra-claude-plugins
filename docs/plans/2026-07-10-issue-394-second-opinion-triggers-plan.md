@@ -120,12 +120,13 @@ is the durable consumer record for opinion text and Claude's decision.
 ## Key Technical Decisions
 
 **KTD1 — add one trigger coordinator, not a second transport:** Add
-`plugins/saga/scripts/second_opinion.py` as a typed coordination layer over `engine_offer.py`,
-`engine_recommend.py`, `engine_resolver.py`, `engine_dispatch.py`, and `reconcile.py`. It exposes pure
-prepare/detect/adjudicate/serialize functions; the Markdown stage remains the chaperone and invokes the
-already-installed wrapper selected by `resolution.invocation.via` (`codex:delegate`, `agy:delegate`, or the
-generic HTTP bridge). Tests inject the existing `Runner` seam. No cross-plugin Python import, raw provider
-CLI, provider-specific bridge, executor, residency, or Team Execution participant is added.
+`plugins/saga/scripts/second_opinion.py` as a typed coordination layer over `engine_recommend.py`,
+`engine_resolver.py`, `engine_dispatch.py`, and `reconcile.py`. It exposes pure
+prepare/detect/adjudicate/serialize functions; the Markdown stage retains `engine_offer` preference/prompt
+policy and passes an already-confirmed request to the coordinator. The stage invokes the already-installed
+wrapper selected by `resolution.invocation.via` (`codex:delegate`, `agy:delegate`, or the generic HTTP
+bridge). Tests inject the existing `Runner` seam. No cross-plugin Python import, raw provider CLI,
+provider-specific bridge, executor, residency, or Team Execution participant is added.
 
 **KTD2 — trigger intent is second-opinion or decline, with an explicit tier record:** A remembered stage
 preference of `none` may suppress the automatic stuck offer; a generic remembered `offload` choice is not a
@@ -148,7 +149,8 @@ one line: `Second opinion available: {target} failed after 3 fix attempts; dispa
 `docs/work-sessions/YYYY-MM-DD-<topic>.md`. It contains bounded attempts and offers, and the Markdown links
 it. Top-level fields are `{schema, round, attempts, offers}`; an attempt carries
 `{attempt_id, change_ref, result, failing_test_files}`; an offer carries
-`{offer_id, target, streak_epoch_attempt_id, disposition, tier, engine, execution_id}` with
+`{offer_id, target, streak_epoch_attempt_id, disposition, tier, engine, request_id, request_digest,
+execution_id}` with
 `disposition ∈ {offered,accepted,declined,unattended,unavailable}` and absent-tolerant post-acceptance
 fields. The stable offer key is
 `(round, target, streak_epoch_attempt_id)`, where the epoch is the first attempt after that target's last
@@ -160,9 +162,10 @@ its Stage-A `#N`; document review assigns `D<N>` after sorting by priority, sour
 one reviewed revision. Both may carry `external_opinion.state` in
 `{recommended,requested,available,unavailable,declined}`. The block's closed fields are `state`,
 `intent=second-opinion`, `role_kind=advisory-reviewer`, `requested_by ∈ {human,claude}`, `reason`,
-`chaperone_tier={model,effort}`, `engine_id`, `variant`, `egress_policy`, `execution_id`,
-`reconciliation_id`, `evidence_digest`, `findings`, `verified_by_claude`, and `status_note`; fields that do
-not yet exist for the current state are omitted rather than filled with fabricated values.
+`chaperone_tier={model,effort}`, `engine_id`, `variant`, `egress_policy`, `execution_id`, `request_id`,
+`request_digest`, `reconciliation_id`, `evidence_digest`, `findings`, `verified_by_claude`, and
+`status_note`; fields that do not yet exist for the current state are omitted rather than filled with
+fabricated values.
 `claude_adjudication` is absent until Claude acts and then carries `adjudicator_id`, `decision` in
 `{keep,downgrade,dismiss}`, `rationale`, `final_severity`, and
 `final_status ∈ {active,dismissed}`. Programmatic review emits `state=recommended`
@@ -178,32 +181,48 @@ retains the finding with `final_status=dismissed`. Mark immutable evidence revie
 `dataclasses.replace(evidence, verified_by_claude=True)`, never mutation.
 
 **KTD7 — verdict isolation is content-blind and v1 dispatch remains synchronous:**
-`engine_dispatch.dispatch()` accepts a validated additive `role_kind`, defaults to `worker`, and stamps it on
-every returned evidence path. Trigger calls use `advisory-reviewer` with `gated=False`. An accepted wrapper
+`engine_dispatch.dispatch()` accepts a validated additive `role_kind`, defaults to `worker`, validates the
+same closed resolver vocabulary in direct `AdvisoryEvidence` construction, and stamps it on every returned
+evidence path. Trigger calls use `advisory-reviewer` with `gated=False`; Codex and agy wrapper invocations
+use reviewer/read-only or reviewer/no-write posture rather than a worker/coder identity. An accepted wrapper
 call may run until its existing timeout, but timeout/halt/unavailable proceeds without an opinion; v1 adds no
 callback, polling, or late-result ingestion. Verdicts read only Claude-owned final severity/status and the
 existing `pre_existing` rule. Gate-shaped top-level runner keys are rejected, while the same words inside
 opinion prose remain escaped opaque data and cannot influence the formula.
 
 **KTD8 — the single-finding context package is bounded and egress-aware:** Send only stable finding ID,
-current severity/priority, why/evidence/suggested fix, reviewed revision, and bounded cited source excerpts;
-never forward the system prompt, conversation, unrelated findings, or discovered credential values. The
-context has at most 16 excerpts, 16 KiB per excerpt, and 128 KiB total, all measured as UTF-8 bytes before
-resolution; it also supplies the corresponding token estimate for the existing context-window halt. The
-stage sets `sensitive=true` when the operator marks it, the finding or excerpt contains credentials/secrets,
-or it contains private customer/tenant data; security-category alone is not a proxy when the excerpt has no
+current severity/priority, why/evidence/suggested fix, reviewed revision, request reason, and bounded cited
+source excerpts; never forward the system prompt, conversation, unrelated findings, or discovered credential
+values. Render those fields as canonical JSON and measure the entire rendered UTF-8 payload before
+resolution: at most 16 excerpts, 16 KiB per excerpt, and 128 KiB total. Its byte count is the conservative
+token estimate supplied to the existing context-window halt. `reason` and `status_note` cap at 4 KiB and
+1 KiB respectively; Claude adjudication rationale reuses #393's 4 KiB rationale cap. The stage sets
+`sensitive=true` when the operator marks it, the finding or excerpt contains credentials/secrets, or it
+contains private customer/tenant data; security-category alone is not a proxy when the excerpt has no
 sensitive data. Surface selected engine/variant plus egress policy before confirmation. Sensitive input
 first calls `engine_recommend.recommend()` with `capability=second-opinion`,
 `policy=cheapest-viable`, `min_rating=MODERATE`, and `sensitive=true`, and may dispatch only to a
 `local-only` eligible row; none currently exists, so that path returns unavailable rather than using a
-network provider.
+network provider. A conservative deterministic classifier runs before resolution: explicit operator marking
+always wins, and credential/secret signatures or private customer/tenant markers in any egressable finding,
+reason, or excerpt force the same local-only path.
 
-**KTD9 — artifact durability precedes the ledger's apply transition:** Build a stable request/offer and
-reconciliation ID before dispatch; retries with the same ID do not call the runner twice. Append the existing
-`reconcile` fact after a ready result, atomically write the enriched review artifact or work-session sidecar,
-then append `apply`. Programmatic `/code-review` returns the enriched in-memory envelope; `/work` owns its
-durable write and apply fact. Crash/retry tests cover every boundary, and `run_fact.v1` continues to omit raw
-opinion and rationale.
+**KTD9 — pre-dispatch reservation plus artifact durability prevents duplicate calls:** Derive stable
+request, execution, and reconciliation IDs from the canonical context and selected route. Before invoking a
+wrapper, atomically claim `state=requested`, the IDs, and the request digest in the durable consumer record;
+only the absence-to-requested owner may dispatch. A retry with the same digest sees the prior claim and never
+calls the runner again: if an available result is not already durable, it atomically becomes visible
+`unavailable` with an interrupted-dispatch note. The same ID with a different digest is a hard error.
+
+After a ready result, append `reconcile` only when an identical fact is not already present, atomically write
+the enriched review artifact or work-session sidecar, mark the matching claim `available`, then append
+`apply` only when its matching reconcile is present and apply is absent. Conflicting hashes remain hard
+errors. A crash before the raw opinion reaches that atomic artifact has no replayable result and becomes
+unavailable; a crash after that write resumes only the missing `available` or `apply` transition without a
+runner call. Programmatic `/code-review` returns a `recommended` in-memory envelope and cannot
+claim/dispatch until `/work` persists the request. Raw opinion and rationale remain in the enriched
+review/work artifact only; `run_fact.v1` stores identities, digests, statuses, and hashes but cannot replay a
+lost wrapper response.
 
 **KTD10 — execute through a root-owned Codex DAG, not a Claude-style agent team:** Saga records
 `orchestration_mode=inline`, while the root Codex thread owns dependency ordering, Saga state, shared-file
@@ -232,21 +251,29 @@ provenance, and serialization/validation for external opinion plus Claude adjudi
 
 **Files:** `plugins/saga/scripts/second_opinion.py` (new);
 `plugins/saga/scripts/engine_dispatch.py`; `plugins/saga/references/engine-dispatch.md`;
+`plugins/saga/references/engine-output-trust-boundary.md`;
 `tests/test_review_second_opinion.py` (new); `tests/test_saga_engine_dispatch.py`;
 `tests/test_engine_output_trust_boundary.py`.
 
-**Approach:** Prepare a single-finding request, classify sensitivity, resolve the permitted
-second-opinion route with `role_kind=advisory-reviewer` and `mode=dispatch`, and return the existing wrapper
-invocation plus stable request/execution identity to the stage. The stage invokes the named installed
-wrapper through its normal host surface; the coordinator validates the returned Runner contract and binds
+**Approach:** Prepare a single-finding request, render KTD8's canonical bounded context, classify
+sensitivity, and resolve the permitted second-opinion route with `role_kind=advisory-reviewer` and
+`mode=dispatch`. The stage atomically persists KTD9's requested projection before passing the existing
+wrapper runner to the coordinator; an existing identical claim refuses redispatch and becomes unavailable
+when no durable result can be recovered. The coordinator validates the returned Runner contract and binds
 successful typed findings to a ready #393 reconciliation. HTTP rows use the existing generic bridge runner;
-Codex and agy use their guarded delegate wrappers, never raw CLIs or imports across installed plugin roots.
+Codex and agy use their guarded reviewer/read-only or reviewer/no-write delegate posture, never raw CLIs or
+imports across installed plugin roots. An adapter maps established wrapper status vocabulary at this boundary;
+successful typed findings must already equal the exact canonical ordered envelope so raw-output attestation
+is not invalidated by a post-receipt rewrite.
 
-Add `role_kind` to `dispatch()` with validation against the resolver vocabulary and propagate it through
-every return path; retain `worker` as the default so existing callers are unchanged. The coordinator emits
-KTD5's exact optional projection and fixed state vocabulary. A halt, timeout, malformed response, sensitivity
-halt, or missing output becomes visible unavailable advisory evidence rather than a gate or silent Claude
-or network fallback. Append reconciliation/apply facts only in KTD9's order.
+Add `role_kind` to `dispatch()` with validation against the resolver vocabulary in both dispatch input and
+`AdvisoryEvidence`, then propagate it through every return path; retain `worker` as the default so existing
+callers are unchanged. Panel callers stamp `panel` through that same validated path. The coordinator emits
+KTD5's exact optional projection and fixed state vocabulary. A halt, timeout, malformed response, empty typed
+response, sensitivity halt, or missing output becomes visible unavailable advisory evidence rather than a
+gate or silent Claude or network fallback. Add the new opaque advisory fields and call sites to #385's
+trust-boundary table and AST guard. Reconciliation/artifact/availability/apply follow KTD9's idempotent
+order.
 
 **Patterns to follow:** `plugins/saga/scripts/engine_offer.py:163-207` for advisory stage policy;
 `plugins/saga/scripts/engine_resolver.py:330-407` for advisory-reviewer resolution;
@@ -259,12 +286,14 @@ or network fallback. Append reconciliation/apply facts only in KTD9's order.
 ordered typed `AdvisoryEvidence` stamped `advisory-reviewer`, reconciles every source ID, and serializes the
 bounded record. A halted, timed-out, empty, or malformed runner produces no adjudication and leaves the
 source finding unchanged. Invalid role kinds, mismatched finding IDs, duplicate source IDs, an unready
-reconciliation, 17th excerpt, 16 KiB + 1 excerpt, 128 KiB + 1 context, oversized returned findings, and
-runner-authored gatekeeper fields fail visibly. Exact cap values pass. A sensitive request with no
-local-only candidate produces no wrapper call. Gate-shaped words inside a typed finding remain inert opaque
-data. Existing callers that omit `role_kind` still return byte-equivalent worker evidence. Calling
-`satisfy_gate()` with the resulting advisory-reviewer evidence remains a hard refusal. A crash before the
-artifact write has no apply fact; a retry with the same request ID does not repeat dispatch.
+reconciliation, 17th excerpt, 16 KiB + 1 excerpt, 128 KiB + 1 canonical context, oversized returned
+findings, over-cap reason/status-note/adjudication rationale, and runner-authored gatekeeper fields fail
+visibly. Exact cap values pass. A sensitive request with no local-only candidate produces no resolver or
+wrapper call. Gate-shaped words inside a typed finding remain inert opaque data. Existing callers that omit
+`role_kind` still return byte-equivalent worker evidence. Calling `satisfy_gate()` with the resulting
+advisory-reviewer evidence remains a hard refusal. A crash after the requested claim or reconciliation but
+before the atomic raw-opinion artifact produces unavailable on retry with zero runner calls; a crash after
+that artifact write resumes only the missing availability/apply transition.
 
 **Verification:** Focused helper, dispatch, and reconciliation tests prove all engine calls use the shipped
 resolver/runner path, all returned findings are accounted for, and the new record cannot become a gate.
@@ -294,9 +323,9 @@ helper validates all fields and caps before evaluation; malformed or oversized s
 condition with no offer and no dispatch.
 
 When one target first reaches three, `/work` records the stable offer key and prints KTD3's exact line.
-Stored `none` suppresses this automatic offer; stored `offload` is not applicable. Acceptance records the
-tier/provider/egress choice and invokes U1 exactly once; decline, no response, unattended mode, or dispatch
-failure records a disposition and proceeds through current gates. A programmatic `/code-review` point-out
+Stored `none` suppresses this automatic offer; stored `offload` is not applicable. Acceptance atomically
+claims KTD9's requested state in the sidecar before invoking U1; decline, no response, unattended mode, or
+dispatch failure records a disposition and proceeds through current gates. A programmatic `/code-review` point-out
 arrives as `external_opinion.state=recommended` on the selected finding, and `/work` owns attended
 confirmation, durable enrichment, verdict recomputation, and the KTD9 apply transition.
 
@@ -344,10 +373,12 @@ asks first in interactive mode. Programmatic/report-only mode never prompts or d
 `/work` consumes a typed field instead of prose.
 
 For accepted interactive requests, build KTD8's single-finding context and surface provider/egress/tier
-before invoking U1. Claude verifies any available response against the source, creates a ready reconciliation,
-records `keep|downgrade|dismiss`, atomically persists the enriched artifact, then records apply. Stage B and
-verdict code use only `final_status`, `final_severity`, and existing `pre_existing`; recommended, requested,
-unavailable, declined, or omitted states are no-ops.
+before atomically persisting `state=requested` in the durable artifact. Only that claim owner invokes U1;
+a resumed unresolved claim becomes visible unavailable rather than repeating a wrapper call. Claude verifies
+any available response against the source, creates a ready reconciliation, records `keep|downgrade|dismiss`,
+atomically persists the enriched artifact, then records apply. Stage B and verdict code use only
+`final_status`, `final_severity`, and existing `pre_existing`; recommended, requested, unavailable, declined,
+or omitted states are no-ops.
 
 **Patterns to follow:** `plugins/saga/skills/code-review/SKILL.md:210-255` for Stage A/B ordering;
 `plugins/saga/skills/code-review/SKILL.md:271-302` for output persistence; and
@@ -386,8 +417,9 @@ durable output, and preserve Claude-owned readiness and safe-fix behavior.
 **Approach:** Sort by priority, normalized source anchor, then title and assign `D1..Dn` within the reviewed
 document revision. Reuse KTD5's exact blocks while keeping `/doc-review`'s native P0-P3 and artifact fields.
 A human `D<N>` point-out confirms; a Claude-originated suggestion prompts; report-only mode emits
-`state=recommended` only. Accepted requests use KTD8's bounded context and U1. Claude verifies available
-content, records its adjudication, atomically writes the enriched artifact, and only then records apply.
+`state=recommended` only. Accepted requests persist KTD9's `state=requested` claim before using KTD8's
+bounded context and U1; a resumed unresolved claim becomes unavailable without redispatch. Claude verifies
+available content, records its adjudication, atomically writes the enriched artifact, and only then records apply.
 Existing readiness and safe-in-place-fix rules consume final Claude priority/status; unavailable output is
 never a readiness prerequisite.
 
@@ -447,7 +479,7 @@ formatting, validation, and release tests pass before the full suite.
 
 ## System-Wide Impact
 
-The planned implementation touches 17 files across one plugin and five dependency-ordered units: eight
+The planned implementation touches 18 files across one plugin and five dependency-ordered units: nine
 runtime/user-contract files, five test files, three Saga release surfaces, and one journal record. It adds an
 additive Python API (`dispatch(role_kind=...)` plus the new coordinator), two optional review-record blocks,
 and one versioned work-session sidecar. Existing callers retain worker-role defaults, findings without
@@ -476,7 +508,7 @@ and splitting the release triad is forbidden by repository policy.
 | Repeated failures could spam offers or repeat calls after resume. | Persist attempt IDs and offered signatures in the work-session record; reset only on the documented pass/signature/round boundaries. |
 | Generic stored `offload` preference conflicts with the issue's fixed posture. | Constrain trigger choices to second-opinion/decline and test that offload never reaches dispatch. |
 | Code-review and doc-review output could drift semantically. | Reuse one typed projection and shared fixtures while keeping each native finding schema explicit. |
-| A crash could record an applied opinion without a durable finding. | Use stable request IDs and reconcile → atomic artifact write → apply ordering, with boundary/retry tests. |
+| A crash could duplicate an external call or record an applied opinion without a durable finding. | Atomically claim requested state before dispatch; an unresolved claim fails visible unavailable on retry, while reconcile → artifact write → apply resumes only missing matching transitions. |
 | Release version may move before implementation starts. | Derive the next Saga version from execution-time HEAD and update all triad surfaces atomically. |
 
 Current-source dependencies are already merged and live-verified on 2026-07-10: #451 provides stage offer
@@ -541,7 +573,7 @@ a Claude-style Agent Team runtime.
 ### Runtime Contract
 
 - Lifecycle destination: `merge`, carried from the resumed `issue-394` saga.
-- Shape recommendation: `team-execution`, because the plan spans 17 files and five units.
+- Shape recommendation: `team-execution`, because the plan spans 18 files and five units.
 - Operator-selected and effective Saga backend: `inline`, with a root-owned native Codex DAG.
 - Mechanical strategy: direct serial or parallel Codex child threads coordinated by the root.
 - Root authority: dependency barriers, Saga, shared-file integration, Git, focused and full verification,

@@ -14,10 +14,13 @@ The adapter dispatches to the wrapper each engine already owns — it does not r
 - **Codex** (`resolution.engine_id == "codex"`) → `codex:delegate`. The invocation carries
   `sandbox: read-only` (R23) and `task` set to `resolution.payload` **byte-for-byte** — the assembled
   protocol + context is forwarded verbatim, never paraphrased or shell-interpolated (R9/R11/AE5).
+  `advisory-reviewer` and `panel` dispatches additionally carry `role: reviewer`; ordinary workers omit
+  the field and retain their existing invocation bytes.
 - **agy** (`resolution.engine_id == "agy"`) → `agy:delegate`. The invocation is an
   `agy.delegation.v1` envelope with `mode: no-write` (R23), `task` = `resolution.payload`, and `model`
   set to the registry entry's **verbatim canonical string** (e.g. `Gemini 3.1 Pro (High)`), forwarded
-  byte-for-byte because agy's `--model` is passed through unmodified.
+  byte-for-byte because agy's `--model` is passed through unmodified. Worker/generator envelopes retain
+  `role: coder`; `advisory-reviewer` and `panel` use `role: reviewer` under the same no-write ceiling.
 - **Generic HTTP** (`transport == "http"`) → `engine-bridge-http`. The invocation carries the
   registry row's base URL, model, and bearer environment-variable name into the one generic
   OpenAI-compatible Chat Completions bridge. Provider-specific HTTP branches are forbidden; use the
@@ -44,9 +47,9 @@ registry pull request, and advisory standing still does not grant gate authority
 ## The advisory-evidence result type (R13 enforcement)
 
 `dispatch()` returns an `AdvisoryEvidence` — a value that carries `evidence`, `provenance`, immutable
-dispatch `execution_id` and canonical `intent`, a SHA-256 digest of the full evidence artifact, an
-ordered tuple of typed `SourceFinding` metadata, its ordered IDs, a `verified_by_claude` flag (default
-`False`), and an optional `halt`. It carries **no gated-verdict field**.
+dispatch `execution_id`, canonical `intent`, and resolver-validated `role_kind`, a SHA-256 digest of the
+full evidence artifact, an ordered tuple of typed `SourceFinding` metadata, its ordered IDs, a
+`verified_by_claude` flag (default `False`), and an optional `halt`. It carries **no gated-verdict field**.
 
 A runner's optional `findings` field is an ordered array of `{"content": <string>}` objects.
 Dispatch retains each bounded content string in-memory with immutable

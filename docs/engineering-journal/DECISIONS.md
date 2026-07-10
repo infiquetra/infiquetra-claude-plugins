@@ -9,9 +9,9 @@ present on `main`. The missing behavior is narrower: deterministic `/work` stuck
 single-finding dispatch in both review surfaces, and a durable Claude re-adjudication record.
 
 - **KTD1 - one trigger coordinator, existing host wrappers.** Add one Saga-local typed helper over
-  offer, sensitivity recommendation, resolver, dispatch, and #393 reconciliation. Markdown stages
-  remain chaperones and invoke the already-installed wrapper named by the resolution; the helper never
-  imports sibling plugin roots, calls raw provider CLIs, or creates a transport/executor/resident slot.
+  sensitivity recommendation, resolver, dispatch, and #393 reconciliation. Markdown stages retain offer
+  policy, remain chaperones, and invoke the already-installed wrapper named by the resolution; the helper
+  never imports sibling plugin roots, calls raw provider CLIs, or creates a transport/executor/resident slot.
 - **KTD2 - trigger intent is constrained and tier-visible.** The paths allow `second-opinion` or
   decline only. Remembered `none` may suppress the automatic stuck offer; generic `offload` never
   changes trigger semantics. Persist the `opus/high` recommendation and any explicit override; human
@@ -30,17 +30,25 @@ single-finding dispatch in both review surfaces, and a durable Claude re-adjudic
 - **KTD6 - reconciliation status is not review disposition.** Account every engine finding with
   `reconciled|dropped|overridden`; separately record Claude `keep|downgrade|dismiss`. Keep and downgrade
   remain active, dismiss retains nonblocking history, and immutable evidence is verified via replacement.
-- **KTD7 - verdict isolation is content-blind and synchronous.** Stamp `advisory-reviewer`; never use
-  `satisfy_gate()` as authority. Only Claude final severity/status plus existing pre-existing policy
-  enters the verdict. Gate-shaped object keys reject, while the same words in prose stay inert. V1 adds
-  no late-result callback or polling after the wrapper's existing timeout.
-- **KTD8 - context is bounded and egress-aware.** Send one finding plus reviewed revision and cited
-  excerpts, never the conversation/system prompt/unrelated findings/credential values. Classify
-  sensitivity and surface provider egress before confirmation; sensitive work requires an eligible
-  local-only row and otherwise halts with zero dispatch.
-- **KTD9 - durable artifact write precedes ledger apply.** Stable IDs make retries idempotent. Append
-  `reconcile` after a ready result, atomically write the enriched artifact/sidecar, then append `apply`.
-  Raw opinion and rationale remain outside `run_fact.v1`.
+- **KTD7 - verdict isolation is content-blind and synchronous.** Stamp a resolver-validated
+  `advisory-reviewer` on every dispatch and evidence construction; reviewer wrappers use read-only/no-write
+  posture, and `satisfy_gate()` remains a structural refusal. Only Claude final severity/status plus existing
+  pre-existing policy enters the verdict. Gate-shaped object keys reject, while the same words in prose stay
+  inert. V1 adds no late-result callback or polling after the wrapper's existing timeout.
+- **KTD8 - context is bounded and egress-aware.** Canonical JSON carries one finding, reviewed revision,
+  request reason, and cited excerpts, never the conversation/system prompt/unrelated findings/credential
+  values. Cap the whole rendered UTF-8 context at 128 KiB, 16 excerpts at 16 KiB each, reason at 4 KiB,
+  status note at 1 KiB, and adjudication rationale at #393's 4 KiB. A conservative pre-resolution scanner
+  treats operator-marked input, credential/secret signatures, and private customer/tenant markers in any
+  egressable content as sensitive. Surface provider egress before confirmation; sensitive work requires an
+  eligible local-only row and otherwise halts with zero dispatch.
+- **KTD9 - pre-dispatch reservation prevents duplicate wrapper calls.** Atomically write `requested` plus
+  stable IDs and request digest in the consumer artifact before the wrapper runs. Only its creator may
+  dispatch; a retry with an unresolved matching claim becomes visible unavailable rather than redispatching.
+  Then append an idempotent matching `reconcile`, atomically write the enriched artifact/sidecar, mark the
+  claim `available`, and append the missing `apply`. A crash before raw output reaches the artifact is
+  unavailable; after it reaches the artifact, only the marker/apply transitions resume. Raw opinion and
+  rationale remain outside `run_fact.v1`, which cannot replay a lost wrapper response.
 - **KTD10 - execute as a root-owned native Codex DAG, not a Claude-style team.** Saga writes
   `orchestration_mode=inline`; the root owns the U1 -> {U2, U3, U4} -> U5 barriers, Saga, shared writes,
   Git, and final acceptance. Bounded Codex children may explore, implement one owned slice, review, or

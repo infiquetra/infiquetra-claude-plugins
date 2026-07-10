@@ -123,6 +123,73 @@ def test_agy_envelope_is_no_write_and_forwards_model_verbatim() -> None:
     assert envelope["model"] == model
 
 
+def test_advisory_reviewer_uses_reviewer_wrapper_posture() -> None:
+    codex = D.build_codex_invocation(_resolution(), role_kind="advisory-reviewer")
+    agy = D.build_agy_envelope(
+        _resolution(engine_id="agy", variant="gemini-3.1-pro-high"),
+        model="Gemini 3.1 Pro (High)",
+        role_kind="advisory-reviewer",
+    )
+
+    assert codex["sandbox"] == "read-only"
+    assert codex["role"] == "reviewer"
+    assert agy["mode"] == "no-write"
+    assert agy["role"] == "reviewer"
+
+
+@pytest.mark.parametrize("status", ["ok", "timeout"])
+def test_dispatch_stamps_explicit_advisory_role_on_every_terminal_path(status: str) -> None:
+    runner = (
+        (lambda _invocation: _review_payload("review finding"))
+        if status == "ok"
+        else (lambda _invocation: {"status": status, "output": "wrapper stopped"})
+    )
+    evidence = D.dispatch(
+        _resolution(),
+        runner=runner,
+        execution_id=f"advisory-{status}",
+        intent="second-opinion",
+        role_kind="advisory-reviewer",
+    )
+
+    assert evidence.role_kind == "advisory-reviewer"
+
+
+def test_resolution_halt_preserves_explicit_advisory_role_without_runner() -> None:
+    evidence = D.dispatch(
+        _resolution(halt="preflight halted"),
+        runner=lambda _invocation: pytest.fail("halted resolution must not invoke runner"),
+        execution_id="advisory-halt",
+        intent="second-opinion",
+        role_kind="advisory-reviewer",
+    )
+
+    assert evidence.role_kind == "advisory-reviewer"
+    assert evidence.halt == "preflight halted"
+
+
+def test_invalid_role_rejects_before_runner_and_direct_evidence_construction() -> None:
+    called = False
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        nonlocal called
+        called = True
+        return {"status": "ok", "output": "should not run"}
+
+    with pytest.raises(D.DispatchError, match="role_kind"):
+        D.dispatch(_resolution(), runner=runner, role_kind="unknown")
+    assert called is False
+    with pytest.raises(D.DispatchError, match="role_kind"):
+        D.AdvisoryEvidence(
+            engine_id="codex",
+            variant="gpt-5.5-xhigh",
+            evidence="external finding",
+            provenance={"status": "ok"},
+            execution_id="invalid-role",
+            role_kind="unknown",
+        )
+
+
 @pytest.mark.parametrize(
     "status",
     ["timeout", "no-output", "error", "malformed", "clone-failed"],

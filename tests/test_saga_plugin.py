@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.75.21"  # pull-cord schema flat, no top-level oneOf (#364)
+    assert plugin_json["version"] == "0.75.22"  # advisory second-opinion triggers (#394)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -643,6 +643,82 @@ def test_work_engine_merge_contract() -> None:
     # qa/resume routing is advisory and lifecycle does not advance past work.
     assert "advisor" in corpus.lower()  # advisory qa/resume routing
     assert "lifecycle_phase" in corpus  # the phase the engine deliberately does not advance
+
+
+def test_work_second_opinion_trigger_contract_is_operator_confirmed_and_non_gating() -> None:
+    """Issue #394 keeps repeated-failure assistance typed, durable, and advisory-only."""
+    work = PLUGIN_ROOT / "skills" / "work"
+    skill_doc = _read(work / "SKILL.md")
+    continuation = _read(work / "references" / "pr-continuation-loop.md")
+    corpus = "\n".join((skill_doc, continuation))
+
+    for token in (
+        "saga.work-second-opinion.v1",
+        "WorkAttempt",
+        "record_work_attempt",
+        "save_work_second_opinion_state",
+        "accept_work_offer",
+        "dispatch_second_opinion",
+        "record_work_dispatch_outcome",
+        "complete_second_opinion",
+        "external_opinion.state=recommended",
+        "requested",
+        "available",
+        "apply",
+    ):
+        assert token in corpus
+    assert (
+        "Second opinion available: {target} failed after 3 fix attempts; "
+        "dispatch an advisory second opinion?"
+    ) in skill_doc
+    for boundary in (
+        "Never auto-dispatch.",
+        "zero runner calls",
+        "Only Claude-owned final status/severity",
+        "A remembered `offload` preference is not a\nvalid trigger route",
+    ):
+        assert boundary in corpus
+
+
+def test_review_second_opinion_contracts_preserve_native_findings_and_gate_authority() -> None:
+    """Issue #394 gives each review surface an exact optional advisory block, never a shared schema."""
+    code_review = PLUGIN_ROOT / "skills" / "code-review"
+    doc_review = PLUGIN_ROOT / "skills" / "doc-review"
+    code_skill = _read(code_review / "SKILL.md")
+    schema = _read(code_review / "references" / "findings-schema.md")
+    doc_skill = _read(doc_review / "SKILL.md")
+
+    for token in (
+        "Second-opinion point-out (after Stage A numbering)",
+        "stable `#N`",
+        "external_opinion.state=recommended",
+        "Review complete",
+        "keep`/`downgrade`/`dismiss",
+        "available`/`apply",
+        "Claude-owned final severity/status",
+    ):
+        assert token in code_skill
+    for token in (
+        "recommended | requested | available | unavailable | declined",
+        "intent: second-opinion",
+        "role_kind: advisory-reviewer",
+        "requested_by: human | claude",
+        "source_finding_id",
+        "keep|downgrade|dismiss",
+        "active|dismissed",
+        "256 KiB",
+    ):
+        assert token in schema
+    for token in (
+        "stable `D1..Dn`",
+        "`D<N>`",
+        "external_opinion.state=recommended",
+        "../code-review/references/findings-schema.md",
+        "Never auto-dispatch",
+        "late-result ingestion",
+        "Claude-owned final priority/status",
+    ):
+        assert token in doc_skill
 
 
 def test_loop_engine_merge_contract() -> None:

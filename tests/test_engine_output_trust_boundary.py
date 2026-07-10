@@ -17,6 +17,7 @@ import pytest
 ROOT = Path(__file__).parent.parent
 SCRIPT_DIR = ROOT / "plugins" / "saga" / "scripts"
 DISPATCH_SCRIPT = SCRIPT_DIR / "engine_dispatch.py"
+SECOND_OPINION_SCRIPT = SCRIPT_DIR / "second_opinion.py"
 TRUST_BOUNDARY_DOC = ROOT / "plugins" / "saga" / "references" / "engine-output-trust-boundary.md"
 TEAM_VALIDATOR_REGISTRY = (
     ROOT
@@ -37,7 +38,7 @@ TEAM_VALIDATOR_CRITERIA = (
     / "validator-criteria.md"
 )
 
-PYTHON_CALL_SITES = (DISPATCH_SCRIPT,)
+PYTHON_CALL_SITES = (DISPATCH_SCRIPT, SECOND_OPINION_SCRIPT)
 ADVISORY_TEXT_NAMES = {"advisory_text", "engine_output", "external_engine_output", "finding_text"}
 FORBIDDEN_CALLS = {
     "eval",
@@ -111,9 +112,9 @@ def _contains_advisory_text(node: ast.AST) -> bool:
         return True
     if (
         isinstance(node, ast.Attribute)
-        and node.attr == "evidence"
+        and node.attr in {"evidence", "content"}
         and isinstance(node.value, ast.Name)
-        and node.value.id in {"advisory", "evidence", "external", "finding"}
+        and node.value.id in {"advisory", "evidence", "external", "finding", "item", "excerpt"}
     ):
         return True
     return any(_contains_advisory_text(child) for child in ast.iter_child_nodes(node))
@@ -184,6 +185,7 @@ def test_contract_document_names_untrusted_fields_and_forbidden_sinks() -> None:
 
     for anchor in (
         "AdvisoryEvidence.evidence",
+        "external_opinion.findings[].content",
         "validator and reviewer finding text",
         "subprocess",
         "eval",
@@ -226,6 +228,17 @@ def test_lint_catches_interpolation() -> None:
 
     assert any("f-string" in reason for reason in reasons)
     assert any("forbidden sink subprocess.run" in reason for reason in reasons)
+
+
+def test_lint_catches_second_opinion_content_interpolation() -> None:
+    unsafe_source = """
+        def run_external_text(item):
+            return f"shell {item.content}"
+    """
+
+    reasons = [violation.reason for violation in _violations(unsafe_source)]
+
+    assert "advisory text interpolated into f-string" in reasons
 
 
 def test_lint_catches_gate_token_comparison() -> None:

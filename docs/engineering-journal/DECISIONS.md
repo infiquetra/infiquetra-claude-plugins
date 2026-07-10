@@ -1,5 +1,73 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-10
+
+### Issue #394 adds trigger-specific second opinions without changing gate authority {#work-review-second-opinion-394}
+
+**Context.** Issue #394 predates the shared engine-offer helper and typed reconciliation work now
+present on `main`. The missing behavior is narrower: deterministic `/work` stuck detection,
+single-finding dispatch in both review surfaces, and a durable Claude re-adjudication record.
+
+- **KTD1 - one trigger coordinator, existing host wrappers.** Add one Saga-local typed helper over
+  sensitivity recommendation, resolver, dispatch, and #393 reconciliation. Markdown stages retain offer
+  policy, remain chaperones, and invoke the already-installed wrapper named by the resolution; the helper
+  never imports sibling plugin roots, calls raw provider CLIs, or creates a transport/executor/resident slot.
+- **KTD2 - trigger intent is constrained and tier-visible.** The paths allow `second-opinion` or
+  decline only. Remembered `none` may suppress the automatic stuck offer; generic `offload` never
+  changes trigger semantics. Persist the `opus/high` recommendation and any explicit override; human
+  point-out confirms, Claude prompts, and programmatic review emits a typed recommendation only.
+- **KTD3 - stuck is a target-specific three-fix streak.** Count distinct applied-fix/test attempts,
+  not reruns. A pass resets all targets; a target's absence resets only that target, so incidental
+  failures cannot hide a persistent file. The lexical first target wins and emits one fixed line.
+- **KTD4 - work debounce is a versioned durable sidecar.** Store bounded attempts/offers in
+  `saga.work-second-opinion.v1` beside the linked work-session. Stable key is
+  `(round,target,streak_epoch_attempt_id)`; writes are atomic, malformed/over-cap state fails closed,
+  and resume cannot repeat an accepted or declined offer.
+- **KTD5 - native review schemas share one exact optional projection.** Code review binds Stage-A
+  `#N`; doc review deterministically assigns `D<N>`. Both use the closed opinion-state and final-status
+  vocabularies. Available content is the canonical typed-finding list under #393's 256 KiB cap;
+  programmatic review places `state=recommended` on the finding rather than emitting prose to parse.
+- **KTD6 - reconciliation status is not review disposition.** Account every engine finding with
+  `reconciled|dropped|overridden`; separately record Claude `keep|downgrade|dismiss`. Keep and downgrade
+  remain active, dismiss retains nonblocking history, and immutable evidence is verified via replacement.
+- **KTD7 - verdict isolation is content-blind and synchronous.** Stamp a resolver-validated
+  `advisory-reviewer` on every dispatch and evidence construction; reviewer wrappers use read-only/no-write
+  posture, and `satisfy_gate()` remains a structural refusal. Only Claude final severity/status plus existing
+  pre-existing policy enters the verdict. Gate-shaped object keys reject, while the same words in prose stay
+  inert. V1 adds no late-result callback or polling after the wrapper's existing timeout.
+- **KTD8 - context is bounded and egress-aware.** Canonical JSON carries one finding, reviewed revision,
+  request reason, and cited excerpts, never the conversation/system prompt/unrelated findings/credential
+  values. Cap the whole rendered UTF-8 context at 128 KiB, 16 excerpts at 16 KiB each, reason at 4 KiB,
+  status note at 1 KiB, and adjudication rationale at #393's 4 KiB. A conservative pre-resolution scanner
+  treats operator-marked input, credential/secret signatures, and private customer/tenant markers in any
+  egressable content as sensitive. Surface provider egress before confirmation; sensitive work requires an
+  eligible local-only row and otherwise halts with zero dispatch.
+- **KTD9 - pre-dispatch reservation prevents duplicate wrapper calls.** Atomically write `requested` plus
+  stable IDs and request digest in the consumer artifact before the wrapper runs. Only its creator may
+  dispatch; a retry with an unresolved matching claim becomes visible unavailable rather than redispatching.
+  Then append an idempotent matching `reconcile`, atomically write the enriched artifact/sidecar, mark the
+  claim `available`, and append the missing `apply`. A crash before raw output reaches the artifact is
+  unavailable; after it reaches the artifact, only the marker/apply transitions resume. Raw opinion and
+  rationale remain outside `run_fact.v1`, which cannot replay a lost wrapper response.
+- **KTD10 - execute as a root-owned native Codex DAG, not a Claude-style team.** Saga writes
+  `orchestration_mode=inline`; the root owns the U1 -> {U2, U3, U4} -> U5 barriers, Saga, shared writes,
+  Git, and final acceptance. Bounded Codex children may explore, implement one owned slice, review, or
+  validate, but they do not form a named team, write Saga, commit, or gate completion. Shared-worktree
+  writes stay single-writer; the operator explicitly chose this over the shape recommender's
+  `team-execution` result, following the root-owned workflow pattern approved in
+  `infiquetra-codex-plugins@3f63910`.
+
+**Plan.** `docs/plans/2026-07-10-issue-394-second-opinion-triggers-plan.md`.
+
+**Status.** Shipped in Saga 0.75.22. The implementation adds the bounded typed coordinator, atomic
+requested/available claim flow, deterministic sensitive-content classification, `/work` sidecar debounce,
+and native code-review/doc-review point-out contracts. External output remains advisory and opaque; only
+Claude's final finding state can affect a gate.
+
+**Revisit when.** A later objective wants automatic dispatch, cross-stage shared finding-schema
+unification, or aggregate usefulness measurement. Each is separately scoped and must preserve the
+binding [external engines are never gatekeepers](#external-engines-never-gatekeepers) rule.
+
 ## 2026-07-09
 
 ### Typed reconciliation reuses the run-fact ledger and keeps policy changes approval-only {#typed-second-opinion-reconciliation-393}

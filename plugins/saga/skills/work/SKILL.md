@@ -81,6 +81,49 @@ offload while judgment work stays advisory. If the helper reports `prompt_requir
 operator prompt and persists the selected preference with `engine_offer.py remember`. The offer never
 dispatches by itself, never replaces `/work`'s backend choice, and never satisfies a gate.
 
+## Second-opinion triggers
+
+Issue-specific or plan-specific work may add an advisory second-opinion trigger, but it never changes the
+Engine Offer choices into a generic offload path. For a repeated-test-failure trigger, create the Markdown
+work-session and its adjacent `saga.work-second-opinion.v1` sidecar together:
+
+```text
+docs/work-sessions/YYYY-MM-DD-<topic>.md
+docs/work-sessions/YYYY-MM-DD-<topic>-second-opinion.json
+```
+
+Use `second_opinion.WorkAttempt`, `load_work_second_opinion_state`,
+`record_work_attempt`, and `save_work_second_opinion_state`. Record an attempt only after one applied fix
+and its following test run; a rerun must reuse its `attempt_id` and is a no-op. Normalize pytest node IDs to
+their repo-relative `.py` file target. Absolute paths, traversal, unparseable targets, malformed sidecars,
+and over-cap history are visible fail-closed conditions: do not offer or dispatch.
+
+The detector tracks each target independently. A pass resets every streak; a target missing from a failed run
+resets only that target; unrelated extra failures do not reset a persistent target. On the first three-fix
+streak, print exactly this one line and persist its offer key before asking:
+
+```text
+Second opinion available: {target} failed after 3 fix attempts; dispatch an advisory second opinion?
+```
+
+The `none` work preference suppresses only this automatic offer. A remembered `offload` preference is not a
+valid trigger route and cannot change it from `second-opinion`. Do not write a permanent preference because
+the operator declined one offer. No answer or unattended mode records `unattended`; decline records
+`declined`; both proceed through the existing work gates with zero runner calls.
+
+For explicit acceptance, first call `prepare_second_opinion`, then use `accept_work_offer` and atomically
+save the sidecar before invoking `dispatch_second_opinion`. The U1 claim store takes its own durable
+`requested` reservation immediately before the wrapper; only that owner can call the runner. An unavailable,
+halted, timeout, empty, or malformed response calls `record_work_dispatch_outcome` and atomically saves
+`unavailable` before the current work verdict and next fix decision proceed unchanged. Never auto-dispatch.
+
+When `/code-review` returns a selected finding with
+`external_opinion.state=recommended`, treat it as a typed advisory recommendation, not prose to parse. In
+attended mode, ask the same confirmation before acceptance. `/work` owns the full durable completion:
+Claude validates every returned typed finding, records `keep`, `downgrade`, or `dismiss`, atomically writes
+the enriched consumer artifact, then calls `complete_second_opinion` for the matching `available` and
+`apply` transitions. Only Claude-owned final status/severity feeds the existing next-fix and verdict logic.
+
 ---
 
 ## Phase 0 — Enter, scan the saga, triage, detect round-N

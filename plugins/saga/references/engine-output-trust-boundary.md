@@ -8,6 +8,7 @@ path, gate token, or verifier-of-record decision.
 | Field | Source | Required handling |
 | --- | --- | --- |
 | `AdvisoryEvidence.evidence` | `plugins/saga/scripts/engine_dispatch.py` | Render as opaque evidence data. Do not parse it for gate status, shell commands, or write paths. |
+| `external_opinion.findings[].content` | `plugins/saga/scripts/second_opinion.py` and the enriched review/work artifact | Render as opaque evidence data only. It may be serialized under the selected finding, but never becomes a command, path, gate token, or Claude adjudication rationale. |
 | Team Execution validator and reviewer finding text | `plugins/team-execution/skills/team-execution/references/validator-registry.md` and `validator-criteria.md` | Render as opaque finding data. Claude and required validators own gate interpretation; external text never supplies the gate token. |
 
 ## Forbidden Sinks

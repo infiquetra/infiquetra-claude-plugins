@@ -7,7 +7,7 @@ import contextlib
 import hashlib
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -75,6 +75,11 @@ class AdvisoryEvidence:
     runner_receipt: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
+        if self.role_kind not in engine_resolver.ROLE_KINDS:
+            raise DispatchError(
+                f"advisory evidence role_kind {self.role_kind!r} not in "
+                f"{engine_resolver.ROLE_KINDS}"
+            )
         try:
             reconcile.recipe_for_intent(self.intent)
         except reconcile.ReconciliationError as exc:
@@ -176,7 +181,12 @@ _INTEGRITY_REASON = (
 )
 
 
-def build_codex_invocation(resolution: Resolution, *, sandbox: Any = None) -> dict[str, Any]:
+def build_codex_invocation(
+    resolution: Resolution,
+    *,
+    sandbox: Any = None,
+    role_kind: str = "worker",
+) -> dict[str, Any]:
     """Build a read-only codex:delegate invocation with a verbatim task payload.
 
     codex has no write adapter (#287 KTD4): ``sandbox: "read-only"`` is its only supported posture.
@@ -189,11 +199,14 @@ def build_codex_invocation(resolution: Resolution, *, sandbox: Any = None) -> di
             "(#287 R6/KTD4 halt-not-downgrade) -- route write-mode work to agy, or drop the "
             "sandbox to run codex read-only"
         )
-    invocation = {
+    _validate_role_kind(role_kind)
+    invocation: dict[str, Any] = {
         "via": "codex:delegate",
         "task": resolution.payload,
         "sandbox": "read-only",
     }
+    if role_kind in {"advisory-reviewer", "panel"}:
+        invocation["role"] = "reviewer"
     _assert_payload_preserved(invocation["task"], resolution.payload)
     return invocation
 
@@ -204,6 +217,7 @@ def build_agy_envelope(
     model: Any,
     sandbox: Any = None,
     write_set: list[str] | None = None,
+    role_kind: str = "worker",
 ) -> dict[str, Any]:
     """Build an agy delegation envelope with a verbatim task payload.
 
@@ -214,6 +228,7 @@ def build_agy_envelope(
     ``apply_policy: "preserve-patch"``. No new isolation is built -- the remotes-stripped disposable
     clone agy already sets up is the workspace, and preserve-patch was already the apply policy.
     """
+    _validate_role_kind(role_kind)
     if _sandbox_requests_writes(sandbox):
         mode = "patch-only"
         allowed_writes = list(write_set or [])
@@ -222,7 +237,7 @@ def build_agy_envelope(
         allowed_writes = []
     envelope = {
         "schema": "agy.delegation.v1",
-        "role": "coder",
+        "role": "reviewer" if role_kind in {"advisory-reviewer", "panel"} else "coder",
         "mode": mode,
         "task": resolution.payload,
         "model": model,
@@ -258,6 +273,7 @@ def dispatch(
     economics: dict[str, Any] | None = None,
     execution_id: str = "",
     intent: str = "offload",
+    role_kind: str = "worker",
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Run an external engine adapter and return advisory evidence only.
 
@@ -305,6 +321,7 @@ def dispatch(
         reconcile.recipe_for_intent(intent)
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"dispatch intent is invalid: {exc}") from exc
+    _validate_role_kind(role_kind)
     if resolution.halt is not None:
         halted_provenance: dict[str, Any] = {
             "engine": resolution.engine_id,
@@ -321,6 +338,7 @@ def dispatch(
             provenance=halted_provenance,
             execution_id=execution_id,
             intent=intent,
+            role_kind=role_kind,
             halt=resolution.halt,
         )
 
@@ -349,10 +367,17 @@ def dispatch(
                 provenance=economics_provenance,
                 execution_id=execution_id,
                 intent=intent,
+                role_kind=role_kind,
                 halt=economics_decision.status,
             )
 
-    invocation = _build_invocation(resolution, model=model, sandbox=sandbox, write_set=write_set)
+    invocation = _build_invocation(
+        resolution,
+        model=model,
+        sandbox=sandbox,
+        write_set=write_set,
+        role_kind=role_kind,
+    )
 
     # Arm the delegation-liveness marker BEFORE the adapter runs (KTD4: arming authority is
     # the dispatch layer) and disarm in a finally. Arming failure is fail-open but NAMED:
@@ -447,6 +472,7 @@ def dispatch(
                     provenance=provenance,
                     execution_id=execution_id,
                     intent=intent,
+                    role_kind=role_kind,
                     halt=reason,
                     runner_receipt=runner_receipt,
                 )
@@ -465,6 +491,7 @@ def dispatch(
                 provenance=provenance,
                 execution_id=execution_id,
                 intent=intent,
+                role_kind=role_kind,
                 halt=note,
                 runner_receipt=runner_receipt,
             )
@@ -483,6 +510,7 @@ def dispatch(
             provenance=provenance,
             execution_id=execution_id,
             intent=intent,
+            role_kind=role_kind,
             source_findings=source_findings,
             runner_output_digest=reconcile.evidence_digest(output),
             runner_output_bytes=len(output.encode("utf-8")),
@@ -500,6 +528,7 @@ def dispatch(
             provenance=provenance,
             execution_id=execution_id,
             intent=intent,
+            role_kind=role_kind,
             halt=note,
             runner_receipt=runner_receipt,
         )
@@ -559,10 +588,16 @@ def dispatch_advisory_panel(
     member_evidence: list[AdvisoryEvidence] = []
     total_output_bytes = 0
     for resolution in resolutions:
-        dispatched = dispatch(resolution, runner=runner, execution_id=execution_id, intent=intent)
+        dispatched = dispatch(
+            resolution,
+            runner=runner,
+            execution_id=execution_id,
+            intent=intent,
+            role_kind="panel",
+        )
         if isinstance(dispatched, RequeueDisposition):
             raise DispatchError("advisory panel dispatch unexpectedly requested a gated requeue")
-        panel_evidence = replace(dispatched, role_kind="panel")
+        panel_evidence = dispatched
         if panel_evidence.halt is not None:
             raise DispatchError(
                 "advisory panel member failed; no reconciliation fact was written: "
@@ -1442,6 +1477,7 @@ def _build_invocation(
     model: Any | None,
     sandbox: Any = None,
     write_set: list[str] | None = None,
+    role_kind: str = "worker",
 ) -> dict[str, Any]:
     # Transport-keyed branch (KTD1): a row carrying http-transport invocation data dispatches
     # through the generic bridge; the cli arm keeps the existing codex/agy builders unchanged.
@@ -1449,9 +1485,15 @@ def _build_invocation(
     if row.get("via") == "engine-bridge-http":
         return build_http_invocation(resolution)
     if resolution.engine_id == "codex":
-        return build_codex_invocation(resolution, sandbox=sandbox)
+        return build_codex_invocation(resolution, sandbox=sandbox, role_kind=role_kind)
     if resolution.engine_id == "agy":
-        return build_agy_envelope(resolution, model=model, sandbox=sandbox, write_set=write_set)
+        return build_agy_envelope(
+            resolution,
+            model=model,
+            sandbox=sandbox,
+            write_set=write_set,
+            role_kind=role_kind,
+        )
     raise DispatchError(f"unsupported external engine {resolution.engine_id!r}")
 
 
@@ -1467,6 +1509,11 @@ def _sandbox_requests_writes(sandbox: Any) -> bool:
         and getattr(sandbox, "is_restrictive", False)
         and getattr(sandbox, "mutation_policy", None) == "read-write"
     )
+
+
+def _validate_role_kind(role_kind: str) -> None:
+    if role_kind not in engine_resolver.ROLE_KINDS:
+        raise DispatchError(f"role_kind {role_kind!r} not in {engine_resolver.ROLE_KINDS}")
 
 
 def _assert_payload_preserved(task: Any, payload: str) -> None:

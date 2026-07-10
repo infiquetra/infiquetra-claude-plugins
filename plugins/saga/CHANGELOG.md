@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.75.20] - 2026-07-10
+
+### Fixed - `save --kind` no longer silently flips a saga's identity kind
+
+- `saga.py save --saga-id task-foo --id foo` with `--kind` omitted no longer stamps `kind: issue`
+  over a prior `task` saga. `--kind` argparse-defaulted to `"issue"` and `kind` (a sticky identity
+  field) has no dataclass default, so `_merge`'s default-equality carry-forward could never fire
+  for it and the resolved default always won — the last deliberately-unfixed residual of the
+  issue-157 absent-vs-default audit (0.75.18).
+- `--kind` now defaults to `None`. An omitted `--kind` on an existing `--saga-id` carries the
+  prior tick's kind forward in `save()` (via the `explicit_fields` set from 0.75.18); a new saga
+  with no `--kind` still resolves to `"issue"` in `_build_save_saga` to derive its id. An explicit
+  `--kind` that contradicts the prior tick's recorded kind is now rejected (exit 2) rather than
+  applied, since identity is fixed at birth.
+- Regression tests pin omitted-`--kind` task-kind preservation and explicit-contradiction
+  rejection (`tests/test_saga_saga.py`); programmatic `save()` callers that pass no
+  `explicit_fields` now inherit the prior tick's kind instead of overwriting it.
+
 ## [0.75.19] - 2026-07-10
 
 ### Fixed - pull-cord unit schemas rejected at agent dispatch (#364)

@@ -27,6 +27,39 @@
 
 ## 2026-07-10
 
+### A field with no dataclass default is invisible to default-equality carry-forward {#save-kind-identity-carry-forward}
+
+**Context.** The 0.75.18 fix (`{#save-explicit-vs-default-ambiguity}`) made every scalar save flag
+argparse-default to `None` and threaded an `explicit_fields` set through `_merge`, but explicitly
+left `--kind` as a known residual. `kind` is a sticky identity field declared `kind: str` with no
+`=` default.
+**Evidence.** `saga.py save --saga-id task-foo --id foo` with `--kind` omitted stamped `kind: issue`
+into a prior `task` saga's next tick, silently flipping its identity. Root cause at
+`plugins/saga/scripts/saga.py` — `--kind` argparse-defaulted to `"issue"` and `_merge`'s scalar
+carry-forward keys on `inc_value == defaults.get(name)`.
+**Mechanism.** `fields(Saga)` reports a no-default field's default as `dataclasses.MISSING`, which
+no real string ever equals. So the carry-forward branch (`inc_value == default`) can *never* fire
+for `kind` — the incoming value always wins, and an omitted `--kind` therefore stamps its resolved
+argparse default over the prior. `explicit_fields` (0.75.18) protects fields that *have* a default;
+it did nothing for `kind` because the default-equality test it bypasses never matched anyway.
+**Fix.** `--kind` now argparse-defaults to `None`; `_build_save_saga` resolves omission to `"issue"`
+only when deriving a NEW saga's id, and marks `kind` explicit only when actually provided. `save()`
+carries the prior tick's kind forward when `kind` is absent from `explicit_fields`, and rejects
+(exit 2) an explicit `--kind` that contradicts the prior — identity is fixed at birth. saga 0.75.20.
+**Validation.** `tests/test_saga_saga.py::test_cli_save_omitted_kind_preserves_prior_task_kind`
+(task kind survives an omitted `--kind`) and `::test_cli_save_explicit_kind_contradicting_prior_is_rejected`
+(exit 2, prior untouched); full `test_saga_saga.py` 88/88 green.
+**What surprised.** The `explicit_fields` mechanism *looked* general enough to cover `kind`, but it
+only bypasses a comparison that was already vacuously false for a no-default field. The identity
+carry-forward had to live at the engine layer (`save()`, keyed on `explicit_fields` membership),
+not ride the default-equality path in `_merge`.
+**Generalizable rule.** Default-equality carry-forward is defined only for fields that *have* a
+default. A no-default (identity) field is invisible to it — `MISSING` matches nothing — so
+"omitted means carry forward" must be signalled by explicitness membership, not value comparison.
+Fix identity residuals at the layer that holds the prior (restore/merge), not at the parse boundary.
+**Refs.** saga CHANGELOG 0.75.20; supersedes the `--kind` residual noted in
+`{#save-explicit-vs-default-ambiguity}`; issue-157.
+
 ### Bare top-level `oneOf` schemas die at agent dispatch, not at emit or validate {#toplevel-oneof-schema-dispatch-400}
 
 **Context.** The execution-spec emitter gives pull-cord-capable (cheap-tier) units a union
@@ -83,11 +116,11 @@ local to the field that hurt first instead of becoming the rule for the whole fl
 **Generalizable rule.** "Incoming == default means not provided" is only sound when the default is
 outside the meaningful value-space. For CLI-to-merge pipelines, capture explicitness at the parse
 boundary (default `None` / sentinel) and thread it through — never re-derive it from value
-equality downstream. Residual known gaps, deliberately unfixed here: scalar string flags
-defaulting `""` cannot express "clear this field" (omit and explicit-empty both carry forward),
-and `--kind`'s argparse default `"issue"` stamps over a prior `task` kind when `--saga-id` is
-passed explicitly (no dataclass default, so incoming always wins).
-**Refs.** saga CHANGELOG 0.75.18.
+equality downstream. Residual known gap, deliberately unfixed here: scalar string flags
+defaulting `""` cannot express "clear this field" (omit and explicit-empty both carry forward).
+The `--kind` residual (argparse default `"issue"` stamping over a prior `task` kind) is now fixed
+in 0.75.19 — see `{#save-kind-identity-carry-forward}`.
+**Refs.** saga CHANGELOG 0.75.18; `{#save-kind-identity-carry-forward}` (the --kind follow-up).
 
 ## 2026-07-09
 

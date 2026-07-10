@@ -852,6 +852,69 @@ def test_cli_save_omitted_status_still_carries_prior_forward(
     assert saga.restore(tmp_path, "issue-42").status == "paused"
 
 
+def test_cli_save_omitted_kind_preserves_prior_task_kind(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A save with --saga-id and NO --kind must not flip a task saga to "issue".
+
+    Regression (issue-157 residual, saga 0.75.19): --kind argparse-defaulted to
+    "issue" and kind has no dataclass default, so _merge's default-equality
+    carry-forward never fired for it — an omitted --kind stamped "issue" over a
+    prior task saga's sticky identity kind.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    # Birth a task saga.
+    rc, payload = _run_main(saga, ["save", "--kind", "task", "--id", "foo"], capsys, monkeypatch)
+    assert rc == 0
+    assert payload["saga_id"] == "task-foo"
+    assert saga.restore(tmp_path, "task-foo").kind == "task"
+
+    # A progress tick targeting it by --saga-id with NO --kind must keep kind=task.
+    later = datetime(2026, 6, 2, 14, 6, 0, tzinfo=UTC)
+    monkeypatch.setattr(saga, "_utc_now", lambda: later)
+    rc, payload = _run_main(
+        saga,
+        ["save", "--saga-id", "task-foo", "--id", "foo", "--next-step", "progress tick"],
+        capsys,
+        monkeypatch,
+    )
+    assert rc == 0
+    assert saga.restore(tmp_path, "task-foo").kind == "task"
+
+
+def test_cli_save_explicit_kind_contradicting_prior_is_rejected(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An explicit --kind that contradicts an existing saga's recorded kind is rejected.
+
+    Identity is fixed at birth; a save must never silently flip it, and an explicit
+    attempt to change it is a loud error (exit 2), not a stamp.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    rc, _ = _run_main(saga, ["save", "--kind", "task", "--id", "foo"], capsys, monkeypatch)
+    assert rc == 0
+
+    later = datetime(2026, 6, 2, 14, 6, 0, tzinfo=UTC)
+    monkeypatch.setattr(saga, "_utc_now", lambda: later)
+    monkeypatch.setattr(
+        "sys.argv", ["script", "save", "--saga-id", "task-foo", "--kind", "issue", "--id", "foo"]
+    )
+    rc = saga.main()
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "sticky identity field" in err
+    # The prior task kind is untouched on disk.
+    assert saga.restore(tmp_path, "task-foo").kind == "task"
+
+
 def test_cli_save_explicit_phase_status_pending_resets_completed_phase(
     saga: ModuleType,
     tmp_path: Path,

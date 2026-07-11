@@ -563,9 +563,7 @@ def test_shipped_registry_exposes_current_codex_selectors_and_legacy_rows() -> N
     }
     assert registry.by_engine("codex").key == "codex/gpt-5.6-sol-high"
     assert sum(entry.default_for_engine for entry in codex_rows) == 1
-    assert all(
-        entry.invocation["model"] and entry.invocation["effort"] for entry in codex_rows
-    )
+    assert all(entry.invocation["model"] and entry.invocation["effort"] for entry in codex_rows)
 
 
 def test_family_defaults_merge_before_validation(tmp_path: Path) -> None:

@@ -1,0 +1,73 @@
+{
+  "name": "ship-ceremony-operator-gate",
+  "description": "Issue #526: ship_ceremony.py run refuses always_operator transitions without --operator-confirmed <transition> naming the upcoming transition (KTD1-KTD4); guidance docs and release surfaces move in the same PR. U1 carries the gate + tests with an operator-requested refute-3 panel; panel tier rides the unit tier (R4), sonnet/medium per operator choice. U2/U3 are mechanical follow-ons behind the U1 barrier; widest concurrent fan-out is the 3-verifier panel, exactly at the operator's concurrency cap of 3.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "operator-confirm gate in run() + CLI flag + tests",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U1: Add OperatorConfirmationError and the always_operator gate to plugins/saga/scripts/ship_ceremony.py run() (refuse before dispatch and before the save; tier lookup, never a name list; uniform mismatch rule), plumb --operator-confirmed <transition> through the run subparser and main(), update the module docstring's R5 paragraph, and implement the test scenarios in tests/test_ship_ceremony.py including updating the four existing tests the plan's run()-call-site census names as crossing gated steps. Read the plan at docs/plans/2026-07-11-issue-526-ship-ceremony-operator-gate-plan.md (U1, R1-R5, KTD1-KTD4) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/saga/scripts/ship_ceremony.py",
+        "tests/test_ship_ceremony.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U2",
+      "label": "guidance-surface alignment (work SKILL + pr-continuation-loop)",
+      "tier": {
+        "model": "haiku",
+        "effort": "low"
+      },
+      "prompt": "U2: Update the confirmed-merge guidance so it names the flag: plugins/saga/skills/work/SKILL.md Phase-5 merge step (~lines 528-541) and plugins/saga/skills/work/references/pr-continuation-loop.md approved-fresh row (~lines 99-104) now instruct ship_ceremony.py run --operator-confirmed merge (then checkout_main and pull bare, then --operator-confirmed branch_delete). Read the plan at docs/plans/2026-07-11-issue-526-ship-ceremony-operator-gate-plan.md (U2, R7) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/saga/skills/work/SKILL.md",
+        "plugins/saga/skills/work/references/pr-continuation-loop.md"
+      ]
+    },
+    {
+      "unit_id": "U3",
+      "label": "release surfaces + journal (0.76.0)",
+      "tier": {
+        "model": "haiku",
+        "effort": "low"
+      },
+      "prompt": "U3: Bump plugins/saga/.claude-plugin/plugin.json to 0.76.0, update the saga entry in .claude-plugin/marketplace.json, add the [0.76.0] entry to plugins/saga/CHANGELOG.md, update the drift-guard pin at tests/test_saga_plugin.py:48, and append the one-line shipped addendum to LEARNINGS {#ship-ceremony-run-does-not-self-gate} (the DECISIONS entry is already staged in the working tree). Read the plan at docs/plans/2026-07-11-issue-526-ship-ceremony-operator-gate-plan.md (U3, R6) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/saga/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/saga/CHANGELOG.md",
+        "tests/test_saga_plugin.py",
+        "docs/engineering-journal/LEARNINGS.md"
+      ]
+    }
+  ]
+}

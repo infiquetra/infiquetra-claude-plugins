@@ -1,5 +1,27 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-11
+
+### Ceremony operator confirmation names the transition it confirms (#526) {#ceremony-operator-confirm-names-transition-526}
+
+**Decision.** `ship_ceremony.py run` refuses any `always_operator`-tier transition unless the caller
+passes `--operator-confirmed <transition>` naming that exact transition; a name that does not match
+the upcoming transition refuses regardless of tier. Enforcement is a tier lookup
+(`TRANSITION_TIERS[upcoming]`), never a transition-name list.
+
+**Rationale.** A bare boolean confirm flag would spill onto whatever step happens to be next — the
+PR #525 breach was precisely a caller mispredicting the ledger position (expected a draft-PR stop,
+got `merge`). Binding the word to a named step turns both failure shapes (bare-run bypass and
+mispredicted position) into loud refusals. Plan:
+`docs/plans/2026-07-11-issue-526-ship-ceremony-operator-gate-plan.md`.
+
+**Rejected.** Bare `--operator-confirmed` boolean (confirmation spill); interactive TTY prompt
+(hangs non-TTY agent callers, unusable by `/work`; `git ship` passes trailing args anyway).
+
+**Revisit when.** A transition is added whose confirmation needs an argument of its own (e.g. a
+merge-strategy choice), or caller-identity attestation becomes a real requirement — then the flag
+grows into a typed confirmation payload rather than a name match.
+
 ## 2026-07-10
 
 ### GPT-5.6 Codex routing uses explicit registry variants and preserves direct defaults {#codex-gpt56-routing-559}

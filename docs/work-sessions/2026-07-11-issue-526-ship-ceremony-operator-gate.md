@@ -43,7 +43,16 @@ Completeness manifests persisted for U1/U2/U3 (`manifest_store.py record-complet
   annotation-unchecked note, untouched)
 - `uv run bandit` on the changed script — 0 findings before and after
 
+## Code-review gate (programmatic)
+
+4-lens pass (correctness, security, testing, maintainability) at `d1a667a`: 7 findings, 0 P0/P1 —
+verdict CLEAN. All actionable findings (P2 inert refusal assertions, P2×2 guidance-prose blowout,
+P3×3 coverage/DRY) fixed in `aacc1c9`; staleness re-review of the fix commit passed with
+falsification probes (guard-bypass makes the new assertions fail — load-bearing). Finding #4
+(outcome auto-merge queue is a separate authority) is pre-existing, report-only. Artifact:
+`docs/code-reviews/2026-07-11-work-526-ship-ceremony-operator-gate-code-review.md`. Reviewed SHA
+`aacc1c9`; ceremony test count 43, full suite 3104 passed.
+
 ## Next step
 
-Run the programmatic `/code-review` gate at `146ee11`; on a clean envelope, flip draft PR #561
-ready and request review (destination: merge).
+Flip draft PR #561 ready + request review under operator confirmation (destination: merge).

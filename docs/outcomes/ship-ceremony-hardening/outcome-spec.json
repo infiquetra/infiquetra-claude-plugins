@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "outcome_id": "ship-ceremony-hardening",
+  "spec_revision": 6,
+  "objective": "objective: Automate the ship ceremony end-to-end",
+  "nodes": [
+    {
+      "subplot_id": "sub-346",
+      "title": "\"enhancement: ceremony hazard preflight, deterministic merge-watcher, and ship --undo rollback\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#346",
+        "sub_issue": 346
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-347",
+      "title": "capability: ship ends in teardown \u2014 opened-resource manifest, closing-count reconciliation, immutable ship receipt, idle worktree reclamation",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#347",
+        "sub_issue": 347
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-395",
+      "title": "\"capability: positive handoff protocol at the saga <-> mission-control <-> deploy boundary\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#395",
+        "sub_issue": 395
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-526",
+      "title": "defect: ship_ceremony gated transitions execute on a bare `run` call \u2014 always_operator tier is documentation, not enforcement",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#526",
+        "sub_issue": 526
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    }
+  ],
+  "decision_trail": [
+    {
+      "revision": 2,
+      "reason": "prune sub-434"
+    },
+    {
+      "revision": 3,
+      "reason": "prune sub-345"
+    },
+    {
+      "revision": 4,
+      "reason": "prune sub-477"
+    },
+    {
+      "revision": 5,
+      "reason": "prune sub-478"
+    },
+    {
+      "revision": 6,
+      "reason": "prune sub-480"
+    }
+  ],
+  "cost_rollup": {},
+  "created_at": "",
+  "updated_at": ""
+}

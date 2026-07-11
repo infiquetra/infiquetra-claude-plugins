@@ -92,13 +92,24 @@ def test_merge_and_branch_delete_are_always_operator_tier() -> None:
 
 class FakeGh:
     """Simulates just enough of `gh pr ...` for ceremony tests. Real git calls
-    (passed through here unchanged) are the only thing that touch disk."""
+    (passed through here unchanged) are the only thing that touch disk.
+
+    Extended for issue #346/U4: ``pr view <number-or-branch>`` now answers whatever
+    subset of ``--json`` fields is requested (``ceremony_hazards.py`` asks for
+    ``state,mergedAt``; ``merge_watcher.py`` asks for
+    ``number,state,headRefOid,statusCheckRollup,reviewDecision``) — ``headRefOid``
+    is resolved live against the real branch HEAD in ``self.repo`` so a commit
+    pushed between ``record`` and ``validate`` genuinely shows up as ``head_moved``.
+    ``pr list --base <branch> --state open`` answers from the same PR table,
+    filtered by each entry's recorded ``base`` (default ``"main"``) — the probe
+    ``ceremony_hazards.py`` uses to detect a stacked-PR topology.
+    """
 
     def __init__(self, repo: Path, bare_origin: Path) -> None:
         self.repo = repo
         self.bare_origin = bare_origin
         self._next_number = 1
-        self._prs: dict[str, dict[str, object]] = {}  # branch -> {number, draft}
+        self._prs: dict[str, dict[str, object]] = {}  # branch -> pr record
         # Captured at construction time, NOT looked up as `subprocess.run` inside
         # __call__ — a test that monkeypatches the global `subprocess.run` to this
         # FakeGh instance (to exercise the CLI's real fallback path) would otherwise
@@ -114,25 +125,110 @@ class FakeGh:
         )
         return real
 
+    def add_stacked_pr(self, *, base_branch: str, head_branch: str, title: str = "") -> int:
+        """Test-setup helper (not reachable via ship_ceremony's own gh argv shapes,
+        which never pass ``--base``): register an open PR whose base is
+        ``base_branch``, so ``ceremony_hazards.py``'s ``pr list --base`` probe finds
+        it. The head branch need not exist as a real git ref — the stacked-PR probe
+        only reads ``number``/``title`` from ``pr list``, never ``pr view``."""
+        number = self._next_number
+        self._next_number += 1
+        self._prs[head_branch] = {
+            "number": number,
+            "draft": False,
+            "body": "",
+            "base": base_branch,
+            "title": title,
+            "state": "OPEN",
+            "mergedAt": None,
+            "checks": [],
+            "reviewDecision": None,
+        }
+        return number
+
+    def _head_ref_oid(self, branch: str) -> str:
+        result = self._real_run(  # nosec B603
+            ["git", "rev-parse", branch],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.stdout.strip()
+
+    def _pr_by_ref(self, ref: str) -> tuple[str, dict[str, object]]:
+        if ref in self._prs:
+            return ref, self._prs[ref]
+        try:
+            number = int(ref)
+        except ValueError:
+            raise AssertionError(f"unknown pr ref {ref!r}") from None
+        for branch, pr in self._prs.items():
+            if pr["number"] == number:
+                return branch, pr
+        raise AssertionError(f"unknown pr ref {ref!r}")
+
     def _handle_gh(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         if args[:2] == ["pr", "create"]:
             draft = "--draft" in args
             branch = args[args.index("--head") + 1]
             body = args[args.index("--body") + 1] if "--body" in args else ""
+            base = args[args.index("--base") + 1] if "--base" in args else "main"
             number = self._next_number
             self._next_number += 1
-            self._prs[branch] = {"number": number, "draft": draft, "body": body}
+            self._prs[branch] = {
+                "number": number,
+                "draft": draft,
+                "body": body,
+                "base": base,
+                "state": "OPEN",
+                "mergedAt": None,
+                "checks": [],
+                "reviewDecision": None,
+            }
             return _ok(str(number))
         if args[:2] == ["pr", "view"]:
-            branch = args[2]
-            pr = self._prs[branch]
-            return _ok(json.dumps({"number": pr["number"]}))
+            ref = args[2]
+            branch, pr = self._pr_by_ref(ref)
+            fields = args[args.index("--json") + 1].split(",")
+            payload: dict[str, object] = {}
+            for field in fields:
+                if field == "number":
+                    payload["number"] = pr["number"]
+                elif field == "state":
+                    payload["state"] = pr["state"]
+                elif field == "mergedAt":
+                    payload["mergedAt"] = pr["mergedAt"]
+                elif field == "headRefOid":
+                    payload["headRefOid"] = self._head_ref_oid(branch)
+                elif field == "statusCheckRollup":
+                    payload["statusCheckRollup"] = pr["checks"]
+                elif field == "reviewDecision":
+                    payload["reviewDecision"] = pr["reviewDecision"]
+            return _ok(json.dumps(payload))
         if args[:2] == ["pr", "ready"]:
             for pr in self._prs.values():
                 if pr["number"] == int(args[2]):
                     pr["draft"] = False
             return _ok("")
         if args[:2] == ["pr", "edit"]:
+            return _ok("")
+        if args[:2] == ["pr", "list"]:
+            list_base = args[args.index("--base") + 1] if "--base" in args else None
+            state = args[args.index("--state") + 1] if "--state" in args else None
+            results = []
+            for pr in self._prs.values():
+                if list_base is not None and pr.get("base") != list_base:
+                    continue
+                if state == "open" and pr.get("state") != "OPEN":
+                    continue
+                results.append({"number": pr["number"], "title": pr.get("title", "")})
+            return _ok(json.dumps(results))
+        if args[:2] == ["pr", "close"]:
+            number = int(args[2])
+            for pr in self._prs.values():
+                if pr["number"] == number:
+                    pr["state"] = "CLOSED"
             return _ok("")
         if args[:2] == ["pr", "merge"]:
             number = int(args[2])
@@ -148,6 +244,8 @@ class FakeGh:
                 timeout=30,
                 check=True,
             )
+            self._prs[branch]["state"] = "MERGED"
+            self._prs[branch]["mergedAt"] = "2026-07-11T00:00:00Z"
             return _ok("")
         raise AssertionError(f"unhandled fake gh call: {args!r}")
 
@@ -583,6 +681,312 @@ def test_open_pr_body_autocloses_issue_via_fixes_line(ceremony_repo) -> None:
     assert "Plan: docs/plans/x-plan.md" in body
 
 
+# --------------------------------------------------------------------------- #
+# Issue #346 (U4): hazard preflight, merge-watcher preflight, rollback manifest,
+# and `run --undo` wiring.
+# --------------------------------------------------------------------------- #
+
+BRANCH_345 = "feat/pf-throwaway-345"
+
+
+def test_branch_delete_refused_on_stacked_pr_until_acknowledged(ceremony_repo) -> None:
+    """R1/KTD3: an open PR based on the branch about to be deleted refuses
+    branch_delete until acknowledged; the refusal leaves origin's main SHA and the
+    ledger unchanged, and `--acknowledge-hazard stacked_pr` unlocks it."""
+    repo, fake_gh = ceremony_repo
+    _advance_to(repo, fake_gh, "branch_delete")
+    assert _restore(repo)["ceremony_transition"] == "pull"
+    origin_main_before = _origin_main_sha(fake_gh.bare_origin)
+
+    fake_gh.add_stacked_pr(
+        base_branch=BRANCH_345, head_branch="feat/child-of-345", title="child work"
+    )
+
+    with pytest.raises(SC.HazardRefusedError, match="stacked_pr"):
+        SC.run(
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed="branch_delete",
+            runner=fake_gh,
+        )
+    assert _restore(repo)["ceremony_transition"] == "pull"
+    assert _origin_main_sha(fake_gh.bare_origin) == origin_main_before
+    branches = subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "branch"], check=True, capture_output=True, text=True
+    ).stdout
+    assert BRANCH_345 in branches  # the delete runner never ran
+
+    status = SC.run(
+        repo_root=repo,
+        issue_ref="org/repo#345",
+        operator_confirmed="branch_delete",
+        acknowledge_hazard=["stacked_pr"],
+        runner=fake_gh,
+    )
+    assert "branch_delete" in status
+    assert _restore(repo)["ceremony_transition"] == "branch_delete"
+
+
+def test_merge_not_landed_blocks_branch_delete_and_is_not_acknowledgeable(ceremony_repo) -> None:
+    """R2/KTD3: a delete request arriving before the ceremony PR's state is
+    confirmably MERGED is refused and CANNOT be bypassed via
+    --acknowledge-hazard — it resolves only by the merge actually landing."""
+    repo, fake_gh = ceremony_repo
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # open_pr
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # request_review
+    assert fake_gh._prs[BRANCH_345]["state"] == "OPEN"  # noqa: SLF001 - never merged
+
+    # Force the ledger straight to "pull" without ever running merge/checkout_main
+    # — models the R2 reorder hazard (a delete request racing ahead of a merge that
+    # has not confirmably landed), without needing a real `gh pr merge --auto`.
+    saga_py = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
+    subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(saga_py),
+            "save",
+            "--kind",
+            "issue",
+            "--id",
+            "345",
+            "--ceremony-transition",
+            "pull",
+            "--ceremony-tier",
+            "reversible",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    with pytest.raises(SC.HazardRefusedError, match="merge_not_landed"):
+        SC.run(
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed="branch_delete",
+            runner=fake_gh,
+        )
+    assert _restore(repo)["ceremony_transition"] == "pull"
+
+    with pytest.raises(SC.HazardRefusedError, match="merge_not_landed"):
+        SC.run(
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed="branch_delete",
+            acknowledge_hazard=["merge_not_landed"],
+            runner=fake_gh,
+        )
+    assert _restore(repo)["ceremony_transition"] == "pull"
+    branches = subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "branch"], check=True, capture_output=True, text=True
+    ).stdout
+    assert BRANCH_345 in branches
+
+
+def test_merge_preflight_validates_expectation_and_diverged_blocks(ceremony_repo) -> None:
+    """R4: a commit pushed after review — moving HEAD past the recorded baseline —
+    is a named `head_moved` divergence that blocks merge before dispatch, leaving
+    origin's main SHA and the ledger unchanged (ledger-unadvanced proof)."""
+    repo, fake_gh = ceremony_repo
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # open_pr
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # request_review
+    origin_main_before = _origin_main_sha(fake_gh.bare_origin)
+
+    (repo / "late_change.txt").write_text("late\n")
+    subprocess.run(["git", "-C", str(repo), "add", "late_change.txt"], check=True)  # noqa: S607
+    subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "commit", "-m", "late change"], check=True, capture_output=True
+    )
+
+    with pytest.raises(SC.MergePreflightError, match="head_moved"):
+        SC.run(repo_root=repo, issue_ref="org/repo#345", operator_confirmed="merge", runner=fake_gh)
+    assert _restore(repo)["ceremony_transition"] == "request_review"
+    assert _origin_main_sha(fake_gh.bare_origin) == origin_main_before
+
+
+def test_missing_merge_expectation_refuses_before_dispatch(ceremony_repo) -> None:
+    """KTD8: reaching merge with no merge_expectation.json sidecar (an in-flight
+    ceremony predating this feature, or a deleted sidecar) is a named refusal
+    naming the `record` remedy, never a silent pass."""
+    repo, fake_gh = ceremony_repo
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # open_pr
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # request_review
+    sidecar = repo / ".claude" / "saga" / "sagas" / "issue-345" / "merge_expectation.json"
+    assert sidecar.exists()
+    sidecar.unlink()
+
+    with pytest.raises(SC.MergePreflightError, match="no merge_expectation.json"):
+        SC.run(repo_root=repo, issue_ref="org/repo#345", operator_confirmed="merge", runner=fake_gh)
+    assert _restore(repo)["ceremony_transition"] == "request_review"
+
+
+def test_open_pr_and_start_both_record_expectation(ceremony_repo) -> None:
+    """R3: both record sites — the `run()` path reaching `open_pr` and the
+    front-loaded `start()` path — write the merge-watcher sidecar before any poll
+    loop exists."""
+    repo, fake_gh = ceremony_repo
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # open_pr
+
+    sidecar_a = repo / ".claude" / "saga" / "sagas" / "issue-345" / "merge_expectation.json"
+    assert sidecar_a.exists()
+    expectation_a = json.loads(sidecar_a.read_text())
+    head_sha = subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "rev-parse", BRANCH_345],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert expectation_a["head_sha"] == head_sha
+    assert expectation_a["pr_number"] == fake_gh._prs[BRANCH_345]["number"]  # noqa: SLF001
+
+    # A fresh saga on a new branch, driven through start() — avoids both start()'s
+    # "already in progress" refusal and a by-branch ambiguous match against 345.
+    subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "checkout", "main"], check=True, capture_output=True
+    )
+    subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "checkout", "-b", "feat/pf-throwaway-999"],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "second.txt").write_text("second saga scaffold\n")
+    subprocess.run(["git", "-C", str(repo), "add", "second.txt"], check=True)  # noqa: S607
+    subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "commit", "-m", "second scaffold"],
+        check=True,
+        capture_output=True,
+    )
+    saga_py = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
+    subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(saga_py),
+            "save",
+            "--kind",
+            "issue",
+            "--id",
+            "999",
+            "--issue-ref",
+            "org/repo#999",
+            "--lifecycle-phase",
+            "work",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    SC.start(repo_root=repo, issue_ref="org/repo#999", runner=fake_gh)
+    sidecar_b = repo / ".claude" / "saga" / "sagas" / "issue-999" / "merge_expectation.json"
+    assert sidecar_b.exists()
+
+
+def test_manifest_appended_per_transition_in_full_ceremony(ceremony_repo) -> None:
+    """R6: every successful ceremony transition appends one rollback-manifest entry,
+    in order, each starting unmarked (undone=False)."""
+    repo, fake_gh = ceremony_repo
+    for expected in SC.TRANSITIONS:
+        SC.run(
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed=_confirm_for(expected),
+            runner=fake_gh,
+        )
+
+    manifest = repo / ".claude" / "saga" / "sagas" / "issue-345" / "rollback_manifest.json"
+    entries = json.loads(manifest.read_text())
+    assert [e["transition"] for e in entries] == list(SC.TRANSITIONS)
+    assert all(e["undone"] is False for e in entries)
+
+    by_transition = {e["transition"]: e for e in entries}
+    assert by_transition["commit"]["remote_created"] is True
+    assert by_transition["commit"]["head_sha"]
+    assert by_transition["open_pr"]["pr_number"] == str(fake_gh._prs[BRANCH_345]["number"])  # noqa: SLF001, E501
+    assert by_transition["merge"]["merge_sha"]
+    assert by_transition["merge"]["pre_merge_main_sha"]
+    assert by_transition["merge"]["merge_sha"] != by_transition["merge"]["pre_merge_main_sha"]
+    assert by_transition["branch_delete"]["head_sha"]
+
+
+def test_run_undo_dispatches_to_ship_undo_and_gh_ship_alias_shape_unchanged(
+    ceremony_repo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """KTD6: `--undo` is a flag on the existing `run` subcommand, so it dispatches
+    straight to `ship_undo.undo()` and the installed `git ship` alias
+    (`!python3 <script> run`, which appends trailing args unchanged) keeps working
+    unmodified as `git ship --undo` — no reinstall, no second subcommand."""
+    repo, fake_gh = ceremony_repo
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # open_pr
+    assert fake_gh._prs[BRANCH_345]["state"] == "OPEN"  # noqa: SLF001
+
+    status = SC.run(repo_root=repo, issue_ref="org/repo#345", undo=True, runner=fake_gh)
+    assert "reverted 2" in status
+    assert fake_gh._prs[BRANCH_345]["state"] == "CLOSED"  # noqa: SLF001
+
+    alias_status = SC.install(repo_root=repo)
+    assert "installed" in alias_status
+    alias = subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "config", "--local", "--get", "alias.ship"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert alias.endswith(" run")
+    assert "undo" not in alias
+
+    original = SC.subprocess.run
+    SC.subprocess.run = fake_gh
+    try:
+        exit_code = SC.main(
+            [
+                "--repo-root",
+                str(repo),
+                "run",
+                "--issue-ref",
+                "org/repo#345",
+                "--operator-confirmed",
+                "undo",
+                "--undo",
+            ]
+        )
+    finally:
+        SC.subprocess.run = original
+    assert exit_code == 0
+    assert "no-op" in capsys.readouterr().out  # already fully undone above
+
+
+def test_full_ceremony_green_path_unchanged_when_no_hazards(ceremony_repo) -> None:
+    """Regression: a clean topology with no hazards completes the whole ceremony
+    exactly as the pre-#346 four-invocation #526 flow did — the new preflights are
+    silent additions on the happy path, and both new sidecars exist as evidence the
+    hooks actually engaged rather than being silently skipped."""
+    repo, fake_gh = ceremony_repo
+    for expected in SC.TRANSITIONS:
+        status = SC.run(
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed=_confirm_for(expected),
+            runner=fake_gh,
+        )
+        assert expected in status
+
+    saga = _restore(repo)
+    assert saga["ceremony_transition"] == "branch_delete"
+    assert saga["ceremony_tier"] == SC.CeremonyTier.ALWAYS_OPERATOR
+
+    sidecar = repo / ".claude" / "saga" / "sagas" / "issue-345" / "merge_expectation.json"
+    manifest = repo / ".claude" / "saga" / "sagas" / "issue-345" / "rollback_manifest.json"
+    assert sidecar.exists()
+    entries = json.loads(manifest.read_text())
+    assert [e["transition"] for e in entries] == list(SC.TRANSITIONS)
+
+
 class FailingRunner:
     """Wraps a base runner and fails one specific command (matched by prefix),
     passing everything else through unchanged."""
@@ -637,11 +1041,14 @@ def test_no_saga_error_when_branch_has_no_match(ceremony_repo) -> None:
 
 
 def test_merge_before_open_pr_is_a_named_failure(ceremony_repo) -> None:
-    """_current_pr_number's guard: reaching merge with no pr_refs recorded (open_pr
-    was skipped or its save was lost) is a named failure, not a crash or a silent
-    no-op. (request_review no longer exercises this guard — issue #477 made it a
-    deliberate no-op, since this repo has no second maintainer to request review
-    from; merge is the next GitHub-facing transition that still needs pr_refs.)"""
+    """Reaching merge with no merge-watcher expectation recorded (open_pr was
+    skipped or its save was lost, so ``merge_watcher.record`` never ran) is a named
+    failure, not a crash or a silent no-op. (issue #346/KTD8: the merge preflight's
+    ``merge_watcher.validate`` call — which runs before ``_RUNNERS['merge']``
+    dispatch — now catches this case earlier than ``_current_pr_number``'s own
+    'no pr_refs recorded' guard inside ``_do_merge`` ever gets a chance to; request_review
+    no longer exercises this path at all — issue #477 made it a deliberate no-op,
+    since this repo has no second maintainer to request review from.)"""
     repo, fake_gh = ceremony_repo
     saga_py = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
     subprocess.run(  # noqa: S603
@@ -663,7 +1070,7 @@ def test_merge_before_open_pr_is_a_named_failure(ceremony_repo) -> None:
         capture_output=True,
         text=True,
     )
-    with pytest.raises(SC.TransitionFailedError, match="no pr_refs recorded"):
+    with pytest.raises(SC.MergePreflightError, match="no merge_expectation.json"):
         SC.run(repo_root=repo, issue_ref="org/repo#345", operator_confirmed="merge", runner=fake_gh)
 
 

@@ -541,6 +541,7 @@ On a clean gate (or recorded override):
    `run --operator-confirmed branch_delete` — each explicitly confirmed, never silent; merge is a
    git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
    On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
+   See `references/pr-continuation-loop.md` under "Merge-watcher and hazards" for safety contracts.
 
 At thread completion set `status=done`.
 

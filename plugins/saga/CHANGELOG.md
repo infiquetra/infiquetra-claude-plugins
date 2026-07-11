@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.77.0] - 2026-07-11
+
+### Added - ceremony hazard preflight, deterministic merge-watcher, ship --undo rollback (#346)
+
+- `ceremony_hazards.py`: detect stacked-PR topology and merge-not-landed hazards before destructive
+  transitions; named hazard acknowledgment via `--acknowledge-hazard <hazard-id>` (stacked-PR
+  acknowledgeable, merge-not-landed a hard refusal).
+- `merge_watcher.py`: record merge expectation (target SHA, required checks, review state) at PR-open
+  time, validate at merge, catch mid-poll check flips; divergences block the merge; no auto-heal
+  (KTD7); `record --force` is the only re-baseline path.
+- `ship_undo.py`: rollback manifest (per transition: branch/head/PR/merge SHA/remote-created flag)
+  appended after each successful step; `ship --undo` (via `run --undo`) reverts ceremonies newest→oldest
+  (forward-only: revert commit on main, branch resurrection), resumable and idempotent from
+  manifest alone. Undo of `always_operator`-reversing entries requires `--operator-confirmed undo`
+  (KTD5).
+- `ship_ceremony.py` wiring: preflight hazard detection + merge-watcher validation after #526 gate and
+  before dispatch; manifest append on every successful transition; `--undo` dispatches to ship_undo;
+  `/work` SKILL and `pr-continuation-loop` reference updated with watcher + hazard + undo contract.
+
 ## [0.76.0] - 2026-07-11
 
 ### Added - operator-confirmed gate for `always_operator`-tier transitions (#526)

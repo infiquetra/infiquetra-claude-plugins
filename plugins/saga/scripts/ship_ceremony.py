@@ -52,6 +52,18 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 SAGA_PY = SCRIPT_DIR / "saga.py"
 
+# Sibling-module imports (issue #346, U4): the hazard registry, the merge-watcher,
+# and the undo engine are imported directly (not shelled out to) so run() can call
+# them as a library — mirrors the sys.path.insert + import pattern already used by
+# engine_dispatch.py and friends in this directory. Each of those three modules
+# documents "Depends on: nothing" (U1-U3) specifically so this import graph stays
+# one-directional: they never import ship_ceremony.py back.
+sys.path.insert(0, str(SCRIPT_DIR))
+
+import ceremony_hazards  # noqa: E402
+import merge_watcher  # noqa: E402
+import ship_undo  # noqa: E402
+
 
 class ShipCeremonyError(Exception):
     """Base error for ship_ceremony.py — always caught at the CLI boundary and
@@ -74,6 +86,20 @@ class OperatorConfirmationError(ShipCeremonyError):
     """The upcoming transition is ``always_operator``-tier and was not (or was
     mismatched-ly) confirmed via ``--operator-confirmed <transition>``; refused
     before dispatch and before the save (R1/R3/KTD3)."""
+
+
+class HazardRefusedError(ShipCeremonyError):
+    """One or more ``ceremony_hazards.detect()`` findings on the upcoming transition
+    were not acknowledged via ``--acknowledge-hazard <hazard-id>`` (or are not
+    acknowledgeable at all, e.g. ``merge_not_landed``); refused before dispatch and
+    before ``saga.py save`` (R1/R2/KTD2/KTD3)."""
+
+
+class MergePreflightError(ShipCeremonyError):
+    """``merge_watcher.validate()`` refused the ``merge`` transition — either no
+    ``merge_expectation.json`` sidecar exists (KTD8) or live PR state diverged from
+    the recorded baseline (R4); refused before dispatch and before ``saga.py save``
+    (KTD2)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -272,20 +298,54 @@ def _push_branch(repo_root: Path, *, runner: Callable[..., Any] | None) -> None:
     _run(["git", "push", "-u", "origin", branch], cwd=repo_root, runner=runner)
 
 
+def _remote_branch_exists(
+    repo_root: Path, branch: str, *, runner: Callable[..., Any] | None
+) -> bool:
+    """Best-effort check of whether ``branch`` already exists on ``origin`` BEFORE
+    this ceremony pushes it — feeds the rollback manifest's ``remote_created`` flag
+    (R6) so ``ship_undo.py``'s ``_undo_commit`` never deletes a remote branch that
+    predates the ceremony."""
+    result = _run(
+        ["git", "ls-remote", "--exit-code", "--heads", "origin", branch],
+        cwd=repo_root,
+        runner=runner,
+        check=False,
+    )
+    return getattr(result, "returncode", 1) == 0
+
+
+def _push_and_record_commit_fields(
+    repo_root: Path, *, runner: Callable[..., Any] | None
+) -> dict[str, Any]:
+    """Push the current branch and return the rollback-manifest fields (R6) the
+    ``commit`` transition contributes — ``branch``, ``head_sha``, and
+    ``remote_created``. Shared by ``_do_commit`` and the front-loaded ``start()``
+    path, which both complete the ``commit`` transition."""
+    branch = current_branch(repo_root, runner=runner)
+    existed_before = _remote_branch_exists(repo_root, branch, runner=runner)
+    _run(["git", "push", "-u", "origin", branch], cwd=repo_root, runner=runner)
+    head_sha = _run(["git", "rev-parse", "HEAD"], cwd=repo_root, runner=runner).stdout.strip()
+    return {"branch": branch, "head_sha": head_sha, "remote_created": not existed_before}
+
+
 def _do_commit(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
-) -> None:
+) -> dict[str, Any]:
     """Push the current branch. The scaffold commit itself already exists — from
     ``/work``'s Phase 1.4 mint (KTD4) or from the operator's own commits — this
-    transition's job is making sure it is on the remote."""
-    _push_branch(repo_root, runner=runner)
+    transition's job is making sure it is on the remote. Returns the rollback-
+    manifest fields (R6) for this transition."""
+    return _push_and_record_commit_fields(repo_root, runner=runner)
 
 
 def _do_open_pr(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
-) -> None:
+) -> dict[str, Any]:
     """Open a PR, or — if the front-loaded ``start`` mode already opened a draft PR
-    (R7) — flip that existing draft ready instead of opening a second one."""
+    (R7) — flip that existing draft ready instead of opening a second one. Either
+    path records the merge-watcher expectation baseline (R3) right after the PR
+    carries the HEAD that will actually be merged, and returns the rollback-
+    manifest fields (R6) for this transition."""
     existing = saga.get("pr_refs") or []
     if existing:
         # Front-loaded path: ``start`` opened the draft and pre-recorded
@@ -296,7 +356,18 @@ def _do_open_pr(
         _push_branch(repo_root, runner=runner)
         pr_number = _pr_number(existing[-1])
         _run(["gh", "pr", "ready", pr_number], cwd=repo_root, runner=runner)
-        return
+        # force=True: this may be re-baselining over the sidecar `start()` already
+        # wrote (KTD7's re-baseline path is exactly this — commits pushed after
+        # start() moved HEAD past what was recorded then) or the very first record
+        # if the ceremony never front-loaded via start().
+        merge_watcher.record(
+            saga_id=saga["saga_id"],
+            pr_number=pr_number,
+            repo_root=repo_root,
+            force=True,
+            runner=runner,
+        )
+        return {"pr_number": pr_number, "branch": current_branch(repo_root, runner=runner)}
     branch = current_branch(repo_root, runner=runner)
     body_lines: list[str] = []
     # Auto-close the tracked issue on merge via a ``Fixes #N`` line, so shipping never leaves a
@@ -329,6 +400,14 @@ def _do_open_pr(
         repo_root=repo_root,
         runner=runner,
     )
+    merge_watcher.record(
+        saga_id=saga["saga_id"],
+        pr_number=pr_number,
+        repo_root=repo_root,
+        force=True,
+        runner=runner,
+    )
+    return {"pr_number": pr_number, "branch": branch}
 
 
 def _do_request_review(
@@ -344,36 +423,52 @@ def _do_request_review(
 
 def _do_merge(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
-) -> None:
+) -> dict[str, Any]:
     pr_number = _current_pr_number(saga, repo_root=repo_root, runner=runner)
+    pre_merge_main_sha = _run(
+        ["git", "ls-remote", "origin", "refs/heads/main"], cwd=repo_root, runner=runner
+    ).stdout.split()[0]
     _run(["gh", "pr", "merge", pr_number, "--squash"], cwd=repo_root, runner=runner)
+    merge_sha = _run(
+        ["git", "ls-remote", "origin", "refs/heads/main"], cwd=repo_root, runner=runner
+    ).stdout.split()[0]
+    return {
+        "pr_number": pr_number,
+        "branch": saga.get("branch"),
+        "pre_merge_main_sha": pre_merge_main_sha,
+        "merge_sha": merge_sha,
+    }
 
 
 def _do_checkout_main(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
-) -> None:
+) -> dict[str, Any]:
     _run(["git", "checkout", "main"], cwd=repo_root, runner=runner)
+    return {"branch": saga.get("branch")}
 
 
 def _do_pull(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
-) -> None:
+) -> dict[str, Any]:
     _run(["git", "pull"], cwd=repo_root, runner=runner)
+    return {"branch": saga.get("branch")}
 
 
 def _do_branch_delete(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
-) -> None:
+) -> dict[str, Any]:
     branch = saga.get("branch") or ""
     if not branch or branch == "main":
         raise TransitionFailedError(
             f"refusing to delete branch {branch!r}; saga's recorded branch looks wrong"
         )
+    head_sha = _run(["git", "rev-parse", branch], cwd=repo_root, runner=runner).stdout.strip()
     _run(["git", "branch", "-d", branch], cwd=repo_root, runner=runner)
     _run(["git", "push", "origin", "--delete", branch], cwd=repo_root, runner=runner, check=False)
+    return {"branch": branch, "head_sha": head_sha}
 
 
-_RUNNERS: Mapping[str, Callable[..., None]] = {
+_RUNNERS: Mapping[str, Callable[..., Mapping[str, Any] | None]] = {
     "commit": _do_commit,
     "open_pr": _do_open_pr,
     "request_review": _do_request_review,
@@ -409,6 +504,8 @@ def run(
     issue_ref: str | None = None,
     saga_id: str | None = None,
     operator_confirmed: str | None = None,
+    acknowledge_hazard: Sequence[str] | None = None,
+    undo: bool = False,
     runner: Callable[..., Any] | None = None,
 ) -> str:
     """Execute exactly the next unrun transition and record it. Returns a
@@ -419,8 +516,27 @@ def run(
     must pass ``operator_confirmed`` naming that exact transition — a bare call, or
     one naming a different transition, refuses before ``_RUNNERS[upcoming]`` is
     invoked and before any ``saga.py save``, so the ledger is provably unadvanced.
+
+    ``undo=True`` (KTD6) forks to ``ship_undo.undo()`` immediately after saga
+    resolution — BEFORE the mismatch check and the always_operator gate above, so
+    ``--operator-confirmed undo`` (KTD5) can never trip the forward-transition
+    mismatch rule against whatever the upcoming *forward* transition happens to be.
+
+    KTD2: after the operator-confirmation gate and before ``_RUNNERS[upcoming]``
+    dispatch and the ``saga.py save``, this consults two more preflights: a hazard
+    scan (``ceremony_hazards.detect()``, refusing on any unacknowledged finding —
+    R1/R2/KTD3) and, for ``merge`` specifically, the merge-watcher's point-in-time
+    ``validate()`` (R4, refusing on a missing expectation per KTD8 or a named
+    divergence). Both refuse before dispatch and before save, the same
+    ledger-unadvanced proof shape as the always_operator gate above.
     """
     saga = resolve_saga(repo_root=repo_root, issue_ref=issue_ref, saga_id=saga_id, runner=runner)
+
+    if undo:
+        return ship_undo.undo(
+            saga, repo_root=repo_root, operator_confirmed=operator_confirmed, runner=runner
+        )
+
     upcoming = next_transition(saga.get("ceremony_transition", ""))
     if upcoming is None:
         return "already shipped — all ceremony transitions complete"
@@ -440,7 +556,41 @@ def run(
             f"operator confirmation; re-run with --operator-confirmed {upcoming}"
         )
 
-    _RUNNERS[upcoming](saga, repo_root=repo_root, runner=runner)
+    hazards = ceremony_hazards.detect(saga, upcoming, repo_root, runner)
+    acknowledged_ids = set(acknowledge_hazard or ())
+    unacknowledged = [
+        h for h in hazards if not (h.acknowledgeable and h.hazard_id in acknowledged_ids)
+    ]
+    if unacknowledged:
+        lines = [
+            f"- {h.hazard_id} ({h.transition}): {h.message}\n  remedy: {h.remedy}"
+            for h in unacknowledged
+        ]
+        raise HazardRefusedError(
+            f"transition {upcoming!r} refused — {len(unacknowledged)} unacknowledged "
+            "hazard(s):\n" + "\n".join(lines)
+        )
+
+    if upcoming == "merge":
+        try:
+            merge_watcher.validate(saga_id=saga["saga_id"], repo_root=repo_root, runner=runner)
+        except merge_watcher.MergeWatcherError as exc:
+            raise MergePreflightError(str(exc)) from exc
+
+    extra = _RUNNERS[upcoming](saga, repo_root=repo_root, runner=runner) or {}
+
+    ship_undo.append_entry(
+        repo_root=repo_root,
+        saga_id=saga["saga_id"],
+        transition=upcoming,
+        tier=TRANSITION_TIERS[upcoming],
+        branch=extra.get("branch"),
+        head_sha=extra.get("head_sha"),
+        pr_number=extra.get("pr_number"),
+        merge_sha=extra.get("merge_sha"),
+        pre_merge_main_sha=extra.get("pre_merge_main_sha"),
+        remote_created=extra.get("remote_created", False),
+    )
 
     _saga_cli(
         [
@@ -486,8 +636,8 @@ def start(
             f"pr_refs={saga.get('pr_refs')!r}); 'start' is front-loaded-mode-only and "
             "must not run against a saga that already has state — use 'run' to continue"
         )
-    branch = current_branch(repo_root, runner=runner)
-    _run(["git", "push", "-u", "origin", branch], cwd=repo_root, runner=runner)
+    commit_fields = _push_and_record_commit_fields(repo_root, runner=runner)
+    branch = commit_fields["branch"]
 
     plan_path = saga.get("plan_path") or ""
     body = f"Plan: {plan_path}" if plan_path else ""
@@ -515,6 +665,29 @@ def start(
         ],
         repo_root=repo_root,
         runner=runner,
+    )
+    # R3: record the merge-watcher baseline right away, before any poll loop
+    # exists — this front-loaded path is one of the two record sites (the other
+    # is _do_open_pr's existing-draft branch, which re-baselines with force=True
+    # after any commits pushed since this call).
+    merge_watcher.record(
+        saga_id=saga["saga_id"],
+        pr_number=pr_number,
+        repo_root=repo_root,
+        runner=runner,
+    )
+    # R6: start() completes the "commit" transition (ceremony_transition is set to
+    # "commit" above) even though _do_commit itself never runs on this path — the
+    # rollback manifest needs an entry here too, or a ceremony killed right after
+    # start() would leave ship_undo with no record of the branch this call pushed.
+    ship_undo.append_entry(
+        repo_root=repo_root,
+        saga_id=saga["saga_id"],
+        transition="commit",
+        tier=TRANSITION_TIERS["commit"],
+        branch=commit_fields["branch"],
+        head_sha=commit_fields["head_sha"],
+        remote_created=commit_fields["remote_created"],
     )
     return f"opened draft PR #{pr_number}, ceremony at 'commit' complete"
 
@@ -589,10 +762,29 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--operator-confirmed",
         default=None,
-        choices=TRANSITIONS,
+        choices=(*TRANSITIONS, "undo"),
         help=(
             "name the always_operator-tier transition (merge, branch_delete) you are "
-            "authorizing; required when the upcoming transition is always_operator-tier"
+            "authorizing; required when the upcoming transition is always_operator-tier. "
+            "Pass 'undo' (KTD5) when --undo's in-scope plan reverses merge/branch_delete."
+        ),
+    )
+    p_run.add_argument(
+        "--acknowledge-hazard",
+        action="append",
+        default=None,
+        choices=ceremony_hazards.HAZARD_REGISTRY,
+        help=(
+            "repeatable; acknowledge a detected hazard by id to unblock its transition "
+            "(KTD3). Non-acknowledgeable hazards (e.g. merge_not_landed) ignore this."
+        ),
+    )
+    p_run.add_argument(
+        "--undo",
+        action="store_true",
+        help=(
+            "revert this ceremony from its rollback manifest instead of running the next "
+            "forward transition (KTD6); forks before the forward gate and mismatch checks"
         ),
     )
 
@@ -622,6 +814,8 @@ def main(argv: list[str] | None = None) -> int:
                     issue_ref=args.issue_ref,
                     saga_id=args.saga_id,
                     operator_confirmed=args.operator_confirmed,
+                    acknowledge_hazard=args.acknowledge_hazard,
+                    undo=args.undo,
                 )
             )
         elif args.command == "start":
@@ -633,7 +827,12 @@ def main(argv: list[str] | None = None) -> int:
         else:  # pragma: no cover - argparse enforces valid choices
             parser.error(f"unknown command {args.command!r}")
             return 2
-    except ShipCeremonyError as exc:
+    except (
+        ShipCeremonyError,
+        ceremony_hazards.HazardError,
+        merge_watcher.MergeWatcherError,
+        ship_undo.ShipUndoError,
+    ) as exc:
         print(f"ship_ceremony: {exc}", file=sys.stderr)
         return 1
     return 0

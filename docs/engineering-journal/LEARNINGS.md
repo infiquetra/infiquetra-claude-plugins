@@ -25,6 +25,53 @@
 
 ---
 
+## 2026-07-11
+
+### `gh pr merge --auto` + `--delete-branch` reorder breaks ceremony ledger invariants {#auto-merge-delete-branch-reorder}
+
+**Context.** The ceremony ledger orders operations as they execute (PR-open → merge → branch-delete);
+when a caller invokes `gh pr merge --auto --delete-branch` in sequence, the API reorders them
+(queuing merge for later approval, deleting branch immediately), violating the ledger's assumption
+that merge lands before cleanup begins. A ledger frozen after `merge` but before `branch_delete` is
+left with a deleted branch and an unmerged PR — unrecoverable without hand-editing.
+
+**Evidence.** Session history: manual execution of `gh pr merge --auto --delete-branch` raced: branch
+deleted before approval completed, branch restored by hand, the ceremony re-run from scratch. The
+pattern is named in `docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:147` (recurring manual
+ship ceremony, one instance of the GitHub API reorder gotcha). Grep of `plugins/saga/` verified zero
+live `--auto` / `--delete-branch` flags in shipped code (already absent), so the gotcha existed only
+in naive command sequences, not in plugin code.
+
+**Mechanism.** GitHub's queue implementation services `--delete-branch` synchronously (branch ref
+removed from GitHub), but batches `--auto` merges into an approval queue (merge lands later when
+approval rules fire). A ceremony that dies after delete but before merge redoes the delete step on
+restart and fails (branch already gone), leaving the broken state visible. The ledger is append-only
+and provably-ordered (it records transitions as they complete); reordering at the GitHub boundary
+breaks the assumption.
+
+**Fix.** Issue #346 U1-U4: add `merge_watcher.validate()` preflight that blocks `merge` until
+the PR's live `state` is `MERGED` (R2), and a `ceremony_hazards.detect()` layer that reports
+`merge_not_landed` as a non-acknowledgeable hazard on any `branch_delete` if the merge hasn't landed
+yet. Merged ceremonies can safely delete; unmerged ones stall with a named refusal until the merge
+actually lands (R2, KTD3).
+
+**Validation.** Unit tests: `test_merge_not_landed_blocks_branch_delete_and_is_not_acknowledgeable`
+and `test_auto_merge_delete_branch_hazard_reorders` (mocked GitHub states); full story integration
+in `tests/test_ship_ceremony.py` (real rig, throwaway branches).
+
+**What surprised.** GitHub's own CLI happily emits both flags in the same call; the ordering was not
+documented in gh-help output or the PR merge docs I reviewed. The reorder happened silently (return
+code 0 for both), so observers assumed sync completion. The gap: ceremony code trusted GitHub's
+imperative ordering; GitHub implemented it as async + queue.
+
+**Generalizable rule.** When bridging to an external service's async operations, prove state at
+every ledger checkpoint, not just the last step. Assume ordering breaks. Use named hazards to block
+on unproven intermediate states rather than trusting imperatives complete in sequence.
+
+**Refs.** DECISIONS [#ceremony-sidecars-forward-only-undo-346](DECISIONS.md#ceremony-sidecars-forward-only-undo-346);
+plan `docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md`; grounding brief
+`docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:147`.
+
 ## 2026-07-10
 
 ### Registry identity must survive the Codex bridge boundary {#codex-registry-identity-bridge}

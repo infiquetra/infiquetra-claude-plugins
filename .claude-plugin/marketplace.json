@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.76.0",
+      "version": "0.77.0",
       "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, trust-gated external-engine onboarding, provenance, and attestation.",
       "author": {
         "name": "Infiquetra",

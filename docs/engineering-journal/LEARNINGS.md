@@ -287,6 +287,8 @@ landing; the #526 operator-confirm gate belongs on the transition precisely beca
 all of them at once. When auditing a breach of this shape, enumerate the merge-wired side
 effects; don't stop at the commit.
 
+**Shipped (2026-07-11).** Operator-confirm gate implemented in saga 0.76.0 (#526).
+
 ### Verify panels count structured verdicts — prose-returning verifiers empty the panel silently {#verify-panel-prose-verdicts-vacuous-aggregation}
 
 **Context.** The #390 workflow (`wf_ada4ca97-365`) ran refute-3 panels on U1/U2/U5/U6; all 12

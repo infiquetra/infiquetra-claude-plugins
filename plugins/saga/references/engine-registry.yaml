@@ -21,23 +21,280 @@ capabilities:
   - embedding
 
 model_families:
+  # GPT-5.6 capability guidance is official model positioning, while the concrete ratings below
+  # remain provisional until /retro has enough exact-variant evidence to revalidate them.
+  gpt-5.6-sol:
+    capability_profile:
+      adversarial-review: {rating: STRONG, note: "flagship complex coding and security reviewer"}
+      refactor: {rating: MODERATE, note: "multi-file terminal-oriented"}
+  gpt-5.6-terra:
+    capability_profile:
+      adversarial-review: {rating: MODERATE, note: "everyday reviewer; below Sol for complex judgment"}
+      refactor: {rating: WEAK, note: "conservative until multi-file evidence accumulates"}
+  gpt-5.6-luna:
+    capability_profile:
+      adversarial-review: {rating: WEAK, note: "clear repeatable review only; not a complex reviewer"}
+      refactor: {rating: WEAK, note: "structured transformations preferred over open-ended refactors"}
   gpt-5.5:
     capability_profile:
       adversarial-review: {rating: STRONG, note: "top composite reasoning; repo-access verification"}
       refactor: {rating: MODERATE, note: "multi-file terminal-oriented"}
 
 engines:
-  # ---- Codex / gpt-5.5 (external marketplace plugin; codex CLI) --------------------------------
+  # ---- Codex / GPT-5.6 (external marketplace plugin; codex CLI) -------------------------------
+  # Sol is the flagship default; Terra and Luna are intentionally conservative provisional rows.
+  - engine_id: codex
+    variant: gpt-5.6-sol-high
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: true
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-sol -c model_reasoning_effort=high"
+      write_capable: false
+      model: gpt-5.6-sol
+      effort: high
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 2
+    cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: standard
+    model_identity: gpt-5.6-sol
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "multi-file refactor, structured-output fidelity"}
+      second-opinion: {rating: MODERATE, note: "cross-family; refuter behavior still unmapped"}
+      debug: {rating: MODERATE, note: "tool-orchestrated; give it tools to iterate"}
+      scaffold: {rating: WEAK, note: "greenfield architecture is a caution area"}
+      long-form-writing: {rating: WEAK, note: "route expert prose to Claude"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Give it tools to iterate when debugging (quality drops in pure-chat mode)."
+      - "Manage context actively; it does not self-manage."
+      - "Reserve xhigh for the hardest tasks (cost multiplier)."
+    sources:
+      - {claim: "flagship for complex coding, research, and security", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: STRONG}
+
+  - engine_id: codex
+    variant: gpt-5.6-sol-xhigh
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-sol -c model_reasoning_effort=xhigh"
+      write_capable: false
+      model: gpt-5.6-sol
+      effort: xhigh
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 3
+    cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: slow
+    model_identity: gpt-5.6-sol
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: STRONG, note: "hardest bounded implementation; reserve for tough units"}
+      debug: {rating: STRONG, note: "tool-orchestrated root-cause"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Give it tools to iterate when debugging (quality drops in pure-chat mode)."
+      - "Manage context actively; it does not self-manage."
+      - "Reserve xhigh for the hardest tasks (cost multiplier)."
+    sources:
+      - {claim: "extra high reasoning suits difficult multi-step work", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: MODERATE}
+
+  - engine_id: codex
+    variant: gpt-5.6-terra-high
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-terra -c model_reasoning_effort=high"
+      write_capable: false
+      model: gpt-5.6-terra
+      effort: high
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 4
+    cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: standard
+    model_identity: gpt-5.6-terra
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "everyday implementation workhorse"}
+      second-opinion: {rating: MODERATE, note: "useful everyday cross-check"}
+      debug: {rating: MODERATE, note: "bounded tool-assisted debugging"}
+      scaffold: {rating: MODERATE, note: "routine scaffolding"}
+      long-form-writing: {rating: WEAK, note: "route expert prose to Claude"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Use for everyday work previously routed to GPT-5.5."
+      - "Increase effort only when the task needs deeper checking."
+    sources:
+      - {claim: "everyday workhorse competitive with GPT-5.5 at lower cost", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: STRONG}
+
+  - engine_id: codex
+    variant: gpt-5.6-terra-xhigh
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-terra -c model_reasoning_effort=xhigh"
+      write_capable: false
+      model: gpt-5.6-terra
+      effort: xhigh
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 5
+    cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: slow
+    model_identity: gpt-5.6-terra
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: STRONG, note: "harder everyday implementation with extra checking"}
+      debug: {rating: STRONG, note: "bounded tool-assisted root-cause work"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Use xhigh for bounded tasks with multiple checks or tradeoffs."
+      - "Do not treat Terra as Sol for complex review or refactor work."
+    sources:
+      - {claim: "extra high reasoning suits difficult multi-step work", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: MODERATE}
+
+  - engine_id: codex
+    variant: gpt-5.6-luna-high
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-luna -c model_reasoning_effort=high"
+      write_capable: false
+      model: gpt-5.6-luna
+      effort: high
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 6
+    cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: standard
+    model_identity: gpt-5.6-luna
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "clear, repeatable transformations"}
+      second-opinion: {rating: MODERATE, note: "structured sanity checks"}
+      debug: {rating: WEAK, note: "avoid open-ended root-cause work"}
+      scaffold: {rating: MODERATE, note: "routine repeatable scaffolding"}
+      bulk-classification: {rating: STRONG, note: "high-volume classification lane"}
+      structured-extraction: {rating: STRONG, note: "structured data extraction lane"}
+      long-form-writing: {rating: WEAK, note: "route expert prose to Claude"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Prefer clear, repeatable, high-volume tasks with explicit completion criteria."
+      - "Do not use for complex review or multi-file refactors."
+    sources:
+      - {claim: "fastest and lowest-cost model for clear repeatable work", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: STRONG}
+
+  - engine_id: codex
+    variant: gpt-5.6-luna-xhigh
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-luna -c model_reasoning_effort=xhigh"
+      write_capable: false
+      model: gpt-5.6-luna
+      effort: xhigh
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 7
+    cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: slow
+    model_identity: gpt-5.6-luna
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "repeatable transformation with extra checking"}
+      second-opinion: {rating: MODERATE, note: "structured sanity checks"}
+      debug: {rating: MODERATE, note: "bounded debug with explicit completion criteria"}
+      scaffold: {rating: MODERATE, note: "routine repeatable scaffolding"}
+      bulk-classification: {rating: STRONG, note: "high-volume classification lane"}
+      structured-extraction: {rating: STRONG, note: "structured data extraction lane"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Prefer explicit, repeatable tasks over open-ended reasoning."
+      - "Use xhigh only when the bounded task benefits from additional checking."
+    sources:
+      - {claim: "extra high reasoning suits difficult multi-step work", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: MODERATE}
+
+  # ---- Codex / gpt-5.5 legacy selectors -------------------------------------------------------
   - engine_id: codex
     variant: gpt-5.5-high
     substrate: external
     egress_policy: networked
     trust_tier: advisory
-    default_for_engine: true          # engine-only "use codex" resolves here (R1/R6); xhigh reserved
+    default_for_engine: false         # legacy selector; GPT-5.6 Sol is the current default
     invocation:
       via: codex:delegate
       recipe: "codex exec -s read-only -c model_reasoning_effort=high"
       write_capable: false            # evidence-only default (R23)
+      model: gpt-5.5
+      effort: high
       cli: codex
       auth:
         mode: files
@@ -45,7 +302,7 @@ engines:
           - "~/.codex/auth.json"
           - "~/.codex/config.toml"
     context_window: 400000            # R25 -- Codex CLI ChatGPT-account limit
-    cost_speed_rank: 2
+    cost_speed_rank: 8                 # legacy selector; current rows rank ahead
     cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
     cost_class: metered
     budget_ceiling_usd: 25.0
@@ -79,6 +336,8 @@ engines:
       via: codex:delegate
       recipe: "codex exec -s read-only -c model_reasoning_effort=xhigh"
       write_capable: false
+      model: gpt-5.5
+      effort: xhigh
       cli: codex
       auth:
         mode: files
@@ -86,7 +345,7 @@ engines:
           - "~/.codex/auth.json"
           - "~/.codex/config.toml"
     context_window: 400000
-    cost_speed_rank: 3                 # xhigh is the cost multiplier -- pricier than high
+    cost_speed_rank: 9                 # legacy selector; xhigh is the cost multiplier
     cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
     cost_class: metered
     budget_ceiling_usd: 25.0
@@ -312,7 +571,7 @@ roles:
   # The doc-review external-reviewer panel (R16) -- a first-class composing role, not a one-off.
   cross-family-review-panel:
     members:
-      - codex/gpt-5.5-xhigh
+      - codex/gpt-5.6-sol-xhigh
       - agy/gemini-3.1-pro-high
       - agy/gemini-3.5-flash-high
     verdict: advisory                 # R15 -- never gated

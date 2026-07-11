@@ -17,7 +17,7 @@ python3 plugins/codex/scripts/codex_delegate.py
 
 ## Current Status
 
-- Version `0.1.0` ships the full delegate surface
+- Version `0.1.2` ships the full delegate surface
   (`docs/plans/2026-07-06-codex-first-party-bridge-plugin-plan.md`, U1–U7): the
   `codex.delegation.v1` envelope schema with fail-loud validation, the supervised synchronous
   `codex exec` runner (timeout + no-output watchdogs, whole-tree kill with the kill outcome
@@ -25,6 +25,10 @@ python3 plugins/codex/scripts/codex_delegate.py
   the evidence bundle under `.claude/codex/runs/<run-id>/` (all JSON written atomically),
   the enforced read-only reviewer diff-scan and coder disposable-clone modes, and
   `bridge_receipt.v1` emission for every launched run.
+- Saga registry dispatch now selects explicit GPT-5.6 Sol, Terra, or Luna model/effort rows and
+  forwards both values to `codex:delegate`. Direct envelopes may still omit them and use the local
+  Codex configuration default. Registry and bridge provenance use the canonical
+  `<model>-<effort>` identity.
 - **Invoking the wrapper without `--validate-only`/`--dry-run` launches a live, supervised
   `codex exec` subprocess.** The validate-only path is opt-in, not the default.
 - This plugin retires the upstream `openai-codex` marketplace plugin's `codex:codex-rescue` agent,

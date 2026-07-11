@@ -27,6 +27,33 @@
 
 ## 2026-07-10
 
+### Registry identity must survive the Codex bridge boundary {#codex-registry-identity-bridge}
+
+**Context.** Saga already resolved an external-engine variant and the Codex wrapper already accepted
+optional model and effort fields, but the dispatch builder discarded the registry values and the
+bridge receipt identified only the model.
+**Evidence.** Issue #559; `engine_dispatch.build_codex_invocation()` previously emitted only
+`via`, `task`, and `sandbox`, while `codex_delegate._supervised_receipt()` used `envelope.model` as
+the receipt variant. The fake-Codex fixture now proves `-m gpt-5.6-terra` and
+`-c model_reasoning_effort=high`, with receipt variant `gpt-5.6-terra-high`.
+**Mechanism.** Direct delegate envelopes intentionally allow local-config defaults, so the bridge
+cannot require model metadata globally. Registry-backed resolutions are distinguishable by their
+row-authored `invocation` mapping; that boundary can require non-empty model and effort without
+altering direct delegation behavior.
+**Fix.** Codex registry rows now validate canonical `<model>-<effort>` variants, dispatch copies the
+separate fields into the envelope, and launched receipts use the same canonical pair when both are
+explicit. Projection and manifest tests verify the same identity end to end.
+**Validation.** Focused registry, resolver, dispatch, Codex bridge, receipt, attestation, and sandbox
+tests; full gate remains part of issue #559 closeout.
+**Generalizable rule.** Preserve identity as typed fields at every adapter boundary; use a narrowly
+identified legacy/default path for optional direct calls instead of weakening the registry contract.
+**Refs.** DECISIONS [#codex-gpt56-routing-559](DECISIONS.md#codex-gpt56-routing-559); Saga 0.75.23;
+Codex 0.1.2; issue #559.
+
+---
+
+## 2026-07-10
+
 ### A field with no dataclass default is invisible to default-equality carry-forward {#save-kind-identity-carry-forward}
 
 **Context.** The 0.75.18 fix (`{#save-explicit-vs-default-ambiguity}`) made every scalar save flag

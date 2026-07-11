@@ -46,6 +46,14 @@ def _row(
     }
     if debug_rating is not None:
         profile["debug"] = {"rating": debug_rating, "note": "fixture"}
+    invocation = {
+        "via": f"{engine_id}:delegate",
+        "recipe": f"{engine_id} delegate --mode no-write",
+        "write_capable": False,
+    }
+    if engine_id == "codex":
+        model, effort = variant.rsplit("-", 1)
+        invocation.update({"model": model, "effort": effort})
     return {
         "engine_id": engine_id,
         "variant": variant,
@@ -53,11 +61,7 @@ def _row(
         "egress_policy": "networked",
         "trust_tier": "advisory",
         "default_for_engine": True,
-        "invocation": {
-            "via": f"{engine_id}:delegate",
-            "recipe": f"{engine_id} delegate --mode no-write",
-            "write_capable": False,
-        },
+        "invocation": invocation,
         "context_window": 400000,
         "cost_speed_rank": cost_speed_rank,
         "cost_per_token": {"input_usd": 0.000001, "output_usd": 0.000002},

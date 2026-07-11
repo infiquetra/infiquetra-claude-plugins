@@ -1,6 +1,6 @@
 {
   "name": "team-execution",
-  "version": "2.14.3",
+  "version": "2.14.4",
   "description": "Two-phase plan execution with reviewer consensus, non-scoring external advisory convergence diffs, validator gates, chaperone manifests, and guarded nonprod automation.",
   "author": {
     "name": "Infiquetra",

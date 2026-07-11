@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-10
+
+### Changed - explicit model and effort provenance (#559)
+
+- Include model and reasoning effort in human-readable delegation projections and use the canonical
+  `<model>-<effort>` identity for receipts when both values are explicit.
+- Keep direct envelopes backward-compatible when model or effort is omitted; Saga registry dispatch
+  supplies both explicitly.
+
 ## [0.1.1] - 2026-07-09
 
 ### Added - output-attested bridge receipts (#388)

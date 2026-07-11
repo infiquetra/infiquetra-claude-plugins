@@ -2,6 +2,41 @@
 
 ## 2026-07-10
 
+### GPT-5.6 Codex routing uses explicit registry variants and preserves direct defaults {#codex-gpt56-routing-559}
+
+**Context.** The Codex registry had only GPT-5.5 metadata even though Codex now exposes Sol, Terra,
+and Luna. The bridge accepted model/effort overrides, but Saga routing did not forward them and
+receipts could not prove the selected reasoning effort.
+
+- **KTD1 - six current selectors plus two legacy selectors.** Register
+  `gpt-5.6-{sol,terra,luna}-{high,xhigh}` rows, make `codex/gpt-5.6-sol-high` the sole Codex
+  default, and retain GPT-5.5 high/xhigh as explicit non-default legacy selectors.
+- **KTD2 - canonical identity is `<model>-<effort>`.** Registry variants are validated against the
+  separate row invocation fields. The CLI payload carries `model` and `effort` separately so Codex
+  receives `-m` and `model_reasoning_effort`, while receipts and Saga evidence use the canonical
+  combined identity for comparison.
+- **KTD3 - provisional relative profiles only.** Sol inherits the existing GPT-5.5 profile. Terra
+  and Luna use conservative lower ratings for complex review/refactor work, with rank ordering that
+  expresses relative speed/cost without changing the existing metered budget or credit contract.
+- **KTD4 - direct delegation stays locally configurable.** A direct `/codex:delegate` envelope may
+  omit model/effort and use `~/.codex/config.toml`. Registry-backed Codex resolutions fail closed
+  before runner execution if either field is missing.
+- **KTD5 - safety and economics are unchanged.** Advisory-only authority, read-only Codex posture,
+  reviewer-role mapping, disposable-clone behavior, hard write-mode halt, and existing spend guards
+  remain intact. Credit accounting is deferred.
+
+**Plan.** Supplied inline implementation plan; issue #559.
+
+**Status.** Implemented on `feat/gpt-56-codex-routing`; release surfaces are bumped in Saga 0.75.23,
+Codex 0.1.2, and team-execution 2.14.4 pending final validation and normal PR closeout.
+
+**Revisit when.** Exact-variant bridge evidence is sufficient to replace the provisional Terra/Luna
+profiles or calibrate credit economics. Do not infer those changes from registry rank alone.
+
+---
+
+## 2026-07-10
+
 ### Issue #394 adds trigger-specific second opinions without changing gate authority {#work-review-second-opinion-394}
 
 **Context.** Issue #394 predates the shared engine-offer helper and typed reconciliation work now

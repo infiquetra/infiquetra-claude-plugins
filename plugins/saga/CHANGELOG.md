@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.75.23] - 2026-07-10
+
+### Changed - current Codex model routing and provenance (#559)
+
+- Register GPT-5.6 Sol, Terra, and Luna high/xhigh Codex selectors with Sol high as the
+  engine default; retain GPT-5.5 as explicit legacy selectors.
+- Require registry-backed Codex dispatch to carry explicit model and reasoning effort, and keep the
+  canonical `<model>-<effort>` identity aligned across invocation, receipts, evidence, and manifests.
+- Preserve advisory-only, read-only, reviewer-role, disposable-clone, spend-guard, and no-write halt
+  behavior.
+
 ## [0.75.22] - 2026-07-10
 
 ### Added - operator-confirmed, advisory-only second-opinion triggers (#394)

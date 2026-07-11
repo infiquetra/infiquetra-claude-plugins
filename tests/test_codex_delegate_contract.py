@@ -226,6 +226,34 @@ def test_supervised_receipt_is_emitted_when_codex_launched() -> None:
     assert bridge_receipt.validate_receipt(receipt) == []
 
 
+def test_supervised_receipt_uses_canonical_model_effort_variant() -> None:
+    envelope = codex_delegate.Envelope.from_mapping(
+        _base_reviewer_payload(model="gpt-5.6-sol", effort="xhigh")
+    )
+    now = datetime.now(UTC)
+    run_result = codex_delegate.SupervisedRunResult(
+        status="success",
+        codex_launched=True,
+        resolved_codex="/usr/local/bin/codex",
+        argv=["codex", "exec", "--json"],
+        process_id=4242,
+        return_code=0,
+        started_at=now,
+        ended_at=now,
+        stdout_bytes=128,
+        stderr_bytes=0,
+    )
+
+    receipt = codex_delegate._supervised_receipt(
+        run_result,
+        envelope=envelope,
+        **_receipt_kwargs(),
+    )
+
+    assert receipt is not None
+    assert receipt["variant"] == "gpt-5.6-sol-xhigh"
+
+
 def test_validate_only_cli_prints_envelope_and_exits_zero(capsys, tmp_path) -> None:
     exit_code = codex_delegate.main(
         [
@@ -523,6 +551,40 @@ def test_supervised_command_includes_model_flag_only_when_set(tmp_path) -> None:
     argv = json.loads((bundle / "command.json").read_text())["argv"]
     assert "-m" in argv
     assert argv[argv.index("-m") + 1] == "gpt-5"
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [
+        ("gpt-5.6-sol", "high"),
+        ("gpt-5.6-sol", "xhigh"),
+        ("gpt-5.6-terra", "high"),
+        ("gpt-5.6-terra", "xhigh"),
+        ("gpt-5.6-luna", "high"),
+        ("gpt-5.6-luna", "xhigh"),
+    ],
+)
+def test_registry_model_effort_reach_fake_codex_and_projection(
+    tmp_path, model: str, effort: str
+) -> None:
+    _, bundle = _run_bundle(
+        tmp_path,
+        {"model": model, "effort": effort},
+        _FAKE_CODEX_SUCCESS,
+    )
+    command = json.loads((bundle / "command.json").read_text())
+    argv = command["argv"]
+    assert argv[argv.index("-m") + 1] == model
+    assert argv[argv.index("-c") + 1] == f"model_reasoning_effort={effort}"
+
+    receipt = json.loads((bundle / "bridge-receipt.json").read_text())
+    assert receipt["variant"] == f"{model}-{effort}"
+    result = json.loads((bundle / "result.json").read_text())
+    assert result["model"] == model
+    assert result["effort"] == effort
+    projection = (bundle / "projection.md").read_text()
+    assert f"Model: {model}" in projection
+    assert f"Effort: {effort}" in projection
 
 
 def test_supervised_command_omits_model_flag_when_absent(tmp_path) -> None:

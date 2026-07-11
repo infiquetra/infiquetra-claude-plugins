@@ -111,6 +111,43 @@ def test_valid_attestation_can_run_as_requested() -> None:
     assert manifest.bridge_run_key == "proof-run-1"
 
 
+def test_canonical_codex_variant_matches_receipt_evidence_and_manifest() -> None:
+    resolution = dataclasses.replace(
+        _resolution(),
+        variant="gpt-5.6-sol-high",
+        effort="high",
+        invocation={
+            "via": "codex:delegate",
+            "recipe": "recipe",
+            "write_capable": False,
+            "model": "gpt-5.6-sol",
+            "effort": "high",
+        },
+    )
+    receipt = _receipt()
+    receipt["variant"] = "gpt-5.6-sol-high"
+    evidence = D.dispatch(
+        resolution,
+        runner=lambda invocation: {
+            "status": "ok",
+            "output": "external finding",
+            "receipt": receipt,
+        },
+    )
+    manifest = D.build_dispatch_manifest(
+        evidence,
+        execution_id="exec-canonical",
+        saga_ref="saga-1",
+        created_at="2026-07-09T00:00:00Z",
+        effort=resolution.effort,
+    )
+
+    assert evidence.variant == "gpt-5.6-sol-high"
+    assert evidence.runner_receipt["variant"] == evidence.variant
+    assert manifest.attribution.identity == "codex/gpt-5.6-sol-high"
+    assert manifest.attribution.effort == "high"
+
+
 def test_hash_mismatch_becomes_proof_integrity() -> None:
     manifest = _manifest(_receipt(attested_output="different"))
 

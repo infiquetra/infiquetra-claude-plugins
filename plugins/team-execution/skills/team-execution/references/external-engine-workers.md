@@ -151,6 +151,23 @@ resolution = engine_resolver.resolve(
 )
 ```
 
+For a registry-backed Codex resolution, the resulting envelope includes the complete identity:
+
+```json
+{
+  "via": "codex:delegate",
+  "sandbox": "read-only",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "task": "<resolved protocol and context>"
+}
+```
+
+The registry resolver requires both `model` and `effort`; a missing field halts before the runner.
+This is distinct from direct `/codex:delegate` use, where either field may be omitted and the local
+Codex configuration supplies the default. The canonical variant identity shared by the registry,
+receipt, and Saga evidence is `<model>-<effort>`.
+
 (`role_kind` rides in the request dict; `engine`/`capability` are mutually exclusive keys —
 `engine_resolver.py:79`, `MODES = ("advisory", "dispatch")` at `:17`, `ROLE_KINDS` at `:18`.)
 `role_kind="worker"` puts the chaperone in `FALLBACK_ROLE_KINDS` (`engine_resolver.py:19`), which
@@ -212,7 +229,8 @@ actually invokes the engine is the existing containment wrapper, not a new one t
   declared files, `apply_policy: "preserve-patch"` (`build_agy_envelope`). No new isolation is
   built — the remotes-stripped disposable clone agy already sets up is the workspace, and the
   `git diff <BASE_SHA>` harvest imports only the declared write_set (R23 gate stays upstream).
-- **codex** → `codex:delegate`, `sandbox: "read-only"` (`build_codex_invocation`). codex has
+- **codex** → `codex:delegate`, `sandbox: "read-only"`, explicit registry `model` and `effort`
+  (`build_codex_invocation`). codex has
   **no write adapter**: a `sandboxed-mutate` unit routed to codex HALTS with a visible
   `DispatchError` rather than silently running read-only and dropping the write (#287 KTD4/R6).
 

@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.75.22",
+      "version": "0.75.23",
       "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, trust-gated external-engine onboarding, provenance, and attestation.",
       "author": {
         "name": "Infiquetra",
@@ -108,7 +108,7 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.14.3",
+      "version": "2.14.4",
       "description": "Two-phase plan execution with reviewer consensus, non-scoring external advisory convergence diffs, validator gates, chaperone manifests, and guarded nonprod automation.",
       "author": {
         "name": "Infiquetra",
@@ -220,7 +220,7 @@
     {
       "name": "codex",
       "source": "./plugins/codex",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "First-party guarded synchronous codex delegation bridge with evidence bundles and output-attested receipts, mirroring agy wrapper's shape.",
       "author": {
         "name": "Infiquetra",

@@ -48,6 +48,8 @@ def _registry_dict(*, last_validated: str = "2026-07-06") -> dict[str, Any]:
                     "via": "codex:delegate",
                     "recipe": "codex exec -s read-only -c model_reasoning_effort=high",
                     "write_capable": False,
+                    "model": "gpt-5.5",
+                    "effort": "high",
                     "cli": "codex",
                     "auth": {"mode": "files", "paths": ["~/.codex/auth.json"]},
                 },

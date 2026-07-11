@@ -1,6 +1,6 @@
 # External-engine dispatch contract
 
-How a resolved `{engine, effort, protocol, payload}` (from `engine_resolver.resolve`) reaches an
+How a resolved `{engine, effort, invocation, protocol, payload}` (from `engine_resolver.resolve`) reaches an
 external engine and comes back as evidence Claude verifies. This reference governs the *policy*; the
 mechanism lives in `plugins/saga/scripts/engine_dispatch.py`.
 
@@ -12,8 +12,11 @@ holds a gated verdict.** Dispatch produces *advisory evidence*, never a decision
 The adapter dispatches to the wrapper each engine already owns — it does not re-implement containment.
 
 - **Codex** (`resolution.engine_id == "codex"`) → `codex:delegate`. The invocation carries
-  `sandbox: read-only` (R23) and `task` set to `resolution.payload` **byte-for-byte** — the assembled
+  `sandbox: read-only` (R23), the registry's explicit `model` and `effort`, and `task` set to
+  `resolution.payload` **byte-for-byte** — the assembled
   protocol + context is forwarded verbatim, never paraphrased or shell-interpolated (R9/R11/AE5).
+  Its canonical registry identity is `<model>-<effort>` (for example, `gpt-5.6-sol-high`), so the
+  invocation payload and bridge receipt can be compared directly.
   `advisory-reviewer` and `panel` dispatches additionally carry `role: reviewer`; ordinary workers omit
   the field and retain their existing invocation bytes.
 - **agy** (`resolution.engine_id == "agy"`) → `agy:delegate`. The invocation is an
@@ -31,6 +34,15 @@ All paths are **evidence-only by default** (R23): the engine returns proposed ou
 mutate the working tree. File-mutating external work is deferred until the ideation-R14 sandbox
 profile exists — until then an external worker asked to change files returns the proposed change as
 evidence, not an edit (AE7).
+
+## Direct delegation versus registry dispatch
+
+The direct `/codex:delegate` command accepts an envelope with omitted `model` and `effort`; the
+Codex CLI then uses the user's local `~/.codex/config.toml` default. Saga registry dispatch is a
+different contract: the resolved Codex row must carry non-empty `invocation.model` and
+`invocation.effort`, and dispatch halts before execution if either is missing. This prevents a
+capability route from silently changing model identity between the plan, CLI invocation, receipt,
+and Saga evidence.
 
 ## Trust standing and promotion
 

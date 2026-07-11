@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.76.0] - 2026-07-11
+
+### Added - operator-confirmed gate for `always_operator`-tier transitions (#526)
+
+- `ship_ceremony.py run` now requires `--operator-confirmed <transition>` to execute
+  `always_operator`-tier transitions (`merge`, `branch_delete`).
+- A bare `run` reaching a gated transition exits non-zero, names the withheld transition, and leaves
+  the ceremony ledger unadvanced — no state changes until the operator passes the flag naming that
+  exact transition.
+- Bare `run` behavior on `reversible`/`additive` transitions is unchanged.
+- Guidance surfaces updated: `/work` skill and `pr-continuation-loop` reference now name the flag.
+
 ## [0.75.23] - 2026-07-10
 
 ### Changed - current Codex model routing and provenance (#559)

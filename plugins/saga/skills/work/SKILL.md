@@ -535,8 +535,8 @@ On a clean gate (or recorded override):
    `issue_progress.py` CLI (`--pr-url`, `--review-status`).
 4. **Present continuation routing** and pause. On re-entry, Phase 0.4 reads the live PR state and runs the
    transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
-   approved + clean + fresh, **offer to run `ship_ceremony.py run`** through `merge` → `checkout_main` →
-   `pull` → `branch_delete` (explicitly confirmed) — merge is a git op `/work` owns under confirmation,
+   approved + clean + fresh, **offer to run `ship_ceremony.py run --operator-confirmed merge`** through `merge` → `checkout_main` →
+   `pull` → `branch_delete`, then `ship_ceremony.py run --operator-confirmed branch_delete` (explicitly confirmed) — merge is a git op `/work` owns under confirmation,
    `ship_ceremony.py` is the mechanism, not a new authority. On merge, set `phase_status=complete` and
    route to `/qa` **advisorily**.
 

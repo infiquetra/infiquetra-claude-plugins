@@ -15,7 +15,14 @@ Two entry points share this one implementation (R4): ``/work``'s PR-ready flow c
 auto-fired by this script on its own initiative — every mutating transition is invoked
 only when the caller (``/work`` or the operator at the terminal) explicitly asks for
 the next step; the primitive automates *sequencing and bookkeeping*, not
-*authorization* (R5).
+*authorization* (R5). Sequencing and bookkeeping are not the whole of authorization,
+though: ``run()`` also enforces it directly for ``always_operator``-tier transitions
+(``merge``, ``branch_delete``) — a bare ``run`` reaching one of them refuses
+(``OperatorConfirmationError``) before the transition runner or ``saga.py save`` is
+ever reached, and only ``--operator-confirmed <transition>`` naming that exact
+transition unlocks it (issue #526). The gate is a tier lookup against
+``TRANSITION_TIERS``, never a hardcoded transition-name list, so any future
+transition declared ``always_operator`` inherits enforcement automatically.
 
 Reversibility tiers (KTD1) are declared locally as ``CeremonyTier`` rather than reusing
 ``reversibility_certificate.py`` — that module's own docstring scopes its ``OpKind``
@@ -61,6 +68,12 @@ class NoSagaError(ShipCeremonyError):
 
 class TransitionFailedError(ShipCeremonyError):
     """The underlying git/gh call for a transition failed; state was not advanced."""
+
+
+class OperatorConfirmationError(ShipCeremonyError):
+    """The upcoming transition is ``always_operator``-tier and was not (or was
+    mismatched-ly) confirmed via ``--operator-confirmed <transition>``; refused
+    before dispatch and before the save (R1/R3/KTD3)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -395,14 +408,37 @@ def run(
     repo_root: Path,
     issue_ref: str | None = None,
     saga_id: str | None = None,
+    operator_confirmed: str | None = None,
     runner: Callable[..., Any] | None = None,
 ) -> str:
     """Execute exactly the next unrun transition and record it. Returns a
-    human-readable status line; raises on ambiguity or transition failure."""
+    human-readable status line; raises on ambiguity or transition failure.
+
+    R1/R3/KTD2-KTD4: when the upcoming transition is ``always_operator``-tier
+    (looked up via ``TRANSITION_TIERS``, never a hardcoded name list), the caller
+    must pass ``operator_confirmed`` naming that exact transition — a bare call, or
+    one naming a different transition, refuses before ``_RUNNERS[upcoming]`` is
+    invoked and before any ``saga.py save``, so the ledger is provably unadvanced.
+    """
     saga = resolve_saga(repo_root=repo_root, issue_ref=issue_ref, saga_id=saga_id, runner=runner)
     upcoming = next_transition(saga.get("ceremony_transition", ""))
     if upcoming is None:
         return "already shipped — all ceremony transitions complete"
+
+    if operator_confirmed is not None and operator_confirmed != upcoming:
+        # KTD4: the mismatch rule is uniform across tiers — refuse even when the
+        # upcoming transition is itself reversible, so a mispredicted ledger
+        # position always surfaces instead of confirmation silently "spilling"
+        # onto a step the caller did not name.
+        raise OperatorConfirmationError(
+            f"--operator-confirmed {operator_confirmed!r} does not match the upcoming "
+            f"transition {upcoming!r}; confirmation must name the exact transition being run"
+        )
+    if TRANSITION_TIERS[upcoming] == CeremonyTier.ALWAYS_OPERATOR and operator_confirmed is None:
+        raise OperatorConfirmationError(
+            f"transition {upcoming!r} is tier={CeremonyTier.ALWAYS_OPERATOR!r} and requires "
+            f"operator confirmation; re-run with --operator-confirmed {upcoming}"
+        )
 
     _RUNNERS[upcoming](saga, repo_root=repo_root, runner=runner)
 
@@ -421,7 +457,8 @@ def run(
         repo_root=repo_root,
         runner=runner,
     )
-    return f"ran transition {upcoming!r} (tier={TRANSITION_TIERS[upcoming]})"
+    confirmation_note = ", operator-confirmed" if operator_confirmed == upcoming else ""
+    return f"ran transition {upcoming!r} (tier={TRANSITION_TIERS[upcoming]}{confirmation_note})"
 
 
 def start(
@@ -549,6 +586,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="explicit saga id (e.g. task-<slug>); survives checkout_main, unlike by-branch resolution",
     )
+    p_run.add_argument(
+        "--operator-confirmed",
+        default=None,
+        choices=TRANSITIONS,
+        help=(
+            "name the always_operator-tier transition (merge, branch_delete) you are "
+            "authorizing; required when the upcoming transition is always_operator-tier"
+        ),
+    )
 
     p_start = sub.add_parser("start", help="front-loaded mode: push branch, open draft PR")
     p_start.add_argument("--issue-ref", required=True, help="owner/repo#N")
@@ -570,7 +616,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "run":
-            print(run(repo_root=repo_root, issue_ref=args.issue_ref, saga_id=args.saga_id))
+            print(
+                run(
+                    repo_root=repo_root,
+                    issue_ref=args.issue_ref,
+                    saga_id=args.saga_id,
+                    operator_confirmed=args.operator_confirmed,
+                )
+            )
         elif args.command == "start":
             print(start(repo_root=repo_root, issue_ref=args.issue_ref))
         elif args.command == "install":

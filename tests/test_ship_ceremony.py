@@ -230,6 +230,23 @@ def _restore(repo: Path) -> dict[str, Any]:
     return output
 
 
+def _confirm_for(transition: str) -> str | None:
+    """Operator confirmation for ``transition`` when its tier demands one (#526)."""
+    if SC.TRANSITION_TIERS[transition] == SC.CeremonyTier.ALWAYS_OPERATOR:
+        return transition
+    return None
+
+
+def _origin_main_sha(bare_origin: Path) -> str:
+    out = subprocess.run(  # noqa: S607
+        ["git", "ls-remote", str(bare_origin), "refs/heads/main"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.split()[0]
+
+
 # --------------------------------------------------------------------------- #
 # Integration tests
 # --------------------------------------------------------------------------- #
@@ -238,11 +255,11 @@ def _restore(repo: Path) -> dict[str, Any]:
 def test_full_ceremony_throwaway_branch(ceremony_repo) -> None:
     repo, fake_gh = ceremony_repo
     for expected in SC.TRANSITIONS:
-        confirmed = (
-            expected if SC.TRANSITION_TIERS[expected] == SC.CeremonyTier.ALWAYS_OPERATOR else None
-        )
         status = SC.run(
-            repo_root=repo, issue_ref="org/repo#345", operator_confirmed=confirmed, runner=fake_gh
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed=_confirm_for(expected),
+            runner=fake_gh,
         )
         assert expected in status
 
@@ -275,11 +292,11 @@ def test_resume_from_state(ceremony_repo) -> None:
 def test_already_complete_ceremony_is_a_noop(ceremony_repo) -> None:
     repo, fake_gh = ceremony_repo
     for expected in SC.TRANSITIONS:
-        confirmed = (
-            expected if SC.TRANSITION_TIERS[expected] == SC.CeremonyTier.ALWAYS_OPERATOR else None
-        )
         SC.run(
-            repo_root=repo, issue_ref="org/repo#345", operator_confirmed=confirmed, runner=fake_gh
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed=_confirm_for(expected),
+            runner=fake_gh,
         )
     status = SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
     assert "already shipped" in status
@@ -297,21 +314,24 @@ def _advance_to(repo: Path, fake_gh: FakeGh, target: str) -> None:
     for expected in SC.TRANSITIONS:
         if expected == target:
             return
-        confirmed = (
-            expected if SC.TRANSITION_TIERS[expected] == SC.CeremonyTier.ALWAYS_OPERATOR else None
-        )
         SC.run(
-            repo_root=repo, issue_ref="org/repo#345", operator_confirmed=confirmed, runner=fake_gh
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed=_confirm_for(expected),
+            runner=fake_gh,
         )
 
 
 def test_bare_run_at_merge_refuses_and_names_the_transition(ceremony_repo) -> None:
     repo, fake_gh = ceremony_repo
     _advance_to(repo, fake_gh, "merge")
+    origin_main_before = _origin_main_sha(fake_gh.bare_origin)
     with pytest.raises(SC.OperatorConfirmationError, match="merge"):
         SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
     assert _restore(repo)["ceremony_transition"] == "request_review"
-    assert len(fake_gh._prs) == 1  # noqa: SLF001 - merge runner never invoked
+    # The merge runner's only observable side effect is pushing the branch to the
+    # origin's main ref — prove the runner never ran (R1), not just that no save landed.
+    assert _origin_main_sha(fake_gh.bare_origin) == origin_main_before
 
 
 def test_bare_run_at_branch_delete_refuses_and_names_the_transition(ceremony_repo) -> None:
@@ -321,6 +341,10 @@ def test_bare_run_at_branch_delete_refuses_and_names_the_transition(ceremony_rep
     with pytest.raises(SC.OperatorConfirmationError, match="branch_delete"):
         SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
     assert _restore(repo)["ceremony_transition"] == "pull"
+    branches = subprocess.run(  # noqa: S607
+        ["git", "-C", str(repo), "branch"], check=True, capture_output=True, text=True
+    ).stdout
+    assert "feat/pf-throwaway-345" in branches  # R1: the delete runner never ran
 
 
 def test_operator_confirmed_merge_executes_and_records_tier(ceremony_repo) -> None:
@@ -345,6 +369,22 @@ def test_operator_confirmed_mismatch_refuses_even_on_a_reversible_step(ceremony_
     assert _restore(repo)["ceremony_transition"] == ""
 
 
+def test_operator_confirmed_mismatch_between_two_gated_steps_refuses(ceremony_repo) -> None:
+    """KTD4 from the gated side: a confirmation naming ``branch_delete`` while the
+    upcoming transition is ``merge`` (both always_operator-tier) refuses, names both
+    transitions, and leaves the ledger unadvanced."""
+    repo, fake_gh = ceremony_repo
+    _advance_to(repo, fake_gh, "merge")
+    with pytest.raises(SC.OperatorConfirmationError, match=r"branch_delete.*merge"):
+        SC.run(
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed="branch_delete",
+            runner=fake_gh,
+        )
+    assert _restore(repo)["ceremony_transition"] == "request_review"
+
+
 def test_bare_run_over_reversible_prefix_is_unchanged(ceremony_repo) -> None:
     repo, fake_gh = ceremony_repo
     for expected in ("commit", "open_pr", "request_review"):
@@ -358,11 +398,11 @@ def test_operator_confirmed_flag_on_already_shipped_ceremony_is_still_a_noop(
 ) -> None:
     repo, fake_gh = ceremony_repo
     for expected in SC.TRANSITIONS:
-        confirmed = (
-            expected if SC.TRANSITION_TIERS[expected] == SC.CeremonyTier.ALWAYS_OPERATOR else None
-        )
         SC.run(
-            repo_root=repo, issue_ref="org/repo#345", operator_confirmed=confirmed, runner=fake_gh
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed=_confirm_for(expected),
+            runner=fake_gh,
         )
     status = SC.run(
         repo_root=repo, issue_ref="org/repo#345", operator_confirmed="merge", runner=fake_gh
@@ -694,6 +734,30 @@ def test_cli_main_run_with_operator_confirmed_proceeds(
     assert exit_code == 0
     assert "merge" in capsys.readouterr().out
     assert _restore(repo)["ceremony_transition"] == "merge"
+
+
+def test_cli_main_rejects_off_palette_operator_confirmed_value(
+    ceremony_repo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An off-palette --operator-confirmed value is argparse's error, not the gate's:
+    usage message + exit code 2 (vs the ShipCeremonyError boundary's
+    ship_ceremony:-prefixed stderr + exit 1) — pinned so the distinct shape is
+    intentional, not accidental."""
+    repo, _fake_gh = ceremony_repo
+    with pytest.raises(SystemExit) as excinfo:
+        SC.main(
+            [
+                "--repo-root",
+                str(repo),
+                "run",
+                "--issue-ref",
+                "org/repo#345",
+                "--operator-confirmed",
+                "bogus",
+            ]
+        )
+    assert excinfo.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_cli_main_reports_error_and_exits_nonzero(

@@ -97,8 +97,10 @@ Rules (all load-bearing):
 ## Merge is a confirmed git op `/work` owns
 
 When `destination ⊇ merge` and the approved-fresh row fires, `/work` performs the merge itself — but only
-as an **explicitly operator-confirmed** run of `ship_ceremony.py run --operator-confirmed merge` through `merge` → `checkout_main` →
-`pull` → `branch_delete`, then `ship_ceremony.py run --operator-confirmed branch_delete` (issue #345), never silent. There is no separate "git/human" skill; merge is a
+as an **explicitly operator-confirmed** ceremony — four separate `ship_ceremony.py run` invocations,
+one transition each: `run --operator-confirmed merge`, a bare `run` for `checkout_main`, a bare `run`
+for `pull`, then `run --operator-confirmed branch_delete` (issues #345/#526) — never silent. There is
+no separate "git/human" skill; merge is a
 git op `/work` owns under confirmation (saga-spec §1.1 keeps deploy as deploy's hard boundary, but merge
 is a git operation, not a deployment) — `ship_ceremony.py` is the mechanism that carries out that
 confirmed op and records each transition's reversibility tier on the saga tick, not a new authority. Use

@@ -22,12 +22,22 @@ release/operator documentation.
 ## Checks
 
 - Focused pytest: 346 passed with `--no-cov`.
-- `git diff --check`: passed.
+- Final Codex contract pytest: 34 passed, including all six GPT-5.6 model/effort pairs against a
+  fake Codex executable.
+- Full pytest: 3,094 passed, 0 failed, 1 skipped.
+- Registry validator and conformance: 13 rows passed.
+- Marketplace sync check, release-surface parity, Ruff, mypy, changed-file Bandit, and
+  `git diff --check`: passed.
+- Full recursive Bandit retains pre-existing repository and nested-environment findings; changed
+  Saga/Codex files have zero medium/high findings.
+- Code review: `docs/code-reviews/2026-07-10-issue-559-gpt-56-codex-routing-code-review.md`, clean and
+  not blocked.
+- Commit: `6d49c75` (`feat(codex): route current models through saga dispatch`).
 
 ## Next step
 
-Run the full registry, marketplace, pytest, Ruff, mypy, and Bandit gates, then inspect the final diff
-and perform the code-review readiness gate.
+Push/open the PR and run the external CI, merge, issue, and board closeout sequence after operator
+confirmation.
 
 ## Residual risk
 

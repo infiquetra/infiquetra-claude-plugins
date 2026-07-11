@@ -289,9 +289,14 @@ def _supervised_receipt(
     if not run_result.codex_launched:
         return None
     wall_time_s = (run_result.ended_at - run_result.started_at).total_seconds()
+    variant = (
+        f"{envelope.model}-{envelope.effort}"
+        if envelope.model and envelope.effort
+        else envelope.model or "default"
+    )
     return _bridge_receipt.emit_receipt(
         engine_id="codex",
-        variant=envelope.model or "default",
+        variant=variant,
         transport="cli",
         wall_time_s=wall_time_s,
         bytes_produced=run_result.stdout_bytes + run_result.stderr_bytes,
@@ -465,6 +470,8 @@ def render_projection(result: dict[str, Any]) -> str:
             f"Bundle: {result['bundle_path']}",
             f"Role: {result['role']}",
             f"Mode: {result['mode']}",
+            f"Model: {result.get('model') or '<user config default>'}",
+            f"Effort: {result.get('effort') or '<user config default>'}",
             "",
             result["summary"],
             "",
@@ -892,6 +899,8 @@ def _result_payload(
         "bundle_path": str(bundle_path),
         "role": envelope.role,
         "mode": envelope.mode,
+        "model": envelope.model,
+        "effort": envelope.effort,
         "evidence": envelope.evidence,
         "codex_launched": run_result.codex_launched,
         "resolved_codex": run_result.resolved_codex,

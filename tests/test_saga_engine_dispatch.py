@@ -106,6 +106,46 @@ def test_codex_invocation_preserves_payload_byte_for_byte_and_read_only() -> Non
     assert invocation["task"].encode("utf-8") == payload.encode("utf-8")
 
 
+def test_registry_codex_invocation_propagates_model_and_effort() -> None:
+    resolution = _resolution()
+    resolution = dataclasses.replace(
+        resolution,
+        variant="gpt-5.6-sol-high",
+        effort="high",
+        invocation={
+            "via": "codex:delegate",
+            "recipe": "codex exec -s read-only -m gpt-5.6-sol -c model_reasoning_effort=high",
+            "write_capable": False,
+            "model": "gpt-5.6-sol",
+            "effort": "high",
+        },
+    )
+
+    assert D.build_codex_invocation(resolution) == {
+        "via": "codex:delegate",
+        "task": resolution.payload,
+        "sandbox": "read-only",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+    }
+
+
+@pytest.mark.parametrize("field", ["model", "effort"])
+def test_registry_codex_invocation_missing_model_or_effort_halts_before_runner(field: str) -> None:
+    invocation = {
+        "via": "codex:delegate",
+        "recipe": "recipe",
+        "write_capable": False,
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+    }
+    del invocation[field]
+    resolution = dataclasses.replace(_resolution(), invocation=invocation)
+
+    with pytest.raises(D.DispatchError, match=field):
+        D.build_codex_invocation(resolution)
+
+
 def test_agy_envelope_is_no_write_and_forwards_model_verbatim() -> None:
     payload = "Use the no-write envelope.\n\nReturn evidence only."
     model = "  Gemini 3.1 Pro (High)  "
@@ -1427,6 +1467,8 @@ def _memoization_registry_dict() -> dict[str, Any]:
                     "via": "codex:delegate",
                     "recipe": "codex exec -s read-only -c model_reasoning_effort=xhigh",
                     "write_capable": False,
+                    "model": "gpt-5.5",
+                    "effort": "xhigh",
                 },
                 "context_window": 400000,
                 "cost_speed_rank": 2,

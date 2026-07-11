@@ -392,6 +392,15 @@ class EngineEntry:
         _require_string(invocation, "via", f"{where}: invocation")
         _require_string(invocation, "recipe", f"{where}: invocation")
         _require_bool(invocation, "write_capable", f"{where}: invocation")
+        if engine_id == "codex" and transport == "cli":
+            model = _require_string(invocation, "model", f"{where}: invocation")
+            effort = _require_string(invocation, "effort", f"{where}: invocation")
+            expected_variant = f"{model}-{effort}"
+            if variant != expected_variant:
+                raise RegistryError(
+                    f"{where}: Codex variant must be canonical <model>-<effort> identity "
+                    f"{expected_variant!r}"
+                )
         _validate_invocation_transport(invocation, transport, where)
         auth = _parse_auth(invocation, transport, where)
 

@@ -27,8 +27,9 @@ Delegate one bounded task to codex through the guarded wrapper.
 - `review_lens=<adversarial|quality|scope-gap|security-ops>` selects one reviewer lens without
   creating another agent.
 - `write-set=<repo-relative-path>` may be repeated. Required for `mode=task`.
-- `model=<name>` and `effort=<level>` are optional; when omitted, codex falls back to its own
-  configured default (KTD3).
+- `model=<name>` and `effort=<level>` are optional for direct delegation; when omitted, codex falls
+  back to its own configured default (KTD3). Saga registry dispatch includes both explicitly and
+  fails closed if either is missing.
 
 ## Quick Reference
 

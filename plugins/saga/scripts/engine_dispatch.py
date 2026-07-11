@@ -205,6 +205,19 @@ def build_codex_invocation(
         "task": resolution.payload,
         "sandbox": "read-only",
     }
+    if resolution.invocation is not None:
+        model = resolution.invocation.get("model")
+        effort = resolution.invocation.get("effort")
+        if not isinstance(model, str) or not model.strip():
+            raise DispatchError(
+                "registry-backed Codex resolution is missing a non-empty invocation.model"
+            )
+        if not isinstance(effort, str) or not effort.strip():
+            raise DispatchError(
+                "registry-backed Codex resolution is missing a non-empty invocation.effort"
+            )
+        invocation["model"] = model
+        invocation["effort"] = effort
     if role_kind in {"advisory-reviewer", "panel"}:
         invocation["role"] = "reviewer"
     _assert_payload_preserved(invocation["task"], resolution.payload)

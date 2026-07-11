@@ -4,6 +4,13 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.14.4] - 2026-07-10
+
+### Changed - current Codex registry dispatch contract (#559)
+
+- Document explicit GPT-5.6 model/effort propagation for registry-backed Codex chaperone envelopes,
+  canonical `<model>-<effort>` receipt/evidence identity, and the direct-delegation default boundary.
+
 ## [2.14.3] - 2026-07-09
 
 ### Changed - typed external-engine reconciliation contract (#393)

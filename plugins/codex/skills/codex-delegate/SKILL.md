@@ -27,8 +27,13 @@ Direct Read/Edit/Write solving is a contract breach.
 - `task`: bounded task text or a task file path.
 - `evidence`: `minimal`, `summary`, or `full`.
 - `write_set`: explicit paths, required when `mode=task`.
-- `model` / `effort`: optional; omit to let codex fall back to its own configured default
-  (KTD3).
+- `model` / `effort`: optional for direct `/codex:delegate` use; omit them to let codex fall back
+  to its own configured default (KTD3). Saga registry dispatch supplies both explicitly and fails
+  closed if either is absent.
+
+Registry-backed Codex identity is the canonical `<model>-<effort>` pair, for example
+`gpt-5.6-sol-high`. The separate `model` and `effort` fields are preserved in the envelope so the
+Codex argv, bridge receipt, and Saga evidence can be compared without parsing prose.
 
 ## Shared Envelope Gate
 

@@ -45,6 +45,8 @@ def _valid_registry_dict() -> dict[str, Any]:
                     "via": "codex:delegate",
                     "recipe": "codex exec -s read-only -c model_reasoning_effort=xhigh",
                     "write_capable": False,
+                    "model": "gpt-5.5",
+                    "effort": "xhigh",
                 },
                 "context_window": 400000,
                 "cost_speed_rank": 2,
@@ -238,6 +240,7 @@ def test_ambiguous_engine_default_errors(tmp_path: Path) -> None:
     data["engines"][0]["default_for_engine"] = False
     second_codex_variant = deepcopy(data["engines"][0])
     second_codex_variant["variant"] = "gpt-5.5-medium"
+    second_codex_variant["invocation"]["effort"] = "medium"
     second_codex_variant["cost_speed_rank"] = 3
     data["engines"].append(second_codex_variant)
 
@@ -272,6 +275,23 @@ def test_missing_sources_errors(tmp_path: Path) -> None:
     del data["engines"][0]["sources"]
 
     with pytest.raises(M.RegistryError, match="sources"):
+        M.Registry.load(_write_registry(tmp_path, data))
+
+
+@pytest.mark.parametrize("field", ["model", "effort"])
+def test_codex_cli_rows_require_explicit_model_and_effort(tmp_path: Path, field: str) -> None:
+    data = _valid_registry_dict()
+    del data["engines"][0]["invocation"][field]
+
+    with pytest.raises(M.RegistryError, match=field):
+        M.Registry.load(_write_registry(tmp_path, data))
+
+
+def test_codex_variant_is_canonical_model_effort_identity(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    data["engines"][0]["variant"] = "legacy-selector"
+
+    with pytest.raises(M.RegistryError, match="canonical.*identity"):
         M.Registry.load(_write_registry(tmp_path, data))
 
 
@@ -497,13 +517,13 @@ def test_by_capability_routing_stability_regression_shipped_registry_winners_unc
     registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
 
     expected_winners = {
-        "code-generation": "codex/gpt-5.5-xhigh",
-        "adversarial-review": "codex/gpt-5.5-high",
+        "code-generation": "codex/gpt-5.6-sol-xhigh",
+        "adversarial-review": "codex/gpt-5.6-sol-high",
         "second-opinion": "agy/gemini-3.1-pro-high",
-        "debug": "codex/gpt-5.5-xhigh",
-        "refactor": "codex/gpt-5.5-high",
+        "debug": "codex/gpt-5.6-sol-xhigh",
+        "refactor": "codex/gpt-5.6-sol-high",
         "scaffold": "agy/gemini-3.5-flash-high",
-        "long-form-writing": "codex/gpt-5.5-high",
+        "long-form-writing": "codex/gpt-5.6-sol-high",
     }
     for capability, expected_key in expected_winners.items():
         assert registry.by_capability(capability).key == expected_key, capability
@@ -519,12 +539,31 @@ def test_shipped_registry_resolves_new_schema_currency_capabilities() -> None:
 
 def test_shipped_registry_materializes_codex_family_defaults() -> None:
     registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
-    codex_rows = [entry for entry in registry.engines if entry.model_identity == "gpt-5.5"]
+    sol_rows = [entry for entry in registry.engines if entry.model_identity == "gpt-5.6-sol"]
 
-    assert len(codex_rows) == 2
-    for entry in codex_rows:
+    assert len(sol_rows) == 2
+    for entry in sol_rows:
         assert entry.capability_profile["adversarial-review"]["rating"] == "STRONG"
         assert entry.capability_profile["refactor"]["rating"] == "MODERATE"
+
+
+def test_shipped_registry_exposes_current_codex_selectors_and_legacy_rows() -> None:
+    registry = M.Registry.load(ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml")
+
+    codex_rows = [entry for entry in registry.engines if entry.engine_id == "codex"]
+    assert {entry.variant for entry in codex_rows} == {
+        "gpt-5.6-sol-high",
+        "gpt-5.6-sol-xhigh",
+        "gpt-5.6-terra-high",
+        "gpt-5.6-terra-xhigh",
+        "gpt-5.6-luna-high",
+        "gpt-5.6-luna-xhigh",
+        "gpt-5.5-high",
+        "gpt-5.5-xhigh",
+    }
+    assert registry.by_engine("codex").key == "codex/gpt-5.6-sol-high"
+    assert sum(entry.default_for_engine for entry in codex_rows) == 1
+    assert all(entry.invocation["model"] and entry.invocation["effort"] for entry in codex_rows)
 
 
 def test_family_defaults_merge_before_validation(tmp_path: Path) -> None:
@@ -718,6 +757,7 @@ def test_provider_variants_share_cost_class_and_budget_ceiling(tmp_path: Path) -
     data = _valid_registry_dict()
     variant = deepcopy(data["engines"][0])
     variant["variant"] = "gpt-5.5-medium"
+    variant["invocation"]["effort"] = "medium"
     variant["default_for_engine"] = False
     data["engines"].append(variant)
 

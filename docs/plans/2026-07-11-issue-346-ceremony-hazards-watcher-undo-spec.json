@@ -1,0 +1,142 @@
+{
+  "name": "ceremony-hazards-watcher-undo",
+  "description": "Issue #346: hazard preflight (ceremony_hazards.py), deterministic merge-watcher (merge_watcher.py), and rollback manifest + ship --undo (ship_undo.py) as one safety layer over ship_ceremony.py, wired in U4 behind a U1/U2/U3 module wave; docs and release surfaces follow. Concurrency shaped to the operator cap of 3: U1||U2 run as a pair, U3 waits behind both so its refute-3 panel (3 verifiers, at cap) never overlaps a running unit, U4's panel likewise runs alone; U5/U6 are a haiku pair. Panels ride the unit tier (R4) on the two risky units only: U3 (forward-only undo engine, destructive semantics) and U4 (wiring inside the #526-gated run() path).",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "ceremony_hazards.py registry + detect() + tests",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U1: Create plugins/saga/scripts/ceremony_hazards.py (Hazard dataclass with hazard_id/transition/message/remedy/acknowledgeable, ordered registry, detect() probing live gh state for stacked_pr and the non-acknowledgeable merge_not_landed; reversible transitions probe nothing; probe failure raises, never returns clean) and tests/test_ceremony_hazards.py with a module-local fake runner. Read the plan at docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md (U1, R1-R2, KTD3) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/saga/scripts/ceremony_hazards.py",
+        "tests/test_ceremony_hazards.py"
+      ]
+    },
+    {
+      "unit_id": "U2",
+      "label": "merge_watcher.py record/validate/watch + tests",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U2: Create plugins/saga/scripts/merge_watcher.py (record/validate/watch over the .claude/saga/sagas/<saga_id>/merge_expectation.json sidecar; typed divergences head_moved/check_flipped/check_missing/review_regressed/pr_not_open; MergeExpectationMissing with remedy; injectable poll source, no sleeping in library code; record --force is the only re-baseline) and tests/test_merge_watcher.py with a module-local fake runner. Read the plan at docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md (U2, R3-R4, KTD1/KTD7/KTD8) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/saga/scripts/merge_watcher.py",
+        "tests/test_merge_watcher.py"
+      ]
+    },
+    {
+      "unit_id": "U3",
+      "label": "ship_undo.py manifest + forward-only gated undo engine + tests",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U3: Create plugins/saga/scripts/ship_undo.py (rollback_manifest.json append/read helpers per KTD1; undo() executing the reverse plan newest-to-oldest, forward-only per KTD4 — git revert of the recorded squash SHA, branch resurrection from recorded SHA, never force-push/reset; entries marked undone only after their mutation confirms, so undo is resumable; always_operator-reversing plans require operator_confirmed == 'undo' per KTD5; SHA_UNREACHABLE and empty-manifest handling) and tests/test_ship_undo.py — all scenarios EXCEPT test_manifest_written_per_transition, which U4 adds when it wires the ceremony hook. Read the plan at docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md (U3, R6-R8, KTD1/KTD4/KTD5) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1",
+        "U2"
+      ],
+      "files": [
+        "plugins/saga/scripts/ship_undo.py",
+        "tests/test_ship_undo.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U4",
+      "label": "ship_ceremony.py wiring: preflight, manifest hook, --undo",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U4: Wire the layer into plugins/saga/scripts/ship_ceremony.py — preflight after the #526 operator gate and before dispatch/save (KTD2): ceremony_hazards.detect() with repeatable --acknowledge-hazard (choices from registry, KTD3) and merge_watcher.validate on merge (MergeExpectationMissing refusal per KTD8); merge_watcher.record in _do_open_pr and start; ship_undo manifest append after every successful transition; run --undo dispatching to ship_undo.undo (KTD6) with 'undo' added to the --operator-confirmed palette (KTD5). Extend tests/test_ship_ceremony.py (FakeGh grows pr-list --base and statusCheckRollup handling; ledger-unadvanced proofs via origin-main-SHA equality) and add test_manifest_written_per_transition to tests/test_ship_undo.py. Read the plan at docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md (U4, KTD2/KTD3/KTD5/KTD6) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1",
+        "U2",
+        "U3"
+      ],
+      "files": [
+        "plugins/saga/scripts/ship_ceremony.py",
+        "tests/test_ship_ceremony.py",
+        "tests/test_ship_undo.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U5",
+      "label": "ceremony docs: watcher + hazard + undo contract",
+      "tier": {
+        "model": "haiku",
+        "effort": "low"
+      },
+      "prompt": "U5: Update plugins/saga/skills/work/references/pr-continuation-loop.md ('Merge is a confirmed git op' section: expectation recorded at PR-open, validated at merge, divergence blocks, hazards need named acknowledgment, git ship --undo exists and is gated) and add one pointer line to the plugins/saga/skills/work/SKILL.md Phase-5 merge step. Lines <=106 chars; never introduce --auto or --delete-branch tokens (R5 grep guard). Read the plan at docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md (U5, R5) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [
+        "plugins/saga/skills/work/references/pr-continuation-loop.md",
+        "plugins/saga/skills/work/SKILL.md"
+      ]
+    },
+    {
+      "unit_id": "U6",
+      "label": "release surfaces + journal (0.77.0)",
+      "tier": {
+        "model": "haiku",
+        "effort": "low"
+      },
+      "prompt": "U6: Bump plugins/saga/.claude-plugin/plugin.json to 0.77.0, sync the saga entry in .claude-plugin/marketplace.json, add the [0.77.0] CHANGELOG entry (hazard preflight, deterministic merge-watcher, ship --undo, raw --auto/--delete-branch stay retired), update the drift-guard pin in tests/test_saga_plugin.py, and add the dated docs/engineering-journal/LEARNINGS.md entry recording the mined gh pr merge --auto/--delete-branch surprise pattern with this issue's layer as the durable fix. The DECISIONS entry {#ceremony-sidecars-forward-only-undo-346} is already staged in the working tree — do not duplicate it. Read the plan at docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md (U6, R9) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [
+        "plugins/saga/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/saga/CHANGELOG.md",
+        "tests/test_saga_plugin.py",
+        "docs/engineering-journal/LEARNINGS.md"
+      ]
+    }
+  ]
+}

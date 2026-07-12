@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-07-12
+
+### Added - durable delegation-audit-store mirror (#396)
+
+- `plugins/agy/scripts/agy_delegate.py`: new `--audit-store` CLI option (default
+  `~/.claude/delegation-audit`). Every bundle — validation-only and supervised alike — mirrors its
+  `result.json` payload (and the embedded `bridge_receipt.v1`, when the run launched) to this
+  durable, machine-local store outside the repo tree, resolvable by `run_id` alone independent of
+  whether the originating `.claude/agy/runs/<run_id>` bundle directory (or its enclosing disposable
+  worktree) still exists. `create_validation_bundle` / `create_supervised_bundle` gained an
+  `audit_store_root: Path | None = None` parameter (skip when omitted — every existing direct caller
+  is unaffected; the CLI resolves the real-world default).
+- Every existing subprocess-driven CLI test now passes an isolated `--audit-store <tmp_path>` so no
+  test writes into a real developer's home directory.
+- Consumes the new `plugins/fleet-core/scripts/fleet_commons/audit_store.py` (fleet-core 0.8.5) via
+  `fleet_commons_shim.load("audit_store")`.
+
 ## [0.2.1] - 2026-07-09
 
 ### Added - output-attested bridge receipts (#388)

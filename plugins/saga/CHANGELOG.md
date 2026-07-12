@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.82.0] - 2026-07-12
+
+### Added - durable delegation-audit store mirroring + /delegation-audit reconciliation (#396)
+
+- **`plugins/saga/scripts/engine_dispatch.py`:** `record_dispatch_manifest` and
+  `adjudicate_manifest` gained an `audit_store_root: Path | None = None` parameter. When given, the
+  provenance manifest — and the raw `bridge_receipt.v1` when the dispatched evidence carries one —
+  mirror to the durable delegation audit store (`~/.claude/delegation-audit` by default), keyed by
+  `execution_id`, independent of `manifest_store.py`'s own git-common-dir cache. Defaults to `None`
+  (skip) so every existing direct caller, including every test, is unaffected; the real-world
+  default lives at the documented chaperone call site
+  (`plugins/team-execution/skills/team-execution/references/external-engine-workers.md` §5 step 5),
+  since this module has no CLI layer of its own.
+- **`plugins/saga/scripts/delegation_audit_query.py` (new):** the `/delegation-audit` CLI. Reads
+  the durable store and reports every run's reconciled verdict — a delegation whose disposition
+  claims real execution but has no receipt backing it is flagged as a no-op.
+- **`plugins/saga/skills/delegation-audit/SKILL.md` (new):** the `/delegation-audit` skill —
+  read-only, advisory, on-demand; never a gate, never a background job; complements (does not
+  replace) the always-on Stop-hook tripwire (`delegation_stop_audit_hook.py`).
+- Consumes `plugins/fleet-core/scripts/fleet_commons/audit_store.py` (new, fleet-core 0.8.5) and
+  the extended `fleet_commons/delegation_audit.py`'s new `reconcile_store` function.
+
 ## [0.81.0] - 2026-07-12
 
 ### Added - content-addressed, append-only evidence ledger for /qa and /code-review verdicts (#398)

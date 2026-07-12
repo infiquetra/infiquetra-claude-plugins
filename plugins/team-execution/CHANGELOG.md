@@ -4,6 +4,21 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.14.5] - 2026-07-12
+
+### Changed - write-once pre-fix draft snapshot in the chaperone-dispatch path (#396)
+
+- `skills/team-execution/references/external-engine-workers.md` §5 step 1 ("Verify"): the
+  chaperone now snapshots the engine's raw, pre-fix returned patch/output write-once to the durable
+  delegation audit store (`fleet_commons/audit_store.py`'s `write_once_draft`), keyed by
+  `execution_id`, before any review, adjudication, or fix. Captures the immutable measurement
+  baseline a later fix-delta diff needs, since only the fixed file survives in the working tree. A
+  second snapshot attempt for the same `execution_id` raises rather than silently overwriting.
+- `skills/team-execution/references/worker-manifest.md`: cross-references the durable mirror and
+  clarifies that the raw `manifest_store.py write` CLI path (ordinary Claude-agent worker manifests)
+  has nothing to mirror — only the chaperone's `engine_dispatch.record_dispatch_manifest` path
+  carries an external-engine identity and receipt.
+
 ## [2.14.4] - 2026-07-10
 
 ### Changed - current Codex registry dispatch contract (#559)

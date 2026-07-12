@@ -1,7 +1,7 @@
 {
   "name": "saga",
-  "version": "0.81.0",
-  "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, trust-gated external-engine onboarding, provenance, and attestation.",
+  "version": "0.82.0",
+  "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, trust-gated external-engine onboarding, provenance, attestation, and durable delegation-audit reconciliation.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
@@ -17,6 +17,7 @@
     "doc-review",
     "code-review",
     "optimize",
-    "outcome-orchestration"
+    "outcome-orchestration",
+    "delegation-audit"
   ]
 }

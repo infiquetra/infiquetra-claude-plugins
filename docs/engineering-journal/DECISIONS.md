@@ -3749,3 +3749,38 @@ alongside `fallback_suspected` inside `agy_delegate.py`'s wrapper status vocabul
   dispatch layer no longer depends on either one directly.
 
 ---
+
+### Evidence ledger (#398): committed per-saga custody, attempt-keyed identity, HALT on self-certify {#evidence-ledger-ktds-398}
+
+**Date:** 2026-07-12 · **Plan:** `docs/plans/2026-07-12-evidence-ledger-plan.md` · **Issue:** #398
+(root leaf of outcome `evidence-integrity`; sub-396/397/402 consume the API)
+
+**Decision.** `/qa` §5.1 and `/code-review` §5.3 durable-verdict writes route through a new
+`plugins/saga/scripts/evidence_ledger.py`: content-addressed (sha256) write-once artifacts plus an
+append-only, hash-chained JSONL custody log, with frozen pre-registered criteria and a closure-time
+re-hash verify that HALTs on tamper or producer self-certification.
+
+- **KTD1 — ledger home is committed, per-saga** (`docs/evidence/<saga-id>/ledger.jsonl`).
+  Committed-is-canonical (the R26/R27 philosophy): a fresh clone verifies the chain; custody is
+  auditable in PR history; per-saga files remove cross-branch JSONL merge conflicts.
+  Rejected: one global ledger (routine EOF conflicts); git-common-dir cache (evidence dies with
+  the machine). Operator-confirmed.
+- **KTD2 — identity is (check_id, reviewed_sha, attempt).** Same-identity rewrite → rejected;
+  a retry is a new attempt that appends. The reader groups by (check_id, reviewed_sha) and flags
+  FAIL→PASS as supersession — attempt in the key is what reconciles "no clobber" with
+  "preserve FAIL history".
+- **KTD3 — per-entry prev-hash chain** over canonical JSON, so tampering with the log itself is
+  detectable — git history alone is not sufficient (local edits/force-push rewrite both).
+- **KTD4 — self-certification HALTs**, never flags: a flagged violation inside a green run is
+  exactly the silent-pass failure mode the issue exists to kill (HALT-not-degrade).
+- **KTD5 — dual surface**: argparse CLI (SKILL.md prose call sites) + importable API
+  (tests, sub-397 closure gate).
+- **KTD6 — reuse `outcome_store._write_once`/`_atomic_write` via import** per the
+  `manifest_store` precedent; the only new primitive is an O_APPEND+fsync JSONL append. No
+  modification to `outcome_store` (issue's additive-only constraint).
+
+**Revisit when** a multi-writer path appears on one saga's ledger (parallel worktree gates) —
+add cross-process locking mirroring `outcome_store`'s locks_dir — or when sub-396/402 need entry
+kinds beyond `evidence`/`criteria`/`closure` (the open `payload` dict is the extension seam).
+
+---

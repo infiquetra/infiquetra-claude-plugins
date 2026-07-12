@@ -2,6 +2,32 @@
 
 ## 2026-07-12
 
+### Backend offers enumerate all three backends with availability provenance; verify panels carry their own tier (#565) {#backend-offer-full-enumeration-565}
+
+**Decision.** The #565 fix (planned in
+`docs/plans/2026-07-12-issue-565-backend-offer-fix-plan.md`) reshapes the
+`recommend_execution_backend` contract: a subtractive `release_surface_file_count` keeps release
+bookkeeping out of the team-execution size trigger (KTD1); a frozen validated `workflow_shapes`
+vocabulary (`understand/design/research/review/migrate` — the shapes the Workflow tool doc
+itself names) widens the ultracode triggers beyond breadth/adversarial (KTD2); availability
+carries declared provenance (`workflow_availability_source: probed|asserted`, echoed in the
+output — the prose mandates a live ToolSearch probe at offer time, KTD3); and the output's new
+`backends` key always enumerates all three backends with per-backend status and an availability
+note, with `omit_ultracode` deleted outright and its four prose consumer sites rewritten in
+lockstep (KTD4). On the spec side, `Verify` gains an optional panel tier plus its own worth-it
+receipts, defaulting to the unit tier so plain specs emit byte-identically (KTD5).
+
+**Rejected alternatives.** Redefining `file_count` as functional-only (silently changes every
+caller's semantics); one boolean per workflow shape (kwarg clutter, unversioned vocabulary);
+probing availability from inside the recommender (pure Python, no ToolSearch API); keeping
+`omit_ultracode` as deprecated (a live key that says "omit" gets consumed again — dead-wiring
+risk); borrowing the unit's receipt fields for a premium panel (conflates two independent spend
+decisions).
+
+**Revisit when.** Hand-counting `release_surface_file_count` misfires in practice (then build
+the path-classifier auto-derivation deferred in the plan), or the Workflow tool doc's shape list
+changes (the frozen vocabulary must track it).
+
 ### Deploy handoff ack is a saga-side sidecar; gate-or-auto is a saga field defaulting to gate (#395) {#deploy-handoff-ack-sidecar-395}
 
 **Decision.** The #395 positive-handoff layer (planned in

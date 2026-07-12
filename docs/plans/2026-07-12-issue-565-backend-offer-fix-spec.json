@@ -1,0 +1,93 @@
+{
+  "name": "backend-offer-fix",
+  "description": "Issue #565: fix the /plan Phase 5.2 execution-backend recommendation + offer flow (functional-surface size signal, widened workflow-shape vocabulary, availability provenance, full three-backend enumeration with omit_ultracode deleted) plus the Verify per-panel tier with its own receipts. Concurrency shaped to the operator cap of 3: fully serialized U1->U2->U3->U4 - U1 and U3 carry refute-3 panels (3 verifiers, at cap) that must never overlap a running unit; serialization also keeps tests/test_saga_plugin.py edits (U1, U4) from conflicting. Panels ride the unit tier (R4 - this run predates its own U3 fix) on the two contract-bearing code units only: U1 (the recommender contract reshape) and U3 (Verify schema + emitter + spend with the byte-identical-emission constraint).",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "lifecycle_state.py recommender rework: functional surface, workflow shapes, availability provenance, backends enumeration + lockstep tests",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "issue-band opus/high on the load-bearing contract reshape: this function decides every future /plan backend offer, and the existing tests pin the exact defective behaviors - a subtle regression here silently distorts all downstream spend/governance routing.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: Rework recommend_execution_backend/should_offer_team_execution in plugins/saga/scripts/lifecycle_state.py per KTD1-KTD4 (subtractive release_surface_file_count; frozen validated WORKFLOW_SHAPES vocabulary understand/design/research/review/migrate tripping the ultracode branch under the same elevated-risk suppressor; workflow_availability_source probed|asserted echoed as workflow_availability {available, source}; new backends key always enumerating all three backends with per-backend status recommended|alternative|unavailable and provenance note; omit_ultracode DELETED; alternatives retained reachable-only; CLI flags --release-surface-file-count, repeatable --workflow-shape, --workflow-availability-source). Honor KTD4's compat contract for the direct consumer outcome_dispatcher.py:411-425: new kwargs stay default-valued, recommended/rationale/alternatives keep their semantics, AND the frontier-budget downgrade path re-stamps the backends statuses (team-execution -> recommended, ultracode -> alternative with the budget_note reason) with a regression test in tests/test_outcome_dispatcher.py. Update the existing recommender tests in tests/test_saga_plugin.py (block at ~:2600 pins the defective behaviors - update, never leave asserting the defect) and add the U1 scenarios from the plan (the #526-shape regression, shape triggers + ValueError, suppressor precedence, three-entry backends under workflow_available=False, CLI e2e, dispatcher downgrade consistency). Read the plan at docs/plans/2026-07-12-issue-565-backend-offer-fix-plan.md as your authoritative spec.",
+      "files": [
+        "plugins/saga/scripts/lifecycle_state.py",
+        "tests/test_saga_plugin.py",
+        "plugins/saga/scripts/outcome_dispatcher.py",
+        "tests/test_outcome_dispatcher.py"
+      ],
+      "returns": ["files_changed", "tests_added", "summary"],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "depends_on": []
+    },
+    {
+      "unit_id": "U2",
+      "label": "Prose lockstep: offer contract across plan SKILL, operator-choice, loop SKILL, execution-strategy",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U2: Rewrite the six prose sites that instruct backend omission, document the old recommender JSON shape, or render the offer from alternatives-only, per R2-R4 and KTD2-KTD4: plugins/saga/skills/plan/SKILL.md Phase 5.2 (omit sentence at ~:286, widen the two-purpose framing at ~:269-277 to the five workflow shapes, mandate the ToolSearch availability probe - the word ToolSearch must appear in Phase 5.2 per AC4), plugins/saga/references/operator-choice.md (section 3.2 vocabulary, section 4 omit rule at ~:153 becomes always-name-and-mark-with-provenance, section 5 offer form if it echoes omission), plugins/saga/skills/loop/SKILL.md ~:268, plugins/saga/skills/work/references/execution-strategy.md ~:166 and ~:181-182 (new JSON shape: backends + workflow_availability, no omit_ultracode, new CLI flags), plugins/saga/skills/work/SKILL.md ~:50 and ~:229-232 plus plugins/saga/skills/loop/references/drive-and-resume.md ~:52-56 (both say surface-the-alternatives - reword to render the offer from the full backends enumeration so every offer site names all three). Match U1's landed output shape exactly - read plugins/saga/scripts/lifecycle_state.py after U1 before writing. Read the plan at docs/plans/2026-07-12-issue-565-backend-offer-fix-plan.md as your authoritative spec.",
+      "files": [
+        "plugins/saga/skills/plan/SKILL.md",
+        "plugins/saga/references/operator-choice.md",
+        "plugins/saga/skills/loop/SKILL.md",
+        "plugins/saga/skills/work/references/execution-strategy.md",
+        "plugins/saga/skills/work/SKILL.md",
+        "plugins/saga/skills/loop/references/drive-and-resume.md"
+      ],
+      "returns": ["files_changed", "summary"],
+      "depends_on": ["U1"]
+    },
+    {
+      "unit_id": "U3",
+      "label": "Verify per-panel tier + receipts in execution_spec.py: schema, effective-tier emission, panel-tier spend + tests",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "issue-band opus/high on the schema-critical unit: the byte-identical-emission constraint (R5) means a mistake ships silently into every existing spec's emitted workflow, and the receipts/spend seams (validate --require-receipts, unit_spend) HALT-gate real runs.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U3: Add the optional per-panel tier to Verify in plugins/saga/scripts/execution_spec.py per KTD5 (Verify.tier: Tier | None defaulting to the unit tier; Verify.worth_it_because + Verify.cheaper_fallback mirroring the unit receipt fields; palette-ceiling validation HALTs haiku/xhigh; from_dict/to_dict omit absent keys byte-identically; the single verifier-opts emit site uses the effective tier verify.tier or unit.tier; unit_spend prices the n x iterations verifier calls at the effective panel tier; Unit.validate threads require_receipts into verify.validate so a premium panel without receipts fails only validate --require-receipts). Add the U3 test scenarios from the plan to tests/test_saga_execution_spec.py (panel-tier emission, byte-identical omission, receipts gate both ways, not-strictly-cheaper fallback SpecError, palette HALT, panel-tier spend arithmetic). Read the plan at docs/plans/2026-07-12-issue-565-backend-offer-fix-plan.md as your authoritative spec.",
+      "files": [
+        "plugins/saga/scripts/execution_spec.py",
+        "tests/test_saga_execution_spec.py"
+      ],
+      "returns": ["files_changed", "tests_added", "summary"],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      },
+      "depends_on": ["U2"]
+    },
+    {
+      "unit_id": "U4",
+      "label": "Release surfaces: saga version bump, marketplace, CHANGELOG, drift pin",
+      "tier": {
+        "model": "haiku",
+        "effort": "low"
+      },
+      "prompt": "U4: Release surfaces for the #565 change per R7: bump plugins/saga/.claude-plugin/plugin.json to the next minor version, mirror it in .claude-plugin/marketplace.json, prepend a plugins/saga/CHANGELOG.md entry describing the new offer contract (backends enumeration with availability provenance, omit_ultracode removed, release_surface_file_count, workflow_shapes vocabulary) and the Verify per-panel tier + receipts, and update the saga version drift pin in tests/test_saga_plugin.py. Read the plan at docs/plans/2026-07-12-issue-565-backend-offer-fix-plan.md as your authoritative spec.",
+      "files": [
+        "plugins/saga/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/saga/CHANGELOG.md",
+        "tests/test_saga_plugin.py"
+      ],
+      "returns": ["files_changed", "summary"],
+      "depends_on": ["U3"]
+    }
+  ]
+}

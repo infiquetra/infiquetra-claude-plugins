@@ -80,11 +80,31 @@ def _unique_tmp(path: Path) -> Path:
     )
 
 
+def _write_temp_0600(tmp: Path, content: str) -> None:
+    """Write ``content`` to ``tmp`` mode ``0600`` — no pre-replace world-readable window.
+
+    This store mirrors receipts, agy result payloads, provenance manifests, and raw pre-fix
+    engine output — content this diff's own docstring already flags as potentially sensitive.
+    Mirrors ``manifest_store.py``'s ``_atomic_write_manifest`` precedent (``os.fchmod(fd,
+    0o600)``) for the identical ``manifest.json`` content this module also mirrors, rather than
+    the weaker unrestricted-mode ``outcome_store.py`` primitives this module otherwise matches.
+    """
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.fchmod(fd, 0o600)  # belt-and-suspenders against an inherited restrictive umask
+        payload = memoryview(content.encode("utf-8"))
+        while payload:
+            written = os.write(fd, payload)
+            payload = payload[written:]
+    finally:
+        os.close(fd)
+
+
 def _atomic_write(path: Path, content: str) -> None:
     """Overwrite ``path`` atomically (temp + ``os.replace``) so no reader sees a torn file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _unique_tmp(path)
-    tmp.write_text(content, encoding="utf-8")
+    _write_temp_0600(tmp, content)
     os.replace(tmp, path)
 
 
@@ -96,7 +116,7 @@ def _write_once(path: Path, content: str) -> bool:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _unique_tmp(path)
-    tmp.write_text(content, encoding="utf-8")
+    _write_temp_0600(tmp, content)
     try:
         os.link(tmp, path)
         return True

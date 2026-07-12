@@ -114,3 +114,29 @@ def test_cli_run_id_filter_scopes_to_named_runs(audit_store: ModuleType, tmp_pat
     assert completed.returncode == 0, completed.stderr
     report = json.loads(completed.stdout)
     assert report["run_count"] == 1
+
+
+def test_cli_run_id_naming_absent_run_degrades_to_unflagged_entry(tmp_path: Path) -> None:
+    """A --run-id naming a run with no mirrored artifacts at all reconciles to a clean,
+    unflagged entry rather than crashing or erroring — audit_store.resolve_* already degrades
+    a missing file to None, and reconcile_store's no-claim path treats that as clean."""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--audit-store",
+            str(tmp_path / "audit-store"),
+            "--run-id",
+            "never-existed",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["run_count"] == 1
+    assert report["flagged_count"] == 0
+    assert report["clean"][0]["run_id"] == "never-existed"
+    assert report["clean"][0]["claimed_real"] is False

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import stat
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -139,3 +140,31 @@ def test_resolve_draft_missing_returns_none(audit_store: ModuleType, tmp_path: P
     store = audit_store.Store.for_root(tmp_path / "audit-store")
 
     assert audit_store.resolve_draft(store, "never-existed") is None
+
+
+def test_mirrored_files_are_not_world_or_group_readable(
+    audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """Mirrored evidence (receipts, result payloads, manifests, raw drafts) lands mode 0600 —
+    matching manifest_store.py's precedent for the identical manifest.json content this store
+    also mirrors, not the unrestricted default a bare write_text/os.replace would leave."""
+    store = audit_store.Store.for_root(tmp_path / "audit-store")
+    audit_store.mirror_receipt(store, "run-1", _receipt("run-1"))
+    audit_store.write_once_draft(store, "run-1", "raw pre-fix output")
+
+    for path in (store.receipt_path("run-1"), store.draft_path("run-1")):
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode == 0o600, f"{path} is mode {oct(mode)}, expected 0o600"
+
+
+def test_resolve_receipt_valid_json_non_dict_returns_none(
+    audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """A mirrored file that parses as valid JSON but isn't an object (e.g. a bare list) degrades
+    to None rather than being treated as a receipt/result/manifest dict."""
+    store = audit_store.Store.for_root(tmp_path / "audit-store")
+    path = store.receipt_path("run-list")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+
+    assert audit_store.resolve_receipt(store, "run-list") is None

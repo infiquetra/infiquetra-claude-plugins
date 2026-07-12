@@ -2,12 +2,14 @@
 
 **Verdict: CLEAN — not blocked.** 0 unresolved P0/P1. All actionable findings fixed on-branch in
 `e29b707` and re-verified adversarially (8/8 fix claims upheld, zero refutations, regression sweep
-clean); the review is fresh at that SHA (any later commits are this artifact and session docs — no
-code moved).
+clean). A second, dogfood-caught fix round (`ce2d387`, finding #14) was falsification-tested the
+same way: 5/5 claims upheld, zero refutations, regression sweep clean. The review is fresh at that
+SHA (any later commits are this artifact and session docs — no code moved).
 
-- **Target:** branch diff `478f3e7..e29b707` (merge base = origin/main `478f3e7`, verified fresh)
-- **Reviewed SHA:** `e29b707` (initial 4-lens pass at `653f610`; staleness re-review of
-  `653f610..e29b707` passed — every fix claim falsification-tested, all upheld)
+- **Target:** branch diff `478f3e7..ce2d387` (merge base = origin/main `478f3e7`, verified fresh)
+- **Reviewed SHA:** `ce2d387` (initial 4-lens pass at `653f610`; staleness re-reviews of
+  `653f610..e29b707` and `e29b707..ce2d387` both passed — every fix claim falsification-tested,
+  all upheld)
 - **Mode:** programmatic (called by `/work` as the pre-PR gate); envelope persisted here by `/work`
 - **Linked issue:** infiquetra/infiquetra-claude-plugins#346 · **PR:** #562 (draft)
 - **Plan:** `docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md`
@@ -39,6 +41,7 @@ plan/spec/review orchestration artifacts. The maintainability lens confirmed rel
 | 11 | P3 | 75 | `ceremony_hazards.py` | Hazard-probe TOCTOU (probe-then-dispatch) | **report-only** — by design; the probe is a preflight, not a lock |
 | 12 | P3 | 75 | `saga.py:953` | saga_id sanitization root cause lives upstream in saga.py | **report-only** — pre-existing, separate cleanup issue |
 | 13 | P3 | 75 | repo-wide | `bandit -r plugins/` baseline has never been green (identical 656L/3M/2H at merge base) | **report-only** — pre-existing; honest gate is per-file delta (0 on all touched scripts) |
+| 14 | P1 | 100 | `merge_watcher.py:263-286` | **Dogfood-caught on this PR's own merge**: baseline recorded check *names* without pass states, so `validate` demanded a conditionally-SKIPPED workflow ("Publish Plugin") pass — permanent false `check_flipped`, unhealable by `record --force` | **fixed** `ce2d387` — sidecar records a `checks` name→passing map; `check_flipped` fires only on recorded-passing→non-passing (R4-literal, matching `watch()`); legacy map-less sidecars stay strict; 4 regression oracles incl. the exact scenario; falsification re-review 5/5 upheld; LEARNINGS `{#names-only-baseline-blocks-conditional-workflows-346}` |
 
 Suppressed: 1 (maintainability P3 at confidence 60 — `pre_merge_main_sha` written but never
 consumed; below the 75 anchor. A docstring note marking it audit-only was folded into `e29b707`

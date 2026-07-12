@@ -25,6 +25,51 @@
 
 ---
 
+## 2026-07-12
+
+### A FIFO defeats exception-based degrade: blocking open() hangs instead of raising  {#fifo-hang-defeats-except-degrade-395}
+
+**Context.** #395's `reconcile --all` dropped-baton sweep had to degrade per-saga on unreadable
+sidecars instead of aborting. The first fix caught `InvalidHandoffError`; falsification round 1
+refuted it (directory / chmod-000 sidecars raise `OSError` subclasses from `open()`, escaping the
+except). The second fix broadened to `(InvalidHandoffError, OSError)` — and falsification round 2
+refuted THAT with a strictly worse vector.
+
+**Evidence.** Falsifier reproduction at `fc5cf50`: `os.mkfifo` in place of
+`deploy_handoff.json`, then `reconcile_all()` — a SIGALRM(5s) guard fired; the sweep never
+returned, never raised, reported nothing. Fix + SIGALRM-guarded regression test in `99f3611`
+(`plugins/saga/scripts/deploy_handoff.py` `_read_sidecar`,
+`tests/test_handoff_envelope.py::test_dropped_baton_detected_fifo_sidecar_degrades_without_hanging`).
+
+**Mechanism.** Opening a FIFO read-only in blocking mode parks the caller until a writer appears.
+No exception is ever raised, so no `except` clause — however broad — can fire. Exception-based
+degrade structurally cannot defend a file-sweep against non-regular files; the check must happen
+*before* `open()`. Related: `Path.exists()` follows symlinks, so a dangling-symlink sidecar read
+as "never offered" and vanished from the sweep — absence checks over evidence files need
+`lexists` + an explicit dangling-target branch.
+
+**Fix (or queued).** `99f3611`: `_read_sidecar` stat-checks `S_ISREG` before `open()`
+(directory/FIFO/socket refused without blocking), `lexists` distinguishes truly-absent (`None`)
+from dangling symlink (named error), and every residual `OSError` wraps into the CLI-caught named
+error so `deploy_handoff`'s "message, never a traceback" contract holds for all verbs.
+
+**Validation.** Falsification round 3 at `99f3611`: 21 independent probes incl. FIFO, socket,
+symlink-to-directory — resolved, zero new findings; the legitimate symlink-to-valid-file case
+explicitly verified to still work.
+
+**What surprised.** The failure got *worse* as the except clause got broader: the original bug was
+a loud crash; the FIFO variant is a silent infinite hang — invisible in tests whose fixtures only
+ever create healthy files.
+
+**Generalizable rule.** A sweep over files whose shape you don't control must validate
+`stat.S_ISREG` before opening — an `except` around `open()` only defends against failures that
+raise, and the worst filesystem states (FIFO, blocking device) don't raise, they hang. Pair it
+with `lexists` for absence checks so broken symlinks surface instead of vanishing.
+
+**Refs.** DECISIONS `{#deploy-handoff-ack-sidecar-395}`; same falsifier-vs-fixture blind-spot
+family as `{#names-only-baseline-blocks-conditional-workflows-346}` and #347's prunable-worktree
+P1 (healthy-fixture tests missing degraded-state reality).
+
 ## 2026-07-11
 
 ### A names-only check baseline turns conditional workflows into permanent merge blocks {#names-only-baseline-blocks-conditional-workflows-346}

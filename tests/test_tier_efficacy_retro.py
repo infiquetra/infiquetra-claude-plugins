@@ -121,7 +121,51 @@ def test_write_tier_default_never_called(monkeypatch: pytest.MonkeyPatch) -> Non
 
     history = [_record("judgment", "opus", "high", spend=10, marginal_findings=0) for _ in range(3)]
     proposals = TE.propose_downgrades(history)
+    # Exact min_samples boundary (3 records, default min_samples=3): must still yield a proposal
+    # (a #402 code-review testing-lens finding -- this boundary was exercised but never asserted,
+    # so a `<` -> `<=` mutation in the len(records) check would have slipped through silently).
+    assert len(proposals) == 1
     TE.render_diff_preview(proposals)
+
+
+def test_min_samples_boundary_one_below_yields_no_proposal() -> None:
+    """`min_samples - 1` records must NOT propose -- the exact-boundary complement of the test above."""
+    history = [_record("judgment", "opus", "high", spend=10, marginal_findings=0) for _ in range(2)]
+    assert TE.propose_downgrades(history, min_samples=3) == []
+
+
+def test_at_or_below_baseline_tier_proposes_no_change_even_with_clean_history() -> None:
+    """#402 code-review correctness finding (P1): a work-shape already at-or-below SPEND_BASELINE
+    (sonnet/high) must never get a downgrade proposal, no matter how clean its findings history is
+    or how many runs support it -- there is no over-spend to correct. Regression guard for the
+    missing `is_escalation(SPEND_BASELINE, current_tier)` gate found during code-review.
+    """
+    at_baseline = [
+        _record("mechanical", "sonnet", "high", spend=10, marginal_findings=0) for _ in range(5)
+    ]
+    assert TE.propose_downgrades(at_baseline, min_samples=3) == []
+
+    below_baseline = [
+        _record("mechanical", "sonnet", "low", spend=5, marginal_findings=0) for _ in range(5)
+    ]
+    assert TE.propose_downgrades(below_baseline, min_samples=3) == []
+
+
+def test_cli_malformed_history_returns_exit_code_2(tmp_path: Path) -> None:
+    """#402 code-review security finding (P2): a malformed `--history` JSON element (wrong shape,
+    not a dict, or a non-dict `tier`) must be caught and reported via the module's own
+    `TierEfficacyError`/exit-code-2 contract -- never an uncaught `TypeError` traceback.
+    """
+    malformed = tmp_path / "history.json"
+    malformed.write_text('["not-a-record-object"]', encoding="utf-8")
+    assert TE.main(["--history", str(malformed)]) == 2
+
+    malformed_tier = tmp_path / "history-bad-tier.json"
+    malformed_tier.write_text(
+        '[{"work_shape": "x", "tier": "not-a-dict", "spend": 1, "marginal_findings": 0}]',
+        encoding="utf-8",
+    )
+    assert TE.main(["--history", str(malformed_tier)]) == 2
 
 
 def test_cli_help_exits_zero() -> None:

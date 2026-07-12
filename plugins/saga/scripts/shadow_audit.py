@@ -282,6 +282,28 @@ def render_report(tallies: dict[str, dict[str, int]]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _sampled_unit_from_dict(data: dict) -> SampledUnit:
+    """Validate one `--units` JSON list element before constructing a `SampledUnit`.
+
+    Raises `ShadowAuditError` (already in `main`'s except tuple) on malformed shape instead of
+    letting a raw `TypeError`/`KeyError` escape to an uncaught traceback (#402 code-review finding).
+    """
+    if not isinstance(data, dict):
+        raise ShadowAuditError(f"expected a SampledUnit object, got {type(data).__name__}")
+    tier_raw = data.get("tier")
+    if not isinstance(tier_raw, dict):
+        raise ShadowAuditError(f"expected 'tier' to be an object, got {type(tier_raw).__name__}")
+    try:
+        return SampledUnit(
+            unit_id=str(data["unit_id"]),
+            stage=str(data["stage"]),
+            tier=Tier(model=str(tier_raw["model"]), effort=str(tier_raw["effort"])),
+            reviewed_sha=str(data.get("reviewed_sha", "")),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ShadowAuditError(f"malformed SampledUnit entry: {exc}") from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Sampled shadow-audit: replay-one-rung-down tier-sufficiency evidence (#402 U5)."
@@ -297,7 +319,9 @@ def main(argv: list[str] | None = None) -> int:
     p_sample.add_argument("--unattended", action="store_true")
     p_sample.add_argument("--yes", action="store_true")
     p_sample.add_argument("--max-samples", type=int, default=None)
-    p_sample.add_argument("--root", type=Path, default=None)
+    p_sample.add_argument(
+        "--root", type=Path, default=Path("."), help="repo root for the gate config (default: cwd)"
+    )
 
     p_tier_down = sub.add_parser("tier-down", help="report the one-rung-cheaper tier")
     p_tier_down.add_argument("--model", required=True)
@@ -325,15 +349,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "sample":
             raw = json.loads(args.units.read_text(encoding="utf-8"))
-            units = [
-                SampledUnit(
-                    unit_id=str(u["unit_id"]),
-                    stage=str(u["stage"]),
-                    tier=Tier(model=str(u["tier"]["model"]), effort=str(u["tier"]["effort"])),
-                    reviewed_sha=str(u.get("reviewed_sha", "")),
+            if not isinstance(raw, list):
+                raise ShadowAuditError(
+                    f"expected a JSON list of SampledUnit objects, got {type(raw).__name__}"
                 )
-                for u in raw
-            ]
+            units = [_sampled_unit_from_dict(u) for u in raw]
             picked, gate_result = sample_gated(
                 units,
                 args.n,

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Itemized per-unit/per-tier spend receipt + cheap-fallback counterfactual (#402 U2).
 
-Renders a receipt for a single-session ``execution_spec.ExecutionSpec`` (or an
-``outcome_spec.OutcomeSpec`` via ``spend_estimate.resolve_node_tier``): the ordinal spend at the
+Renders a receipt for a single-session ``execution_spec.ExecutionSpec``: the ordinal spend at the
 tier a unit actually ran at, and a `counterfactual_total` -- the sum of each unit's declared
 fallback-tier cost -- so an operator sees not just "what did this cost" but "what would the
 all-cheap-fallback plan have cost, and what did we give up by not taking it."
@@ -11,12 +10,15 @@ Fallback-tier resolution priority per unit (KTD2 -- ``execution_spec.Unit`` alre
 issue's anticipated fallback-tier/justification fields, no stub needed there):
 
 1. the unit's own declared ``cheaper_fallback`` (an author-confirmed, evidence-backed choice);
-2. else ``execution_spec.adjacent_tier(tier, "cheaper")`` (the generic one-rung-down default);
-3. else, for an outcome-DAG node with no unit-level field at all,
-   ``spend_estimate.resolve_node_tier``'s own fallback (KTD1).
+2. else ``execution_spec.adjacent_tier(tier, "cheaper")`` (the generic one-rung-down default).
 
 A unit already at the cheapest tier (``adjacent_tier`` raises) reports "already cheapest -- no
 counterfactual" rather than propagating the exception -- the boundary is expected, not an error.
+
+An ``outcome_spec.OutcomeSpec``/node-level receipt (using ``spend_estimate.resolve_node_tier``'s
+KTD1 fallback for a node with no unit-level field at all) is NOT implemented in this module --
+deferred to follow-up work (#402 code-review finding: an earlier draft of this docstring overclaimed
+it; `spend_retro.py` already covers the cross-run outcome-DAG aggregation case this would serve).
 
 Pure reader: this module never calls a ledger-write function and never writes the reviewed spec
 back to disk (R9). Plan: ``docs/plans/2026-07-12-spend-observability-plan.md``. Issue: #402.

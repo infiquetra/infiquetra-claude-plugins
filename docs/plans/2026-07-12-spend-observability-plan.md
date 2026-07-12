@@ -250,21 +250,22 @@ structural-coverage test) stays green after the `plan/SKILL.md` edit.
 
 ### U2. `spend_receipt.py` — itemized receipt + cheap-fallback counterfactual
 
-**Goal:** a per-unit/per-tier receipt renderer (CLI verb over an `ExecutionSpec`, or an
-`OutcomeSpec` via U1's node-tier lookup) computing `counterfactual_total` = the sum of each
-unit's declared fallback-tier cost, and naming the tradeoff for every unit that ran above its
-fallback tier.
+**Goal:** a per-unit/per-tier receipt renderer (CLI verb over a single-session `ExecutionSpec`)
+computing `counterfactual_total` = the sum of each unit's declared fallback-tier cost, and naming
+the tradeoff for every unit that ran above its fallback tier. An `OutcomeSpec`/node-level receipt
+is out of scope for this PR (see Deferred to Follow-Up Work, added during code-review — an earlier
+draft of this section and the module's own docstring overclaimed it) — `spend_retro.py` (U3)
+already covers the cross-run outcome-DAG aggregation case that would otherwise motivate it.
 
 **Requirements:** R4, R9, R10.
 
-**Dependencies:** U1 (reuses `resolve_node_tier` for the outcome-DAG case).
+**Dependencies:** none (does not use U1's `resolve_node_tier` — see above).
 
 **Files:** `plugins/saga/scripts/spend_receipt.py` (new), `tests/test_spend_receipt.py` (new).
 
 **Approach:** for each unit, resolve its fallback tier in priority order: the unit's own declared
 `cheaper_fallback` (`execution_spec.Unit.cheaper_fallback`, when set) → `adjacent_tier(tier,
-"cheaper")` (`execution_spec.py:2122-2159`) → U1's `resolve_node_tier` fallback for an
-outcome-DAG node with no unit-level field at all. Sum `to_spend(fallback.model,
+"cheaper")` (`execution_spec.py:2122-2159`). Sum `to_spend(fallback.model,
 fallback.effort)` across every unit for the counterfactual total; for a unit already at the
 cheapest tier (`adjacent_tier` raises `SpecError`), report "already cheapest — no
 counterfactual" rather than propagating the exception.
@@ -509,6 +510,13 @@ Out of scope (from the issue, binding):
 
 Deferred to Follow-Up Work (not non-goals):
 
+- An `outcome_spec.OutcomeSpec`/node-level receipt in `spend_receipt.py` (using U1's
+  `resolve_node_tier` KTD1 fallback for a node with no unit-level field at all) — an earlier draft
+  of U2's Goal/Approach and the module's own docstring overclaimed this as already built; found and
+  corrected during `/code-review` (correctness lens, P2). `spend_retro.py` (U3) already covers the
+  cross-run outcome-DAG aggregation case a node-level receipt would otherwise serve, so this is
+  genuinely deferrable rather than an unmet requirement — no `R4` acceptance criterion names an
+  `OutcomeSpec` receipt, only `ExecutionSpec`.
 - Wiring `shadow_audit.py` into `/work`'s live per-round loop once an operator wants it default-on
   for a repo (KTD8).
 - A richer token-to-ordinal calibration once enough real `outcome_costs.py` telemetry accrues to

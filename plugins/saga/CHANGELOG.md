@@ -13,11 +13,11 @@
   fallback-tier lookup for `outcome_spec.Node` (which has no tier field of its own): the node's
   committed GitHub issue's stamped tier band, else the shared `SPEND_BASELINE` default — sourced
   from durable committed/GitHub state only, never the git-ignored saga cache.
-- **`plugins/saga/scripts/spend_receipt.py` (new):** an itemized per-unit/per-tier receipt whose
-  cheap-fallback counterfactual total sums each unit's declared fallback tier
-  (`Unit.cheaper_fallback` when set, else `adjacent_tier`'s one-rung-down, else
-  `spend_estimate.resolve_node_tier` for an outcome-DAG node), naming the tradeoff
-  (`Unit.worth_it_because`) for every unit that ran above its fallback.
+- **`plugins/saga/scripts/spend_receipt.py` (new):** an itemized per-unit/per-tier receipt (over a
+  single-session `ExecutionSpec`) whose cheap-fallback counterfactual total sums each unit's
+  declared fallback tier (`Unit.cheaper_fallback` when set, else `adjacent_tier`'s one-rung-down),
+  naming the tradeoff (`Unit.worth_it_because`) for every unit that ran above its fallback. An
+  outcome-DAG node-level receipt is deferred to follow-up work — not in this PR's scope.
 - **`plugins/saga/scripts/spend_retro.py` (new):** a cross-run aggregator over every committed
   `docs/outcomes/*/outcome-spec.json`'s materialized `cost_rollup`, emitting a repo-wide tier-mix /
   premium-spend-share / spend-vs-outcome summary appended as a new dated section to
@@ -41,10 +41,12 @@
   tier-default change — mirroring the binding `/outcome` campaign decision that the cost ledger is
   a leaf-produced fact, derived-on-read.
 - `tests/test_spend_estimate.py`, `tests/test_spend_receipt.py`, `tests/test_spend_retro.py`,
-  `tests/test_tier_efficacy_retro.py`, `tests/test_shadow_audit.py` — 37 tests covering the
+  `tests/test_tier_efficacy_retro.py`, `tests/test_shadow_audit.py` — 42 tests covering the
   estimate/reconcile no-write guarantee, the tier-value scoring matrix, the counterfactual-total
   invariant, the golden cross-run spend summary, the gated downgrade proposal (with a byte-unchanged
-  fixture-file assertion), and the off-by-default/budget-capped shadow-audit gate.
+  fixture-file assertion and an above/at/below-baseline-tier regression guard), the
+  off-by-default/budget-capped shadow-audit gate, and malformed-input CLI error-path coverage for
+  `tier_efficacy.py`/`shadow_audit.py`.
 
 ## [0.81.0] - 2026-07-12
 

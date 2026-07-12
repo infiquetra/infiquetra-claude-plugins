@@ -168,6 +168,36 @@ def test_already_cheapest_unit_excluded_from_eligibility() -> None:
     assert [u.unit_id for u in eligible] == ["normal"]
 
 
+def test_all_cheapest_pool_short_circuits_sample_and_sample_gated() -> None:
+    """#402 code-review testing-lens finding (P3): the empty-eligible-pool short-circuit
+    (`if not pool: return []`) exercised only at `eligible_for_sampling()` in isolation above --
+    this pins the same case end-to-end through `sample()` and the gated `sample_gated()` wrapper.
+    """
+    cheap_model, cheap_effort = ES._tier_palette.MODELS[-1], ES._tier_palette.EFFORTS[0]
+    all_cheapest = [_unit(f"C{i}", cheap_model, cheap_effort) for i in range(5)]
+
+    assert SA.sample(all_cheapest, n=1, seed=0) == []
+
+    picked, gate_result = SA.sample_gated(all_cheapest, n=1, yes=True)
+    assert gate_result.allowed is True
+    assert picked == []
+
+
+def test_cli_malformed_units_returns_exit_code_2(tmp_path: Path) -> None:
+    """#402 code-review security finding (P2): a malformed `--units` JSON element must be caught
+    via `ShadowAuditError`/exit-code-2 -- never an uncaught `TypeError` traceback.
+    """
+    not_a_list = tmp_path / "units-not-a-list.json"
+    not_a_list.write_text('{"unit_id": "U1"}', encoding="utf-8")
+    assert SA.main(["sample", "--units", str(not_a_list), "--n", "3", "--yes"]) == 2
+
+    bad_tier = tmp_path / "units-bad-tier.json"
+    bad_tier.write_text(
+        '[{"unit_id": "U1", "stage": "code-review", "tier": "not-a-dict"}]', encoding="utf-8"
+    )
+    assert SA.main(["sample", "--units", str(bad_tier), "--n", "3", "--yes"]) == 2
+
+
 def test_cli_help_exits_zero() -> None:
     with pytest.raises(SystemExit) as exc_info:
         SA.main(["--help"])

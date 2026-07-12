@@ -27,6 +27,53 @@
 
 ## 2026-07-12
 
+### A docstring's stated gating criterion can be silently absent from the implementation it describes  {#docstring-gate-drift-402}
+
+**Context.** #402's `tier_efficacy.py propose_downgrades()` was written to mine cost-vs-outcome
+history for a "work-shape running consistently above baseline tier with zero marginal findings"
+and propose a one-rung-cheaper `.saga/tier-defaults.json` diff. The module docstring and
+`retro/SKILL.md`'s mirrored Phase-1.10/5(e) prose both stated this "above baseline" criterion as
+the trigger.
+
+**Evidence.** The `/code-review` correctness lens reproduced it directly: four synthetic
+`RunRecord`s at `sonnet/low` (a tier `execution_spec.is_escalation(SPEND_BASELINE, tier)` confirms
+is *below* the `sonnet/high` baseline, not above it) with zero marginal findings across all four
+still produced a `DowngradeProposal`. `plugins/saga/scripts/tier_efficacy.py:67-110`'s actual
+filter chain checked `min_samples`, zero-marginal-findings, and same-tier-across-runs — but never
+checked the tier's position relative to `SPEND_BASELINE` at all.
+
+**Mechanism.** The three implemented filters (sample count, clean findings, tier consistency) are
+each independently satisfiable by a work-shape that was never running above baseline in the first
+place — a cheap work-shape run consistently at `haiku/low` with zero findings passes all three
+checks just as easily as an overspending `opus/high` one. Nothing in the control flow read the
+docstring's fourth, load-bearing clause and translated it into a check; the sibling module
+`spend_retro.py`'s premium-share aggregation *did* get this right
+(`is_escalation(SPEND_BASELINE, est.tier)` at `spend_retro.py:118`), so the omission was local to
+`tier_efficacy.py`, not a repo-wide gap in the `is_escalation` pattern's visibility.
+
+**Fix.** Added `if not execution_spec.is_escalation(execution_spec.SPEND_BASELINE, current_tier):
+continue` to `propose_downgrades` (branch `work/402-spend-observability`), reusing the exact
+predicate `spend_retro.py` already established for "premium." Added a direct regression test
+(`tests/test_tier_efficacy_retro.py::test_at_or_below_baseline_tier_proposes_no_change_even_with_clean_history`)
+asserting both an at-baseline and a below-baseline clean history propose nothing.
+
+**Validation.** Full local suite (3392 passed, 1 skipped) plus the new regression test green after
+the fix; the pre-existing `test_write_tier_default_never_called` fixture (exactly `min_samples`
+records at `opus/high`, genuinely above baseline) still asserts a proposal, now with an explicit
+`len(proposals) == 1` check it was missing before (a second, independent code-review testing-lens
+finding on the same function).
+
+**Generalizable rule.** When a pure-function's docstring lists N gating criteria in prose, count
+the actual `if ...: continue`/`return` guards in the implementation and match them 1:1 against the
+prose list before trusting either — a docstring is not self-verifying, and "the tests pass" only
+proves the *implemented* criteria compose correctly, not that all *documented* criteria exist as
+code. Cross-check against a sibling module solving the adjacent case (here, `spend_retro.py`'s
+correct `is_escalation` use) as a working reference implementation of the missing predicate.
+
+**Refs.** `plugins/saga/scripts/tier_efficacy.py`, `plugins/saga/scripts/spend_retro.py:118`,
+`plugins/saga/skills/retro/SKILL.md` (Phase 1.10/5(e), prose unchanged — it was already accurate),
+`docs/plans/2026-07-12-spend-observability-plan.md` (KTD5), issue #402.
+
 ### Branch precedence can make a guard term dead while its outcome test still passes  {#precedence-deadens-guard-term-565}
 
 **Context.** #565's `workflow_shapes` trigger rode the existing `and not elevated_risk`

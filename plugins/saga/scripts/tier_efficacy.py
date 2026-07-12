@@ -71,9 +71,14 @@ def propose_downgrades(
 
     A work-shape proposes a downgrade only when ALL of: at least `min_samples` runs exist, EVERY
     run recorded zero marginal findings (any nonzero anywhere is mixed evidence -- no proposal),
-    and every run shares the SAME tier (a work-shape whose runs used different tiers over time is
-    an ambiguous signal, not a clean one). A work-shape already at the cheapest tier
-    (`adjacent_tier` raises) proposes nothing -- there is no cheaper rung to suggest.
+    every run shares the SAME tier (a work-shape whose runs used different tiers over time is an
+    ambiguous signal, not a clean one), and that shared tier is itself running ABOVE the shared
+    baseline (`execution_spec.is_escalation(execution_spec.SPEND_BASELINE, tier)` -- the same
+    "premium" predicate `spend_retro.py`'s aggregation already uses, both fully qualified since
+    this module does not locally alias either name; #402 code-review finding: a work-shape already
+    at or below baseline has no over-spend to correct, so it is not a candidate no matter how clean
+    its findings history is). A work-shape already at the cheapest tier (`adjacent_tier` raises)
+    proposes nothing -- there is no cheaper rung to suggest.
     """
     by_shape: dict[str, list[RunRecord]] = {}
     for rec in history:
@@ -89,6 +94,8 @@ def propose_downgrades(
         if len(tiers) != 1:
             continue
         current_tier = records[0].tier
+        if not execution_spec.is_escalation(execution_spec.SPEND_BASELINE, current_tier):
+            continue
         try:
             proposed_tier = execution_spec.adjacent_tier(current_tier, "cheaper")
         except execution_spec.SpecError:
@@ -141,12 +148,20 @@ def render_diff_preview(proposals: list[DowngradeProposal], root: Path | None = 
 
 
 def _record_from_dict(data: dict) -> RunRecord:
-    return RunRecord(
-        work_shape=str(data["work_shape"]),
-        tier=Tier(model=str(data["tier"]["model"]), effort=str(data["tier"]["effort"])),
-        spend=int(data["spend"]),
-        marginal_findings=int(data["marginal_findings"]),
-    )
+    if not isinstance(data, dict):
+        raise TierEfficacyError(f"expected a RunRecord object, got {type(data).__name__}")
+    tier_raw = data.get("tier")
+    if not isinstance(tier_raw, dict):
+        raise TierEfficacyError(f"expected 'tier' to be an object, got {type(tier_raw).__name__}")
+    try:
+        return RunRecord(
+            work_shape=str(data["work_shape"]),
+            tier=Tier(model=str(tier_raw["model"]), effort=str(tier_raw["effort"])),
+            spend=int(data["spend"]),
+            marginal_findings=int(data["marginal_findings"]),
+        )
+    except (TypeError, ValueError) as exc:
+        raise TierEfficacyError(f"malformed RunRecord entry: {exc}") from exc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -158,7 +173,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--min-samples", type=int, default=DEFAULT_MIN_SAMPLES)
     parser.add_argument(
-        "--root", type=Path, default=None, help="repo root (for tier-defaults.json)"
+        "--root",
+        type=Path,
+        default=Path("."),
+        help="repo root for tier-defaults.json (default: cwd)",
     )
     args = parser.parse_args(argv)
     try:

@@ -1,5 +1,29 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-12
+
+### Deploy handoff ack is a saga-side sidecar; gate-or-auto is a saga field defaulting to gate (#395) {#deploy-handoff-ack-sidecar-395}
+
+**Decision.** The #395 positive-handoff layer (planned in
+`docs/plans/2026-07-12-issue-395-deploy-handoff-ack-plan.md`) puts the ack envelope in a new
+sibling module `plugins/saga/scripts/deploy_handoff.py` storing to the per-saga sidecar
+`.claude/saga/sagas/<saga_id>/deploy_handoff.json` (write-once ack, token rotation on re-offer),
+and captures the gate-or-auto posture as a new optional saga save field `--deploy-autonomy
+{gate,auto}` asked once at `/plan` intent capture — absent always reads `gate`, so a missing
+posture can never auto-fire a promotion. Dropped batons are derived on read (`reconcile` verb),
+never a committed status field.
+
+**Rejected alternatives.** A `state.json` field for the ack (contention; sidecar discipline
+already established by `{#ceremony-sidecars-forward-only-undo-346}`); deriving gate-or-auto from
+`destination == nonprod-deploy` alone (conflates "wants deploy" with "authorizes auto-deploy");
+a deploy-plugin-side store (deploy has no state model, and `deploy-state/SKILL.md` already
+sanctions `.claude/saga/` scratch); wiring the offer into `ship_ceremony.py`'s merge transition
+(kept as documented `/work` routing guidance to hold the ceremony diff at zero for this issue).
+
+**Revisit when.** The fleet intent-envelope work lands a richer autonomy posture field (migrate
+KTD3's interim `deploy_autonomy` source onto it), or a deploy consumer needs the sidecar
+cross-machine.
+
 ## 2026-07-11
 
 ### Teardown is the ship ceremony's terminal transition; reclaim sweeps porcelain, not the registry (#347) {#ship-teardown-terminal-gate-347}

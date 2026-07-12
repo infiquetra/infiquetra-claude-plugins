@@ -53,6 +53,33 @@ holds no authoritative in-memory DAG (R29):
 | `child_spec_ref` | typed parent→child link (KTD10): when set, the node **is** an outcome and reconcile recurses. Never overload saga's `orchestration_ref`. |
 | `github` / `worktree` / `evidence` / `cost` | open pass-through maps; detailed schemas land in the consuming units (U5/U6/U7/U10) |
 
+### `evidence` schema — the closure gate's declared contract (#397)
+
+The closure gate (`plugins/saga/scripts/closure_gate.py`) is the first consumer to give `evidence`
+a concrete shape:
+
+| key | meaning |
+|---|---|
+| `required_checks` | `list[str]` of `check_id` values (e.g. `["qa", "code-review"]`) this node must have satisfying evidence for before it can be harvested `done`. Absent or empty -> the gate is trivially satisfied; every outcome spec that does not declare this key (every spec that exists today) is unaffected. |
+| `reviewed_sha` | optional explicit close-SHA override. When absent, a `code` node derives its close SHA from `outcome_github.head_ref_oid(node.github["pr"])` — the PR's pre-merge head commit SHA, not the post-squash merge-commit SHA on `main` (which would never match any evidence entry). A `non-code` node has no PR to derive from, so it needs this override to use evidence gating at all. |
+
+The gate reads the evidence ledger (`docs/evidence/<node.leaf_saga_id>/`, #398) for each declared
+check at the resolved close SHA and derives one of these named HALT reasons (never a silent close):
+
+| HALT reason | meaning |
+|---|---|
+| `missing-evidence:<check_id>` | the check has zero evidence entries anywhere in the ledger |
+| `stale-sha:<check_id>` | the check has evidence, but none recorded at the resolved close SHA |
+| `unresolved-fail:<check_id>` | the latest verdict at the close SHA is still `FAIL` |
+| `unsuperseded-fail:<check_id>` | an earlier `FAIL` at the close SHA was followed by a non-FAIL verdict with no `payload["supersession_reason"]` on that later entry — an unexplained PASS never silently clears a FAIL |
+| `unresolvable-close-sha` | `required_checks` is declared but no close SHA (or no `leaf_saga_id`) can be resolved |
+| `chain-tamper:<subplot_id>` | `evidence_ledger.verify_chain()` detected a broken or tampered custody chain |
+
+`outcome_orchestrator.harvest()` runs this gate as a second, additive check after the GitHub-only
+barrier above is satisfied — a node is never harvested `done` while the gate HALTs.
+`barrier_report()` surfaces the same verdict under each node's `closure_gate` key so an operator
+sees the named reason even when the GitHub barrier alone already reads satisfied.
+
 ### Node state machine (`NODE_STATES`)
 
 ```

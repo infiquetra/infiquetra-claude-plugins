@@ -60,6 +60,35 @@ shadow-audit evidence), bumped saga to 0.82.0, and reached PR-ready with a clean
 - `856a423` docs(plan): issue #402 spend-observability plan, doc-review, KTD record
 - `f261227` feat(saga): spend observability on the ledger (#402)
 - `b36b028` chore(saga): release surfaces for spend observability (#402)
+- `f29ccd4` docs(work-session): issue #402 spend-observability session record
+- `88a0006` fix(saga): code-review fixes for issue #402 spend observability
+- `86c385a` docs(evidence): record code-review verdict for issue #402 in the evidence ledger
+
+## Code review (programmatic `/code-review`, 4 lenses: correctness, security, testing, maintainability)
+
+- **P1 (correctness, fixed):** `tier_efficacy.propose_downgrades()` was missing the "above
+  baseline tier" gate its own docstring and `retro/SKILL.md` claimed — a work-shape already at or
+  below `SPEND_BASELINE` could get a downgrade proposal despite having no over-spend to correct.
+  Fixed by adding the same `is_escalation(SPEND_BASELINE, tier)` predicate `spend_retro.py`
+  already uses; regression-tested.
+- **P2s (fixed):** uncaught `TypeError` on malformed JSON in `shadow_audit.py sample` /
+  `tier_efficacy._record_from_dict` (security); `spend_receipt.py`'s docstring/plan overclaiming
+  unimplemented `OutcomeSpec` node-level support (correctness); the `min_samples` exact-boundary
+  case exercised but unasserted (testing); `CHANGELOG.md` release-surface drift from the
+  `spend_receipt.py` fix plus a stale test count (maintainability).
+- **P3s fixed:** all-cheapest/zero-eligible-pool untested at `sample()`/`sample_gated()` level; a
+  bare `SPEND_BASELINE` docstring reference implying a nonexistent local alias; `--root` CLI
+  argument help-text inconsistency (verified the differing *defaults* were correct, only help text
+  was missing).
+- **P3s residual (not fixed, low priority):** CLI malformed-input error-path coverage gap remains
+  for `spend_estimate.py`/`spend_receipt.py`/`spend_retro.py`'s own error classes (a pattern shared
+  with the rest of this repo's script CLIs, not introduced by this PR); `spend_estimate.py`'s
+  `_cost_weights()` lazy-wrapper deviates from the sibling module-level-constant-binding
+  convention; the attribute-docstring style (bare string literal after a dataclass field) is new
+  to this PR and applied inconsistently.
+- Full envelope persisted to the evidence ledger: `docs/evidence/issue-402/ledger.jsonl`
+  (`check_id=code-review`, `reviewed_sha=88a0006`, `verdict=PASS`).
+- Post-fix full suite: 3392 passed / 1 skipped (was 3387 pre-review); ruff/mypy/bandit all clean.
 
 ## Process notes
 
@@ -85,4 +114,6 @@ shadow-audit evidence), bumped saga to 0.82.0, and reached PR-ready with a clean
 
 ## Next step
 
-Run `/code-review` programmatically for the pre-PR gate, then open the draft PR.
+Draft PR #570 is open at `commit`-tier ceremony with all 6 CI checks green. Operator: review and,
+when ready, request review / flip ready-for-review (not performed by this automation — reserved
+for explicit human confirmation).

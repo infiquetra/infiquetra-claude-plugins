@@ -15,10 +15,10 @@
   per-saga or `--all` sweep, derives `handed-off-unacknowledged` for offers without acks (dropped
   baton detection), lists acked or no-handoff scenarios. Exit-code convention: 0 = clean/no-handoff,
   1 = unacknowledged/error.
-- `handoff_envelope.py` gains thin delegating builder: calls `deploy_handoff.py offer()` to mint the
-  envelope, delegates accept/authorize-promotion reads to deploy script (KTD1 — keeps
-  mission-control envelope untouched, avoids cross-plugin Python import, keeps saga script as the
-  single writer).
+- `handoff_envelope.py` gains a thin `build_deploy_handoff_envelope()` delegator calling
+  `deploy_handoff.build_envelope()` — it builds the envelope dict and writes nothing to disk
+  (`offer` owns sidecar persistence). Existing `build_handoff_envelope` output is byte-unchanged
+  (KTD1 — keeps the mission-control envelope untouched, avoids cross-plugin Python import).
 - `saga.py` field: new optional `--deploy-autonomy {gate,auto}` flag on `save` (persisted in saga
   record). Captured once at `/plan` Phase 5.1 as a follow-up only when destination is
   `nonprod-deploy`; absent -> `gate` (safe direction — a missing posture can never auto-fire, per

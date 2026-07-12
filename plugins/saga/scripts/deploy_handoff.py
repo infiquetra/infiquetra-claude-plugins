@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""deploy_handoff.py — positive handoff-ack envelope at the saga -> deploy edge (issue #395, U1).
+"""deploy_handoff.py — positive handoff-ack envelope at the saga -> deploy edge (issue #395).
 
 `/work` owns the PR loop through merge and explicitly disclaims deploy. Nothing today requires
 deploy to acknowledge picking a merged item up, so a dropped baton is invisible. This sidecar
 module owns the acceptance contract that closes that gap (R1/R3/R4/R5):
 
 * ``offer`` mints an ack token (``secrets.token_hex``) and writes a per-saga sidecar
-  ``.claude/saga/sagas/<saga_id>/deploy_handoff.json`` with the gate-or-auto payload. In this unit
-  the payload defaults to ``gate`` (the safe direction R5 mandates — the saga-record read that
-  derives it lands in U2). A repeat ``offer`` (a crashed deploy run, F2 recovery) mints a *fresh*
+  ``.claude/saga/sagas/<saga_id>/deploy_handoff.json`` with the gate-or-auto payload. The payload
+  and ``pr_refs`` are read from the saga record (``state.json["sagas"][saga_id]``, KTD3) — an
+  absent posture reads the safe ``gate`` default (R5) and is never overridable from an offer-time
+  argument (R2). A repeat ``offer`` (a crashed deploy run, F2 recovery) mints a *fresh*
   token and moves the prior envelope to ``superseded`` so a stale token can never be acked (KTD4).
 * ``accept`` is write-once (KTD4): it records ``{token, acknowledged_at, acknowledged_by,
   evidence}`` only on the deploy side. A second accept raises ``AlreadyAcknowledgedError`` (mirrors
@@ -25,8 +26,12 @@ module owns the acceptance contract that closes that gap (R1/R3/R4/R5):
   anywhere (KTD6).
 
 Storage follows the established sidecar discipline (``ship_receipt.py`` / ``ship_teardown.py``):
-saga-id regex hardening, wrapped ``JSONDecodeError``, atomic tmp-then-``os.replace`` writes, a
-single writer, no ``state.json`` contention.
+saga-id regex hardening, wrapped ``JSONDecodeError``, atomic tmp-then-``os.replace`` writes, no
+``state.json`` contention. Write-once is enforced at the API layer (named errors on double-accept
+/ token mismatch), NOT at the filesystem — unlike ``ship_receipt``'s ``O_CREAT|O_EXCL``, which is
+inapplicable here because ``accept`` mutates an already-existing offer file. The sidecar is
+git-ignored, machine-local, single-operator state; a local hand-edit or a same-instant concurrent
+accept is outside the trust model, same as every sibling sidecar.
 """
 
 from __future__ import annotations
@@ -64,6 +69,10 @@ ENV_NONPROD = "nonprod"
 STATUS_NO_HANDOFF = "no-handoff"
 STATUS_UNACKNOWLEDGED = "handed-off-unacknowledged"
 STATUS_ACCEPTED = "accepted"
+# A sidecar that exists but cannot be parsed/validated. Only the --all sweep emits this: one
+# corrupt sidecar must degrade to its own report line, never abort the whole dropped-baton sweep
+# and mask every other saga's status (code-review P2, #395 fix round).
+STATUS_INVALID_SIDECAR = "invalid-sidecar"
 
 # saga_id becomes a path component under .claude/saga/sagas/ — a traversal value ("../..", an
 # absolute path) would read/write outside the sidecar directory. Single path segment, alphanumeric
@@ -442,7 +451,10 @@ def reconcile_all(repo_root: Path, *, now: str | None = None) -> list[dict[str, 
     """Sweep every ``.claude/saga/sagas/*/deploy_handoff.json`` sidecar and derive each one's
     status (KTD6). Saga directories that never received an offer carry no sidecar and are skipped
     entirely — the sweep's purpose is surfacing dropped batons among sagas that WERE offered, not
-    enumerating every saga that exists. Results are sorted by ``saga_id`` for stable output."""
+    enumerating every saga that exists. A sidecar that exists but cannot be parsed degrades to its
+    own ``invalid-sidecar`` entry naming the error — it never aborts the sweep, because one corrupt
+    file masking every OTHER saga's dropped baton would defeat the F2 safety net this sweep exists
+    to provide. Results are sorted by ``saga_id`` for stable output."""
     sagas_dir = repo_root / SAGAS_DIR
     if not sagas_dir.exists():
         return []
@@ -452,7 +464,12 @@ def reconcile_all(repo_root: Path, *, now: str | None = None) -> list[dict[str, 
             continue
         if not (child / HANDOFF_NAME).exists():
             continue
-        results.append(reconcile_one(repo_root, child.name, now=now))
+        try:
+            results.append(reconcile_one(repo_root, child.name, now=now))
+        except InvalidHandoffError as exc:
+            results.append(
+                {"saga_id": child.name, "status": STATUS_INVALID_SIDECAR, "note": str(exc)}
+            )
     return results
 
 
@@ -536,8 +553,9 @@ def main(argv: list[str] | None = None) -> int:
                 results = [reconcile_one(repo_root, args.saga_id)]
             print(json.dumps(results, indent=2, sort_keys=True))
             # Exit-code convention follows ship_receipt.py read (KTD6): 0 for clean or no-handoff,
-            # 1 whenever any reconciled saga is handed-off-unacknowledged (dropped baton, F2).
-            if any(r["status"] == STATUS_UNACKNOWLEDGED for r in results):
+            # 1 whenever any reconciled saga is handed-off-unacknowledged (dropped baton, F2) or
+            # carries an unreadable sidecar (invalid-sidecar is "not clean", never silently 0).
+            if any(r["status"] in (STATUS_UNACKNOWLEDGED, STATUS_INVALID_SIDECAR) for r in results):
                 return 1
         else:  # pragma: no cover - argparse enforces valid choices
             parser.error(f"unknown command {args.command!r}")

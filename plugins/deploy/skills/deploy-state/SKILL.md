@@ -78,9 +78,10 @@ it — an offer alone is never read as "done".
 
    A double-accept, an accept without a matching offer, or a stale (superseded) token is refused.
 
-3. **Consult `authorize_promotion` before promoting** — do not decide gate-vs-auto by convention.
-   The offer's payload is `gate` or `auto`, captured once at saga intent time and carried
-   unmodified with the offer:
+3. **Apply the gate-or-auto rule before promoting** — do not decide gate-vs-auto by convention.
+   Read the payload from the offer (`deploy_handoff.py read`); the rule below is implemented
+   mechanically as `authorize_promotion` in `plugins/saga/scripts/deploy_handoff.py`. The payload
+   is `gate` or `auto`, captured once at saga intent time and carried unmodified with the offer:
    - `gate` **always** blocks pending explicit operator confirmation. A `gate` payload is never
      silently overridden to auto-fire, regardless of environment.
    - `auto` authorizes unattended promotion for `nonprod` only; `staging` and `production` always
@@ -97,5 +98,6 @@ mechanics, environment model, or the confirmation requirements in "Deployment Wo
 - `plugins/deploy/scripts/mint_tag.py`: build and optionally push policy tags.
 - `plugins/deploy/scripts/query_deployments.py`: show status and drift.
 - `plugins/deploy/scripts/preview_release_notes.py`: summarize candidate changes.
-- `plugins/saga/scripts/deploy_handoff.py`: read/accept a saga's deploy-handoff offer and consult
-  `authorize_promotion` (see "Accepting a saga handoff" above).
+- `plugins/saga/scripts/deploy_handoff.py`: read/accept a saga's deploy-handoff offer via its
+  `read`/`accept`/`reconcile` CLI verbs; its `authorize_promotion` function implements the
+  gate-or-auto rule (see "Accepting a saga handoff" above).

@@ -5,10 +5,10 @@
 ### Added - acceptance step at saga handoff boundary, gate-or-auto authorization gating (#395)
 
 - `deploy-state` skill gains "Accepting a saga handoff" section: operators run `deploy_handoff.py
-  accept` before promotion on behalf of a saga-tracked item, consulting `authorize_promotion` to
-  honor gate-or-auto payload (gate -> blocked pending explicit confirmation, auto -> authorized for
-  nonprod only, staging/production always require confirmation regardless of payload). Deploy docs
-  mandate consulting the authorization logic — handoff gating is mechanical on saga side (KTD5), not
+  accept` before promotion on behalf of a saga-tracked item, honoring the gate-or-auto payload read
+  from the offer (gate -> blocked pending explicit confirmation, auto -> authorized for
+  nonprod only, staging/production always require confirmation regardless of payload). The rule is
+  implemented mechanically as `authorize_promotion` on the saga side (KTD5), not
   by deploy convention.
 - `deploy.md` command docs gain acceptance step in Instructions, guiding users to run the ack before
   proceeding with promotion (R6, U4).

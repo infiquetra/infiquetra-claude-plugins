@@ -516,3 +516,156 @@ def test_build_deploy_handoff_envelope_delegates(tmp_path: Path) -> None:
     assert envelope["saga_id"] == SAGA_ID
     assert envelope["token"] == "cafe"
     assert envelope["payload"] == "gate"
+
+
+# --------------------------------------------------------------------------- #
+# Code-review fix round (#395): CLI end-to-end coverage, intent-capture
+# carry-forward guard, and the invalid-sidecar sweep degrade (review P2).
+# --------------------------------------------------------------------------- #
+
+
+def test_ack_round_trip_accept_cli_end_to_end(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The accept CLI verb had zero end-to-end coverage (review P2) — this drives the argparse
+    # wiring (--by -> acknowledged_by) and the success exit code through main().
+    offered = DH.offer(tmp_path, SAGA_ID, offered_by="work")
+    token = offered["envelope"]["token"]
+    rc = DH.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "accept",
+            "--saga-id",
+            SAGA_ID,
+            "--token",
+            token,
+            "--by",
+            "deploy-bot",
+            "--evidence",
+            "tag nonprod-v1",
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ack"]["acknowledged_by"] == "deploy-bot"
+    assert out["ack"]["evidence"] == "tag nonprod-v1"
+
+
+def test_ack_round_trip_accept_cli_error_exits_1_no_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The CLI error boundary (DeployHandoffError -> message + exit 1, never a traceback) was
+    # unexercised by any test (review P2) — the module docstring headlines this contract.
+    rc = DH.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "accept",
+            "--saga-id",
+            SAGA_ID,
+            "--token",
+            "cafe",
+            "--by",
+            "deploy-bot",
+            "--evidence",
+            "tag",
+        ]
+    )
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "deploy_handoff:" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_ack_round_trip_read_cli_end_to_end(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # read CLI verb incl. its no-handoff exit-1 path (review P3).
+    assert DH.main(["--repo-root", str(tmp_path), "read", "--saga-id", SAGA_ID]) == 1
+    assert "no deploy handoff" in capsys.readouterr().err
+    DH.offer(tmp_path, SAGA_ID, offered_by="work")
+    assert DH.main(["--repo-root", str(tmp_path), "read", "--saga-id", SAGA_ID]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["envelope"]["saga_id"] == SAGA_ID
+
+
+def test_gate_or_auto_propagation_cli_flag_carries_forward_on_omit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Intent-capture regression guard (review P2): an authored `auto` posture must survive a later
+    # flagless save — argparse default=None keeps the omitted flag out of explicit_fields so
+    # _merge carries the prior tick's value forward instead of restamping it. A regression that
+    # flips the default to "gate" would silently downgrade the operator's answered-once posture.
+    monkeypatch.chdir(tmp_path)
+    assert SAGA.main(["save", "--kind", "issue", "--id", "9395", "--deploy-autonomy", "auto"]) == 0
+    assert (
+        SAGA.main(["save", "--kind", "issue", "--id", "9395", "--next-step", "flag omitted"]) == 0
+    )
+    capsys.readouterr()
+    state = json.loads((tmp_path / ".claude" / "saga" / "state.json").read_text(encoding="utf-8"))
+    assert state["sagas"]["issue-9395"]["deploy_autonomy"] == "auto"
+    # End-to-end: offer sources the carried-forward posture from the real persisted record.
+    record = DH.offer(tmp_path, "issue-9395", offered_by="work")
+    assert record["envelope"]["payload"] == "auto"
+
+
+def test_gate_or_auto_propagation_cli_flag_explicit_restamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert SAGA.main(["save", "--kind", "issue", "--id", "9395", "--deploy-autonomy", "auto"]) == 0
+    assert SAGA.main(["save", "--kind", "issue", "--id", "9395", "--deploy-autonomy", "gate"]) == 0
+    capsys.readouterr()
+    state = json.loads((tmp_path / ".claude" / "saga" / "state.json").read_text(encoding="utf-8"))
+    assert state["sagas"]["issue-9395"]["deploy_autonomy"] == "gate"
+
+
+def test_gate_or_auto_propagation_corrupt_state_json_defaults_gate(tmp_path: Path) -> None:
+    # R5 self-heal (review P3): a present-but-CORRUPT state.json must degrade to the safe gate
+    # default, never raise and never read auto.
+    state_dir = tmp_path / ".claude" / "saga"
+    state_dir.mkdir(parents=True)
+    (state_dir / "state.json").write_text("{corrupt", encoding="utf-8")
+    record = DH.offer(tmp_path, SAGA_ID, offered_by="work")
+    assert record["envelope"]["payload"] == "gate"
+
+
+def test_ack_round_trip_non_object_json_sidecar_raises_named_error(tmp_path: Path) -> None:
+    # Valid JSON that is not an object ([]) trips the isinstance guard, distinct from the
+    # JSONDecodeError branch the malformed-sidecar test covers (review P3).
+    path = _sidecar_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text("[]", encoding="utf-8")
+    with pytest.raises(DH.InvalidHandoffError):
+        DH.reconcile_one(tmp_path, SAGA_ID)
+
+
+def test_dropped_baton_detected_corrupt_sidecar_degrades_not_aborts_sweep(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Review P2 (reproduced by the correctness lens): one corrupt sidecar must degrade to its own
+    # invalid-sidecar entry, never abort the --all sweep and mask a sibling's dropped baton.
+    corrupt_id, unacked_id = "issue-1", "issue-2"
+    DH.offer(tmp_path, unacked_id, offered_by="work")
+    bad = _sidecar_path(tmp_path, corrupt_id)
+    bad.parent.mkdir(parents=True)
+    bad.write_text("{corrupt", encoding="utf-8")
+
+    results = DH.reconcile_all(tmp_path)
+    by_id = {r["saga_id"]: r for r in results}
+    assert by_id[unacked_id]["status"] == DH.STATUS_UNACKNOWLEDGED
+    assert by_id[corrupt_id]["status"] == DH.STATUS_INVALID_SIDECAR
+    assert by_id[corrupt_id]["note"]
+
+    assert DH.main(["--repo-root", str(tmp_path), "reconcile", "--all"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert {r["saga_id"] for r in out} == {corrupt_id, unacked_id}
+
+
+def test_dropped_baton_detected_invalid_sidecar_alone_is_not_clean(tmp_path: Path) -> None:
+    # An unreadable sidecar with no other handoffs still exits 1 — invalid is never silently clean.
+    bad = _sidecar_path(tmp_path, "issue-1")
+    bad.parent.mkdir(parents=True)
+    bad.write_text("[]", encoding="utf-8")
+    assert DH.main(["--repo-root", str(tmp_path), "reconcile", "--all"]) == 1

@@ -24,10 +24,13 @@ PASS. This module is the consumer that closes that gap: it reads the evidence le
 
 - `missing-evidence:<check_id>` — the check has zero evidence entries anywhere in the ledger.
 - `stale-sha:<check_id>` — the check has evidence, but none at the resolved close SHA.
-- `unresolved-fail:<check_id>` — the latest verdict at the close SHA is still `FAIL`.
-- `unsuperseded-fail:<check_id>` — an earlier `FAIL` at the close SHA was followed by a non-FAIL
-  verdict with no `payload["supersession_reason"]` on that later entry (an unexplained PASS never
-  silently clears a FAIL).
+- `unresolved-fail:<check_id>` — the latest verdict at the close SHA is a failing verdict (`FAIL`,
+  or a real shipped producer's failing string — `no-ship`, `blocked`).
+- `unsuperseded-fail:<check_id>` — an earlier failing verdict at the close SHA was followed by a
+  passing verdict with no `payload["supersession_reason"]` on that later entry (an unexplained
+  PASS never silently clears a FAIL).
+- `unrecognized-verdict:<check_id>` — the latest verdict at the close SHA is neither a known
+  passing nor a known failing string (KTD7) — HALT rather than silently treat it as a pass.
 - `unresolvable-close-sha` — `required_checks` is declared but no close SHA (or no `leaf_saga_id`)
   can be resolved for this node.
 - `chain-tamper:<subplot_id>` — `evidence_ledger.verify_chain()` detected a broken/tampered chain.
@@ -35,6 +38,14 @@ PASS. This module is the consumer that closes that gap: it reads the evidence le
 Supersession is a `payload["supersession_reason"]` convention on the entry that follows a FAIL —
 not a new ledger entry kind (evidence-ledger plan R10 reserves the open `payload` dict for exactly
 this kind of downstream extension; no schema surgery on the already-merged, already-tested ledger).
+
+**Verdict vocabulary (KTD7).** `evidence_ledger.latest()`'s own `superseded_fail` flag hardcodes a
+literal `"FAIL"` sentinel — correct for a synthetic fixture, but blind to what the shipped
+producers actually write: `/qa` records `ship` / `ship-with-deferred` / `no-ship`
+(`qa/SKILL.md` Phase 4.2) and `/code-review` records `clean` / `blocked`
+(`code-review/SKILL.md` Phase 5.3). This module classifies independently, off its own closed
+vocabulary (`_FAIL_VERDICTS` / `_PASS_VERDICTS`), so a real `no-ship`/`blocked` verdict is
+correctly treated as failing rather than silently satisfied.
 
 CLI::
 
@@ -62,7 +73,25 @@ REQUIRED_CHECKS_KEY = "required_checks"
 REVIEWED_SHA_KEY = "reviewed_sha"
 SUPERSESSION_REASON_KEY = "supersession_reason"
 
-FAIL_VERDICT = "FAIL"
+# Closed verdict vocabulary (KTD7): evidence_ledger.py's own `latest().superseded_fail` hardcodes
+# a literal "FAIL" sentinel -- correct for the issue's own golden-fixture tests, but blind to the
+# REAL verdict strings the shipped producers write: `/qa` (`ship` / `ship-with-deferred` /
+# `no-ship`, qa/SKILL.md Phase 4.2) and `/code-review` (`clean` / `blocked`, code-review/SKILL.md
+# Phase 5.3). Treating only a literal "FAIL" as failing would silently satisfy the gate on a real
+# `no-ship`/`blocked` verdict -- exactly the silent-pass failure mode this issue exists to kill.
+# closure_gate therefore classifies independently of evidence_ledger.latest()'s own flag (HALT on
+# an unrecognized string, R9's HALT-not-degrade bias, rather than assuming it is a pass).
+_FAIL_VERDICTS = frozenset({"FAIL", "no-ship", "blocked"})
+_PASS_VERDICTS = frozenset({"PASS", "ship", "ship-with-deferred", "clean"})
+
+
+def _classify_verdict(verdict: str) -> str:
+    """`"fail"` / `"pass"` / `"unrecognized"` for one verdict string against the closed vocabulary."""
+    if verdict in _FAIL_VERDICTS:
+        return "fail"
+    if verdict in _PASS_VERDICTS:
+        return "pass"
+    return "unrecognized"
 
 
 @dataclass(frozen=True)
@@ -120,31 +149,44 @@ def _resolve_close_sha(node: Any, *, github_runner: Callable[..., Any] | None = 
 
 
 def _evaluate_check(store: evidence_ledger.Store, *, check_id: str, close_sha: str) -> CheckResult:
-    """Classify one required check: missing / stale / unresolved-fail / unsuperseded-fail / ok."""
+    """Classify one required check: missing / stale / unresolved-fail / unsuperseded-fail / ok.
+
+    Reads ``evidence_ledger.history()`` directly (not ``latest()``) so the fail/pass
+    classification is closure_gate's own closed vocabulary (KTD7), independent of
+    ``latest().superseded_fail``'s literal-"FAIL"-only computation.
+    """
     history_entries = evidence_ledger.history(store, check_id=check_id)
     if not history_entries:
         return CheckResult(check_id, False, f"missing-evidence:{check_id}", None, None, False)
 
-    at_close_sha = [e for e in history_entries if e.get("reviewed_sha") == close_sha]
+    at_close_sha = sorted(
+        (e for e in history_entries if e.get("reviewed_sha") == close_sha),
+        key=lambda e: e["attempt"],
+    )
     if not at_close_sha:
         return CheckResult(check_id, False, f"stale-sha:{check_id}", None, None, False)
 
-    latest_result = evidence_ledger.latest(store, check_id=check_id, reviewed_sha=close_sha)
-    verdict = latest_result.verdict
-    attempt = latest_result.attempt
+    latest_entry = at_close_sha[-1]
+    verdict = latest_entry["verdict"]
+    attempt = latest_entry["attempt"]
+    classification = _classify_verdict(verdict)
 
-    if verdict == FAIL_VERDICT:
+    if classification == "unrecognized":
+        return CheckResult(
+            check_id, False, f"unrecognized-verdict:{check_id}", verdict, attempt, False
+        )
+    if classification == "fail":
         return CheckResult(check_id, False, f"unresolved-fail:{check_id}", verdict, attempt, False)
 
-    if latest_result.superseded_fail:
-        latest_entry = latest_result.history[-1]
+    had_earlier_fail = any(_classify_verdict(e["verdict"]) == "fail" for e in at_close_sha[:-1])
+    if had_earlier_fail:
         reason = latest_entry.get("payload", {}).get(SUPERSESSION_REASON_KEY)
         if not (isinstance(reason, str) and reason.strip()):
             return CheckResult(
                 check_id, False, f"unsuperseded-fail:{check_id}", verdict, attempt, True
             )
 
-    return CheckResult(check_id, True, None, verdict, attempt, latest_result.superseded_fail)
+    return CheckResult(check_id, True, None, verdict, attempt, had_earlier_fail)
 
 
 def evaluate(

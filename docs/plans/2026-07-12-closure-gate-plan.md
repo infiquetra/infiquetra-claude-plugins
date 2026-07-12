@@ -116,6 +116,19 @@ threaded `repo_root`. The two real production call sites
 (`outcome.py`'s `production_harvester`, both closures) already have `repo_root` in scope and are
 updated to pass it through explicitly.
 
+**KTD7 — Verdict classification is closure_gate's own closed vocabulary, not
+`evidence_ledger.latest()`'s `superseded_fail` flag (added during implementation).**
+`evidence_ledger.latest()` hardcodes a literal `"FAIL"` sentinel for its own supersession
+detection — correct for a synthetic fixture, but blind to what the shipped producers actually
+write: `/qa` records `ship` / `ship-with-deferred` / `no-ship` (never `"FAIL"`/`"PASS"` literally)
+and `/code-review` records `clean` / `blocked`. Relying on the literal sentinel would have silently
+treated a real `no-ship`/`blocked` verdict as satisfied — exactly the silent-pass failure mode this
+issue exists to kill. `closure_gate.py` therefore reads `evidence_ledger.history()` directly and
+classifies each entry against its own closed vocabulary (`_FAIL_VERDICTS` = `{FAIL, no-ship,
+blocked}`, `_PASS_VERDICTS` = `{PASS, ship, ship-with-deferred, clean}`); an unrecognized string
+HALTs `unrecognized-verdict:<check_id>` rather than being assumed to pass (HALT-not-degrade, R9).
+No change to `evidence_ledger.py` itself beyond the already-planned additive `history()` helper.
+
 ## Implementation Units
 
 ### U1. `closure_gate.py` — chain reader, supersession validator, SHA-match, typed verdict

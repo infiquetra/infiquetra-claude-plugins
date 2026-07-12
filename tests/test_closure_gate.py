@@ -167,6 +167,114 @@ def test_closure_gate_unresolved_fail_halts(tmp_path: Path) -> None:
     assert verdict.halt_reason == "unresolved-fail:qa"
 
 
+def test_closure_gate_real_qa_verdict_vocab_no_ship_halts(tmp_path: Path) -> None:
+    """The real `/qa` verdict vocabulary (`ship`/`ship-with-deferred`/`no-ship`), not just FAIL/PASS."""
+    node = _node("sub6b", evidence={"required_checks": ["qa"]})
+    store = _store(tmp_path, node.leaf_saga_id)
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="no-ship", content="bad"
+    )
+
+    verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
+
+    assert not verdict.satisfied
+    assert verdict.halt_reason == "unresolved-fail:qa"
+
+
+def test_closure_gate_real_qa_verdict_vocab_ship_with_deferred_satisfies(tmp_path: Path) -> None:
+    node = _node("sub6c", evidence={"required_checks": ["qa"]})
+    store = _store(tmp_path, node.leaf_saga_id)
+    LEDGER.write(
+        store,
+        check_id="qa",
+        reviewed_sha=SHA,
+        producer="qa-gate",
+        verdict="ship-with-deferred",
+        content="ok",
+    )
+
+    verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
+
+    assert verdict.satisfied
+
+
+def test_closure_gate_real_code_review_verdict_vocab_blocked_halts(tmp_path: Path) -> None:
+    """The real `/code-review` verdict vocabulary (`clean`/`blocked`)."""
+    node = _node("sub6d", evidence={"required_checks": ["code-review"]})
+    store = _store(tmp_path, node.leaf_saga_id)
+    LEDGER.write(
+        store,
+        check_id="code-review",
+        reviewed_sha=SHA,
+        producer="code-review-gate",
+        verdict="blocked",
+        content="bad",
+    )
+
+    verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
+
+    assert not verdict.satisfied
+    assert verdict.halt_reason == "unresolved-fail:code-review"
+
+
+def test_closure_gate_real_code_review_verdict_vocab_clean_satisfies(tmp_path: Path) -> None:
+    node = _node("sub6e", evidence={"required_checks": ["code-review"]})
+    store = _store(tmp_path, node.leaf_saga_id)
+    LEDGER.write(
+        store,
+        check_id="code-review",
+        reviewed_sha=SHA,
+        producer="code-review-gate",
+        verdict="clean",
+        content="ok",
+    )
+
+    verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
+
+    assert verdict.satisfied
+
+
+def test_closure_gate_no_ship_superseded_with_justification(tmp_path: Path) -> None:
+    """The real-vocab equivalent of the golden fixture: no-ship -> justified ship-with-deferred."""
+    node = _node("sub6f", evidence={"required_checks": ["qa"]})
+    store = _store(tmp_path, node.leaf_saga_id)
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="no-ship", content="bad"
+    )
+    LEDGER.write(
+        store,
+        check_id="qa",
+        reviewed_sha=SHA,
+        producer="qa-gate",
+        verdict="ship",
+        content="ok",
+        payload={"supersession_reason": "false positive, re-ran clean"},
+    )
+
+    verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
+
+    assert verdict.satisfied
+
+
+def test_closure_gate_unrecognized_verdict_halts(tmp_path: Path) -> None:
+    """An unrecognized verdict string HALTs rather than being silently treated as a pass."""
+    node = _node("sub6g", evidence={"required_checks": ["qa"]})
+    store = _store(tmp_path, node.leaf_saga_id)
+    LEDGER.write(
+        store,
+        check_id="qa",
+        reviewed_sha=SHA,
+        producer="qa-gate",
+        verdict="pending-review",
+        content="?",
+    )
+
+    verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
+
+    assert not verdict.satisfied
+    assert verdict.halt_reason == "unrecognized-verdict:qa"
+
+
 def test_closure_gate_repeat_fail_pass_cycle(tmp_path: Path) -> None:
     """A second FAIL->justified-PASS cycle after an earlier cycle already resolved.
 

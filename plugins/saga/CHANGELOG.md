@@ -10,13 +10,18 @@
   `required_checks` declared is trivially satisfied, so every existing outcome spec is unaffected.
   Named HALT reasons: `missing-evidence:<check_id>` (no evidence anywhere), `stale-sha:<check_id>`
   (evidence exists, but not at the outcome's current close SHA), `unresolved-fail:<check_id>` (the
-  latest verdict at the close SHA is still `FAIL`), `unsuperseded-fail:<check_id>` (a FAIL was
-  followed by a non-FAIL verdict with no `payload["supersession_reason"]` justifying the
-  transition — an unexplained PASS never silently clears a FAIL), and `unresolvable-close-sha`.
-  Close-SHA resolution: an explicit `evidence.reviewed_sha` override wins; otherwise a `code` node
-  derives it from the PR's pre-merge head commit SHA (`outcome_github.head_ref_oid`), never the
-  post-squash merge-commit SHA on `main`. Calls the already-shipped `evidence_ledger.verify_chain()`
-  once per evaluation so a tampered chain HALTs rather than trusting a compromised read.
+  latest verdict at the close SHA is a failing verdict), `unsuperseded-fail:<check_id>` (a failing
+  verdict was followed by a passing one with no `payload["supersession_reason"]` justifying the
+  transition — an unexplained PASS never silently clears a FAIL), `unrecognized-verdict:<check_id>`
+  (a verdict string outside the known vocabulary HALTs rather than being treated as a pass), and
+  `unresolvable-close-sha`. Close-SHA resolution: an explicit `evidence.reviewed_sha` override
+  wins; otherwise a `code` node derives it from the PR's pre-merge head commit SHA
+  (`outcome_github.head_ref_oid`), never the post-squash merge-commit SHA on `main`. Calls the
+  already-shipped `evidence_ledger.verify_chain()` once per evaluation so a tampered chain HALTs
+  rather than trusting a compromised read. Classifies each verdict against its own closed
+  vocabulary rather than `evidence_ledger.latest()`'s literal-`"FAIL"`-only flag, so the real
+  producer verdicts (`/qa`'s `ship` / `ship-with-deferred` / `no-ship`, `/code-review`'s `clean` /
+  `blocked`) are correctly recognized as passing or failing.
 - **`evidence_ledger.py` gains one additive read helper, `history(store, check_id=...)`:** every
   evidence entry for a check across every reviewed SHA — needed to distinguish "this check never
   ran" from "this check ran, but only at a different SHA". No change to any existing signature or

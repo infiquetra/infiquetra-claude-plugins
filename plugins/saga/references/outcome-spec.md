@@ -70,8 +70,9 @@ check at the resolved close SHA and derives one of these named HALT reasons (nev
 |---|---|
 | `missing-evidence:<check_id>` | the check has zero evidence entries anywhere in the ledger |
 | `stale-sha:<check_id>` | the check has evidence, but none recorded at the resolved close SHA |
-| `unresolved-fail:<check_id>` | the latest verdict at the close SHA is still `FAIL` |
-| `unsuperseded-fail:<check_id>` | an earlier `FAIL` at the close SHA was followed by a non-FAIL verdict with no `payload["supersession_reason"]` on that later entry — an unexplained PASS never silently clears a FAIL |
+| `unresolved-fail:<check_id>` | the latest verdict at the close SHA is a failing verdict (`FAIL`, or a real producer's failing string — `no-ship`, `blocked`) |
+| `unsuperseded-fail:<check_id>` | an earlier failing verdict at the close SHA was followed by a passing verdict with no `payload["supersession_reason"]` on that later entry — an unexplained PASS never silently clears a FAIL |
+| `unrecognized-verdict:<check_id>` | the latest verdict at the close SHA is neither a known passing nor a known failing string — HALT rather than silently treat it as a pass |
 | `unresolvable-close-sha` | `required_checks` is declared but no close SHA (or no `leaf_saga_id`) can be resolved |
 | `chain-tamper:<subplot_id>` | `evidence_ledger.verify_chain()` detected a broken or tampered custody chain |
 
@@ -79,6 +80,13 @@ check at the resolved close SHA and derives one of these named HALT reasons (nev
 barrier above is satisfied — a node is never harvested `done` while the gate HALTs.
 `barrier_report()` surfaces the same verdict under each node's `closure_gate` key so an operator
 sees the named reason even when the GitHub barrier alone already reads satisfied.
+
+**Verdict vocabulary (KTD7).** The gate classifies each check's latest verdict against its own
+closed vocabulary, independent of `evidence_ledger.latest()`'s own `superseded_fail` flag (which
+hardcodes a literal `"FAIL"` sentinel). Known-failing: `FAIL`, `no-ship` (`/qa`), `blocked`
+(`/code-review`). Known-passing: `PASS`, `ship`, `ship-with-deferred` (`/qa`), `clean`
+(`/code-review`). Anything else HALTs `unrecognized-verdict:<check_id>` rather than being
+silently treated as a pass.
 
 ### Node state machine (`NODE_STATES`)
 

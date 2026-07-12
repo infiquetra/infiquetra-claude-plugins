@@ -3821,6 +3821,15 @@ never be silently cleared by an unexplained later PASS.
   resolves. Defaulted so every existing test call site and every outcome spec that declares no
   `required_checks` (all of them, today) is unaffected; the two real production call sites
   (`outcome.py`'s `production_harvester`) already have `repo_root` in scope.
+- **KTD7 — verdict classification is closure_gate's own closed vocabulary, found during
+  implementation self-review, not `evidence_ledger.latest()`'s `superseded_fail` flag.**
+  `latest()` hardcodes a literal `"FAIL"` sentinel — correct for a synthetic fixture, but blind to
+  what the shipped producers actually write (`/qa`: `ship`/`ship-with-deferred`/`no-ship`;
+  `/code-review`: `clean`/`blocked`; neither ever writes literal `"FAIL"`/`"PASS"`). Relying on the
+  literal sentinel would have silently treated a real `no-ship`/`blocked` verdict as satisfied —
+  exactly the silent-pass failure this issue exists to kill. `closure_gate.py` reads
+  `evidence_ledger.history()` directly and classifies against its own closed vocabulary; an
+  unrecognized verdict HALTs `unrecognized-verdict:<check_id>` rather than being assumed to pass.
 
 **Revisit when** a non-`code` node needs native close-SHA gating without an explicit override
 (a tracking-issue close-event hash, e.g.), or when an operator wants closure-gate HALTs surfaced

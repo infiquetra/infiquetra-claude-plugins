@@ -390,3 +390,40 @@ def test_make_dispatcher_raises_backend_halt_on_unenforceable_sandbox() -> None:
     with pytest.raises(D.BackendHaltError) as exc:
         dispatcher(_req_sandbox("inline", sb))
     assert "workspace_isolation" in exc.value.receipt.reason
+
+
+def test_frontier_budget_downgrade_restamps_backends_enumeration() -> None:
+    """KTD4 compat contract: the frontier-budget downgrade re-stamps the leaf recommender's
+    full-enumeration ``backends`` payload so the authoritative enumeration never contradicts the
+    downgraded ``recommended``.
+
+    A wide frontier turns a ``cc-workflows-ultracode`` leaf recommendation into ``team-execution``
+    (a dynamic workflow per leaf is expensive). The ``backends`` list must follow: team-execution
+    reads ``recommended``, ultracode reads ``alternative`` carrying the ``budget_note`` reason.
+    """
+    # Narrow frontier: no downgrade, ultracode stays recommended in both keys.
+    narrow = D.recommend_outcome_backend(frontier_width=1, broad_independent_fanout=True)
+    assert narrow["recommended"] == "cc-workflows-ultracode"
+    narrow_statuses = {b["backend"]: b["status"] for b in narrow["backends"]}
+    assert narrow_statuses["cc-workflows-ultracode"] == "recommended"
+
+    # Wide frontier: budget downgrade to team-execution AND the enumeration is re-stamped.
+    wide = D.recommend_outcome_backend(frontier_width=20, broad_independent_fanout=True)
+    assert wide["recommended"] == "team-execution"
+    assert "budget_note" in wide
+    assert "omit_ultracode" not in wide
+    statuses = {b["backend"]: b["status"] for b in wide["backends"]}
+    assert statuses == {
+        "inline": "alternative",
+        "team-execution": "recommended",
+        "cc-workflows-ultracode": "alternative",
+    }
+    # Exactly one recommended entry and it matches the downgraded recommended key.
+    recommended_entries = [b for b in wide["backends"] if b["status"] == "recommended"]
+    assert len(recommended_entries) == 1
+    assert recommended_entries[0]["backend"] == wide["recommended"]
+    # The ultracode entry's note carries the budget_note reason.
+    ultra_note = next(
+        b["note"] for b in wide["backends"] if b["backend"] == "cc-workflows-ultracode"
+    )
+    assert ultra_note == wide["budget_note"]

@@ -105,15 +105,24 @@ crossing an ownership boundary = a multi-party coordination need) and the **gate
 
 ### 3.2 `inline` -> `cc-workflows-ultracode` (Claude Code only)
 
-Offer in **either** of two ungoverned-multiplicity modes, both without elevated risk:
+Offer when the work matches **any** of the frozen `workflow_shapes` vocabulary — **understand / design /
+research / review / migrate**, the shapes the Workflow tool doc itself names — or either of the two
+legacy ungoverned-multiplicity triggers still recognized beside them, all without elevated risk:
 
-- **Breadth / scale** — high-parallelism, broad independent fan-out (the same operation across many
-  targets), or an exhaustive search-all / probe-all sweep where missing a target is the failure mode.
+- **Breadth / scale** (`broad_independent_fanout`) — high-parallelism, broad independent fan-out (the
+  same operation across many targets), or an exhaustive search-all / probe-all sweep where missing a
+  target is the failure mode.
 - **Adversarial confidence** (`adversarial_confidence`) — prove-by-refutation, a judge panel over N
   independent attempts, or perspective-diverse verifiers each applying a distinct lens. This is real review
   depth; the Workflow tool names *confidence* as a first-class purpose. Set it only on an **explicit**
   request for many-independent-attempt verification — not inferred from a generic "be more sure," and not
   when 1-3 lenses suffice (that is an `inline` / `team-execution` review, not an ultracode fan-out).
+- **Named workflow shape** (`workflow_shapes`, repeatable) — a request that matches one of the five frozen
+  shapes: **understand** (broad codebase/system comprehension), **design** (structured option exploration),
+  **research** (multi-source investigation), **review** (a multi-lens review *sweep* requested as a
+  workflow — the explicit refute-N / judge-panel form stays `adversarial_confidence`, and the two may
+  co-fire with no precedence between them), or **migrate** (a systematic many-target transformation). An
+  unknown shape is rejected loud (`ValueError`), never silently downgraded to `inline`.
 
 So ultracode is **not** "fan-out, not review depth" — it delivers deterministic fan-out **and** independent
 adversarial verification. What it lacks is **governance**: no reviewer-CONSENSUS gate, no named scanner
@@ -150,8 +159,12 @@ rules keep the contract honest across hosts:
 
 - **Document all three backends ALWAYS.** This file is the full map; an off-host reader needs to understand
   `cc-workflows-ultracode` even though they cannot run it.
-- **At the offer, prefer to omit `cc-workflows-ultracode` when the Workflow tool is observably absent in
-  this session.** Don't offer a path the operator cannot take here.
+- **At the offer, always name and mark all three backends, with provenance.** Never drop
+  `cc-workflows-ultracode` from the offer when the Workflow tool is observably absent — render it with
+  `status: unavailable` and a note carrying the availability source (`probed` via `ToolSearch` at offer
+  time, or `asserted` when a live probe wasn't possible). An `asserted` absence renders as "unverified —
+  probe before trusting," never a silent omission. Don't let the operator discover a backend exists only
+  by reading this file after the fact.
 
 **Regardless of the offer:** if `cc-workflows-ultracode` is chosen but turns out to be unavailable, **fall
 back to `team-execution` or `inline` with a one-line note** rather than failing. This is the same

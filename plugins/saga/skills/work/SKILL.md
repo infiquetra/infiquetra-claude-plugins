@@ -47,8 +47,10 @@ it leaves `lifecycle_phase=work` because `/qa` does not yet advance the phase (s
    api/deployment/data) **block** unless overridden with a recorded rationale. Run tests against the
    merge base, not stale local state.
 4. **Recommend the backend, the operator confirms.** Compute the cheapest-correct execution backend
-   with `recommend_execution_backend()`, pre-select it, and always surface the alternatives so
-   escalation is one keystroke (operator-choice §2). The recorded value is what the operator picked.
+   with `recommend_execution_backend()`, pre-select it, and always render the offer from the full
+   `backends` enumeration — all three, each `{backend, status, note}` — so escalation is one keystroke
+   and no backend is silently dropped (operator-choice §2). The recorded value is what the operator
+   picked.
 5. **Coordinate the PR loop, mutate only under confirmation.** Offer PR-open, review-request, and merge
    — each an explicitly confirmed git/`gh` op, **never silent**. Deploy mutation routes to
    `deploy`; issue comments and board moves route to `mission-control`.
@@ -227,8 +229,10 @@ chat memory alone as durable evidence after a resume.
 
 Offer the execution backend per `references/operator-choice.md` and the **runnable
 `recommend_execution_backend()` CLI call** in `references/execution-strategy.md`: compute the
-recommendation from the work shape, pre-select it, surface the alternatives (overlap offers both),
-confirm with the operator, and record what they picked via `--orchestration-mode`. Also pass
+recommendation from the work shape, pre-select it, and render the offer from the full `backends`
+enumeration — all three backends, each `{backend, status, note}` (overlap offers both as `alternative`,
+and an unavailable ultracode entry is still named with its provenance note, never dropped), confirm with
+the operator, and record what they picked via `--orchestration-mode`. Also pass
 `--orchestration-recommended <the recommend_execution_backend() output>` so the tick records
 recommended-vs-chosen on this decision (R12 override-rate telemetry); `orchestration_operator_choice`
 auto-derives from `--orchestration-mode`, so the only added burden is naming the recommendation.

@@ -153,33 +153,51 @@ already landed some units.
 ## Backend recommendation — `recommend_execution_backend()` (Phase 1.4)
 
 `/work` lands the deferred operator-choice helper (operator-choice §7). Compute the cheapest-correct
-backend, pre-select it, and surface the alternatives so escalation is one keystroke. Call the CLI:
+backend, pre-select it, and render the offer from the full `backends` enumeration so escalation is one
+keystroke. Before calling the CLI, **probe Workflow-tool availability with `ToolSearch`** and pass the
+result as `--workflow-availability-source probed`; fall back to the `asserted` default only when a live
+probe isn't possible on this host. Call the CLI:
 
 ```bash
 python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
   --file-count <N> --phase-count <N> \
   [--has-security] [--has-infra] [--cross-repo] [--deployment-sensitive] \
   [--needs-consensus] [--broad-fanout] [--adversarial-confidence] \
-  [--no-code-surface] [--no-workflow]
+  [--workflow-shape <understand|design|research|review|migrate>]... \
+  [--release-surface-file-count <N>] \
+  [--no-code-surface] [--no-workflow] \
+  [--workflow-availability-source probed|asserted]
 ```
 
-It returns JSON: `{recommended, rationale, alternatives, omit_ultracode}`. The recommendation reuses
-`should_offer_team_execution`'s thresholds (file_count ≥ 8, phase_count ≥ 4, security, infra, cross-repo,
-deployment-sensitive) **or** a needs-consensus signal for `team-execution`; broad-independent-fanout
-**or** an adversarial-confidence pass (prove-by-refutation / judge-panel) without elevated risk for
-`cc-workflows-ultracode`; `inline` otherwise. Pass `--no-code-surface` for pure docs/spec/research output:
-it voids the code-shaped proxies (size, and the `has_infra` / `has_security` keyword flags that
-false-positive on docs) so a big docs change isn't conscripted into team-execution — only `--cross-repo`
-and `--needs-consensus` keep it there. Set `--adversarial-confidence` ONLY on an explicit operator request
-for many-independent-attempt verification (refute-N, a judge panel, perspective-diverse lenses) — not
-inferred from generic "make me more confident" phrasing, and not when 1-3 review lenses would do; that bar
-keeps confidence work from over-routing to ultracode. `alternatives` lists every
-reachable backend **independent of which one won precedence**, so an overlap job (consensus AND
-fan-out) still offers both — escalation stays one step (operator-choice §3.3).
+It returns JSON: `{recommended, rationale, alternatives, backends, workflow_availability}`.
+`recommended` / `rationale` / `alternatives` are unchanged. `backends` is the full-enumeration payload —
+always exactly three ordered `{backend, status, note}` entries (`inline`, `team-execution`,
+`cc-workflows-ultracode`) with `status` in `{recommended, alternative, unavailable}`; there is no
+`omit_ultracode` key. `workflow_availability` echoes `{available, source}`, where `source` is `probed`
+or `asserted` (KTD3) — the provenance of the availability check.
 
-Surface the recommendation with `AskUserQuestion` (or channel-inline) pre-selecting `recommended`,
-listing `alternatives`. **Omit `cc-workflows-ultracode`** from the offer when `omit_ultracode` is true
-(pass `--no-workflow` when the Workflow tool is observably absent this session — operator-choice §4). If
-the operator picks `cc-workflows-ultracode` but it turns out unavailable, fall back to `team-execution`
-or `inline` with a one-line note. Record the operator's pick via the saga's `--orchestration-mode`
+The recommendation reuses `should_offer_team_execution`'s thresholds (functional file count — raw
+`--file-count` minus `--release-surface-file-count` — ≥ 8, phase_count ≥ 4, security, infra, cross-repo,
+deployment-sensitive) **or** a gated needs-consensus signal for `team-execution`; broad-independent-fanout,
+an adversarial-confidence pass (prove-by-refutation / judge-panel), advisory consensus, or any of the five
+`--workflow-shape` entries (`understand` / `design` / `research` / `review` / `migrate`) without elevated
+risk for `cc-workflows-ultracode`; `inline` otherwise. An unknown `--workflow-shape` value raises loud
+(`ValueError`) — never a silent downgrade to inline. Pass `--release-surface-file-count` for the count of
+release-bookkeeping files (plugin.json, marketplace.json, CHANGELOGs, version drift pins) inside
+`--file-count` — they carry no functional risk and must not trip the size trigger on their own. Pass
+`--no-code-surface` for pure docs/spec/research output: it voids the code-shaped proxies (size, and the
+`has_infra` / `has_security` keyword flags that false-positive on docs) so a big docs change isn't
+conscripted into team-execution — only `--cross-repo` and gated `--needs-consensus` keep it there. Set
+`--adversarial-confidence` ONLY on an explicit operator request for many-independent-attempt verification
+(refute-N, a judge panel, perspective-diverse lenses) — not inferred from generic "make me more confident"
+phrasing, and not when 1-3 review lenses would do; that bar keeps confidence work from over-routing to
+ultracode. `alternatives` lists every reachable backend **independent of which one won precedence**, so
+an overlap job (consensus AND fan-out) still offers both — escalation stays one step (operator-choice
+§3.3).
+
+Surface the recommendation with `AskUserQuestion` (or channel-inline), rendering **all three backends**
+from `backends` — pre-selecting the `recommended` one, listing the `alternative` ones, and **still naming**
+any `unavailable` one with its availability note (never a silent drop — operator-choice §4). If the
+operator picks `cc-workflows-ultracode` but it turns out unavailable, fall back to `team-execution` or
+`inline` with a one-line note. Record the operator's pick via the saga's `--orchestration-mode`
 (Phase 1.4) — that is the durable home for the choice (operator-choice §6).

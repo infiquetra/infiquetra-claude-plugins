@@ -68,7 +68,11 @@ def test_next_transition_advances_one_step() -> None:
 
 
 def test_next_transition_none_when_complete() -> None:
-    assert SC.next_transition("branch_delete") is None
+    # Issue #347: teardown is the new terminal transition appended after branch_delete,
+    # so branch_delete is no longer the end — teardown is, and only after teardown does
+    # next_transition report the ceremony complete (AC6, structurally non-skippable).
+    assert SC.next_transition("branch_delete") == "teardown"
+    assert SC.next_transition("teardown") is None
 
 
 def test_next_transition_rejects_unknown_name() -> None:
@@ -362,8 +366,13 @@ def test_full_ceremony_throwaway_branch(ceremony_repo) -> None:
         assert expected in status
 
     saga = _restore(repo)
-    assert saga["ceremony_transition"] == "branch_delete"
-    assert saga["ceremony_tier"] == SC.CeremonyTier.ALWAYS_OPERATOR
+    # Issue #347: the ceremony now ends at teardown (tier reversible), not branch_delete.
+    assert saga["ceremony_transition"] == "teardown"
+    assert saga["ceremony_tier"] == SC.CeremonyTier.REVERSIBLE
+    # teardown reconciled the opened-resource manifest clean (branch + PR both closed by
+    # their transitions) and minted the immutable receipt.
+    receipt = repo / ".claude" / "saga" / "sagas" / "issue-345" / "ship_receipt.json"
+    assert receipt.exists()
     # checkout_main + pull actually landed the merged commit locally.
     assert (repo / "change.txt").exists()
     branches = subprocess.run(  # noqa: S607
@@ -977,8 +986,9 @@ def test_full_ceremony_green_path_unchanged_when_no_hazards(ceremony_repo) -> No
         assert expected in status
 
     saga = _restore(repo)
-    assert saga["ceremony_transition"] == "branch_delete"
-    assert saga["ceremony_tier"] == SC.CeremonyTier.ALWAYS_OPERATOR
+    # Issue #347: teardown is the terminal transition now (tier reversible).
+    assert saga["ceremony_transition"] == "teardown"
+    assert saga["ceremony_tier"] == SC.CeremonyTier.REVERSIBLE
 
     sidecar = repo / ".claude" / "saga" / "sagas" / "issue-345" / "merge_expectation.json"
     manifest = repo / ".claude" / "saga" / "sagas" / "issue-345" / "rollback_manifest.json"
@@ -1245,6 +1255,243 @@ def test_uninstall_leaves_no_residue(bare_repo_clone: Path) -> None:
         text=True,
     )
     assert result.returncode != 0
+
+
+# --------------------------------------------------------------------------- #
+# Issue #347 (U4): terminal `teardown` transition, immutable receipt mint, and the
+# register-on-open / close-on-close manifest wiring at the ceremony's own call sites.
+# These ride the same ceremony_repo + FakeGh rig — teardown reconciles the
+# opened-resource manifest (a real ship_teardown sidecar under the saga dir), so the
+# oracles below assert real sidecar state, not a fake.
+# --------------------------------------------------------------------------- #
+
+
+def _opened_manifest(repo: Path) -> dict[str, Any]:
+    # SC is importlib-loaded, so its attributes are Any to mypy — dict() restores the type.
+    return dict(SC.ship_teardown.read_manifest(repo, "issue-345"))
+
+
+def test_AC_6_terminal_transition_not_skippable(ceremony_repo) -> None:
+    """AC6: teardown is appended last, so it is structurally the terminal transition —
+    ``TRANSITIONS[-1]`` is teardown and ``next_transition('branch_delete')`` is teardown,
+    not ``None``. A partial-failure path (the remote branch-delete leg failing on its
+    ``check=False`` call) still reaches teardown and lands at an explicit terminal state
+    (the receipt), never skipping the gate to 'already shipped'."""
+    assert SC.TRANSITIONS[-1] == "teardown"
+    assert SC.next_transition("branch_delete") == "teardown"
+
+    repo, fake_gh = ceremony_repo
+    # Fail exactly the remote branch-delete leg (the check=False call in
+    # _do_branch_delete) — branch_delete still succeeds locally and the ceremony must
+    # still reach teardown rather than stalling.
+    failing = FailingRunner(fake_gh, fail_prefix=["git", "push", "origin", "--delete"])
+    for expected in SC.TRANSITIONS:
+        SC.run(
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed=_confirm_for(expected),
+            runner=failing,
+        )
+
+    saga = _restore(repo)
+    assert saga["ceremony_transition"] == "teardown"
+    receipt = repo / ".claude" / "saga" / "sagas" / "issue-345" / "ship_receipt.json"
+    assert receipt.exists(), "teardown must reach the receipt even on the partial-delete path"
+
+
+def test_AC_1_blocks_on_nonzero_closing_count(ceremony_repo) -> None:
+    """AC1: two orphan worktree entries + one open background_session on the manifest
+    make the closing count non-zero; teardown refuses, names all three, leaves the saga's
+    ceremony_transition unadvanced (still branch_delete), and mints no receipt."""
+    repo, fake_gh = ceremony_repo
+    _advance_to(repo, fake_gh, "teardown")  # drives commit..branch_delete
+    assert _restore(repo)["ceremony_transition"] == "branch_delete"
+
+    # Seed the AC1 blocker shape onto the ceremony's own opened-resource manifest.
+    SC.ship_teardown.register(
+        repo,
+        "issue-345",
+        "wt-orphan-1",
+        kind="worktree",
+        ref="/tmp/pf-orphan-1",
+        opened_by="reclaim",
+    )
+    SC.ship_teardown.register(
+        repo,
+        "issue-345",
+        "wt-orphan-2",
+        kind="worktree",
+        ref="/tmp/pf-orphan-2",
+        opened_by="reclaim",
+    )
+    SC.ship_teardown.register(
+        repo, "issue-345", "sess-1", kind="background_session", ref="sess-abc", opened_by="spawn"
+    )
+
+    with pytest.raises(SC.ship_receipt.TeardownBlockedError) as excinfo:
+        SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
+
+    message = str(excinfo.value)
+    assert "/tmp/pf-orphan-1" in message
+    assert "/tmp/pf-orphan-2" in message
+    assert "sess-abc" in message
+    # Ledger provably unadvanced: teardown raised before append_entry + save.
+    assert _restore(repo)["ceremony_transition"] == "branch_delete"
+    receipt = repo / ".claude" / "saga" / "sagas" / "issue-345" / "ship_receipt.json"
+    assert not receipt.exists()
+
+
+def test_teardown_happy_path_mints_receipt_then_already_shipped(ceremony_repo) -> None:
+    """Happy path: a fully-closed manifest reconciles clean, teardown mints the receipt
+    recording what opened and closed, records ceremony_transition=teardown, and a
+    subsequent run reports 'already shipped'."""
+    repo, fake_gh = ceremony_repo
+    for expected in SC.TRANSITIONS:
+        SC.run(
+            repo_root=repo,
+            issue_ref="org/repo#345",
+            operator_confirmed=_confirm_for(expected),
+            runner=fake_gh,
+        )
+    assert _restore(repo)["ceremony_transition"] == "teardown"
+
+    receipt = SC.ship_receipt.read(repo, "issue-345", reprobe=False)
+    # The branch + PR the ceremony opened are recorded, both closed.
+    opened = receipt["opened"]
+    branch_id = SC._branch_resource_id(BRANCH_345)
+    assert branch_id in opened
+    assert opened[branch_id]["closed_at"] != ""
+    assert any(entry["kind"] == "draft_pr" for entry in opened.values())
+    assert receipt["closed"]["closing_count"] == 0
+    assert receipt["ceremony"]["final_transition"] == "teardown"
+
+    status = SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
+    assert "already shipped" in status
+
+
+def test_pre_0_78_0_saga_at_branch_delete_reports_teardown_pending(ceremony_repo) -> None:
+    """Compat (KTD3): a saga whose last recorded transition is branch_delete (an
+    in-flight or completed pre-0.78.0 ceremony) regains exactly one pending transition —
+    teardown — rather than reporting 'already shipped'. The old ceremony gets the gate."""
+    repo, fake_gh = ceremony_repo
+    saga_py = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
+    subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(saga_py),
+            "save",
+            "--kind",
+            "issue",
+            "--id",
+            "345",
+            "--ceremony-transition",
+            "branch_delete",
+            "--ceremony-tier",
+            "always_operator",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    saga = _restore(repo)
+    assert SC.next_transition(saga["ceremony_transition"]) == "teardown"
+
+    # A bare run runs teardown (no operator confirm — reversible), not "already shipped".
+    # The pre-0.78.0 saga has no opened_resources manifest, so reconcile is trivially
+    # clean and the receipt mints.
+    status = SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
+    assert "teardown" in status
+    assert "already shipped" not in status
+    assert _restore(repo)["ceremony_transition"] == "teardown"
+
+
+def test_undo_teardown_entry_is_forward_only_noop(ceremony_repo) -> None:
+    """Undo: a rollback manifest carrying a teardown entry is a forward-only no-op —
+    undo reverts it (marks it undone) without crashing on the new transition name and
+    without any git/gh side effect (a raising runner proves nothing was shelled out)."""
+    repo, _fake_gh = ceremony_repo
+    SC.ship_undo.append_entry(
+        repo_root=repo, saga_id="issue-345", transition="teardown", tier="reversible"
+    )
+
+    def _raising_runner(cmd, **kwargs):  # noqa: ANN001
+        raise AssertionError(f"teardown undo must not shell out, but tried: {cmd!r}")
+
+    status = SC.ship_undo.undo({"saga_id": "issue-345"}, repo_root=repo, runner=_raising_runner)
+    assert "reverted 1" in status
+
+
+# ---- Per-call-site register/close oracles (KTD9) ---------------------------- #
+
+
+def test_commit_registers_branch_on_manifest(ceremony_repo) -> None:
+    repo, fake_gh = ceremony_repo
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    manifest = _opened_manifest(repo)
+    branch_id = SC._branch_resource_id(BRANCH_345)
+    assert branch_id in manifest
+    assert manifest[branch_id]["kind"] == "branch"
+    assert manifest[branch_id]["closed_at"] == ""  # opened, not yet closed
+
+
+def test_open_pr_registers_pr_on_manifest(ceremony_repo) -> None:
+    repo, fake_gh = ceremony_repo
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # open_pr
+    pr_number = str(fake_gh._prs[BRANCH_345]["number"])  # noqa: SLF001
+    pr_id = SC._pr_resource_id(pr_number)
+    manifest = _opened_manifest(repo)
+    assert pr_id in manifest
+    assert manifest[pr_id]["kind"] == "draft_pr"
+    assert manifest[pr_id]["closed_at"] == ""
+
+
+def test_merge_closes_pr_entry_with_merge_evidence(ceremony_repo) -> None:
+    repo, fake_gh = ceremony_repo
+    _advance_to(repo, fake_gh, "merge")
+    pr_number = str(fake_gh._prs[BRANCH_345]["number"])  # noqa: SLF001
+    SC.run(repo_root=repo, issue_ref="org/repo#345", operator_confirmed="merge", runner=fake_gh)
+    manifest = _opened_manifest(repo)
+    pr_entry = manifest[SC._pr_resource_id(pr_number)]
+    assert pr_entry["closed_at"] != ""
+    assert "merged:" in pr_entry["close_evidence"]
+
+
+def test_branch_delete_closes_branch_entry_with_head_evidence(ceremony_repo) -> None:
+    repo, fake_gh = ceremony_repo
+    _advance_to(repo, fake_gh, "branch_delete")
+    SC.run(
+        repo_root=repo,
+        issue_ref="org/repo#345",
+        operator_confirmed="branch_delete",
+        runner=fake_gh,
+    )
+    manifest = _opened_manifest(repo)
+    branch_entry = manifest[SC._branch_resource_id(BRANCH_345)]
+    assert branch_entry["closed_at"] != ""
+    assert "deleted head:" in branch_entry["close_evidence"]
+
+
+def test_start_registers_branch_and_pr(ceremony_repo) -> None:
+    repo, fake_gh = ceremony_repo
+    SC.start(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)
+    manifest = _opened_manifest(repo)
+    branch_id = SC._branch_resource_id(BRANCH_345)
+    pr_number = str(fake_gh._prs[BRANCH_345]["number"])  # noqa: SLF001
+    pr_id = SC._pr_resource_id(pr_number)
+    assert branch_id in manifest and manifest[branch_id]["kind"] == "branch"
+    assert pr_id in manifest and manifest[pr_id]["kind"] == "draft_pr"
+
+
+def test_close_if_registered_no_ops_on_absent_entry(ceremony_repo) -> None:
+    """A close call for a resource the ceremony never registered (a pre-wiring saga, or
+    a forced-state jump straight to merge) is a silent no-op — it must not raise the
+    fail-loud UnknownResourceError that ship_teardown.close would on a bare call."""
+    repo, _fake_gh = ceremony_repo
+    saga = {"saga_id": "issue-345"}
+    # No manifest entry exists for this id; the guarded helper must not raise.
+    SC._close_if_registered(saga, SC._pr_resource_id("999"), repo_root=repo, evidence="x")
 
 
 # --------------------------------------------------------------------------- #

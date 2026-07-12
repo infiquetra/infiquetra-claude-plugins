@@ -433,6 +433,18 @@ def _undo_branch_delete(
     _run(["git", "push", "origin", "--", branch], cwd=repo_root, runner=runner)
 
 
+def _undo_teardown(
+    entry: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
+) -> None:
+    """``teardown``'s forward transition (issue #347) mints an immutable, write-once
+    ship receipt and reclaims idle merged worktrees — both forward-only truths. There
+    is nothing to reverse: the receipt is tamper-evident by design (0444, exclusive
+    create), and a reclaimed merged worktree is trivially re-created via
+    ``git worktree add`` from the surviving merged branch, not something undo owns. This
+    handler exists so a rollback manifest carrying a ``teardown`` entry never crashes
+    undo on an unregistered transition name — it is a deliberate no-op."""
+
+
 _REVERSE_RUNNERS: Mapping[str, Callable[..., None]] = {
     "commit": _undo_commit,
     "open_pr": _undo_open_pr,
@@ -441,6 +453,7 @@ _REVERSE_RUNNERS: Mapping[str, Callable[..., None]] = {
     "checkout_main": _undo_checkout_main,
     "pull": _undo_pull,
     "branch_delete": _undo_branch_delete,
+    "teardown": _undo_teardown,
 }
 
 

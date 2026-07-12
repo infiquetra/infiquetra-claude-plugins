@@ -88,6 +88,33 @@ def test_close_reopen_inverses_are_symmetric() -> None:
 
 
 # ---------------------------------------------------------------------------
+# issue #347 U3 (KTD7) — worktree-reclaim-merged reversible op + its inverse
+# ---------------------------------------------------------------------------
+
+
+def test_worktree_reclaim_merged_is_authorized_reversible() -> None:
+    """worktree-reclaim-merged is an enumerated reversible op → AUTHORIZED (KTD7)."""
+    verdict = RC.authorize_write(RC.OpKind.WORKTREE_RECLAIM_MERGED)
+    assert verdict == RC.AUTHORIZED
+    f = RC.facts(RC.OpKind.WORKTREE_RECLAIM_MERGED)
+    assert f.tier == RC.Tier.REVERSIBLE
+    assert f.always_operator is False
+
+
+def test_worktree_reclaim_merged_declares_git_worktree_add_inverse() -> None:
+    """Its inverse re-creates the worktree via `git worktree add` (KTD7, R5 golden)."""
+    f = RC.facts(RC.OpKind.WORKTREE_RECLAIM_MERGED)
+    assert f.inverse is not None
+    assert "worktree add" in f.inverse.arg_derivation
+    assert RC.OpKind.WORKTREE_RECLAIM_MERGED in RC.reversible_op_kinds()
+
+
+def test_worktree_reclaim_merged_string_form_authorized() -> None:
+    """String form resolves to AUTHORIZED via the coerce path (KTD7)."""
+    assert RC.authorize_write("worktree-reclaim-merged") == RC.AUTHORIZED
+
+
+# ---------------------------------------------------------------------------
 # R6 — Enumerated additive op → AUTHORIZED; no inverse; abort_cost bound present
 # ---------------------------------------------------------------------------
 

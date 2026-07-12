@@ -40,6 +40,13 @@ python3 plugins/saga/scripts/manifest_store.py \
   write --execution-id <worker-id>-<unit-id> --file <path-to-manifest.json>
 ```
 
+This raw CLI path is for an ordinary Claude-agent worker's manifest (`kind="team-execution"`, no
+external-engine identity, no `bridge_receipt.v1` to prove) — there is nothing for the durable
+delegation-audit store (#396) to mirror here. A chaperone worker's manifest instead goes through
+`engine_dispatch.record_dispatch_manifest(...)` (`external-engine-workers.md` §5 step 5), which
+mirrors both the manifest and its raw receipt to that durable store; see that snippet's
+`audit_store_root` argument.
+
 `<manifest.json>` is the `to_dict()` output of a `provenance_manifest.Manifest` built as below.
 
 ## Manifest shape for a worker exit

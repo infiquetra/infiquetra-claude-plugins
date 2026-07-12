@@ -27,6 +27,7 @@ from execution_spec import AdvisoryPanelRequest  # noqa: E402
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
 _delegation_audit = fleet_commons_shim.load("delegation_audit")
 _delegation_state = fleet_commons_shim.load("delegation_state")
+_audit_store = fleet_commons_shim.load("audit_store")
 
 FAILURE_STATUSES = frozenset({"timeout", "no-output", "error", "malformed", "clone-failed"})
 NON_GATING_ROLE_KINDS = frozenset({"advisory-reviewer", "panel"})
@@ -1220,6 +1221,29 @@ def rejected_offload_reconciliation(
         raise DispatchError(str(exc)) from exc
 
 
+def _mirror_manifest_to_audit_store(
+    audit_store_root: Path | None,
+    execution_id: str,
+    manifest: pm.Manifest,
+    evidence: AdvisoryEvidence | None,
+) -> None:
+    """Mirror the manifest — and the raw receipt, when the evidence carries one — to the durable
+    audit store (#396, R2/KTD9). A no-op when ``audit_store_root`` is ``None`` (KTD5 — this module
+    has no CLI layer, so the resolved default lives at the documented chaperone call site rather
+    than a hidden default here). Never raises: a failed durable-mirror write must not fail the
+    dispatch/adjudication it mirrors — the mirror is additive evidence, not a gate.
+    """
+    if audit_store_root is None:
+        return
+    try:
+        store = _audit_store.Store.for_root(audit_store_root).ensure()
+        _audit_store.mirror_manifest(store, execution_id, manifest.to_dict())
+        if evidence is not None and evidence.runner_receipt is not None:
+            _audit_store.mirror_receipt(store, execution_id, evidence.runner_receipt)
+    except OSError:
+        pass
+
+
 def record_dispatch_manifest(
     store: manifest_store.Store,
     evidence: AdvisoryEvidence,
@@ -1231,6 +1255,7 @@ def record_dispatch_manifest(
     protocol: str = "",
     sandbox: str = "",
     claim_provenance: pm.ClaimProvenance | None = None,
+    audit_store_root: Path | None = None,
 ) -> pm.Manifest:
     """Build and persist the typed manifest for one dispatch via ``manifest_store`` (KTD1)."""
     manifest = build_dispatch_manifest(
@@ -1244,6 +1269,7 @@ def record_dispatch_manifest(
         claim_provenance=claim_provenance,
     )
     manifest_store.write_manifest(store, execution_id, manifest.to_dict())
+    _mirror_manifest_to_audit_store(audit_store_root, execution_id, manifest, evidence)
     return manifest
 
 
@@ -1251,6 +1277,8 @@ def adjudicate_manifest(
     store: manifest_store.Store,
     execution_id: str,
     adjudications: dict[tuple[str, str], tuple[pm.AdjudicatedStatus, pm.Adjudication]],
+    *,
+    audit_store_root: Path | None = None,
 ) -> pm.Manifest:
     """Write Claude's adjudication layer onto a persisted claimed-only manifest (D5/R6).
 
@@ -1296,6 +1324,7 @@ def adjudicate_manifest(
         tripwire_note=manifest.tripwire_note,
     )
     manifest_store.write_manifest(store, execution_id, adjudicated.to_dict())
+    _mirror_manifest_to_audit_store(audit_store_root, execution_id, adjudicated, evidence=None)
     return adjudicated
 
 

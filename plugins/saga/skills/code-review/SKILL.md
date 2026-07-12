@@ -372,7 +372,7 @@ omitting it sends the argparse default `ideation`, which equals the dataclass de
 python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> \
   --id <the-existing-saga-id> \
-  --review-paths docs/code-reviews/YYYY-MM-DD-<branch-or-pr>-code-review.md \
+  --review-paths "<the ledger artifact_path from 5.3>" \
   --orchestration-mode <inline|team-execution|cc-workflows-ultracode>
 ```
 

@@ -7,8 +7,10 @@ see "Health-score model" below). It rides alongside the severity-banded ship ver
 **signal** (its inputs are LLM-assigned severity counts), the verdict is the **gate decision**. Plus
 the ship-verdict derivation and the tier → blocking-threshold table the verdict is computed from.
 
-The artifact lives at `docs/qa/qa-<saga-id-or-issue>-<date>.md` (its own directory — no handoff/sdlc
-classifier collision).
+The artifact is persisted through the evidence ledger (#398, `SKILL.md` §5.1) rather than a bare file
+write — `evidence_ledger.py write --check-id qa ...` content-addresses it under
+`docs/evidence/<saga-id>/artifacts/` and returns the `artifact_path` to reference from issue progress
+and the saga tick (its own store — no handoff/sdlc classifier collision).
 
 ---
 
@@ -174,7 +176,7 @@ python3 plugins/saga/scripts/issue_progress.py \
   --issue-ref <owner/repo#N> \
   --destination <plan-only|pr|merge|nonprod-deploy> \
   --checks-run "<class:check | class:check>" \
-  --evidence-link "docs/qa/<file>.md"
+  --evidence-link "<the ledger artifact_path from evidence_ledger.py write>"
 ```
 
 On a PASS verdict, advance the saga qa-track — write `qa_paths` and advance `lifecycle_phase` work→qa,
@@ -188,12 +190,13 @@ python3 plugins/saga/scripts/saga.py save \
   --lifecycle-phase qa \
   --phase-status complete \
   --phase <restored-phase> \
-  --qa-paths docs/qa/<file>.md \
+  --qa-paths "<the ledger artifact_path from evidence_ledger.py write>" \
   --checks-run "<class:check | ...>" \
   --next-step "<route to /handoff or /retro>" \
   --summary "<one-line ship verdict>"
 ```
 
 On a FAIL verdict, **omit** `--lifecycle-phase` (the prior `work` phase carries forward) and still write
-`--qa-paths docs/qa/<file>.md` plus the evidence — then route by merge state (pre-merge → `/work`,
-post-merge → `/handoff`). Never `git add` a saga tick: saga state is git-ignored and machine-local.
+`--qa-paths "<the ledger artifact_path>"` plus the evidence — then route by merge state (pre-merge →
+`/work`, post-merge → `/handoff`). Never `git add` a saga tick: saga state is git-ignored and
+machine-local.

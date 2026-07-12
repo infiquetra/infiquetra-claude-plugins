@@ -119,9 +119,11 @@ by `autofix_class` (severity-sorted within each group), an `Artifact:` line, a `
 marker where `requires_verification` is true, and `Review complete` as the terminal line. ZERO file writes
 to reviewed code.
 
-**Durable artifact** (`docs/code-reviews/YYYY-MM-DD-<branch-or-pr>-code-review.md`) carries the **reviewed
-SHA** plus the review-result contract: target and reviewed revision; blocked status (blocked when any
-P0/P1 remains); finding priorities and statuses; plan-completion results and the scope-check verdict;
+**Durable artifact** — persisted through the evidence ledger (#398, `SKILL.md` §5.3) in **interactive**
+mode rather than a bare file write: `evidence_ledger.py write --check-id code-review ...`
+content-addresses it under `docs/evidence/<saga-id>/artifacts/`. It carries the **reviewed SHA** plus
+the review-result contract: target and reviewed revision; blocked status (blocked when any P0/P1
+remains); finding priorities and statuses; plan-completion results and the scope-check verdict;
 coverage stats; and linked issue/plan/work-session paths.
 
 ## Optional advisory second-opinion block

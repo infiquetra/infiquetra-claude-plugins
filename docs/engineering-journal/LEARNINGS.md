@@ -27,6 +27,29 @@
 
 ## 2026-07-11
 
+### A local-only reachability probe is blind in the merge-landed-but-not-pulled window {#local-reachability-blind-to-origin-346}
+
+**Context.** `ship_undo.py`'s merge/branch-delete reverses gate on `_sha_reachable()` before
+mutating anything, so an unreachable recorded SHA becomes a named `SHA_UNREACHABLE` refusal
+instead of fabricated state. The probe was `git cat-file -e <sha>^{commit}` — purely local.
+**Evidence.** Code-review P1 on `653f610` (correctness lens, empirically reproduced): squash-merge
+a PR, don't pull, run `ship --undo` — the squash SHA exists only on origin, the local probe
+misses, and the undo of a genuinely revertable merge is falsely refused. Regression oracle:
+`tests/test_ship_undo.py::test_sha_reachable_fetches_missing_origin_object` (two clones of one
+bare origin; the second lands a commit the first never pulls).
+**Mechanism.** `gh pr merge --squash` creates the squash commit **on the remote**; nothing about
+the ceremony guarantees a subsequent local pull before an undo is attempted. Exactly the window
+where an operator most wants `--undo` (merge landed, regret is fresh) is the window where every
+recorded merge SHA is origin-only.
+**Fix.** `_sha_reachable` now re-probes after one best-effort `git fetch origin` (`check=False`,
+so offline undo of local-only entries still works); `SHAUnreachableError` gained a remedy line
+naming the post-fetch recovery options.
+**Generalizable rule.** Any "does this object exist" gate that can refuse a remote-side artifact
+must probe remote-aware (fetch-then-recheck), or it will refuse precisely the freshest, most
+legitimate cases — local object-store checks answer "have I seen it", not "does it exist".
+**Refs.** DECISIONS `{#ceremony-sidecars-forward-only-undo-346}`; sibling entry
+`{#auto-merge-delete-branch-reorder}` below (same issue #346 layer).
+
 ### `gh pr merge --auto` + `--delete-branch` reorder breaks ceremony ledger invariants {#auto-merge-delete-branch-reorder}
 
 **Context.** The ceremony ledger orders operations as they execute (PR-open → merge → branch-delete);

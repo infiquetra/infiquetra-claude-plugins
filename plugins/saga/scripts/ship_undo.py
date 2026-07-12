@@ -11,7 +11,8 @@ Storage (KTD1): the manifest is a JSON sidecar at
 written directly by this module (never through ``saga.py save``), one entry per
 successful ceremony transition:
 ``{transition, tier, branch, head_sha, pr_number, merge_sha, pre_merge_main_sha,
-remote_created, undone}``.
+remote_created, undone}``. ``pre_merge_main_sha`` is audit-only forensic context —
+``undo()`` reverts from ``merge_sha`` alone and never consumes it programmatically.
 
 ``undo()`` is forward-only (KTD4): a landed merge is undone with ``git revert
 <recorded squash SHA>`` on ``main`` (a new commit, never a rewrite), and a deleted
@@ -48,6 +49,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess  # nosec B404
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -72,6 +75,12 @@ ALWAYS_OPERATOR_TRANSITIONS: frozenset[str] = frozenset({"merge", "branch_delete
 
 SHA_UNREACHABLE = "SHA_UNREACHABLE"
 
+# saga_id becomes a path component under .claude/saga/sagas/ — a traversal value
+# ("../..", absolute path) would read/write outside the sidecar directory. Single
+# path segment, alphanumeric first char (also excludes "." / ".." / leading "-").
+_SAGA_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_PR_NUMBER_RE = re.compile(r"[0-9]+")
+
 
 # --------------------------------------------------------------------------- #
 # Errors
@@ -92,15 +101,22 @@ class SHAUnreachableError(ShipUndoError):
     """A recorded SHA (merge_sha or head_sha) is unreachable — squash-discarded
     commits GC'd on origin, or simply absent locally (KTD4). Named, not fabricated;
     the entry stays unmarked and later (older) entries in this run are left
-    untouched."""
+    untouched. Carries a ``remedy`` (same contract as
+    ``merge_watcher.MergeExpectationMissingError``) so the operator's next step is
+    in the message."""
 
     def __init__(self, sha: str, *, entry_transition: str) -> None:
         self.sha = sha
         self.entry_transition = entry_transition
         self.kind = SHA_UNREACHABLE
+        self.remedy = (
+            "the sha was not found even after 'git fetch origin' — recover it "
+            "(mirror clone, origin reflog) or resolve this entry by hand; it stays "
+            "unmarked, so a later undo resumes exactly here"
+        )
         super().__init__(
             f"{SHA_UNREACHABLE}: sha {sha!r} recorded on transition {entry_transition!r} "
-            "is not reachable in this repository; undo cannot proceed for this entry"
+            f"is not reachable in this repository; {self.remedy}"
         )
 
 
@@ -144,15 +160,26 @@ def _current_branch(repo_root: Path, *, runner: Callable[..., Any] | None) -> st
 
 
 def _sha_reachable(sha: str, *, repo_root: Path, runner: Callable[..., Any] | None) -> bool:
-    """Best-effort local reachability check — ``git cat-file -e <sha>^{commit}``.
+    """Best-effort reachability check — ``git cat-file -e <sha>^{commit}``, and on a
+    local miss one ``git fetch origin`` before re-probing: the squash SHA a merge
+    records exists only on origin until this clone pulls, and declaring it
+    unreachable in that window would falsely block the undo. The fetch itself is
+    best-effort (``check=False``) so offline undo of local-only entries still works.
     Never raises: a non-zero/erroring probe means "not reachable", not "unknown"."""
-    result = _run(
-        ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
-        cwd=repo_root,
-        runner=runner,
-        check=False,
-    )
-    return getattr(result, "returncode", 1) == 0
+
+    def _probe() -> bool:
+        result = _run(
+            ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+            cwd=repo_root,
+            runner=runner,
+            check=False,
+        )
+        return getattr(result, "returncode", 1) == 0
+
+    if _probe():
+        return True
+    _run(["git", "fetch", "origin"], cwd=repo_root, runner=runner, check=False)
+    return _probe()
 
 
 # --------------------------------------------------------------------------- #
@@ -160,8 +187,28 @@ def _sha_reachable(sha: str, *, repo_root: Path, runner: Callable[..., Any] | No
 # --------------------------------------------------------------------------- #
 
 
+def _validate_saga_id(saga_id: str) -> str:
+    if not _SAGA_ID_RE.fullmatch(saga_id):
+        raise ShipUndoError(
+            f"invalid saga_id {saga_id!r}: must be a single path-safe segment "
+            "matching [A-Za-z0-9][A-Za-z0-9._-]* (e.g. issue-345)"
+        )
+    return saga_id
+
+
+def _require_option_safe(value: str, *, field: str, transition: str) -> str:
+    """Manifest-sourced strings become git/gh argv — a value opening with ``-``
+    would parse as an option, not a ref. Refused loud, never sanitized."""
+    if value.startswith("-"):
+        raise ShipUndoError(
+            f"{field} {value!r} recorded on transition {transition!r} begins with '-' "
+            "and cannot be passed to git/gh safely; fix the rollback manifest by hand"
+        )
+    return value
+
+
 def manifest_path(repo_root: Path, saga_id: str) -> Path:
-    return repo_root / SAGAS_DIR / saga_id / MANIFEST_NAME
+    return repo_root / SAGAS_DIR / _validate_saga_id(saga_id) / MANIFEST_NAME
 
 
 def read_manifest(repo_root: Path, saga_id: str) -> list[dict[str, Any]]:
@@ -172,14 +219,21 @@ def read_manifest(repo_root: Path, saga_id: str) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     with open(path, encoding="utf-8") as handle:
-        data = json.load(handle)
+        try:
+            data = json.load(handle)
+        except json.JSONDecodeError as exc:
+            raise ShipUndoError(f"rollback manifest at {path} is not valid JSON: {exc}") from exc
     return list(data)
 
 
 def _write_manifest(repo_root: Path, saga_id: str, entries: Sequence[Mapping[str, Any]]) -> Path:
     path = manifest_path(repo_root, saga_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(list(entries), indent=2, sort_keys=True) + "\n")
+    # Atomic replace (same idiom as saga.py's _atomic_write) — a crash mid-write
+    # must never leave a truncated manifest that a resuming undo() would misread.
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(list(entries), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
     return path
 
 
@@ -236,8 +290,9 @@ def _undo_commit(
     branch = entry.get("branch")
     if not branch:
         return
+    _require_option_safe(str(branch), field="branch", transition="commit")
     _run(
-        ["git", "push", "origin", "--delete", branch],
+        ["git", "push", "origin", "--delete", "--", branch],
         cwd=repo_root,
         runner=runner,
         check=False,
@@ -252,6 +307,11 @@ def _undo_open_pr(
     pr_number = entry.get("pr_number")
     if not pr_number:
         return
+    if not _PR_NUMBER_RE.fullmatch(str(pr_number)):
+        raise ShipUndoError(
+            f"pr_number {pr_number!r} recorded on transition 'open_pr' is not a "
+            "plain PR number; fix the rollback manifest by hand"
+        )
     _run(["gh", "pr", "close", str(pr_number)], cwd=repo_root, runner=runner)
 
 
@@ -296,6 +356,7 @@ def _undo_merge(
         raise UndoTransitionFailedError(
             "merge entry is missing merge_sha; cannot revert a merge that was never recorded"
         )
+    _require_option_safe(str(merge_sha), field="merge_sha", transition="merge")
     if not _sha_reachable(merge_sha, repo_root=repo_root, runner=runner):
         raise SHAUnreachableError(merge_sha, entry_transition="merge")
     current = _current_branch(repo_root, runner=runner)
@@ -318,6 +379,7 @@ def _restore_pre_ceremony_checkout(
     branch = entry.get("branch")
     if not branch:
         return
+    _require_option_safe(str(branch), field="branch", transition=str(entry.get("transition")))
     current = _current_branch(repo_root, runner=runner)
     if current == branch:
         return
@@ -329,7 +391,8 @@ def _restore_pre_ceremony_checkout(
     )
     if getattr(exists, "returncode", 1) != 0:
         return
-    _run(["git", "checkout", branch], cwd=repo_root, runner=runner)
+    # Trailing "--" pins <branch> as a revision, never a pathspec.
+    _run(["git", "checkout", branch, "--"], cwd=repo_root, runner=runner)
 
 
 def _undo_checkout_main(
@@ -355,6 +418,8 @@ def _undo_branch_delete(
         raise UndoTransitionFailedError(
             "branch_delete entry is missing branch/head_sha; cannot resurrect"
         )
+    _require_option_safe(str(branch), field="branch", transition="branch_delete")
+    _require_option_safe(str(head_sha), field="head_sha", transition="branch_delete")
     if not _sha_reachable(head_sha, repo_root=repo_root, runner=runner):
         raise SHAUnreachableError(head_sha, entry_transition="branch_delete")
     exists = _run(
@@ -364,8 +429,8 @@ def _undo_branch_delete(
         check=False,
     )
     if getattr(exists, "returncode", 1) != 0:
-        _run(["git", "branch", branch, head_sha], cwd=repo_root, runner=runner)
-    _run(["git", "push", "origin", branch], cwd=repo_root, runner=runner)
+        _run(["git", "branch", "--", branch, head_sha], cwd=repo_root, runner=runner)
+    _run(["git", "push", "origin", "--", branch], cwd=repo_root, runner=runner)
 
 
 _REVERSE_RUNNERS: Mapping[str, Callable[..., None]] = {
@@ -460,7 +525,12 @@ def _saga_cli(
         cwd=repo_root,
         runner=runner,
     )
-    return json.loads(result.stdout)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ShipUndoError(
+            f"saga.py {' '.join(args)} returned unparseable JSON: {result.stdout!r}"
+        ) from exc
 
 
 def _build_parser() -> argparse.ArgumentParser:

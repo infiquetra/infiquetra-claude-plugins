@@ -878,3 +878,111 @@ def test_cli_undo_dispatches_end_to_end(bare_repo, capsys: pytest.CaptureFixture
     assert exit_code == 0
     assert "reverted 2" in capsys.readouterr().out
     assert not _origin_ref_exists(bare_origin, branch)
+
+
+# --------------------------------------------------------------------------- #
+# Code-review fix round (653f610 review): F1/F2/F3/F5/F6/F7 regression oracles
+# --------------------------------------------------------------------------- #
+
+
+def test_sha_reachable_fetches_missing_origin_object(bare_repo) -> None:  # noqa: ANN001
+    """F1 (P1): a squash SHA that landed on origin but was never pulled locally is
+    REACHABLE — _sha_reachable must fetch before declaring SHA_UNREACHABLE."""
+    repo, bare_origin = bare_repo
+    clone2 = repo.parent / "clone2"
+    subprocess.run(  # noqa: S603, S607
+        ["git", "clone", str(bare_origin), str(clone2)], check=True, capture_output=True
+    )
+    _git(clone2, "config", "user.email", "t@example.com")
+    _git(clone2, "config", "user.name", "Test")
+    # The bare origin's HEAD may not point at 'main' (ambient init.defaultBranch),
+    # leaving the clone on an unborn branch — pin to origin/main explicitly.
+    _git(clone2, "checkout", "-B", "main", "origin/main")
+    (clone2 / "landed.txt").write_text("merged elsewhere\n")
+    _git(clone2, "add", "landed.txt")
+    _git(clone2, "commit", "-m", "squash landed on origin only")
+    sha = _rev_parse(clone2, "HEAD")
+    _git(clone2, "push", "origin", "HEAD:main")
+
+    # Sanity: the object is genuinely absent from the local clone before the probe.
+    local = _git(repo, "cat-file", "-e", f"{sha}^{{commit}}", check=False)
+    assert local.returncode != 0
+
+    assert SU._sha_reachable(sha, repo_root=repo, runner=None) is True
+
+
+def test_sha_unreachable_even_after_fetch(bare_repo) -> None:  # noqa: ANN001
+    repo, _ = bare_repo
+    assert SU._sha_reachable(UNREACHABLE_SHA, repo_root=repo, runner=None) is False
+
+
+def test_sha_unreachable_error_carries_remedy() -> None:
+    """F5 (P2): the named refusal must tell the operator the next step, matching the
+    remedy contract of MergeExpectationMissingError / Hazard.remedy."""
+    err = SU.SHAUnreachableError(UNREACHABLE_SHA, entry_transition="merge")
+    assert err.remedy
+    assert err.remedy in str(err)
+    assert "git fetch origin" in str(err)
+
+
+@pytest.mark.parametrize("bad_id", ["../evil", "..", "a/b", "-x", "", "/abs"])
+def test_manifest_path_rejects_unsafe_saga_id(tmp_path: Path, bad_id: str) -> None:
+    """F2 (P2): saga_id is a path component — traversal or option-like values
+    refuse loud before any filesystem access."""
+    with pytest.raises(SU.ShipUndoError):
+        SU.manifest_path(tmp_path, bad_id)
+
+
+def test_undo_rejects_unsafe_saga_id_before_anything(bare_repo) -> None:  # noqa: ANN001
+    repo, _ = bare_repo
+    with pytest.raises(SU.ShipUndoError):
+        SU.undo(_saga("../evil"), repo_root=repo, runner=ExplodingRunner())
+
+
+def test_option_like_branch_refused_before_shellout(bare_repo) -> None:  # noqa: ANN001
+    """F3 (P2): a manifest-sourced branch beginning with '-' would parse as a git
+    option — refused loud, and provably before any subprocess call."""
+    repo, _ = bare_repo
+    saga_id = "issue-346"
+    SU.append_entry(
+        repo_root=repo,
+        saga_id=saga_id,
+        transition="commit",
+        tier="reversible",
+        branch="--force",
+        remote_created=True,
+    )
+    with pytest.raises(SU.ShipUndoError, match="begins with '-'"):
+        SU.undo(_saga(saga_id), repo_root=repo, runner=ExplodingRunner())
+
+
+def test_option_like_pr_number_refused_before_shellout(bare_repo) -> None:  # noqa: ANN001
+    repo, _ = bare_repo
+    saga_id = "issue-346"
+    SU.append_entry(
+        repo_root=repo,
+        saga_id=saga_id,
+        transition="open_pr",
+        tier="reversible",
+        branch="feat/x",
+        pr_number="--repo evil",
+    )
+    with pytest.raises(SU.ShipUndoError, match="not a plain PR number"):
+        SU.undo(_saga(saga_id), repo_root=repo, runner=ExplodingRunner())
+
+
+def test_corrupt_manifest_is_named_refusal(tmp_path: Path) -> None:
+    """F6 (P3): a truncated/garbled manifest surfaces as ShipUndoError, never a raw
+    JSONDecodeError traceback."""
+    path = SU.manifest_path(tmp_path, "issue-346")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[{not json", encoding="utf-8")
+    with pytest.raises(SU.ShipUndoError, match="not valid JSON"):
+        SU.read_manifest(tmp_path, "issue-346")
+
+
+def test_manifest_write_is_atomic_no_tmp_left(tmp_path: Path) -> None:
+    SU.append_entry(repo_root=tmp_path, saga_id="issue-346", transition="commit", tier="reversible")
+    path = SU.manifest_path(tmp_path, "issue-346")
+    assert path.exists()
+    assert not path.with_suffix(path.suffix + ".tmp").exists()

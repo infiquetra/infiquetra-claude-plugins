@@ -18,6 +18,12 @@
 - `ship_ceremony.py` wiring: preflight hazard detection + merge-watcher validation after #526 gate and
   before dispatch; manifest append on every successful transition; `--undo` dispatches to ship_undo;
   `/work` SKILL and `pr-continuation-loop` reference updated with watcher + hazard + undo contract.
+- Code-review hardening (same release): `_sha_reachable` fetches origin before declaring a recorded
+  SHA unreachable (a merge-landed-but-not-pulled squash SHA is reachable, not a refusal); `saga_id`
+  is validated as a single path-safe segment before any sidecar path is derived; manifest-sourced
+  branch/SHA/PR values are refused if option-like before reaching git/gh argv (plus `--` separators
+  where git supports them); sidecar writes are atomic (tmp + rename); corrupt sidecar/manifest JSON
+  surfaces as a named module refusal, never a raw traceback; `SHA_UNREACHABLE` now carries a remedy.
 
 ## [0.76.0] - 2026-07-11
 

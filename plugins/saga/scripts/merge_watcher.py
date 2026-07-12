@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess  # nosec B404
 import sys
 import time
@@ -68,6 +70,14 @@ DIVERGENCE_KINDS: tuple[str, ...] = (
 # Covers both CheckRun (`conclusion`) and legacy StatusContext (`state`) shapes
 # gh's statusCheckRollup can emit.
 _PASSING_CONCLUSIONS = frozenset({"SUCCESS", "NEUTRAL"})
+
+# saga_id becomes a path component under .claude/saga/sagas/ — a traversal value
+# ("../..", absolute path) would read/write outside the sidecar directory. Single
+# path segment, alphanumeric first char (also excludes "." / ".." / leading "-").
+# Duplicated in ship_undo.py, not shared — both modules are deliberately
+# dependency-free ("Depends on: nothing").
+_SAGA_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_PR_NUMBER_RE = re.compile(r"[0-9]+")
 
 
 class MergeWatcherError(Exception):
@@ -140,8 +150,17 @@ def _run(
 # --------------------------------------------------------------------------- #
 
 
+def _validate_saga_id(saga_id: str) -> str:
+    if not _SAGA_ID_RE.fullmatch(saga_id):
+        raise MergeWatcherError(
+            f"invalid saga_id {saga_id!r}: must be a single path-safe segment "
+            "matching [A-Za-z0-9][A-Za-z0-9._-]* (e.g. issue-345)"
+        )
+    return saga_id
+
+
 def sidecar_path(repo_root: Path, saga_id: str) -> Path:
-    return repo_root / SAGAS_DIR / saga_id / SIDECAR_NAME
+    return repo_root / SAGAS_DIR / _validate_saga_id(saga_id) / SIDECAR_NAME
 
 
 def _read_sidecar(repo_root: Path, saga_id: str) -> dict[str, Any]:
@@ -149,14 +168,23 @@ def _read_sidecar(repo_root: Path, saga_id: str) -> dict[str, Any]:
     if not path.exists():
         raise MergeExpectationMissingError(saga_id)
     with open(path, encoding="utf-8") as handle:
-        data: dict[str, Any] = json.load(handle)
+        try:
+            data: dict[str, Any] = json.load(handle)
+        except json.JSONDecodeError as exc:
+            raise MergeWatcherError(
+                f"merge expectation at {path} is not valid JSON: {exc}"
+            ) from exc
     return data
 
 
 def _write_sidecar(repo_root: Path, saga_id: str, expectation: Mapping[str, Any]) -> Path:
     path = sidecar_path(repo_root, saga_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dict(expectation), indent=2, sort_keys=True) + "\n")
+    # Atomic replace (same idiom as saga.py's _atomic_write) — a crash mid-write
+    # must never leave a truncated expectation that validate() would misread.
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(dict(expectation), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
     return path
 
 
@@ -195,6 +223,10 @@ def normalize_pr_view(raw: Mapping[str, Any]) -> dict[str, Any]:
 def _fetch_live_state(
     pr_number: int | str, *, repo_root: Path, runner: Callable[..., Any] | None
 ) -> dict[str, Any]:
+    if not _PR_NUMBER_RE.fullmatch(str(pr_number)):
+        raise MergeWatcherError(
+            f"pr_number {pr_number!r} is not a plain PR number; refusing to pass it to gh"
+        )
     result = _run(
         [
             "gh",
@@ -207,7 +239,13 @@ def _fetch_live_state(
         cwd=repo_root,
         runner=runner,
     )
-    return normalize_pr_view(json.loads(result.stdout))
+    try:
+        raw = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise MergeWatcherError(
+            f"gh pr view {pr_number} returned unparseable JSON: {result.stdout!r}"
+        ) from exc
+    return normalize_pr_view(raw)
 
 
 # --------------------------------------------------------------------------- #

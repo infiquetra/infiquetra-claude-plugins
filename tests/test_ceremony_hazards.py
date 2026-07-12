@@ -228,3 +228,15 @@ def test_hazard_ordering_is_registry_order() -> None:
     hazards = CH.detect(_saga(), "branch_delete", ROOT, runner)
     assert [h.hazard_id for h in hazards] == [CH.STACKED_PR, CH.MERGE_NOT_LANDED]
     assert list(CH.HAZARD_REGISTRY) == [CH.STACKED_PR, CH.MERGE_NOT_LANDED]
+
+
+def test_garbled_pr_ref_fails_loud_never_reaches_gh() -> None:
+    """A pr_refs entry that doesn't yield a plain PR number must raise (fail-loud,
+    never 'no hazard') and must never reach gh argv (code-review F3)."""
+
+    def exploding_runner(cmd, *, cwd, capture_output, text, timeout):  # noqa: ANN001, ANN202
+        raise AssertionError(f"probe should not have shelled out, but called: {cmd!r}")
+
+    saga = {"branch": "", "pr_refs": ["#12x"]}
+    with pytest.raises(CH.HazardProbeError, match="not a plain PR number"):
+        CH.detect(saga, "branch_delete", ROOT, exploding_runner)

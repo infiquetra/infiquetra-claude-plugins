@@ -335,3 +335,196 @@ def test_watch_never_sleeps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 def test_sidecar_path_matches_ktd1_layout(tmp_path: Path) -> None:
     path = MW.sidecar_path(tmp_path, "issue-346")
     assert path == tmp_path / ".claude" / "saga" / "sagas" / "issue-346" / "merge_expectation.json"
+
+
+@pytest.mark.parametrize("bad_id", ["../evil", "..", "a/b", "-x", "", "/abs"])
+def test_sidecar_path_rejects_unsafe_saga_id(tmp_path: Path, bad_id: str) -> None:
+    """saga_id is a path component — traversal or option-like values refuse loud
+    before any filesystem or gh access (code-review F2)."""
+    with pytest.raises(MW.MergeWatcherError):
+        MW.sidecar_path(tmp_path, bad_id)
+
+
+def test_record_rejects_unsafe_saga_id_before_gh(tmp_path: Path) -> None:
+    runner = FakeRunner(pr_view=_raw_pr_view())
+    with pytest.raises(MW.MergeWatcherError):
+        MW.record(saga_id="../evil", pr_number=101, repo_root=tmp_path, runner=runner)
+    assert runner.calls == []
+
+
+def test_nonnumeric_pr_number_refused_before_gh(tmp_path: Path) -> None:
+    """A pr_number that isn't a plain number never reaches gh argv (code-review F3)."""
+    runner = FakeRunner(pr_view=_raw_pr_view())
+    MW.record(saga_id="issue-346", pr_number=101, repo_root=tmp_path, runner=runner)
+    probe = FakeRunner(pr_view=_raw_pr_view())
+    with pytest.raises(MW.MergeWatcherError, match="not a plain PR number"):
+        MW.validate(saga_id="issue-346", repo_root=tmp_path, pr_number="101 --repo x", runner=probe)
+    assert probe.calls == []
+
+
+def test_corrupt_sidecar_is_named_refusal(tmp_path: Path) -> None:
+    """A truncated/garbled sidecar surfaces as MergeWatcherError, never a raw
+    JSONDecodeError traceback (code-review F6)."""
+    path = MW.sidecar_path(tmp_path, "issue-346")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(MW.MergeWatcherError, match="not valid JSON"):
+        MW.validate(saga_id="issue-346", repo_root=tmp_path, runner=FakeRunner())
+
+
+def test_sidecar_write_is_atomic_no_tmp_left(tmp_path: Path) -> None:
+    runner = FakeRunner(pr_view=_raw_pr_view())
+    MW.record(saga_id="issue-346", pr_number=101, repo_root=tmp_path, runner=runner)
+    path = MW.sidecar_path(tmp_path, "issue-346")
+    assert path.exists()
+    assert not path.with_suffix(path.suffix + ".tmp").exists()
+
+
+# --------------------------------------------------------------------------- #
+# watch — remaining divergence kinds at the watch() level
+# --------------------------------------------------------------------------- #
+
+
+def test_watch_pr_not_open_raises_immediately(tmp_path: Path) -> None:
+    runner = FakeRunner(pr_view=_raw_pr_view())
+    MW.record(saga_id="issue-346", pr_number=101, repo_root=tmp_path, runner=runner)
+
+    calls: list[int] = []
+
+    def poll_source(tick: int) -> dict[str, Any]:
+        calls.append(tick)
+        return _normalized(state="MERGED")
+
+    with pytest.raises(MW.MergeExpectationDivergedError) as excinfo:
+        MW.watch(saga_id="issue-346", repo_root=tmp_path, poll_source=poll_source, ticks=4)
+    assert excinfo.value.kind == "pr_not_open"
+    assert calls == [0]
+
+
+def test_watch_check_missing_raises_immediately(tmp_path: Path) -> None:
+    runner = FakeRunner(pr_view=_raw_pr_view(checks={"lint": "SUCCESS", "tests": "SUCCESS"}))
+    MW.record(saga_id="issue-346", pr_number=101, repo_root=tmp_path, runner=runner)
+
+    def poll_source(tick: int) -> dict[str, Any]:
+        return _normalized(checks={"lint": True})  # "tests" vanished from the rollup
+
+    with pytest.raises(MW.MergeExpectationDivergedError) as excinfo:
+        MW.watch(saga_id="issue-346", repo_root=tmp_path, poll_source=poll_source, ticks=3)
+    assert excinfo.value.kind == "check_missing"
+    assert excinfo.value.detail["missing_checks"] == ["tests"]
+
+
+def test_watch_review_regressed_on_final_tick(tmp_path: Path) -> None:
+    runner = FakeRunner(pr_view=_raw_pr_view(review_decision="APPROVED"))
+    MW.record(saga_id="issue-346", pr_number=101, repo_root=tmp_path, runner=runner)
+
+    def poll_source(tick: int) -> dict[str, Any]:
+        return _normalized(review_state="CHANGES_REQUESTED")
+
+    with pytest.raises(MW.MergeExpectationDivergedError) as excinfo:
+        MW.watch(saga_id="issue-346", repo_root=tmp_path, poll_source=poll_source, ticks=2)
+    assert excinfo.value.kind == "review_regressed"
+    assert excinfo.value.tick == 1
+
+
+# --------------------------------------------------------------------------- #
+# legacy StatusContext shape (context/state instead of name/conclusion)
+# --------------------------------------------------------------------------- #
+
+
+def test_normalize_handles_legacy_status_context_shape() -> None:
+    """gh's statusCheckRollup mixes CheckRun (name/conclusion) and legacy
+    StatusContext (context/state) entries — both shapes must normalize
+    (code-review F8)."""
+    raw = {
+        "number": 101,
+        "state": "OPEN",
+        "headRefOid": "sha-aaa",
+        "statusCheckRollup": [
+            {"name": "tests", "conclusion": "SUCCESS"},
+            {"context": "ci/legacy-build", "state": "SUCCESS"},
+            {"context": "ci/legacy-flaky", "state": "FAILURE"},
+        ],
+        "reviewDecision": "APPROVED",
+    }
+    normalized = MW.normalize_pr_view(raw)
+    assert normalized["checks"] == {
+        "tests": True,
+        "ci/legacy-build": True,
+        "ci/legacy-flaky": False,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# CLI boundary — record/validate/watch through main() (code-review F4)
+# --------------------------------------------------------------------------- #
+
+
+def _patched_live(monkeypatch: pytest.MonkeyPatch, live: dict[str, Any]) -> None:
+    def _fake(pr_number: int | str, *, repo_root: Path, runner: Any) -> dict[str, Any]:
+        return dict(live)
+
+    monkeypatch.setattr(MW, "_fetch_live_state", _fake)
+
+
+def test_cli_record_validate_roundtrip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    live = _normalized()
+    _patched_live(monkeypatch, live)
+    root = ["--repo-root", str(tmp_path)]
+
+    assert MW.main([*root, "record", "--saga-id", "issue-346", "--pr-number", "101"]) == 0
+    recorded = json.loads(capsys.readouterr().out)
+    assert recorded["head_sha"] == "sha-aaa"
+
+    # Plain re-record refuses (KTD7) through the CLI with the module-prefixed message.
+    assert MW.main([*root, "record", "--saga-id", "issue-346", "--pr-number", "101"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("merge_watcher:") and "already recorded" in err
+
+    assert (
+        MW.main([*root, "record", "--saga-id", "issue-346", "--pr-number", "101", "--force"]) == 0
+    )
+    capsys.readouterr()
+
+    assert MW.main([*root, "validate", "--saga-id", "issue-346"]) == 0
+    capsys.readouterr()
+
+    live["head_sha"] = "sha-moved"
+    assert MW.main([*root, "validate", "--saga-id", "issue-346"]) == 1
+    assert "head_moved" in capsys.readouterr().err
+
+
+def test_cli_watch_clean_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _patched_live(monkeypatch, _normalized())
+    root = ["--repo-root", str(tmp_path)]
+    assert MW.main([*root, "record", "--saga-id", "issue-346", "--pr-number", "101"]) == 0
+    capsys.readouterr()
+    code = MW.main(
+        [
+            *root,
+            "watch",
+            "--saga-id",
+            "issue-346",
+            "--pr-number",
+            "101",
+            "--ticks",
+            "2",
+            "--interval-seconds",
+            "0",
+        ]
+    )
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["ticks"] == 2
+
+
+def test_cli_missing_expectation_names_remedy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = MW.main(["--repo-root", str(tmp_path), "validate", "--saga-id", "issue-346"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "no merge_expectation.json recorded" in err and "record --saga-id issue-346" in err

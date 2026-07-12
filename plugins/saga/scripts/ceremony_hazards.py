@@ -27,11 +27,14 @@ no added latency on the steps that were never at risk.
 from __future__ import annotations
 
 import json
+import re
 import subprocess  # nosec B404
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_PR_NUMBER_RE = re.compile(r"[0-9]+")
 
 # --------------------------------------------------------------------------- #
 # Errors
@@ -184,6 +187,13 @@ def _probe_merge_not_landed(
         # No PR recorded yet — branch_delete this early is already going to fail
         # its own sanity checks downstream; nothing to probe here.
         return None
+    if not _PR_NUMBER_RE.fullmatch(pr_number):
+        # Fail-loud, never fail-quiet: a garbled pr_refs entry must not read as
+        # "no hazard" (and must never reach gh argv).
+        raise HazardProbeError(
+            f"pr_refs entry yields pr_number {pr_number!r}, not a plain PR number; "
+            "refusing to probe with it"
+        )
     pr = _run_gh_json(
         ["pr", "view", pr_number, "--json", "state,mergedAt"],
         repo_root=repo_root,

@@ -7,11 +7,12 @@
 - **Offer enumeration:** `recommend_execution_backend` now returns `backends`: an ordered list of all three backends
   (`inline` / `team-execution` / `cc-workflows-ultracode`) with per-backend status (`recommended` / `alternative` /
   `unavailable`) and availability notes. The deprecated `omit_ultracode` key is removed; all offer sites now name all
-  three backends. Related prose at `plan/SKILL.md:286`, `operator-choice.md:153`, `loop/SKILL.md:268`,
-  `work/references/execution-strategy.md:166,181-182` rewritten to render from the full enumeration.
+  three backends. Related prose in `plan/SKILL.md` (Phase 5.2), `operator-choice.md` (§3.2/§4),
+  `loop/SKILL.md`, `work/SKILL.md`, `work/references/execution-strategy.md`, and
+  `loop/references/drive-and-resume.md` rewritten to render from the full enumeration.
 - **Availability provenance:** new `workflow_availability_source: "probed" | "asserted"` kwarg (default `"asserted"`)
   records whether availability was ToolSearch-probed at offer time or caller-asserted; output mirrors the source so
-  asserted-absent backends render with "unverified — probe before trusting". Probe mandate documented in `/plan`
+  asserted-absent backends render with "unverified; probe before trusting". Probe mandate documented in `/plan`
   prose (Phase 5.2, U2).
 - **Functional surface signal:** new `release_surface_file_count: int = 0` kwarg (CLI `--release-surface-file-count`)
   subtracts release-surface files (plugin.json, marketplace.json, CHANGELOG.md, version drift tests) from the
@@ -26,8 +27,9 @@
   requires `worth_it_because` / `cheaper_fallback` justification under `--require-receipts` (mirrors unit machinery).
   Emitted verifier opts carry effective tier (`verify.tier or unit.tier`); `unit_spend` prices verifier calls at the
   effective panel tier. Byte-identical round-trip when panel tier absent (R4 default preserved).
-- Dispatcher frontier-budget downgrade (`:411-425`) re-stamps `backends` statuses on ultracode → team-execution
-  downgrade per KTD4's compat contract — enumeration never contradicts the downgraded `recommended` key.
+- Dispatcher frontier-budget downgrade (`outcome_dispatcher.py`) re-stamps `backends` statuses on ultracode →
+  team-execution downgrade per KTD4's compat contract — enumeration never contradicts the downgraded
+  `recommended` key.
 - New test scenarios in `tests/test_saga_plugin.py`: functional-surface boundary regression at `file_count=9 -
   release_surface_file_count=6` → `inline`; shape validation + CLI round-trip; ultracode unavailability enumerated
   with provenance; backend enumeration always present, never silent omission.

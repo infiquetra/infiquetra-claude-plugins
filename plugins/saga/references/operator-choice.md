@@ -162,8 +162,8 @@ rules keep the contract honest across hosts:
 - **At the offer, always name and mark all three backends, with provenance.** Never drop
   `cc-workflows-ultracode` from the offer when the Workflow tool is observably absent — render it with
   `status: unavailable` and a note carrying the availability source (`probed` via `ToolSearch` at offer
-  time, or `asserted` when a live probe wasn't possible). An `asserted` absence renders as "unverified —
-  probe before trusting," never a silent omission. Don't let the operator discover a backend exists only
+  time, or `asserted` when a live probe wasn't possible). An `asserted` absence renders as "unverified;
+  probe before trusting", never a silent omission. Don't let the operator discover a backend exists only
   by reading this file after the fact.
 
 **Regardless of the offer:** if `cc-workflows-ultracode` is chosen but turns out to be unavailable, **fall

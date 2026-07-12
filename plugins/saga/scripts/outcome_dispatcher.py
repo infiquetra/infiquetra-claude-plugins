@@ -401,6 +401,11 @@ def recommend_outcome_backend(
     import lifecycle_state
 
     if fork_candidate and fork_signals is not None and fork_is_cheap(**fork_signals):
+        # Intentionally reduced shape: `fork` is an /outcome-internal verdict outside the
+        # three-backend offer vocabulary, so this dict carries no `backends` /
+        # `workflow_availability` enumeration (KTD4 applies to the recommender passthrough
+        # below, not to the fork fast-path). Consumers must not read `backends`
+        # unconditionally off this function's result.
         return {
             "recommended": "fork",
             "rationale": "fork shares the parent's warm cache (model+system+tools match within TTL) -> cheap (R7)",

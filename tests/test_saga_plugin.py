@@ -2958,14 +2958,30 @@ def test_recommend_backend_release_surface_subtraction() -> None:
         )
         is False
     )
+    # A negative count would INFLATE the functional total and silently over-escalate ->
+    # fail loud instead (garbage-in guard), through both the direct and recommender paths.
+    with pytest.raises(ValueError, match="release_surface_file_count"):
+        lifecycle.should_offer_team_execution(
+            file_count=3,
+            phase_count=1,
+            has_security=False,
+            has_infra=False,
+            cross_repo=False,
+            deployment_sensitive=False,
+            release_surface_file_count=-10,
+        )
+    with pytest.raises(ValueError, match="release_surface_file_count"):
+        rec(file_count=3, release_surface_file_count=-10)
 
 
 def test_recommend_backend_workflow_shapes() -> None:
     """KTD2 (R2): the frozen workflow-shape vocabulary trips ultracode; an unknown shape fails loud.
 
     understand / design / research / review / migrate are the shapes the Workflow tool doc names;
-    any one reaches the ultracode branch beside broad fan-out and adversarial confidence, under the
-    same elevated-risk suppressor. An unknown shape raises ValueError (never a silent inline).
+    any one reaches the ultracode branch beside broad fan-out and adversarial confidence. An
+    unknown shape raises ValueError (never a silent inline). Elevated-risk inputs route to
+    team-execution by branch PRECEDENCE (those flags are team triggers first); the elif-side
+    suppressor term is a reordering guard, not independently reachable today.
     """
     lifecycle = _load_module("lifecycle_state.py")
     rec = lifecycle.recommend_execution_backend
@@ -2986,8 +3002,10 @@ def test_recommend_backend_workflow_shapes() -> None:
     with pytest.raises(ValueError, match="bogus"):
         rec(workflow_shapes=["research", "bogus"])
 
-    # SUPPRESSOR PRECEDENCE: an elevated-risk code surface suppresses the shape-driven ultracode
-    # branch and routes to team-execution, exactly like the other ultracode triggers.
+    # RISK PRECEDENCE: an elevated-risk code surface routes a shape job to team-execution.
+    # The mechanism is team-branch precedence (has_infra/has_security are team triggers first);
+    # the elif's `and not elevated_risk` term is a guard against future reordering and is not
+    # independently reachable under the current branch order.
     assert rec(workflow_shapes=["migrate"], has_infra=True)["recommended"] == "team-execution"
     assert rec(workflow_shapes=["review"], has_security=True)["recommended"] == "team-execution"
 
@@ -3132,8 +3150,9 @@ def test_recommend_backend_cli_new_offer_flags(capsys: pytest.CaptureFixture[str
     assert shaped["recommended"] == "cc-workflows-ultracode"
     assert "understand" in shaped["rationale"] and "migrate" in shaped["rationale"]
 
-    # An unknown shape exits non-zero (ValueError bubbles as a failure, not a silent inline).
-    with pytest.raises(ValueError, match="unknown workflow shape"):
+    # argparse rejects an out-of-vocabulary shape cleanly (choices-gated, like the source flag);
+    # the Python-API ValueError path is covered in test_recommend_backend_workflow_shapes.
+    with pytest.raises(SystemExit):
         lifecycle.main(["recommend-backend", "--workflow-shape", "bogus"])
 
     # --workflow-availability-source probed echoes through the CLI.

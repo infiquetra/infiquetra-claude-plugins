@@ -80,9 +80,15 @@ def should_offer_team_execution(
     so ``file_count`` keeps its stable meaning (raw touched files) and the default
     of 0 leaves every existing caller byte-identical. The #526 shape (3 functional
     + 6 bookkeeping files) therefore recommends inline; 8+ genuinely functional
-    files still trips.
+    files still trips. A negative ``release_surface_file_count`` raises
+    ``ValueError`` — it would inflate the functional count and silently
+    over-escalate (fail loud on garbage-in).
     """
 
+    if release_surface_file_count < 0:
+        raise ValueError(
+            f"release_surface_file_count must be >= 0, got {release_surface_file_count}"
+        )
     functional_file_count = file_count - release_surface_file_count
     code_shaped = any(
         (
@@ -259,7 +265,7 @@ def recommend_execution_backend(
     probe at offer time) or ``"asserted"`` (assumed, unverified). It is echoed in
     ``workflow_availability`` as ``{available, source}`` and folded into the
     ultracode backend's availability note — an asserted absence renders as
-    "unverified — probe before trusting". An unknown source raises ``ValueError``.
+    "unverified; probe before trusting". An unknown source raises ``ValueError``.
 
     ``release_surface_file_count`` (KTD1, default 0) is threaded to
     ``should_offer_team_execution`` so the size trigger fires on FUNCTIONAL surface
@@ -304,6 +310,11 @@ def recommend_execution_backend(
     )
     # The risk suppressor only bites when there is a real code/scanner surface:
     # has_infra / has_security are keyword matches that false-positive on docs.
+    # Under the current precedence this term is not independently reachable: every input
+    # that makes elevated_risk True also satisfies should_offer_team_execution (the same
+    # flags behind the same has_code_surface gate), so the `if team:` branch resolves those
+    # inputs first. Kept as a guard against a future if/elif reordering, which would
+    # otherwise route risky fan-outs to ultracode.
     elevated_risk = (has_security or has_infra or deployment_sensitive) and has_code_surface
     ultracode = (
         broad_independent_fanout
@@ -503,6 +514,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="workflow_shapes",
         default=[],
+        choices=WORKFLOW_SHAPES,
         metavar="SHAPE",
         help=f"repeatable dynamic-workflow shape ({'|'.join(WORKFLOW_SHAPES)}); any entry trips ultracode (KTD2)",
     )

@@ -97,7 +97,12 @@ def test_outcome_orchestrator_gate_allows_harvest_when_satisfied(tmp_path: Path)
     runner = _gh(pr_state={"42": "MERGED"}, head_ref_oid={"42": SHA})
     ledger_store = LEDGER.Store.for_saga("leaf-outcome-sub397", tmp_path)
     LEDGER.write(
-        ledger_store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="PASS", content="ok"
+        ledger_store,
+        check_id="qa",
+        reviewed_sha=SHA,
+        producer="qa-gate",
+        verdict="PASS",
+        content="ok",
     )
 
     harvested = ORCH.harvest(spec, store=store, github_runner=runner, repo_root=tmp_path)

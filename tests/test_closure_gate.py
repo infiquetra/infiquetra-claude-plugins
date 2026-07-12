@@ -76,7 +76,9 @@ def _store(tmp_path: Path, saga_id: str):
 def test_closure_gate_matching_sha_pass_closes(tmp_path: Path) -> None:
     node = _node("sub1", evidence={"required_checks": ["qa"]})
     store = _store(tmp_path, node.leaf_saga_id)
-    LEDGER.write(store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="PASS", content="ok")
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="PASS", content="ok"
+    )
 
     verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
 
@@ -89,8 +91,12 @@ def test_closure_gate_golden_fixture_fail_overwritten_by_unexplained_pass(tmp_pa
     """The grounding-brief incident, reproduced verbatim: a FAIL silently overwritten by a PASS."""
     node = _node("sub2", evidence={"required_checks": ["qa"]})
     store = _store(tmp_path, node.leaf_saga_id)
-    LEDGER.write(store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad")
-    LEDGER.write(store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="PASS", content="ok")
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad"
+    )
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="PASS", content="ok"
+    )
 
     verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
 
@@ -101,7 +107,9 @@ def test_closure_gate_golden_fixture_fail_overwritten_by_unexplained_pass(tmp_pa
 def test_closure_gate_fail_superseded_with_justification(tmp_path: Path) -> None:
     node = _node("sub3", evidence={"required_checks": ["qa"]})
     store = _store(tmp_path, node.leaf_saga_id)
-    LEDGER.write(store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad")
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad"
+    )
     LEDGER.write(
         store,
         check_id="qa",
@@ -122,7 +130,14 @@ def test_closure_gate_stale_sha_halts(tmp_path: Path) -> None:
     node = _node("sub4", evidence={"required_checks": ["qa"]})
     store = _store(tmp_path, node.leaf_saga_id)
     other_sha = "b" * 40
-    LEDGER.write(store, check_id="qa", reviewed_sha=other_sha, producer="qa-gate", verdict="PASS", content="ok")
+    LEDGER.write(
+        store,
+        check_id="qa",
+        reviewed_sha=other_sha,
+        producer="qa-gate",
+        verdict="PASS",
+        content="ok",
+    )
 
     verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
 
@@ -142,7 +157,9 @@ def test_closure_gate_missing_evidence_halts(tmp_path: Path) -> None:
 def test_closure_gate_unresolved_fail_halts(tmp_path: Path) -> None:
     node = _node("sub6", evidence={"required_checks": ["qa"]})
     store = _store(tmp_path, node.leaf_saga_id)
-    LEDGER.write(store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad")
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad"
+    )
 
     verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
 
@@ -157,7 +174,9 @@ def test_closure_gate_repeat_fail_pass_cycle(tmp_path: Path) -> None:
     """
     node = _node("sub7", evidence={"required_checks": ["qa"]})
     store = _store(tmp_path, node.leaf_saga_id)
-    LEDGER.write(store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad-1")
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad-1"
+    )
     LEDGER.write(
         store,
         check_id="qa",
@@ -167,7 +186,9 @@ def test_closure_gate_repeat_fail_pass_cycle(tmp_path: Path) -> None:
         content="ok-1",
         payload={"supersession_reason": "fixed the first regression"},
     )
-    LEDGER.write(store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad-2")
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="FAIL", content="bad-2"
+    )
     LEDGER.write(
         store,
         check_id="qa",
@@ -200,7 +221,9 @@ def test_closure_gate_reviewed_sha_override_for_non_code_node(tmp_path: Path) ->
         evidence={"required_checks": ["qa"], "reviewed_sha": SHA},
     )
     store = _store(tmp_path, node.leaf_saga_id)
-    LEDGER.write(store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="PASS", content="ok")
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="PASS", content="ok"
+    )
 
     verdict = GATE.evaluate(node, repo_root=tmp_path)
 
@@ -239,16 +262,28 @@ def test_closure_gate_tamper_detected_halts(tmp_path: Path) -> None:
     assert verdict.halt_reason == "chain-tamper:sub12"
 
 
-def test_closure_gate_cli_evaluate_prints_verdict(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_closure_gate_cli_evaluate_prints_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     node = _node("sub13", evidence={"required_checks": ["qa"], "reviewed_sha": SHA})
     store = _store(tmp_path, node.leaf_saga_id)
-    LEDGER.write(store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="PASS", content="ok")
+    LEDGER.write(
+        store, check_id="qa", reviewed_sha=SHA, producer="qa-gate", verdict="PASS", content="ok"
+    )
     spec_obj = SPEC.OutcomeSpec(outcome_id="oc", objective="test", nodes=[node])
     spec_path = tmp_path / "outcome-spec.json"
     spec_path.write_text(spec_obj.to_json(), encoding="utf-8")
 
     exit_code = GATE.main(
-        ["--repo-root", str(tmp_path), "evaluate", "--spec", str(spec_path), "--subplot-id", "sub13"]
+        [
+            "--repo-root",
+            str(tmp_path),
+            "evaluate",
+            "--spec",
+            str(spec_path),
+            "--subplot-id",
+            "sub13",
+        ]
     )
 
     assert exit_code == 0
@@ -256,7 +291,9 @@ def test_closure_gate_cli_evaluate_prints_verdict(tmp_path: Path, capsys: pytest
     assert printed["satisfied"] is True
 
 
-def test_closure_gate_cli_evaluate_unknown_subplot(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_closure_gate_cli_evaluate_unknown_subplot(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     node = _node("sub14")
     spec_obj = SPEC.OutcomeSpec(outcome_id="oc", objective="test", nodes=[node])
     spec_path = tmp_path / "outcome-spec.json"

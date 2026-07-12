@@ -190,7 +190,9 @@ def evaluate(
     except evidence_ledger.EvidenceLedgerError as exc:
         return GateVerdict(sid, False, f"chain-tamper:{sid}", str(exc), [])
 
-    checks = [_evaluate_check(store, check_id=check_id, close_sha=close_sha) for check_id in required]
+    checks = [
+        _evaluate_check(store, check_id=check_id, close_sha=close_sha) for check_id in required
+    ]
     first_failure = next((c for c in checks if not c.satisfied), None)
     if first_failure is not None:
         return GateVerdict(

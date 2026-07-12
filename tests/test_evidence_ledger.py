@@ -240,11 +240,19 @@ def test_evidence_ledger_fail_then_pass_supersession_pass_then_fail_is_not_flagg
 
 
 def test_evidence_ledger_history_returns_entries_across_every_sha(store):
-    E.write(store, check_id="qa", reviewed_sha=SHA_A, producer="qa-gate", verdict="FAIL", content="v1")
-    E.write(store, check_id="qa", reviewed_sha=SHA_B, producer="qa-gate", verdict="PASS", content="v2")
     E.write(
-        store, check_id="code-review", reviewed_sha=SHA_A, producer="code-review-gate",
-        verdict="PASS", content="v3",
+        store, check_id="qa", reviewed_sha=SHA_A, producer="qa-gate", verdict="FAIL", content="v1"
+    )
+    E.write(
+        store, check_id="qa", reviewed_sha=SHA_B, producer="qa-gate", verdict="PASS", content="v2"
+    )
+    E.write(
+        store,
+        check_id="code-review",
+        reviewed_sha=SHA_A,
+        producer="code-review-gate",
+        verdict="PASS",
+        content="v3",
     )
 
     qa_history = E.history(store, check_id="qa")
@@ -254,7 +262,9 @@ def test_evidence_ledger_history_returns_entries_across_every_sha(store):
 
 
 def test_evidence_ledger_history_empty_for_unknown_check(store):
-    E.write(store, check_id="qa", reviewed_sha=SHA_A, producer="qa-gate", verdict="PASS", content="v1")
+    E.write(
+        store, check_id="qa", reviewed_sha=SHA_A, producer="qa-gate", verdict="PASS", content="v1"
+    )
 
     assert E.history(store, check_id="code-review") == []
     assert E.history(store, check_id="qa") != []

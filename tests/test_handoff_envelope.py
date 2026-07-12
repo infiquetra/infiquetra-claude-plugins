@@ -708,3 +708,65 @@ def test_dropped_baton_detected_unreadable_sidecar_degrades_not_aborts_sweep(
         assert by_id["issue-1"]["status"] == DH.STATUS_INVALID_SIDECAR
     finally:
         unreadable.chmod(0o644)  # so tmp_path teardown can remove it
+
+
+def test_dropped_baton_detected_fifo_sidecar_degrades_without_hanging(tmp_path: Path) -> None:
+    # Falsification round 2 (#395): a FIFO sidecar with no writer makes a blocking open() hang
+    # FOREVER — nothing raised, so no except clause can save the sweep. The regular-file stat
+    # check in _read_sidecar must refuse it before open(). SIGALRM guards this test against a
+    # regression re-introducing the hang.
+    import signal
+
+    DH.offer(tmp_path, "issue-2", offered_by="work")
+    fifo = _sidecar_path(tmp_path, "issue-1")
+    fifo.parent.mkdir(parents=True)
+    os.mkfifo(fifo)
+
+    def _timeout(signum: int, frame: object) -> None:  # pragma: no cover - fires only on hang
+        raise TimeoutError("reconcile_all hung on a FIFO sidecar (regression)")
+
+    old = signal.signal(signal.SIGALRM, _timeout)
+    signal.alarm(10)
+    try:
+        results = DH.reconcile_all(tmp_path)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+    by_id = {r["saga_id"]: r for r in results}
+    assert by_id["issue-2"]["status"] == DH.STATUS_UNACKNOWLEDGED
+    assert by_id["issue-1"]["status"] == DH.STATUS_INVALID_SIDECAR
+    assert "not a regular file" in by_id["issue-1"]["note"]
+
+
+def test_dropped_baton_detected_dangling_symlink_surfaces_as_invalid(tmp_path: Path) -> None:
+    # Falsification round 2 (#395): a dangling-symlink sidecar was silently skipped (exists()
+    # follows the link -> False -> read as never-offered). Something WAS there — a lost offer —
+    # so it must surface as invalid-sidecar and make the sweep not-clean.
+    DH.offer(tmp_path, "issue-2", offered_by="work")
+    dangling = _sidecar_path(tmp_path, "issue-1")
+    dangling.parent.mkdir(parents=True)
+    dangling.symlink_to(tmp_path / "no-such-target.json")
+
+    results = DH.reconcile_all(tmp_path)
+    by_id = {r["saga_id"]: r for r in results}
+    assert by_id["issue-2"]["status"] == DH.STATUS_UNACKNOWLEDGED
+    assert by_id["issue-1"]["status"] == DH.STATUS_INVALID_SIDECAR
+    assert "dangling symlink" in by_id["issue-1"]["note"]
+    assert DH.main(["--repo-root", str(tmp_path), "reconcile", "--all"]) == 1
+
+
+def test_ownership_not_released_without_ack_single_saga_oserror_is_message_not_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Falsification round 2 (#395): reconcile --saga-id on a directory-shaped sidecar escaped
+    # main()'s DeployHandoffError boundary as a raw IsADirectoryError traceback, contradicting
+    # the module's own 'never a traceback' contract. _read_sidecar now wraps every OSError class
+    # into InvalidHandoffError, so the CLI reports a message and exits 1.
+    dir_sidecar = _sidecar_path(tmp_path, "issue-1")
+    dir_sidecar.mkdir(parents=True)
+    rc = DH.main(["--repo-root", str(tmp_path), "reconcile", "--saga-id", "issue-1"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "deploy_handoff:" in err
+    assert "Traceback" not in err

@@ -41,6 +41,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -217,19 +218,38 @@ def build_envelope(
 
 
 def _read_sidecar(repo_root: Path, saga_id: str) -> dict[str, Any] | None:
-    """Read the sidecar's ``{envelope, ack, superseded}`` record. An absent sidecar is ``None`` (a
-    saga that was never offered has no handoff — deliberately NOT an error). Malformed JSON is
-    wrapped in ``InvalidHandoffError``, never a bare ``JSONDecodeError``."""
+    """Read the sidecar's ``{envelope, ack, superseded}`` record. Truly-absent (nothing at the
+    path at all) is ``None`` — a saga that was never offered has no handoff, deliberately NOT an
+    error. EVERYTHING else that prevents a clean read raises ``InvalidHandoffError`` — malformed
+    JSON, a non-object body, a dangling symlink, a directory/FIFO/socket in place of the file, or
+    an unreadable file (falsification re-review, #395). The regular-file ``stat`` check runs
+    BEFORE ``open()`` because a FIFO with no writer makes a blocking ``open()`` hang forever —
+    nothing is ever raised, so no except clause downstream could save the reconcile sweep."""
     path = handoff_path(repo_root, saga_id)
-    if not path.exists():
+    if not os.path.lexists(path):
         return None
-    with open(path, encoding="utf-8") as handle:
-        try:
-            data = json.load(handle)
-        except json.JSONDecodeError as exc:
-            raise InvalidHandoffError(
-                f"deploy_handoff.json at {path} is not valid JSON: {exc}"
-            ) from exc
+    try:
+        mode = os.stat(path).st_mode  # follows symlinks
+    except FileNotFoundError as exc:
+        # lexists but stat fails: a dangling symlink — something IS there (a lost/partial offer),
+        # so surface it rather than reading as never-offered.
+        raise InvalidHandoffError(f"deploy_handoff.json at {path} is a dangling symlink") from exc
+    except OSError as exc:
+        raise InvalidHandoffError(f"deploy_handoff.json at {path} is unreadable: {exc}") from exc
+    if not stat.S_ISREG(mode):
+        raise InvalidHandoffError(
+            f"deploy_handoff.json at {path} is not a regular file (directory/FIFO/socket)"
+        )
+    try:
+        with open(path, encoding="utf-8") as handle:
+            try:
+                data = json.load(handle)
+            except json.JSONDecodeError as exc:
+                raise InvalidHandoffError(
+                    f"deploy_handoff.json at {path} is not valid JSON: {exc}"
+                ) from exc
+    except OSError as exc:
+        raise InvalidHandoffError(f"deploy_handoff.json at {path} is unreadable: {exc}") from exc
     if not isinstance(data, dict):
         raise InvalidHandoffError(f"deploy_handoff.json at {path} is not a JSON object")
     return data
@@ -462,7 +482,10 @@ def reconcile_all(repo_root: Path, *, now: str | None = None) -> list[dict[str, 
     for child in sorted(sagas_dir.iterdir()):
         if not child.is_dir() or not _SAGA_ID_RE.fullmatch(child.name):
             continue
-        if not (child / HANDOFF_NAME).exists():
+        # lexists, not exists: a DANGLING-symlink sidecar must reach _read_sidecar and surface
+        # as invalid-sidecar (something was there — a lost offer), never silently read as
+        # never-offered (falsification re-review, #395).
+        if not os.path.lexists(child / HANDOFF_NAME):
             continue
         try:
             results.append(reconcile_one(repo_root, child.name, now=now))

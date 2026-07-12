@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.80.0"
-    )  # backend offer contract: enumeration, availability provenance, functional surface signal, verified shapes (#565)
+        plugin_json["version"] == "0.81.0"
+    )  # content-addressed, append-only evidence ledger for /qa and /code-review verdicts (#398)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -400,8 +400,9 @@ def test_code_review_engine_merge_contract() -> None:
     assert "saga.py" in skill_doc
     assert "--review-paths" in skill_doc
     assert "--orchestration-mode" in skill_doc
-    # Own-dir durable artifact path (NOT docs/reviews/).
-    assert "docs/code-reviews/" in skill_doc
+    # Own-dir durable artifact path (evidence ledger, #398) (NOT docs/reviews/).
+    assert "docs/evidence/" in skill_doc
+    assert "docs/reviews/" in skill_doc and "handoff/sdlc classifiers" in skill_doc
     # Operator-choice citation at the plugin-root path + the 3 backend enums.
     assert "references/operator-choice.md" in skill_doc
     for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
@@ -1153,8 +1154,10 @@ def test_qa_engine_merge_contract() -> None:
     )
     assert "The designed routing map for `/loop`" not in corpus
 
-    # --- MECHANISM FLOOR 11: own durable artifact dir (docs/qa/), no classifier collision. ---
-    assert "docs/qa/" in skill_doc and "docs/qa/" in report_doc
+    # --- MECHANISM FLOOR 11: own durable artifact dir (evidence ledger, #398),
+    # no classifier collision. ---
+    assert "docs/qa/" in skill_doc
+    assert "docs/evidence/" in report_doc and "classifier collision" in report_doc
 
     # --- Operator-choice citation at the plugin-root path + the 3 backend enums (large/parallel
     # verification is OFFERED, never auto-spawned; generic agents only — no agents/ dir). ---

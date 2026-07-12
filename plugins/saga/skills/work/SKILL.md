@@ -499,8 +499,12 @@ programmatic mode).
 
 Read `/code-review`'s structured findings envelope (the programmatic shape — findings grouped by
 `autofix_class`, verdict in the header). That envelope is the gate input. Record the review outcome (the
-verdict, the P-level counts, and `REVIEWED_SHA`) in the Phase-4 work-session writeup; persist the envelope
-under `docs/code-reviews/` if you want a durable artifact and reference it from the work-session.
+verdict, the P-level counts, and `REVIEWED_SHA`) in the Phase-4 work-session writeup; if you want a
+durable artifact, persist the envelope through the evidence ledger (#398) —
+`evidence_ledger.py write --check-id code-review --reviewed-sha "$REVIEWED_SHA" --producer work-gate
+--verdict <the envelope's verdict> --artifact-file <envelope-text-file>` — rather than a bare file write,
+so this programmatic-mode persistence gets the same no-clobber/custody guarantee as `/code-review`'s own
+interactive-mode write (SKILL.md §5.3).
 
 ### 5.3 Hard review gate (block on P0/P1 or stale)
 

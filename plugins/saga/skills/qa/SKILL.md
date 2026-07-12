@@ -153,6 +153,23 @@ A change usually lands in 1-3 classes. **trivial** short-circuits to a quick rea
 
 ## Phase 2 — Run checks per class
 
+**Freeze the pass/fail criteria before running any check** (pre-registered criteria, R4/#398): the
+in-scope risk classes and the tier's blocking threshold from Phase 1/0.1 are the criteria contract for
+this run, and they must be frozen before the first check runs so a later attempt cannot redefine what
+counts as passing:
+
+```bash
+python3 plugins/saga/scripts/evidence_ledger.py --repo-root . --saga-id <issue-N|task-slug> \
+  freeze-criteria --check-id qa --reviewed-sha "$(git rev-parse HEAD)" --criteria-file <criteria.json>
+```
+
+`<criteria.json>` is a small object capturing `{"tier": "<Quick|Standard|Exhaustive>", "in_scope":
+["<class>", ...], "blocking_threshold": "<per §4.2>"}`. A repeat run against the same reviewed SHA
+reuses the same frozen block — `freeze-criteria` **rejects a second freeze** for the same
+`(check_id, reviewed_sha)` by design (R4: freeze is one-time). Treat that specific rejection as
+expected on a retry (the criteria are already locked in from attempt 1) and continue to Phase 2's
+checks; any other `evidence_ledger.py` error is a real failure and should surface.
+
 For each in-scope class, run the acceptance checks from `references/risk-taxonomy.md`, narrow before
 broad, and gather **evidence** for every result:
 
@@ -266,14 +283,32 @@ drill-down body the card cells reference, not replaced by the card.
 The ship verdict values (`ship`, `ship-with-deferred`, `no-ship`) derived in §4.2 are the card's data
 source; they remain authoritative in the artifact.
 
-### 5.1 Write the durable artifact
+### 5.1 Write the durable artifact through the evidence ledger
 
-Write `docs/qa/qa-<saga-id-or-issue>-<date>.md` using the shape in `references/qa-report.md` (adapted
-from gstack's template, browser-decoupled): header (target / tier / scope / reviewed revision), overall
-health score + per-class table + baseline delta from Phase 4, top findings, summary-by-severity,
-per-finding (severity / class / evidence / repro / falsifiable-prediction), **recommended** regression
-tests (recommend — do **not** generate them), the ship verdict with its derivation, and
-deferred-with-repro. Use `docs/qa/` — its own directory, with no handoff/sdlc classifier collision.
+Compose the report using the shape in `references/qa-report.md` (adapted from gstack's template,
+browser-decoupled): header (target / tier / scope / reviewed revision), overall health score +
+per-class table + baseline delta from Phase 4, top findings, summary-by-severity, per-finding
+(severity / class / evidence / repro / falsifiable-prediction), **recommended** regression tests
+(recommend — do **not** generate them), the ship verdict with its derivation, and
+deferred-with-repro.
+
+Persist it through the evidence ledger (#398) instead of a bare file write — content-addressed,
+write-once, and custody-logged so a later PASS can never silently overwrite an earlier FAIL:
+
+```bash
+REVIEWED_SHA=$(git rev-parse HEAD)
+python3 plugins/saga/scripts/evidence_ledger.py --repo-root . \
+  --saga-id <issue-N|task-slug|adhoc-work-<slug>> \
+  write --check-id qa --reviewed-sha "$REVIEWED_SHA" --producer qa-gate \
+  --verdict "<ship|ship-with-deferred|no-ship>" --artifact-file <path-to-composed-report.md>
+```
+
+The ledger prints the resulting `artifact_path` (under `docs/evidence/<saga-id>/artifacts/`) — that
+path is the durable QA artifact; reference it exactly as `docs/qa/qa-<saga-id-or-issue>-<date>.md` was
+referenced before (Phase 5.2's evidence link, Phase 6's `--qa-paths`, and issue progress all point at
+this ledger artifact path now). When Phase 0.2 found no work-thread saga, use
+`--saga-id adhoc-<branch-slug>` (the branch-or-pr stem) so the write still lands in the ledger —
+only the saga *tick* is skipped in that case (Phase 6), never the custody entry.
 
 ### 5.2 Emit issue progress with evidence
 
@@ -285,7 +320,7 @@ python3 plugins/saga/scripts/issue_progress.py \
   --issue-ref <owner/repo#N> \
   --destination <plan-only|pr|merge|nonprod-deploy> \
   --checks-run "<class:check | class:check | ...>" \
-  --evidence-link "docs/qa/<file>.md"
+  --evidence-link "<the ledger artifact_path from 5.1>"
 ```
 
 `--checks-run` is pipe-separated. Skip this command when there is no issue ref (a `task-` thread).
@@ -308,7 +343,7 @@ python3 plugins/saga/scripts/saga.py save \
   --lifecycle-phase qa \
   --phase-status complete \
   --phase <restored-phase> \
-  --qa-paths docs/qa/<file>.md \
+  --qa-paths "<the ledger artifact_path from 5.1>" \
   --checks-run "<class:check | ...>" \
   --next-step "<route to /handoff or /retro>" \
   --summary "<one-line ship verdict>"
@@ -322,8 +357,8 @@ invent a `--kind`/`--id` to satisfy the CLI (the scan-first / never-mint guard `
 ### 6.2 FAIL — keep work phase, route by merge state
 
 On a `no-ship` verdict, **keep `lifecycle_phase=work`** (omit `--lifecycle-phase`, which carries the
-prior phase forward), tick with `--qa-paths docs/qa/<file>.md` and the evidence, then route by **merge
-state**:
+prior phase forward), tick with `--qa-paths "<the ledger artifact_path from 5.1>"` and the evidence,
+then route by **merge state**:
 
 - **Pre-merge (PR still open)** → **`/work`** — hand the findings back and re-enter the round-N PR loop.
   `/work`'s Phase 0.4 re-entry keys on the saga's `pr_refs`, so the thread resumes cleanly.

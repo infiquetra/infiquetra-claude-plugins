@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.81.0] - 2026-07-12
+
+### Added - content-addressed, append-only evidence ledger for /qa and /code-review verdicts (#398)
+
+- **`plugins/saga/scripts/evidence_ledger.py` (new):** a content-addressed (sha256), write-once
+  custody store for verification evidence, committed per-saga at `docs/evidence/<saga-id>/`
+  (not the git-common-dir cache `outcome_store.py`/`manifest_store.py` use — evidence needs to
+  survive a fresh clone and be auditable in PR history). Identity is
+  `(check_id, reviewed_sha, attempt)`: a retry appends a new attempt rather than mutating a prior
+  one, and `latest()` flags a FAIL-then-PASS transition as a supersession instead of a silent
+  green. Each custody entry chains to the previous via a hash over its canonical JSON, plus a
+  `ledger.head` pointer that closes the one gap a pure hash chain has (an undetectable edit to
+  the *last* entry, with no successor to check it against) — exactly the grounded incident this
+  module exists to prevent (a probe script silently overwriting a FAIL artifact with a later
+  PASS). `freeze_criteria()` pre-registers a run's pass/fail contract once, before its first
+  attempt, so it cannot be redefined by a later attempt. `close_verify()` re-hashes every
+  referenced artifact and criteria file and HALTs on any mismatch, and rejects a verifier whose
+  role matches the check's producer (no self-certification). Reuses
+  `outcome_store._write_once` / `_atomic_write` / `_safe_name` rather than duplicating them
+  (mirroring the existing `manifest_store` precedent).
+- **`/qa` (Phase 2, 5.1)** and **`/code-review` (Phase 1.5, 5.3)** now persist their durable
+  verdict artifacts through the ledger instead of a bare file write, with a criteria-freeze step
+  at each gate's intent-capture point. A no-saga interactive run falls back to
+  `docs/evidence/adhoc-<branch-slug>/` — the saga *tick* is skipped in that case, never the
+  ledger write. `/code-review`'s programmatic/report-only mode is unchanged (zero file writes of
+  any kind, by contract).
+- `tests/test_evidence_ledger.py` — 19 tests covering no-clobber, custody-chain validation
+  (including a hand-edited entry, a deleted artifact, and a torn trailing line), FAIL-then-PASS
+  supersession, frozen-criteria immutability across attempts, tamper-HALT at closure,
+  producer/verifier role separation, and the CLI write-through path (including the adhoc
+  fallback).
+
 ## [0.80.0] - 2026-07-12
 
 ### Fixed - backend offer contract in /plan Phase 5.2: enumeration, availability provenance, functional surface signal, verified shapes (#565)

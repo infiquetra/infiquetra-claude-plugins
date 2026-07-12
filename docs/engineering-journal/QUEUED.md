@@ -184,22 +184,7 @@ primitive. Ids named in issue #463 itself are marked ★.
 
 ## P1 — urgent
 
-### Execution-backend recommendation + offer flow are broken in `/plan` Phase 5.2  {#plan-backend-recommendation-broken}
-
-**Priority.** P1 — distorts every `/plan` backend offer; operator-directed fix (2026-07-11: "both need fixed").
-
-**Effort.** Half-day. `lifecycle_state.py` signal rework + `/plan` SKILL.md offer-flow edits + `execution_spec.py` schema addition.
-
-> **Worth it when.** Immediately after the ship-ceremony-hardening outcome completes — scheduled by the operator during #526 planning.
-
-**Context.** Surfaced live while planning #526 (2026-07-11). Four defects, one adjacent gap:
-
-1. **Crude size signal.** `should_offer_team_execution`'s `file_count >= 8` trigger (consumed by `recommend_execution_backend`, `plugins/saga/scripts/lifecycle_state.py:100`) counted 6 one-line release-surface bumps toward a 9-file total and recommended `team-execution` for a single-script defect fix. The signal must weigh *functional* surface (feature-bearing files), not raw touched-file count — release bookkeeping is constant overhead on every PR in this repo.
-2. **Workflows undersold.** The ultracode triggers are only `broad_independent_fanout` / `adversarial_confidence` / advisory-consensus. Operator: "workflows are more than breadth" — the Workflow tool's own doc names understand/design/research/migrate shapes that the recommender and `/plan` SKILL.md's Phase-5.2 framing cannot reach. The trigger vocabulary (and the skill prose mirroring it) needs widening.
-3. **Availability trusted, not probed.** `workflow_available` is caller-asserted; in the live session the caller passed `False` unverified and the ultracode option vanished from the operator's offer entirely. Availability must be observably probed (ToolSearch for the Workflow tool) at offer time, and the recommender/skill should say so.
-4. **Offer construction hid the alternative.** Even with `omit_ultracode: true`, the `/plan` offer showed only two options with no note that a third backend existed — the operator had to ask. The offer must always name all three backends and mark unavailable ones as such, not silently drop them.
-
-Adjacent gap (same session): **verify panels cannot carry their own tier** — R4 binds every verifier to the unit's tier unconditionally (`execution_spec.py:1512-1514`; `Verify` has no tier field), so the operator's request for an opus/high refute-3 panel on a sonnet/medium unit forced the whole unit up to opus/high. A per-panel tier override field on `Verify` (defaulting to the unit tier, preserving R4) is the fix.
+### brainstorm + ideate re-litigate settled scope for solo operators  {#brainstorm-ideate-convergence-bias}
 
 **Priority.** P1.
 

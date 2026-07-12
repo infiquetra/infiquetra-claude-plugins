@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -14,6 +15,8 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 WRAPPER = ROOT / "plugins" / "agy" / "scripts" / "agy_delegate.py"
+FAKE_AGY = ROOT / "tests" / "fixtures" / "agy" / "fake_agy.py"
+AUDIT_STORE_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "audit_store.py"
 
 
 def _load_module() -> ModuleType:
@@ -203,6 +206,8 @@ def test_cli_flags_normalize_to_envelope(tmp_path: Path) -> None:
             "reviewer",
             "--task",
             "Review the scoped diff.",
+            "--audit-store",
+            str(tmp_path / "audit-store"),
         ],
         check=False,
         capture_output=True,
@@ -233,6 +238,8 @@ def test_cli_envelope_dry_validation_outputs_projection(tmp_path: Path) -> None:
             "cli-run",
             "--envelope",
             str(envelope_path),
+            "--audit-store",
+            str(tmp_path / "audit-store"),
         ],
         check=False,
         capture_output=True,
@@ -485,6 +492,8 @@ def test_cli_rejects_invalid_envelope_without_bundle(tmp_path: Path) -> None:
             "bad-run",
             "--envelope",
             str(envelope_path),
+            "--audit-store",
+            str(tmp_path / "audit-store"),
         ],
         check=False,
         capture_output=True,
@@ -610,3 +619,127 @@ def test_blocked_status_marker_parsing_produces_fallback_suspected(
     # Marker in stderr alone is also honored (the parser reads both streams).
     stderr_path.write_text("TEST_CONFLICT: fixture collision\n")
     assert agy_delegate._blocked_status_from_logs(stdout_path, stderr_path) == "test_conflict"
+
+
+# --- durable audit-store mirroring (#396, U3) ------------------------------------------------
+
+
+def _load_audit_store() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("audit_store", AUDIT_STORE_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["audit_store"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _init_git_repo(repo: Path) -> None:
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "tests@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "README.md"], cwd=repo, check=True, capture_output=True, text=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial"], cwd=repo, check=True, capture_output=True, text=True
+    )
+
+
+def test_audit_store_survives_bundle_deletion(tmp_path: Path) -> None:
+    """A receipt written under --audit-store is still readable by run_id after the working
+    bundle directory is deleted (the literal DoD acceptance check for issue #396)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    envelope_path = tmp_path / "envelope.json"
+    envelope_path.write_text(
+        json.dumps(_valid_payload(task="FAKE_AGY_MODE=success")), encoding="utf-8"
+    )
+    audit_store_root = tmp_path / "audit-store"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(WRAPPER),
+            "--repo-root",
+            str(repo),
+            "--run-id",
+            "durable-run",
+            "--envelope",
+            str(envelope_path),
+            "--launch-agy",
+            "--agy-bin",
+            str(FAKE_AGY),
+            "--audit-store",
+            str(audit_store_root),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    bundle_path = repo / ".claude" / "agy" / "runs" / "durable-run"
+    assert (bundle_path / "result.json").exists()
+
+    # The bundle directory — the disposable-worktree blast radius the issue names — is gone.
+    shutil.rmtree(bundle_path)
+    assert not bundle_path.exists()
+
+    audit_store = _load_audit_store()
+    store = audit_store.Store.for_root(audit_store_root)
+    receipt = audit_store.resolve_receipt(store, "durable-run")
+
+    assert receipt is not None
+    assert receipt["run_id"] == "durable-run"
+    assert receipt["schema"] == "bridge_receipt.v1"
+
+
+def test_validation_bundle_mirrors_result_without_receipt(tmp_path: Path) -> None:
+    """A validation-only bundle (agy never launches) mirrors result.json but no receipt.json —
+    there is nothing to prove was run."""
+    envelope_path = tmp_path / "envelope.json"
+    envelope_path.write_text(json.dumps(_valid_payload()), encoding="utf-8")
+    audit_store_root = tmp_path / "audit-store"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(WRAPPER),
+            "--repo-root",
+            str(tmp_path),
+            "--run-id",
+            "validation-only-run",
+            "--envelope",
+            str(envelope_path),
+            "--audit-store",
+            str(audit_store_root),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    audit_store = _load_audit_store()
+    store = audit_store.Store.for_root(audit_store_root)
+
+    result = audit_store.resolve_result(store, "validation-only-run")
+    assert result is not None
+    assert result["agy_launched"] is False
+
+    assert audit_store.resolve_receipt(store, "validation-only-run") is None

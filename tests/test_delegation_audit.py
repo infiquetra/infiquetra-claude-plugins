@@ -16,6 +16,9 @@ MODULE_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "d
 STATE_MODULE_PATH = (
     ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "delegation_state.py"
 )
+AUDIT_STORE_MODULE_PATH = (
+    ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "audit_store.py"
+)
 AGY_DELEGATE_PATH = ROOT / "plugins" / "agy" / "scripts" / "agy_delegate.py"
 FIXTURES = ROOT / "tests" / "fixtures" / "delegation"
 
@@ -43,6 +46,13 @@ def agy_delegate() -> ModuleType:
 @pytest.fixture
 def delegation_state() -> ModuleType:
     return _load_module(STATE_MODULE_PATH, "delegation_state")
+
+
+@pytest.fixture
+def audit_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
+    # Never resolve DEFAULT_AUDIT_STORE_ROOT against the real developer home directory (R5/KTD6).
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+    return _load_module(AUDIT_STORE_MODULE_PATH, "audit_store")
 
 
 # --- classify() happy path -----------------------------------------------------------------
@@ -365,3 +375,72 @@ def test_ttl_exact_boundary_still_live(delegation_state: ModuleType, tmp_path: P
         "session-boundary", root=tmp_path, now=now + delegation_state.DEFAULT_TTL_SECONDS + 1
     )
     assert past_boundary is None
+
+
+# --- audit_store.write_once_draft() guard (#396, U1) -----------------------------------------
+
+
+def test_draft_snapshot_write_once_guard(audit_store: ModuleType, tmp_path: Path) -> None:
+    """A second write-once draft snapshot for the same run_id is rejected, never overwritten."""
+    store = audit_store.Store.for_root(tmp_path / "audit-store")
+    first_content = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
+
+    audit_store.write_once_draft(store, "run-1", first_content)
+
+    with pytest.raises(audit_store.AuditStoreError):
+        audit_store.write_once_draft(store, "run-1", "a completely different second attempt")
+
+    # The first snapshot's bytes are unchanged by the rejected second attempt.
+    assert audit_store.resolve_draft(store, "run-1") == first_content
+
+
+# --- delegation_audit.reconcile_store() (#396, U2) -------------------------------------------
+
+
+def _valid_receipt(run_id: str) -> dict[str, object]:
+    return {
+        "schema": "bridge_receipt.v1",
+        "engine_id": "agy",
+        "variant": "flash",
+        "transport": "cli",
+        "wall_time_s": 1.0,
+        "bytes_produced": 10,
+        "runner": {"pid": 1, "argv": ["agy"], "exit_code": 0},
+        "run_id": run_id,
+    }
+
+
+def test_flags_forced_fallback_only(
+    delegation_audit: ModuleType, audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """Exactly the forced-fallback run is flagged; the genuinely-real run never is."""
+    store = audit_store.Store.for_root(tmp_path / "audit-store")
+
+    # A real delegation: claims ran-as-requested AND carries a schema-valid receipt.
+    audit_store.mirror_manifest(store, "real-run", {"disposition": "ran-as-requested"})
+    audit_store.mirror_receipt(store, "real-run", _valid_receipt("real-run"))
+
+    # A forced fallback: claims ran-as-requested but has no receipt at all (the engine never
+    # actually launched — the fleet-wide silent-no-op shape this issue exists to catch).
+    audit_store.mirror_manifest(store, "forced-fallback-run", {"disposition": "ran-as-requested"})
+
+    entries = delegation_audit.reconcile_store(store)
+    flagged = {entry.run_id for entry in entries if entry.flagged}
+
+    assert flagged == {"forced-fallback-run"}
+
+
+def test_reconcile_store_degrades_on_corrupt_manifest(
+    delegation_audit: ModuleType, audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """A corrupt manifest.json degrades to 'no claim' rather than raising."""
+    store = audit_store.Store.for_root(tmp_path / "audit-store")
+    manifest_path = store.manifest_path("corrupt-run")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("{not valid json", encoding="utf-8")
+
+    entries = delegation_audit.reconcile_store(store, run_ids=["corrupt-run"])
+
+    assert len(entries) == 1
+    assert entries[0].flagged is False
+    assert entries[0].claimed_real is False

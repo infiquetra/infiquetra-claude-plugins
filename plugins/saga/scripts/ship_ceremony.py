@@ -47,6 +47,7 @@ import os
 import shutil
 import subprocess  # nosec B404
 import sys
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -588,6 +589,18 @@ def _teardown_ceremony_summary(saga: Mapping[str, Any], *, repo_root: Path) -> d
     return summary
 
 
+def _scratch_ref_contained(ref: str, repo_root: Path) -> bool:
+    """True only when a scratch ref resolves strictly INSIDE a sanctioned root (the
+    system tempdir or the repo itself). ``register`` stores refs verbatim, so an
+    absolute or ``..``-bearing ref would otherwise be honored by ``rmtree`` — the
+    security-review F2 deletion-safety gap. A root itself is never removable."""
+    target = os.path.realpath(ref)
+    for root in (os.path.realpath(tempfile.gettempdir()), os.path.realpath(str(repo_root))):
+        if root and target.startswith(root + os.sep):
+            return True
+    return False
+
+
 def _teardown_attempt_closes(
     saga: Mapping[str, Any],
     report: ship_teardown.ReconcileReport,
@@ -617,6 +630,11 @@ def _teardown_attempt_closes(
     ]
 
     for entry in open_scratch:
+        if not _scratch_ref_contained(entry.ref, repo_root):
+            # Refuse to rmtree a ref outside the sanctioned scratch roots (security
+            # review F2): the entry stays open, so the re-reconcile HALTs naming it —
+            # teardown never deletes an uncontained path on the manifest's say-so.
+            continue
         path = Path(entry.ref)
         if path.exists():
             shutil.rmtree(path, ignore_errors=True)

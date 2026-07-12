@@ -424,6 +424,7 @@ ACTION_REMOVAL_FAILED = "removal-failed"
 ACTION_SKIP_PRIMARY = "skipped-primary"
 ACTION_SKIP_SELF = "skipped-self"
 ACTION_SKIP_BARE = "skipped-bare"
+ACTION_SKIP_PRUNABLE = "skipped-prunable"
 ACTION_SKIP_DIRTY = "skipped-dirty"
 ACTION_SKIP_UNMERGED = "skipped-unmerged"
 ACTION_SKIP_RECENT = "skipped-recent-activity"
@@ -524,7 +525,12 @@ def _self_toplevel(repo_root: Path, runner: Callable[..., Any] | None) -> str:
 def _worktree_is_dirty(worktree_path: str, runner: Callable[..., Any] | None) -> bool:
     """True if the worktree has uncommitted changes — or if its status is unreadable
     (degrade safe: never remove a worktree we cannot prove is clean, KTD6)."""
-    result = _run(["git", "status", "--porcelain"], cwd=Path(worktree_path), runner=runner)
+    try:
+        result = _run(["git", "status", "--porcelain"], cwd=Path(worktree_path), runner=runner)
+    except OSError:
+        # A vanished/unreadable working directory (prunable worktree) must degrade to
+        # "dirty" (skip), never crash the SessionStart hook — code-review P1.
+        return True
     if getattr(result, "returncode", 1) != 0:
         return True
     return bool((result.stdout or "").strip())
@@ -785,6 +791,19 @@ def reclaim(
                     info.branch,
                     ACTION_SKIP_BARE,
                     "bare worktree — nothing to reclaim",
+                )
+            )
+            continue
+        if not os.path.isdir(info.path):
+            # Prunable worktree: git still lists it but the working directory is gone
+            # (removed out-of-band). Report it instead of crashing on cwd probes.
+            report.entries.append(
+                ReclaimEntry(
+                    info.path,
+                    info.head,
+                    info.branch,
+                    ACTION_SKIP_PRUNABLE,
+                    "working directory missing (prunable) — run 'git worktree prune'",
                 )
             )
             continue

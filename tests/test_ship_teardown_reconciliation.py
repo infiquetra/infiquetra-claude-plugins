@@ -27,6 +27,7 @@ import importlib
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -869,3 +870,91 @@ def test_reclaim_if_idle_aged_removes_cold_skips_recent(
         "a merged+clean worktree with recent activity is skipped (sibling-session guard, KTD8)"
     )
     assert _rp(hot) in _live_worktree_paths(repo)
+
+
+def test_reclaim_reports_prunable_worktree_without_crash(
+    wt_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Code-review P1: a prunable worktree (working dir deleted out-of-band — the exact
+    stale-agent-worktree state reclaim targets) must be reported, never crash the
+    SessionStart hook, and must not stop the sweep from reclaiming healthy candidates."""
+    repo, _bare = wt_repo
+    prunable = tmp_path / "wt-prunable"
+    healthy = tmp_path / "wt-healthy"
+    _wt_git(repo, "worktree", "add", "-b", "feat/prunable", str(prunable), "main")
+    _wt_git(repo, "worktree", "add", "-b", "feat/healthy", str(healthy), "main")
+    _advance_main(repo)  # both heads become strict ancestors of main
+    shutil.rmtree(prunable)  # out-of-band delete: git still lists it as prunable
+
+    report = ST.reclaim(repo, main_ref="main")  # must not raise (FileNotFoundError before fix)
+
+    pruned = [e for e in report.entries if e.action == ST.ACTION_SKIP_PRUNABLE]
+    assert pruned and _rp(Path(pruned[0].path)) == _rp(prunable)
+    assert "prune" in pruned[0].note
+    removed = {_rp(Path(e.path)) for e in report.removed}
+    assert _rp(healthy) in removed, "sweep must continue past the prunable entry"
+    assert _rp(prunable) not in removed
+
+
+def test_worktree_is_dirty_degrades_to_dirty_on_oserror() -> None:
+    """TOCTOU backstop for the same P1: a probe whose cwd vanishes between the isdir
+    guard and the status call degrades to dirty (skip), never an escaped OSError."""
+
+    def exploding_runner(cmd, *, cwd, capture_output, text, timeout):  # noqa: ANN001, ANN202
+        raise FileNotFoundError(f"[Errno 2] No such file or directory: {cwd!r}")
+
+    assert ST._worktree_is_dirty("/nonexistent/worktree-path", exploding_runner) is True
+
+
+def test_AC_6_terminal_transition_not_skippable() -> None:
+    """AC6 (structural half, co-located so the issue's own -k selector collects here —
+    testing-lens finding): teardown is TRANSITIONS[-1], next_transition demands it after
+    branch_delete, and every table carries it. The behavioral half (partial-failure path
+    still reaching an explicit terminal state) lives in tests/test_ship_ceremony.py with
+    its FakeGh rig."""
+    sc = _load_scripts_module("ship_ceremony")
+    assert sc.TRANSITIONS[-1] == "teardown"
+    assert sc.next_transition("branch_delete") == "teardown"
+    assert sc.next_transition("teardown") is None
+    assert "teardown" in sc._RUNNERS
+    assert sc.TRANSITION_TIERS["teardown"] == sc.CeremonyTier.REVERSIBLE
+
+
+def test_teardown_scratch_ref_outside_sanctioned_roots_refused(
+    wt_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Security-review F2: the ceremony's scratch close must refuse to rmtree a manifest
+    ref outside the sanctioned roots (system tempdir / repo) — the victim dir survives
+    and the entry stays open, while a contained scratch ref is removed and closed."""
+    repo, _bare = wt_repo
+    sc = _load_scripts_module("ship_ceremony")
+
+    sanctioned = tmp_path / "sanctioned-tmp"
+    sanctioned.mkdir()
+    victim = tmp_path / "victim"  # outside both sanctioned roots (tempdir is patched)
+    victim.mkdir()
+    (victim / "keep.txt").write_text("precious\n")
+    contained = sanctioned / "scratch-ok"
+    contained.mkdir()
+
+    real_gettempdir = sc.tempfile.gettempdir
+    sc.tempfile.gettempdir = lambda: str(sanctioned)
+    try:
+        assert sc._scratch_ref_contained(str(contained), repo) is True
+        assert sc._scratch_ref_contained(str(victim), repo) is False
+        assert sc._scratch_ref_contained(str(sanctioned), repo) is False, "a root itself"
+        assert sc._scratch_ref_contained(str(repo), repo) is False, "the repo root itself"
+        assert sc._scratch_ref_contained(str(repo / "sub"), repo) is True
+
+        ST.register(repo, "issue-347", "scr-out", kind="scratch", ref=str(victim), opened_by="t")
+        ST.register(repo, "issue-347", "scr-in", kind="scratch", ref=str(contained), opened_by="t")
+        report = ST.reconcile(repo, "issue-347")
+        sc._teardown_attempt_closes({"saga_id": "issue-347"}, report, repo_root=repo, runner=None)
+    finally:
+        sc.tempfile.gettempdir = real_gettempdir
+
+    assert victim.exists() and (victim / "keep.txt").exists(), "uncontained ref must survive"
+    assert not contained.exists(), "contained scratch ref is removed"
+    manifest = ST.read_manifest(repo, "issue-347")
+    assert manifest["scr-out"]["closed_at"] == "", "refused entry stays open (HALT names it)"
+    assert manifest["scr-in"]["closed_at"] != ""

@@ -17,7 +17,6 @@
     "doc-review",
     "code-review",
     "optimize",
-    "outcome-orchestration",
-    "delegation-audit"
+    "outcome-orchestration"
   ]
 }

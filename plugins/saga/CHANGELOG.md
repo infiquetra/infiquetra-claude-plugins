@@ -13,8 +13,10 @@
   latest verdict at the close SHA is a failing verdict), `unsuperseded-fail:<check_id>` (a failing
   verdict was followed by a passing one with no `payload["supersession_reason"]` justifying the
   transition — an unexplained PASS never silently clears a FAIL), `unrecognized-verdict:<check_id>`
-  (a verdict string outside the known vocabulary HALTs rather than being treated as a pass), and
-  `unresolvable-close-sha`. Close-SHA resolution: an explicit `evidence.reviewed_sha` override
+  (a verdict string outside the known vocabulary HALTs rather than being treated as a pass),
+  `unresolvable-close-sha`, and `invalid-identity:<subplot_id>` (a malformed `leaf_saga_id` or
+  `check_id` HALTs cleanly instead of an uncaught exception crashing the reconcile loop).
+  Close-SHA resolution: an explicit `evidence.reviewed_sha` override
   wins; otherwise a `code` node derives it from the PR's pre-merge head commit SHA
   (`outcome_github.head_ref_oid`), never the post-squash merge-commit SHA on `main`. Calls the
   already-shipped `evidence_ledger.verify_chain()` once per evaluation so a tampered chain HALTs

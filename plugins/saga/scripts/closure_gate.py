@@ -34,6 +34,9 @@ PASS. This module is the consumer that closes that gap: it reads the evidence le
 - `unresolvable-close-sha` — `required_checks` is declared but no close SHA (or no `leaf_saga_id`)
   can be resolved for this node.
 - `chain-tamper:<subplot_id>` — `evidence_ledger.verify_chain()` detected a broken/tampered chain.
+- `invalid-identity:<subplot_id>` — a malformed `leaf_saga_id` or `check_id` (e.g. traversal-
+  shaped) was rejected by `evidence_ledger`'s `_safe_name` guard — HALT rather than an uncaught
+  exception crashing the reconcile loop.
 
 Supersession is a `payload["supersession_reason"]` convention on the entry that follows a FAIL —
 not a new ledger entry kind (evidence-ledger plan R10 reserves the open `payload` dict for exactly
@@ -226,15 +229,28 @@ def evaluate(
             [],
         )
 
-    store = evidence_ledger.Store.for_saga(saga_id, repo_root)
+    # A malformed leaf_saga_id or check_id (e.g. a traversal-shaped string) raises
+    # EvidenceLedgerError from `_safe_name` — `OutcomeSpec.validate()` never catches this, since
+    # `evidence` is an open pass-through map it deliberately does not schema-check. HALT rather
+    # than let an uncaught exception crash the reconcile loop (R9's HALT-not-degrade — a mid-loop
+    # crash is the opposite of a clean, named HALT).
+    try:
+        store = evidence_ledger.Store.for_saga(saga_id, repo_root)
+    except evidence_ledger.EvidenceLedgerError as exc:
+        return GateVerdict(sid, False, f"invalid-identity:{sid}", str(exc), [])
+
     try:
         evidence_ledger.verify_chain(store)
     except evidence_ledger.EvidenceLedgerError as exc:
         return GateVerdict(sid, False, f"chain-tamper:{sid}", str(exc), [])
 
-    checks = [
-        _evaluate_check(store, check_id=check_id, close_sha=close_sha) for check_id in required
-    ]
+    try:
+        checks = [
+            _evaluate_check(store, check_id=check_id, close_sha=close_sha) for check_id in required
+        ]
+    except evidence_ledger.EvidenceLedgerError as exc:
+        return GateVerdict(sid, False, f"invalid-identity:{sid}", str(exc), [])
+
     first_failure = next((c for c in checks if not c.satisfied), None)
     if first_failure is not None:
         return GateVerdict(

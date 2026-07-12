@@ -356,6 +356,26 @@ def test_closure_gate_empty_leaf_saga_id_halts(tmp_path: Path) -> None:
     assert verdict.halt_reason == "unresolvable-close-sha"
 
 
+def test_closure_gate_malformed_leaf_saga_id_halts_not_crashes(tmp_path: Path) -> None:
+    """A traversal-shaped leaf_saga_id HALTs cleanly rather than an uncaught EvidenceLedgerError."""
+    node = _node("sub11b", leaf_saga_id="../escape", evidence={"required_checks": ["qa"]})
+
+    verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
+
+    assert not verdict.satisfied
+    assert verdict.halt_reason == "invalid-identity:sub11b"
+
+
+def test_closure_gate_malformed_check_id_halts_not_crashes(tmp_path: Path) -> None:
+    """A traversal-shaped check_id HALTs cleanly rather than an uncaught EvidenceLedgerError."""
+    node = _node("sub11c", evidence={"required_checks": ["../escape"]})
+
+    verdict = GATE.evaluate(node, repo_root=tmp_path, github_runner=_gh({"42": SHA}))
+
+    assert not verdict.satisfied
+    assert verdict.halt_reason == "invalid-identity:sub11c"
+
+
 def test_closure_gate_tamper_detected_halts(tmp_path: Path) -> None:
     node = _node("sub12", evidence={"required_checks": ["qa"]})
     store = _store(tmp_path, node.leaf_saga_id)

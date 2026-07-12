@@ -75,6 +75,7 @@ check at the resolved close SHA and derives one of these named HALT reasons (nev
 | `unrecognized-verdict:<check_id>` | the latest verdict at the close SHA is neither a known passing nor a known failing string — HALT rather than silently treat it as a pass |
 | `unresolvable-close-sha` | `required_checks` is declared but no close SHA (or no `leaf_saga_id`) can be resolved |
 | `chain-tamper:<subplot_id>` | `evidence_ledger.verify_chain()` detected a broken or tampered custody chain |
+| `invalid-identity:<subplot_id>` | a malformed `leaf_saga_id` or `check_id` (e.g. traversal-shaped) was rejected by `evidence_ledger`'s `_safe_name` guard — a clean HALT instead of an uncaught exception crashing the reconcile loop |
 
 `outcome_orchestrator.harvest()` runs this gate as a second, additive check after the GitHub-only
 barrier above is satisfied — a node is never harvested `done` while the gate HALTs.

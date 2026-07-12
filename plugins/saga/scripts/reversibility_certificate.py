@@ -58,6 +58,10 @@ class OpKind(StrEnum):
     SUB_ISSUE_REOPEN = "sub-issue-reopen"
     ISSUE_PROGRESS_COMMENT = "issue-progress-comment"
     PARENT_ISSUE_CLOSE = "parent-issue-close"
+    # issue #347 U3 (KTD7): the certificate authority for ship_teardown.reclaim's
+    # merged-worktree removal. Reversible — a merged-only reclaim leaves the branch/
+    # commit on origin/main, so the worktree can be re-created via ``git worktree add``.
+    WORKTREE_RECLAIM_MERGED = "worktree-reclaim-merged"
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +204,25 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         abort_cost=None,
         always_operator=False,
         key_recipe="{op_kind}:{repo}#{issue_number}:",
+    ),
+    # issue #347 U3 (KTD7): merged-worktree reclamation. REVERSIBLE — the inverse is
+    # re-creating the worktree via ``git worktree add`` from the surviving merged
+    # branch/main (a merged-only reclaim never removes the branch or its commits from
+    # origin/main). Everything not enumerated here keeps the default-GATE verdict.
+    OpKind.WORKTREE_RECLAIM_MERGED: OpFacts(
+        op_kind=OpKind.WORKTREE_RECLAIM_MERGED,
+        tier=Tier.REVERSIBLE,
+        inverse=InverseDescriptor(
+            op_kind=OpKind.WORKTREE_RECLAIM_MERGED,
+            arg_derivation=(
+                "re-create the removed worktree via `git worktree add <path> <branch>` from "
+                "the surviving merged branch or main — a merged-only reclaim leaves the branch "
+                "and its commits on origin/main, so nothing is lost by the removal"
+            ),
+        ),
+        abort_cost=None,
+        always_operator=False,
+        key_recipe="{op_kind}:{worktree_path}",
     ),
     # --- Additive tier (R6) ---
     OpKind.ISSUE_PROGRESS_COMMENT: OpFacts(

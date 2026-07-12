@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.77.0"
-    )  # ceremony hazard preflight, deterministic merge-watcher, ship --undo rollback (#346)
+        plugin_json["version"] == "0.78.0"
+    )  # ship ends in teardown: opened-resource manifest, closing-count gate, immutable receipt, worktree reclaim (#347)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

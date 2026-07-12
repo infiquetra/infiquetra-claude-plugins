@@ -43,6 +43,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import subprocess  # nosec B404
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -62,6 +64,8 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import ceremony_hazards  # noqa: E402
 import merge_watcher  # noqa: E402
+import ship_receipt  # noqa: E402
+import ship_teardown  # noqa: E402
 import ship_undo  # noqa: E402
 
 
@@ -129,6 +133,7 @@ TRANSITIONS: tuple[str, ...] = (
     "checkout_main",
     "pull",
     "branch_delete",
+    "teardown",
 )
 
 TRANSITION_TIERS: Mapping[str, str] = {
@@ -139,6 +144,12 @@ TRANSITION_TIERS: Mapping[str, str] = {
     "checkout_main": CeremonyTier.REVERSIBLE,
     "pull": CeremonyTier.REVERSIBLE,
     "branch_delete": CeremonyTier.ALWAYS_OPERATOR,
+    # teardown (issue #347, KTD3): the terminal gate. Appended after branch_delete so
+    # next_transition() structurally refuses to report the ceremony complete until it
+    # has run (AC6 — no configuration bypass). tier=REVERSIBLE is honest: teardown only
+    # closes resources whose removal is reversible (merged worktrees, scratch,
+    # already-merged draft PRs) and HALTs on anything else.
+    "teardown": CeremonyTier.REVERSIBLE,
 }
 
 
@@ -283,6 +294,69 @@ def _saga_short_id(saga: Mapping[str, Any]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Opened-resource manifest wiring (issue #347, KTD9) — register-on-open at the
+# ceremony's own resource-opening sites (branch push, PR create) and close-on-close
+# at the sites that close them (merge lands the PR, branch_delete removes the branch).
+# The manifest is ship_teardown.py's per-saga sidecar; the terminal ``teardown``
+# transition reconciles it. Resource ids are deterministic per (kind, ref) so the
+# close site can address exactly what the open site registered.
+# --------------------------------------------------------------------------- #
+
+
+def _branch_resource_id(branch: str) -> str:
+    return f"ceremony-branch:{branch}"
+
+
+def _pr_resource_id(pr_number: str) -> str:
+    return f"ceremony-pr:{pr_number}"
+
+
+def _register_branch(
+    saga: Mapping[str, Any], branch: str, *, repo_root: Path, opened_by: str
+) -> None:
+    """Register the pushed feature branch on the opened-resource manifest (R1). Shared
+    by both push sites — ``_do_commit`` (plain ``run`` flow) and ``start()``
+    (front-loaded) — since the branch is 'opened' the moment either pushes it. Idempotent
+    per resource id (a re-push refreshes the still-open entry)."""
+    ship_teardown.register(
+        repo_root,
+        str(saga["saga_id"]),
+        _branch_resource_id(branch),
+        kind="branch",
+        ref=branch,
+        opened_by=opened_by,
+    )
+
+
+def _register_pr(
+    saga: Mapping[str, Any], pr_number: str, *, repo_root: Path, opened_by: str
+) -> None:
+    """Register a PR this ceremony opens on the opened-resource manifest (R1)."""
+    ship_teardown.register(
+        repo_root,
+        str(saga["saga_id"]),
+        _pr_resource_id(str(pr_number)),
+        kind="draft_pr",
+        ref=str(pr_number),
+        opened_by=opened_by,
+    )
+
+
+def _close_if_registered(
+    saga: Mapping[str, Any], resource_id: str, *, repo_root: Path, evidence: str
+) -> None:
+    """Close a manifest entry the ceremony owns, but only if it was registered —
+    ``ship_teardown.close`` is fail-loud on an unknown id by design, yet a ceremony
+    that predates this wiring (or a forced-state test jump) may legitimately have no
+    entry to close. Absence here is not an accounting gap: reconcile still sees a truly
+    unclosed entry as open. So this closes when present and no-ops when absent, never
+    inventing an entry and never crashing the mutating transition it rides on."""
+    saga_id = str(saga["saga_id"])
+    if resource_id in ship_teardown.read_manifest(repo_root, saga_id):
+        ship_teardown.close(repo_root, saga_id, resource_id, evidence=evidence)
+
+
+# --------------------------------------------------------------------------- #
 # Transition runners — one function per TRANSITIONS entry. Each returns nothing on
 # success and raises TransitionFailedError on failure; the caller (``run``) is
 # responsible for not advancing recorded state past a failed transition.
@@ -334,8 +408,14 @@ def _do_commit(
     """Push the current branch. The scaffold commit itself already exists — from
     ``/work``'s Phase 1.4 mint (KTD4) or from the operator's own commits — this
     transition's job is making sure it is on the remote. Returns the rollback-
-    manifest fields (R6) for this transition."""
-    return _push_and_record_commit_fields(repo_root, runner=runner)
+    manifest fields (R6) for this transition.
+
+    Register-on-open (R1/KTD9): the plain ``run`` flow's push site — the branch is
+    'opened' here, so it lands on the opened-resource manifest for teardown to account
+    (``start()`` is the front-loaded counterpart)."""
+    fields = _push_and_record_commit_fields(repo_root, runner=runner)
+    _register_branch(saga, fields["branch"], repo_root=repo_root, opened_by="commit")
+    return fields
 
 
 def _do_open_pr(
@@ -387,6 +467,9 @@ def _do_open_pr(
         runner=runner,
     )
     pr_number = result.stdout.strip().rsplit("/", 1)[-1]
+    # Register-on-open (R1/KTD9): the PR this transition just created lands on the
+    # opened-resource manifest; _do_merge closes it once the merge lands.
+    _register_pr(saga, pr_number, repo_root=repo_root, opened_by="open_pr")
     _saga_cli(
         [
             "save",
@@ -432,6 +515,14 @@ def _do_merge(
     merge_sha = _run(
         ["git", "ls-remote", "origin", "refs/heads/main"], cwd=repo_root, runner=runner
     ).stdout.split()[0]
+    # Close-on-close (KTD9): the merge landed the PR, so the draft_pr manifest entry
+    # this ceremony opened is now closed, evidenced by the squash-merge sha.
+    _close_if_registered(
+        saga,
+        _pr_resource_id(pr_number),
+        repo_root=repo_root,
+        evidence=f"merged: {merge_sha}",
+    )
     return {
         "pr_number": pr_number,
         "branch": saga.get("branch"),
@@ -465,7 +556,111 @@ def _do_branch_delete(
     head_sha = _run(["git", "rev-parse", branch], cwd=repo_root, runner=runner).stdout.strip()
     _run(["git", "branch", "-d", branch], cwd=repo_root, runner=runner)
     _run(["git", "push", "origin", "--delete", branch], cwd=repo_root, runner=runner, check=False)
+    # Close-on-close (KTD9): the branch this ceremony opened is now deleted, evidenced
+    # by the head sha it carried at deletion (also the resurrection target for undo).
+    _close_if_registered(
+        saga,
+        _branch_resource_id(branch),
+        repo_root=repo_root,
+        evidence=f"deleted head: {head_sha}",
+    )
     return {"branch": branch, "head_sha": head_sha}
+
+
+def _teardown_ceremony_summary(saga: Mapping[str, Any], *, repo_root: Path) -> dict[str, Any]:
+    """Build the ``ceremony`` block the receipt records (KTD5): what shipped — the PR
+    ref, the branch, the final transition, and (best-effort) the squash-merge sha pulled
+    from the rollback manifest's ``merge`` entry. A missing merge sha is not fatal (a
+    task-kind ceremony that never merged still tears down and mints a receipt)."""
+    pr_refs = saga.get("pr_refs") or []
+    summary: dict[str, Any] = {
+        "pr": pr_refs[-1] if pr_refs else "",
+        "branch": saga.get("branch") or "",
+        "final_transition": "teardown",
+    }
+    try:
+        for entry in ship_undo.read_manifest(repo_root, str(saga["saga_id"])):
+            if entry.get("transition") == "merge" and entry.get("merge_sha"):
+                summary["merge_sha"] = entry["merge_sha"]
+                break
+    except ship_undo.ShipUndoError:
+        pass
+    return summary
+
+
+def _teardown_attempt_closes(
+    saga: Mapping[str, Any],
+    report: ship_teardown.ReconcileReport,
+    *,
+    repo_root: Path,
+    runner: Callable[..., Any] | None,
+) -> None:
+    """Best-effort authorized close of the ceremony's own still-open resources (KTD9),
+    so a ceremony that legitimately opened a merged worktree or a scratch dir can reach
+    a clean teardown without operator intervention.
+
+    * scratch — remove the directory, then close the manifest entry with evidence.
+    * worktree — route through ``ship_teardown.reclaim`` (the certificate-gated,
+      merged+clean-only single sanctioned removal primitive, U3); close each manifest
+      entry whose worktree ``reclaim`` actually removed. An unmerged/dirty/gated worktree
+      is left in place by ``reclaim`` and stays open — the re-reconcile then HALTs on it,
+      which is the point (teardown never force-closes what it cannot safely remove).
+
+    Only ``open`` entries are touched; a ``discrepancy`` (marked closed but still alive)
+    is a different failure the operator must resolve, never silently re-closed here."""
+    saga_id = str(saga["saga_id"])
+    open_worktrees = [
+        e for e in report.entries if e.status == ship_teardown.STATUS_OPEN and e.kind == "worktree"
+    ]
+    open_scratch = [
+        e for e in report.entries if e.status == ship_teardown.STATUS_OPEN and e.kind == "scratch"
+    ]
+
+    for entry in open_scratch:
+        path = Path(entry.ref)
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            ship_teardown.close(
+                repo_root, saga_id, entry.resource_id, evidence=f"scratch removed: {entry.ref}"
+            )
+
+    if open_worktrees:
+        reclaim_report = ship_teardown.reclaim(repo_root, runner=runner)
+        removed = {os.path.realpath(e.path) for e in reclaim_report.removed}
+        for entry in open_worktrees:
+            if os.path.realpath(entry.ref) in removed:
+                ship_teardown.close(
+                    repo_root,
+                    saga_id,
+                    entry.resource_id,
+                    evidence="reclaimed via ship_teardown.reclaim",
+                )
+
+
+def _do_teardown(
+    saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
+) -> dict[str, Any]:
+    """The terminal gate (issue #347, R3/R4/KTD3). Reconcile the opened-resource
+    manifest against reality; if anything is still open, attempt an authorized close of
+    the ceremony's own resources and reconcile again. A non-zero closing count raises
+    ``ship_receipt.TeardownBlockedError`` naming every blocker — and because this raises
+    from inside ``_RUNNERS[upcoming]``, it lands BEFORE ``run()``'s ``ship_undo.append_entry``
+    and ``saga.py save``, so the ledger is provably unadvanced (the #526/#346 refusal
+    shape). A zero count mints the immutable receipt (``ship_receipt.mint``, write-once)
+    and returns its path in ``extra``."""
+    saga_id = str(saga["saga_id"])
+    report = ship_teardown.reconcile(repo_root, saga_id, runner=runner)
+    if not report.clean:
+        _teardown_attempt_closes(saga, report, repo_root=repo_root, runner=runner)
+        report = ship_teardown.reconcile(repo_root, saga_id, runner=runner)
+    if not report.clean:
+        # Raised before append_entry + save (see run()): ledger provably unadvanced.
+        raise ship_receipt.TeardownBlockedError(saga_id, report)
+    receipt_path = ship_receipt.mint(
+        repo_root, saga_id, report, _teardown_ceremony_summary(saga, repo_root=repo_root)
+    )
+    return {"branch": saga.get("branch"), "receipt_path": str(receipt_path)}
 
 
 _RUNNERS: Mapping[str, Callable[..., Mapping[str, Any] | None]] = {
@@ -476,6 +671,7 @@ _RUNNERS: Mapping[str, Callable[..., Mapping[str, Any] | None]] = {
     "checkout_main": _do_checkout_main,
     "pull": _do_pull,
     "branch_delete": _do_branch_delete,
+    "teardown": _do_teardown,
 }
 
 
@@ -608,7 +804,13 @@ def run(
         runner=runner,
     )
     confirmation_note = ", operator-confirmed" if operator_confirmed == upcoming else ""
-    return f"ran transition {upcoming!r} (tier={TRANSITION_TIERS[upcoming]}{confirmation_note})"
+    receipt_note = ""
+    if extra.get("receipt_path"):
+        receipt_note = f"; ship receipt minted at {extra['receipt_path']}"
+    return (
+        f"ran transition {upcoming!r} (tier={TRANSITION_TIERS[upcoming]}"
+        f"{confirmation_note}){receipt_note}"
+    )
 
 
 def start(
@@ -638,6 +840,9 @@ def start(
         )
     commit_fields = _push_and_record_commit_fields(repo_root, runner=runner)
     branch = commit_fields["branch"]
+    # Register-on-open (R1/KTD9): the front-loaded push site — the branch is 'opened'
+    # here, the counterpart to _do_commit's registration on the plain run flow.
+    _register_branch(saga, branch, repo_root=repo_root, opened_by="start")
 
     plan_path = saga.get("plan_path") or ""
     body = f"Plan: {plan_path}" if plan_path else ""
@@ -648,6 +853,10 @@ def start(
     )
     pr_view = _run(["gh", "pr", "view", branch, "--json", "number"], cwd=repo_root, runner=runner)
     pr_number = json.loads(pr_view.stdout)["number"]
+    # Register-on-open (R1/KTD9): the draft PR start() just opened; _do_open_pr's
+    # existing-draft path later flips it ready without re-registering, and _do_merge
+    # closes it once the merge lands.
+    _register_pr(saga, pr_number, repo_root=repo_root, opened_by="start")
 
     _saga_cli(
         [
@@ -832,6 +1041,8 @@ def main(argv: list[str] | None = None) -> int:
         ceremony_hazards.HazardError,
         merge_watcher.MergeWatcherError,
         ship_undo.ShipUndoError,
+        ship_teardown.ShipTeardownError,
+        ship_receipt.ShipReceiptError,
     ) as exc:
         print(f"ship_ceremony: {exc}", file=sys.stderr)
         return 1

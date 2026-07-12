@@ -18,6 +18,15 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/compact_spore_session_hook.py\""
           }
         ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ship_teardown.py\" reclaim --if-idle 24h --quiet"
+          }
+        ]
       }
     ],
     "PreCompact": [

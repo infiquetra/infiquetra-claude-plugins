@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.78.0] - 2026-07-12
+
+### Added - ship ends in teardown: opened-resource manifest, closing-count gate, immutable receipt, worktree reclaim (#347)
+
+- `ship_teardown.py`: opened-resource manifest (`opened_resources.json`) registers every resource the
+  ceremony opens (branch, worktree, background session, scratch, draft PR) at open time; reconcile
+  derives a closing count by reality-checking each entry per kind (worktree paths via git, branches
+  via git rev-parse, scratch via filesystem, draft_pr via gh, background_session only via explicit
+  close + evidence), and flags entries marked closed whose resources still exist as discrepancies
+  (open, not trusted).
+- `ship_receipt.py`: immutable receipt writer/reader — `mint()` refuses if closing count is non-zero
+  (halts before advancing the ledger, matching #526/#346 gate shape), writes
+  `ship_receipt.json` via `O_CREAT|O_EXCL` then `chmod 0444` (re-mint raises `ReceiptExistsError`),
+  records every opened resource and its closed state; reader validates schema and never writes.
+- `ship_ceremony.py` wiring: appends `teardown` as the terminal, non-skippable transition (tier
+  `reversible`) after `branch_delete`; `next_transition` names `teardown` as the next step even for
+  pre-0.78.0 ceremonies sitting at `branch_delete` (compatibility: old ceremonies regain one pending
+  transition); new `_do_teardown` reconciles opened resources with reality probes, HALTs naming every
+  blocker if closing count is non-zero, otherwise mints receipt and declares done; wiring
+  register-on-open for branch, draft_pr, and worktrees (register at push/create, close at merge/delete).
+- `reclaim` subcommand: sweeps `git worktree list --porcelain` (every linked worktree except primary
+  and the running worktree), skips dirty trees and unmerged branches, removes merged-branch worktrees
+  under a new `reversibility_certificate.OpKind.WORKTREE_RECLAIM_MERGED` authorize_write verdict,
+  supports `--if-idle <duration>` flag (exits 0 "not idle" if newest mtime across saga sidecars /
+  worktree registry is younger than bound; candidate worktrees with recent activity within the bound
+  are skipped even if merged+clean). One additive SessionStart hook entry invokes
+  `reclaim --if-idle 24h --quiet`.
+- `ship_undo.py`: adds no-op handler for the new `teardown` transition (receipt is forward-only truth;
+  undo must not crash on the new transition name).
+
 ## [0.77.0] - 2026-07-11
 
 ### Added - ceremony hazard preflight, deterministic merge-watcher, ship --undo rollback (#346)

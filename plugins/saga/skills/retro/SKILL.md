@@ -287,6 +287,21 @@ into the interview and retro doc as **PROPOSE-DIFF-AND-WAIT** input. `/retro` re
 advisory: it writes no saga tick, and even an approved recipe proposal must be handed to a separate
 authorized implementation path.
 
+**1.10 Tier-efficacy evidence (read-only, issue #402).** Beside the R24 realized-economics pass (1.7),
+gather the cost-vs-outcome evidence the Phase-5(e) tier-efficacy proposal needs: run
+`scripts/spend_retro.py report --root . --json` for the repo-wide tier-mix / premium-spend-share
+aggregation, then join it per work-shape against each check's verdict history from
+`scripts/evidence_ledger.py`'s `latest()` reader (a `superseded_fail` or a multi-attempt history is a
+nonzero "marginal findings"/"rework" signal; a run whose only attempt passed clean is zero). Assemble
+the joined rows as `tier_efficacy.RunRecord`s and pass them to
+`scripts/tier_efficacy.py propose_downgrades(history)` — this is a **reader only**, it never proposes
+or applies anything itself; Phase 5(e) below is where a resulting proposal is surfaced.
+
+**Zero-data contract** (same as 1.6/1.7/1.9): a work-shape with no recorded runs, or fewer than the
+resolver's `min_samples` threshold, contributes no proposal — carry that as "insufficient evidence yet,"
+never a fabricated recommendation. Both real committed `docs/outcomes/*/outcome-spec.json` examples in
+this repo roll up empty today, so expect "no data yet" until real telemetry accrues.
+
 ---
 
 ## Phase 2 — Structured interview
@@ -378,6 +393,14 @@ The passes neither source had, all gated (`references/retro-passes.md`):
   `~/.claude` directives** (global carries the cross-project warning, per the contract).
 - **(d) memory pruning** — propose curation of the `.claude` auto-memory (`MEMORY.md` + topic files) per
   the journal-rule + staleness + contradiction sweeps.
+- **(e) tier-efficacy (issue #402)** — when Phase 1.10's `propose_downgrades` returns one or more
+  `DowngradeProposal`s (a work-shape running consistently above baseline tier with zero marginal
+  findings across enough runs), render `scripts/tier_efficacy.py`'s diff preview against
+  `.saga/tier-defaults.json` and show it with `AskUserQuestion` (apply / skip / modify) — **exactly**
+  like (b)/(c), never an auto-append. This pass **never calls** `tier_defaults.write_tier_default()`
+  itself; an "apply" answer means the operator (or a follow-up `/plan` run) performs the write-back,
+  not this pass. No proposal (insufficient samples or mixed cost-vs-outcome evidence) is a normal,
+  silent no-op — never force a downgrade from thin evidence.
 
 A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (`team-execution`
 ("team execution") / `cc-workflows-ultracode` ("dynamic workflows")) per
@@ -438,3 +461,9 @@ It never blocks the router.
   tree for parroting count, disposition rate, and the adjudicated verified ratio (Phase 1.8).
   Zero-data reports "no data yet"; read-only and advisory-only (R8/R12); `--json` for
   machine-readable output.
+- `../../scripts/spend_retro.py` — cross-run spend aggregator: tier-mix and premium-spend-share
+  across every committed `docs/outcomes/*/outcome-spec.json` (Phase 1.10). Read-only; `report
+  --json` for machine-readable output.
+- `../../scripts/tier_efficacy.py` — the tier-efficacy pass's proposal engine (Phase 1.10 reads,
+  Phase 5(e) proposes). `propose_downgrades()` never writes; `render_diff_preview()` only reads
+  `.saga/tier-defaults.json` to show what would change.

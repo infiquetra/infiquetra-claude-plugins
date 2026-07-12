@@ -25,7 +25,8 @@
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#396",
-        "sub_issue": 396
+        "sub_issue": 396,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/569"
       },
       "worktree": {},
       "evidence": {},

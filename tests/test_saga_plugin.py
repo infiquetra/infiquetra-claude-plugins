@@ -400,8 +400,9 @@ def test_code_review_engine_merge_contract() -> None:
     assert "saga.py" in skill_doc
     assert "--review-paths" in skill_doc
     assert "--orchestration-mode" in skill_doc
-    # Own-dir durable artifact path (NOT docs/reviews/).
-    assert "docs/code-reviews/" in skill_doc
+    # Own-dir durable artifact path (evidence ledger, #398) (NOT docs/reviews/).
+    assert "docs/evidence/" in skill_doc
+    assert "docs/reviews/" in skill_doc and "handoff/sdlc classifiers" in skill_doc
     # Operator-choice citation at the plugin-root path + the 3 backend enums.
     assert "references/operator-choice.md" in skill_doc
     for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
@@ -1153,8 +1154,10 @@ def test_qa_engine_merge_contract() -> None:
     )
     assert "The designed routing map for `/loop`" not in corpus
 
-    # --- MECHANISM FLOOR 11: own durable artifact dir (docs/qa/), no classifier collision. ---
-    assert "docs/qa/" in skill_doc and "docs/qa/" in report_doc
+    # --- MECHANISM FLOOR 11: own durable artifact dir (evidence ledger, #398),
+    # no classifier collision. ---
+    assert "docs/qa/" in skill_doc
+    assert "docs/evidence/" in report_doc and "classifier collision" in report_doc
 
     # --- Operator-choice citation at the plugin-root path + the 3 backend enums (large/parallel
     # verification is OFFERED, never auto-spawned; generic agents only — no agents/ dir). ---

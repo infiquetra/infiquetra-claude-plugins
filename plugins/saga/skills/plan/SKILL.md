@@ -243,6 +243,22 @@ vector). Add `deepened: YYYY-MM-DD` to frontmatter when the plan was substantive
 Ask the routing intent (`AskUserQuestion`, or channel-inline): **plan-only / pr / merge /
 nonprod-deploy**. This becomes the saga `--destination`.
 
+**Deploy-autonomy follow-up (only when destination is `nonprod-deploy`).** When — and only when —
+the operator picks `nonprod-deploy`, ask one more question (`AskUserQuestion`, or channel-inline) to
+capture the gate-or-auto posture at the saga→deploy edge (issue #395, KTD3). Skip this question for
+every other destination.
+
+> **When a merged item reaches deploy, should nonprod promotion happen automatically, or wait for
+> your explicit confirmation each time?**
+> **A) Gate** (default, pre-select) — deploy asks for explicit confirmation before promoting.
+> **B) Auto** — deploy may auto-promote to **nonprod only** (staging/production always confirm).
+
+This becomes the saga `--deploy-autonomy <gate|auto>`. It is authored **once** here and read — never
+re-asked — by `deploy_handoff.offer` at handoff time; there is deliberately no way to widen it to
+`auto` at deploy time. **Pre-select Gate**: a missing or gate posture can never auto-fire, which is
+the safe failure direction (R5). Omit `--deploy-autonomy` entirely for any non-deploy destination —
+`deploy_handoff` reads an absent posture as `gate`.
+
 ### 5.2 Offer the execution backend
 
 Offer the execution backend per `references/operator-choice.md` (the decision contract). There are
@@ -444,6 +460,7 @@ python3 plugins/saga/scripts/saga.py save \
   --lifecycle-phase plan \
   --plan-path docs/plans/YYYY-MM-DD-<topic>-plan.md \
   --destination <plan-only|pr|merge|nonprod-deploy> \
+  --deploy-autonomy <gate|auto>   # ONLY when --destination nonprod-deploy (Phase 5.1); else omit \
   --adr-refs "ADR-NNNN|ADR-MMMM" \
   --decisions "KTD1: rationale. KTD2: rationale." \
   --orchestration-mode <inline|team-execution|cc-workflows-ultracode> \
@@ -476,7 +493,8 @@ recommended-vs-chosen on this decision (R12 override-rate telemetry); `orchestra
 auto-derives from `--orchestration-mode`, so the only added burden is naming the recommendation.
 
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc work pass
-`--kind task --id <slug>`. `--lifecycle-phase plan`, `--plan-path`, `--destination`, `--adr-refs`,
+`--kind task --id <slug>`. `--lifecycle-phase plan`, `--plan-path`, `--destination`,
+`--deploy-autonomy` (only when `--destination nonprod-deploy` — Phase 5.1), `--adr-refs`,
 `--decisions` (the KTD mirror), `--orchestration-mode`, `--orchestration-recommended`, and (for
 ultracode) `--orchestration-ref` carry the `/plan` consumer row from `references/saga-spec.md` §11.
 When resuming (Phase 0.3 matched), this appends a tick to the existing saga directory rather than

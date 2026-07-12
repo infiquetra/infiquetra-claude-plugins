@@ -140,6 +140,39 @@ def build_handoff_envelope(
     }
 
 
+def build_deploy_handoff_envelope(
+    saga_id: str,
+    *,
+    payload: str = "gate",
+    offered_by: str = "",
+    pr_refs: list[str] | None = None,
+    token: str | None = None,
+    now: str | None = None,
+) -> dict[str, object]:
+    """Thin delegator to ``deploy_handoff.build_envelope`` (issue #395, KTD1).
+
+    The saga -> deploy edge gets its own single-writer sidecar module
+    (``deploy_handoff.py``); this builder is the only seam ``handoff_envelope.py`` exposes onto it,
+    keeping the mission-control envelope (``build_handoff_envelope`` above) byte-untouched. The
+    import is lazy so loading this module for the mission-control path never pulls the deploy edge
+    in — and ``deploy_handoff`` is a sibling script resolved via a ``sys.path`` insert, not a
+    cross-plugin import (R1).
+    """
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import deploy_handoff  # noqa: PLC0415
+
+    return deploy_handoff.build_envelope(
+        saga_id,
+        payload=payload,
+        offered_by=offered_by,
+        pr_refs=pr_refs,
+        token=token,
+        now=now,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default=None)

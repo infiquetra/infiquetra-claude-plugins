@@ -125,6 +125,7 @@ construct a `Saga` (no default); all others have the listed default.
 | `orchestration_downgrade` | str | — | `""` | One-line capability-portable downgrade note (R11). Set on an off-host resume when the Workflow tool is unavailable and the orchestration tier recompiled DOWN (unit specs + per-unit tiers preserved); empty on a host that ran the authored tier. Empty on older sagas. |
 | `issue_ref` | str | — | `""` | `owner/repo#N` pointer; empty for plan-only / pre-issue work. |
 | `destination` | enum | — | `plan-only` | Routing intent — **MUST** be in `DESTINATIONS`. Mirrors `lifecycle_state`. |
+| `deploy_autonomy` | enum | — | `""` | Gate-or-auto posture for the saga→deploy edge (issue #395, KTD3). One of `""`/`gate`/`auto`. Authored once at `/plan` (Phase 5.1, only when `destination=nonprod-deploy`); read — never re-asked — by `deploy_handoff.offer`. Carried forward like `destination`. Empty on older sagas and non-deploy destinations; `deploy_handoff` reads absent/empty as the safe `gate` default (a missing posture can never auto-fire). Mirrored into `state.json.sagas[*]`. |
 | `round` | int | — | `0` | Current PR/iteration round. |
 | `phase` | int | — | `0` | Current numeric phase within the work plan. |
 | `progress_pct` | int | — | `0` | Coarse progress (display only). |
@@ -492,7 +493,7 @@ this table is the wiring contract for their own queued items.
 
 | Command | Reads | Writes (`save`) |
 |---|---|---|
-| **/plan** | `scan` (offer "resume existing?" before minting — §2.3) | `lifecycle_phase=plan`, `plan_path`, `destination`, `adr_refs`; `## Decisions` = KTDs. |
+| **/plan** | `scan` (offer "resume existing?" before minting — §2.3) | `lifecycle_phase=plan`, `plan_path`, `destination`, `deploy_autonomy` (Phase 5.1 follow-up, only when `destination=nonprod-deploy`), `adr_refs`; `## Decisions` = KTDs. |
 | **/work** | `restore` (rehydrate `round`/`phase`/`checks_run`/`next_step`) | primary writer: per-phase ticks, round bump (`rounds_seen`), `checks_run`, `work_session_paths`, `issue_ref` adoption, `status=done` at completion. |
 | **/code-review** | the diff + `scan`/`restore` (the existing work-thread) | review-track consumer: appends `review_paths` (append-only, never mints); **never advances `lifecycle_phase`** (preserves it). |
 | **/qa** | `restore` (the work-thread) | qa-track consumer: writes `qa_paths`; on PASS advances `lifecycle_phase` `work`→`qa`; on FAIL keeps `lifecycle_phase=work`. Never mints. |

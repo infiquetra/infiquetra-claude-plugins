@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.79.0] - 2026-07-12
+
+### Added - positive handoff protocol at saga -> deploy boundary: ack envelope, autonomy posture, dropped-baton reconcile (#395)
+
+- `deploy_handoff.py`: new sidecar module minting handoff-ack envelopes at the saga -> deploy edge
+  (distinct from mission-control envelope). Envelope schema carries ack token, gate-or-auto payload,
+  offer timestamp/saga-id/pr-refs; ack side records acknowledgment token + timestamp + identity +
+  evidence. Mint via `offer` (token via `secrets.token_hex`), accept via `accept` (write-once, raises
+  named errors for double-accept / no-offer / token mismatch / empty identity or evidence);
+  `authorize_promotion` consults the payload (gate blocks auto-promotion pending explicit confirmation,
+  auto authorizes nonprod promotion only, gate payloads never silently overridden to auto-fire).
+  Sidecar storage at `.claude/saga/sagas/<saga_id>/deploy_handoff.json` per KTD2. `reconcile` reads
+  per-saga or `--all` sweep, derives `handed-off-unacknowledged` for offers without acks (dropped
+  baton detection), lists acked or no-handoff scenarios. Exit-code convention: 0 = clean/no-handoff,
+  1 = unacknowledged/error.
+- `handoff_envelope.py` gains thin delegating builder: calls `deploy_handoff.py offer()` to mint the
+  envelope, delegates accept/authorize-promotion reads to deploy script (KTD1 — keeps
+  mission-control envelope untouched, avoids cross-plugin Python import, keeps saga script as the
+  single writer).
+- `saga.py` field: new optional `--deploy-autonomy {gate,auto}` flag on `save` (persisted in saga
+  record). Captured once at `/plan` Phase 5.1 as a follow-up only when destination is
+  `nonprod-deploy`; absent -> `gate` (safe direction — a missing posture can never auto-fire, per
+  R5). Envelope reads `saga.deploy_autonomy or "gate"` at offer time and never re-asks (R2, KTD3).
+- Handoff skill docs gain "Deploy edge" section documenting the offer/ack contract and gate-or-auto
+  carriage alongside the existing mission-control boundary language; `/work` hard boundary language
+  preserved — merge stays a confirmed git op `/work` owns, advisory `/qa` routing intact (AC7).
+
 ## [0.78.0] - 2026-07-12
 
 ### Added - ship ends in teardown: opened-resource manifest, closing-count gate, immutable receipt, worktree reclaim (#347)

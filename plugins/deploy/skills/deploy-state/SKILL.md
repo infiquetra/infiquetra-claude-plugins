@@ -55,8 +55,47 @@ Durable evidence belongs in the repository:
 Runtime scratch belongs under ignored local state such as `.claude/saga/` or a
 deployment-specific cache. Do not commit raw API responses or validator JSON.
 
+## Accepting a saga handoff
+
+When promoting on behalf of a saga-tracked item, `saga`'s `/work` mints an **offer** (an ack
+token + a gate-or-auto payload) at or after merge via `plugins/saga/scripts/deploy_handoff.py
+offer`. Ownership is not considered transferred until `deploy` explicitly **acknowledges (ack)**
+it — an offer alone is never read as "done".
+
+1. Read the offer before promoting:
+
+   ```bash
+   python3 plugins/saga/scripts/deploy_handoff.py read --saga-id <saga-id>
+   ```
+
+2. Record the write-once ack once you take the item:
+
+   ```bash
+   python3 plugins/saga/scripts/deploy_handoff.py accept \
+     --saga-id <saga-id> --token <token-from-offer> \
+     --by <identity> --evidence <durable-evidence-e.g.-PR-or-tag-url>
+   ```
+
+   A double-accept, an accept without a matching offer, or a stale (superseded) token is refused.
+
+3. **Consult `authorize_promotion` before promoting** — do not decide gate-vs-auto by convention.
+   The offer's payload is `gate` or `auto`, captured once at saga intent time and carried
+   unmodified with the offer:
+   - `gate` **always** blocks pending explicit operator confirmation. A `gate` payload is never
+     silently overridden to auto-fire, regardless of environment.
+   - `auto` authorizes unattended promotion for `nonprod` only; `staging` and `production` always
+     require explicit confirmation regardless of payload.
+4. An unacknowledged offer reads `handed-off-unacknowledged` on
+   `deploy_handoff.py reconcile --saga-id <saga-id>` (or `--all` for a sweep) — treat that as a
+   dropped baton, not a clean state, and accept it before proceeding.
+
+This ack contract is scoped to the saga -> deploy edge and does not change tag-promotion
+mechanics, environment model, or the confirmation requirements in "Deployment Workflow" above.
+
 ## Script Helpers
 
 - `plugins/deploy/scripts/mint_tag.py`: build and optionally push policy tags.
 - `plugins/deploy/scripts/query_deployments.py`: show status and drift.
 - `plugins/deploy/scripts/preview_release_notes.py`: summarize candidate changes.
+- `plugins/saga/scripts/deploy_handoff.py`: read/accept a saga's deploy-handoff offer and consult
+  `authorize_promotion` (see "Accepting a saga handoff" above).

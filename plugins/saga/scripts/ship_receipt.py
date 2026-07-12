@@ -48,10 +48,10 @@ import ship_teardown  # noqa: E402
 SAGAS_DIR = ship_teardown.SAGAS_DIR
 RECEIPT_NAME = "ship_receipt.json"
 
-# Duplicated (not imported) from ship_teardown.py by house convention — each
-# sidecar module stays dependency-free on the saga_id validation regex itself,
-# even though it happens to share ship_teardown's helper here for DRYness of the
-# storage location. The regex is intentionally the same value.
+# Re-declared rather than referencing ship_teardown._SAGA_ID_RE, which is a private
+# (underscore) helper — this module already depends on ship_teardown for the
+# reconcile/manifest API, so the copy is about not reaching into a sibling's private
+# names, not decoupling. The regex is intentionally the same value.
 _SAGA_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 _REQUIRED_TOP_KEYS = ("saga_id", "minted_at", "opened", "closed", "ceremony")

@@ -34,8 +34,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import closure_gate  # noqa: E402  (after the sys.path shim, by design)
 import manifest_store  # noqa: E402
-import outcome_github  # noqa: E402  (after the sys.path shim, by design)
+import outcome_github  # noqa: E402
 import outcome_spec  # noqa: E402
 import outcome_store  # noqa: E402
 
@@ -149,6 +150,7 @@ def harvest(
     github_runner: Callable[..., Any] | None = None,
     child_state_reader: ChildStateReader | None = None,
     at: str = "",
+    repo_root: Path = Path("."),
 ) -> list[str]:
     """Run the barrier over the spec and materialize each newly-satisfied contract as a success
     completion event in the store. Returns the newly-harvested subplot ids (R9/R10/R11).
@@ -156,6 +158,12 @@ def harvest(
     Idempotent: a subplot already success-completed in the store is skipped, and the write itself is
     idempotency-keyed, so re-harvesting (or a second machine) never double-records. This is the
     GitHub-canonical-completion -> cache materialization that unlocks the next Kahn layer.
+
+    ``repo_root`` (#397) resolves the committed evidence ledger (``docs/evidence/<saga-id>/``,
+    distinct from the git-common-dir cache ``store`` already resolves) for the closure gate — a
+    SECOND, additive check run only after the GitHub barrier itself is satisfied. Defaulted to
+    ``Path(".")`` so every caller that never declares a node's ``evidence.required_checks`` (every
+    outcome spec that exists today) behaves exactly as before.
     """
     already = outcome_store.completed_subplots(store)
     harvested: list[str] = []
@@ -167,6 +175,12 @@ def harvest(
             node, store=store, github_runner=github_runner, child_state_reader=child_state_reader
         )
         if not verdict.satisfied:
+            continue
+        # Closure gate (#397): a second, additive check — never a rewrite of the GitHub barrier
+        # above. A node with no declared `required_checks` is trivially satisfied (R8), so this is
+        # a no-op for every pre-existing outcome spec.
+        gate_verdict = closure_gate.evaluate(node, repo_root=repo_root, github_runner=github_runner)
+        if not gate_verdict.satisfied:
             continue
         # Write to a FRESH attempt slot, never the implicit attempt 1: a subplot that already holds a
         # NON-success terminal (failed/rejected/stalled) at attempt 1 is not in `already`
@@ -232,14 +246,24 @@ def barrier_report(
     store: Any,
     github_runner: Callable[..., Any] | None = None,
     child_state_reader: ChildStateReader | None = None,
+    repo_root: Path = Path("."),
 ) -> dict[str, dict[str, Any]]:
-    """Every node's barrier verdict (derived-on-read, for the cockpit/report). No writes."""
-    return {
-        node.subplot_id: barrier_satisfied(
+    """Every node's barrier verdict (derived-on-read, for the cockpit/report). No writes.
+
+    Also runs the closure gate (#397) per node and merges its verdict under a ``closure_gate`` key
+    — so an operator sees the gate's NAMED HALT reason (``stale-sha:<id>``, ``missing-
+    evidence:<id>``, ...) even when the GitHub-only barrier above already reads satisfied.
+    """
+    report: dict[str, dict[str, Any]] = {}
+    for node in spec.nodes:
+        verdict = barrier_satisfied(
             node, store=store, github_runner=github_runner, child_state_reader=child_state_reader
         ).to_dict()
-        for node in spec.nodes
-    }
+        verdict["closure_gate"] = closure_gate.evaluate(
+            node, repo_root=repo_root, github_runner=github_runner
+        ).to_dict()
+        report[node.subplot_id] = verdict
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -107,6 +107,18 @@ confirmed op and records each transition's reversibility tier on the saga tick, 
 the repo's merge method; respect branch protections (if the operator cannot merge, hand back the PR and
 stop, and `ship_ceremony.py`'s state stays at the last successful transition, ready to resume).
 
+## Merge-watcher and hazards — safety contracts around merge
+
+The ceremony records a **merge expectation** at PR-open (target head SHA, required-check names,
+review state) before any poll loop begins. At merge time, the expectation is re-validated against
+live PR state; divergence (head moved, check flipped/missing, review regressed) blocks merge with
+a named failure. A branch-delete refuses unless the merge is confirmed landed (`mergedAt`
+non-null); deleting a base branch while child PRs are stacked on it triggers a stacked-PR hazard.
+Both are blockable until resolved or acknowledged with `--acknowledge-hazard <hazard-id>`.
+`git ship --undo` is gated like forward merge: `--operator-confirmed undo` for reversals of
+landed merges, bare `--undo` for reversible-only plans. Undo is forward-only (new revert commit
+on `main`, branch resurrected from recorded SHA), never history-rewriting.
+
 ## Deploy / canary belong to deploy
 
 `/work` never deploys, never runs canary verification, and never performs a production-health revert.

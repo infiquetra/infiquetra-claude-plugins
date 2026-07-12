@@ -25,6 +25,102 @@
 
 ---
 
+## 2026-07-11
+
+### A names-only check baseline turns conditional workflows into permanent merge blocks {#names-only-baseline-blocks-conditional-workflows-346}
+
+**Context.** `merge_watcher.record` captured the merge expectation as a *set of check names*
+(`required_checks`), and `validate` required every recorded name to be passing at merge time.
+**Evidence.** First live use — PR #562, this very feature's own merge — refused with
+`check_flipped: ['Publish Plugin']`. That workflow is conditionally SKIPPED on PRs; it was
+non-passing at record time and identically non-passing at merge. Nothing flipped. Reproduced as
+`tests/test_merge_watcher.py::test_validate_tolerates_recorded_nonpassing_check_still_nonpassing`.
+**Mechanism.** Recording names discards the pass-state half of the baseline, so `validate` can't
+distinguish "was passing, regressed" from "was never passing, unchanged" — and `record --force`
+cannot heal it, because a re-recorded baseline has the same names-only shape. The plan's R4
+definition ("a previously-passing required check goes non-passing") was implemented correctly in
+`watch()` (which tracks `seen_passing`) but not in `validate()`.
+**Fix.** The sidecar now records a `checks` name→passing map; `validate` flags `check_flipped`
+only for recorded-passing→non-passing. Legacy map-less sidecars fall back to all-passing (the old
+strict behavior — upgrades never weaken an existing baseline); `record --force` mints the map.
+**What surprised.** The bug was invisible to a 4-lens review + refute-3 panels + 35 module tests —
+every fixture recorded all-SUCCESS baselines. Only dogfooding against a repo with a conditionally
+skipped workflow exposed it, on the first real merge attempt.
+**Generalizable rule.** A baseline that stores membership but not state can only express "all
+members must be in the good state" — if any member is legitimately in a non-good steady state,
+record the state alongside the membership or the gate hard-blocks forever. And: gates ship with
+fixtures that mirror the repo's own CI shape, including its skips.
+**Refs.** LEARNINGS `{#local-reachability-blind-to-origin-346}` (same layer);
+DECISIONS `{#ceremony-sidecars-forward-only-undo-346}`.
+
+### A local-only reachability probe is blind in the merge-landed-but-not-pulled window {#local-reachability-blind-to-origin-346}
+
+**Context.** `ship_undo.py`'s merge/branch-delete reverses gate on `_sha_reachable()` before
+mutating anything, so an unreachable recorded SHA becomes a named `SHA_UNREACHABLE` refusal
+instead of fabricated state. The probe was `git cat-file -e <sha>^{commit}` — purely local.
+**Evidence.** Code-review P1 on `653f610` (correctness lens, empirically reproduced): squash-merge
+a PR, don't pull, run `ship --undo` — the squash SHA exists only on origin, the local probe
+misses, and the undo of a genuinely revertable merge is falsely refused. Regression oracle:
+`tests/test_ship_undo.py::test_sha_reachable_fetches_missing_origin_object` (two clones of one
+bare origin; the second lands a commit the first never pulls).
+**Mechanism.** `gh pr merge --squash` creates the squash commit **on the remote**; nothing about
+the ceremony guarantees a subsequent local pull before an undo is attempted. Exactly the window
+where an operator most wants `--undo` (merge landed, regret is fresh) is the window where every
+recorded merge SHA is origin-only.
+**Fix.** `_sha_reachable` now re-probes after one best-effort `git fetch origin` (`check=False`,
+so offline undo of local-only entries still works); `SHAUnreachableError` gained a remedy line
+naming the post-fetch recovery options.
+**Generalizable rule.** Any "does this object exist" gate that can refuse a remote-side artifact
+must probe remote-aware (fetch-then-recheck), or it will refuse precisely the freshest, most
+legitimate cases — local object-store checks answer "have I seen it", not "does it exist".
+**Refs.** DECISIONS `{#ceremony-sidecars-forward-only-undo-346}`; sibling entry
+`{#auto-merge-delete-branch-reorder}` below (same issue #346 layer).
+
+### `gh pr merge --auto` + `--delete-branch` reorder breaks ceremony ledger invariants {#auto-merge-delete-branch-reorder}
+
+**Context.** The ceremony ledger orders operations as they execute (PR-open → merge → branch-delete);
+when a caller invokes `gh pr merge --auto --delete-branch` in sequence, the API reorders them
+(queuing merge for later approval, deleting branch immediately), violating the ledger's assumption
+that merge lands before cleanup begins. A ledger frozen after `merge` but before `branch_delete` is
+left with a deleted branch and an unmerged PR — unrecoverable without hand-editing.
+
+**Evidence.** Session history: manual execution of `gh pr merge --auto --delete-branch` raced: branch
+deleted before approval completed, branch restored by hand, the ceremony re-run from scratch. The
+pattern is named in `docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:147` (recurring manual
+ship ceremony, one instance of the GitHub API reorder gotcha). Grep of `plugins/saga/` verified zero
+live `--auto` / `--delete-branch` flags in shipped code (already absent), so the gotcha existed only
+in naive command sequences, not in plugin code.
+
+**Mechanism.** GitHub's queue implementation services `--delete-branch` synchronously (branch ref
+removed from GitHub), but batches `--auto` merges into an approval queue (merge lands later when
+approval rules fire). A ceremony that dies after delete but before merge redoes the delete step on
+restart and fails (branch already gone), leaving the broken state visible. The ledger is append-only
+and provably-ordered (it records transitions as they complete); reordering at the GitHub boundary
+breaks the assumption.
+
+**Fix.** Issue #346 U1-U4: add `merge_watcher.validate()` preflight that blocks `merge` until
+the PR's live `state` is `MERGED` (R2), and a `ceremony_hazards.detect()` layer that reports
+`merge_not_landed` as a non-acknowledgeable hazard on any `branch_delete` if the merge hasn't landed
+yet. Merged ceremonies can safely delete; unmerged ones stall with a named refusal until the merge
+actually lands (R2, KTD3).
+
+**Validation.** Unit tests: `test_merge_not_landed_blocks_branch_delete_and_is_not_acknowledgeable`
+and `test_auto_merge_delete_branch_hazard_reorders` (mocked GitHub states); full story integration
+in `tests/test_ship_ceremony.py` (real rig, throwaway branches).
+
+**What surprised.** GitHub's own CLI happily emits both flags in the same call; the ordering was not
+documented in gh-help output or the PR merge docs I reviewed. The reorder happened silently (return
+code 0 for both), so observers assumed sync completion. The gap: ceremony code trusted GitHub's
+imperative ordering; GitHub implemented it as async + queue.
+
+**Generalizable rule.** When bridging to an external service's async operations, prove state at
+every ledger checkpoint, not just the last step. Assume ordering breaks. Use named hazards to block
+on unproven intermediate states rather than trusting imperatives complete in sequence.
+
+**Refs.** DECISIONS [#ceremony-sidecars-forward-only-undo-346](DECISIONS.md#ceremony-sidecars-forward-only-undo-346);
+plan `docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md`; grounding brief
+`docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:147`.
+
 ## 2026-07-10
 
 ### Registry identity must survive the Codex bridge boundary {#codex-registry-identity-bridge}

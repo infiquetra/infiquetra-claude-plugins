@@ -2,6 +2,36 @@
 
 ## 2026-07-11
 
+### Ceremony safety state is sidecar JSON; undo is forward-only and tier-gated (#346) {#ceremony-sidecars-forward-only-undo-346}
+
+**Decision.** The #346 safety layer over `ship_ceremony.py` stores its merge expectation and
+rollback manifest as JSON sidecars in the saga's own directory
+(`.claude/saga/sagas/<saga_id>/merge_expectation.json` / `rollback_manifest.json`), never as saga
+tick fields. `ship --undo` (spelled `run --undo` so the installed `git ship` alias survives) is
+forward-only — `git revert <recorded squash SHA>` on `main`, branch resurrection from a recorded
+SHA, never a history rewrite — and undoing any `always_operator`-reversing entry requires
+`--operator-confirmed undo`, the same named-confirmation palette as the forward gate. Hazard
+bypasses are equally named: `--acknowledge-hazard <hazard-id>`, with `merge_not_landed`
+deliberately non-acknowledgeable. Watcher divergences never auto-heal; `record --force` is the one
+re-baseline path.
+
+**Rationale.** Saga list fields are full-snapshot per tick — append-only bookkeeping through
+`saga.py save` is clobber-prone, and ceremony-private state does not belong in `saga.py`'s schema
+(`.claude/saga/` already hosts non-tick JSON: `effort-ledger.json` on disk, and
+`tier_session.py:29` writes `tier-session-override.json` there on demand). Forward-only undo
+keeps shared refs safe under the same philosophy
+as the #526 gate: destructive intent must be named, and silence never authorizes. Plan:
+`docs/plans/2026-07-11-issue-346-ceremony-hazards-watcher-undo-plan.md`.
+
+**Rejected.** Tick-field storage (snapshot clobber, schema churn); a separate `undo` subcommand
+(breaks every installed `git ship` alias); reusing `reversibility_certificate.py` (its `OpKind`
+allowlist excludes merge/repo mutations — same grounds as #345 KTD1); auto-refreshing the merge
+expectation on divergence (silently re-baselining IS the merge-raced-ahead failure being killed).
+
+**Revisit when.** A second consumer needs the expectation/manifest cross-machine (then the sidecar
+graduates to a committed or GitHub-backed store), or branch protection lands on `main` (then merge
+undo must open a revert PR instead of pushing a revert commit).
+
 ### Ceremony operator confirmation names the transition it confirms (#526) {#ceremony-operator-confirm-names-transition-526}
 
 **Decision.** `ship_ceremony.py run` refuses any `always_operator`-tier transition unless the caller

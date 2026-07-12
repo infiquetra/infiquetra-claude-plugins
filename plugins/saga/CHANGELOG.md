@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.77.0] - 2026-07-11
+
+### Added - ceremony hazard preflight, deterministic merge-watcher, ship --undo rollback (#346)
+
+- `ceremony_hazards.py`: detect stacked-PR topology and merge-not-landed hazards before destructive
+  transitions; named hazard acknowledgment via `--acknowledge-hazard <hazard-id>` (stacked-PR
+  acknowledgeable, merge-not-landed a hard refusal).
+- `merge_watcher.py`: record merge expectation (target SHA, required checks, review state) at PR-open
+  time, validate at merge, catch mid-poll check flips; divergences block the merge; no auto-heal
+  (KTD7); `record --force` is the only re-baseline path.
+- `ship_undo.py`: rollback manifest (per transition: branch/head/PR/merge SHA/remote-created flag)
+  appended after each successful step; `ship --undo` (via `run --undo`) reverts ceremonies newest→oldest
+  (forward-only: revert commit on main, branch resurrection), resumable and idempotent from
+  manifest alone. Undo of `always_operator`-reversing entries requires `--operator-confirmed undo`
+  (KTD5).
+- `ship_ceremony.py` wiring: preflight hazard detection + merge-watcher validation after #526 gate and
+  before dispatch; manifest append on every successful transition; `--undo` dispatches to ship_undo;
+  `/work` SKILL and `pr-continuation-loop` reference updated with watcher + hazard + undo contract.
+- Code-review hardening (same release): `_sha_reachable` fetches origin before declaring a recorded
+  SHA unreachable (a merge-landed-but-not-pulled squash SHA is reachable, not a refusal); `saga_id`
+  is validated as a single path-safe segment before any sidecar path is derived; manifest-sourced
+  branch/SHA/PR values are refused if option-like before reaching git/gh argv (plus `--` separators
+  where git supports them); sidecar writes are atomic (tmp + rename); corrupt sidecar/manifest JSON
+  surfaces as a named module refusal, never a raw traceback; `SHA_UNREACHABLE` now carries a remedy.
+- Dogfood fix (same release): the expectation sidecar records a name→passing map and `validate`
+  raises `check_flipped` only for a recorded-passing check gone non-passing (R4-literal) — a
+  conditionally-SKIPPED workflow, non-passing at record and merge alike, is baseline, not a flip.
+  Legacy map-less sidecars stay strict; `record --force` upgrades them.
+
 ## [0.76.0] - 2026-07-11
 
 ### Added - operator-confirmed gate for `always_operator`-tier transitions (#526)

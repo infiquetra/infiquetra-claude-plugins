@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "outcome_id": "evidence-integrity",
+  "spec_revision": 8,
+  "objective": "Evidence integrity \u2014 append-only evidence ledger, teardown-durable delegation evidence, evidence-gated closure, spend observability (slice of objective #338)",
+  "nodes": [
+    {
+      "subplot_id": "sub-396",
+      "title": "\"enhancement: delegation evidence survives teardown \u2014 durable audit store, write-once draft snapshots, /delegation-audit query\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-398"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#396",
+        "sub_issue": 396
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-397",
+      "title": "\"enhancement: closure gate \u2014 /outcome refuses to close a leaf on missing, stale-SHA, or unsuperseded-FAIL evidence\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-398"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#397",
+        "sub_issue": 397
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-398",
+      "title": "\"capability: content-addressed, append-only evidence ledger (FAIL is never overwritten)\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#398",
+        "sub_issue": 398
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-402",
+      "title": "\"enhancement: spend observability on the ledger \u2014 estimate-reconcile, itemized receipts, spend retro, tier-efficacy and shadow-audit evidence\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-398"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#402",
+        "sub_issue": 402
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    }
+  ],
+  "decision_trail": [
+    {
+      "revision": 2,
+      "reason": "prune sub-462"
+    },
+    {
+      "revision": 3,
+      "reason": "prune sub-400"
+    },
+    {
+      "revision": 4,
+      "reason": "prune sub-459"
+    },
+    {
+      "revision": 5,
+      "reason": "prune sub-461"
+    },
+    {
+      "revision": 6,
+      "reason": "prune sub-399"
+    },
+    {
+      "revision": 7,
+      "reason": "prune sub-401"
+    },
+    {
+      "revision": 8,
+      "reason": "wire dependency edges: sub-398 (evidence ledger) is the root; sub-396, sub-397, sub-402 fan out behind it \u2014 operator-approved outcome scoping (objective #338 slice); edges not inferable from GitHub relationships"
+    }
+  ],
+  "cost_rollup": {},
+  "created_at": "",
+  "updated_at": ""
+}

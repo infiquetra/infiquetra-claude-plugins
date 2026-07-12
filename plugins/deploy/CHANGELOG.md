@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.0] - 2026-07-12
+
+### Added - acceptance step at saga handoff boundary, gate-or-auto authorization gating (#395)
+
+- `deploy-state` skill gains "Accepting a saga handoff" section: operators run `deploy_handoff.py
+  accept` before promotion on behalf of a saga-tracked item, honoring the gate-or-auto payload read
+  from the offer (gate -> blocked pending explicit confirmation, auto -> authorized for
+  nonprod only, staging/production always require confirmation regardless of payload). The rule is
+  implemented mechanically as `authorize_promotion` on the saga side (KTD5), not
+  by deploy convention.
+- `deploy.md` command docs gain acceptance step in Instructions, guiding users to run the ack before
+  proceeding with promotion (R6, U4).
+- Minor version bump reflects new acceptance behavior contract at the saga boundary (previously
+  0.1.4: no handoff acceptance path existed).
+
 ## [0.1.4] - 2026-07-05
 
 - `release-orchestrator` agent: add validated `effort: high` frontmatter field, consuming the

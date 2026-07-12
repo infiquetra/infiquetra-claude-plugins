@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.78.0"
-    )  # ship ends in teardown: opened-resource manifest, closing-count gate, immutable receipt, worktree reclaim (#347)
+        plugin_json["version"] == "0.79.0"
+    )  # positive handoff protocol at saga -> deploy boundary: ack envelope, autonomy posture, dropped-baton reconcile (#395)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

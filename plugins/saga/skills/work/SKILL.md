@@ -542,6 +542,9 @@ On a clean gate (or recorded override):
    git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
    On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
    See `references/pr-continuation-loop.md` under "Merge-watcher and hazards" for safety contracts.
+   When the destination includes deploy, route the merged item's ownership transfer through the
+   offer step in `plugins/saga/skills/handoff/SKILL.md` ("Deploy edge") — `/work` does not accept
+   the handoff itself.
 
 At thread completion set `status=done`.
 

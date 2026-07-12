@@ -1,0 +1,140 @@
+{
+  "name": "deploy-handoff-ack",
+  "description": "Issue #395: positive handoff protocol at the saga -> deploy edge — deploy_handoff.py sidecar (offer/accept/authorize, write-once ack, token rotation), gate-or-auto intent capture as a saga field defaulting to gate, dropped-baton reconcile read, boundary docs on both sides, release surfaces for saga 0.79.0 + deploy 0.2.0. Concurrency shaped to the operator cap of 3: fully serialized U1->U2->U3->U4->U5 — U1 and U2 carry refute-3 panels (3 verifiers, at cap) that must never overlap a running unit, and U2/U3 both edit deploy_handoff.py + tests/test_handoff_envelope.py so serialization also avoids write conflicts. Panels ride the unit tier (R4) on the two contract-bearing units only: U1 (write-once ack semantics) and U2 (gate-never-silently-auto-fires propagation, edits saga.py).",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "deploy_handoff.py module: offer/accept/authorize + envelope schema + tests",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "operator-escalated: the ack is the fleet's ownership-transfer record — a write-once or token-rotation mistake silently drops or double-releases a baton, exactly the failure class this issue exists to close.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: Create plugins/saga/scripts/deploy_handoff.py (per-saga sidecar .claude/saga/sagas/<saga_id>/deploy_handoff.json per KTD2 with the established sidecar hardening — saga-id regex guard, wrapped JSONDecodeError, atomic tmp+os.replace writes; offer mints a secrets.token_hex token, writes payload 'gate' as the default in this unit (the saga-record read that derives it is U2's deliverable), and supersedes any prior unacked envelope per KTD4; accept is write-once with named errors for double-accept, accept-without-offer, token mismatch, and empty --by/--evidence; authorize_promotion per KTD5 — gate blocks, auto authorizes nonprod only, staging/production always confirm; CLI verbs offer/accept/read with all errors caught at the CLI boundary), a thin build_deploy_handoff_envelope() delegator in plugins/saga/scripts/handoff_envelope.py whose existing build_handoff_envelope output stays byte-identical, and the schema/ack sections of tests/test_handoff_envelope.py (test names must contain ack_envelope_schema and ack_round_trip so the issue's -k selectors collect — KTD7). Read the plan at docs/plans/2026-07-12-issue-395-deploy-handoff-ack-plan.md (U1, R1/R3, KTD1/KTD2/KTD4/KTD5) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/saga/scripts/deploy_handoff.py",
+        "plugins/saga/scripts/handoff_envelope.py",
+        "tests/test_handoff_envelope.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U2",
+      "label": "gate-or-auto intent capture: --deploy-autonomy saga field + payload propagation",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "operator-escalated: edits saga.py (the fleet's core state writer) and carries the R5 hard rule — a propagation mistake could let a gate posture silently auto-fire a promotion.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: Add the optional --deploy-autonomy {gate,auto} flag to saga.py save (persisted saga field, carried forward like destination), document the field row and the /plan consumer row in plugins/saga/references/saga-spec.md, add the Phase 5.1 follow-up question (asked only when destination is nonprod-deploy) to plugins/saga/skills/plan/SKILL.md, and make deploy_handoff.py offer read the payload from the saga record per KTD3 via the read_state(root)['sagas'][saga_id] pattern (precedent handoff_envelope.py:57), sourcing deploy_autonomy and pr_refs from the same record — saga.deploy_autonomy or 'gate', never an offer-time CLI override (R2), absent always reads gate (R5 safe direction), absent pr_refs reads empty. Extend tests/test_handoff_envelope.py with test names containing gate_or_auto_propagation (KTD7): auto authorizes nonprod and still blocks staging/production; gate blocks pending confirmation; absent field defaults gate; the posture comes from the saga record, not an offer argument. Existing saga.py save tests must stay green. Read the plan at docs/plans/2026-07-12-issue-395-deploy-handoff-ack-plan.md (U2, R2/R5, KTD3) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/saga/scripts/saga.py",
+        "plugins/saga/references/saga-spec.md",
+        "plugins/saga/skills/plan/SKILL.md",
+        "plugins/saga/scripts/deploy_handoff.py",
+        "tests/test_handoff_envelope.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U3",
+      "label": "ownership gating + dropped-baton reconcile read + tests",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U3: Add the read-only reconcile verb to plugins/saga/scripts/deploy_handoff.py per KTD6 — per-saga and --all sweep across .claude/saga/sagas/*/deploy_handoff.json; offer-without-ack derives handed-off-unacknowledged (never deployed/done) naming the saga and offer age; acked reads accepted; no sidecar reads no-handoff (not an error); exit-code convention follows the ship_receipt.py read precedent — 0 for clean or no-handoff, 1 for unacknowledged or error. Extend tests/test_handoff_envelope.py with test names containing ownership_not_released_without_ack and dropped_baton_detected (KTD7): the merged-then-silence scenario surfaces on a reconcile read rather than silently vanishing or reading done. Read the plan at docs/plans/2026-07-12-issue-395-deploy-handoff-ack-plan.md (U3, R4, KTD6) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1",
+        "U2"
+      ],
+      "files": [
+        "plugins/saga/scripts/deploy_handoff.py",
+        "tests/test_handoff_envelope.py"
+      ]
+    },
+    {
+      "unit_id": "U4",
+      "label": "boundary docs on both sides of the edge (saga handoff + deploy acceptance)",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U4: Document the contract on both sides — plugins/saga/skills/handoff/SKILL.md gains a Deploy edge section (offer/ack contract, gate-or-auto carriage) beside the existing mission-control boundary language; plugins/deploy/skills/deploy-state/SKILL.md gains an Accepting a saga handoff section (run deploy_handoff.py accept before promoting on behalf of a saga-tracked item; consult authorize_promotion — a gate payload never auto-fires; AC6 requires grep -n 'ack' on this file to match); plugins/deploy/commands/deploy.md gains the acceptance step in its Instructions; plugins/saga/skills/work/SKILL.md gains ONLY a one-line routing pointer to the offer step — the Hard boundary section's substantive language must be preserved verbatim (AC7/R7, verify with git diff on that section). No Python changes in this unit. Read the plan at docs/plans/2026-07-12-issue-395-deploy-handoff-ack-plan.md (U4, R6/R7) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U1",
+        "U2",
+        "U3"
+      ],
+      "files": [
+        "plugins/saga/skills/handoff/SKILL.md",
+        "plugins/deploy/skills/deploy-state/SKILL.md",
+        "plugins/deploy/commands/deploy.md",
+        "plugins/saga/skills/work/SKILL.md"
+      ]
+    },
+    {
+      "unit_id": "U5",
+      "label": "release surfaces: saga 0.79.0 + deploy 0.2.0, marketplace, changelogs, drift pins",
+      "tier": {
+        "model": "haiku",
+        "effort": "low"
+      },
+      "prompt": "U5: Bump plugins/saga/.claude-plugin/plugin.json to 0.79.0 and plugins/deploy/.claude-plugin/plugin.json to 0.2.0, sync both entries in .claude-plugin/marketplace.json, add the [0.79.0] saga CHANGELOG entry (deploy handoff-ack envelope, --deploy-autonomy intent field, dropped-baton reconcile) and the [0.2.0] deploy CHANGELOG entry (acceptance/ack step, gate-or-auto consumption), and update the drift-guard pins in tests/test_saga_plugin.py (0.78.0 -> 0.79.0) and tests/test_deploy_plugin.py (0.1.4 -> 0.2.0, line 42). The DECISIONS entry {#deploy-handoff-ack-sidecar-395} is already staged in the working tree — do not duplicate it; add a LEARNINGS entry only if implementation surfaced a non-obvious mechanism. Read the plan at docs/plans/2026-07-12-issue-395-deploy-handoff-ack-plan.md (U5) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [
+        "plugins/saga/.claude-plugin/plugin.json",
+        "plugins/deploy/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/saga/CHANGELOG.md",
+        "plugins/deploy/CHANGELOG.md",
+        "tests/test_saga_plugin.py",
+        "tests/test_deploy_plugin.py"
+      ]
+    }
+  ]
+}

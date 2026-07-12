@@ -28,6 +28,42 @@ Infiquetra lifecycle artifact.
 
 Do not copy SDLC issue templates into this skill.
 
+## Deploy edge
+
+The mission-control boundary above governs the saga -> mission-control handoff. A separate,
+narrower contract governs the saga -> `deploy` edge, when a merged item's destination includes
+deploy: a sibling module, `plugins/saga/scripts/deploy_handoff.py`, mints an **offer** (an ack
+token + a gate-or-auto payload) and requires `deploy` to explicitly **accept** before ownership
+is considered transferred.
+
+- **Offer.** The releasing side (`/work`, at or after merge) mints the offer:
+
+  ```bash
+  python3 plugins/saga/scripts/deploy_handoff.py offer \
+    --saga-id <saga-id> --offered-by <identity>
+  ```
+
+  The payload is never supplied at the command line — it is read from the saga record's
+  `deploy_autonomy` field (`gate` or `auto`, captured once at `/plan` intent time; absent reads
+  the safe `gate` default). A repeat offer rotates the token and supersedes the prior one, so a
+  stale token can never be acked.
+
+- **Accept.** `deploy` explicitly accepts (see `plugins/deploy/skills/deploy-state/SKILL.md`,
+  "Accepting a saga handoff"). The ack is write-once and durable
+  (`.claude/saga/sagas/<saga_id>/deploy_handoff.json`).
+
+- **Unacknowledged, never silently done.** Until the ack is recorded, `deploy_handoff.py reconcile`
+  derives `handed-off-unacknowledged` — the item is never read as `deployed`/`done` on an offer
+  alone.
+
+- **Gate never auto-fires.** A `gate` payload always blocks pending explicit confirmation on the
+  deploy side; only `auto` authorizes unattended nonprod promotion. This posture travels with the
+  offer and cannot be widened at accept time.
+
+This is additive to the mission-control boundary, not a replacement for it — `/work` still routes
+issue comments and board moves through `mission-control`; only deploy-bound ownership transfer
+uses this ack contract.
+
 ## Workflow
 
 1. Prefer an explicit source path or URL from the command arguments.

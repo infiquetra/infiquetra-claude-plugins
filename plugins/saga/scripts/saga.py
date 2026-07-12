@@ -195,6 +195,12 @@ class Saga:
     # Pointers (link, never duplicate, another owner's state).
     issue_ref: str = ""  # owner/repo#N (empty for plan-only)
     destination: str = "plan-only"  # plan-only|pr|merge|nonprod-deploy
+    # Operator-authored gate-or-auto posture for the saga -> deploy edge (issue #395, KTD3).
+    # Captured once at /plan time (Phase 5.1, only when destination is nonprod-deploy) and read —
+    # never re-asked — by deploy_handoff.offer. Carried forward like destination. Empty on older
+    # sagas and on any destination that is not nonprod-deploy; deploy_handoff reads absent/empty as
+    # the safe `gate` default (R5 — a missing posture can never auto-fire).
+    deploy_autonomy: str = ""  # ""|gate|auto
 
     # Round / phase / progress.
     round: int = 0
@@ -268,6 +274,7 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "orchestration_downgrade",
     "issue_ref",
     "destination",
+    "deploy_autonomy",
     "round",
     "phase",
     "progress_pct",
@@ -843,6 +850,11 @@ def _saga_summary(saga: Saga) -> dict[str, Any]:
         "next_phase": _next_phase(saga.phase, saga.phase_status),
         "next_round": saga.next_round,
         "destination": saga.destination,
+        # deploy_autonomy + pr_refs travel in the derived index so deploy_handoff.offer can read
+        # the gate-or-auto posture and merged PR refs from state.json["sagas"][saga_id] without
+        # parsing the envelope (issue #395, KTD3 — precedent handoff_envelope.read_state).
+        "deploy_autonomy": saga.deploy_autonomy,
+        "pr_refs": _materialize(saga.pr_refs),
         "issue_ref": saga.issue_ref,
         "plan_path": saga.plan_path,
         "branch": saga.branch,
@@ -1342,6 +1354,7 @@ _SAVE_SCALAR_DEFAULTS: dict[str, Any] = {
     "phase_status": "pending",
     "status": "active",
     "destination": "plan-only",
+    "deploy_autonomy": "",
     "phase": 0,
     "round": 0,
     "progress_pct": 0,
@@ -1398,6 +1411,7 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         orchestration_downgrade=args.orchestration_downgrade,
         issue_ref=args.issue_ref,
         destination=scalars["destination"],
+        deploy_autonomy=scalars["deploy_autonomy"],
         round=scalars["round"],
         phase=scalars["phase"],
         progress_pct=scalars["progress_pct"],
@@ -1447,6 +1461,12 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--round", type=int, default=None)
     p.add_argument("--progress-pct", type=int, default=None)
     p.add_argument("--destination", choices=list(DESTINATIONS), default=None)
+    # Optional gate-or-auto posture for the saga -> deploy edge (issue #395, KTD3). Captured once at
+    # /plan Phase 5.1 (only when --destination nonprod-deploy); default=None (not "gate") so an
+    # omitted flag carries the prior tick's value forward in _merge instead of restamping it. When
+    # absent from the record entirely, deploy_handoff.offer reads the safe `gate` default (R5). There
+    # is deliberately NO way to override this posture at deploy_handoff offer time (R2).
+    p.add_argument("--deploy-autonomy", choices=["gate", "auto"], default=None)
     # default=None (not "inline") so a save with NO --orchestration-mode leaves the mode at
     # its dataclass default and carries the prior tick's mode/operator_choice forward (see
     # _build_save_saga); only an explicit flag stamps a new orchestration decision.

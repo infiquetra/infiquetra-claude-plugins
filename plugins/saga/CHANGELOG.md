@@ -24,6 +24,10 @@
   branch/SHA/PR values are refused if option-like before reaching git/gh argv (plus `--` separators
   where git supports them); sidecar writes are atomic (tmp + rename); corrupt sidecar/manifest JSON
   surfaces as a named module refusal, never a raw traceback; `SHA_UNREACHABLE` now carries a remedy.
+- Dogfood fix (same release): the expectation sidecar records a name→passing map and `validate`
+  raises `check_flipped` only for a recorded-passing check gone non-passing (R4-literal) — a
+  conditionally-SKIPPED workflow, non-passing at record and merge alike, is baseline, not a flip.
+  Legacy map-less sidecars stay strict; `record --force` upgrades them.
 
 ## [0.76.0] - 2026-07-11
 

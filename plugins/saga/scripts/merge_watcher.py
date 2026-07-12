@@ -286,6 +286,11 @@ def record(
         "pr_number": live["pr_number"],
         "head_sha": live["head_sha"],
         "required_checks": sorted(live["checks"]),
+        # Name -> passing map at record time. check_flipped means a previously-
+        # PASSING check went non-passing (R4) — a check that was already
+        # non-passing at record time (e.g. a conditionally-SKIPPED workflow that
+        # never runs on PRs) hasn't flipped by still being non-passing at merge.
+        "checks": {name: bool(passing) for name, passing in sorted(live["checks"].items())},
         "review_state": live["review_state"],
         "recorded_at": now or datetime.now(UTC).isoformat(),
     }
@@ -298,9 +303,26 @@ def record(
 # --------------------------------------------------------------------------- #
 
 
+def _baseline_passing(expectation: Mapping[str, Any]) -> Mapping[str, bool]:
+    """The name -> was-passing-at-record map. Legacy sidecars (recorded before the
+    ``checks`` map existed) fall back to treating every recorded name as passing —
+    the strict pre-map behavior, so an old baseline never gets weaker by upgrade;
+    ``record --force`` is the one-command path to a map-carrying baseline."""
+    baseline = expectation.get("checks")
+    if isinstance(baseline, Mapping):
+        return {str(name): bool(passing) for name, passing in baseline.items()}
+    return dict.fromkeys(expectation.get("required_checks") or [], True)
+
+
 def _compare_snapshot(expectation: Mapping[str, Any], live: Mapping[str, Any]) -> None:
     """Raise ``MergeExpectationDivergedError`` on the first divergence found, checked in
-    a fixed, deterministic order so the same input always reports the same kind."""
+    a fixed, deterministic order so the same input always reports the same kind.
+
+    ``check_flipped`` is R4-literal: a check that was PASSING at record time is
+    non-passing now. A check already non-passing at record (e.g. a
+    conditionally-SKIPPED workflow that never runs on PRs) is part of the baseline,
+    not a flip — requiring it to pass would make every merge in a repo with
+    conditional workflows permanently unmergeable."""
     if live.get("state") != "OPEN":
         raise MergeExpectationDivergedError(
             "pr_not_open",
@@ -319,9 +341,12 @@ def _compare_snapshot(expectation: Mapping[str, Any], live: Mapping[str, Any]) -
     missing = sorted(required - set(live_checks))
     if missing:
         raise MergeExpectationDivergedError("check_missing", {"missing_checks": missing})
-    non_passing = sorted(name for name in required if not live_checks.get(name, False))
-    if non_passing:
-        raise MergeExpectationDivergedError("check_flipped", {"non_passing_checks": non_passing})
+    baseline = _baseline_passing(expectation)
+    flipped = sorted(
+        name for name in required if baseline.get(name, True) and not live_checks.get(name, False)
+    )
+    if flipped:
+        raise MergeExpectationDivergedError("check_flipped", {"non_passing_checks": flipped})
     baseline_review = expectation.get("review_state")
     live_review = live.get("review_state")
     if baseline_review == "APPROVED" and live_review != "APPROVED":

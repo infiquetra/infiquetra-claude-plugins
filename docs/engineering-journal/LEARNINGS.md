@@ -27,6 +27,32 @@
 
 ## 2026-07-11
 
+### A names-only check baseline turns conditional workflows into permanent merge blocks {#names-only-baseline-blocks-conditional-workflows-346}
+
+**Context.** `merge_watcher.record` captured the merge expectation as a *set of check names*
+(`required_checks`), and `validate` required every recorded name to be passing at merge time.
+**Evidence.** First live use — PR #562, this very feature's own merge — refused with
+`check_flipped: ['Publish Plugin']`. That workflow is conditionally SKIPPED on PRs; it was
+non-passing at record time and identically non-passing at merge. Nothing flipped. Reproduced as
+`tests/test_merge_watcher.py::test_validate_tolerates_recorded_nonpassing_check_still_nonpassing`.
+**Mechanism.** Recording names discards the pass-state half of the baseline, so `validate` can't
+distinguish "was passing, regressed" from "was never passing, unchanged" — and `record --force`
+cannot heal it, because a re-recorded baseline has the same names-only shape. The plan's R4
+definition ("a previously-passing required check goes non-passing") was implemented correctly in
+`watch()` (which tracks `seen_passing`) but not in `validate()`.
+**Fix.** The sidecar now records a `checks` name→passing map; `validate` flags `check_flipped`
+only for recorded-passing→non-passing. Legacy map-less sidecars fall back to all-passing (the old
+strict behavior — upgrades never weaken an existing baseline); `record --force` mints the map.
+**What surprised.** The bug was invisible to a 4-lens review + refute-3 panels + 35 module tests —
+every fixture recorded all-SUCCESS baselines. Only dogfooding against a repo with a conditionally
+skipped workflow exposed it, on the first real merge attempt.
+**Generalizable rule.** A baseline that stores membership but not state can only express "all
+members must be in the good state" — if any member is legitimately in a non-good steady state,
+record the state alongside the membership or the gate hard-blocks forever. And: gates ship with
+fixtures that mirror the repo's own CI shape, including its skips.
+**Refs.** LEARNINGS `{#local-reachability-blind-to-origin-346}` (same layer);
+DECISIONS `{#ceremony-sidecars-forward-only-undo-346}`.
+
 ### A local-only reachability probe is blind in the merge-landed-but-not-pulled window {#local-reachability-blind-to-origin-346}
 
 **Context.** `ship_undo.py`'s merge/branch-delete reverses gate on `_sha_reachable()` before

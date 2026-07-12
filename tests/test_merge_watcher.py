@@ -428,6 +428,69 @@ def test_watch_review_regressed_on_final_tick(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# check_flipped semantics — R4-literal: only a recorded-PASSING check can flip
+# (dogfood-caught on PR #562: a conditionally-SKIPPED workflow, non-passing at
+# record time and still non-passing at merge, must not read as a flip)
+# --------------------------------------------------------------------------- #
+
+
+def test_validate_tolerates_recorded_nonpassing_check_still_nonpassing(tmp_path: Path) -> None:
+    runner = FakeRunner(pr_view=_raw_pr_view(checks={"lint": "SUCCESS", "publish": "SKIPPED"}))
+    MW.record(saga_id="issue-346", pr_number=101, repo_root=tmp_path, runner=runner)
+
+    live_runner = FakeRunner(pr_view=_raw_pr_view(checks={"lint": "SUCCESS", "publish": "SKIPPED"}))
+    expectation = MW.validate(saga_id="issue-346", repo_root=tmp_path, runner=live_runner)
+    assert expectation["checks"] == {"lint": True, "publish": False}
+
+
+def test_validate_flips_only_on_recorded_passing_regression(tmp_path: Path) -> None:
+    runner = FakeRunner(pr_view=_raw_pr_view(checks={"lint": "SUCCESS", "publish": "SKIPPED"}))
+    MW.record(saga_id="issue-346", pr_number=101, repo_root=tmp_path, runner=runner)
+
+    live_runner = FakeRunner(pr_view=_raw_pr_view(checks={"lint": "FAILURE", "publish": "SKIPPED"}))
+    with pytest.raises(MW.MergeExpectationDivergedError) as excinfo:
+        MW.validate(saga_id="issue-346", repo_root=tmp_path, runner=live_runner)
+    assert excinfo.value.kind == "check_flipped"
+    # Only the genuine passing->non-passing regression is named; the baseline
+    # non-passing check is not.
+    assert excinfo.value.detail["non_passing_checks"] == ["lint"]
+
+
+def test_validate_recorded_nonpassing_check_may_improve(tmp_path: Path) -> None:
+    runner = FakeRunner(pr_view=_raw_pr_view(checks={"lint": "SUCCESS", "publish": "SKIPPED"}))
+    MW.record(saga_id="issue-346", pr_number=101, repo_root=tmp_path, runner=runner)
+
+    live_runner = FakeRunner(pr_view=_raw_pr_view(checks={"lint": "SUCCESS", "publish": "SUCCESS"}))
+    expectation = MW.validate(saga_id="issue-346", repo_root=tmp_path, runner=live_runner)
+    assert expectation["pr_number"] == 101
+
+
+def test_legacy_sidecar_without_checks_map_stays_strict(tmp_path: Path) -> None:
+    """A pre-map sidecar carries only required_checks names — the fallback treats
+    them all as recorded-passing (old strict behavior), so upgrading the module
+    never silently weakens an existing baseline."""
+    path = MW.sidecar_path(tmp_path, "issue-346")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "pr_number": 101,
+                "head_sha": "sha-aaa",
+                "required_checks": ["lint", "publish"],
+                "review_state": "APPROVED",
+                "recorded_at": "2026-07-11T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    live_runner = FakeRunner(pr_view=_raw_pr_view(checks={"lint": "SUCCESS", "publish": "SKIPPED"}))
+    with pytest.raises(MW.MergeExpectationDivergedError) as excinfo:
+        MW.validate(saga_id="issue-346", repo_root=tmp_path, runner=live_runner)
+    assert excinfo.value.kind == "check_flipped"
+    assert excinfo.value.detail["non_passing_checks"] == ["publish"]
+
+
+# --------------------------------------------------------------------------- #
 # legacy StatusContext shape (context/state instead of name/conclusion)
 # --------------------------------------------------------------------------- #
 

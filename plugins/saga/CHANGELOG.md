@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.82.0] - 2026-07-12
+
+### Added - spend observability on the ledger: estimate-reconcile, itemized receipts, spend retro, tier-efficacy and shadow-audit evidence (#402)
+
+- **`plugins/saga/scripts/spend_estimate.py` (new):** a pre-run ordinal estimate column that joins
+  onto `/plan`'s Phase 5.2a tier table (`plugins/saga/skills/plan/SKILL.md`), a payoff-at-stake x
+  remaining-spend-envelope tier-value scoring helper, and a post-run `reconcile` reader over
+  `outcome_costs.py`'s rollup. The reconcile deltas only the commensurable fields
+  (`operator_touches`/`retries`); `tokens`/`wall_seconds` render as labeled real-world context —
+  never a fabricated token-to-ordinal exchange rate. Also carries `resolve_node_tier`, a read-time
+  fallback-tier lookup for `outcome_spec.Node` (which has no tier field of its own): the node's
+  committed GitHub issue's stamped tier band, else the shared `SPEND_BASELINE` default — sourced
+  from durable committed/GitHub state only, never the git-ignored saga cache.
+- **`plugins/saga/scripts/spend_receipt.py` (new):** an itemized per-unit/per-tier receipt whose
+  cheap-fallback counterfactual total sums each unit's declared fallback tier
+  (`Unit.cheaper_fallback` when set, else `adjacent_tier`'s one-rung-down, else
+  `spend_estimate.resolve_node_tier` for an outcome-DAG node), naming the tradeoff
+  (`Unit.worth_it_because`) for every unit that ran above its fallback.
+- **`plugins/saga/scripts/spend_retro.py` (new):** a cross-run aggregator over every committed
+  `docs/outcomes/*/outcome-spec.json`'s materialized `cost_rollup`, emitting a repo-wide tier-mix /
+  premium-spend-share / spend-vs-outcome summary appended as a new dated section to
+  `docs/engineering-journal/LEARNINGS.md` — the mechanism that makes "xhigh-Opus is wasteful" a
+  checkable claim instead of an assertion.
+- **`/retro` tier-efficacy pass** (`plugins/saga/skills/retro/SKILL.md`, new Phase 1.10 reader +
+  Phase 5(e) propose-diff-and-wait step) and **`plugins/saga/scripts/tier_efficacy.py` (new)**:
+  mines completed-run cost-vs-outcome history and, for a work-shape running consistently above
+  baseline tier with zero marginal findings across enough runs, proposes a one-rung-cheaper
+  `.saga/tier-defaults.json` diff — rendered for operator review, never applied by the pass itself.
+- **`plugins/saga/scripts/shadow_audit.py` (new):** a sampled 1-in-N shadow audit that replays a
+  completed unit one tier down (`execution_spec.adjacent_tier`), records a sufficient/insufficient
+  verdict into the evidence ledger (#398) under a namespaced `shadow-audit:<stage>:<unit-id>`
+  `check_id` (reusing `evidence_ledger.py` rather than a new ledger format), and renders per-stage
+  tier-sufficiency rates. Off by default in attended mode absent an explicit `--yes` or a committed
+  `.saga/shadow-audit.json` `{"enabled": true}`; budget-capped via a mandatory `--max-samples` in
+  unattended mode. The module never spawns an Agent itself — the replay dispatch site is documented
+  in `plugins/saga/references/sandbox-spawn-sites.md`'s ad-hoc-spawn table.
+- Every module here is a reader or a leaf-appender only: none writes a cost/status field back into
+  `outcome_costs.py`'s ledger or an `outcome-spec.json` in place, and none auto-applies a
+  tier-default change — mirroring the binding `/outcome` campaign decision that the cost ledger is
+  a leaf-produced fact, derived-on-read.
+- `tests/test_spend_estimate.py`, `tests/test_spend_receipt.py`, `tests/test_spend_retro.py`,
+  `tests/test_tier_efficacy_retro.py`, `tests/test_shadow_audit.py` — 37 tests covering the
+  estimate/reconcile no-write guarantee, the tier-value scoring matrix, the counterfactual-total
+  invariant, the golden cross-run spend summary, the gated downgrade proposal (with a byte-unchanged
+  fixture-file assertion), and the off-by-default/budget-capped shadow-audit gate.
+
 ## [0.81.0] - 2026-07-12
 
 ### Added - content-addressed, append-only evidence ledger for /qa and /code-review verdicts (#398)

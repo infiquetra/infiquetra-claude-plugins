@@ -148,6 +148,25 @@ the three verification modes (DIFF / CROSS-REPO / EXTERNAL-STATE) and the honest
 UNVERIFIABLE over DONE when the diff cannot confirm the deliverable — code that *handles* a deliverable
 is not the deliverable). The audit **always runs and emits findings**. Cite evidence per item.
 
+### 1.5 Freeze the review criteria (pre-registered, R4/#398)
+
+In **interactive** mode, before the Phase 3 fan-out, freeze the pass/fail contract for this reviewed
+SHA — the scope (files under `<base>...HEAD`) and the P0/P1-blocks rule from Phase 4.2 — so a later
+attempt at the same revision cannot redefine what counts as clean:
+
+```bash
+python3 plugins/saga/scripts/evidence_ledger.py --repo-root . --saga-id <issue-N|task-slug> \
+  freeze-criteria --check-id code-review --reviewed-sha "$(git rev-parse HEAD)" \
+  --criteria-file <criteria.json>
+```
+
+`<criteria.json>` captures `{"scope": "<base>...HEAD", "blocking_rule": "P0/P1 blocks"}`. A repeat
+review at the same reviewed SHA hits the same `(check_id, reviewed_sha)` identity —
+`freeze-criteria` **rejects** that second freeze by design (R4: freeze is one-time); treat the
+rejection as expected on a retry and continue. **Skip this step entirely in programmatic /
+report-only mode** — that mode makes zero file writes to reviewed code and owns no persistence
+(Phase 5.3/5.4's contract); the caller freezes criteria on its own review, if at all.
+
 ---
 
 ## Phase 2 — Select lenses (judgment)
@@ -303,12 +322,9 @@ pipe-delimited table per severity (`# | File | Issue | Reviewer | Confidence | R
 built-vs-planned summary, the scope-check result, suppressed-count, and coverage (residual risks,
 testing gaps). See `references/findings-schema.md` for the full output and artifact contract.
 
-### 5.3 Write the durable artifact
+### 5.3 Write the durable artifact through the evidence ledger
 
-Write `docs/code-reviews/YYYY-MM-DD-<branch-or-pr>-code-review.md`. Use its **own** directory
-`docs/code-reviews/` — **not** `docs/reviews/`, which the handoff/sdlc classifiers
-(`handoff_envelope.py`) tag as plan-ready. The artifact carries the **reviewed SHA**
-(`git rev-parse HEAD`) and the review-result contract (mirroring `/doc-review`'s shape):
+Compose the review-result contract (mirroring `/doc-review`'s shape):
 
 - target (diff/branch/PR) and reviewed revision (commit SHA or "working tree")
 - blocked status (blocked when any P0/P1 finding remains)
@@ -317,15 +333,33 @@ Write `docs/code-reviews/YYYY-MM-DD-<branch-or-pr>-code-review.md`. Use its **ow
 - coverage stats (suppressed count, residual risks, testing gaps)
 - linked issue, plan, and work-session paths when available
 
-In **interactive** mode, write the artifact. In **programmatic / report-only** mode, return the
-structured findings envelope (CE headless shape — findings grouped by `autofix_class`, verdict in the
-header, `Review complete` as the terminal line) and write **ZERO file writes to reviewed code**; the
-caller owns durable persistence and any downstream routing.
+In **interactive** mode, persist it through the evidence ledger (#398) instead of a bare file write —
+content-addressed, write-once, and custody-logged so a later clean pass can never silently overwrite an
+earlier blocked verdict:
+
+```bash
+REVIEWED_SHA=$(git rev-parse HEAD)
+python3 plugins/saga/scripts/evidence_ledger.py --repo-root . \
+  --saga-id <issue-N|task-slug|adhoc-work-<slug>> \
+  write --check-id code-review --reviewed-sha "$REVIEWED_SHA" --producer code-review-gate \
+  --verdict "<blocked|clean>" --artifact-file <path-to-composed-review.md>
+```
+
+The ledger prints the resulting `artifact_path` (under `docs/evidence/<saga-id>/artifacts/`, **not**
+`docs/reviews/`, which the handoff/sdlc classifiers `handoff_envelope.py` tag as plan-ready) — that
+path is the durable code-review artifact for 5.4's `--review-paths`. When Phase 5.1 found no
+work-thread saga, use `--saga-id adhoc-<branch-slug>` (the branch-or-pr stem) so the write still lands
+in the ledger — only the saga *tick* (5.4) is skipped in that case, never the custody entry.
+
+In **programmatic / report-only** mode, return the structured findings envelope (CE headless shape —
+findings grouped by `autofix_class`, verdict in the header, `Review complete` as the terminal line) and
+write **ZERO file writes to reviewed code and ZERO ledger writes**; the caller owns durable persistence
+(including, if it wants one, its own ledger write) and any downstream routing.
 
 ### 5.4 Append the saga tick (only if a saga exists and in interactive mode)
 
 In **programmatic / report-only** mode, SKIP this step entirely — the caller owns durable persistence
-(the Phase 5.3 contract), and no `docs/code-reviews/` artifact was written for a tick to reference.
+(the Phase 5.3 contract), and no ledger artifact was written for a tick to reference.
 
 In **interactive** mode, **if and only if** Phase 5.1 found an active work-thread saga, append a tick —
 reusing its exact `kind` and `id`, passing the artifact path to `--review-paths` and the chosen backend

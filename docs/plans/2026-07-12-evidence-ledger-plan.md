@@ -76,17 +76,27 @@ FAIL→PASS as `superseded_fail: true` (R3). This reconciles "reject same-identi
 "preserve fail-then-pass history" — the two acceptance criteria that look contradictory until
 attempt joins the key.
 
-**KTD3 — Custody-log integrity: per-entry hash chain.** Each JSONL entry records
-`prev` = sha256 of the previous entry's canonical JSON (`sort_keys`, genesis `prev: null`).
-`verify_chain()` recomputes linkage AND re-hashes each referenced artifact on disk. This detects
-tampering of the log itself, not just of artifacts — git history alone cannot, since a
-force-push or local edit rewrites both.
+**KTD3 — Custody-log integrity: per-entry hash chain plus a head pointer.** Each JSONL entry
+records `prev` = sha256 of the previous entry's canonical JSON (`sort_keys`, genesis
+`prev: null`). `verify_chain()` recomputes linkage AND re-hashes each referenced artifact on
+disk. This detects tampering of the log itself, not just of artifacts — git history alone cannot,
+since a force-push or local edit rewrites both. A pure hash chain has one structural gap: the
+*last* entry has no successor to check its hash against, so a lone-tail edit (exactly the
+grounding incident's shape — a script silently overwrites the newest verdict) goes undetected.
+`ledger.head` closes it: every append atomically records the hash of the just-appended entry
+alongside the log, and `verify_chain()` compares the recomputed tail hash against it — an
+independent second pointer that a bare content-only edit doesn't automatically keep in sync.
 
 **KTD4 — Self-certification is a HALT, not a flag.** The acceptance criterion allows "rejected or
 flagged"; we reject, matching the repo-wide HALT-not-degrade bias (a flagged violation in a green
 run is exactly the silent-pass failure mode this issue exists to kill). Roles are plain strings
 (`producer` e.g. `qa-gate` / `code-review-gate`; `verifier` e.g. `outcome-coordinator`,
-`operator`); equality of role strings is the rejection test.
+`operator`); equality of role strings is the rejection test. `close_verify` is scoped to one
+`(check_id, reviewed_sha)` — the acceptance criterion's own wording ("a producer self-certifying
+its own verdict") is singular per check, and a per-check close matches sub-397's future closure
+gate (which decides readiness one check at a time, not the whole ledger at once). The chain-verify
+half of closure still covers the FULL log regardless of scope — a tamper anywhere invalidates
+trust in everything, not just the closing check.
 
 **KTD5 — Dual surface: argparse CLI + importable API.** The skill wire-through points are prose
 steps in SKILL.md files, so the module must be invocable as

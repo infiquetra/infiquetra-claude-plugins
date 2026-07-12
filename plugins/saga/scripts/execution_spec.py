@@ -531,18 +531,31 @@ class Tier:
 class Verify:
     """An optional refute-N judge-panel over a unit's output (KTD5).
 
-    ``n`` verifier agents (same tier as the unit) review the unit's result; a finding
-    survives unless refuted per ``pass_rule`` (majority / unanimous). The panel is
-    bounded (KTD3): ``1 <= n <= VERIFY_N_CAP``, with a soft warn band above
-    ``VERIFY_N_WARN`` -- the bound guards the rate-limit overcorrection.
+    ``n`` verifier agents review the unit's result; a finding survives unless refuted per
+    ``pass_rule`` (majority / unanimous). The panel is bounded (KTD3): ``1 <= n <= VERIFY_N_CAP``,
+    with a soft warn band above ``VERIFY_N_WARN`` -- the bound guards the rate-limit overcorrection.
+
+    #565 KTD5: a panel MAY carry its own ``tier`` ({model, effort}); absent, it defaults to the
+    unit tier (R4 default preserved, byte-identical emission). A premium panel tier justifies its
+    OWN spend via ``worth_it_because`` + ``cheaper_fallback`` -- mirroring the unit receipt fields
+    so escalating the *panel* does not borrow the unit's receipt (the two are independent spend
+    decisions). Receipts are enforced only under ``validate(require_receipts=True)`` (the /plan
+    authoring boundary), so existing specs never break retroactively.
     """
 
     n: int
     pass_rule: str
     iterate_to_consensus: bool = False
     max_iterations: int = 3
+    # Optional per-panel tier (#565 KTD5). None => run verifiers at the unit tier (R4 default);
+    # an absent field emits no key so existing specs round-trip byte-identical.
+    tier: Tier | None = None
+    # Panel-tier receipts, mirroring the unit fields (#565 KTD5 / #367 U3). Enforced only when the
+    # panel tier is premium (above sonnet/high) AND validate is called with require_receipts=True.
+    worth_it_because: str = ""
+    cheaper_fallback: Tier | None = None
 
-    def validate(self, where: str) -> None:
+    def validate(self, where: str, *, require_receipts: bool = False) -> None:
         if self.n < 1:
             raise SpecError(f"{where}: verify n={self.n} must be >= 1")
         if self.n > VERIFY_N_CAP:
@@ -561,6 +574,34 @@ class Verify:
             raise SpecError(f"{where}: verify pass_rule {self.pass_rule!r} not in {PASS_RULES}")
         if self.max_iterations < 1:
             raise SpecError(f"{where}: verify max_iterations={self.max_iterations} must be >= 1")
+        if self.tier is not None:
+            # A panel tier is a normal Claude verifier tier: off-palette model/effort fails, and an
+            # on-palette-but-unrunnable panel tier (e.g. haiku/xhigh) HALTs via the ceiling check --
+            # a palette ceiling HALT, never a clamp (#565 R5).
+            self.tier.validate(f"{where} verify tier")
+            # #565 R6: a premium panel tier must justify its OWN spend under require_receipts,
+            # mirroring the unit receipts rule -- the panel does not borrow the unit's receipt.
+            if require_receipts and is_escalation(SPEND_BASELINE, self.tier):
+                if not self.worth_it_because:
+                    raise SpecError(
+                        f"{where}: verify tier {self.tier.model}/{self.tier.effort} is a premium "
+                        f"panel tier (above sonnet/high) but carries no worth_it_because "
+                        f"justification (#565)"
+                    )
+                if self.cheaper_fallback is None:
+                    raise SpecError(
+                        f"{where}: premium verify tier {self.tier.model}/{self.tier.effort} names "
+                        f"no cheaper_fallback (#565 -- premium panel spend must be one downgrade "
+                        f"away)"
+                    )
+                self.cheaper_fallback.validate(f"{where} verify cheaper_fallback")
+                if spend_delta(self.tier, self.cheaper_fallback) != "cheapen":
+                    raise SpecError(
+                        f"{where}: verify cheaper_fallback "
+                        f"{self.cheaper_fallback.model}/{self.cheaper_fallback.effort} is not "
+                        f"strictly cheaper than verify tier {self.tier.model}/{self.tier.effort} "
+                        f"(#565)"
+                    )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], where: str) -> Verify:
@@ -580,20 +621,41 @@ class Verify:
                 f"{where}: verify max_iterations {max_iterations_raw!r} is not an integer"
             ) from exc
 
+        tier_raw = data.get("tier")
+        tier = Tier.from_dict(tier_raw, f"{where} verify tier") if tier_raw else None
+        cheaper_fallback_raw = data.get("cheaper_fallback")
+        cheaper_fallback = (
+            Tier.from_dict(cheaper_fallback_raw, f"{where} verify cheaper_fallback")
+            if cheaper_fallback_raw
+            else None
+        )
+
         return cls(
             n=n,
             pass_rule=str(data["pass_rule"]),
             iterate_to_consensus=iterate_to_consensus,
             max_iterations=max_iterations,
+            tier=tier,
+            worth_it_because=str(data.get("worth_it_because", "")),
+            cheaper_fallback=cheaper_fallback,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "n": self.n,
             "pass_rule": self.pass_rule,
             "iterate_to_consensus": self.iterate_to_consensus,
             "max_iterations": self.max_iterations,
         }
+        # #565 KTD5: absent panel tier / receipts emit no key so an existing panel round-trips
+        # byte-identical (team_emitter and specs authored before the field are untouched).
+        if self.tier is not None:
+            out["tier"] = self.tier.to_dict()
+        if self.worth_it_because:
+            out["worth_it_because"] = self.worth_it_because
+        if self.cheaper_fallback is not None:
+            out["cheaper_fallback"] = self.cheaper_fallback.to_dict()
+        return out
 
 
 @dataclass(frozen=True)
@@ -848,7 +910,7 @@ class Unit:
                     f"not in {VERIFIABILITY_VALUES}"
                 )
         if self.verify is not None:
-            self.verify.validate(f"unit {self.unit_id}")
+            self.verify.validate(f"unit {self.unit_id}", require_receipts=require_receipts)
         if self.sandbox is not None:
             self.sandbox.validate(f"unit {self.unit_id}")
         if self.min_tier is not None:
@@ -1034,22 +1096,36 @@ def _optional_int_field(data: dict[str, Any], key: str) -> int | None:
         raise SpecError(f"spec {key} {raw!r} is not an integer") from exc
 
 
+def _effective_verify_tier(unit: Unit) -> Tier:
+    """The tier a unit's verifier panel actually runs at (#565 KTD5).
+
+    A panel's own ``tier`` overrides the unit tier when set; absent, verifiers ride the unit tier
+    (R4 default, byte-identical emission). Callers must only pass a unit whose ``verify`` is set.
+    """
+    if unit.verify is not None and unit.verify.tier is not None:
+        return unit.verify.tier
+    return unit.tier
+
+
 def unit_spend(unit: Unit) -> int:
     """Ordinal spend for one unit's full call footprint (#366 KTD8).
 
     A unit is not always one agent call: a *fan-out* runs its op once per enumerated target,
-    and a *verify* panel adds ``n`` verifier calls at the unit's tier (times ``max_iterations``
-    when it iterates to consensus). A ``pilot`` is a SEPARATE declared unit, counted on its own
-    row, so it is deliberately NOT re-added here -- that would double-count. A one-weight-per-unit
-    sum would undercount exactly the expensive fan-out/panel plans and silently false-negative
-    the cost HALT (the HALT-not-degrade violation U2 exists to prevent).
+    and a *verify* panel adds ``n`` verifier calls at the effective panel tier (the panel's own
+    ``tier`` when set, else the unit tier -- #565 KTD5) times ``max_iterations`` when it iterates
+    to consensus. A ``pilot`` is a SEPARATE declared unit, counted on its own row, so it is
+    deliberately NOT re-added here -- that would double-count. A one-weight-per-unit sum would
+    undercount exactly the expensive fan-out/panel plans and silently false-negative the cost HALT
+    (the HALT-not-degrade violation U2 exists to prevent).
     """
     base = cast(int, to_spend(unit.tier.model, unit.tier.effort))
     calls = len(unit.targets) if (unit.fanout and unit.targets) else 1
     total = base * calls
     if unit.verify is not None:
+        panel_tier = _effective_verify_tier(unit)
+        panel_base = cast(int, to_spend(panel_tier.model, panel_tier.effort))
         iterations = unit.verify.max_iterations if unit.verify.iterate_to_consensus else 1
-        total += unit.verify.n * base * iterations
+        total += unit.verify.n * panel_base * iterations
     return total
 
 
@@ -1505,13 +1581,16 @@ def _verifier_agent_opts(unit: Unit) -> list[str]:
     Edit/Write (mutation_policy: read-only) and ``isolation: 'worktree'`` runs it in a throwaway
     worktree (workspace_isolation: disposable-worktree), so a verifier's Bash ``git checkout``
     cannot clobber the primary tree. No opt-out -- a verifier that needs write access is a design
-    smell, and an opt-out would be an escalation channel contradicting R8. The unit's per-tier
-    ``model``/``effort`` still ride so the panel runs at the same tier as the unit (R4).
+    smell, and an opt-out would be an escalation channel contradicting R8. The panel runs at its
+    EFFECTIVE tier -- the panel's own ``verify.tier`` when authored, else the unit tier (#565
+    KTD5, R4 default) -- so an opus/high refute-3 request over a sonnet/medium unit runs the
+    verifiers at opus/high without forcing the unit itself up.
     """
+    tier = _effective_verify_tier(unit)
     opts = [
         f"label: {_js_string(unit.label + ' verifier')}",
-        f"model: {_js_string(unit.tier.model)}",
-        f"effort: {_js_string(unit.tier.effort)}",
+        f"model: {_js_string(tier.model)}",
+        f"effort: {_js_string(tier.effort)}",
         f"agentType: {_js_string(READONLY_VERIFIER_AGENT_TYPE)}",
         f"isolation: {_js_string(READONLY_VERIFIER_ISOLATION)}",
     ]

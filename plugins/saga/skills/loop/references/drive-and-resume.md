@@ -53,7 +53,8 @@ python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
   --broad-fanout --file-count <N> --phase-count <M>
 ```
 
-Recommend the cheapest-correct backend, surface the alternatives, confirm, and record
+Recommend the cheapest-correct backend, but render the offer from the full `backends` enumeration
+(all three, each `{backend, status, note}`, never a silent drop), confirm, and record
 `--orchestration-mode` + `--orchestration-ref` in the routing tick — this pair appears **only** in the
 `/loop`-owned-offload context, never on an ordinary single-command route. An ordinary route hands the
 backend choice entirely to the destination command (which makes its own offer); `/loop` does not

@@ -1334,3 +1334,184 @@ def test_worth_it_cheaper_fallback_roundtrips_when_present() -> None:
     assert unit_dict["cheaper_fallback"] == {"model": "opus", "effort": "xhigh"}
     assert ES.ExecutionSpec.from_dict(spec.to_dict()).to_dict() == spec.to_dict()
     spec.validate(require_receipts=True)  # fable/xhigh with a strictly-cheaper opus/xhigh fallback
+
+
+# --- #565 U3: Verify panel tier + panel receipts (KTD5) -------------------------------------
+
+
+def _panel_unit(
+    unit_id: str = "U1",
+    model: str = "sonnet",
+    effort: str = "medium",
+    **verify_overrides: object,
+) -> dict[str, object]:
+    """A unit at ``model``/``effort`` carrying an n=3 majority verify panel with overrides."""
+    verify: dict[str, object] = {"n": 3, "pass_rule": "majority"}
+    verify.update(verify_overrides)
+    return {
+        "unit_id": unit_id,
+        "label": unit_id,
+        "tier": {"model": model, "effort": effort},
+        "prompt": "do the work",
+        "returns": ["result"],
+        "verify": verify,
+    }
+
+
+def test_panel_tier_emits_effective_tier_while_unit_stays_lower() -> None:
+    # A verify panel authored at opus/high over a sonnet/medium unit runs the VERIFIERS at
+    # opus/high while the unit's own agent call stays sonnet/medium (#565 KTD5).
+    unit_dict = _panel_unit(tier={"model": "opus", "effort": "high"})
+    spec = ES.ExecutionSpec.from_dict(
+        {"name": "panel-tier", "description": "d", "repo": "/tmp/r", "units": [unit_dict]}
+    )
+    spec.validate()
+    unit = spec.unit_by_id("U1")
+    assert unit is not None
+
+    verifier_opts = ES._verifier_agent_opts(unit)
+    assert 'model: "opus"' in verifier_opts
+    assert 'effort: "high"' in verifier_opts
+    # The unit's own tier is untouched.
+    assert unit.tier.model == "sonnet"
+    assert unit.tier.effort == "medium"
+
+    script = str(ES.emit_workflow_script(spec))
+    # Both tiers appear in the emitted script: the unit at sonnet/medium, the verifiers at opus/high.
+    assert 'model: "opus"' in script
+    assert 'model: "sonnet"' in script
+
+
+def test_panel_tier_absent_uses_unit_tier_and_omits_keys() -> None:
+    # Without a panel tier, verifiers ride the unit tier (R4 default preserved) and to_dict omits
+    # the new keys byte-identically.
+    unit_dict = _panel_unit(model="sonnet", effort="medium")
+    spec = ES.ExecutionSpec.from_dict(
+        {"name": "panel-default", "description": "d", "repo": "/tmp/r", "units": [unit_dict]}
+    )
+    spec.validate()
+    unit = spec.unit_by_id("U1")
+    assert unit is not None
+
+    verifier_opts = ES._verifier_agent_opts(unit)
+    assert 'model: "sonnet"' in verifier_opts
+    assert 'effort: "medium"' in verifier_opts
+
+    verify_dict = unit.verify.to_dict()
+    assert set(verify_dict) == {"n", "pass_rule", "iterate_to_consensus", "max_iterations"}
+    assert "tier" not in verify_dict
+    assert "worth_it_because" not in verify_dict
+    assert "cheaper_fallback" not in verify_dict
+    # Full spec round-trip is byte-identical.
+    assert ES.ExecutionSpec.from_dict(spec.to_dict()).to_dict() == spec.to_dict()
+
+
+def test_panel_tier_and_receipts_roundtrip_when_present() -> None:
+    unit_dict = _panel_unit(
+        tier={"model": "opus", "effort": "high"},
+        worth_it_because="adversarial depth",
+        cheaper_fallback={"model": "sonnet", "effort": "high"},
+    )
+    spec = ES.ExecutionSpec.from_dict(
+        {"name": "panel-receipts", "description": "d", "repo": "/tmp/r", "units": [unit_dict]}
+    )
+    verify_dict = spec.units[0].to_dict()["verify"]
+    assert verify_dict["tier"] == {"model": "opus", "effort": "high"}
+    assert verify_dict["worth_it_because"] == "adversarial depth"
+    assert verify_dict["cheaper_fallback"] == {"model": "sonnet", "effort": "high"}
+    assert ES.ExecutionSpec.from_dict(spec.to_dict()).to_dict() == spec.to_dict()
+
+
+def test_premium_panel_tier_receipts_gate_both_ways() -> None:
+    # A premium panel tier (opus/high) on a NON-premium unit (sonnet/medium): plain validate passes,
+    # but validate(require_receipts=True) fails naming both the unit and the panel.
+    unit_dict = _panel_unit(tier={"model": "opus", "effort": "high"})
+    bare = ES.ExecutionSpec.from_dict(
+        {"name": "panel-gate", "description": "d", "repo": "/tmp/r", "units": [unit_dict]}
+    )
+    bare.validate()  # no receipts -> no raise (no retroactive break)
+    with pytest.raises(ES.SpecError, match=r"unit U1: verify tier .*worth_it_because"):
+        bare.validate(require_receipts=True)
+
+    # justification present but no cheaper_fallback:
+    no_fb = ES.ExecutionSpec.from_dict(
+        {
+            "name": "panel-gate",
+            "description": "d",
+            "repo": "/tmp/r",
+            "units": [
+                _panel_unit(
+                    tier={"model": "opus", "effort": "high"},
+                    worth_it_because="adversarial depth",
+                )
+            ],
+        }
+    )
+    with pytest.raises(ES.SpecError, match=r"cheaper_fallback"):
+        no_fb.validate(require_receipts=True)
+
+    # both present with a strictly-cheaper fallback -> passes the authoring gate.
+    ok = ES.ExecutionSpec.from_dict(
+        {
+            "name": "panel-gate",
+            "description": "d",
+            "repo": "/tmp/r",
+            "units": [
+                _panel_unit(
+                    tier={"model": "opus", "effort": "high"},
+                    worth_it_because="adversarial depth",
+                    cheaper_fallback={"model": "sonnet", "effort": "high"},
+                )
+            ],
+        }
+    )
+    ok.validate(require_receipts=True)  # no raise
+
+
+def test_panel_cheaper_fallback_not_strictly_cheaper_fails() -> None:
+    # A panel cheaper_fallback that is NOT strictly cheaper than the panel tier fails under
+    # require_receipts, mirroring the unit rule.
+    unit_dict = _panel_unit(
+        tier={"model": "opus", "effort": "high"},
+        worth_it_because="adversarial depth",
+        cheaper_fallback={"model": "opus", "effort": "xhigh"},  # dearer, not cheaper
+    )
+    spec = ES.ExecutionSpec.from_dict(
+        {"name": "panel-fb", "description": "d", "repo": "/tmp/r", "units": [unit_dict]}
+    )
+    with pytest.raises(ES.SpecError, match=r"not strictly\s+cheaper"):
+        spec.validate(require_receipts=True)
+
+
+def test_panel_tier_haiku_xhigh_halts_on_ceiling() -> None:
+    # An on-palette-but-unrunnable panel tier (haiku/xhigh) HALTs on the palette ceiling check --
+    # a HALT, not a clamp -- even on plain validate().
+    unit_dict = _panel_unit(tier={"model": "haiku", "effort": "xhigh"})
+    spec = ES.ExecutionSpec.from_dict(
+        {"name": "panel-ceiling", "description": "d", "repo": "/tmp/r", "units": [unit_dict]}
+    )
+    with pytest.raises(ES.SpecError, match=r"exceeds model 'haiku' ceiling"):
+        spec.validate()
+
+
+def test_panel_tier_spend_prices_verifiers_at_effective_tier() -> None:
+    # A 3-verifier opus/high panel on a sonnet/medium unit costs base(sonnet/medium) +
+    # 3 x base(opus/high) = 6 + 3*32 = 102.
+    unit_dict = _panel_unit(tier={"model": "opus", "effort": "high"})
+    spec = ES.ExecutionSpec.from_dict(
+        {"name": "panel-spend", "description": "d", "repo": "/tmp/r", "units": [unit_dict]}
+    )
+    unit = spec.unit_by_id("U1")
+    assert unit is not None
+    base_unit = ES.to_spend("sonnet", "medium")
+    base_panel = ES.to_spend("opus", "high")
+    assert ES.unit_spend(unit) == base_unit + 3 * base_panel
+
+    # Without the panel tier the same panel prices at the unit tier: 6 + 3*6 = 24.
+    default_dict = _panel_unit(model="sonnet", effort="medium")
+    default_spec = ES.ExecutionSpec.from_dict(
+        {"name": "panel-spend2", "description": "d", "repo": "/tmp/r", "units": [default_dict]}
+    )
+    default_unit = default_spec.unit_by_id("U1")
+    assert default_unit is not None
+    assert ES.unit_spend(default_unit) == base_unit + 3 * base_unit

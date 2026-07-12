@@ -27,6 +27,37 @@
 
 ## 2026-07-12
 
+### Branch precedence can make a guard term dead while its outcome test still passes  {#precedence-deadens-guard-term-565}
+
+**Context.** #565's `workflow_shapes` trigger rode the existing `and not elevated_risk`
+"suppressor" in `recommend_execution_backend`'s ultracode expression, and the new test asserted
+`rec(workflow_shapes=["migrate"], has_infra=True) == "team-execution"` under a comment crediting
+the suppressor.
+
+**Evidence.** The 4-lens testing verifier's mutation J deleted the term — all 69 tests still
+passed (PR #566, review at `efc8510`). The falsifier then brute-forced ~1.4M input combinations:
+zero cases reach the `elif` with `elevated_risk` True.
+
+**Mechanism.** Every component of `elevated_risk` (`has_security` / `has_infra` /
+`deployment_sensitive`, gated by `has_code_surface`) is itself a `code_shaped` team-execution
+trigger behind the *same* gate, so the `if team:` branch always consumes those inputs before the
+`elif` is evaluated. The suppression *outcome* is real; the *named mechanism* never executes —
+so the outcome-asserting test passes while crediting dead code.
+
+**Fix.** `383b1cb` kept the term (it becomes load-bearing the moment the if/elif order changes)
+and rewrote the code comment + test prose to state the true mechanism: team precedence does the
+routing; the term is a reordering guard, not independently reachable today.
+
+**Generalizable rule.** When a test's comment names a *mechanism* ("X suppresses Y"), mutation-
+test the mechanism, not just the outcome — precedence, short-circuiting, or caching upstream can
+satisfy the assertion while the credited code is unreachable, and the comment then lies to the
+next maintainer. Keep an unreachable defense only with a comment stating exactly why it is
+unreachable and what future change would arm it.
+
+**Refs.** `plugins/saga/scripts/lifecycle_state.py` (ultracode expression),
+`tests/test_saga_plugin.py::test_recommend_backend_workflow_shapes`,
+`docs/code-reviews/2026-07-12-work-565-backend-offer-fix-code-review.md`.
+
 ### A FIFO defeats exception-based degrade: blocking open() hangs instead of raising  {#fifo-hang-defeats-except-degrade-395}
 
 **Context.** #395's `reconcile --all` dropped-baton sweep had to degrade per-saga on unreadable

@@ -262,11 +262,14 @@ python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
   --broad-fanout --file-count <N> --phase-count <M>
 ```
 
-Recommend the cheapest-correct backend, surface the alternatives (escalation one step), confirm with
-the operator, and record `--orchestration-mode` + `--orchestration-ref` in the routing tick (Phase 4)
-**only in this `/loop`-owned-offload case** — never on an ordinary single-command route. Omit
-`cc-workflows-ultracode` ("dynamic workflows") from the offer when the Workflow tool is observably absent; fall back to
-`/loop`'s own phase-walk when no heavier backend is reachable (operator-choice §4).
+Recommend the cheapest-correct backend, but render the offer from the full `backends` enumeration
+(all three, each `{backend, status, note}`) so escalation is one step and no backend is silently
+dropped, confirm with the operator, and record `--orchestration-mode` + `--orchestration-ref` in the
+routing tick (Phase 4) **only in this `/loop`-owned-offload case** — never on an ordinary single-command
+route. **Never omit `cc-workflows-ultracode` ("dynamic workflows") from the offer** — when the Workflow
+tool is observably absent, still name it with `status: unavailable` and its availability-provenance note
+(probed vs asserted); fall back to `/loop`'s own phase-walk when no heavier backend is reachable
+(operator-choice §4).
 
 ---
 

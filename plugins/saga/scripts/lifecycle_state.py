@@ -51,6 +51,7 @@ def should_offer_team_execution(
     cross_repo: bool,
     deployment_sensitive: bool,
     has_code_surface: bool = True,
+    release_surface_file_count: int = 0,
 ) -> bool:
     """Decide whether the loop should offer team-execution.
 
@@ -70,11 +71,28 @@ def should_offer_team_execution(
     OWNERSHIP boundary, a multi-party coordination/consensus need that holds even
     for docs. (``needs_consensus`` survives in ``recommend_execution_backend`` for
     the same reason.)
+
+    ``release_surface_file_count`` (KTD1, default 0) is the count of release
+    BOOKKEEPING files inside ``file_count`` — plugin.json, marketplace.json,
+    CHANGELOGs, version drift-guard pins — that a behavior change must edit in
+    lockstep but that carry no functional risk. The size trigger fires on
+    FUNCTIONAL surface only (``file_count - release_surface_file_count >= 8``),
+    so ``file_count`` keeps its stable meaning (raw touched files) and the default
+    of 0 leaves every existing caller byte-identical. The #526 shape (3 functional
+    + 6 bookkeeping files) therefore recommends inline; 8+ genuinely functional
+    files still trips. A negative ``release_surface_file_count`` raises
+    ``ValueError`` — it would inflate the functional count and silently
+    over-escalate (fail loud on garbage-in).
     """
 
+    if release_surface_file_count < 0:
+        raise ValueError(
+            f"release_surface_file_count must be >= 0, got {release_surface_file_count}"
+        )
+    functional_file_count = file_count - release_surface_file_count
     code_shaped = any(
         (
-            file_count >= 8,
+            functional_file_count >= 8,
             phase_count >= 4,
             has_security,
             has_infra,
@@ -97,6 +115,71 @@ def requires_hard_test_gate(change_kinds: Sequence[str]) -> bool:
     return bool(risky.intersection(kind.lower() for kind in change_kinds))
 
 
+# KTD4: the fixed backend enumeration order the offer always renders, most-capable last so the
+# ladder reads inline -> team-execution -> cc-workflows-ultracode.
+_ALL_BACKENDS = ("inline", "team-execution", "cc-workflows-ultracode")
+
+
+def _availability_note(*, workflow_available: bool, workflow_availability_source: str) -> str:
+    """Render the cc-workflows-ultracode availability note carrying KTD3 provenance."""
+
+    if workflow_available:
+        if workflow_availability_source == "probed":
+            return "Workflow tool available (probed at offer time)."
+        return "Workflow tool assumed available (asserted — probe before trusting)."
+    if workflow_availability_source == "probed":
+        return "Workflow tool unavailable (probed at offer time)."
+    return "Workflow tool unavailable (asserted — unverified; probe before trusting)."
+
+
+def _enumerate_backends(
+    *,
+    recommended: str,
+    reachable: list[str],
+    workflow_available: bool,
+    workflow_availability_source: str,
+) -> list[dict[str, str]]:
+    """Build the full-enumeration ``backends`` payload (KTD4): all three, never a silent drop.
+
+    Every backend gets a ``{backend, status, note}`` entry. ``status`` is
+    ``recommended`` for the winner, ``alternative`` for a reachable non-winner, and
+    ``unavailable`` for a backend the host cannot run (only ever
+    ``cc-workflows-ultracode`` when ``workflow_available`` is False). The ultracode
+    entry always carries the KTD3 provenance note.
+    """
+
+    backends: list[dict[str, str]] = []
+    for backend in _ALL_BACKENDS:
+        if backend == recommended:
+            status = "recommended"
+        elif backend in reachable:
+            status = "alternative"
+        else:
+            status = "unavailable"
+
+        if backend == "cc-workflows-ultracode":
+            note = _availability_note(
+                workflow_available=workflow_available,
+                workflow_availability_source=workflow_availability_source,
+            )
+        else:
+            note = "Always available (host-portable)."
+        backends.append({"backend": backend, "status": status, "note": note})
+    return backends
+
+
+# KTD2: the frozen workflow-shape vocabulary the Workflow tool doc itself names. Any of these
+# shapes, requested as a dynamic workflow, is an ultracode job beside broad fan-out and
+# adversarial confidence. The tuple is the validated wire contract — an unknown shape raises
+# ValueError (fail loud), never a silent inline.
+WORKFLOW_SHAPES = ("understand", "design", "research", "review", "migrate")
+
+# KTD3: the two honest provenance values for workflow availability. The recommender is pure
+# Python and cannot call ToolSearch, so it records whether the caller PROBED (ToolSearch at
+# offer time) or merely ASSERTED (default) the Workflow tool's presence.
+WORKFLOW_AVAILABILITY_SOURCES = ("probed", "asserted")
+
+
 def recommend_execution_backend(
     *,
     file_count: int = 0,
@@ -111,6 +194,9 @@ def recommend_execution_backend(
     adversarial_confidence: bool = False,
     has_code_surface: bool = True,
     workflow_available: bool = True,
+    workflow_shapes: Sequence[str] = (),
+    workflow_availability_source: str = "asserted",
+    release_surface_file_count: int = 0,
     ledger: Any = None,
     prior_n: int = 5,
 ) -> dict[str, object]:
@@ -162,7 +248,50 @@ def recommend_execution_backend(
     ``broad_independent_fanout``) recommends ``team-execution`` yet still lists
     ``cc-workflows-ultracode`` in ``alternatives`` — escalation stays one
     keystroke (operator-choice section 3.3).
+
+    ``workflow_shapes`` (KTD2, default empty) is a sequence of dynamic-workflow
+    shapes drawn from the frozen :data:`WORKFLOW_SHAPES` vocabulary — understand /
+    design / research / review / migrate, the shapes the Workflow tool doc names.
+    ANY entry trips the ultracode branch beside ``broad_independent_fanout`` /
+    ``adversarial_confidence`` (they may co-fire, no precedence between them), and
+    rides the SAME elevated-risk suppressor and ``has_code_surface`` neutralizer as
+    the existing triggers. An unknown shape raises ``ValueError`` (fail loud — a
+    silent typo must never degrade to inline). The ``review`` shape covers a
+    multi-lens review *sweep* requested as a workflow; the explicit
+    refute-N / judge-panel form stays ``adversarial_confidence``.
+
+    ``workflow_availability_source`` (KTD3, default ``"asserted"``) records the
+    provenance of ``workflow_available``: ``"probed"`` (the caller ran a ToolSearch
+    probe at offer time) or ``"asserted"`` (assumed, unverified). It is echoed in
+    ``workflow_availability`` as ``{available, source}`` and folded into the
+    ultracode backend's availability note — an asserted absence renders as
+    "unverified; probe before trusting". An unknown source raises ``ValueError``.
+
+    ``release_surface_file_count`` (KTD1, default 0) is threaded to
+    ``should_offer_team_execution`` so the size trigger fires on FUNCTIONAL surface
+    only (``file_count - release_surface_file_count >= 8``).
+
+    ``backends`` (KTD4) always enumerates ALL THREE backends in a fixed order
+    (``inline`` / ``team-execution`` / ``cc-workflows-ultracode``) as ordered
+    ``{backend, status, note}`` entries with
+    ``status in {recommended, alternative, unavailable}`` — never a silent drop.
+    The unavailable status only ever attaches to ``cc-workflows-ultracode`` when
+    ``workflow_available`` is False; its note carries the KTD3 provenance.
     """
+
+    shapes = tuple(workflow_shapes)
+    unknown_shapes = [shape for shape in shapes if shape not in WORKFLOW_SHAPES]
+    if unknown_shapes:
+        raise ValueError(
+            f"unknown workflow shape(s): {', '.join(unknown_shapes)}; "
+            f"valid shapes are {', '.join(WORKFLOW_SHAPES)}"
+        )
+    if workflow_availability_source not in WORKFLOW_AVAILABILITY_SOURCES:
+        raise ValueError(
+            f"unknown workflow_availability_source: {workflow_availability_source!r}; "
+            f"valid sources are {', '.join(WORKFLOW_AVAILABILITY_SOURCES)}"
+        )
+    has_workflow_shape = bool(shapes)
 
     gated_consensus = needs_consensus and consensus_is_gated
     advisory_consensus = needs_consensus and not consensus_is_gated
@@ -175,14 +304,23 @@ def recommend_execution_backend(
             cross_repo=cross_repo,
             deployment_sensitive=deployment_sensitive,
             has_code_surface=has_code_surface,
+            release_surface_file_count=release_surface_file_count,
         )
         or gated_consensus
     )
     # The risk suppressor only bites when there is a real code/scanner surface:
     # has_infra / has_security are keyword matches that false-positive on docs.
+    # Under the current precedence this term is not independently reachable: every input
+    # that makes elevated_risk True also satisfies should_offer_team_execution (the same
+    # flags behind the same has_code_surface gate), so the `if team:` branch resolves those
+    # inputs first. Kept as a guard against a future if/elif reordering, which would
+    # otherwise route risky fan-outs to ultracode.
     elevated_risk = (has_security or has_infra or deployment_sensitive) and has_code_surface
     ultracode = (
-        broad_independent_fanout or adversarial_confidence or advisory_consensus
+        broad_independent_fanout
+        or adversarial_confidence
+        or advisory_consensus
+        or has_workflow_shape
     ) and not elevated_risk
 
     if team:
@@ -190,9 +328,15 @@ def recommend_execution_backend(
         rationale = "size/risk or consensus signal -> review consensus + gates fit"
     elif ultracode and workflow_available:
         recommended = "cc-workflows-ultracode"
+        reasons = []
+        if broad_independent_fanout:
+            reasons.append("broad fan-out")
+        if adversarial_confidence or advisory_consensus:
+            reasons.append("adversarial-confidence pass")
+        if has_workflow_shape:
+            reasons.append("workflow shape(s) " + "/".join(shapes))
         rationale = (
-            "broad fan-out or adversarial-confidence pass without elevated risk"
-            " -> deterministic independent verification"
+            f"{', '.join(reasons)} without elevated risk -> deterministic independent verification"
         )
     else:
         recommended = "inline"
@@ -207,7 +351,16 @@ def recommend_execution_backend(
         "recommended": recommended,
         "rationale": rationale,
         "alternatives": alternatives,
-        "omit_ultracode": not workflow_available,
+        "backends": _enumerate_backends(
+            recommended=recommended,
+            reachable=reachable,
+            workflow_available=workflow_available,
+            workflow_availability_source=workflow_availability_source,
+        ),
+        "workflow_availability": {
+            "available": workflow_available,
+            "source": workflow_availability_source,
+        },
     }
     # #401 U5: surface a run-fact ledger prior ("last N runs averaged X tokens"). Read-only and
     # additive — the ``prior`` key appears ONLY when a ledger is supplied AND has data, so the
@@ -350,6 +503,27 @@ def _build_parser() -> argparse.ArgumentParser:
     backend.add_argument("--adversarial-confidence", action="store_true")
     backend.add_argument("--no-code-surface", action="store_true")
     backend.add_argument("--no-workflow", action="store_true")
+    backend.add_argument(
+        "--release-surface-file-count",
+        type=int,
+        default=0,
+        help="count of release-bookkeeping files inside --file-count to subtract from the size trigger (KTD1)",
+    )
+    backend.add_argument(
+        "--workflow-shape",
+        action="append",
+        dest="workflow_shapes",
+        default=[],
+        choices=WORKFLOW_SHAPES,
+        metavar="SHAPE",
+        help=f"repeatable dynamic-workflow shape ({'|'.join(WORKFLOW_SHAPES)}); any entry trips ultracode (KTD2)",
+    )
+    backend.add_argument(
+        "--workflow-availability-source",
+        choices=WORKFLOW_AVAILABILITY_SOURCES,
+        default="asserted",
+        help="provenance of workflow availability: probed (ToolSearch) or asserted (default) (KTD3)",
+    )
 
     recheck = subparsers.add_parser(
         "recheck-capability",
@@ -397,6 +571,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             adversarial_confidence=args.adversarial_confidence,
             has_code_surface=not args.no_code_surface,
             workflow_available=not args.no_workflow,
+            workflow_shapes=args.workflow_shapes,
+            workflow_availability_source=args.workflow_availability_source,
+            release_surface_file_count=args.release_surface_file_count,
         )
         print(json.dumps(result))
         return 0

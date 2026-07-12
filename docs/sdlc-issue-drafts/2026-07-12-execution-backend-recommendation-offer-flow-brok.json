@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-12T16:15:17.652980+00:00",
+  "created_issue_number": 565,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/565",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-12-execution-backend-recommendation-offer-flow-brok.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/3c91e90f-5e0a-4704-ac4f-4ac6ddeb2742/scratchpad/issue-source-plan-backend.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-12-execution-backend-recommendation-offer-flow-brok.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# Fix the execution-backend recommendation + offer flow in `/plan` Phase 5.2\n\nSource: repo QUEUED `{#plan-backend-recommendation-broken}` (P1, operator-directed 2026-07-11:\n\"both need fixed\"), scheduled immediately after the ship-ceremony-hardening outcome \u2014 which\ncompleted 2026-07-12 (objective #340, PRs #561/#562/#563/#564).\n\n## Problem\n\nSurfaced live while planning #526 (2026-07-11). The `/plan` Phase 5.2 backend offer was wrong in\nfour independent ways in one session, and an adjacent spec-schema gap surfaced alongside them.\n\nFour defects:\n\n1. **Crude size signal.** `should_offer_team_execution`'s `file_count >= 8` trigger\n   (`plugins/saga/scripts/lifecycle_state.py:77`, consumed by `recommend_execution_backend` at\n   `lifecycle_state.py:100`) counted 6 one-line release-surface bumps (plugin.json,\n   marketplace.json, CHANGELOGs, drift pins) toward a 9-file total and recommended\n   `team-execution` for a single-script defect fix. The signal must weigh *functional* surface\n   (feature-bearing files), not raw touched-file count \u2014 release bookkeeping is constant overhead\n   on every PR in this repo.\n2. **Workflows undersold.** The ultracode triggers are only `broad_independent_fan",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/3c91e90f-5e0a-4704-ac4f-4ac6ddeb2742/scratchpad/issue-source-plan-backend.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/3c91e90f-5e0a-4704-ac4f-4ac6ddeb2742/scratchpad/issue-source-plan-backend.md",
+    "title": "Fix the execution-backend recommendation + offer flow in `/plan` Phase 5.2",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "Execution-backend recommendation + offer flow broken in /plan Phase 5.2",
+  "updated_at": "2026-07-12T16:15:32.295515+00:00"
+}

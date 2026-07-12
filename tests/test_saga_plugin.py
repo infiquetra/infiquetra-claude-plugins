@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.79.0"
-    )  # positive handoff protocol at saga -> deploy boundary: ack envelope, autonomy posture, dropped-baton reconcile (#395)
+        plugin_json["version"] == "0.80.0"
+    )  # backend offer contract: enumeration, availability provenance, functional surface signal, verified shapes (#565)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -2644,13 +2644,23 @@ def test_recommend_execution_backend_precedence_and_overlap() -> None:
     # The recommended backend is never echoed back into its own alternatives.
     assert "team-execution" not in overlap["alternatives"]
 
-    # omit_ultracode when the Workflow tool is unavailable: the flag is set AND
-    # cc-workflows-ultracode is dropped from alternatives (it is no longer reachable).
+    # KTD4: the Workflow tool unavailable -> cc-workflows-ultracode is dropped from alternatives
+    # (no longer reachable) but ENUMERATED in backends with status="unavailable" (never a silent
+    # drop). The deleted omit_ultracode key must be gone entirely.
     no_workflow = lifecycle.recommend_execution_backend(
         broad_independent_fanout=True, needs_consensus=True, workflow_available=False
     )
-    assert no_workflow["omit_ultracode"] is True
+    assert "omit_ultracode" not in no_workflow
     assert "cc-workflows-ultracode" not in no_workflow["alternatives"]
+    assert [b["backend"] for b in no_workflow["backends"]] == [
+        "inline",
+        "team-execution",
+        "cc-workflows-ultracode",
+    ]
+    ultra_entry = next(
+        b for b in no_workflow["backends"] if b["backend"] == "cc-workflows-ultracode"
+    )
+    assert ultra_entry["status"] == "unavailable"
     # With ultracode capability-gated out, a pure-fan-out job degrades to inline.
     assert (
         lifecycle.recommend_execution_backend(
@@ -2658,8 +2668,15 @@ def test_recommend_execution_backend_precedence_and_overlap() -> None:
         )["recommended"]
         == "inline"
     )
-    # When workflow IS available, omit_ultracode stays false.
-    assert lifecycle.recommend_execution_backend()["omit_ultracode"] is False
+    # When workflow IS available, the ultracode entry is reachable (recommended or alternative,
+    # never unavailable) and omit_ultracode is gone.
+    available = lifecycle.recommend_execution_backend()
+    assert "omit_ultracode" not in available
+    assert len(available["backends"]) == 3
+    available_ultra = next(
+        b for b in available["backends"] if b["backend"] == "cc-workflows-ultracode"
+    )
+    assert available_ultra["status"] != "unavailable"
 
 
 def test_lifecycle_state_cli_subcommands(capsys: pytest.CaptureFixture[str]) -> None:
@@ -2683,10 +2700,15 @@ def test_lifecycle_state_cli_subcommands(capsys: pytest.CaptureFixture[str]) -> 
     assert overlap["recommended"] == "team-execution"
     assert "cc-workflows-ultracode" in overlap["alternatives"]
 
-    # --no-workflow flows through to omit_ultracode via the CLI.
+    # --no-workflow flows through to the ultracode backend's "unavailable" status via the CLI,
+    # and the deleted omit_ultracode key is gone.
     assert lifecycle.main(["recommend-backend", "--broad-fanout", "--no-workflow"]) == 0
     no_workflow = json.loads(capsys.readouterr().out)
-    assert no_workflow["omit_ultracode"] is True
+    assert "omit_ultracode" not in no_workflow
+    cli_ultra = next(b for b in no_workflow["backends"] if b["backend"] == "cc-workflows-ultracode")
+    assert cli_ultra["status"] == "unavailable"
+    # workflow_availability echoes the default asserted source through the CLI.
+    assert no_workflow["workflow_availability"] == {"available": False, "source": "asserted"}
 
     # normalize subcommand preserves the legacy alias resolution.
     assert lifecycle.main(["normalize", "deploy"]) == 0
@@ -2716,10 +2738,14 @@ def test_recommend_execution_backend_adversarial_confidence() -> None:
     assert rec(adversarial_confidence=True, has_security=True)["recommended"] == "team-execution"
 
     # Capability gate: with the Workflow tool absent it degrades to inline and
-    # drops ultracode from the offer (mirrors the broad-fanout degrade).
+    # marks the ultracode backend unavailable in the enumeration (mirrors the broad-fanout degrade).
     gated = rec(adversarial_confidence=True, workflow_available=False)
     assert gated["recommended"] == "inline"
-    assert gated["omit_ultracode"] is True
+    assert "omit_ultracode" not in gated
+    assert (
+        next(b for b in gated["backends"] if b["backend"] == "cc-workflows-ultracode")["status"]
+        == "unavailable"
+    )
 
     # Overlap: adversarial_confidence (ultracode) AND needs_consensus (team wins)
     # still lists ultracode as a one-keystroke alternative.
@@ -2774,11 +2800,15 @@ def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
     )
 
     # Advisory consensus rides the SAME capability gate: absent the Workflow tool
-    # it degrades to inline and drops ultracode from the offer.
+    # it degrades to inline; ultracode drops from alternatives but is enumerated unavailable.
     no_wf = rec(needs_consensus=True, consensus_is_gated=False, workflow_available=False)
     assert no_wf["recommended"] == "inline"
-    assert no_wf["omit_ultracode"] is True
+    assert "omit_ultracode" not in no_wf
     assert "cc-workflows-ultracode" not in no_wf["alternatives"]
+    assert (
+        next(b for b in no_wf["backends"] if b["backend"] == "cc-workflows-ultracode")["status"]
+        == "unavailable"
+    )
 
     # OVERLAP — gated consensus AND broad fan-out: team wins precedence, but
     # cc-workflows-ultracode is still listed as a one-keystroke escalation.
@@ -2893,6 +2923,246 @@ def test_recommend_backend_cli_new_flags(capsys: pytest.CaptureFixture[str]) -> 
     assert lifecycle.main(["recommend-backend", "--cross-repo", "--no-code-surface"]) == 0
     cross = json.loads(capsys.readouterr().out)
     assert cross["recommended"] == "team-execution"
+
+
+def test_recommend_backend_release_surface_subtraction() -> None:
+    """KTD1 (R1): release-bookkeeping files do not count toward the team-execution size trigger.
+
+    The #526 shape (3 functional + 6 bookkeeping files) misfired to team-execution because the
+    raw file_count >= 8 boundary counted plugin.json / marketplace.json / CHANGELOGs / drift pins.
+    The subtractive release_surface_file_count fixes it: the size trigger compares
+    file_count - release_surface_file_count >= 8, so genuinely-functional 8+ still trips.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+    rec = lifecycle.recommend_execution_backend
+
+    # #526-shape regression: 9 touched files, 6 of them release bookkeeping -> 3 functional -> inline.
+    assert rec(file_count=9, release_surface_file_count=6)["recommended"] == "inline"
+    # Without the subtraction the SAME raw count still trips team-execution (boundary preserved).
+    assert rec(file_count=9, release_surface_file_count=0)["recommended"] == "team-execution"
+    # 8 genuinely-functional files still trips even with bookkeeping on top.
+    assert rec(file_count=14, release_surface_file_count=6)["recommended"] == "team-execution"
+    # Exactly-at-boundary functional count (8) trips; one below (7) does not.
+    assert rec(file_count=10, release_surface_file_count=2)["recommended"] == "team-execution"
+    assert rec(file_count=9, release_surface_file_count=2)["recommended"] == "inline"
+    # should_offer_team_execution carries the same subtraction directly.
+    assert (
+        lifecycle.should_offer_team_execution(
+            file_count=9,
+            phase_count=1,
+            has_security=False,
+            has_infra=False,
+            cross_repo=False,
+            deployment_sensitive=False,
+            release_surface_file_count=6,
+        )
+        is False
+    )
+    # A negative count would INFLATE the functional total and silently over-escalate ->
+    # fail loud instead (garbage-in guard), through both the direct and recommender paths.
+    with pytest.raises(ValueError, match="release_surface_file_count"):
+        lifecycle.should_offer_team_execution(
+            file_count=3,
+            phase_count=1,
+            has_security=False,
+            has_infra=False,
+            cross_repo=False,
+            deployment_sensitive=False,
+            release_surface_file_count=-10,
+        )
+    with pytest.raises(ValueError, match="release_surface_file_count"):
+        rec(file_count=3, release_surface_file_count=-10)
+
+
+def test_recommend_backend_workflow_shapes() -> None:
+    """KTD2 (R2): the frozen workflow-shape vocabulary trips ultracode; an unknown shape fails loud.
+
+    understand / design / research / review / migrate are the shapes the Workflow tool doc names;
+    any one reaches the ultracode branch beside broad fan-out and adversarial confidence. An
+    unknown shape raises ValueError (never a silent inline). Elevated-risk inputs route to
+    team-execution by branch PRECEDENCE (those flags are team triggers first); the elif-side
+    suppressor term is a reordering guard, not independently reachable today.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+    rec = lifecycle.recommend_execution_backend
+
+    # Every frozen shape trips ultracode on its own.
+    for shape in lifecycle.WORKFLOW_SHAPES:
+        assert rec(workflow_shapes=[shape])["recommended"] == "cc-workflows-ultracode", shape
+
+    # A representative shape names itself in the rationale (the offer explains itself).
+    research = rec(workflow_shapes=["research"])
+    assert research["recommended"] == "cc-workflows-ultracode"
+    assert "research" in research["rationale"]
+
+    # Unknown shape -> ValueError, fail loud.
+    with pytest.raises(ValueError, match="unknown workflow shape"):
+        rec(workflow_shapes=["bogus"])
+    # A mix with one bad entry also raises (no silent partial acceptance).
+    with pytest.raises(ValueError, match="bogus"):
+        rec(workflow_shapes=["research", "bogus"])
+
+    # RISK PRECEDENCE: an elevated-risk code surface routes a shape job to team-execution.
+    # The mechanism is team-branch precedence (has_infra/has_security are team triggers first);
+    # the elif's `and not elevated_risk` term is a guard against future reordering and is not
+    # independently reachable under the current branch order.
+    assert rec(workflow_shapes=["migrate"], has_infra=True)["recommended"] == "team-execution"
+    assert rec(workflow_shapes=["review"], has_security=True)["recommended"] == "team-execution"
+
+    # Capability gate: absent the Workflow tool a shape job degrades to inline.
+    gated = rec(workflow_shapes=["design"], workflow_available=False)
+    assert gated["recommended"] == "inline"
+    assert (
+        next(b for b in gated["backends"] if b["backend"] == "cc-workflows-ultracode")["status"]
+        == "unavailable"
+    )
+
+    # Shapes co-fire with the other ultracode triggers (no precedence between them).
+    both = rec(workflow_shapes=["understand"], broad_independent_fanout=True)
+    assert both["recommended"] == "cc-workflows-ultracode"
+
+
+def test_recommend_backend_workflow_availability_provenance() -> None:
+    """KTD3 (R3): workflow_availability echoes {available, source}; default source is asserted.
+
+    The recommender is pure Python and cannot probe, so it RECORDS whether the caller probed
+    (ToolSearch) or merely asserted. The ultracode backend note renders an asserted absence as
+    "probe before trusting".
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+    rec = lifecycle.recommend_execution_backend
+
+    # Default source is asserted, available True.
+    default = rec()
+    assert default["workflow_availability"] == {"available": True, "source": "asserted"}
+
+    # Probed + available.
+    probed = rec(workflow_availability_source="probed")
+    assert probed["workflow_availability"] == {"available": True, "source": "probed"}
+
+    # Asserted absence renders "probe before trusting" in the ultracode note.
+    asserted_absent = rec(workflow_available=False)
+    assert asserted_absent["workflow_availability"] == {"available": False, "source": "asserted"}
+    absent_note = next(
+        b["note"] for b in asserted_absent["backends"] if b["backend"] == "cc-workflows-ultracode"
+    )
+    assert "probe before trusting" in absent_note
+
+    # Probed absence records the probe provenance.
+    probed_absent = rec(workflow_available=False, workflow_availability_source="probed")
+    assert probed_absent["workflow_availability"] == {"available": False, "source": "probed"}
+
+    # An unknown source fails loud.
+    with pytest.raises(ValueError, match="workflow_availability_source"):
+        rec(workflow_availability_source="rumored")
+
+
+def test_recommend_backend_full_enumeration() -> None:
+    """KTD4 (R4): backends always enumerates all three; omit_ultracode is deleted.
+
+    Every offer carries a fixed-order {backend, status, note} list for inline / team-execution /
+    cc-workflows-ultracode. Exactly one is recommended; reachable non-winners are alternative; an
+    unreachable ultracode is unavailable. Never a silent drop.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+    rec = lifecycle.recommend_execution_backend
+
+    def _statuses(result: dict) -> dict[str, str]:
+        return {b["backend"]: b["status"] for b in result["backends"]}
+
+    # Inline recommendation: three entries, inline recommended, both others alternative.
+    inline = rec()
+    assert [b["backend"] for b in inline["backends"]] == [
+        "inline",
+        "team-execution",
+        "cc-workflows-ultracode",
+    ]
+    assert "omit_ultracode" not in inline
+    assert _statuses(inline) == {
+        "inline": "recommended",
+        "team-execution": "alternative",
+        "cc-workflows-ultracode": "alternative",
+    }
+
+    # team-execution recommendation.
+    team = rec(has_security=True)
+    assert _statuses(team)["team-execution"] == "recommended"
+    assert _statuses(team)["cc-workflows-ultracode"] == "alternative"
+
+    # ultracode recommendation.
+    ultra = rec(broad_independent_fanout=True)
+    assert _statuses(ultra)["cc-workflows-ultracode"] == "recommended"
+
+    # workflow_available=False -> exactly-3 entries, ultracode unavailable, others reachable.
+    absent = rec(broad_independent_fanout=True, workflow_available=False)
+    assert len(absent["backends"]) == 3
+    assert _statuses(absent) == {
+        "inline": "recommended",
+        "team-execution": "alternative",
+        "cc-workflows-ultracode": "unavailable",
+    }
+    # alternatives stays reachable-only (ultracode not listed) even though it is enumerated.
+    assert "cc-workflows-ultracode" not in absent["alternatives"]
+
+    # Exactly one recommended in every case.
+    for result in (inline, team, ultra, absent):
+        recommended_entries = [b for b in result["backends"] if b["status"] == "recommended"]
+        assert len(recommended_entries) == 1
+        assert recommended_entries[0]["backend"] == result["recommended"]
+
+
+def test_recommend_backend_cli_new_offer_flags(capsys: pytest.CaptureFixture[str]) -> None:
+    """CLI end-to-end for --release-surface-file-count, repeatable --workflow-shape, and
+    --workflow-availability-source: the new offer knobs must flow through main(), not just Python.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+
+    # --release-surface-file-count subtracts from the size trigger (the #526 shape -> inline).
+    assert (
+        lifecycle.main(
+            [
+                "recommend-backend",
+                "--file-count",
+                "9",
+                "--release-surface-file-count",
+                "6",
+            ]
+        )
+        == 0
+    )
+    subtracted = json.loads(capsys.readouterr().out)
+    assert subtracted["recommended"] == "inline"
+
+    # Repeatable --workflow-shape round-trips and trips ultracode.
+    assert (
+        lifecycle.main(
+            [
+                "recommend-backend",
+                "--workflow-shape",
+                "understand",
+                "--workflow-shape",
+                "migrate",
+            ]
+        )
+        == 0
+    )
+    shaped = json.loads(capsys.readouterr().out)
+    assert shaped["recommended"] == "cc-workflows-ultracode"
+    assert "understand" in shaped["rationale"] and "migrate" in shaped["rationale"]
+
+    # argparse rejects an out-of-vocabulary shape cleanly (choices-gated, like the source flag);
+    # the Python-API ValueError path is covered in test_recommend_backend_workflow_shapes.
+    with pytest.raises(SystemExit):
+        lifecycle.main(["recommend-backend", "--workflow-shape", "bogus"])
+
+    # --workflow-availability-source probed echoes through the CLI.
+    assert lifecycle.main(["recommend-backend", "--workflow-availability-source", "probed"]) == 0
+    probed = json.loads(capsys.readouterr().out)
+    assert probed["workflow_availability"] == {"available": True, "source": "probed"}
+
+    # argparse rejects an out-of-vocabulary source (choices-gated).
+    with pytest.raises(SystemExit):
+        lifecycle.main(["recommend-backend", "--workflow-availability-source", "rumored"])
 
 
 def test_issue_progress_comments_include_required_evidence() -> None:

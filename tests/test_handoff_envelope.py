@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -669,3 +670,41 @@ def test_dropped_baton_detected_invalid_sidecar_alone_is_not_clean(tmp_path: Pat
     bad.parent.mkdir(parents=True)
     bad.write_text("[]", encoding="utf-8")
     assert DH.main(["--repo-root", str(tmp_path), "reconcile", "--all"]) == 1
+
+
+def test_dropped_baton_detected_directory_sidecar_degrades_not_aborts_sweep(
+    tmp_path: Path,
+) -> None:
+    # Falsification re-review repro (#395): a sidecar that is a DIRECTORY raises IsADirectoryError
+    # from open() before any JSON validation — an OSError, not InvalidHandoffError — and must
+    # degrade to invalid-sidecar exactly like malformed JSON, never abort the sweep.
+    DH.offer(tmp_path, "issue-2", offered_by="work")
+    dir_sidecar = _sidecar_path(tmp_path, "issue-1")
+    dir_sidecar.mkdir(parents=True)  # the sidecar path itself is a directory
+
+    results = DH.reconcile_all(tmp_path)
+    by_id = {r["saga_id"]: r for r in results}
+    assert by_id["issue-2"]["status"] == DH.STATUS_UNACKNOWLEDGED  # sibling still visible
+    assert by_id["issue-1"]["status"] == DH.STATUS_INVALID_SIDECAR
+    assert DH.main(["--repo-root", str(tmp_path), "reconcile", "--all"]) == 1
+
+
+def test_dropped_baton_detected_unreadable_sidecar_degrades_not_aborts_sweep(
+    tmp_path: Path,
+) -> None:
+    # PermissionError branch of the same falsification repro. Meaningless when running as root
+    # (root reads through chmod 000), so skip there — CI and dev boxes run unprivileged.
+    if os.geteuid() == 0:  # pragma: no cover - CI/dev never run as root
+        pytest.skip("chmod 000 is not enforced for root")
+    DH.offer(tmp_path, "issue-2", offered_by="work")
+    unreadable = _sidecar_path(tmp_path, "issue-1")
+    unreadable.parent.mkdir(parents=True)
+    unreadable.write_text("{}", encoding="utf-8")
+    unreadable.chmod(0)
+    try:
+        results = DH.reconcile_all(tmp_path)
+        by_id = {r["saga_id"]: r for r in results}
+        assert by_id["issue-2"]["status"] == DH.STATUS_UNACKNOWLEDGED
+        assert by_id["issue-1"]["status"] == DH.STATUS_INVALID_SIDECAR
+    finally:
+        unreadable.chmod(0o644)  # so tmp_path teardown can remove it

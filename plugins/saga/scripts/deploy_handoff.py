@@ -466,7 +466,12 @@ def reconcile_all(repo_root: Path, *, now: str | None = None) -> list[dict[str, 
             continue
         try:
             results.append(reconcile_one(repo_root, child.name, now=now))
-        except InvalidHandoffError as exc:
+        except (InvalidHandoffError, OSError) as exc:
+            # OSError covers a sidecar that is a directory (IsADirectoryError) or unreadable
+            # (PermissionError) — open() raises these BEFORE the JSON validation that produces
+            # InvalidHandoffError, and they must degrade the same way, never abort the sweep
+            # (falsification re-review, #395 fix round; same class as ship_teardown's
+            # _worktree_is_dirty OSError degrade from #347).
             results.append(
                 {"saga_id": child.name, "status": STATUS_INVALID_SIDECAR, "note": str(exc)}
             )

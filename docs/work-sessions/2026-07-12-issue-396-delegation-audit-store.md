@@ -65,7 +65,49 @@ worker-manifest.md}`, 6 test files (3 new: `test_audit_store.py`,
   once the KTD6 isolation fix landed; confirmed it WAS real before the fix (two stray run
   directories found and cleaned up during development).
 
+## Code review (programmatic gate)
+
+Ran the 4-lens `/code-review` (correctness, security, testing+conventions, built-vs-planned) as
+`saga:readonly-verifier` + `isolation: "worktree"` subagents against `0e4085a` (reviewed SHA).
+
+**Verdict: CLEAN — 0 P0, 0 P1.** Scope check clean; 12/14 plan items DONE with direct evidence,
+2 correctly CHANGED (write-once draft snapshot is a documentation-only chaperone hook by design —
+no executable `chaperone.py` exists in this repo). 3 findings, all fixed in commit `557604b`:
+
+- **P2 (security)** — `audit_store.py`'s mirrored writes (receipts, agy result payloads, raw
+  pre-fix draft snapshots) landed at the process umask's default mode instead of the `0600`
+  `manifest_store.py` already uses for the identical `manifest.json` content this store also
+  mirrors. Fixed with `_write_temp_0600` (mirrors `manifest_store._atomic_write_manifest`'s
+  `os.fchmod(fd, 0o600)`); covered by `test_mirrored_files_are_not_world_or_group_readable`.
+- **P3 (testing)** — `_read_json`'s valid-JSON-non-dict path untested. Fixed with
+  `test_resolve_receipt_valid_json_non_dict_returns_none`.
+- **P3 (testing)** — `delegation_audit_query.py`'s `--run-id` naming an absent run untested. Fixed
+  with `test_cli_run_id_naming_absent_run_degrades_to_unflagged_entry`.
+
+Correctness lens raised a non-blocking aside (4 mypy errors in `agy_delegate.py` when checked as a
+standalone file) that was verified against the actual CI gate command
+(`mypy plugins/ scripts/ tests/ --ignore-missing-imports`, clean at 193 files) and root-caused to
+`pyproject.toml`'s pre-existing `[tool.mypy] exclude = ["plugins/.*/scripts/"]` policy, which
+excludes recursively-discovered files under any `plugins/*/scripts/` directory but not
+explicitly-named single-file arguments — a repo-wide, pre-existing discrepancy, not a regression.
+
+Full review artifact: `/tmp/code-review-396.md` (not committed — programmatic-mode persistence is
+optional per `/code-review`'s Phase 5.3; this section is the durable record).
+
+## Post-review release-surface fix (commit `52df4af`)
+
+The pre-push gate's marketplace validator (not run at commit time, only at push time) caught 3
+schema violations U7's version-bump commit introduced: fleet-core's and team-execution's
+`description` fields exceeded the marketplace schema's 200-character limit, and saga's `keywords`
+array grew to 11 items against a 10-item cap. Fixed by trimming description wording (no
+capability dropped) and declining to add the new `delegation-audit` keyword to saga's already-full
+list (the description text already names the reconciliation capability) — minimal-blast-radius
+choice over displacing one of the 10 existing keywords. Regenerated `marketplace.json` via
+`sync_marketplace.py`; re-ran the full gate (`ruff format --check .`, `ruff check .`, `mypy
+plugins/ scripts/ tests/ --ignore-missing-imports`, `marketplace/validator/validate.py`, full
+`pytest`) — all green (3377 passed, 1 skipped) — then pushed clean.
+
 ## Next step
 
-`/code-review` programmatic gate, then PR-ready boundary (draft PR #569 already open from the
-front-loaded ceremony start).
+PR-ready boundary reached (draft PR #569, front-loaded ceremony start). Per the leaf's hard
+boundary: draft PR stays draft, no review requested, no merge, no branch deletion.

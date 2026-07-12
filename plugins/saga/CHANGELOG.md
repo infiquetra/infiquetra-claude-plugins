@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.82.0] - 2026-07-12
+
+### Added - closure gate: /outcome refuses to close a leaf on missing, stale-SHA, or unsuperseded-FAIL evidence (#397)
+
+- **`plugins/saga/scripts/closure_gate.py` (new):** reads the evidence ledger (#398) for a node's
+  declared `evidence.required_checks` and derives a typed verdict every reconcile tick — pure
+  read-time derivation, no new committed or cached closure-status field. A node with no
+  `required_checks` declared is trivially satisfied, so every existing outcome spec is unaffected.
+  Named HALT reasons: `missing-evidence:<check_id>` (no evidence anywhere), `stale-sha:<check_id>`
+  (evidence exists, but not at the outcome's current close SHA), `unresolved-fail:<check_id>` (the
+  latest verdict at the close SHA is still `FAIL`), `unsuperseded-fail:<check_id>` (a FAIL was
+  followed by a non-FAIL verdict with no `payload["supersession_reason"]` justifying the
+  transition — an unexplained PASS never silently clears a FAIL), and `unresolvable-close-sha`.
+  Close-SHA resolution: an explicit `evidence.reviewed_sha` override wins; otherwise a `code` node
+  derives it from the PR's pre-merge head commit SHA (`outcome_github.head_ref_oid`), never the
+  post-squash merge-commit SHA on `main`. Calls the already-shipped `evidence_ledger.verify_chain()`
+  once per evaluation so a tampered chain HALTs rather than trusting a compromised read.
+- **`evidence_ledger.py` gains one additive read helper, `history(store, check_id=...)`:** every
+  evidence entry for a check across every reviewed SHA — needed to distinguish "this check never
+  ran" from "this check ran, but only at a different SHA". No change to any existing signature or
+  storage format.
+- **`outcome_orchestrator.harvest()`/`barrier_report()` wire the gate in:** `harvest()` never
+  writes a `done` completion event until the closure gate is satisfied for every declared required
+  check; `barrier_report()` surfaces the gate's named HALT reason per node under a `closure_gate`
+  key. Both gain a new keyword-only `repo_root: Path = Path(".")` (the ledger is a committed
+  repo-tree path, distinct from the git-common-dir cache `store` already resolves), defaulted so
+  every pre-existing caller and outcome spec is unaffected.
+- **`plugins/saga/references/outcome-spec.md`** documents the new `Node.evidence` schema
+  (`required_checks` / `reviewed_sha`) and the full HALT-reason vocabulary.
+
 ## [0.81.0] - 2026-07-12
 
 ### Added - content-addressed, append-only evidence ledger for /qa and /code-review verdicts (#398)

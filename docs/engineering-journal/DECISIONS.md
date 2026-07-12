@@ -2,6 +2,34 @@
 
 ## 2026-07-11
 
+### Teardown is the ship ceremony's terminal transition; reclaim sweeps porcelain, not the registry (#347) {#ship-teardown-terminal-gate-347}
+
+**Decision.** The #347 teardown layer (planned in
+`docs/plans/2026-07-11-issue-347-ship-teardown-reconciliation-plan.md`) appends a `teardown`
+transition after `branch_delete` in `ship_ceremony.TRANSITIONS` (tier `reversible`) instead of
+adding a skippable post-step or config flag — `next_transition` structurally refuses to call the
+ceremony complete until it runs, and a pre-0.78.0 saga sitting at `branch_delete` intentionally
+regains one pending transition. The opened-resource manifest is a per-saga sidecar
+(`opened_resources.json`, beside `merge_expectation.json` / `rollback_manifest.json`), whose closing
+count is derived on read with per-kind reality probes — a closed-claiming entry whose resource still
+exists counts as open (discrepancy), never trusted. `reclaim` sweeps `git worktree list --porcelain`
+rather than only the outcome registry (the live stale worktrees are unregistered — a registry-only
+sweep cannot prevent recurrence), decides merged-ness via `git merge-base --is-ancestor`, and routes
+every removal through a new `reversibility_certificate.OpKind.WORKTREE_RECLAIM_MERGED`
+`authorize_write` verdict. Receipt immutability is mechanical: `O_CREAT|O_EXCL` + `chmod 0444`,
+re-mint raises.
+
+**Rejected.** Folding the layer into `ship_ceremony.py` (tangles gate logic with orchestration);
+extending the outcome store's `worktrees.json` for the manifest (outcome-scoped, wrong ownership
+axis for a per-saga ceremony); trusting manifest `closed_at` claims without probes (the
+green-looking exit the issue exists to kill); content-hash receipt chains (over-engineered for a
+single-writer local sidecar); a cron/daemon idle trigger (a SessionStart `--if-idle` nudge
+suffices).
+
+**Revisit when.** Background sessions gain a real liveness oracle (today they close only via
+explicit evidence-bearing `close`), or teardown needs to run on non-ceremony surfaces
+(team-execution's Step B8 sibling, theme T6).
+
 ### Ceremony safety state is sidecar JSON; undo is forward-only and tier-gated (#346) {#ceremony-sidecars-forward-only-undo-346}
 
 **Decision.** The #346 safety layer over `ship_ceremony.py` stores its merge expectation and

@@ -161,6 +161,7 @@ extension; *transient-today* = the value is already produced during the run and 
 | 12 | `panel_size_policy` | which rung of the (future) ordered panel ladder was used and why (full / reduced / minimum) — constant "full/convention" until elasticity exists | **new** |
 | 13 | `diff_stats` | hunk count, insertions/deletions, files touched, above/below artifact-pointer threshold (`consensus-protocol.md:28`) | **new** — nothing records diff-size distribution today (finding, section 8) |
 | 14 | `advisory_convergence` | the four convergence-bucket counts when the external seat participates (`consensus-protocol.md:120-128`) — report-only, never gate-bearing | transient-today (rendered into the verdict artifact as prose, not machine-readable) |
+| 15 | `sample_manifest` | per-hunk risk classification (stratum 1: security/auth/public-API vs. stratum 2: other, per the section 6 rule) plus which stratum-2 hunks were sampled in/out — the escape-attribution record section 7.3 reads | **new** — no per-hunk risk classifier or sampling manifest exists today; only meaningful if the acceptance-sampling mechanism (recommended park, section 9) is ever built |
 
 **Findings-overlap is derived, not stored.** Given field 10 across the panel, pairwise overlap
 (section 5) is computed on read — consistent with the run-fact ledger's derive-on-read design
@@ -178,8 +179,8 @@ machinery (`evidence_ledger.py:365-403`) rather than buried.
 
 **Summary for AC1:** the ledger *machinery* for every field above exists and merged; the
 consensus protocol's score table already *produces* fields 1, 3-9, 11, 14 transiently and
-discards them; fields 10, 12, 13 plus the `FACT_KINDS` extension and the Step B3c writer are the
-new instrumentation. Nothing proposed here requires a substrate that does not exist in this
+discards them; fields 10, 12, 13, 15 plus the `FACT_KINDS` extension and the Step B3c writer are
+the new instrumentation. Nothing proposed here requires a substrate that does not exist in this
 repo today.
 
 ## 5. Measured reviewer independence
@@ -231,7 +232,9 @@ born stale.
 Applies only to the full-diff review obligation (`consensus-protocol.md:28`, `:213-217`); the
 model is per-reviewer and Claude-internal.
 
-**Stratification rule — two strata, and stratum 1 is never sampled:**
+**Stratification rule — two strata, and stratum 1 is never sampled.** Substrate status: the
+per-hunk risk classification this rule produces is **new** instrumentation — nothing classifies
+hunks today (section 4 field 15 is where it would be recorded).
 
 1. **Always in-sample (100% review, unconditionally):** hunks touching security/auth surfaces —
    auth, secrets, permissions, PII, the same vocabulary the triage escape hatch already treats
@@ -319,7 +322,8 @@ it, silently violating the always-in-sample invariant while the gate still repor
 review.
 
 **Detection signal — out-of-sample escape rate with a stratification-leak alarm.** Every
-sampled review appends its sample manifest (which hunks were in/out) to the ledger. When any
+sampled review appends its sample manifest (which hunks were in/out, with each hunk's stratum
+classification — section 4 field 15, substrate status **new**) to the ledger. When any
 later gate — validator, CI, `/qa`, or a post-merge defect issue — attributes a defect to a
 hunk, the manifest answers whether that hunk was sampled out. An out-of-sample escape increments
 the escape-rate signal and tightens inspection (section 6); an escape in a hunk that *should*

@@ -23,6 +23,7 @@ import fleet_commons_shim  # noqa: E402
 
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
 _output_attestation = fleet_commons_shim.load("output_attestation")
+_audit_store = fleet_commons_shim.load("audit_store")
 
 SCHEMA = "agy.delegation.v1"
 
@@ -270,6 +271,28 @@ def build_envelope_from_args(args: argparse.Namespace) -> Envelope:
     return Envelope.from_mapping(payload)
 
 
+def _mirror_to_audit_store(
+    audit_store_root: Path | None, run_id: str, result_payload: dict[str, Any]
+) -> None:
+    """Mirror ``result_payload`` (and its embedded ``receipt``, when present) to the durable store.
+
+    A no-op when ``audit_store_root`` is ``None`` (R1/KTD5 — the CLI resolves a concrete root by
+    default; direct callers, including every existing test, opt in explicitly). Never raises: a
+    delegation's own result must still be returned to its caller even if the durable mirror write
+    itself fails (e.g. a read-only home directory) — mirroring is additive evidence, not a gate.
+    """
+    if audit_store_root is None:
+        return
+    try:
+        store = _audit_store.Store.for_root(audit_store_root).ensure()
+        _audit_store.mirror_result(store, run_id, result_payload)
+        receipt = result_payload.get("receipt")
+        if isinstance(receipt, dict):
+            _audit_store.mirror_receipt(store, run_id, receipt)
+    except OSError:
+        pass
+
+
 def create_validation_bundle(
     envelope: Envelope,
     *,
@@ -278,6 +301,7 @@ def create_validation_bundle(
     source_envelope: Path | None = None,
     argv: list[str] | None = None,
     now: datetime | None = None,
+    audit_store_root: Path | None = None,
 ) -> BundleResult:
     repo_root = repo_root.resolve()
     timestamp = now or datetime.now(UTC)
@@ -326,6 +350,7 @@ def create_validation_bundle(
         _write_json(bundle_path / "run-lease.json", lease_payload)
         _write_json(bundle_path / "result.json", result_payload)
         (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
+        _mirror_to_audit_store(audit_store_root, resolved_run_id, result_payload)
     except OSError:
         projection = render_bundle_failed_projection(bundle_path)
         return BundleResult(
@@ -352,6 +377,7 @@ def create_supervised_bundle(
     wrapper_argv: list[str] | None = None,
     agy_bin: str | None = None,
     now: datetime | None = None,
+    audit_store_root: Path | None = None,
 ) -> BundleResult:
     repo_root = repo_root.resolve()
     timestamp = now or datetime.now(UTC)
@@ -438,6 +464,7 @@ def create_supervised_bundle(
             )
             _write_json(bundle_path / "result.json", result_payload)
             (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
+            _mirror_to_audit_store(audit_store_root, resolved_run_id, result_payload)
             return BundleResult(
                 status=parse_status("checks_failed"),
                 run_id=resolved_run_id,
@@ -497,6 +524,7 @@ def create_supervised_bundle(
             )
             _write_json(bundle_path / "result.json", result_payload)
             (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
+            _mirror_to_audit_store(audit_store_root, resolved_run_id, result_payload)
             return BundleResult(
                 status=parse_status("error"),
                 run_id=resolved_run_id,
@@ -630,6 +658,7 @@ def create_supervised_bundle(
         projection = render_projection(result_payload)
         _write_json(bundle_path / "result.json", result_payload)
         (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
+        _mirror_to_audit_store(audit_store_root, resolved_run_id, result_payload)
     except OSError:
         projection = render_bundle_failed_projection(bundle_path)
         return BundleResult(
@@ -1135,6 +1164,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--provenance-required", action=argparse.BooleanOptionalAction, default=True
     )
+    parser.add_argument(
+        "--audit-store",
+        default=None,
+        help=(
+            "Durable delegation-audit store root (#396). Every bundle mirrors its result "
+            "payload and receipt here, resolvable by run_id after the bundle directory is "
+            f"gone. Default: {_audit_store.DEFAULT_AUDIT_STORE_ROOT}"
+        ),
+    )
     return parser
 
 
@@ -1148,6 +1186,12 @@ def main(argv: list[str] | None = None) -> int:
             envelope = build_envelope_from_args(args)
             source_envelope = None
 
+        # R1/KTD5: the CLI is the outermost entry point, so it is the one place that resolves
+        # the home-dir default when --audit-store is omitted. Every underlying bundle function
+        # defaults `audit_store_root` to None (skip) — a direct caller (every existing test)
+        # never touches a real home directory unless it opts in.
+        audit_store_root = _audit_store.Store.for_root(args.audit_store).root
+
         wrapper_argv = list(sys.argv[1:] if argv is None else argv)
         validation_only = args.validation_only or args.dry_run or not args.launch_agy
         if validation_only:
@@ -1157,6 +1201,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
                 source_envelope=source_envelope,
                 argv=wrapper_argv,
+                audit_store_root=audit_store_root,
             )
         else:
             result = create_supervised_bundle(
@@ -1166,6 +1211,7 @@ def main(argv: list[str] | None = None) -> int:
                 source_envelope=source_envelope,
                 wrapper_argv=wrapper_argv,
                 agy_bin=args.agy_bin,
+                audit_store_root=audit_store_root,
             )
     except EnvelopeError as exc:
         print(f"agy delegation envelope error: {exc}", file=sys.stderr)

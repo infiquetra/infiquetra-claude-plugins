@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -1063,6 +1064,82 @@ def test_dispatch_emits_manifest_with_attribution(tmp_path: Path) -> None:
     round_tripped = PM.Manifest.from_dict(persisted)
     assert round_tripped.attribution.identity == "codex/gpt-5.5-xhigh"
     assert round_tripped.schema == PM.SCHEMA_VERSION
+
+
+# --- durable audit-store mirroring (#396, U4) ------------------------------------------------
+
+
+def test_record_dispatch_manifest_mirrors_to_audit_store(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    audit_store_root = tmp_path / "audit-store"
+    evidence = D.dispatch(_resolution(), runner=_ok_runner, execution_id="exec-claims")
+
+    manifest = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-audit-1",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+        audit_store_root=audit_store_root,
+    )
+
+    audit_store = D._audit_store
+    mirror = audit_store.Store.for_root(audit_store_root)
+    mirrored_manifest = audit_store.resolve_manifest(mirror, "exec-audit-1")
+    mirrored_receipt = audit_store.resolve_receipt(mirror, "exec-audit-1")
+
+    assert mirrored_manifest is not None
+    assert mirrored_manifest["disposition"] == manifest.disposition.value
+    assert mirrored_receipt is not None
+    assert mirrored_receipt["schema"] == "bridge_receipt.v1"
+
+    # The mirror is independent of manifest_store's own tree — deleting it does not touch
+    # the durable audit-store mirror (the whole point of the durable copy).
+    shutil.rmtree(store.root)
+    assert audit_store.resolve_manifest(mirror, "exec-audit-1") is not None
+
+
+def test_adjudicate_manifest_updates_mirror(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    audit_store_root = tmp_path / "audit-store"
+    evidence = D.dispatch(_resolution(), runner=_ok_runner, execution_id="exec-claims")
+
+    D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-audit-2",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+        claim_provenance=PM.ClaimProvenance(
+            claims=(
+                PM.Claim(
+                    text="a claim",
+                    claimed=PM.ClaimedStatus.NOT_CHECKED,
+                    source_ref="finding-1",
+                ),
+            )
+        ),
+        audit_store_root=audit_store_root,
+    )
+
+    D.adjudicate_manifest(
+        store,
+        "exec-audit-2",
+        {
+            ("a claim", "finding-1"): (
+                PM.AdjudicatedStatus.VERIFIED,
+                PM.Adjudication(adjudicator="claude", decision="checked against the source"),
+            )
+        },
+        audit_store_root=audit_store_root,
+    )
+
+    audit_store = D._audit_store
+    mirror = audit_store.Store.for_root(audit_store_root)
+    mirrored = audit_store.resolve_manifest(mirror, "exec-audit-2")
+
+    assert mirrored is not None
+    assert mirrored["claim_provenance"]["claims"][0]["adjudicated"] == "verified"
 
 
 def test_halted_dispatch_records_disposition_note(tmp_path: Path) -> None:

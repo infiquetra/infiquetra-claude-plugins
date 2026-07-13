@@ -3785,6 +3785,49 @@ kinds beyond `evidence`/`criteria`/`closure` (the open `payload` dict is the ext
 
 ---
 
+### Delegation audit store (#396): machine-local durable mirror, fleet-core home, write-once drafts {#delegation-audit-store-ktds-396}
+
+**Date:** 2026-07-12 · **Plan:** `docs/plans/2026-07-12-issue-396-delegation-audit-store-plan.md` ·
+**Issue:** #396 (leaf `sub-396` of outcome `evidence-integrity`; depends on #398/PR #567 and #383
+`bridge_receipt.v1`, both already landed)
+
+**Decision.** `agy_delegate.py` and `engine_dispatch.py` mirror every receipt and provenance manifest
+to a new durable store (`~/.claude/delegation-audit` by default), the chaperone-dispatch path
+snapshots the external engine's raw pre-fix output write-once before applying any fix, and a new
+`/delegation-audit` surface reconciles the durable store to flag claimed-but-unproven delegations as
+no-ops.
+
+- **KTD1 — shared primitives live in fleet-core** (`fleet_commons/audit_store.py`), not saga: agy,
+  saga, and team-execution all need symmetric access, and fleet-core is the existing install-boundary-
+  safe home for exactly this shape of cross-plugin primitive (the same rationale `bridge_receipt.py`
+  already documents).
+- **KTD2 — duplicate, don't cross-import, the small atomic-write/write-once/safe-name primitives.**
+  Importing `plugins/saga/scripts/outcome_store.py` from fleet-core would reintroduce the install-time
+  break `bridge_receipt.py`'s docstring warns against; the duplicated surface is ~25 lines.
+  Deliberately mirrors the opposite call evidence_ledger.py's KTD1 made (see above) — that ledger
+  answers "does a fresh clone on a different machine need to verify this," this store answers "does
+  this survive worktree teardown on the same machine" — different requirements, different homes.
+- **KTD3 — machine-local, uncommitted store root**, chosen deliberately opposite to
+  evidence_ledger's committed-per-saga home: delegation evidence must outlive a torn-down worktree on
+  the *same* machine, never needs to reach a different developer's clone, and committing raw
+  diffs/receipts to every PR would bloat history for no reader.
+- **KTD4 — new, distinctly-named module** (`audit_store.py`) beside the existing
+  `fleet_commons/delegation_audit.py` (#384) rather than folding into or renaming it: that module
+  already owns live-transcript classification and bundle corroboration over the disposable location
+  this issue exists to escape; the new `reconcile_store` function extends it to read the durable store
+  instead, reusing its `REAL`/`FALLBACK_SUSPECTED` vocabulary rather than inventing a parallel one.
+- **KTD5 — default-on lives at the outermost entry point only.** `agy_delegate.py`'s CLI resolves the
+  home-dir default when `--audit-store` is omitted; every underlying function defaults its
+  `audit_store_root` parameter to `None` (skip), so direct unit-test callers never touch a real
+  developer's home directory unless they ask to. `engine_dispatch.py` has no CLI, so its default-on
+  behavior lives in the documented chaperone call site instead.
+- **KTD6 — every existing subprocess-driven CLI test for `agy_delegate.py` isolates `--audit-store`
+  explicitly**, named so the home-directory-pollution risk a CLI-level home-dir default creates is
+  never an implicit landmine for a later contributor.
+
+**Revisit when** a future issue asks for cross-machine aggregation of the audit store (KTD3
+deliberately keeps it machine-local today) or a retention/pruning policy is needed as
+`~/.claude/delegation-audit` grows unbounded.
 ### Closure gate (#397): required-check set + SHA override in `node.evidence`, supersession is a payload convention {#closure-gate-ktds-397}
 
 **Date:** 2026-07-12 · **Plan:** `docs/plans/2026-07-12-closure-gate-plan.md` · **Issue:** #397

@@ -27,13 +27,52 @@ adding one row, not a new algorithm.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
+
+
+def _load_sibling(name: str) -> ModuleType:
+    """Load a fleet-commons sibling module (mirrors ``bridge_receipt.py``'s own ``_load_sibling``).
+
+    Works both under a real package import and the ``importlib.util.spec_from_file_location``
+    loading tests use — the same helper already proven by ``bridge_receipt.py``, duplicated here
+    rather than imported (this module is itself loaded either way, so it cannot depend on the other
+    module's loader having already run).
+    """
+    try:
+        module = __import__(f"{__package__}.{name}", fromlist=[name]) if __package__ else None
+    except ImportError:
+        module = None
+    if module is not None:
+        return module
+    cache_key = f"_fleet_commons_{name}"
+    if cache_key in sys.modules:
+        return sys.modules[cache_key]
+    path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(cache_key, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load fleet-commons sibling module {name!r}")
+    loaded = importlib.util.module_from_spec(spec)
+    sys.modules[cache_key] = loaded
+    spec.loader.exec_module(loaded)
+    return loaded
+
+
+bridge_receipt = _load_sibling("bridge_receipt")
+audit_store = _load_sibling("audit_store")
 
 # KTD8: Stop-hook cost bound — stream transcripts with a byte cap, never read_text a whole file.
 TRANSCRIPT_BYTE_CAP = 8 * 1024 * 1024
+
+# reconcile_store() verdicts (#396, U2) — distinct from classify()/reconcile()'s REAL/
+# FALLBACK_SUSPECTED/DELEGATION_INTEGRITY vocabulary above, reused rather than duplicated where the
+# concept overlaps (a flagged run IS a fallback-shaped no-op; a real one is exactly `REAL`).
+NO_OP_UNPROVEN_CLAIM = "no-op: claimed real execution, no proof in the durable store"
 
 CLAUDE_FILE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 
@@ -358,3 +397,99 @@ def reconcile(
     if engine_says_ok != observer_says_launched:
         return DELEGATION_INTEGRITY
     return REAL if observer_says_launched else FALLBACK_SUSPECTED
+
+
+# ---------------------------------------------------------------------------
+# reconcile_store() — durable-store reconciliation (#396, U2)
+# ---------------------------------------------------------------------------
+
+_CLAIMED_REAL_STATUSES = frozenset({"success", "patch_ready", "applied"})
+
+
+@dataclass(frozen=True)
+class ReconciliationEntry:
+    """One run's reconciled verdict against the durable audit store."""
+
+    run_id: str
+    flagged: bool
+    claimed_real: bool
+    observed_real: bool
+    reason: str
+
+    def to_jsonable(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "flagged": self.flagged,
+            "claimed_real": self.claimed_real,
+            "observed_real": self.observed_real,
+            "reason": self.reason,
+        }
+
+
+def _claimed_real(
+    manifest: dict[str, Any] | None, result: dict[str, Any] | None
+) -> tuple[bool, str]:
+    """Derive the claimed disposition — manifest first (saga/team-execution), then agy's result.
+
+    Degrades to "no claim" (never raises) on an absent or malformed manifest/result — a manifest
+    that failed to parse already came back as ``None`` from ``audit_store.resolve_manifest`` (its
+    own never-raise contract), so a corrupt file and an absent one are indistinguishable here by
+    design (#396 D-note: reconcile_store must never raise on corrupt input).
+    """
+    if isinstance(manifest, dict):
+        disposition = manifest.get("disposition")
+        if disposition == "ran-as-requested":
+            return True, "manifest disposition=ran-as-requested"
+        if isinstance(disposition, str) and disposition:
+            return False, f"manifest disposition={disposition}"
+    if isinstance(result, dict):
+        launched = result.get("agy_launched")
+        status = result.get("status")
+        if launched is True and status in _CLAIMED_REAL_STATUSES:
+            return True, f"agy result agy_launched=True status={status}"
+        if launched is not None or status is not None:
+            return False, f"agy result agy_launched={launched} status={status}"
+    return False, "no claimed disposition on record"
+
+
+def _observed_real(receipt: dict[str, Any] | None) -> tuple[bool, str]:
+    """A run is observed-real only when its mirrored receipt is a schema-valid ``bridge_receipt.v1``."""
+    if not isinstance(receipt, dict):
+        return False, "no receipt in the durable store"
+    problems = bridge_receipt.validate_receipt(receipt)
+    if problems:
+        return False, f"receipt present but schema-invalid: {problems[0]}"
+    return True, "schema-valid receipt present"
+
+
+def reconcile_store(store: Any, run_ids: list[str] | None = None) -> list[ReconciliationEntry]:
+    """Reconcile every run (or the given ``run_ids``) in the durable audit store.
+
+    Flags a run exactly when it claims real execution (a manifest ``disposition`` of
+    ``ran-as-requested``, or agy's own ``agy_launched``/passing ``status``) but the durable store
+    holds no schema-valid receipt backing that claim — never flagging a run with a genuine receipt,
+    and never raising on a missing or corrupt mirrored file (every ``audit_store.resolve_*`` call
+    already degrades to ``None`` rather than raising).
+    """
+    ids = list(run_ids) if run_ids is not None else audit_store.list_runs(store)
+    entries: list[ReconciliationEntry] = []
+    for run_id in ids:
+        manifest = audit_store.resolve_manifest(store, run_id)
+        result = audit_store.resolve_result(store, run_id)
+        receipt = audit_store.resolve_receipt(store, run_id)
+
+        claimed, claim_reason = _claimed_real(manifest, result)
+        observed, observe_reason = _observed_real(receipt)
+        flagged = claimed and not observed
+        reason = f"{claim_reason}; {observe_reason}" if flagged else "clean"
+
+        entries.append(
+            ReconciliationEntry(
+                run_id=run_id,
+                flagged=flagged,
+                claimed_real=claimed,
+                observed_real=observed,
+                reason=reason,
+            )
+        )
+    return entries

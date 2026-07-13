@@ -2527,3 +2527,35 @@ merge (commit `5a92695`). The two dogfood defects shared one primitive — #495'
 **Generalizable rule.** Panels upholding 9/9 is evidence the units are built-as-claimed, not that the diff is sound — always run a whole-diff review pass after a multi-unit workflow, and treat two prompts as standing risks: any "lands in a later unit" doc line (assign the LAST unit a doc-currency sweep) and any "mirror <sibling>" instruction (audit the sibling's known gaps; file the parity fix both ways).
 
 **Refs.** Fix round: all 10 findings fixed in-PR (this commit); agy parity follow-up filed for the shared patterns. Panel-side guardrails from Wave A remain in `{#verify-panels-blind-to-uncommitted-tree}`.
+
+---
+
+### A CLI default under `Path.home()` silently pollutes the real home directory on every existing subprocess-driven test run {#cli-home-default-pollutes-tests-396}
+
+**Evidence.** Issue #396 added `--audit-store` (default `~/.claude/delegation-audit`) to
+`agy_delegate.py`. Before isolating the existing subprocess-driven CLI tests
+(`tests/test_agy_delegate_contract.py`, `tests/test_agy_run_lease.py`,
+`tests/test_agy_apply_policy.py`), a single run of `tests/test_agy_delegate_contract.py` alone left
+two real directories under `~/.claude/delegation-audit/runs/` on the machine running this session
+(`cli-run/`, `flags-run/`) — confirmed and cleaned up before proceeding, not hypothetical.
+
+**Mechanism.** `main()` is the CLI's outermost entry point, so it is the one place that must resolve
+the real-world default when `--audit-store` is omitted (the issue's own explicit requirement). Every
+one of the repo's existing subprocess-driven tests for this CLI invoked `main()` via
+`subprocess.run([sys.executable, str(WRAPPER), ...])` without an `env=` override and without the new
+flag, so they all inherited the pytest process's real `HOME` and silently wrote into it. The
+underlying library functions (`create_validation_bundle`/`create_supervised_bundle`) default their
+new `audit_store_root` parameter to `None` (skip) — but that only protects a *direct* Python caller,
+not a subprocess-spawned CLI invocation, which always goes through `main()`'s eager default
+resolution.
+
+**Generalizable rule.** When a CLI flag's documented default resolves under `Path.home()` (or any
+other real, shared, persistent location outside `tmp_path`), grep every existing
+`subprocess.run([..., str(WRAPPER), ...])` call site for that CLI before shipping the default —
+each one either needs the new flag pointed at an isolated path, or the test needs an isolated `HOME`
+via `monkeypatch.setenv`. A function-level `None`-means-skip default is necessary but not
+sufficient: it protects direct unit-test callers, not subprocess-driven CLI tests, which is a
+different call path entirely.
+
+**Refs.** Fixed in `plugins/agy/scripts/agy_delegate.py` (#396) by isolating all 7 existing
+subprocess call sites across the three test files with an explicit `--audit-store <tmp_path>/audit-store`.

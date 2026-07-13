@@ -2,11 +2,11 @@
   "schema_version": 1,
   "outcome_id": "delegation-integrity",
   "spec_revision": 2,
-  "objective": "Delegation integrity — schema-enforced verify panels, honest delegation receipts, HTTP-bridge corroboration, cross-process tripwires, agy delegate reliability parity (follow-up debt from #384/#468/#476 reviews)",
+  "objective": "Delegation integrity \u2014 schema-enforced verify panels, honest delegation receipts, HTTP-bridge corroboration, cross-process tripwires, agy delegate reliability parity (follow-up debt from #384/#468/#476 reviews)",
   "nodes": [
     {
       "subplot_id": "sub-517",
-      "title": "defect: agy_delegate parity — port the four reliability hardenings from the codex delegate (#476 review)",
+      "title": "defect: agy_delegate parity \u2014 port the four reliability hardenings from the codex delegate (#476 review)",
       "kind": "code",
       "state": "pending",
       "backend": "inline",
@@ -23,7 +23,8 @@
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#517",
-        "sub_issue": 517
+        "sub_issue": 517,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/573"
       },
       "worktree": {},
       "evidence": {},
@@ -48,7 +49,8 @@
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#520",
-        "sub_issue": 520
+        "sub_issue": 520,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/572"
       },
       "worktree": {},
       "evidence": {},
@@ -56,7 +58,7 @@
     },
     {
       "subplot_id": "sub-523",
-      "title": "agy_delegate maps executor-construction failure to success — zero-output run emits a corroborating receipt (bytes_produced=0)",
+      "title": "agy_delegate maps executor-construction failure to success \u2014 zero-output run emits a corroborating receipt (bytes_produced=0)",
       "kind": "code",
       "state": "pending",
       "backend": "inline",
@@ -83,7 +85,7 @@
     },
     {
       "subplot_id": "sub-524",
-      "title": "delegation corroboration has no ENGINE_CONFIGS row for HTTP-bridge engines — passing workspace_root discards honest ok output as an integrity divergence",
+      "title": "delegation corroboration has no ENGINE_CONFIGS row for HTTP-bridge engines \u2014 passing workspace_root discards honest ok output as an integrity divergence",
       "kind": "code",
       "state": "pending",
       "backend": "inline",
@@ -110,7 +112,7 @@
     },
     {
       "subplot_id": "sub-527",
-      "title": "defect: execution_spec verify panels do not schema-enforce verifier verdicts — prose returns vacuously empty the panel",
+      "title": "defect: execution_spec verify panels do not schema-enforce verifier verdicts \u2014 prose returns vacuously empty the panel",
       "kind": "code",
       "state": "pending",
       "backend": "inline",
@@ -127,7 +129,8 @@
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#527",
-        "sub_issue": 527
+        "sub_issue": 527,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/571"
       },
       "worktree": {},
       "evidence": {},
@@ -137,7 +140,7 @@
   "decision_trail": [
     {
       "revision": 2,
-      "reason": "seed five validated defect/hardening leaves (#517 #520 #523 #524 #527 — recorded follow-up debt from the #384/#468/#476 reviews and the external-engine-offload outcome) and wire edges: sub-523 behind sub-517 (both mutate plugins/agy/scripts/agy_delegate.py and bump the agy plugin; 523's no-output-failure path builds on 517's terminal-bundle hardening), sub-524 behind sub-520 (both rewrite engine_dispatch.py's divergence path and fleet_commons delegation modules); sub-527 independent. Ready frontier {sub-517, sub-520, sub-527} = 3, matching the concurrency cap. Edges not inferable from GitHub relationships — operator-scoped slice; sequenced BEFORE finishing objective #338 because #459 (earned ratings) consumes dispatch receipts these defects make honest, and #527 fixes the refute-N verify panels every outcome run relies on."
+      "reason": "seed five validated defect/hardening leaves (#517 #520 #523 #524 #527 \u2014 recorded follow-up debt from the #384/#468/#476 reviews and the external-engine-offload outcome) and wire edges: sub-523 behind sub-517 (both mutate plugins/agy/scripts/agy_delegate.py and bump the agy plugin; 523's no-output-failure path builds on 517's terminal-bundle hardening), sub-524 behind sub-520 (both rewrite engine_dispatch.py's divergence path and fleet_commons delegation modules); sub-527 independent. Ready frontier {sub-517, sub-520, sub-527} = 3, matching the concurrency cap. Edges not inferable from GitHub relationships \u2014 operator-scoped slice; sequenced BEFORE finishing objective #338 because #459 (earned ratings) consumes dispatch receipts these defects make honest, and #527 fixes the refute-N verify panels every outcome run relies on."
     }
   ],
   "cost_rollup": {},

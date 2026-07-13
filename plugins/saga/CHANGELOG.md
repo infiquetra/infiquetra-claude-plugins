@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.85.0] - 2026-07-13
+
+### Changed - verify-panel verdict schema: tool-boundary enforcement aligned with the reporter predicate (#527)
+
+- **`plugins/saga/scripts/execution_spec.py` (`_verifier_schema`)**: the verdict schema attached
+  to every verify-panel `agent()` call now carries `minLength: 1` on the #390 U6 attribution
+  strings (`verifier_identity`, `examined_sha`), mirroring the emitted
+  `<var>_valid_verifier_verdict` runtime predicate's `.length > 0` checks exactly. Closes the
+  remaining gap where a schema-admitted verdict (empty attribution string) could still be
+  classified runtime-missing by the panel — any verdict the tool boundary admits is now counted
+  as a reporter, and a prose/malformed return is retried/failed at the tool boundary instead of
+  parse-and-hoped (evidence: workflow wf_ada4ca97-365 aggregated every panel over 0 reporters;
+  LEARNINGS `{#verify-panel-prose-verdicts-vacuous-aggregation}`).
+- **Tests**: emitted-JS assertions now prove the schema opt is present on EVERY verify-panel
+  call across all panel-emitting sites (plain one-shot panel, iterate-to-consensus singleton
+  loop, escalate_on_signal attended panel, and the unattended one-rung climb's retry panel);
+  a node-executed aggregation test runs the emitted reporter predicate + reported-filter lines
+  against a schema-valid verdict (counted as a reporter, refutations tallied) and the prose /
+  null / partial failure modes (classified runtime-missing); a jsonschema test pins that the
+  schema rejects prose and empty attribution fields at the tool boundary.
+
 ## [0.84.0] - 2026-07-12
 
 ### Added - spend observability on the ledger: estimate-reconcile, itemized receipts, spend retro, tier-efficacy and shadow-audit evidence (#402)

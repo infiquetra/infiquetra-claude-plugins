@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -452,14 +454,18 @@ def _return_schema_fragment(keys: tuple[str, ...] = ("result",), *, cheap: bool 
 
 
 def _verifier_schema_fragment() -> str:
+    # Hardcoded on purpose (drift guard, #527): building this from ES._verifier_schema() would
+    # make the schema-presence assertions tautological. minLength: 1 on the attribution strings
+    # mirrors the runtime reporter predicate's `.length > 0` checks, so tool-boundary-valid
+    # verdicts are always counted as reporters.
     schema: dict[str, object] = {
         "type": "object",
         "properties": {
             "refuted": {"type": "array"},
             "upheld": {"type": "array"},
-            "verifier_identity": {"type": "string"},
+            "verifier_identity": {"type": "string", "minLength": 1},
             "fallback_depth": {},
-            "examined_sha": {"type": "string"},
+            "examined_sha": {"type": "string", "minLength": 1},
         },
         "required": [
             "refuted",
@@ -526,6 +532,115 @@ def test_verifier_panel_emits_fallback_tier_marker_in_throw() -> None:
     assert "fallback tier" in script
     assert "fallback_marker" in script
     assert "verifier-disagreement" in script
+
+
+def test_every_verify_panel_call_carries_verifier_schema_all_sites() -> None:
+    # #527: EVERY verify-panel agent() call must carry the schema opt, across all three
+    # panel-emitting sites (plain one-shot panel, iterate-to-consensus singleton loop,
+    # escalate_on_signal panel). The agentType marker appears exactly once per verifier
+    # call, so schema-count == agentType-count proves no verifier call is missing it.
+    script = _emit_units(
+        [
+            _verify_unit("plain", verify={"n": 2, "pass_rule": "majority"}),
+            _verify_unit(
+                "loop",
+                verify={"n": 2, "pass_rule": "majority", "iterate_to_consensus": True},
+            ),
+            _verify_unit(
+                "climb",
+                tier={"model": "sonnet", "effort": "medium"},
+                verify={"n": 3, "pass_rule": "majority"},
+                escalate_on_signal=True,
+            ),
+        ]
+    )
+    agent_type_count = script.count('agentType: "saga:readonly-verifier"')
+    assert agent_type_count == 7  # 2 plain + 2 loop + 3 climb
+    assert script.count(_verifier_schema_fragment()) == agent_type_count
+
+
+def test_unattended_climb_retry_panel_also_carries_verifier_schema() -> None:
+    # #527: the unattended one-rung climb emits a SECOND panel over the retried unit --
+    # its verifier calls must carry the schema too, not just the first panel's.
+    script = _emit_units_unattended([_escalate_unit()])
+    assert "climbing ONE rung to sonnet/high" in script  # proves the retry panel exists
+    agent_type_count = script.count('agentType: "saga:readonly-verifier"')
+    assert agent_type_count == 6  # 3 first panel + 3 retry panel
+    assert script.count(_verifier_schema_fragment()) == agent_type_count
+
+
+def _extract_emitted_line(script: str, prefix: str) -> str:
+    for line in script.splitlines():
+        if line.strip().startswith(prefix):
+            return line.strip()
+    raise AssertionError(f"no emitted line starting with {prefix!r}")
+
+
+_SCHEMA_VALID_VERDICT: dict[str, object] = {
+    "refuted": [],
+    "upheld": ["finding-1 upheld: evidence matches"],
+    "verifier_identity": "saga:readonly-verifier",
+    "fallback_depth": 0,
+    "examined_sha": "deadbeefcafe",
+}
+
+
+def test_schema_valid_verdict_satisfies_verifier_schema_and_prose_fails() -> None:
+    # #527 tool-boundary half: the verdict shape the panel counts passes the attached schema,
+    # while the wf_ada4ca97-365 failure modes (prose string, missing/empty attribution fields)
+    # are rejected AT THE TOOL BOUNDARY -- retried/failed there, never parse-and-hoped.
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = ES._verifier_schema()
+    jsonschema.validate(_SCHEMA_VALID_VERDICT, schema)  # must not raise
+    refuting = dict(_SCHEMA_VALID_VERDICT, refuted=["claim X contradicted by file:line"])
+    jsonschema.validate(refuting, schema)
+    malformed: object
+    for malformed in (
+        "All findings upheld; examined SHA deadbeef.",  # prose verdict (the #527 evidence)
+        {},  # empty object
+        {"refuted": [], "upheld": []},  # missing the #390 U6 attribution fields
+        dict(_SCHEMA_VALID_VERDICT, examined_sha=""),  # empty sha fails minLength
+        dict(_SCHEMA_VALID_VERDICT, verifier_identity=""),  # empty identity fails minLength
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(malformed, schema)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_schema_valid_verdict_is_counted_as_reporter_in_emitted_aggregation() -> None:
+    # #527 aggregation half: execute the EMITTED reporter predicate + reported-filter lines
+    # under node against a schema-valid verdict and the prose/malformed failure modes. Proves
+    # a schema-valid verdict is counted as a reporter (and a refuting one counts toward
+    # refute_count), while prose is classified runtime-missing -- the exact vacuous-aggregation
+    # failure of workflow wf_ada4ca97-365.
+    script = _emit_units([_verify_unit("a", verify={"n": 2, "pass_rule": "majority"})])
+    predicate_line = _extract_emitted_line(script, "const a_valid_verifier_verdict =")
+    reported_line = _extract_emitted_line(script, "const a_reported =")
+    refuting = dict(_SCHEMA_VALID_VERDICT, refuted=["claim X contradicted by file:line"])
+    js = "\n".join(
+        [
+            "const a_verdicts = ["
+            + json.dumps(_SCHEMA_VALID_VERDICT)
+            + ", "
+            + json.dumps(refuting)
+            + ', "All findings upheld; examined SHA deadbeef.", null, {refuted: []}]',
+            predicate_line,
+            reported_line,
+            "const a_refute_count = a_reported.filter((v) => v.refuted.length > 0).length",
+            "console.log(JSON.stringify("
+            "{reported: a_reported.length, refute_count: a_refute_count}))",
+        ]
+    )
+    proc = subprocess.run(
+        [shutil.which("node") or "node", "-e", js],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    result = json.loads(proc.stdout.strip())
+    # Both schema-valid verdicts count as reporters; prose/null/partial are runtime-missing.
+    assert result == {"reported": 2, "refute_count": 1}
 
 
 def test_verifier_iterate_singleton_emits_readonly_agenttype_and_isolation() -> None:

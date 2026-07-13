@@ -27,6 +27,42 @@
 
 ## 2026-07-13
 
+### A tool-boundary schema that is looser than the runtime predicate re-opens the gap it was built to close  {#verifier-schema-predicate-alignment-527}
+
+**Context.** #527 hardens the refute-N verify panels against prose verdicts (workflow
+wf_ada4ca97-365: 12/12 verifiers returned substantive prose, every panel aggregated over 0
+reporters). The `schema` opt on verifier `agent()` calls had already landed under sibling work
+(#519, commit 099ec4c), so the remaining defect was subtler: alignment between the two layers of
+enforcement.
+
+**Evidence.** `plugins/saga/scripts/execution_spec.py` — `_verifier_schema()` declared
+`verifier_identity`/`examined_sha` as bare `{"type": "string"}`, while the emitted runtime
+reporter predicate (`_emit_panel_reconciliation`'s `<var>_valid_verifier_verdict`) requires
+`.length > 0` on both. A verdict with `examined_sha: ""` passed the tool boundary yet was
+classified runtime-missing by the panel — exactly the "schema-valid but not counted as a
+reporter" hole the issue's aggregation criterion exists to catch.
+
+**Mechanism.** Two independently authored validators over the same value drift unless one is
+derived from the other or a test pins their equivalence. The tool boundary retries/fails a
+schema-invalid return; the panel predicate silently drops a predicate-invalid verdict from the
+reporter denominator. Any shape admitted by the first but rejected by the second is enforced by
+neither retry nor refutation — it just vanishes from the aggregation.
+
+**Fix.** `minLength: 1` on both attribution strings in `_verifier_schema()` (matching the
+predicate exactly), plus a node-executed test that runs the EMITTED predicate + reported-filter
+lines against a jsonschema-validated verdict and the prose/null/partial failure modes
+(`tests/test_saga_execution_spec.py::test_schema_valid_verdict_is_counted_as_reporter_in_emitted_aggregation`),
+and schema-count == agentType-count assertions across all four panel emission shapes.
+
+**Generalizable rule.** When a value is validated at two layers (tool-boundary schema, runtime
+predicate), the outer layer must be at least as strict as the inner one, and a test should prove
+it — the cheapest faithful proof is executing the emitted inner validator (via `node -e` for
+emitted JS) against fixtures the outer schema has just validated, not re-implementing either
+side in the test.
+
+**Refs.** `{#verify-panel-prose-verdicts-vacuous-aggregation}`; issue #527; issue #519 (schema
+attachment); #390 U6 (attribution fields).
+
 ### "Mirror the sibling" instructions import the sibling's own latent bugs, not just its shape  {#agy-codex-parity-517}
 
 **Context.** Issue #517 ported the four reliability hardenings fixed in the codex delegate for

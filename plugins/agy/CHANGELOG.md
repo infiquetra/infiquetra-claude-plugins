@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-13
+
+### Fixed - executor-construction failure no longer reports false success (#523)
+
+`run_agy_supervised` mapped any `return_code == 0` straight to `status="success"`, regardless of
+whether the process actually produced any output. Antigravity's executor-construction failure
+(observed 2026-07-07 during the #468 zero-token fire drill, S1/agy/attempt1: a transient 503 on
+`loadCodeAssist` left the model table empty, `agy` logged "failed to construct executor: neither
+PlanModel nor RequestedModel specified" to its own log file, then exited 0 having written zero
+bytes to stdout/stderr) used to emit a schema-valid success receipt with `bytes_produced: 0` —
+letting engine_dispatch's #384 two-signal observer corroborate a run that did nothing as if it
+had proceeded as requested.
+
+- `run_agy_supervised` now checks `stdout_bytes + stderr_bytes == 0` alongside `return_code == 0`
+  before deciding the run is a success; a zero-output exit-0 run is mapped to the existing
+  `no_output` terminal status instead (not a new status — every downstream consumer that already
+  treats `no_output` as non-passing, e.g. `_PASSING_STATUSES`/`_exit_code_for_status`, covers this
+  path for free), carrying a named `error` explaining the no-output classification.
+- `shutdown == "exited"` on the `no_output` status distinguishes this exit-0/zero-bytes path from
+  the pre-existing watchdog-killed `no_output` path (silence for `no_output_seconds`); the summary
+  text and `_supervised_summary` branch on that field so the two read distinctly in the bundle.
+- New regression test (`test_zero_output_exit_zero_is_not_success`,
+  `tests/test_agy_delegate_reliability.py`) reproduces the drill-468 S1 false-success path with a
+  hermetic fake `agy` that exits 0 with no output, and proves the bundle now lands terminal
+  `no_output` — never `success` — with a nonzero exit code.
+
 ## [0.3.0] - 2026-07-13
 
 ### Fixed - reliability-hardening parity with the codex delegate (#517)

@@ -1,6 +1,6 @@
 {
   "name": "agy",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Antigravity-backed coder reviewer bridge agents with guarded evidence bundles, output-attested receipts, a durable delegation-audit-store mirror, patch import, and fail-loud provenance coercion.",
   "author": {
     "name": "Infiquetra",

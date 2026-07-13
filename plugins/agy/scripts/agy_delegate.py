@@ -1014,6 +1014,21 @@ def run_agy_supervised(
         status = parse_status("timeout")
     elif timeout_class == "no_output":
         status = parse_status("no_output")
+    elif return_code == 0 and stdout_bytes + stderr_bytes == 0:
+        # An exit-0 run that produced literally zero bytes of stdout/stderr proves nothing ran
+        # to completion — e.g. Antigravity's executor-construction failure (#523, drill-468 S1)
+        # exits cleanly before doing any work. Mapping that to "success" let a
+        # bytes_produced=0 receipt corroborate a no-op as if it had proceeded as requested.
+        # Reuse the existing "no_output" terminal status (not a new one) so every downstream
+        # consumer that already treats "no_output" as non-passing (_PASSING_STATUSES,
+        # _exit_code_for_status, decide_non_apply_status's early-return) covers this path for
+        # free; `shutdown == "exited"` (rather than "terminated"/"killed") distinguishes this
+        # from the watchdog-triggered no_output above.
+        status = parse_status("no_output")
+        error = (
+            "agy exited 0 but produced zero bytes of stdout/stderr; treating as a no-output "
+            "failure rather than success — likely an executor-construction failure (#523)"
+        )
     elif return_code == 0:
         status = parse_status("success")
     else:
@@ -1965,6 +1980,13 @@ def _supervised_summary(run_result: SupervisedRunResult) -> str:
         return f"agy reported {run_result.status}; no patch was applied."
     if run_result.status == "timeout":
         return "agy exceeded the total timeout and was shut down."
+    if run_result.status == "no_output" and run_result.shutdown == "exited":
+        # Distinguishes the exit-0/zero-bytes path (#523) from the watchdog-killed path below —
+        # this run was never killed, it exited on its own having produced nothing.
+        return (
+            "agy exited 0 but produced zero bytes of stdout/stderr; treated as a no-output "
+            "failure rather than success."
+        )
     if run_result.status == "no_output":
         return "agy produced no output before the no-output timeout and was shut down."
     if run_result.status == "shutdown_incomplete":

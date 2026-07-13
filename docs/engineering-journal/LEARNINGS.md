@@ -2683,3 +2683,41 @@ different call path entirely.
 
 **Refs.** Fixed in `plugins/agy/scripts/agy_delegate.py` (#396) by isolating all 7 existing
 subprocess call sites across the three test files with an explicit `--audit-store <tmp_path>/audit-store`.
+
+---
+
+### A supervised subprocess's exit code alone cannot certify success — zero-byte output must be checked too {#agy-exit-zero-zero-bytes-false-success-523}
+
+**Evidence.** Issue #523, drill-468 S1/agy/attempt1 (`.claude/agy/runs/drill-468-s1-agy-190129`,
+`agy.log` lines ~97/~103/~130-131): a transient 503 on Antigravity's `loadCodeAssist` left the model
+table empty, `agy` logged "failed to construct executor: neither PlanModel nor RequestedModel
+specified" to its own `--log_path` file, then exited 0 having written zero bytes to the stdout/stderr
+streams the wrapper actually supervises. Before the fix, `run_agy_supervised`
+(`plugins/agy/scripts/agy_delegate.py:1017-1018`) mapped `return_code == 0` straight to
+`status="success"` with no output check, so the bundle's `result.json` recorded `status: success` and
+a `bridge_receipt.v1` with `bytes_produced: 0` — a schema-valid, self-consistent lie that
+engine_dispatch's #384 two-signal observer would corroborate as a proceeded-as-requested run.
+
+**Mechanism.** The supervise loop's own failure taxonomy (timeout, no-output watchdog, output-byte
+cap, die-clean signal) all fire on process *behavior observed during* the run — none of them fire
+when the process starts, does nothing, and exits cleanly before any watchdog has a chance to trip.
+Antigravity's own diagnostic (the executor-construction error) lands in a log file the wrapper never
+reads for status purposes; the only two signals the wrapper does read — exit code and captured
+stdout/stderr byte count — were exactly the two that, in combination, proved the run did nothing.
+Checking exit code alone treats "exited without crashing" as proof of work done, when it only proves
+the process didn't crash.
+
+**Generalizable rule.** For any supervised external-process wrapper that maps `return_code == 0` to a
+passing status, also gate on "did this run produce the output a passing run is expected to produce"
+(here: `stdout_bytes + stderr_bytes > 0`) — a zero-output success is usually an unstarted or
+early-aborted run wearing a clean exit code, not a completed one. Reuse an existing terminal failure
+status for the zero-output case rather than minting a new one; every consumer that already treats
+that status as non-passing (`_PASSING_STATUSES`, `_exit_code_for_status`, status-gated branches like
+`decide_non_apply_status`'s early return) then covers the new path for free, and the `shutdown` field
+(killed vs exited on its own) is enough to distinguish it from any pre-existing watchdog-triggered
+case sharing the same status.
+
+**Refs.** Fixed in `plugins/agy/scripts/agy_delegate.py` (#523), building on the terminal-bundle and
+atomic-write mechanisms from `{#unit-panels-vs-whole-diff-lenses-476}`'s sibling parity work (#517).
+Same "receipt schema-valid ≠ receipt honest" family as #384's two-signal observer design; sibling gap
+in the same batch: #520 (tripwire hardening).

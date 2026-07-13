@@ -598,7 +598,13 @@ def dispatch(
                     runner_receipt=runner_receipt,
                 )
                 _record_advisory_facts(
-                    ledger, invocation, disputed, result, subplot_id=subplot_id, at=at
+                    ledger,
+                    invocation,
+                    disputed,
+                    result,
+                    subplot_id=subplot_id,
+                    at=at,
+                    resolution=resolution,
                 )
                 return RequeueDisposition(reason=reason, attempt=attempt, evidence=disputed)
             # Advisory (non-gated) divergence: the existing downgrade_note mechanism with the
@@ -617,7 +623,13 @@ def dispatch(
                 runner_receipt=runner_receipt,
             )
             _record_advisory_facts(
-                ledger, invocation, evidence, result, subplot_id=subplot_id, at=at
+                ledger,
+                invocation,
+                evidence,
+                result,
+                subplot_id=subplot_id,
+                at=at,
+                resolution=resolution,
             )
             return evidence
         if gated:
@@ -654,7 +666,9 @@ def dispatch(
             runner_receipt=runner_receipt,
         )
 
-    _record_advisory_facts(ledger, invocation, evidence, result, subplot_id=subplot_id, at=at)
+    _record_advisory_facts(
+        ledger, invocation, evidence, result, subplot_id=subplot_id, at=at, resolution=resolution
+    )
     return evidence
 
 
@@ -761,12 +775,17 @@ def dispatch_advisory_panel(
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"Claude panel foreman reconciliation failed: {exc}") from exc
 
+    # Panel-member attribution (#459 R4): which members produced each gathered finding, so the
+    # capability_elo reducer can derive head-to-head matches from this reconciliation. Metadata
+    # only — it never enters the canonical result hash and grants no authority.
+    member_index = {item.source_finding_id: list(item.member_ids) for item in gathered}
     reconcile_fact = reconcile.append_reconciliation_fact(
         ledger,
         result,
         action=reconcile.ReconciliationAction.RECONCILE,
         subplot_id=subplot_id,
         at=at,
+        member_index=member_index,
     )
     apply_fact = reconcile.append_reconciliation_fact(
         ledger,
@@ -774,6 +793,7 @@ def dispatch_advisory_panel(
         action=reconcile.ReconciliationAction.APPLY,
         subplot_id=subplot_id,
         at=at,
+        member_index=member_index,
     )
     return PanelDispatchResult(
         role_name=role_name,
@@ -1110,11 +1130,17 @@ def _record_advisory_facts(
     *,
     subplot_id: str,
     at: str,
+    resolution: Any | None = None,
 ) -> None:
     """Write run-fact telemetry for an advisory call. **Telemetry only (KTD5)** — never gates, and a
     no-op unless ``ledger`` + ``subplot_id`` + ``at`` are all supplied (so dispatch is byte-identical
     for every existing caller). U3 writes an ``engine`` fact on any real call; U4 adds a ``delegation``
     fact only when the invocation is an ``agy.delegation.v1`` envelope.
+
+    ``resolution`` (#459 R1) contributes the registry-cell join fields — ``capability`` and the
+    resolution-time ``rating_claimed`` — so earned-ratings reducers can join a dispatch fact to a
+    ``(engine_key, capability)`` cell; ``execution_id`` joins it to a reconciliation. All three are
+    strings (empty when unknown), never gates, and never change the returned evidence.
     """
     if ledger is None or not subplot_id or not at:
         return
@@ -1143,6 +1169,9 @@ def _record_advisory_facts(
                 "engine": evidence.engine_id,
                 "variant": evidence.variant,
                 "status": str(evidence.provenance.get("status", "")),
+                "capability": str(getattr(resolution, "capability", None) or ""),
+                "rating_claimed": str(getattr(resolution, "rating_claimed", None) or ""),
+                "execution_id": evidence.execution_id or "",
                 "cost": _num(result.get("cost")),
                 "latency_seconds": _num(result.get("latency_seconds")),
                 "tokens": _num(result.get("tokens")),

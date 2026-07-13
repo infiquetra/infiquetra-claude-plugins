@@ -27,6 +27,70 @@
 
 ## 2026-07-13
 
+### A wave-3 issue's "verified absent today" claims go stale as the wave-2 spine lands — re-verify at plan time and re-scope to gap closure  {#stale-absence-claims-rescope-459}
+
+**Context.** Issue #459 (earned ratings) was authored 2026-07-03 against evidence that "no per-call
+dispatch ledger exists anywhere" and named a new `engine_dispatch_ledger.py` as the R1 deliverable.
+
+**Evidence.** By plan time (`origin/main` @ 2bdc168), the merge train had already landed the exact
+substrate the issue said was absent: `plugins/saga/scripts/run_ledger.py` (#401 — append-only,
+hash-chained, `verify_chain` with mutation/middle-deletion detection),
+`engine_dispatch._record_advisory_facts` appending an `engine` fact per real advisory dispatch
+(#388), and hash-chained `reconciliation` facts (#393). The implementation plan's §0 anchor audit
+(`docs/plans/2026-07-13-459-earned-ratings-plan.md`) caught this before any code was written.
+
+**Mechanism.** Wave-3 issues are authored against wave-2 evidence; the consolidation train keeps
+moving between authoring and execution, so every "confirmed absent" grep result in an issue body
+has a shelf life. Building the named second ledger would have forked the "one ledger, six
+consumers" premise the issue itself demanded.
+
+**Fix (or queued).** R1 shipped as a gap-closing EXTENSION of the landed spine (capability /
+rating_claimed / execution_id join fields + a sixth `benchmark` fact kind) instead of a duplicate
+module; the acceptance test file name (`tests/test_engine_dispatch_ledger.py`) was preserved and
+AE1 proven through the real dispatch write path (PR for #459).
+
+**Generalizable rule.** Re-verify every "verified absent today" claim from an issue body at plan
+time, and when the substrate has since landed, re-scope the requirement to gap closure over the
+landed spine — never duplicate it to match the issue's indicative file list.
+
+**Refs.** DECISIONS `{#earned-ratings-proposal-only-459}`.
+
+### The consensus panel already computes its own agreement signal every cycle — and throws it away  {#panel-agreement-signal-discarded-462}
+
+**Context.** Exploration #462 asked when the team-execution consensus panel can safely shrink.
+The blocking question was whether measuring reviewer agreement/independence needs new review
+machinery or just persistence of what already happens.
+
+**Evidence.** `docs/analysis/2026-07-13-panel-economics-exploration.md` (this commit).
+`consensus-protocol.md:153-161` — fix consolidation groups fix requests by file/section and
+"deduplicates identical fixes", i.e. it computes findings-overlap between reviewers on every
+multi-failure cycle, then discards it; `:43-49`/`:165-180` render per-reviewer scores as
+display-only tables; `:184-196` keeps only a prose summary after 3 cycles. Meanwhile the merged
+ledger substrate is ready to receive the data: `run_ledger.py:43` (`FACT_KINDS` closed set —
+one-line extension), `reconcile.py:715-757` (typed run-fact writer precedent),
+`evidence_ledger.py:213-231` (consensus gate custody fits `write()` with zero schema change).
+
+**Mechanism.** The protocol was authored as an in-session ceremony: every signal a calibration
+loop needs (scores, verdicts, overlapping findings, panel composition) is produced transiently
+for the operator's eyes and never crosses into a machine-readable store, because no store
+existed when the protocol was written. The substrate (#398/#401) landed later, substrate-first
+by design, so the gap is now pure wiring, not architecture.
+
+**Fix (or queued).** Recommendation document shipped this commit; Priority-1 follow-up issue
+(agreement-ledger instrumentation) is the concrete action, per the document's section 10.
+
+**What surprised.** Two of the issue's own evidence anchors had drifted
+(`consensus-protocol.md:142-157`→`:43-49`/`:165-180`, `execution_spec.py:114`→`:156` for
+`VERIFY_N_CAP`) — the claims held but the lines moved, in a document written nine days ago.
+
+**Generalizable rule.** Before designing new measurement machinery, check whether the ceremony
+already computes the signal transiently — persisting an existing intermediate is an order of
+magnitude cheaper than adding a measurement step, and it cannot change behavior. And treat
+file:line anchors in issues as hypotheses to re-verify, not facts: they rot in days in an
+active repo.
+
+**Refs.** #462, #338, #398, #401, #402; `{#external-engines-never-gatekeepers}` (#283).
+
 ### A tool-boundary schema that is looser than the runtime predicate re-opens the gap it was built to close  {#verifier-schema-predicate-alignment-527}
 
 **Context.** #527 hardens the refute-N verify panels against prose verdicts (workflow

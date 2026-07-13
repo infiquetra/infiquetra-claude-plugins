@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -47,6 +47,9 @@ _RECONCILIATION_FACT_FIELDS = {
     "source_finding_ids",
     "items",
 }
+# Optional reconciliation-fact metadata (#459 R4): panel-member attribution for Elo derivation.
+# Additive — legacy facts without it stay valid, and it never enters ``canonical_result_hash``.
+_OPTIONAL_RECONCILIATION_FACT_FIELDS = {"member_index"}
 RECIPE_UPDATE_PROPOSAL_SCHEMA = "recipe_update_proposal.v1"
 MAX_ID_BYTES = 256
 MAX_ITEMS = 256
@@ -705,6 +708,27 @@ def canonical_result_hash(result: ReconciliationResult) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _validated_member_index(
+    member_index: Mapping[str, Sequence[str]],
+    source_finding_ids: Iterable[str],
+) -> dict[str, list[str]]:
+    """Validate ``{source_finding_id: [engine_key, ...]}`` panel attribution metadata (#459 R4)."""
+    if not isinstance(member_index, Mapping):
+        raise ReconciliationError("member_index must be a mapping when supplied")
+    known = set(source_finding_ids)
+    validated: dict[str, list[str]] = {}
+    for finding_id, members in member_index.items():
+        _require_id(finding_id, "member_index source_finding_id")
+        if finding_id not in known:
+            raise ReconciliationError(f"member_index names unknown source finding {finding_id!r}")
+        if isinstance(members, str) or not isinstance(members, Sequence) or not members:
+            raise ReconciliationError(
+                "member_index values must be non-empty lists of member identities"
+            )
+        validated[finding_id] = [_require_id(member, "member_index member") for member in members]
+    return validated
+
+
 def append_reconciliation_fact(
     ledger: run_ledger.RunLedger,
     result: ReconciliationResult,
@@ -712,6 +736,7 @@ def append_reconciliation_fact(
     action: ReconciliationAction | str,
     subplot_id: str,
     at: str,
+    member_index: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     result.require_ready()
     try:
@@ -719,6 +744,11 @@ def append_reconciliation_fact(
     except ValueError as exc:
         raise ReconciliationError(f"invalid reconciliation action {action!r}") from exc
     result_hash = canonical_result_hash(result)
+    optional_fields: dict[str, Any] = {}
+    if member_index is not None:
+        optional_fields["member_index"] = _validated_member_index(
+            member_index, result.source_finding_ids
+        )
     fact = run_ledger.build_fact(
         "reconciliation",
         subplot_id=subplot_id,
@@ -736,6 +766,7 @@ def append_reconciliation_fact(
             {"source_finding_id": item.source_finding_id, "status": item.status.value}
             for item in result.items
         ],
+        **optional_fields,
     )
 
     def validate_transition(snapshot: run_ledger.LedgerSnapshot) -> None:
@@ -773,7 +804,9 @@ def _validated_reconciliation_facts(
     for fact in records:
         if fact.get("kind") != "reconciliation":
             continue
-        if set(fact) != _STANDARD_FACT_FIELDS | _RECONCILIATION_FACT_FIELDS:
+        required = _STANDARD_FACT_FIELDS | _RECONCILIATION_FACT_FIELDS
+        fields = set(fact)
+        if not (required <= fields <= required | _OPTIONAL_RECONCILIATION_FACT_FIELDS):
             raise ReconciliationError("reconciliation fact fields are malformed")
         if fact.get("schema") != run_ledger.RUN_FACT_SCHEMA:
             raise ReconciliationError("reconciliation fact has an unsupported schema")
@@ -809,6 +842,8 @@ def _validated_reconciliation_facts(
         normalized_sources = tuple(_require_id(item, "source_finding_id") for item in source_ids)
         if len(normalized_sources) != len(set(normalized_sources)):
             raise ReconciliationError("reconciliation fact contains duplicate source findings")
+        if "member_index" in fact:
+            _validated_member_index(fact["member_index"], normalized_sources)
         projected_ids: list[str] = []
         for item in items:
             if not isinstance(item, Mapping) or set(item) != {"source_finding_id", "status"}:

@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.82.0] - 2026-07-12
+## [0.83.0] - 2026-07-12
 
 ### Added - durable delegation-audit store mirroring + /delegation-audit reconciliation (#396)
 
@@ -21,6 +21,43 @@
   replace) the always-on Stop-hook tripwire (`delegation_stop_audit_hook.py`).
 - Consumes `plugins/fleet-core/scripts/fleet_commons/audit_store.py` (new, fleet-core 0.8.5) and
   the extended `fleet_commons/delegation_audit.py`'s new `reconcile_store` function.
+
+## [0.82.0] - 2026-07-12
+
+### Added - closure gate: /outcome refuses to close a leaf on missing, stale-SHA, or unsuperseded-FAIL evidence (#397)
+
+- **`plugins/saga/scripts/closure_gate.py` (new):** reads the evidence ledger (#398) for a node's
+  declared `evidence.required_checks` and derives a typed verdict every reconcile tick — pure
+  read-time derivation, no new committed or cached closure-status field. A node with no
+  `required_checks` declared is trivially satisfied, so every existing outcome spec is unaffected.
+  Named HALT reasons: `missing-evidence:<check_id>` (no evidence anywhere), `stale-sha:<check_id>`
+  (evidence exists, but not at the outcome's current close SHA), `unresolved-fail:<check_id>` (the
+  latest verdict at the close SHA is a failing verdict), `unsuperseded-fail:<check_id>` (a failing
+  verdict was followed by a passing one with no `payload["supersession_reason"]` justifying the
+  transition — an unexplained PASS never silently clears a FAIL), `unrecognized-verdict:<check_id>`
+  (a verdict string outside the known vocabulary HALTs rather than being treated as a pass),
+  `unresolvable-close-sha`, and `invalid-identity:<subplot_id>` (a malformed `leaf_saga_id` or
+  `check_id` HALTs cleanly instead of an uncaught exception crashing the reconcile loop).
+  Close-SHA resolution: an explicit `evidence.reviewed_sha` override
+  wins; otherwise a `code` node derives it from the PR's pre-merge head commit SHA
+  (`outcome_github.head_ref_oid`), never the post-squash merge-commit SHA on `main`. Calls the
+  already-shipped `evidence_ledger.verify_chain()` once per evaluation so a tampered chain HALTs
+  rather than trusting a compromised read. Classifies each verdict against its own closed
+  vocabulary rather than `evidence_ledger.latest()`'s literal-`"FAIL"`-only flag, so the real
+  producer verdicts (`/qa`'s `ship` / `ship-with-deferred` / `no-ship`, `/code-review`'s `clean` /
+  `blocked`) are correctly recognized as passing or failing.
+- **`evidence_ledger.py` gains one additive read helper, `history(store, check_id=...)`:** every
+  evidence entry for a check across every reviewed SHA — needed to distinguish "this check never
+  ran" from "this check ran, but only at a different SHA". No change to any existing signature or
+  storage format.
+- **`outcome_orchestrator.harvest()`/`barrier_report()` wire the gate in:** `harvest()` never
+  writes a `done` completion event until the closure gate is satisfied for every declared required
+  check; `barrier_report()` surfaces the gate's named HALT reason per node under a `closure_gate`
+  key. Both gain a new keyword-only `repo_root: Path = Path(".")` (the ledger is a committed
+  repo-tree path, distinct from the git-common-dir cache `store` already resolves), defaulted so
+  every pre-existing caller and outcome spec is unaffected.
+- **`plugins/saga/references/outcome-spec.md`** documents the new `Node.evidence` schema
+  (`required_checks` / `reviewed_sha`) and the full HALT-reason vocabulary.
 
 ## [0.81.0] - 2026-07-12
 

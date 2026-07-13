@@ -6,7 +6,7 @@
   "nodes": [
     {
       "subplot_id": "sub-396",
-      "title": "\"enhancement: delegation evidence survives teardown — durable audit store, write-once draft snapshots, /delegation-audit query\"",
+      "title": "\"enhancement: delegation evidence survives teardown \u2014 durable audit store, write-once draft snapshots, /delegation-audit query\"",
       "kind": "code",
       "state": "done",
       "backend": "inline",
@@ -32,7 +32,7 @@
     },
     {
       "subplot_id": "sub-397",
-      "title": "\"enhancement: closure gate — /outcome refuses to close a leaf on missing, stale-SHA, or unsuperseded-FAIL evidence\"",
+      "title": "\"enhancement: closure gate \u2014 /outcome refuses to close a leaf on missing, stale-SHA, or unsuperseded-FAIL evidence\"",
       "kind": "code",
       "state": "done",
       "backend": "inline",
@@ -84,7 +84,7 @@
     },
     {
       "subplot_id": "sub-461",
-      "title": "context-update: freeze the before picture — fleet baseline pain metrics",
+      "title": "context-update: freeze the before picture \u2014 fleet baseline pain metrics",
       "kind": "code",
       "state": "done",
       "backend": "inline",
@@ -136,7 +136,7 @@
     },
     {
       "subplot_id": "sub-462",
-      "title": "exploration: panel economics — measured reviewer independence, consensus elasticity, acceptance-sampling review",
+      "title": "exploration: panel economics \u2014 measured reviewer independence, consensus elasticity, acceptance-sampling review",
       "kind": "code",
       "state": "pending",
       "backend": "inline",
@@ -153,7 +153,8 @@
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#462",
-        "sub_issue": 462
+        "sub_issue": 462,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/576"
       },
       "worktree": {},
       "evidence": {},
@@ -161,7 +162,7 @@
     },
     {
       "subplot_id": "sub-400",
-      "title": "\"capability: Pulse live-telemetry component — board/agent/run state rendered from real signals\"",
+      "title": "\"capability: Pulse live-telemetry component \u2014 board/agent/run state rendered from real signals\"",
       "kind": "code",
       "state": "pending",
       "backend": "inline",
@@ -178,7 +179,8 @@
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#400",
-        "sub_issue": 400
+        "sub_issue": 400,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/577"
       },
       "worktree": {},
       "evidence": {},
@@ -212,7 +214,7 @@
     },
     {
       "subplot_id": "sub-402",
-      "title": "\"enhancement: spend observability on the ledger — estimate-reconcile, itemized receipts, spend retro, tier-efficacy and shadow-audit evidence\"",
+      "title": "\"enhancement: spend observability on the ledger \u2014 estimate-reconcile, itemized receipts, spend retro, tier-efficacy and shadow-audit evidence\"",
       "kind": "code",
       "state": "done",
       "backend": "inline",
@@ -238,7 +240,7 @@
     },
     {
       "subplot_id": "sub-459",
-      "title": "\"capability: earned ratings — dispatch/benchmark evidence drives retro-gated engine-registry calibration (SPC drift, Elo, staleness report)\"",
+      "title": "\"capability: earned ratings \u2014 dispatch/benchmark evidence drives retro-gated engine-registry calibration (SPC drift, Elo, staleness report)\"",
       "kind": "code",
       "state": "pending",
       "backend": "inline",
@@ -255,7 +257,8 @@
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#459",
-        "sub_issue": 459
+        "sub_issue": 459,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/578"
       },
       "worktree": {},
       "evidence": {},
@@ -265,7 +268,7 @@
   "decision_trail": [
     {
       "revision": 1,
-      "reason": "seeded via start --from-objective infiquetra/infiquetra-claude-plugins#338 (Build the fleet telemetry and ledger substrate): 10 sub-issues ingested, 7 already closed and back-linked to their historically-merged PRs (sub-396#569, sub-397#568, sub-398#567, sub-399#472, sub-401#489, sub-402#570, sub-461#471) so harvest completes them from GitHub-canonical PR state instead of re-dispatching closed work. Open frontier = the objective's 3 remaining leaves: sub-459 (earned ratings, moonshot, needs-plan), sub-400 (Pulse live-telemetry, structural, needs-plan), sub-462 (panel economics exploration, research doc). No dependency edges among the three — disjoint code surfaces (engine registry/resolver + /retro vs. new read-side pulse surface vs. docs/analysis recommendation) — so ready frontier = 3, matching the 3-concurrent cap. Sequenced after the delegation-integrity outcome per its own trail: sub-459 consumes the dispatch receipts those defects made honest. Backend workflow-orchestrated; per-leaf tiering fable-heavy (operator directive: recommendations with opus upgraded to fable, more reasoning on harder parts)."
+      "reason": "seeded via start --from-objective infiquetra/infiquetra-claude-plugins#338 (Build the fleet telemetry and ledger substrate): 10 sub-issues ingested, 7 already closed and back-linked to their historically-merged PRs (sub-396#569, sub-397#568, sub-398#567, sub-399#472, sub-401#489, sub-402#570, sub-461#471) so harvest completes them from GitHub-canonical PR state instead of re-dispatching closed work. Open frontier = the objective's 3 remaining leaves: sub-459 (earned ratings, moonshot, needs-plan), sub-400 (Pulse live-telemetry, structural, needs-plan), sub-462 (panel economics exploration, research doc). No dependency edges among the three \u2014 disjoint code surfaces (engine registry/resolver + /retro vs. new read-side pulse surface vs. docs/analysis recommendation) \u2014 so ready frontier = 3, matching the 3-concurrent cap. Sequenced after the delegation-integrity outcome per its own trail: sub-459 consumes the dispatch receipts those defects made honest. Backend workflow-orchestrated; per-leaf tiering fable-heavy (operator directive: recommendations with opus upgraded to fable, more reasoning on harder parts)."
     }
   ],
   "cost_rollup": {},

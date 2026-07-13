@@ -88,6 +88,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     explain.add_argument("capability")
     explain.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    explain.add_argument(
+        "--calibration",
+        action="store_true",
+        help=(
+            "consult earned-ratings signals (#459 R4/R5): reorder within an authored rating "
+            "band by reconciliation Elo and deprioritize SPC drift-flagged providers — "
+            "read-only, never a registry write"
+        ),
+    )
 
     return parser
 
@@ -132,12 +141,40 @@ def _run(args: argparse.Namespace) -> int:
                 return 0
 
     if args.family == "route" and args.route_command == "explain":
-        explanation = registry.explain_capability(args.capability, overlay=overlay)
+        calibration = _load_calibration_signals(repo_root) if args.calibration else None
+        explanation = registry.explain_capability(
+            args.capability, overlay=overlay, calibration=calibration
+        )
         payload = _explanation_payload(explanation)
-        _emit(payload, args.json, _format_explanation(explanation))
+        if calibration is not None:
+            payload["calibration"] = _calibration_payload(calibration, args.capability)
+        _emit(payload, args.json, _format_explanation(explanation, calibration, args.capability))
         return 0
 
     raise RegistryError("unhandled engine registry CLI command")
+
+
+def _load_calibration_signals(repo_root: Path) -> Any:
+    """Resolve the run-fact ledger and derive the earned-ratings signals — READ ONLY."""
+    import engine_calibration  # noqa: PLC0415 - lazy: only the --calibration path pays for it
+    import run_ledger  # noqa: PLC0415
+
+    try:
+        ledger = run_ledger.RunLedger.resolve(repo_root)
+        return engine_calibration.load_calibration(ledger)
+    except Exception as exc:  # noqa: BLE001 - CLI boundary: named failure, never a crash
+        raise RegistryError(f"calibration signals unavailable: {exc}") from exc
+
+
+def _calibration_payload(calibration: Any, capability: str) -> dict[str, object]:
+    return {
+        "drift_flagged": sorted(calibration.drift_flagged),
+        "elo": {
+            key: round(score, 2)
+            for (key, cell_capability), score in sorted(calibration.elo.items())
+            if cell_capability == capability
+        },
+    }
 
 
 def _row_payload(
@@ -225,7 +262,11 @@ def _candidate_payload(candidate: CapabilityCandidate) -> dict[str, object]:
     return data
 
 
-def _format_explanation(explanation: CapabilityExplanation) -> str:
+def _format_explanation(
+    explanation: CapabilityExplanation,
+    calibration: Any | None = None,
+    capability: str = "",
+) -> str:
     lines = [
         f"capability: {explanation.capability}",
         f"selected: {explanation.selected.entry.key}",
@@ -233,15 +274,26 @@ def _format_explanation(explanation: CapabilityExplanation) -> str:
         f"pin: {explanation.pinned_key or 'none'}",
         "deprecated: "
         + (",".join(explanation.deprecated_keys) if explanation.deprecated_keys else "none"),
-        "candidates:",
     ]
+    if calibration is not None:
+        lines.append(
+            "calibration: reorder-within-rating-band (drift_flagged="
+            + (",".join(sorted(calibration.drift_flagged)) or "none")
+            + ")"
+        )
+    lines.append("candidates:")
     for candidate in explanation.candidates:
         marker = "*" if candidate.entry.key == explanation.selected.entry.key else "-"
-        lines.append(
+        line = (
             f"{marker} {candidate.entry.key} rating={candidate.rating} "
             f"cost_speed_rank={candidate.cost_speed_rank} "
             f"registry_order={candidate.registry_order} reason={candidate.reason}"
         )
+        if calibration is not None:
+            elo = calibration.elo.get((candidate.entry.key, capability))
+            drift = candidate.entry.engine_id in calibration.drift_flagged
+            line += f" elo={round(elo, 2) if elo is not None else 'prior'} drift={drift}"
+        lines.append(line)
     return "\n".join(lines)
 
 

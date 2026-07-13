@@ -2,6 +2,32 @@
 
 ## 2026-07-13
 
+### Earned ratings terminate in proposals a human applies — one write seam, no carve-outs (#459) {#earned-ratings-proposal-only-459}
+
+**Decision.** Every earned-ratings calibration signal — benchmark contradiction
+(`engine_benchmark.py`), staleness verdict (`engine_stale_report.py`), reconciliation Elo
+divergence (`capability_elo.py`), and SPC drift flag (`provider_control_chart.py`) — terminates in
+a `registry_calibration_proposal.v1` that `/retro` Phase 5(f) surfaces propose-diff-and-wait and a
+HUMAN applies by hand-editing `engine-registry.yaml`. No module in the pipeline has a registry
+write path (`engine_calibration.report`/`render_diff_preview` read only;
+`tests/test_saga_retro_calibration.py::test_proposal_only_never_writes_registry` is the byte-identity
+guard). Runtime consumption (R4/R5) is strictly reorder-within-an-authored-rating-band and opt-in
+(`calibration=None` everywhere is byte-identical): deprioritize, never exclude, never rewrite a
+rating. This is `{#external-engines-never-gatekeepers}` (#283) applied to the registry's own data.
+
+**Rejected alternatives.** (a) Auto-applying `last_validated` bumps for corroborated cells —
+rejected: the tiered self-edit contract's one auto-apply carve-out is a pure new journal entry;
+a registry field edit is not that, and one write seam with no carve-outs is the whole guarantee.
+(b) A separate `engine_dispatch_ledger.py` beside `run_ledger.py` (the issue's indicative file
+list) — rejected: the wave-2 spine already landed as the one hash-chained ledger; a second chain
+forks evidence (see LEARNINGS `{#stale-absence-claims-rescope-459}`). (c) LLM-graded benchmark
+probes — rejected: an external engine must never judge another engine's rating (#283);
+deterministic string graders only, with nuance left to the human reading the proposal.
+
+**Revisit when** (revisit-when)**:** three consecutive retros where every emitted calibration proposal was applied
+unmodified — then consider auto-applying ONLY `last-validated-bump` actions behind an explicit
+operator setting (never `rating-change` or `revalidate`).
+
 ### HTTP-bridge lanes corroborate receipt-only; no ENGINE_CONFIGS receipt-store row (#524) {#http-receipt-only-corroboration-524}
 
 **Decision.** Two-signal dispatch corroboration for HTTP-transport engines (ollama-cloud,

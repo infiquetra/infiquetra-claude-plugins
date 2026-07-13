@@ -785,3 +785,89 @@ def test_panel_foreman_rejects_wrong_type_execution_and_intent() -> None:
         RC.validate_panel_reconciliation(
             result, execution_id="wrong", intent="divergence", evidence=evidence
         )
+
+
+# ----------------------------------------------------------------- #459 R4: member_index metadata
+
+
+def test_member_index_round_trips_through_reconciliation_facts(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    member_index = {"finding-1": ["enga/default", "engb/default"]}
+    RC.append_reconciliation_fact(
+        ledger,
+        _result(),
+        action="reconcile",
+        subplot_id="leaf",
+        at="t1",
+        member_index=member_index,
+    )
+    RC.append_reconciliation_fact(
+        ledger,
+        _result(),
+        action="apply",
+        subplot_id="leaf",
+        at="t2",
+        member_index=member_index,
+    )
+
+    facts = RC.read_reconciliation_facts(ledger)
+    assert [fact["member_index"] for fact in facts] == [member_index, member_index]
+
+
+def test_legacy_facts_without_member_index_stay_valid(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    RC.append_reconciliation_fact(ledger, _result(), action="reconcile", subplot_id="leaf", at="t")
+
+    facts = RC.read_reconciliation_facts(ledger)
+    assert len(facts) == 1
+    assert "member_index" not in facts[0]
+
+
+def test_member_index_naming_unknown_finding_is_rejected(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    with pytest.raises(RC.ReconciliationError, match="unknown source finding"):
+        RC.append_reconciliation_fact(
+            ledger,
+            _result(),
+            action="reconcile",
+            subplot_id="leaf",
+            at="t",
+            member_index={"finding-unknown": ["enga/default"]},
+        )
+    assert RL.read_facts(ledger) == []
+
+
+def test_member_index_with_empty_member_list_is_rejected(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    with pytest.raises(RC.ReconciliationError, match="non-empty lists"):
+        RC.append_reconciliation_fact(
+            ledger,
+            _result(),
+            action="reconcile",
+            subplot_id="leaf",
+            at="t",
+            member_index={"finding-1": []},
+        )
+
+
+def test_reader_rejects_malformed_member_index_in_stored_fact(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    fact = RL.build_fact(
+        "reconciliation",
+        subplot_id="leaf",
+        at="t",
+        reconciliation_id="recon-bad-index",
+        execution_id="exec-1",
+        intent="offload",
+        recipe_id="offload-accept-drop-override-v1",
+        adjudicator_id="claude/opus",
+        evidence_digest="0" * 64,
+        action="reconcile",
+        result_hash="1" * 64,
+        source_finding_ids=["finding-1"],
+        items=[{"source_finding_id": "finding-1", "status": "reconciled"}],
+        member_index={"finding-1": "not-a-list"},
+    )
+    RL.append_fact(ledger, fact)
+    with pytest.raises(RC.ReconciliationError, match="non-empty lists"):
+        RC.read_reconciliation_facts(ledger)

@@ -344,6 +344,20 @@ tier from the work-shape heuristic (R10). Surface the tier table for operator ov
 Apply the heuristic per unit, then present the full tier table (U-ID, label, proposed tier, rationale)
 and ask the operator to confirm or override before proceeding. Do not lock tiers silently.
 
+**Estimate column (#402).** Add a fourth `Estimate` column to this per-plan table (the U-ID/label/
+tier/rationale table above, never the GENERATED work-shape registry table) — the ordinal, index-weighted
+spend the assigned tier costs (never a dollar amount). Once the per-unit tiers are locked into a draft
+`ExecutionSpec`, run
+
+```bash
+python3 plugins/saga/scripts/spend_estimate.py estimate --spec <spec.json>
+```
+
+and fold its per-unit figures into the Estimate column so the operator sees relative cost alongside the
+tier they are confirming, not as a separate lookup. The estimator is read-only (it renders a table; it
+writes nothing to the ledger or the spec) — see `spend_estimate.py`'s own module docstring for the
+reconcile-side (post-run) companion this authoring-time render feeds into.
+
 **The `/plan`-authored tier table is not the only lever (#365).** The operator can adjust tier
 **mid-run** without aborting and re-planning via `/tier`: a run-scoped ceiling
 (`.claude/saga/tier-session-override.json`) that the emitters clamp every unit down to, or a mid-run

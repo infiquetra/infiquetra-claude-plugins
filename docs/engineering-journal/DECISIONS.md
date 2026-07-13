@@ -2,6 +2,56 @@
 
 ## 2026-07-12
 
+### Spend observability reads the leaf-produced ledger at two granularities; no new fallback-tier or ledger schema where one already exists (#402) {#spend-observability-ktds-402}
+
+**Decision.** The #402 spend-observability layer (planned in
+`docs/plans/2026-07-12-spend-observability-plan.md`, leaf sub-402 of outcome `evidence-integrity`)
+adds five reader/leaf-appender modules over the existing `outcome_costs.py` cost ledger:
+`spend_estimate.py` (pre-run ordinal estimate + tier-value score + post-run reconcile),
+`spend_receipt.py` (itemized receipt + cheap-fallback counterfactual), `spend_retro.py`
+(cross-run tier-mix/spend-vs-outcome aggregator), a new `/retro` tier-efficacy Phase-5
+propose-diff-and-wait pass (`tier_efficacy.py`), and `shadow_audit.py` (sampled one-rung-down
+replay evidence). Two granularities share one ordinal currency: `execution_spec.Unit` already
+carries the fields the issue anticipated stubbing (`cheaper_fallback`/`worth_it_because`, shipped
+by `#367`/`#565` — verified by direct read, no stub needed there); `outcome_spec.Node` carries no
+tier field at all, so a new read-time fallback-tier lookup (the node's committed `github.issue` →
+its stamped tier band via `gh issue view` → `SPEND_BASELINE` default) resolves it there only —
+sourced from durable committed/GitHub state alone, never the git-ignored saga cache (`resume/
+SKILL.md`'s own committed-docs/GitHub-wins-over-cache precedence), since `spend_retro.py`'s
+cross-run aggregation must work long after the fact, possibly from a different machine. The
+single-session estimate literally renders inside `/plan`'s own Phase-5.2a tier table (a `plan/
+SKILL.md` edit) — the issue's own DoD anchor — while the node-level resolver is a separate,
+reusable function `/plan` itself never renders (it is single-session-scoped). The post-run
+reconcile never invents a
+token-to-ordinal exchange rate — it deltas only the commensurable `outcome_costs.py` fields
+(`operator_touches`/`retries`) and renders `tokens`/`wall_seconds` as labeled real-world context,
+because zero real telemetry exists in either committed `docs/outcomes/*/outcome-spec.json`
+example today (verified: both roll up to `{}`). The shadow-audit tier-evidence ledger reuses
+`evidence_ledger.py` (#398) via a namespaced `check_id` (`shadow-audit:<stage>:<unit-id>`) —
+exactly the extension seam `{#evidence-ledger-ktds-398}` names — rather than a new ledger format;
+`shadow_audit.py` never spawns an Agent itself (only a Claude-driven flow can), so its replay
+dispatch site is documented in `sandbox-spawn-sites.md` for whichever flow invokes it. The
+tier-efficacy pass is a new Phase-5(e) propose-diff-and-wait target in `/retro` (never an
+AUTO-APPLY journal append) and reuses `execution_spec`'s existing `unattended` vocabulary (#364
+KTD3) for shadow-audit's attended/unattended gate rather than inventing new terms.
+
+**Rejected alternatives.** Resolving a node's tier via the leaf's own saga `orchestration_ref` /
+`.claude/saga/` state (git-ignored, machine-local — the anchor, not the authority, so cross-run
+aggregation run long after the fact or on a different machine cannot depend on it); adding a tier
+field to `outcome_spec.Node`'s own schema (owned by `#287`, a separate concern from this read-time
+convenience lookup); classifying an arbitrary node into a work-shape via an LLM call (unverifiable,
+breaks offline testability); fabricating a
+token-per-ordinal-unit exchange rate to force a unified estimate/actual delta (no repo data
+validates one yet); inventing a second ledger file format for shadow-audit results instead of a
+namespaced `evidence_ledger.py` `check_id`; wiring `shadow_audit.py` into `/work`'s default
+execution path in this PR (not in the issue's files-expected-to-change list, and it would compete
+with R8's "off by default" honesty).
+
+**Revisit when.** Real `outcome_costs.py` telemetry accrues across enough outcomes to validate a
+token-to-ordinal calibration (today: zero — both committed example outcome specs roll up empty),
+or an operator wants `shadow_audit.py` wired into `/work`'s live per-round loop as a default-on
+repo behavior.
+
 ### Backend offers enumerate all three backends with availability provenance; verify panels carry their own tier (#565) {#backend-offer-full-enumeration-565}
 
 **Decision.** The #565 fix (planned in

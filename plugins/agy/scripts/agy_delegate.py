@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import selectors
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -223,6 +225,60 @@ class TranscriptClassification:
         return asdict(self)
 
 
+# agy is a black box that can emit runaway output; without a cumulative cap, spam resets the
+# no-output watchdog and only the wall clock bounds it — 1-10 MB/s over the 900s default is
+# 0.9-9 GB on disk and then in memory at marker-scan time. Cap and kill instead (parity with
+# plugins/codex/scripts/codex_delegate.py's MAX_OUTPUT_BYTES, #476/#517).
+MAX_OUTPUT_BYTES = 128 * 1024 * 1024
+
+# Active supervised process, tracked so the SIGTERM/SIGINT die-clean handlers can kill it even
+# if the signal arrives while the supervising loop is between reads (#517).
+_ACTIVE_PROCESS: subprocess.Popen[bytes] | None = None
+_DIE_CLEAN_SIGNAL: int | None = None
+
+
+class DieCleanInterrupt(BaseException):
+    """Raised by the bundle-span SIGTERM/SIGINT handler to unwind through ``finally`` blocks.
+
+    Derives from BaseException so the terminal-bundle ``except Exception`` guard in
+    ``create_supervised_bundle`` cannot swallow it — it has its own dedicated handler. Raising
+    (rather than terminating at default disposition) is the whole fix: default SIGTERM kills the
+    interpreter without unwinding, skipping the terminal ``result.json`` write (#517).
+    """
+
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        super().__init__(f"terminated by signal {signum}")
+
+
+def _bundle_die_clean_handler(signum: int, _frame: object) -> None:
+    """Bundle-span SIGTERM/SIGINT handler: kill any live agy process, then unwind (#517).
+
+    Covers the windows OUTSIDE ``run_agy_supervised`` (clone setup, verification commands, patch
+    apply, bundle writes) — the supervised loop installs its own handler and restores this one
+    after.
+    """
+    process = _ACTIVE_PROCESS
+    if process is not None and process.poll() is None:
+        _terminate_process(process)
+    raise DieCleanInterrupt(signum)
+
+
+def _run_die_clean_handler(signum: int, _frame: object) -> None:
+    """SIGTERM/SIGINT die-clean handler for the supervised launch window (#517).
+
+    A caller's Bash-tool timeout SIGTERMs the delegate before its own wall-clock timeout can
+    fire; this handler guarantees the same terminal-bundle outcome as an internal timeout — the
+    agy process dies and the supervising loop notices the flag and finishes normally (no
+    exception unwind needed here, unlike the bundle-span handler above).
+    """
+    global _DIE_CLEAN_SIGNAL
+    _DIE_CLEAN_SIGNAL = signum
+    process = _ACTIVE_PROCESS
+    if process is not None and process.poll() is None:
+        _terminate_process(process)
+
+
 def parse_status(name: str) -> str:
     if name not in STATUSES:
         raise EnvelopeError(_enum_error("status", name, STATUSES))
@@ -368,6 +424,30 @@ def create_validation_bundle(
     )
 
 
+def _finalize_failed_bundle(bundle_path: Path, *, run_id: str, status: str, error: str) -> str:
+    """Best-effort terminal record for a run that failed outside the happy path (#517).
+
+    Every attempted run must end with an on-disk terminal status — a bundle whose
+    ``result.json`` is missing is exactly the ambiguous zombie state this delegate exists to
+    eliminate. If even this write fails, the projection still reports the failure loudly
+    (parity with codex's ``_finalize_failed_bundle``, #476/#517).
+    """
+    with contextlib.suppress(OSError):
+        if bundle_path.exists() and not (bundle_path / "result.json").exists():
+            _write_json(
+                bundle_path / "result.json",
+                {
+                    "schema": "agy.result.v1",
+                    "run_id": run_id,
+                    "bundle_path": str(bundle_path),
+                    "status": status,
+                    "error": error,
+                    "terminal": True,
+                },
+            )
+    return render_bundle_failed_projection(bundle_path)
+
+
 def create_supervised_bundle(
     envelope: Envelope,
     *,
@@ -384,6 +464,19 @@ def create_supervised_bundle(
     resolved_run_id = run_id or _new_run_id(timestamp)
     _validate_run_id(resolved_run_id)
     bundle_path = repo_root / ".claude" / "agy" / "runs" / resolved_run_id
+
+    # Bundle-span die-clean handlers (#517): a caller's SIGTERM can arrive during clone setup,
+    # verification-command execution, patch apply, or bundle writes — windows OUTSIDE
+    # run_agy_supervised (which installs its own handler for the launch window and restores
+    # these afterward). At default disposition the interpreter dies without unwinding: no
+    # terminal result.json is ever written. ValueError = non-main-thread caller; proceed
+    # uncovered rather than fail.
+    prior_handlers: dict[int, Any] = {}
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            prior_handlers[signum] = signal.signal(signum, _bundle_die_clean_handler)
+    except ValueError:
+        prior_handlers = {}
 
     try:
         bundle_path.mkdir(parents=True, exist_ok=False)
@@ -659,14 +752,55 @@ def create_supervised_bundle(
         _write_json(bundle_path / "result.json", result_payload)
         (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
         _mirror_to_audit_store(audit_store_root, resolved_run_id, result_payload)
-    except OSError:
-        projection = render_bundle_failed_projection(bundle_path)
+    except DieCleanInterrupt as exc:
+        # Signal arrived outside the supervised launch window: still end terminal (#517).
+        projection = _finalize_failed_bundle(
+            bundle_path,
+            run_id=resolved_run_id,
+            status=parse_status("error"),
+            error=f"terminated by signal {exc.signum} outside the supervised window",
+        )
+        return BundleResult(
+            status=parse_status("error"),
+            run_id=resolved_run_id,
+            bundle_path=bundle_path,
+            projection=projection,
+        )
+    except OSError as exc:
+        projection = _finalize_failed_bundle(
+            bundle_path,
+            run_id=resolved_run_id,
+            status=parse_status("bundle_failed"),
+            error=f"bundle write failed: {exc}",
+        )
         return BundleResult(
             status=parse_status("bundle_failed"),
             run_id=resolved_run_id,
             bundle_path=bundle_path,
             projection=projection,
         )
+    except Exception as exc:
+        # Terminal-bundle guarantee over exception precision (#517): a post-launch failure
+        # (receipt emission, JSON serialization) must not leave a launched run non-terminal.
+        projection = _finalize_failed_bundle(
+            bundle_path,
+            run_id=resolved_run_id,
+            status=parse_status("bundle_failed"),
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return BundleResult(
+            status=parse_status("bundle_failed"),
+            run_id=resolved_run_id,
+            bundle_path=bundle_path,
+            projection=projection,
+        )
+    finally:
+        # Restore the caller's signal disposition (#517). agy's disposable clone lives inside
+        # the bundle itself (bundle_path / "worktree"), unlike codex's — there is no separate
+        # teardown step to run here.
+        for signum, handler in prior_handlers.items():
+            with contextlib.suppress(ValueError):
+                signal.signal(signum, handler)
 
     return BundleResult(
         # Source status from result_payload, not run_result.status directly: the
@@ -690,6 +824,14 @@ def run_agy_supervised(
     stderr_path: Path,
     agy_bin: str | None = None,
 ) -> SupervisedRunResult:
+    """Launch and supervise one ``agy`` invocation (#517).
+
+    Enforces a wall-clock timeout, a no-output watchdog, and a cumulative ``MAX_OUTPUT_BYTES``
+    cap; on any of those, or on an external SIGTERM/SIGINT, the agy process is killed and a
+    terminal status is returned — the on-disk state never says ``running`` behind a dead worker.
+    """
+    global _ACTIVE_PROCESS, _DIE_CLEAN_SIGNAL
+
     started_at = datetime.now(UTC)
     resolved_agy = agy_bin or shutil.which("agy")
     if resolved_agy is None:
@@ -726,101 +868,148 @@ def run_agy_supervised(
     process_id: int | None = None
     return_code: int | None = None
 
-    with (
-        stdout_path.open("ab") as stdout_log,
-        stderr_path.open("ab") as stderr_log,
-    ):
-        try:
-            process = subprocess.Popen(
-                argv,
-                cwd=repo_root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=False,
-            )
-        except OSError as exc:
-            ended_at = datetime.now(UTC)
-            stderr_log.write(f"failed to launch agy: {exc}\n".encode())
-            return SupervisedRunResult(
-                status=parse_status("error"),
-                agy_launched=False,
-                resolved_agy=resolved_agy,
-                argv=argv,
-                process_id=None,
-                return_code=None,
-                started_at=started_at,
-                ended_at=ended_at,
-                shutdown="not_started",
-                stdout_path=stdout_path,
-                stderr_path=stderr_path,
-                timeout_class=None,
-                stdout_bytes=0,
-                stderr_bytes=stderr_log.tell(),
-                error=str(exc),
-            )
+    # Launch-window die-clean handler (#517): a caller's Bash-tool timeout SIGTERMs the delegate
+    # before its own wall-clock timeout can fire. Unlike the bundle-span handler installed in
+    # create_supervised_bundle (which raises to unwind through windows with no supervising loop
+    # watching a flag), this handler just kills the process and flags _DIE_CLEAN_SIGNAL — the
+    # while loop below notices the flag and finishes normally, so the run still returns a
+    # regular SupervisedRunResult rather than propagating an exception. ValueError/OSError =
+    # non-main-thread caller (e.g. an in-process pytest worker); proceed uncovered rather than
+    # fail, the watchdog still bounds the run.
+    previous_handlers: dict[int, Any] = {}
+    _DIE_CLEAN_SIGNAL = None
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(ValueError, OSError):
+            previous_handlers[signum] = signal.signal(signum, _run_die_clean_handler)
 
-        process_id = process.pid
-        selector = selectors.DefaultSelector()
-        if process.stdout is not None:
-            selector.register(process.stdout, selectors.EVENT_READ, stdout_log)
-        if process.stderr is not None:
-            selector.register(process.stderr, selectors.EVENT_READ, stderr_log)
-
-        start_monotonic = time.monotonic()
-        last_output_monotonic = start_monotonic
-
-        while process.poll() is None:
-            events = selector.select(timeout=0.05)
-            for key, _mask in events:
-                data = os.read(key.fileobj.fileno(), 8192)
-                if not data:
-                    selector.unregister(key.fileobj)
-                    continue
-                key.data.write(data)
-                key.data.flush()
-                if key.data is stdout_log:
-                    stdout_bytes += len(data)
-                else:
-                    stderr_bytes += len(data)
-                last_output_monotonic = time.monotonic()
-
-            now_monotonic = time.monotonic()
-            if now_monotonic - start_monotonic >= envelope.timeout_seconds:
-                timeout_class = "timeout"
-                shutdown = _terminate_process(process)
-                break
-            if now_monotonic - last_output_monotonic >= envelope.no_output_seconds:
-                timeout_class = "no_output"
-                shutdown = _terminate_process(process)
-                break
-
-        while selector.get_map():
-            events = selector.select(timeout=0.05)
-            if not events:
-                break
-            for key, _mask in events:
-                data = os.read(key.fileobj.fileno(), 8192)
-                if not data:
-                    selector.unregister(key.fileobj)
-                    continue
-                key.data.write(data)
-                key.data.flush()
-                if key.data is stdout_log:
-                    stdout_bytes += len(data)
-                else:
-                    stderr_bytes += len(data)
-
-        selector.close()
-        return_code = process.poll()
-        if return_code is None:
+    try:
+        with (
+            stdout_path.open("ab") as stdout_log,
+            stderr_path.open("ab") as stderr_log,
+        ):
             try:
-                return_code = process.wait(timeout=0.1)
-            except subprocess.TimeoutExpired:
-                return_code = None
+                process = subprocess.Popen(
+                    argv,
+                    cwd=repo_root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    shell=False,
+                )
+            except OSError as exc:
+                ended_at = datetime.now(UTC)
+                stderr_log.write(f"failed to launch agy: {exc}\n".encode())
+                return SupervisedRunResult(
+                    status=parse_status("error"),
+                    agy_launched=False,
+                    resolved_agy=resolved_agy,
+                    argv=argv,
+                    process_id=None,
+                    return_code=None,
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    shutdown="not_started",
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                    timeout_class=None,
+                    stdout_bytes=0,
+                    stderr_bytes=stderr_log.tell(),
+                    error=str(exc),
+                )
+
+            _ACTIVE_PROCESS = process
+            process_id = process.pid
+            selector = selectors.DefaultSelector()
+            if process.stdout is not None:
+                selector.register(process.stdout, selectors.EVENT_READ, stdout_log)
+            if process.stderr is not None:
+                selector.register(process.stderr, selectors.EVENT_READ, stderr_log)
+
+            start_monotonic = time.monotonic()
+            last_output_monotonic = start_monotonic
+
+            while process.poll() is None:
+                if _DIE_CLEAN_SIGNAL is not None:
+                    timeout_class = "die_clean"
+                    shutdown = _terminate_process(process)
+                    break
+
+                events = selector.select(timeout=0.05)
+                for key, _mask in events:
+                    data = os.read(key.fileobj.fileno(), 8192)
+                    if not data:
+                        selector.unregister(key.fileobj)
+                        continue
+                    key.data.write(data)
+                    key.data.flush()
+                    if key.data is stdout_log:
+                        stdout_bytes += len(data)
+                    else:
+                        stderr_bytes += len(data)
+                    last_output_monotonic = time.monotonic()
+
+                if stdout_bytes + stderr_bytes >= MAX_OUTPUT_BYTES:
+                    timeout_class = "output_limit"
+                    shutdown = _terminate_process(process)
+                    break
+
+                now_monotonic = time.monotonic()
+                if now_monotonic - start_monotonic >= envelope.timeout_seconds:
+                    timeout_class = "timeout"
+                    shutdown = _terminate_process(process)
+                    break
+                if now_monotonic - last_output_monotonic >= envelope.no_output_seconds:
+                    timeout_class = "no_output"
+                    shutdown = _terminate_process(process)
+                    break
+
+            while selector.get_map():
+                events = selector.select(timeout=0.05)
+                if not events:
+                    break
+                for key, _mask in events:
+                    data = os.read(key.fileobj.fileno(), 8192)
+                    if not data:
+                        selector.unregister(key.fileobj)
+                        continue
+                    key.data.write(data)
+                    key.data.flush()
+                    if key.data is stdout_log:
+                        stdout_bytes += len(data)
+                    else:
+                        stderr_bytes += len(data)
+
+            selector.close()
+            return_code = process.poll()
+            if return_code is None:
+                try:
+                    return_code = process.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    return_code = None
+    finally:
+        _ACTIVE_PROCESS = None
+        for signum, handler in previous_handlers.items():
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(signum, handler)
 
     ended_at = datetime.now(UTC)
+    signal_caught = _DIE_CLEAN_SIGNAL
+    error: str | None = None
     if shutdown == "shutdown_incomplete":
+        # A process that survived SIGKILL + grace is worse than any timeout class: the on-disk
+        # status must flag the leak, never read as a clean termination (#517).
         status = parse_status("shutdown_incomplete")
+        error = (
+            f"agy process could not be reaped after {timeout_class or 'kill'}; "
+            "an orphaned process may remain"
+        )
+    elif timeout_class == "die_clean":
+        status = parse_status("error")
+        error = f"terminated by signal {signal_caught}; agy process killed"
+    elif timeout_class == "output_limit":
+        status = parse_status("error")
+        error = (
+            f"cumulative output exceeded MAX_OUTPUT_BYTES ({MAX_OUTPUT_BYTES}); agy process killed"
+        )
     elif timeout_class == "timeout":
         status = parse_status("timeout")
     elif timeout_class == "no_output":
@@ -845,6 +1034,7 @@ def run_agy_supervised(
         timeout_class=timeout_class,
         stdout_bytes=stdout_bytes,
         stderr_bytes=stderr_bytes,
+        error=error,
     )
 
 
@@ -1272,7 +1462,15 @@ def _enum_error(name: str, value: object, allowed: frozenset[str]) -> str:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    """Write JSON atomically (tmp + rename) — a mid-write kill must never leave torn JSON.
+
+    ``result.json`` is the terminal-bundle record; a partial write would present as an
+    unparseable, ambiguous state to every downstream reader (parity with codex's
+    ``_write_json``, #476/#517).
+    """
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def _run_git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -1420,15 +1618,33 @@ def _override_run_status(run_result: SupervisedRunResult, *, status: str) -> Sup
 
 
 def _blocked_status_from_logs(stdout_path: Path, stderr_path: Path) -> str | None:
-    text = stdout_path.read_text(encoding="utf-8") + "\n" + stderr_path.read_text(encoding="utf-8")
+    """Scan the supervised run's logs for blocked-status markers (#517).
+
+    Streams both logs line-by-line rather than ``read_text``-ing them whole into a combined
+    string — the logs are agy-controlled and already byte-capped by ``MAX_OUTPUT_BYTES`` in the
+    supervise loop, but this scan must never assume that cap held (defense in depth, parity with
+    codex's streaming ``parse_token_usage``). Marker priority is fixed by dict order, matching
+    the original whole-text-search semantics: whichever marker is present is returned in the
+    order below regardless of which log or line it appeared on.
+    """
     markers = {
         "PLAN_GAP:": "plan_gap",
         "TEST_CONFLICT:": "test_conflict",
         "PATH_MISSING:": "path_missing",
         "FALLBACK_SUSPECTED:": "fallback_suspected",
     }
+    seen: set[str] = set()
+    for path in (stdout_path, stderr_path):
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    for marker in markers:
+                        if marker in line:
+                            seen.add(marker)
+        except OSError:
+            continue
     for marker, status in markers.items():
-        if marker in text:
+        if marker in seen:
             return parse_status(status)
     return None
 

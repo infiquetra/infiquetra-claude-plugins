@@ -63,6 +63,46 @@ side in the test.
 **Refs.** `{#verify-panel-prose-verdicts-vacuous-aggregation}`; issue #527; issue #519 (schema
 attachment); #390 U6 (attribution fields).
 
+### "Mirror the sibling" instructions import the sibling's own latent bugs, not just its shape  {#agy-codex-parity-517}
+
+**Context.** Issue #517 ported the four reliability hardenings fixed in the codex delegate for
+#476 (commit `437e73a`: atomic `_write_json`, a widened `except Exception` funneled through
+`_finalize_failed_bundle`, a `MAX_OUTPUT_BYTES` cumulative-output cap, and bundle-span
+SIGTERM/SIGINT die-clean handling) into the sibling `plugins/agy/scripts/agy_delegate.py`. The
+#476 review had already named this: codex's original implementation carried these four gaps
+byte-for-byte-equivalent because its plan explicitly told the units to "mirror the agy delegate."
+
+**Evidence.** Before this fix, `agy_delegate.py` had zero `signal` handling anywhere in the
+module (confirmed via `grep -n "signal\." plugins/agy/scripts/agy_delegate.py` returning no
+hits) despite already having the exact vocabulary a signal handler needs
+(`shutdown_incomplete` status, a `shutdown` field distinguishing `terminated`/`killed`/
+`shutdown_incomplete`) — the vocabulary existed for the internal watchdog's kill outcome, but
+nothing wired an external caller's SIGTERM into it. `_write_json` was a bare `write_text`
+(`agy_delegate.py`, pre-fix), `create_supervised_bundle` caught only `except OSError`, and
+`_blocked_status_from_logs` did `stdout_path.read_text() + stderr_path.read_text()` — a full
+in-memory slurp with no cap, mirroring codex's pre-fix `parse_token_usage`.
+
+**Mechanism.** A sibling-mirroring instruction transfers structure (argument shapes, dataclass
+fields, status vocabulary) faithfully, but a code reviewer auditing the NEW sibling's own tests
+sees 100% green — the tests were written against the flawed implementation, so they prove
+consistency with itself, not soundness. The gap only surfaces when something audits the two
+siblings AGAINST EACH OTHER (the #476 review's Round 2 notes) or against a fixed reference
+implementation, never from either sibling's own test suite in isolation.
+
+**Generalizable rule.** When two modules are built by "mirror sibling X," file a parity-audit
+follow-up the moment X's OWN bugs get fixed — a shared-shape sibling does not self-heal, and its
+copy of the bug will pass its own tests indefinitely. In the port itself: `_run_die_clean_handler`
+(installed for the supervised launch window, sets a flag and lets the watchdog loop finish
+normally) must be a DIFFERENT handler from `_bundle_die_clean_handler` (installed for the whole
+bundle span, raises `DieCleanInterrupt` to unwind through windows with no watchdog loop watching
+a flag) — collapsing them to one handler either breaks the loop's cooperative shutdown (if it
+always raises) or leaves windows outside the loop uncovered (if it never raises).
+
+**Refs.** `plugins/agy/scripts/agy_delegate.py` (#517); codex precedent
+`plugins/codex/scripts/codex_delegate.py` (#476, commit `437e73a`); prior journal entry on the
+same review, which named this exact parity gap and filed the agy follow-up, at
+`{#unit-panels-vs-whole-diff-lenses-476}`.
+
 ## 2026-07-12
 
 ### A docstring's stated gating criterion can be silently absent from the implementation it describes  {#docstring-gate-drift-402}

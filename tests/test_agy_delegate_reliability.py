@@ -76,6 +76,26 @@ for _ in range(4096):
 time.sleep(60)
 """
 
+# Reproduces the #523/drill-468 S1 false-success path: Antigravity's executor construction fails
+# ("failed to construct executor: neither PlanModel nor RequestedModel specified") and the
+# process exits 0 having written nothing at all to stdout/stderr (the failure reason lands only
+# in agy's own --log_path, which the supervise loop never inspects for status).
+_FAKE_AGY_SILENT_SUCCESS = """#!/usr/bin/env python3
+import sys
+sys.exit(0)
+"""
+
+# Nearest-neighbor variant of the #523 incident (pre-merge review hardening, PR #575 F1): the
+# process writes a single incidental line to stderr (a warning/log line unrelated to the
+# deliverable) but still produces zero stdout bytes and exits 0. Before the F1 fix, gating on
+# stdout_bytes + stderr_bytes == 0 let this land as "success" the moment any stderr byte was
+# present, re-opening the false-success path for the observed incident's nearest neighbor.
+_FAKE_AGY_STDERR_ONLY_SUCCESS = """#!/usr/bin/env python3
+import sys
+print("W0712 executor warning", file=sys.stderr, flush=True)
+sys.exit(0)
+"""
+
 
 def _init_repo(repo: Path) -> None:
     subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
@@ -313,3 +333,85 @@ def test_delegate_killed_mid_run_leaves_terminal_bundle(tmp_path) -> None:
     payload = json.loads((bundle / "result.json").read_text(encoding="utf-8"))
     assert payload["status"] in agy_delegate.STATUSES  # terminal vocabulary only
     assert payload["status"] != "running"
+
+
+# --- #523: executor-construction failure must not be corroborated as success ------------------
+
+
+def test_zero_output_exit_zero_is_not_success(tmp_path) -> None:
+    """Reproduces the drill-468 S1 false-success path and proves it now lands terminal-failed.
+
+    Before the #523 fix, ``run_agy_supervised`` mapped any ``return_code == 0`` straight to
+    ``status="success"`` regardless of output produced. An Antigravity executor-construction
+    failure exits 0 with zero stdout/stderr bytes (the failure reason lands only in agy's own
+    log, never in the supervised stdout/stderr streams) — that used to emit a schema-valid
+    success receipt with ``bytes_produced=0``, which engine_dispatch's two-signal observer would
+    then corroborate as a real, proceeded-as-requested run. This must now be a terminal
+    ``no_output`` failure, never ``success``.
+    """
+    result, bundle = _quick_bundle(
+        tmp_path, run_id="silent-exit-zero", body=_FAKE_AGY_SILENT_SUCCESS
+    )
+
+    assert result.status == "no_output"
+    assert result.status != "success"
+
+    payload = json.loads((bundle / "result.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "no_output"
+    assert payload["status"] not in agy_delegate._PASSING_STATUSES
+    assert "no-output failure" in payload["error"]
+
+    # The receipt (if emitted) must never be read as a corroborating success signal: either no
+    # receipt is attached, or its bytes_produced=0 is paired with a non-passing terminal status
+    # rather than "success" — closing the exact gap #384's two-signal observer was fooled by.
+    receipt = payload.get("receipt")
+    if receipt is not None:
+        assert receipt["bytes_produced"] == 0
+    assert payload["status"] != "success"
+
+    lease = json.loads((bundle / "run-lease.json").read_text(encoding="utf-8"))
+    assert lease["status"] == "no_output"
+    assert lease["timeout_class"] is None  # not the watchdog path — the process exited on its own
+    assert lease["shutdown"] == "exited"
+
+    # The wrapper's exit code must be nonzero too — a caller (or CI) checking the process exit
+    # code alone must also see failure, not just the receipt payload.
+    assert agy_delegate._exit_code_for_status(result.status) != 0
+
+
+def test_stderr_only_exit_zero_is_not_success(tmp_path) -> None:
+    """Stderr-only chatter with zero stdout on an exit-0 run must still be ``no_output``.
+
+    Pre-merge review hardening on PR #575 (finding F1): the original #523 fix gated on
+    ``stdout_bytes + stderr_bytes == 0``, which is narrower than the issue's own fix direction
+    ("empty stdout on an exit-0 run"). A run that emits any stderr byte (a warning or log line)
+    while still writing zero stdout and exiting 0 is the nearest-neighbor variant of the
+    drill-468 incident — the deliverable stream (stdout) is empty, so it must not be corroborated
+    as success just because stderr happened to carry incidental chatter.
+    """
+    result, bundle = _quick_bundle(
+        tmp_path, run_id="stderr-only-exit-zero", body=_FAKE_AGY_STDERR_ONLY_SUCCESS
+    )
+
+    assert result.status == "no_output"
+    assert result.status != "success"
+
+    stdout_bytes = (bundle / "stdout.log").stat().st_size
+    stderr_bytes = (bundle / "stderr.log").stat().st_size
+    assert stdout_bytes == 0
+    assert stderr_bytes > 0
+
+    payload = json.loads((bundle / "result.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "no_output"
+    assert payload["status"] not in agy_delegate._PASSING_STATUSES
+    assert "no-output failure" in payload["error"]
+
+    # The receipt (if emitted) carries a nonzero bytes_produced here (the incidental stderr
+    # bytes) — the fix does not depend on bytes_produced being zero, only on the terminal status
+    # never reading as "success" so a two-signal observer cannot corroborate it as a real run.
+    receipt = payload.get("receipt")
+    if receipt is not None:
+        assert receipt["bytes_produced"] == stderr_bytes
+    assert payload["status"] != "success"
+
+    assert agy_delegate._exit_code_for_status(result.status) != 0

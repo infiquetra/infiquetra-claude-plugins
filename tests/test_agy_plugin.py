@@ -35,7 +35,7 @@ def test_agy_metadata_is_marketplace_registered() -> None:
     marketplace_entry = next(plugin for plugin in marketplace["plugins"] if plugin["name"] == "agy")
 
     assert plugin_json["name"] == "agy"
-    assert plugin_json["version"] == "0.3.0"  # codex-delegate reliability-hardening parity (#517)
+    assert plugin_json["version"] == "0.4.0"  # no-output/exit-0 false-success fix (#523)
     assert "Antigravity" in plugin_json["description"]
     assert {"agy", "antigravity", "delegation", "teammate", "evidence"} <= set(
         plugin_json["keywords"]

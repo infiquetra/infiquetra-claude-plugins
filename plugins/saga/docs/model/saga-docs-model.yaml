@@ -2,8 +2,8 @@ schema_version: 1
 model_name: saga-comprehensive-documentation
 source_of_truth: Claude Saga in this repository
 command_surface:
-  command_files: 22
-  routable_commands: 21
+  command_files: 23
+  routable_commands: 22
   alias_count: 1
   alias_note: /ceo-review is an alias for /founder-review, not a separate lifecycle node.
 
@@ -665,6 +665,33 @@ commands:
       - Expecting an /outcome work verb (leaf work stays the native verbs).
       - Treating status as stored rather than derived on read.
     example_invocation: /outcome advance ship-feature-x
+  pulse:
+    command: /pulse
+    phase: utility
+    lifecycle_role: live fleet telemetry (read-only)
+    source_refs:
+      - plugins/saga/commands/pulse.md
+      - plugins/saga/skills/pulse/SKILL.md
+      - plugins/saga/scripts/pulse.py
+    purpose: Render live board, run, run-fact-ledger, and outcome-economics state from real signals in one read-only snapshot.
+    use_when:
+      - The operator asks what the fleet is doing right now (boards, in-flight sagas, spend).
+      - A run is in flight and the operator wants its state and ledger facts on refresh.
+    do_not_use_when:
+      - The goal is a bounded metric experiment with a target and budget (use /optimize).
+      - Board or issue state needs mutating (use mission-control).
+    inputs: Optional --project boards, --saga focus id, --json, bounded --watch.
+    outputs: Terminal status card + per-saga detail, or pulse_snapshot.v1 JSON.
+    durable_artifacts: []
+    saga_state_behavior: Strictly read-only and derive-on-read; writes no tick, fact, or cache and owns no status field.
+    routes_in: [operator telemetry ask, /outcome status curiosity]
+    routes_out: [/optimize, /resume, /outcome]
+    gates: Tri-state source honesty per panel (ok / no-data / unavailable, ledger adds chain-broken); a broken chain suppresses all aggregates; no thresholds, not a gate.
+    ownership_boundary: Owns rendering only; mission-control owns board mutation, saga writers own ticks, ledger writers own facts.
+    common_mistakes:
+      - Treating an empty panel's "no data yet" as zero activity.
+      - Expecting /pulse to feed /optimize automatically (the boundary is settled — it stands beside it).
+    example_invocation: /pulse --project operations
   engines:
     command: /engines
     phase: utility

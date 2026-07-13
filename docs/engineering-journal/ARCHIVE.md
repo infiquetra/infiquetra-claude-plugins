@@ -12,6 +12,23 @@
 
 ## Shipped
 
+### `/pulse` live fleet telemetry — board/run/ledger/outcome state from real signals  {#pulse-live-telemetry-shipped}
+
+**SHIPPED** 2026-07-13, saga 0.88.0, issue #400 (wave-2, telemetry-substrate-close outcome #338),
+with an **adapted scope**: fleet telemetry, not the original CE `ce-product-pulse` product-usage
+analytics (usage/conversion/retention stay parked in QUEUED
+[#pulse-live-telemetry-component](QUEUED.md#pulse-live-telemetry-component) — still pre-revenue,
+no product data). `plugins/saga/scripts/pulse.py` + `skills/pulse/` + `commands/pulse.md`: four
+panels — mission-control board JSON read path (subprocess, runner-injectable), saga tick history
+(derive-on-read, exactly the `scan()` fields), the hash-chained run-fact ledger via its own
+reducers, `outcome_costs.rollup` — each tri-state `ok`/`no-data`/`unavailable` (+`chain-broken`),
+zero writes, no thresholds, no experiment primitives. The AC-to-test map lives in the plan
+(`docs/plans/2026-07-13-400-pulse-live-telemetry-plan.md` §5); the end-to-end proof is
+`tests/test_pulse_telemetry.py::test_drives_real_run_and_surface_updates` (a real two-tick saga
+transition + two real appended ledger facts asserted as a rendered before/after diff). KTDs:
+DECISIONS [#pulse-live-telemetry-ktds-400](DECISIONS.md#pulse-live-telemetry-ktds-400). The
+`/pulse`-vs-`/optimize` data-flow question is settled: stands beside, no feed, not a gate.
+
 ### `/code-review` Defect 2 — programmatic-mode saga append mode-gated (completes the scan touch-ups pair)  {#code-review-defect2-shipped}
 
 **SHIPPED** 2026-07-07, saga 0.74.1, as the real work unit of the #468 zero-token fire drill (PR #522).

@@ -1,5 +1,69 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-13
+
+### `/pulse` is a saga-resident read-only projection: status_card render, tri-state source honesty, beside-not-feeding `/optimize` (#400) {#pulse-live-telemetry-ktds-400}
+
+**KTD1 — placement: saga plugin, not mission-control, not a new plugin.** Every existing
+read-side consumer of the telemetry substrate is a saga script (`engine_promotion.py`,
+`spend_receipt.py`/`spend_retro.py`/`tier_efficacy.py`, `override_rate_reader.py`), and three of
+Pulse's four sources are saga-resident (`run_ledger.py`, `saga.py` ticks, `outcome_costs.py`) —
+only the board read crosses to mission-control, and only as a subprocess consumer of
+`sdlc_manager.py`'s own JSON output. *Rejected:* mission-control (no access to sagas/ledger
+without importing saga internals backwards); a new `pulse` plugin (fails the
+`{#plugin-portfolio-groom-17-to-7}` consolidation-burden test for one read-only file).
+*Revisit when* Pulse grows a non-saga consumer or a non-terminal (web) surface.
+
+**KTD2 — render through `status_card.py`** (`project_pulse`, archetype `summary-projection`,
+fixed six rows), not a bespoke renderer — keeps the fleet's single-status-emitter decision
+(#278) intact; numbers live in labels + the indexed evidence footer.
+
+**KTD3 — `/pulse` stands BESIDE `/optimize`; no programmatic feed; not a gate.** Settles the
+QUEUED open data-flow question from the pulse side: the operator may read a pulse snapshot when
+choosing an `/optimize` target, and that human step is the entire coupling. No target, baseline,
+budget, or stop primitive exists anywhere in Pulse (AC6, belt-and-braces schema test).
+
+**KTD4 — snapshot-on-invoke; `--watch` is a bounded loop (`--iterations` required), never a
+daemon** — mirrors the fleet's settled rejection of standing calibration ceremony; the DoD's
+"real time or on refresh" is satisfied by refresh-on-invoke.
+
+**KTD5 — tri-state source honesty is the load-bearing mechanism**: every panel is
+`ok`/`no-data`/`unavailable` (ledger adds `chain-broken`), so a consumer can never mistake
+"could not read it" or "nothing recorded" for "zero activity". A broken hash chain suppresses
+ALL aggregates and renders the break banner — explicit degrade, not fabrication (the U8 stance,
+inherited verbatim from `outcome_costs.py`).
+
+### HTTP-bridge lanes corroborate receipt-only; no ENGINE_CONFIGS receipt-store row (#524) {#http-receipt-only-corroboration-524}
+
+**Decision.** Two-signal dispatch corroboration for HTTP-transport engines (ollama-cloud,
+deepseek — any `via: engine-bridge-http` registry row) validates the observer signal against the
+HTTP bridge's own `bridge_receipt.v1` (`engine_dispatch._http_receipt_corroborates`): full receipt
+schema including proof extensions, the `http-bridge` `bridge_signatures` emitter policy, the
+output attestation bound to the ACTUAL returned output, and engine/variant/transport identity
+matching the registry-built resolution. The lane is selected by the invocation dict's `transport`
+(built from the registry row, so runner-untouchable), never by the receipt's own transport claim.
+`fleet_commons.delegation_audit.ENGINE_CONFIGS` stays a subprocess-bundle-engine table (agy,
+codex) and the bundle path is byte-identical (issue #524 fix direction 1).
+
+**Rationale.** The HTTP bridge writes no durable per-run artifact: its receipt travels inside the
+runner result (`engine_bridge_http._invoke`), so there is no independent `runs/` bundle for
+`delegation_audit.corroborate()` to scan — calling it raised `UnknownEngineError`, the observer
+answered NO, and every honest HTTP ok was discarded as `DELEGATION_INTEGRITY` (the #468 drill's
+OBS-1). The receipt's output attestation is the strongest observer check available for that lane:
+it binds the receipt to the exact returned bytes, so a fabricated-ok or tampered-output run still
+diverges and still trips the KTD7 requeue-once-then-HALT tripwire.
+
+**Rejected alternative.** An `ENGINE_CONFIGS` row keyed to a receipt store (fix direction 2):
+it would require the bridge to start persisting receipts to disk purely so the bundle-scan
+algorithm has something to read — a second copy of the same runner-produced bytes with extra
+moving parts (store location, retention, mtime filtering) and no independence gain, since both
+"signals" would originate from the identical runner result. Receipt-only names that honestly.
+
+**Revisit when.** An HTTP-lane runner gains a genuinely independent observer artifact (e.g. a
+provider-side usage/billing probe, or the bridge moves out-of-process and persists receipts
+under its own authority) — then a true second signal becomes possible and the receipt-only
+posture should be upgraded rather than trusted further.
+
 ## 2026-07-12
 
 ### Spend observability reads the leaf-produced ledger at two granularities; no new fallback-tier or ledger schema where one already exists (#402) {#spend-observability-ktds-402}

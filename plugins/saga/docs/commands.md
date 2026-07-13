@@ -1,6 +1,6 @@
 # Saga Command Selection
 
-Saga has 22 command files and 21 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
+Saga has 23 command files and 22 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
 
 ![Command Matrix](assets/command-matrix.svg)
 
@@ -433,3 +433,22 @@ External-engine registry visibility and repo-local route overlay.
 | Boundary | Owns local visibility and overlay mutation only; does not dispatch engines, rewrite registry seed data, or file issues. |
 | Common mistakes | Treating `route explain` as an engine invocation; committing local overlay state as shared policy. |
 | Example | `/engines route explain code-generation` |
+
+### /pulse
+
+Live fleet telemetry rendered from real signals (read-only).
+
+| Field | Value |
+|-------|-------|
+| Purpose | Render live board, run, run-fact-ledger, and outcome-economics state from real signals in one read-only snapshot. |
+| Use when | The operator asks what the fleet is doing right now (boards, in-flight sagas, spend), or a run is in flight and its state should be observed on refresh. |
+| Do not use when | The goal is a bounded metric experiment with a target and budget (use `/optimize`), or board/issue state needs mutating (use mission-control). |
+| Inputs | Optional `--project` boards, `--saga` focus id, `--json`, bounded `--watch --iterations N`. |
+| Outputs | Terminal status card + per-saga detail, or `pulse_snapshot.v1` JSON. |
+| Saga state | Strictly read-only and derive-on-read; writes no tick, fact, or cache and owns no status field. |
+| Routes in | Operator telemetry ask, `/outcome` status curiosity. |
+| Routes out | `/optimize`, `/resume`, `/outcome`. |
+| Gates | Tri-state source honesty per panel (`ok` / `no-data` / `unavailable`, ledger adds `chain-broken`); a broken chain suppresses all aggregates; no thresholds, not a gate. |
+| Boundary | Owns rendering only; mission-control owns board mutation, saga writers own ticks, ledger writers own facts. |
+| Common mistakes | Treating an empty panel's "no data yet" as zero activity; expecting `/pulse` to feed `/optimize` automatically (settled: it stands beside it). |
+| Example | `/pulse --project operations` |

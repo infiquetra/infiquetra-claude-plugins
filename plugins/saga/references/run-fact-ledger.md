@@ -146,6 +146,14 @@ Before appending an `engine` fact, dispatch checks for an existing `engine` fact
 `bridge_run_key` and skips the duplicate. The ledger remains append-only; exactly-once accounting is
 enforced by the writer before append rather than by mutating existing facts.
 
+## Live telemetry surface (#400)
+
+`pulse.py` (`/pulse`) is a read-only consumer of the ledger beside `engine_promotion.py`. It renders
+the chain verdict, per-kind fact counts, spend totals and `reuse_ratio` (via this module's own
+reducers), and engine-fact status/proof-integrity breakdowns in its ledger panel. An absent or empty
+ledger renders "no data yet" (never zeros); a broken chain renders the break banner and suppresses
+all aggregates. It never appends, heals, or mutates the ledger file.
+
 ## Probation promotion assessment (#455)
 
 `engine_promotion.py <engine>/<variant>` is a read-only consumer of the ledger. It verifies the hash

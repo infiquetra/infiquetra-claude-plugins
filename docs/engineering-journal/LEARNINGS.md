@@ -27,6 +27,34 @@
 
 ## 2026-07-13
 
+### A wave-3 issue's "verified absent today" claims go stale as the wave-2 spine lands — re-verify at plan time and re-scope to gap closure  {#stale-absence-claims-rescope-459}
+
+**Context.** Issue #459 (earned ratings) was authored 2026-07-03 against evidence that "no per-call
+dispatch ledger exists anywhere" and named a new `engine_dispatch_ledger.py` as the R1 deliverable.
+
+**Evidence.** By plan time (`origin/main` @ 2bdc168), the merge train had already landed the exact
+substrate the issue said was absent: `plugins/saga/scripts/run_ledger.py` (#401 — append-only,
+hash-chained, `verify_chain` with mutation/middle-deletion detection),
+`engine_dispatch._record_advisory_facts` appending an `engine` fact per real advisory dispatch
+(#388), and hash-chained `reconciliation` facts (#393). The implementation plan's §0 anchor audit
+(`docs/plans/2026-07-13-459-earned-ratings-plan.md`) caught this before any code was written.
+
+**Mechanism.** Wave-3 issues are authored against wave-2 evidence; the consolidation train keeps
+moving between authoring and execution, so every "confirmed absent" grep result in an issue body
+has a shelf life. Building the named second ledger would have forked the "one ledger, six
+consumers" premise the issue itself demanded.
+
+**Fix (or queued).** R1 shipped as a gap-closing EXTENSION of the landed spine (capability /
+rating_claimed / execution_id join fields + a sixth `benchmark` fact kind) instead of a duplicate
+module; the acceptance test file name (`tests/test_engine_dispatch_ledger.py`) was preserved and
+AE1 proven through the real dispatch write path (PR for #459).
+
+**Generalizable rule.** Re-verify every "verified absent today" claim from an issue body at plan
+time, and when the substrate has since landed, re-scope the requirement to gap closure over the
+landed spine — never duplicate it to match the issue's indicative file list.
+
+**Refs.** DECISIONS `{#earned-ratings-proposal-only-459}`.
+
 ### A tool-boundary schema that is looser than the runtime predicate re-opens the gap it was built to close  {#verifier-schema-predicate-alignment-527}
 
 **Context.** #527 hardens the refute-N verify panels against prose verdicts (workflow

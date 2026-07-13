@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.88.0] - 2026-07-13
+
+### Added - Earned ratings: dispatch/benchmark evidence drives retro-gated registry calibration (#459)
+
+One evidence-to-proposal pipeline over the hash-chained run-fact ledger. The non-negotiable seam
+everywhere: nothing edits `engine-registry.yaml` autonomously — every signal terminates in a
+`registry_calibration_proposal.v1` a human applies via `/retro`
+({#external-engines-never-gatekeepers}, #283).
+
+- **Dispatch-fact registry-cell join fields (R1):** `engine_resolver.Resolution` gains additive
+  `capability` / `rating_claimed` (stamped AT RESOLUTION TIME, so ledger joins stay
+  self-contained history), and `engine_dispatch._record_advisory_facts` stamps
+  `capability` / `rating_claimed` / `execution_id` onto every `engine` run fact. The run-fact
+  ledger (`run_ledger.py`, already append-only + hash-chained with `verify_chain`) gains a sixth
+  `benchmark` fact kind. AE1's mutation/deletion chain-verification is proven through the real
+  dispatch write path in `tests/test_engine_dispatch_ledger.py`.
+- **Panel-member attribution (R4 substrate):** `reconcile.append_reconciliation_fact` accepts an
+  optional, validated `member_index` (`{source_finding_id: [engine_key, ...]}`);
+  `dispatch_advisory_panel` records it on both RECONCILE and APPLY facts. Legacy facts without it
+  stay valid; it never enters `canonical_result_hash`.
+- **`engine_benchmark.py` + `references/benchmark-suite.yaml` + `references/benchmark-loop.md`
+  (R2):** an ACTIVE fixed-suite harness (operator-invoked, deterministic string graders only —
+  never LLM-judged) measuring a registry claim; a measured-vs-claimed contradiction emits a
+  proposal cell, never a write. Suites are versioned by immutable `suite_id`.
+- **`engine_stale_report.py` (R3):** per-(engine, capability) staleness verdicts —
+  `corroborated` / `contradicted` / `unexercised` — joining ledger evidence strictly newer than
+  each row's `last_validated`. Chain break RAISES; empty ledger reports "no dispatch evidence
+  yet", never a fabricated verdict.
+- **`capability_elo.py` (R4):** derive-on-read Elo per (engine, capability) folded from live
+  reconciliation win/loss outcomes (head-to-head `member_index` evidence only; solo
+  reconciliations produce no match; unmapped intents are skipped and counted). No persisted score
+  file. Divergences only ever propose `revalidate` — never a rating value.
+- **`provider_control_chart.py` (R5):** XmR control charts (rule 1 beyond-limit, rule 4
+  run-of-8) over per-provider cost/latency series; thin series are `no-data`, zero metric values
+  are excluded as unmeasured. Drift flags deprioritize at resolution time — never exclude — and
+  surface as `revalidate` proposals. Distinct signal from R3 staleness by design.
+- **`engine_calibration.py` + `/retro` Phase 1.11 / Phase 5(f) (R6):** the aggregator mirrors
+  `tier_efficacy.py` — `report` emits `registry_calibration_proposal.v1` (benchmark contradiction
+  -> rating-change; contradicted/Elo/SPC -> revalidate; corroborated -> last-validated-bump;
+  zero data -> `no-proposal`), `render_diff_preview` reads the YAML read-only, and
+  `approval_required` is always true. `/retro` gains the read-only Phase 1.11 evidence pass and
+  the Phase 5(f) propose-diff-and-wait pass; the pass never writes the registry
+  (byte-identity guarded by `tests/test_saga_retro_calibration.py`).
+- **Opt-in runtime consumption (R4/R5):** `Registry.ranked_candidates` / `explain_capability` /
+  `engine_resolver.resolve` accept a duck-typed `calibration` signals object
+  (`CalibrationSignals`: Elo map + drift flags) that reorders WITHIN an authored rating band only
+  (deprioritize, never exclude; overlay pins still win; `RunMemo` keys carry a calibration
+  fingerprint). `calibration=None` — the default everywhere — is byte-identical to before.
+  Committed consumer: `engines route explain <capability> --calibration`.
+
 ## [0.87.0] - 2026-07-13
 
 ### Fixed - HTTP-bridge lanes corroborate receipt-only instead of structurally failing (#524)

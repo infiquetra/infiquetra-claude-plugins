@@ -618,7 +618,17 @@ class Registry:
         capability: str,
         *,
         overlay: Any | None = None,
+        calibration: Any | None = None,
     ) -> tuple[CapabilityCandidate, ...]:
+        """Rank rows for ``capability`` (rating desc, cost_speed_rank asc, registry_order asc).
+
+        ``calibration`` (#459 R4/R5) is a duck-typed earned-ratings signals object carrying
+        ``drift_flagged`` (provider engine_ids) and ``elo`` (``(engine_key, capability) -> score``).
+        When supplied, candidates reorder WITHIN an authored rating band only: the authored
+        rating score still dominates, a drift-flagged or Elo-losing provider is deprioritized but
+        NEVER excluded, and no rating value is rewritten ({#external-engines-never-gatekeepers}).
+        ``calibration=None`` (the default) is byte-identical to the uncalibrated ranking.
+        """
         self._validate_capability(capability)
         pin_key = _overlay_pins(overlay).get(capability)
         deprecated_keys = _overlay_deprecated(overlay)
@@ -633,7 +643,13 @@ class Registry:
                 f"no non-deprecated engine variant supports capability {capability!r}"
             )
 
-        ranked = sorted(candidates, key=lambda entry: _capability_sort_key(entry, capability))
+        if calibration is None:
+            ranked = sorted(candidates, key=lambda entry: _capability_sort_key(entry, capability))
+        else:
+            ranked = sorted(
+                candidates,
+                key=lambda entry: _calibrated_sort_key(entry, capability, calibration),
+            )
         if pin_key is not None:
             pinned = self._validate_pin(capability, pin_key, deprecated_keys)
             ranked = [pinned, *[entry for entry in ranked if entry.key != pin_key]]
@@ -653,8 +669,9 @@ class Registry:
         capability: str,
         *,
         overlay: Any | None = None,
+        calibration: Any | None = None,
     ) -> CapabilityExplanation:
-        candidates = self.ranked_candidates(capability, overlay=overlay)
+        candidates = self.ranked_candidates(capability, overlay=overlay, calibration=calibration)
         return CapabilityExplanation(
             capability=capability,
             selected=candidates[0],
@@ -745,6 +762,30 @@ def validate_panel_role(role_name: str, *, registry: Registry | None = None) -> 
 def _capability_sort_key(entry: EngineEntry, capability: str) -> tuple[int, int, int]:
     rating = str(entry.capability_profile[capability]["rating"])
     return (-_RATING_SCORE[rating], entry.cost_speed_rank, entry.registry_order)
+
+
+# The default Elo prior when a cell has no reconciliation-match evidence yet. Kept numerically
+# equal to capability_elo.ELO_BASE without importing it (duck-typed seam, no module cycle).
+_ELO_PRIOR = 1200.0
+
+
+def _calibrated_sort_key(
+    entry: EngineEntry,
+    capability: str,
+    calibration: Any,
+) -> tuple[int, int, float, int, int]:
+    """Reorder-within-rating-band sort key (#459 R4/R5): deprioritize, never exclude.
+
+    The authored rating score stays the leading component, so no earned signal can promote a
+    row across a rating band or hide one — drift flags and Elo only break ties inside a band.
+    """
+    rating = str(entry.capability_profile[capability]["rating"])
+    drift_flagged = getattr(calibration, "drift_flagged", frozenset()) or frozenset()
+    drift = 1 if entry.engine_id in drift_flagged else 0
+    elo_map = getattr(calibration, "elo", {}) or {}
+    raw_elo = elo_map.get((entry.key, capability), _ELO_PRIOR)
+    elo = float(raw_elo) if isinstance(raw_elo, (int, float)) else _ELO_PRIOR
+    return (-_RATING_SCORE[rating], drift, -elo, entry.cost_speed_rank, entry.registry_order)
 
 
 def _candidate_from_entry(

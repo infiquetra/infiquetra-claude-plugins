@@ -309,6 +309,28 @@ resolver's `min_samples` threshold, contributes no proposal — carry that as "i
 never a fabricated recommendation. Both real committed `docs/outcomes/*/outcome-spec.json` examples in
 this repo roll up empty today, so expect "no data yet" until real telemetry accrues.
 
+**1.11 Engine-registry calibration evidence (read-only, issue #459).** Run the earned-ratings
+calibration aggregator over the run-fact ledger:
+
+```bash
+python3 plugins/saga/scripts/engine_calibration.py report --root . --json
+```
+
+The reader **chain-verifies the run-fact ledger first** — a chain break is a **visible evidence
+failure** (1.9's rule), never a silent skip. It aggregates the four earned-ratings signal families
+into one `registry_calibration_proposal.v1`: benchmark contradictions (`engine_benchmark.py`, the
+active fixed-suite harness), per-cell staleness verdicts (`engine_stale_report.py` —
+corroborated / contradicted / unexercised), Elo divergences from live reconciliation outcomes
+(`capability_elo.py`), and SPC cost/latency drift flags (`provider_control_chart.py`). Include the
+output verbatim in the Phase-1 evidence block; cells with `contradicted` or `unexercised`
+staleness verdicts are calibration candidates worth raising in the Phase-2 interview.
+
+**Zero-data contract** (same as 1.6/1.7/1.9/1.10): `status: "no-proposal"` or an all-`unexercised`
+report is carried as **"no dispatch evidence yet"** — never a fabricated calibration. This pass is
+**read-only and derive-on-read**: it appends nothing to the ledger and **never writes
+`engine-registry.yaml`** — every signal terminates in the Phase-5(f) proposal below, which only a
+human applies ({#external-engines-never-gatekeepers}, #283).
+
 ---
 
 ## Phase 2 — Structured interview
@@ -408,6 +430,16 @@ The passes neither source had, all gated (`references/retro-passes.md`):
   itself; an "apply" answer means the operator (or a follow-up `/plan` run) performs the write-back,
   not this pass. No proposal (insufficient samples or mixed cost-vs-outcome evidence) is a normal,
   silent no-op — never force a downgrade from thin evidence.
+- **(f) engine-registry calibration (issue #459)** — when Phase 1.11's aggregated report returned
+  `status: "proposal"`: render `scripts/engine_calibration.py`'s diff preview
+  (`python3 plugins/saga/scripts/engine_calibration.py preview --root .`) and present each cell
+  with `AskUserQuestion` (apply / skip / modify) — **exactly** like (e), never an auto-append.
+  **This pass never writes `engine-registry.yaml`** — every earned-ratings signal (benchmark,
+  staleness, Elo, SPC) terminates in a proposal, and an "apply" answer means the **operator** (or
+  a follow-up `/plan` run) performs the hand-edit of the named `rating` / `last_validated` cells,
+  not this pass ({#external-engines-never-gatekeepers}, #283 — external engines and automated
+  reducers never gain write access to the registry's own data). `status: "no-proposal"` is a
+  normal, silent no-op — never force a calibration from thin evidence.
 
 A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (`team-execution`
 ("team execution") / `cc-workflows-ultracode` ("dynamic workflows")) per
@@ -474,3 +506,21 @@ It never blocks the router.
 - `../../scripts/tier_efficacy.py` — the tier-efficacy pass's proposal engine (Phase 1.10 reads,
   Phase 5(e) proposes). `propose_downgrades()` never writes; `render_diff_preview()` only reads
   `.saga/tier-defaults.json` to show what would change.
+- `../../scripts/engine_calibration.py` — the earned-ratings calibration aggregator (Phase 1.11
+  reads, Phase 5(f) proposes; **never writes `engine-registry.yaml`**). Chain-verifies the
+  run-fact ledger first; `report` emits `registry_calibration_proposal.v1`; `render_diff_preview`
+  reads the registry only to show what would change.
+- `../../scripts/engine_stale_report.py` — per-(engine, capability) staleness verdicts
+  (corroborated / contradicted / unexercised) joined against `last_validated` (Phase 1.11 input).
+  Read-only; `report --json` for machine-readable output.
+- `../../scripts/capability_elo.py` — derive-on-read Elo from live reconciliation outcomes
+  (Phase 1.11 input; the runtime reorder-within-band signal). No persisted score file; zero-data
+  reports no matches yet.
+- `../../scripts/provider_control_chart.py` — SPC (XmR) cost/latency drift flags per provider
+  (Phase 1.11 input; the runtime deprioritization signal — deprioritize, never exclude).
+  Read-only; thin series report `no-data`, never a flag.
+- `../../scripts/engine_benchmark.py` — the active fixed-suite benchmark harness (operator-invoked;
+  measured-vs-claimed contradictions feed Phase 1.11). Deterministic graders only; proposal-only.
+- `../../references/benchmark-loop.md` — the benchmark propose-not-commit gate: suite versioning
+  (immutable `suite_id`), threshold semantics, and how a contradiction becomes a Phase-5(f)
+  proposal a human applies by hand.

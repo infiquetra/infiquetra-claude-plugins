@@ -57,6 +57,12 @@ class Resolution:
     latency_class: str | None = None
     estimated_input_cost_usd: float | None = None
     warnings: tuple[str, ...] = ()
+    # Earned-ratings telemetry (#459 R1): the capability this request resolved through and the
+    # registry-claimed rating AT RESOLUTION TIME (so a later hand-edit of the registry never
+    # rewrites history — every ledger join stays self-contained). Additive and defaulted:
+    # explicit-engine requests and existing constructors stay byte-identical with both ``None``.
+    capability: str | None = None
+    rating_claimed: str | None = None
 
 
 @dataclass(frozen=True)
@@ -89,7 +95,7 @@ class RunMemo:
 
     def __init__(self) -> None:
         self._preflight: dict[str, dict[str, bool | str]] = {}
-        self._capability: dict[tuple[str, int | None, str, str], _CapabilityDecision] = {}
+        self._capability: dict[tuple[str, int | None, str, str, str], _CapabilityDecision] = {}
         self._payload: dict[tuple[str, str, str], str] = {}
         self.last_payload_cache_status: str = ""
 
@@ -105,8 +111,11 @@ class RunMemo:
         token_estimate: int | None,
         role_kind: str,
         overlay_key: str = "",
+        calibration_key: str = "",
     ) -> _CapabilityDecision | None:
-        return self._capability.get((capability, token_estimate, role_kind, overlay_key))
+        return self._capability.get(
+            (capability, token_estimate, role_kind, overlay_key, calibration_key)
+        )
 
     def store_capability_decision(
         self,
@@ -115,8 +124,11 @@ class RunMemo:
         decision: _CapabilityDecision,
         role_kind: str,
         overlay_key: str = "",
+        calibration_key: str = "",
     ) -> None:
-        self._capability[(capability, token_estimate, role_kind, overlay_key)] = decision
+        self._capability[(capability, token_estimate, role_kind, overlay_key, calibration_key)] = (
+            decision
+        )
 
     def payload(self, unit_id: str, protocol_hash: str, context_hash: str) -> str | None:
         cached = self._payload.get((unit_id, protocol_hash, context_hash))
@@ -336,8 +348,16 @@ def resolve(
     known_revision_dates: Mapping[str, Any] | None = None,
     repo_root: Path | str | None = None,
     overlay: EngineOverlay | None = None,
+    calibration: Any | None = None,
 ) -> Resolution:
-    """Resolve a capability or explicit engine request into the U2 contract."""
+    """Resolve a capability or explicit engine request into the U2 contract.
+
+    ``calibration`` (#459 R4/R5) is an optional, duck-typed earned-ratings signals object
+    (``engine_calibration.CalibrationSignals``): when supplied, capability ranking reorders
+    candidates WITHIN an authored rating band by Elo and deprioritizes drift-flagged providers.
+    ``None`` (the default everywhere) is byte-identical to the uncalibrated behavior, and no
+    calibration signal ever rewrites an authored rating — that stays a `/retro`-gated proposal.
+    """
     if mode not in MODES:
         raise RegistryError(f"mode {mode!r} not in {MODES}")
 
@@ -358,6 +378,7 @@ def resolve(
             memo=memo,
             known_revision_dates=release_dates,
             overlay=effective_overlay,
+            calibration=calibration,
         )
 
     if engine is None:
@@ -458,11 +479,15 @@ def _resolve_capability(
     memo: RunMemo | None = None,
     known_revision_dates: Mapping[str, Any] | None = None,
     overlay: EngineOverlay | None = None,
+    calibration: Any | None = None,
 ) -> Resolution:
     token_estimate = _token_estimate(task_context)
     overlay_key = overlay_fingerprint(overlay)
+    calibration_key = _calibration_fingerprint(calibration)
     decision = (
-        memo.capability_decision(capability, token_estimate, role_kind, overlay_key)
+        memo.capability_decision(
+            capability, token_estimate, role_kind, overlay_key, calibration_key
+        )
         if memo is not None
         else None
     )
@@ -472,6 +497,7 @@ def _resolve_capability(
             registry,
             role_kind=role_kind,
             overlay=overlay,
+            calibration=calibration,
         )
         if memo is not None:
             memo.store_capability_decision(
@@ -480,6 +506,7 @@ def _resolve_capability(
                 decision,
                 role_kind,
                 overlay_key,
+                calibration_key,
             )
 
     if decision.no_capability_reason is not None:
@@ -511,7 +538,18 @@ def _resolve_capability(
         explicit_engine=False,
         memo=memo,
         known_revision_dates=known_revision_dates,
+        capability=capability,
     )
+
+
+def _calibration_fingerprint(calibration: Any | None) -> str:
+    """A deterministic memo-key component for a duck-typed calibration signals object."""
+    if calibration is None:
+        return ""
+    fingerprint = getattr(calibration, "fingerprint", None)
+    if callable(fingerprint):
+        return str(fingerprint())
+    return _hash_text(repr(calibration))
 
 
 def _decide_capability(
@@ -520,9 +558,12 @@ def _decide_capability(
     *,
     role_kind: str,
     overlay: EngineOverlay | None = None,
+    calibration: Any | None = None,
 ) -> _CapabilityDecision:
     try:
-        candidates = registry.ranked_candidates(capability, overlay=overlay)
+        candidates = registry.ranked_candidates(
+            capability, overlay=overlay, calibration=calibration
+        )
     except RegistryError as exc:
         message = str(exc)
         no_candidate = (
@@ -578,6 +619,7 @@ def _resolve_entry(
     explicit_engine: bool,
     memo: RunMemo | None = None,
     known_revision_dates: Mapping[str, Any] | None = None,
+    capability: str | None = None,
 ) -> Resolution:
     trust_halt = _trust_tier_halt(entry, role_kind)
     if trust_halt is not None:
@@ -587,6 +629,7 @@ def _resolve_entry(
             halt=trust_halt,
             memo=memo,
             known_revision_dates=known_revision_dates,
+            capability=capability,
         )
 
     context_halt = _context_window_halt(entry, task_context)
@@ -597,13 +640,14 @@ def _resolve_entry(
             halt=context_halt,
             memo=memo,
             known_revision_dates=known_revision_dates,
+            capability=capability,
         )
 
     if role_kind == "panel":
         panel_halt = _panel_availability_halt(registry, task_context, memo=memo)
         if panel_halt is not None:
             return _resolution_from_entry(
-                entry, task_context=task_context, halt=panel_halt, memo=memo
+                entry, task_context=task_context, halt=panel_halt, memo=memo, capability=capability
             )
 
     availability = preflight(entry.engine_id, entry=entry, memo=memo)
@@ -616,9 +660,10 @@ def _resolve_entry(
                 halt=reason,
                 memo=memo,
                 known_revision_dates=known_revision_dates,
+                capability=capability,
             )
         return _fallback_resolution(
-            "external-engine",
+            capability or "external-engine",
             task_context=task_context,
             reason=reason,
         )
@@ -628,6 +673,7 @@ def _resolve_entry(
         task_context=task_context,
         memo=memo,
         known_revision_dates=known_revision_dates,
+        capability=capability,
     )
 
 
@@ -658,7 +704,9 @@ def _no_fit_resolution(
 
     halt = f"external capability {capability!r} cannot run for {role_kind}: {reason}"
     if entry is not None:
-        return _resolution_from_entry(entry, task_context=task_context, halt=halt, memo=memo)
+        return _resolution_from_entry(
+            entry, task_context=task_context, halt=halt, memo=memo, capability=capability
+        )
     return Resolution(
         engine_id="unresolved",
         variant="unresolved",
@@ -669,6 +717,7 @@ def _no_fit_resolution(
         write_capable=False,
         fallback=None,
         halt=halt,
+        capability=capability,
     )
 
 
@@ -688,6 +737,7 @@ def _fallback_resolution(
         write_capable=True,
         fallback=f"external capability {capability!r} fell back to Claude: {reason}",
         halt=None,
+        capability=capability,
     )
 
 
@@ -699,10 +749,16 @@ def _resolution_from_entry(
     halt: str | None = None,
     memo: RunMemo | None = None,
     known_revision_dates: Mapping[str, Any] | None = None,
+    capability: str | None = None,
 ) -> Resolution:
     protocol = list(entry.prompting_protocol)
     payload = _assemble_payload_for_unit(protocol, task_context, memo=memo)
     token_estimate = _token_estimate(task_context)
+    rating_claimed: str | None = None
+    if capability is not None:
+        claim = entry.capability_profile.get(capability)
+        if isinstance(claim, dict):
+            rating_claimed = str(claim.get("rating", "")) or None
     return Resolution(
         engine_id=entry.engine_id,
         variant=entry.variant,
@@ -720,6 +776,8 @@ def _resolution_from_entry(
         latency_class=entry.latency_class,
         estimated_input_cost_usd=_estimated_input_cost(entry, token_estimate),
         warnings=_registry_warnings(entry, known_revision_dates or {}),
+        capability=capability,
+        rating_claimed=rating_claimed,
     )
 
 

@@ -236,3 +236,52 @@ def test_unknown_capability_returns_nonzero_with_registry_error(
 
     err = capsys.readouterr().err
     assert "unknown capability key 'telepathy'" in err
+
+
+def test_route_explain_calibration_consults_ledger_signals_read_only(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#459 R4/R5: --calibration shows the calibrated ranking beside drift/Elo columns and
+    reorders within a rating band; the registry file stays byte-identical."""
+    registry = _write_registry(tmp_path)
+    registry_bytes = registry.read_bytes()
+
+    calibration_module = importlib.import_module("engine_calibration")
+    run_ledger_module = importlib.import_module("run_ledger")
+    signals = calibration_module.CalibrationSignals(
+        elo={
+            ("codex/gpt-5.5-xhigh", "code-generation"): 1100.0,
+            ("agy/gemini-3.1-pro-high", "code-generation"): 1300.0,
+        },
+        drift_flagged=frozenset({"codex"}),
+    )
+    monkeypatch.setattr(calibration_module, "load_calibration", lambda _ledger, **_kw: signals)
+    monkeypatch.setattr(
+        run_ledger_module.RunLedger,
+        "resolve",
+        classmethod(lambda cls, root, **_kw: cls(path=Path(tmp_path) / "run-facts.jsonl")),
+    )
+
+    assert (
+        C.main(_args(tmp_path, registry, "route", "explain", "code-generation", "--calibration"))
+        == 0
+    )
+    out = capsys.readouterr().out
+
+    assert "selected: agy/gemini-3.1-pro-high" in out  # deprioritized within the STRONG band
+    assert "drift_flagged=codex" in out
+    assert "elo=1300.0" in out
+    assert registry.read_bytes() == registry_bytes
+
+
+def test_route_explain_without_calibration_is_unchanged(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = _write_registry(tmp_path)
+    assert C.main(_args(tmp_path, registry, "route", "explain", "code-generation")) == 0
+    out = capsys.readouterr().out
+    assert "selected: agy/gemini-3.1-pro-high" in out  # cost_speed_rank order, as before
+    assert "calibration" not in out

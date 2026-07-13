@@ -1,0 +1,80 @@
+# Fixed per-capability engine benchmark suite (#459 R2, T2-F1-7).
+#
+# Suite versioning is IMMUTABLE by suite_id: editing, adding, or removing a probe REQUIRES a new
+# suite_id (e.g. adversarial-review-v2) so measured ratings stay comparable across time. Graders
+# are deterministic string checks only (contains / regex / json-parses) — never LLM-graded, so no
+# external engine judges anything ({#external-engines-never-gatekeepers}, #283). Thresholds are
+# pass-share floors: share >= STRONG -> STRONG, >= MODERATE -> MODERATE, below -> WEAK.
+# A measured-vs-claimed contradiction only ever becomes a /retro-surfaced proposal a human
+# applies by hand — see references/benchmark-loop.md.
+schema: benchmark_suite.v1
+suites:
+  - suite_id: adversarial-review-v1
+    capability: adversarial-review
+    thresholds: {STRONG: 0.8, MODERATE: 0.5}
+    probes:
+      - id: ar-001
+        prompt: |
+          Review this Python function for defects. Name each defect and the line it is on.
+
+          1  def last_window(items, n):
+          2      """Return the last n items."""
+          3      if n <= 0:
+          4          return []
+          5      start = len(items) - n
+          6      window = []
+          7      for i in range(start, len(items) - 1):
+          8          window.append(items[i])
+          9      return window
+        grader: {kind: regex, pattern: "(?i)off.by.one|line\\s*7|len\\(items\\)\\s*-\\s*1"}
+      - id: ar-002
+        prompt: |
+          Review this Python snippet for defects. Name each defect precisely.
+
+          def read_config(path):
+              f = open(path)
+              data = f.read()
+              return parse(data)
+        grader: {kind: regex, pattern: "(?i)close|leak|context manager|with open"}
+      - id: ar-003
+        prompt: |
+          Review this Python function for defects. Name each defect precisely.
+
+          def add_tag(record, tag, tags=[]):
+              tags.append(tag)
+              record["tags"] = tags
+              return record
+        grader: {kind: regex, pattern: "(?i)mutable default|shared|default argument"}
+      - id: ar-004
+        prompt: |
+          Review this SQL-building Python code for security defects. Name each defect precisely.
+
+          def find_user(cursor, name):
+              cursor.execute("SELECT * FROM users WHERE name = '" + name + "'")
+              return cursor.fetchall()
+        grader: {kind: regex, pattern: "(?i)sql injection|parameteri[sz]ed|placeholder"}
+  - suite_id: code-generation-v1
+    capability: code-generation
+    thresholds: {STRONG: 0.8, MODERATE: 0.5}
+    probes:
+      - id: cg-001
+        prompt: |
+          Write a Python function named slugify(s) that lowercases s, replaces runs of
+          non-alphanumeric characters with single hyphens, and strips leading/trailing hyphens.
+          Reply with only the code.
+        grader: {kind: contains, value: "def slugify("}
+      - id: cg-002
+        prompt: |
+          Write a Python function named fibonacci(n) returning the nth Fibonacci number
+          iteratively (fibonacci(0) == 0). Reply with only the code.
+        grader: {kind: contains, value: "def fibonacci("}
+      - id: cg-003
+        prompt: |
+          Reply with ONLY a JSON object (no prose, no code fences) with keys "name" (string)
+          and "version" (string) describing a fictional package called demo at version 1.2.3.
+        grader: {kind: json-parses}
+      - id: cg-004
+        prompt: |
+          Write a Python function named merge_sorted(a, b) that merges two sorted lists into one
+          sorted list in O(len(a) + len(b)). Reply with only the code.
+        grader: {kind: contains, value: "def merge_sorted("}

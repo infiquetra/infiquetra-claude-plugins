@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-13
+
+### Fixed - reliability-hardening parity with the codex delegate (#517)
+
+Ports the four reliability hardenings fixed in the codex delegate for #476 (commit `437e73a`)
+into `plugins/agy/scripts/agy_delegate.py`, in the agy idiom:
+
+- **Atomic `_write_json`**: writes go through a `.tmp` sibling file plus `os.replace` instead of
+  a bare `write_text` — a mid-write kill can no longer leave torn JSON in `result.json` or any
+  other bundle state file.
+- **`create_supervised_bundle` now catches `except Exception`, not just `except OSError`**,
+  funneled through a new best-effort `_finalize_failed_bundle` that writes a terminal
+  `result.json` (if one is not already present) before returning the `bundle_failed` projection —
+  a non-`OSError` failure after a successful launch (e.g. receipt-emission `ValueError`) can no
+  longer leave a launched run's bundle non-terminal.
+- **Cumulative output byte cap**: `run_agy_supervised`'s supervise loop now enforces
+  `MAX_OUTPUT_BYTES` (128 MiB) alongside the existing wall-clock and no-output watchdogs — a
+  runaway `agy` process is killed and the bundle ends terminal with a named
+  `MAX_OUTPUT_BYTES`-cap error instead of growing unbounded on disk. `_blocked_status_from_logs`
+  (the stdout/stderr marker scan) now streams both logs line-by-line instead of `read_text`-ing
+  them whole into a combined string, matching codex's streaming `parse_token_usage`.
+- **SIGTERM/SIGINT die-clean handling**: `create_supervised_bundle` installs a bundle-span
+  handler (`_bundle_die_clean_handler`, raising `DieCleanInterrupt`) covering the windows outside
+  the supervised launch window (clone setup, verification commands, patch apply, bundle writes);
+  `run_agy_supervised` installs its own non-raising handler (`_run_die_clean_handler`) for the
+  launch window itself, so the supervise loop notices the flag and finishes with a normal
+  terminal status instead of unwinding via exception. Either path always ends with a terminal
+  `result.json` and a nonzero exit code — a caller's Bash-tool timeout can no longer kill the
+  delegate mid-run and leave a non-terminal bundle. A kill that cannot reap the process (unlikely
+  in agy's un-grouped single-process model, but exercised via the same monkeypatch technique as
+  codex's tests) maps to the existing terminal `shutdown_incomplete` status.
+
 ## [0.2.2] - 2026-07-12
 
 ### Added - durable delegation-audit-store mirror (#396)

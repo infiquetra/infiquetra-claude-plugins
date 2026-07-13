@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.88.0"
-    )  # Earned ratings: dispatch/benchmark evidence drives retro-gated registry calibration (#459)
+        plugin_json["version"] == "0.89.0"
+    )  # /pulse live fleet telemetry — read-only surface over board/ticks/ledger/costs (#400)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -129,6 +129,7 @@ def test_infiquetra_lifecycle_commands_are_packaged() -> None:
         "investigate",
         "spec",
         "outcome",
+        "pulse",
     ):
         assert (PLUGIN_ROOT / "commands" / f"{command}.md").exists()
 
@@ -154,6 +155,7 @@ def test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior() -> N
         "investigate",
         "spec",
         "outcome",
+        "pulse",
     }
     for skill in expected_skills:
         skill_path = PLUGIN_ROOT / "skills" / skill / "SKILL.md"

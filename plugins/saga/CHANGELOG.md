@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.89.0] - 2026-07-13
+
+### Added - /pulse live fleet-telemetry surface (#400)
+
+- **`plugins/saga/scripts/pulse.py` + `skills/pulse/SKILL.md` + `commands/pulse.md`:** a
+  strictly read-only live-telemetry surface rendering four panels from REAL signals only —
+  board state through mission-control's own `sdlc_manager.py --format json board view` read
+  path (subprocess, runner-injectable, `--sdlc-manager` override), agent/run state derived on
+  read from the saga tick history (`saga.scan`/`read_ticks`, projecting exactly the scanner's
+  fields — no pulse-owned status field anywhere), the hash-chained run-fact ledger via its own
+  reducers (`rollup`/`reuse_ratio`, chain verdict always shown), and outcome economics via
+  `outcome_costs.rollup` over the newest `docs/outcomes/*/outcome-spec.json`. Every panel is
+  tri-state `ok` / `no-data` / `unavailable` (ledger adds `chain-broken`): an absent or empty
+  source renders an explicit "no data yet" / "unavailable (<reason>)" label — never a silent
+  zero — and a broken hash chain suppresses every aggregate and renders the break banner
+  instead. No hardcoded judgment thresholds (numbers cited, operator judges), no experiment
+  primitives (the bounded target/baseline/budget loop stays `/optimize`'s — settled boundary,
+  no programmatic feed), zero writes (byte-hash-enforced by test). `--watch` is a bounded
+  refresh loop (`--iterations` required), not a daemon. Human render reuses the `status_card`
+  summary-projection card; `--json` emits `pulse_snapshot.v1`. Manual drive-a-run recipe in
+  `skills/pulse/references/manual-verification.md`; the automated end-to-end proof is
+  `tests/test_pulse_telemetry.py::test_drives_real_run_and_surface_updates`.
 ## [0.88.0] - 2026-07-13
 
 ### Added - Earned ratings: dispatch/benchmark evidence drives retro-gated registry calibration (#459)

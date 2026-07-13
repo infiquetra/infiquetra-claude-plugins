@@ -2,6 +2,36 @@
 
 ## 2026-07-13
 
+### `/pulse` is a saga-resident read-only projection: status_card render, tri-state source honesty, beside-not-feeding `/optimize` (#400) {#pulse-live-telemetry-ktds-400}
+
+**KTD1 — placement: saga plugin, not mission-control, not a new plugin.** Every existing
+read-side consumer of the telemetry substrate is a saga script (`engine_promotion.py`,
+`spend_receipt.py`/`spend_retro.py`/`tier_efficacy.py`, `override_rate_reader.py`), and three of
+Pulse's four sources are saga-resident (`run_ledger.py`, `saga.py` ticks, `outcome_costs.py`) —
+only the board read crosses to mission-control, and only as a subprocess consumer of
+`sdlc_manager.py`'s own JSON output. *Rejected:* mission-control (no access to sagas/ledger
+without importing saga internals backwards); a new `pulse` plugin (fails the
+`{#plugin-portfolio-groom-17-to-7}` consolidation-burden test for one read-only file).
+*Revisit when* Pulse grows a non-saga consumer or a non-terminal (web) surface.
+
+**KTD2 — render through `status_card.py`** (`project_pulse`, archetype `summary-projection`,
+fixed six rows), not a bespoke renderer — keeps the fleet's single-status-emitter decision
+(#278) intact; numbers live in labels + the indexed evidence footer.
+
+**KTD3 — `/pulse` stands BESIDE `/optimize`; no programmatic feed; not a gate.** Settles the
+QUEUED open data-flow question from the pulse side: the operator may read a pulse snapshot when
+choosing an `/optimize` target, and that human step is the entire coupling. No target, baseline,
+budget, or stop primitive exists anywhere in Pulse (AC6, belt-and-braces schema test).
+
+**KTD4 — snapshot-on-invoke; `--watch` is a bounded loop (`--iterations` required), never a
+daemon** — mirrors the fleet's settled rejection of standing calibration ceremony; the DoD's
+"real time or on refresh" is satisfied by refresh-on-invoke.
+
+**KTD5 — tri-state source honesty is the load-bearing mechanism**: every panel is
+`ok`/`no-data`/`unavailable` (ledger adds `chain-broken`), so a consumer can never mistake
+"could not read it" or "nothing recorded" for "zero activity". A broken hash chain suppresses
+ALL aggregates and renders the break banner — explicit degrade, not fabrication (the U8 stance,
+inherited verbatim from `outcome_costs.py`).
 ### Earned ratings terminate in proposals a human applies — one write seam, no carve-outs (#459) {#earned-ratings-proposal-only-459}
 
 **Decision.** Every earned-ratings calibration signal — benchmark contradiction

@@ -198,6 +198,34 @@ def test_cli_malformed_units_returns_exit_code_2(tmp_path: Path) -> None:
     assert SA.main(["sample", "--units", str(bad_tier), "--n", "3", "--yes"]) == 2
 
 
+def test_cli_missing_scalar_key_returns_exit_code_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#402 post-merge review fix (P2): a dict element missing a required scalar key
+    (`unit_id`/`stage`/`tier.model`/`tier.effort`) must wrap into `ShadowAuditError`/exit-2 as
+    `_sampled_unit_from_dict`'s docstring promises -- never a raw `KeyError` traceback.
+    """
+    missing_key = tmp_path / "units-missing-unit-id.json"
+    missing_key.write_text(
+        '[{"stage": "code-review", "tier": {"model": "opus", "effort": "high"}}]',
+        encoding="utf-8",
+    )
+    assert SA.main(["sample", "--units", str(missing_key), "--n", "3", "--yes"]) == 2
+    assert "missing key" in capsys.readouterr().err
+
+
+def test_cli_corrupt_units_json_returns_exit_code_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#402 post-merge review fix (P3): a corrupt `--units` file must map to the clean
+    `SHADOW AUDIT ERROR`/exit-2 path, never an uncaught `JSONDecodeError` traceback.
+    """
+    corrupt = tmp_path / "units-corrupt.json"
+    corrupt.write_text("this is not json{", encoding="utf-8")
+    assert SA.main(["sample", "--units", str(corrupt), "--n", "3", "--yes"]) == 2
+    assert "SHADOW AUDIT ERROR" in capsys.readouterr().err
+
+
 def test_cli_help_exits_zero() -> None:
     with pytest.raises(SystemExit) as exc_info:
         SA.main(["--help"])

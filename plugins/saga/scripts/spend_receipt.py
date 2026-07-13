@@ -168,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         spec = _load_execution_spec(args.spec)
         print(render_receipt(spec))
         return 0
-    except (execution_spec.SpecError, SpendReceiptError) as exc:
+    except (execution_spec.SpecError, SpendReceiptError, json.JSONDecodeError) as exc:
         print(f"SPEND RECEIPT ERROR: {exc}", file=sys.stderr)
         return 2
 

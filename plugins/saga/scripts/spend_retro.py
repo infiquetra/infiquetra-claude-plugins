@@ -60,6 +60,8 @@ class OutcomeSpendRow:
     terminal_state_counts: dict[str, int]
     cost_rollup: dict[str, Any]
     has_real_telemetry: bool
+    tier_provenance: dict[str, int] = field(default_factory=dict)
+    """{'issue-tier-band' | 'default': node_count} — how each node's tier was resolved."""
 
 
 @dataclass
@@ -89,6 +91,15 @@ class SpendSummary:
         premium = sum(r.premium_estimate for r in self.rows)
         return premium / total
 
+    @property
+    def all_tiers_defaulted(self) -> bool:
+        """True when no node's tier came from an issue tier band — every estimate fell back to
+        the SPEND_BASELINE default (no issue bodies supplied), so the premium share is a floor,
+        not a derived fact."""
+        return self.has_any_data and not any(
+            row.tier_provenance.get("issue-tier-band") for row in self.rows
+        )
+
 
 def discover_outcomes(root: Path, glob: str = DEFAULT_OUTCOMES_GLOB) -> list[tuple[str, Path]]:
     """Every committed outcome-spec.json under ``root`` (never a new store, KTD4).
@@ -108,12 +119,14 @@ def _outcome_row(
 ) -> OutcomeSpendRow:
     estimates = spend_estimate.estimate_nodes(spec, issue_bodies)
     tier_mix: dict[str, int] = {}
+    tier_provenance: dict[str, int] = {}
     premium_node_count = 0
     premium_estimate = 0
     total_estimate = 0
     for est in estimates:
         key = f"{est.tier.model}/{est.tier.effort}"
         tier_mix[key] = tier_mix.get(key, 0) + 1
+        tier_provenance[est.provenance] = tier_provenance.get(est.provenance, 0) + 1
         total_estimate += est.spend
         if is_escalation(SPEND_BASELINE, est.tier):
             premium_node_count += 1
@@ -134,6 +147,7 @@ def _outcome_row(
         terminal_state_counts=terminal_counts,
         cost_rollup=dict(spec.cost_rollup),
         has_real_telemetry=bool(spec.cost_rollup),
+        tier_provenance=tier_provenance,
     )
 
 
@@ -169,6 +183,12 @@ def render_summary_table(summary: SpendSummary) -> str:
         "" if summary.any_real_telemetry else " (no outcome has recorded real telemetry yet)"
     )
     lines.append(f"\nRepo-wide estimated premium-spend share: {repo_share:.0%}{real_note}.")
+    if summary.all_tiers_defaulted:
+        lines.append(
+            "Note: every node's tier fell back to the SPEND_BASELINE default (no issue tier "
+            "bands supplied — pass --issue-bodies with fetched issue bodies to derive real "
+            "tiers); the premium share above is a floor, not a derived fact."
+        )
     return "\n".join(lines)
 
 
@@ -216,13 +236,31 @@ def main(argv: list[str] | None = None) -> int:
     p_append.add_argument("--root", type=Path, default=Path("."), help="repo root")
     p_append.add_argument("--journal", type=Path, default=None, help="override the journal path")
 
+    for p_sub in (p_report, p_append):
+        p_sub.add_argument(
+            "--issue-bodies",
+            type=Path,
+            default=None,
+            help="JSON object of {issue-ref: already-fetched issue body text} for "
+            "issue-tier-band resolution; without it every node's tier falls back to the "
+            "SPEND_BASELINE default and the premium share is a labeled floor",
+        )
+
     args = parser.parse_args(argv)
     try:
+        issue_bodies: dict[str, str] | None = None
+        if args.issue_bodies is not None:
+            raw_bodies = json.loads(args.issue_bodies.read_text(encoding="utf-8"))
+            if not isinstance(raw_bodies, dict):
+                raise SpendRetroError(
+                    f"expected --issue-bodies to be a JSON object, got {type(raw_bodies).__name__}"
+                )
+            issue_bodies = {str(k): str(v) for k, v in raw_bodies.items()}
         specs = [
             (oid, outcome_spec.OutcomeSpec.from_dict(json.loads(p.read_text(encoding="utf-8"))))
             for oid, p in discover_outcomes(args.root)
         ]
-        summary = build_spend_summary(specs)
+        summary = build_spend_summary(specs, issue_bodies)
         if args.cmd == "report":
             if args.json:
                 print(
@@ -238,10 +276,12 @@ def main(argv: list[str] | None = None) -> int:
                                     "premium_estimate": r.premium_estimate,
                                     "terminal_state_counts": r.terminal_state_counts,
                                     "has_real_telemetry": r.has_real_telemetry,
+                                    "tier_provenance": r.tier_provenance,
                                 }
                                 for r in summary.rows
                             ],
                             "repo_wide_premium_share": summary.aggregate_premium_share(),
+                            "tiers_defaulted": summary.all_tiers_defaulted,
                         },
                         indent=2,
                         sort_keys=True,
@@ -255,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
             append_to_journal(summary, journal_path)
             print(f"appended spend-retro section to {journal_path}")
             return 0
-    except (outcome_spec.OutcomeSpecError, SpendRetroError) as exc:
+    except (outcome_spec.OutcomeSpecError, SpendRetroError, json.JSONDecodeError) as exc:
         print(f"SPEND RETRO ERROR: {exc}", file=sys.stderr)
         return 2
 

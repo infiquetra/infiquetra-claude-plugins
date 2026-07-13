@@ -359,7 +359,12 @@ def main(argv: list[str] | None = None) -> int:
             report = reconcile(out_spec, store)
             print(json.dumps(report, indent=2, sort_keys=True))
             return 0
-    except (execution_spec.SpecError, outcome_spec.OutcomeSpecError, SpendEstimateError) as exc:
+    except (
+        execution_spec.SpecError,
+        outcome_spec.OutcomeSpecError,
+        SpendEstimateError,
+        json.JSONDecodeError,
+    ) as exc:
         print(f"SPEND ESTIMATE ERROR: {exc}", file=sys.stderr)
         return 2
 

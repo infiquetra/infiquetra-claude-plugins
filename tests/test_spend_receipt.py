@@ -142,6 +142,18 @@ def test_derived_on_read_no_write(monkeypatch: pytest.MonkeyPatch) -> None:
     SR.render_receipt(spec)  # must not touch any write function
 
 
+def test_cli_corrupt_spec_json_returns_exit_code_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#402 post-merge review fix (P3): a corrupt JSON input file must map to the clean
+    `SPEND RECEIPT ERROR`/exit-2 path, never an uncaught `JSONDecodeError` traceback.
+    """
+    corrupt = tmp_path / "spec-corrupt.json"
+    corrupt.write_text("this is not json{", encoding="utf-8")
+    assert SR.main(["--spec", str(corrupt)]) == 2
+    assert "SPEND RECEIPT ERROR" in capsys.readouterr().err
+
+
 def test_cli_help_exits_zero() -> None:
     with pytest.raises(SystemExit) as exc_info:
         SR.main(["--help"])

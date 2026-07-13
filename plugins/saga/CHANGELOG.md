@@ -40,13 +40,24 @@
   `outcome_costs.py`'s ledger or an `outcome-spec.json` in place, and none auto-applies a
   tier-default change — mirroring the binding `/outcome` campaign decision that the cost ledger is
   a leaf-produced fact, derived-on-read.
+- **Pre-merge review hardening (same PR):** `spend_retro.py report`/`append` gain
+  `--issue-bodies` (a `{issue-ref: fetched body}` JSON object) so the CLI can reach the
+  issue-tier-band resolution path — previously every node structurally defaulted to
+  `SPEND_BASELINE` and the CLI's premium share could never exceed 0%; the JSON output now carries
+  per-row `tier_provenance` plus a top-level `tiers_defaulted` flag, and the table labels an
+  all-default premium share as a floor rather than a derived fact (`retro/SKILL.md` Phase 1.10
+  updated to fetch issue bodies first). `shadow_audit.py` wraps a missing scalar key
+  (`unit_id`/`stage`/`tier.*`) into `ShadowAuditError`/exit-2 as its docstring promised, and all
+  five CLIs now map a corrupt JSON input file to their clean `X ERROR:`/exit-2 path instead of an
+  uncaught `JSONDecodeError` traceback.
 - `tests/test_spend_estimate.py`, `tests/test_spend_receipt.py`, `tests/test_spend_retro.py`,
-  `tests/test_tier_efficacy_retro.py`, `tests/test_shadow_audit.py` — 42 tests covering the
+  `tests/test_tier_efficacy_retro.py`, `tests/test_shadow_audit.py` — 50 tests covering the
   estimate/reconcile no-write guarantee, the tier-value scoring matrix, the counterfactual-total
   invariant, the golden cross-run spend summary, the gated downgrade proposal (with a byte-unchanged
   fixture-file assertion and an above/at/below-baseline-tier regression guard), the
-  off-by-default/budget-capped shadow-audit gate, and malformed-input CLI error-path coverage for
-  `tier_efficacy.py`/`shadow_audit.py`.
+  off-by-default/budget-capped shadow-audit gate, the `--issue-bodies` premium-share derivation and
+  defaulted-floor labeling, and malformed-/corrupt-input CLI error-path coverage across all five
+  scripts.
 
 ## [0.81.0] - 2026-07-12
 

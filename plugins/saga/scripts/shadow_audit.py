@@ -300,6 +300,8 @@ def _sampled_unit_from_dict(data: dict) -> SampledUnit:
             tier=Tier(model=str(tier_raw["model"]), effort=str(tier_raw["effort"])),
             reviewed_sha=str(data.get("reviewed_sha", "")),
         )
+    except KeyError as exc:
+        raise ShadowAuditError(f"malformed SampledUnit entry: missing key {exc}") from exc
     except (TypeError, ValueError) as exc:
         raise ShadowAuditError(f"malformed SampledUnit entry: {exc}") from exc
 
@@ -401,7 +403,12 @@ def main(argv: list[str] | None = None) -> int:
             tallies = report(args.root)
             print(render_report(tallies))
             return 0
-    except (execution_spec.SpecError, evidence_ledger.EvidenceLedgerError, ShadowAuditError) as exc:
+    except (
+        execution_spec.SpecError,
+        evidence_ledger.EvidenceLedgerError,
+        ShadowAuditError,
+        json.JSONDecodeError,
+    ) as exc:
         print(f"SHADOW AUDIT ERROR: {exc}", file=sys.stderr)
         return 2
 

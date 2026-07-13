@@ -190,6 +190,66 @@ def test_real_repo_committed_outcomes_do_not_crash() -> None:
     SR.render_summary_table(summary)  # must not raise
 
 
+def test_cli_corrupt_outcome_spec_json_returns_exit_code_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#402 post-merge review fix (P3): a corrupt committed outcome-spec.json must map to the
+    clean `SPEND RETRO ERROR`/exit-2 path, never an uncaught `JSONDecodeError` traceback.
+    """
+    outcomes_dir = tmp_path / "docs" / "outcomes" / "outcome-a"
+    outcomes_dir.mkdir(parents=True)
+    (outcomes_dir / "outcome-spec.json").write_text("this is not json{", encoding="utf-8")
+    assert SR.main(["report", "--root", str(tmp_path)]) == 2
+    assert "SPEND RETRO ERROR" in capsys.readouterr().err
+
+
+def test_cli_issue_bodies_derives_premium_share_and_provenance(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#402 post-merge review fix (P2): the CLI must be able to reach the issue-tier-band
+    resolution path -- before `--issue-bodies` existed, every node structurally defaulted to
+    SPEND_BASELINE and the CLI's premium share could never be anything but 0%.
+    """
+    outcomes_dir = tmp_path / "docs" / "outcomes" / "outcome-a"
+    outcomes_dir.mkdir(parents=True)
+    spec = _spec("outcome-a", [_node("sub-1", github={"issue": "org/repo#3"}), _node("sub-2")])
+    (outcomes_dir / "outcome-spec.json").write_text(spec.to_json())
+
+    bodies_path = tmp_path / "issue-bodies.json"
+    bodies_path.write_text(
+        json.dumps({"org/repo#3": "### Recommended Tier Band\nopus/high\n"}), encoding="utf-8"
+    )
+
+    args = ["report", "--root", str(tmp_path), "--json", "--issue-bodies", str(bodies_path)]
+    assert SR.main(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tiers_defaulted"] is False
+    assert payload["repo_wide_premium_share"] > 0.0
+    (row,) = payload["rows"]
+    assert row["tier_provenance"] == {"issue-tier-band": 1, "default": 1}
+    assert row["premium_node_count"] == 1
+
+
+def test_cli_without_issue_bodies_labels_defaulted_floor(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Honesty companion to the fix above: with no `--issue-bodies`, the all-default 0% premium
+    share must be visibly labeled a floor (JSON flag + table note), not presented as derived.
+    """
+    outcomes_dir = tmp_path / "docs" / "outcomes" / "outcome-a"
+    outcomes_dir.mkdir(parents=True)
+    spec = _spec("outcome-a", [_node("sub-1")])
+    (outcomes_dir / "outcome-spec.json").write_text(spec.to_json())
+
+    assert SR.main(["report", "--root", str(tmp_path), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tiers_defaulted"] is True
+    assert payload["rows"][0]["tier_provenance"] == {"default": 1}
+
+    assert SR.main(["report", "--root", str(tmp_path)]) == 0
+    assert "floor, not a derived fact" in capsys.readouterr().out
+
+
 def test_cli_help_exits_zero() -> None:
     with pytest.raises(SystemExit) as exc_info:
         SR.main(["--help"])

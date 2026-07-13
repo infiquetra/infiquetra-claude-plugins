@@ -168,6 +168,18 @@ def test_cli_malformed_history_returns_exit_code_2(tmp_path: Path) -> None:
     assert TE.main(["--history", str(malformed_tier)]) == 2
 
 
+def test_cli_corrupt_history_json_returns_exit_code_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#402 post-merge review fix (P3): a corrupt `--history` file must map to the clean
+    `TIER EFFICACY ERROR`/exit-2 path, never an uncaught `JSONDecodeError` traceback.
+    """
+    corrupt = tmp_path / "history-corrupt.json"
+    corrupt.write_text("this is not json{", encoding="utf-8")
+    assert TE.main(["--history", str(corrupt)]) == 2
+    assert "TIER EFFICACY ERROR" in capsys.readouterr().err
+
+
 def test_cli_help_exits_zero() -> None:
     with pytest.raises(SystemExit) as exc_info:
         TE.main(["--help"])

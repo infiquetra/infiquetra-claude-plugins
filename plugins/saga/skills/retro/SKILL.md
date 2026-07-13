@@ -288,14 +288,21 @@ advisory: it writes no saga tick, and even an approved recipe proposal must be h
 authorized implementation path.
 
 **1.10 Tier-efficacy evidence (read-only, issue #402).** Beside the R24 realized-economics pass (1.7),
-gather the cost-vs-outcome evidence the Phase-5(e) tier-efficacy proposal needs: run
-`scripts/spend_retro.py report --root . --json` for the repo-wide tier-mix / premium-spend-share
-aggregation, then join it per work-shape against each check's verdict history from
+gather the cost-vs-outcome evidence the Phase-5(e) tier-efficacy proposal needs. First fetch each
+outcome node's linked issue body so tiers resolve from real `### Recommended Tier Band` stamps: for
+every `github.issue` ref in the committed `docs/outcomes/*/outcome-spec.json` files, run
+`gh issue view <ref> --json body -q .body` and assemble a `{"<ref>": "<body>"}` JSON object file.
+Then run `scripts/spend_retro.py report --root . --json --issue-bodies <that-file>` for the
+repo-wide tier-mix / premium-spend-share aggregation — without `--issue-bodies` every node's tier
+falls back to the SPEND_BASELINE default and the output flags `tiers_defaulted: true`, meaning the
+premium share is a floor, not a derived fact (each row's `tier_provenance` shows the split). Join
+the result per work-shape against each check's verdict history from
 `scripts/evidence_ledger.py`'s `latest()` reader (a `superseded_fail` or a multi-attempt history is a
 nonzero "marginal findings"/"rework" signal; a run whose only attempt passed clean is zero). Assemble
-the joined rows as `tier_efficacy.RunRecord`s and pass them to
-`scripts/tier_efficacy.py propose_downgrades(history)` — this is a **reader only**, it never proposes
-or applies anything itself; Phase 5(e) below is where a resulting proposal is surfaced.
+the joined rows as `tier_efficacy.RunRecord` dicts in a JSON list file and pass it to
+`scripts/tier_efficacy.py --history <json-file>` (the CLI wrapper over `propose_downgrades`) — this
+is a **reader only**, it never proposes or applies anything itself; Phase 5(e) below is where a
+resulting proposal is surfaced.
 
 **Zero-data contract** (same as 1.6/1.7/1.9): a work-shape with no recorded runs, or fewer than the
 resolver's `min_samples` threshold, contributes no proposal — carry that as "insufficient evidence yet,"

@@ -190,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         tier_defaults.TierDefaultsError,
         TierEfficacyError,
         KeyError,
+        json.JSONDecodeError,
     ) as exc:
         print(f"TIER EFFICACY ERROR: {exc}", file=sys.stderr)
         return 2

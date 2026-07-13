@@ -335,7 +335,7 @@ def test_no_pulse_owned_status_field(tmp_path: Path) -> None:
     assert set(pulse.RUN_FIELDS) <= candidate_keys
     # And the ledger schema is untouched: no pulse-owned fact kind.
     assert (
-        frozenset({"spend", "cache", "engine", "delegation", "reconciliation"})
+        frozenset({"spend", "cache", "engine", "delegation", "reconciliation", "benchmark"})
         == run_ledger.FACT_KINDS
     )
 

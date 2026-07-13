@@ -403,6 +403,20 @@ def latest(store: Store, *, check_id: str, reviewed_sha: str) -> LatestResult:
     )
 
 
+def history(store: Store, *, check_id: str) -> list[dict[str, Any]]:
+    """Every evidence entry for ``check_id`` across every ``reviewed_sha``, oldest -> newest (#397).
+
+    ``latest()`` is already scoped to one exact ``(check_id, reviewed_sha)`` pair, so it alone
+    cannot distinguish "this check never ran" from "this check ran, but only at a different SHA" —
+    the closure gate (sub-397) needs exactly that distinction to tell ``missing-evidence`` apart
+    from ``stale-sha``. Additive only: no change to any existing signature or storage format
+    (evidence-ledger plan R10 reserves this module's read surface for sub-397 to extend).
+    """
+    check_id = _safe_name(check_id, what="check_id")
+    entries = _read_lines_or_halt(store.ledger_path)
+    return [e for e in entries if e.get("kind") == "evidence" and e.get("check_id") == check_id]
+
+
 # ---------------------------------------------------------------------------
 # verify_chain() — linkage + artifact re-hash (R2, KTD3)
 # ---------------------------------------------------------------------------

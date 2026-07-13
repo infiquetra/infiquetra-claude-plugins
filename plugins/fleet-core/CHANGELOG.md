@@ -5,6 +5,22 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-07-13
+
+### Added
+- `scripts/fleet_commons/delegation_state.py` grows the durable delegation-integrity attempt
+  counter (#520 F1): `record_integrity_divergence` / `integrity_attempts` /
+  `clear_integrity_attempts` over `.claude/delegation/integrity.json`, keyed session + engine with
+  the same 4h TTL and fail-open-read posture as `active.json`. This is where the dispatch layer's
+  re-queue-once-then-HALT count (KTD7, #384) now lives, so it survives one-process-per-attempt
+  consumers.
+
+### Fixed
+- `delegation_state.arm()` / `disarm()` read-modify-write is now serialized under an exclusive
+  `fcntl.flock` on a sibling `<name>.lock` file (#520 F4): two sessions arming concurrently could
+  previously lose an entry last-writer-wins — a silent, fail-open loss of tripwire protection.
+  Reads stay lock-free and fail-open.
+
 ## [0.8.5] - 2026-07-12
 
 ### Added

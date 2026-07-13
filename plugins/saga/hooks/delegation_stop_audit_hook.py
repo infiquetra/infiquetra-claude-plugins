@@ -58,12 +58,18 @@ def _find_repo_root(cwd: str | None) -> Path:
 
 
 def _write_audit_record(repo_root: Path, record: dict[str, Any]) -> str | None:
-    """Best-effort audit record under ``.claude/delegation/audits/<ts>.json``. Never raises."""
+    """Best-effort audit record under ``.claude/delegation/audits/<ts>.json``. Never raises.
+
+    The session id is harness-supplied but untrusted for path purposes (#520, #384 review
+    suppressed finding): ``Path(...).name`` strips any directory components so a session id
+    like ``../../evil`` can never traverse out of the audits directory.
+    """
     try:
         audits_dir = repo_root / ".claude" / "delegation" / "audits"
         audits_dir.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-        path = audits_dir / f"{ts}-{record.get('session_id', 'unknown')}.json"
+        safe_session = Path(str(record.get("session_id", "unknown"))).name or "unknown"
+        path = audits_dir / f"{ts}-{safe_session}.json"
         path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return str(path)
     except Exception:

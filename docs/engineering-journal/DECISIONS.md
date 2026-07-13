@@ -3930,3 +3930,34 @@ through `outcome_report.py`'s `TIER_AMBIGUITY` scan rather than only via `barrie
 per-node `closure_gate` key.
 
 ---
+### Delegation-integrity requeue counter lives in the delegation-state marker family {#integrity-counter-home-520}
+
+**Date:** 2026-07-13 · **Issue:** #520 (closes #384 review F1/F4/F5) · **Origin:** #384 plan KTD7
+
+**Decision.** The KTD7 re-queue-once-then-HALT consecutive-divergence count persists in
+`.claude/delegation/integrity.json` — a sibling of `active.json` in the delegation-state marker
+family, owned by `fleet_commons/delegation_state.py` (`record_integrity_divergence` /
+`integrity_attempts` / `clear_integrity_attempts`), keyed `session_id` + `engine`, 4h TTL,
+fail-open reads, and writes serialized under the same new `_write_lock` (`fcntl.flock` on a
+sibling `.lock` file) that #520 F4 adds for `arm()`/`disarm()`. `engine_dispatch.py` reads the
+count back at dispatch entry and keeps its old module-level dict only as a fallback when the
+durable store is unavailable (version-skewed fleet-core, unwritable filesystem) — same-process
+behavior is then never worse than pre-#520.
+
+**Rejected alternatives.**
+- *Manifest record* (the plan KTD7 wording): manifests are per-`execution_id` artifacts written
+  by the consumer *after* dispatch returns — dispatch entry would need to scan/index another
+  store it doesn't own, and a consumer that never persists the RequeueDisposition's manifest
+  would silently break the count. The counter must be written by the same layer that enforces
+  the HALT.
+- *Module-level dict* (status quo): provably degrades to requeue-forever for
+  one-process-per-attempt consumers — the F1 finding itself.
+- *A saga-side private file written by `engine_dispatch` directly*: avoids fleet-core version
+  coupling but forks `.claude/delegation/` ownership across two plugins and duplicates the
+  locking/TTL/fail-open plumbing `delegation_state` already carries; the skew case is already
+  handled by the named-degradation fallback.
+
+**Revisit when** a production gated-dispatch consumer needs the counter keyed by something finer
+than session+engine (e.g. per-unit), or when the marker family moves out of the repo tree.
+
+---

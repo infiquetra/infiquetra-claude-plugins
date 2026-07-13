@@ -9,6 +9,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Literal, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -25,9 +26,37 @@ from engine_resolver import Resolution, RunMemo  # noqa: E402
 from execution_spec import AdvisoryPanelRequest  # noqa: E402
 
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
-_delegation_audit = fleet_commons_shim.load("delegation_audit")
-_delegation_state = fleet_commons_shim.load("delegation_state")
-_audit_store = fleet_commons_shim.load("audit_store")
+
+# The delegation/audit fleet-core modules are loaded LAZILY (#520 F5): they were added in
+# fleet-core 0.8.0, so an eager module-level `shim.load()` made every `engine_dispatch` import
+# crash under version skew (saga >= 0.74.0 against an older installed fleet-core) — where the
+# hooks guard the identical loads and fail open. Callers go through `_load_fleet_module`, which
+# degrades NAMED (`delegation-audit-unavailable`, the tripwire_unarmed pattern) instead of
+# raising at import time. `bridge_receipt` stays eager: it long predates the skew window, and
+# this module's hard imports (bridge_signatures -> output_attestation) already require that era.
+_LAZY_FLEET_MODULES = frozenset({"delegation_audit", "delegation_state", "audit_store"})
+
+_DELEGATION_AUDIT_UNAVAILABLE = "delegation-audit-unavailable"
+
+
+def _load_fleet_module(name: str) -> tuple[ModuleType | None, str]:
+    """Load a fleet-core module lazily; ``(None, named-degradation-reason)`` when unavailable.
+
+    Never caches failures: the shim itself caches successes keyed by resolved root, and a
+    re-pointed ``FLEET_COMMONS_ROOT`` (as tests do) must be able to recover.
+    """
+    try:
+        return fleet_commons_shim.load(name), ""
+    except Exception as exc:  # noqa: BLE001 - version skew degrades named, never crashes
+        return None, f"{_DELEGATION_AUDIT_UNAVAILABLE}: {name}: {exc}"
+
+
+def __getattr__(name: str) -> ModuleType:
+    """Back-compat module attributes (``_delegation_audit`` etc.) resolve lazily (PEP 562)."""
+    if name.startswith("_") and name[1:] in _LAZY_FLEET_MODULES:
+        return fleet_commons_shim.load(name[1:])
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 FAILURE_STATUSES = frozenset({"timeout", "no-output", "error", "malformed", "clone-failed"})
 NON_GATING_ROLE_KINDS = frozenset({"advisory-reviewer", "panel"})
@@ -169,9 +198,14 @@ class PanelDispatchResult:
     advisory: bool = True
 
 
-# Consecutive gated-divergence attempt counter (KTD7 re-queue-once-then-HALT), keyed by
-# session + engine. Reset on any corroborated acceptance; a surviving count of 1 means the
-# NEXT divergence for the same key is the second consecutive one and must HALT.
+# In-process FALLBACK for the consecutive gated-divergence attempt counter (KTD7
+# re-queue-once-then-HALT), keyed session + engine. The durable counter lives in the
+# delegation-state marker family (`delegation_state.record_integrity_divergence`,
+# `.claude/delegation/integrity.json`) so it survives one-process-per-attempt consumers
+# (#520 F1); this dict is used only when that store is unavailable (version-skewed
+# fleet-core, unwritable filesystem). Reset on any corroborated acceptance; a surviving
+# count of 1 means the NEXT divergence for the same key is the second consecutive one
+# and must HALT.
 _INTEGRITY_ATTEMPTS: dict[str, int] = {}
 _SATISFIED_RECONCILIATIONS: set[tuple[str, str, str, str]] = set()
 
@@ -180,6 +214,52 @@ _INTEGRITY_REASON = (
     "delegation-integrity: engine self-report 'ok' but observer corroboration failed "
     "(bundle launch flag + schema-valid receipt required)"
 )
+
+
+def _integrity_key(session_id: str, engine_id: str) -> str:
+    return f"{session_id or 'anon'}:{engine_id}"
+
+
+def _record_integrity_divergence(
+    session_id: str, engine_id: str, workspace_root: Path | str | None
+) -> int:
+    """Record one gated divergence durably; returns the consecutive attempt count (#520 F1).
+
+    Prefers the delegation-state marker family (cross-process, KTD7's real guarantee); falls
+    back to the in-process dict when that store is unavailable (skewed fleet-core lacking the
+    counter API, unwritable filesystem) so the same-process behavior is never worse than
+    pre-#520.
+    """
+    key = _integrity_key(session_id, engine_id)
+    delegation_state, _ = _load_fleet_module("delegation_state")
+    if delegation_state is not None and hasattr(delegation_state, "record_integrity_divergence"):
+        try:
+            attempt = int(
+                delegation_state.record_integrity_divergence(
+                    session_id or "anon", engine_id, root=workspace_root
+                )
+            )
+        except Exception:  # noqa: BLE001 - durable-store trouble degrades to in-process
+            pass
+        else:
+            _INTEGRITY_ATTEMPTS[key] = attempt
+            return attempt
+    attempt = _INTEGRITY_ATTEMPTS.get(key, 0) + 1
+    _INTEGRITY_ATTEMPTS[key] = attempt
+    return attempt
+
+
+def _clear_integrity_attempts(
+    session_id: str, engine_id: str, workspace_root: Path | str | None
+) -> None:
+    """Reset the divergence counter (corroborated acceptance, or immediately after a HALT)."""
+    _INTEGRITY_ATTEMPTS.pop(_integrity_key(session_id, engine_id), None)
+    delegation_state, _ = _load_fleet_module("delegation_state")
+    if delegation_state is not None and hasattr(delegation_state, "clear_integrity_attempts"):
+        with contextlib.suppress(Exception):
+            delegation_state.clear_integrity_attempts(
+                session_id or "anon", engine_id, root=workspace_root
+            )
 
 
 def build_codex_invocation(
@@ -395,24 +475,31 @@ def dispatch(
 
     # Arm the delegation-liveness marker BEFORE the adapter runs (KTD4: arming authority is
     # the dispatch layer) and disarm in a finally. Arming failure is fail-open but NAMED:
-    # dispatch still runs, and the evidence/manifest carry a `tripwire_unarmed` note.
+    # dispatch still runs, and the evidence/manifest carry a `tripwire_unarmed` note. A
+    # fleet-core too old to carry delegation_state at all degrades the same way, under its
+    # own name (`delegation-audit-unavailable`, #520 F5) — never an import-time crash.
     armed_at: float | None = None
     tripwire_note = ""
+    delegation_state: ModuleType | None = None
     if session_id:
-        try:
-            entry = _delegation_state.arm(
-                resolution.engine_id, session_id, "engine_dispatch", root=workspace_root
-            )
-            armed_at = float(entry.armed_at)
-        except Exception as exc:  # noqa: BLE001 - fail-open, named (plan U5 error scenario)
-            tripwire_note = f"{_TRIPWIRE_UNARMED}: {exc}"
+        delegation_state, state_degradation = _load_fleet_module("delegation_state")
+        if delegation_state is None:
+            tripwire_note = state_degradation
+        else:
+            try:
+                entry = delegation_state.arm(
+                    resolution.engine_id, session_id, "engine_dispatch", root=workspace_root
+                )
+                armed_at = float(entry.armed_at)
+            except Exception as exc:  # noqa: BLE001 - fail-open, named (plan U5 error scenario)
+                tripwire_note = f"{_TRIPWIRE_UNARMED}: {exc}"
     try:
         result = runner(invocation)
     finally:
-        if armed_at is not None:
+        if armed_at is not None and delegation_state is not None:
             # Disarm failure must never mask the adapter's result.
             with contextlib.suppress(Exception):
-                _delegation_state.disarm(session_id, root=workspace_root)
+                delegation_state.disarm(session_id, root=workspace_root)
 
     _reject_gatekeeper_keys(result)
     status = _string_result(result.get("status"), default="malformed")
@@ -456,27 +543,37 @@ def dispatch(
         # bundle launch flag plus a schema-valid receipt. Opt-in (gated or workspace_root) so
         # every existing single-signal advisory caller stays byte-identical.
         two_signal = gated or workspace_root is not None
+        if two_signal:
+            # Version-skew guard (#520 F5): a fleet-core lacking delegation_audit degrades
+            # NAMED on the provenance; the observer predicate below then reads conservative
+            # observer-NO, never a silent accept and never an import/dispatch crash.
+            _, audit_degradation = _load_fleet_module("delegation_audit")
+            if audit_degradation:
+                provenance["degradation"] = audit_degradation
         observer_yes = two_signal and _observer_corroborates(
             resolution.engine_id,
             runner_receipt,
             workspace_root=workspace_root,
             since_ts=armed_at,
         )
-        integrity_key = f"{session_id or 'anon'}:{resolution.engine_id}"
+        integrity_key = _integrity_key(session_id, resolution.engine_id)
         if two_signal and not observer_yes:
             provenance["integrity"] = pm.Disposition.DELEGATION_INTEGRITY.value
             if gated:
                 # KTD7 re-queue-once-then-HALT: first divergence returns the typed re-queue
-                # disposition; a second CONSECUTIVE divergence for the same key HALTs.
-                attempt = _INTEGRITY_ATTEMPTS.get(integrity_key, 0) + 1
+                # disposition; a second CONSECUTIVE divergence for the same key HALTs. The
+                # count is durable (delegation-state marker family, #520 F1) so the guarantee
+                # holds across one-process-per-attempt consumers, not just this process.
+                attempt = _record_integrity_divergence(
+                    session_id, resolution.engine_id, workspace_root
+                )
                 if attempt >= 2:
-                    _INTEGRITY_ATTEMPTS.pop(integrity_key, None)
+                    _clear_integrity_attempts(session_id, resolution.engine_id, workspace_root)
                     raise DispatchError(
                         "HALT: second consecutive delegation-integrity divergence for "
                         f"{integrity_key!r} -- {_INTEGRITY_REASON} "
                         "(KTD7: re-queue once, then HALT -- never silent accept)"
                     )
-                _INTEGRITY_ATTEMPTS[integrity_key] = attempt
                 reason = f"{_INTEGRITY_REASON} (divergence attempt {attempt}; one re-queue allowed)"
                 provenance["note"] = reason
                 disputed = AdvisoryEvidence(
@@ -514,7 +611,7 @@ def dispatch(
             )
             return evidence
         if gated:
-            _INTEGRITY_ATTEMPTS.pop(integrity_key, None)
+            _clear_integrity_attempts(session_id, resolution.engine_id, workspace_root)
         if two_signal and observer_yes:
             provenance["observer_corroborated"] = True
         evidence = AdvisoryEvidence(
@@ -905,13 +1002,18 @@ def _observer_corroborates(
 
     Conservative by construction: a receipt-valid bundle whose ``launch_key`` is missing or
     false is observer-NO, an unknown/uncorroboratable engine is observer-NO, and any error
-    reading the bundles is observer-NO. The observer never raises -- divergence handling
-    (not this predicate) decides what a "no" costs.
+    reading the bundles is observer-NO. A fleet-core too old to carry ``delegation_audit``
+    is observer-NO too (#520 F5) — ``dispatch`` records the named
+    ``delegation-audit-unavailable`` degradation on the provenance. The observer never
+    raises -- divergence handling (not this predicate) decides what a "no" costs.
     """
     if _base_receipt_problems(runner_receipt):
         return False
+    delegation_audit, _ = _load_fleet_module("delegation_audit")
+    if delegation_audit is None:
+        return False
     try:
-        corroboration = _delegation_audit.corroborate(engine_id, since_ts, root=workspace_root)
+        corroboration = delegation_audit.corroborate(engine_id, since_ts, root=workspace_root)
     except Exception:  # noqa: BLE001 - observer-no beats crashing the dispatch path
         return False
     return bool(corroboration.launched)
@@ -1231,15 +1333,19 @@ def _mirror_manifest_to_audit_store(
     audit store (#396, R2/KTD9). A no-op when ``audit_store_root`` is ``None`` (KTD5 — this module
     has no CLI layer, so the resolved default lives at the documented chaperone call site rather
     than a hidden default here). Never raises: a failed durable-mirror write must not fail the
-    dispatch/adjudication it mirrors — the mirror is additive evidence, not a gate.
+    dispatch/adjudication it mirrors — the mirror is additive evidence, not a gate. A fleet-core
+    too old to carry ``audit_store`` skips the mirror the same way (#520 F5, lazy guarded load).
     """
     if audit_store_root is None:
         return
+    audit_store, _ = _load_fleet_module("audit_store")
+    if audit_store is None:
+        return
     try:
-        store = _audit_store.Store.for_root(audit_store_root).ensure()
-        _audit_store.mirror_manifest(store, execution_id, manifest.to_dict())
+        store = audit_store.Store.for_root(audit_store_root).ensure()
+        audit_store.mirror_manifest(store, execution_id, manifest.to_dict())
         if evidence is not None and evidence.runner_receipt is not None:
-            _audit_store.mirror_receipt(store, execution_id, evidence.runner_receipt)
+            audit_store.mirror_receipt(store, execution_id, evidence.runner_receipt)
     except OSError:
         pass
 

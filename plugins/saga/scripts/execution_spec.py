@@ -1599,15 +1599,25 @@ def _verifier_agent_opts(unit: Unit) -> list[str]:
 
 
 def _verifier_schema() -> dict[str, object]:
-    """StructuredOutput schema for refute-N verifier verdicts (#519)."""
+    """StructuredOutput schema for refute-N verifier verdicts (#519/#527).
+
+    Attached to EVERY verify-panel ``agent()`` call (all panel forms route through
+    ``_emit_panel_reconciliation`` -> ``_verifier_agent_opts``) so a prose/markdown verdict is
+    retried/failed at the tool boundary instead of parse-and-hoped (#527: workflow
+    wf_ada4ca97-365 aggregated over 0 reporters because verifiers returned prose). The
+    constraints mirror the emitted ``<var>_valid_verifier_verdict`` runtime predicate exactly --
+    ``minLength: 1`` on the #390 U6 attribution strings matches the predicate's
+    ``.length > 0`` checks, so any verdict the schema admits is counted as a reporter. Flat
+    typed object only: the API rejects top-level combinators (see ``_return_schema``).
+    """
     return {
         "type": "object",
         "properties": {
             "refuted": {"type": "array"},
             "upheld": {"type": "array"},
-            "verifier_identity": {"type": "string"},
+            "verifier_identity": {"type": "string", "minLength": 1},
             "fallback_depth": {},
-            "examined_sha": {"type": "string"},
+            "examined_sha": {"type": "string", "minLength": 1},
         },
         "required": [
             "refuted",

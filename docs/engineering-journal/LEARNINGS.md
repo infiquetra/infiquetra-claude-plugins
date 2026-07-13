@@ -25,6 +25,84 @@
 
 ---
 
+## 2026-07-13
+
+### A tool-boundary schema that is looser than the runtime predicate re-opens the gap it was built to close  {#verifier-schema-predicate-alignment-527}
+
+**Context.** #527 hardens the refute-N verify panels against prose verdicts (workflow
+wf_ada4ca97-365: 12/12 verifiers returned substantive prose, every panel aggregated over 0
+reporters). The `schema` opt on verifier `agent()` calls had already landed under sibling work
+(#519, commit 099ec4c), so the remaining defect was subtler: alignment between the two layers of
+enforcement.
+
+**Evidence.** `plugins/saga/scripts/execution_spec.py` — `_verifier_schema()` declared
+`verifier_identity`/`examined_sha` as bare `{"type": "string"}`, while the emitted runtime
+reporter predicate (`_emit_panel_reconciliation`'s `<var>_valid_verifier_verdict`) requires
+`.length > 0` on both. A verdict with `examined_sha: ""` passed the tool boundary yet was
+classified runtime-missing by the panel — exactly the "schema-valid but not counted as a
+reporter" hole the issue's aggregation criterion exists to catch.
+
+**Mechanism.** Two independently authored validators over the same value drift unless one is
+derived from the other or a test pins their equivalence. The tool boundary retries/fails a
+schema-invalid return; the panel predicate silently drops a predicate-invalid verdict from the
+reporter denominator. Any shape admitted by the first but rejected by the second is enforced by
+neither retry nor refutation — it just vanishes from the aggregation.
+
+**Fix.** `minLength: 1` on both attribution strings in `_verifier_schema()` (matching the
+predicate exactly), plus a node-executed test that runs the EMITTED predicate + reported-filter
+lines against a jsonschema-validated verdict and the prose/null/partial failure modes
+(`tests/test_saga_execution_spec.py::test_schema_valid_verdict_is_counted_as_reporter_in_emitted_aggregation`),
+and schema-count == agentType-count assertions across all four panel emission shapes.
+
+**Generalizable rule.** When a value is validated at two layers (tool-boundary schema, runtime
+predicate), the outer layer must be at least as strict as the inner one, and a test should prove
+it — the cheapest faithful proof is executing the emitted inner validator (via `node -e` for
+emitted JS) against fixtures the outer schema has just validated, not re-implementing either
+side in the test.
+
+**Refs.** `{#verify-panel-prose-verdicts-vacuous-aggregation}`; issue #527; issue #519 (schema
+attachment); #390 U6 (attribution fields).
+
+### "Mirror the sibling" instructions import the sibling's own latent bugs, not just its shape  {#agy-codex-parity-517}
+
+**Context.** Issue #517 ported the four reliability hardenings fixed in the codex delegate for
+#476 (commit `437e73a`: atomic `_write_json`, a widened `except Exception` funneled through
+`_finalize_failed_bundle`, a `MAX_OUTPUT_BYTES` cumulative-output cap, and bundle-span
+SIGTERM/SIGINT die-clean handling) into the sibling `plugins/agy/scripts/agy_delegate.py`. The
+#476 review had already named this: codex's original implementation carried these four gaps
+byte-for-byte-equivalent because its plan explicitly told the units to "mirror the agy delegate."
+
+**Evidence.** Before this fix, `agy_delegate.py` had zero `signal` handling anywhere in the
+module (confirmed via `grep -n "signal\." plugins/agy/scripts/agy_delegate.py` returning no
+hits) despite already having the exact vocabulary a signal handler needs
+(`shutdown_incomplete` status, a `shutdown` field distinguishing `terminated`/`killed`/
+`shutdown_incomplete`) — the vocabulary existed for the internal watchdog's kill outcome, but
+nothing wired an external caller's SIGTERM into it. `_write_json` was a bare `write_text`
+(`agy_delegate.py`, pre-fix), `create_supervised_bundle` caught only `except OSError`, and
+`_blocked_status_from_logs` did `stdout_path.read_text() + stderr_path.read_text()` — a full
+in-memory slurp with no cap, mirroring codex's pre-fix `parse_token_usage`.
+
+**Mechanism.** A sibling-mirroring instruction transfers structure (argument shapes, dataclass
+fields, status vocabulary) faithfully, but a code reviewer auditing the NEW sibling's own tests
+sees 100% green — the tests were written against the flawed implementation, so they prove
+consistency with itself, not soundness. The gap only surfaces when something audits the two
+siblings AGAINST EACH OTHER (the #476 review's Round 2 notes) or against a fixed reference
+implementation, never from either sibling's own test suite in isolation.
+
+**Generalizable rule.** When two modules are built by "mirror sibling X," file a parity-audit
+follow-up the moment X's OWN bugs get fixed — a shared-shape sibling does not self-heal, and its
+copy of the bug will pass its own tests indefinitely. In the port itself: `_run_die_clean_handler`
+(installed for the supervised launch window, sets a flag and lets the watchdog loop finish
+normally) must be a DIFFERENT handler from `_bundle_die_clean_handler` (installed for the whole
+bundle span, raises `DieCleanInterrupt` to unwind through windows with no watchdog loop watching
+a flag) — collapsing them to one handler either breaks the loop's cooperative shutdown (if it
+always raises) or leaves windows outside the loop uncovered (if it never raises).
+
+**Refs.** `plugins/agy/scripts/agy_delegate.py` (#517); codex precedent
+`plugins/codex/scripts/codex_delegate.py` (#476, commit `437e73a`); prior journal entry on the
+same review, which named this exact parity gap and filed the agy follow-up, at
+`{#unit-panels-vs-whole-diff-lenses-476}`.
+
 ## 2026-07-12
 
 ### A docstring's stated gating criterion can be silently absent from the implementation it describes  {#docstring-gate-drift-402}

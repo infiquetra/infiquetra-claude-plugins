@@ -46,7 +46,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.85.0"
+        plugin_json["version"] == "0.86.0"
     )  # delegation tripwires hardening: durable requeue counter, marker locking, skew-safe imports (#520)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"

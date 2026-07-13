@@ -792,6 +792,49 @@ def test_verify_panel_emits_n_verifier_agents_and_majority_check() -> None:
     assert 'label: "build verifier"' in script
 
 
+def test_every_verify_panel_agent_call_carries_verdict_schema() -> None:
+    """#527: every verify-panel agent() call must carry the verdict schema opt so a prose
+    return is retried/failed at the tool boundary instead of being classified runtime-missing
+    (wf_ada4ca97-365: 12/12 prose verdicts -> every panel aggregated over 0 reporters).
+    Fragment hardcoded as a drift guard -- deriving it from the module under test would be
+    tautological."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": "majority"}
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = mod.emit_workflow_script(spec)
+
+    verdict_schema_fragment = "schema: " + json.dumps(
+        {
+            "type": "object",
+            "properties": {
+                "refuted": {"type": "array"},
+                "upheld": {"type": "array"},
+                "verifier_identity": {"type": "string", "minLength": 1},
+                "fallback_depth": {},
+                "examined_sha": {"type": "string", "minLength": 1},
+            },
+            "required": [
+                "refuted",
+                "upheld",
+                "verifier_identity",
+                "fallback_depth",
+                "examined_sha",
+            ],
+            "additionalProperties": True,
+        },
+        sort_keys=True,
+    )
+    # One schema opt per verifier call: schema-count == agentType-count == n (verifiers are
+    # the only agents carrying an agentType).
+    assert script.count(verdict_schema_fragment) == 3
+    assert script.count('agentType: "saga:readonly-verifier"') == 3
+
+
 def test_unanimous_verify_panel_requires_all_to_refute() -> None:
     mod = _load()
     data = _valid_spec_dict()

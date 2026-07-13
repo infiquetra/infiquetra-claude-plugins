@@ -1014,11 +1014,16 @@ def run_agy_supervised(
         status = parse_status("timeout")
     elif timeout_class == "no_output":
         status = parse_status("no_output")
-    elif return_code == 0 and stdout_bytes + stderr_bytes == 0:
-        # An exit-0 run that produced literally zero bytes of stdout/stderr proves nothing ran
-        # to completion — e.g. Antigravity's executor-construction failure (#523, drill-468 S1)
-        # exits cleanly before doing any work. Mapping that to "success" let a
+    elif return_code == 0 and stdout_bytes == 0:
+        # An exit-0 run that produced zero bytes on the deliverable stream (stdout) proves
+        # nothing ran to completion — e.g. Antigravity's executor-construction failure (#523,
+        # drill-468 S1) exits cleanly before doing any work. Mapping that to "success" let a
         # bytes_produced=0 receipt corroborate a no-op as if it had proceeded as requested.
+        # Gate on stdout alone, not stdout+stderr: a run that logs a warning/info line to stderr
+        # (e.g. "W0712 executor warning") but writes nothing to stdout is still a no-output
+        # failure on a prose-deliverable dispatch — stderr is not the deliverable stream, and
+        # requiring both to be zero re-opened the false-success path for any run that happens to
+        # emit incidental stderr chatter alongside empty stdout.
         # Reuse the existing "no_output" terminal status (not a new one) so every downstream
         # consumer that already treats "no_output" as non-passing (_PASSING_STATUSES,
         # _exit_code_for_status, decide_non_apply_status's early-return) covers this path for
@@ -1026,8 +1031,9 @@ def run_agy_supervised(
         # from the watchdog-triggered no_output above.
         status = parse_status("no_output")
         error = (
-            "agy exited 0 but produced zero bytes of stdout/stderr; treating as a no-output "
-            "failure rather than success — likely an executor-construction failure (#523)"
+            "agy exited 0 but produced zero bytes of stdout (the deliverable stream); "
+            "treating as a no-output failure rather than success — likely an "
+            "executor-construction failure (#523)"
         )
     elif return_code == 0:
         status = parse_status("success")

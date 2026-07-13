@@ -73,6 +73,55 @@ correct `is_escalation` use) as a working reference implementation of the missin
 **Refs.** `plugins/saga/scripts/tier_efficacy.py`, `plugins/saga/scripts/spend_retro.py:118`,
 `plugins/saga/skills/retro/SKILL.md` (Phase 1.10/5(e), prose unchanged — it was already accurate),
 `docs/plans/2026-07-12-spend-observability-plan.md` (KTD5), issue #402.
+### A shared ledger's own internal FAIL-detection convention can silently not apply to its real producers  {#evidence-ledger-verdict-vocab-mismatch-397}
+
+**Context.** Building the #397 closure gate (a consumer of #398's `evidence_ledger.py`, merged
+same day as PR #567), the first implementation reused `evidence_ledger.latest().superseded_fail`
+to decide whether a required check's evidence was passing or failing — matching the issue's own
+golden-fixture test names, which write literal `verdict="FAIL"`/`verdict="PASS"`.
+
+**Evidence.** `evidence_ledger.latest()` computes `superseded_fail` off a hardcoded literal
+`"FAIL"` string comparison (`plugins/saga/scripts/evidence_ledger.py`, the `latest()` function).
+But the actual shipped producers never write that literal string: `/qa` writes
+`ship`/`ship-with-deferred`/`no-ship` (`qa/SKILL.md` Phase 4.2) and `/code-review` writes
+`clean`/`blocked` (`code-review/SKILL.md` Phase 5.3, and `/work`'s own programmatic persistence in
+`work/SKILL.md` Phase 5.2). A real `no-ship` or `blocked` verdict therefore compared unequal to
+`"FAIL"` and the gate would have treated an actual QA failure as satisfied — silently defeating the
+whole point of the closure gate.
+
+**Mechanism.** The bug was caught by an adversarial self-review question ("does the real producer
+vocabulary actually reach this literal-string comparison?"), not by the issue's own acceptance
+tests — because the issue's AC test names (`fail_overwritten_by_unexplained_pass`, etc.) use
+literal `"FAIL"`/`"PASS"` throughout, matching evidence_ledger's own synthetic test fixtures
+exactly. Every test written straight off the issue's own AC wording would have passed while the
+real-world integration silently failed. Passing the letter of an issue's acceptance criteria is
+not the same as passing its intent.
+
+**Fix.** `closure_gate.py` reads `evidence_ledger.history()` directly (not `latest()`) and
+classifies each verdict against its own closed vocabulary (`_FAIL_VERDICTS`/`_PASS_VERDICTS`,
+covering both the literal test convention and the real shipped producer strings); an unrecognized
+verdict HALTs `unrecognized-verdict:<check_id>` rather than being assumed to pass (commit on
+`work/397-closure-gate`, same PR as the initial implementation — caught and fixed before
+PR-ready, never shipped).
+
+**Validation.** `tests/test_closure_gate.py` gained six real-vocab tests
+(`test_closure_gate_real_qa_verdict_vocab_no_ship_halts`, `..._ship_with_deferred_satisfies`,
+`test_closure_gate_real_code_review_verdict_vocab_blocked_halts`, `..._clean_satisfies`,
+`test_closure_gate_no_ship_superseded_with_justification`,
+`test_closure_gate_unrecognized_verdict_halts`) alongside the original literal-`"FAIL"`/`"PASS"`
+tests that satisfy the issue's own `-k` filters; both sets pass.
+
+**Generalizable rule.** When building a consumer against a producer's already-shipped data
+contract, always trace the producer's REAL, currently-written values end to end — not just the
+literal strings an upstream issue's acceptance-criteria wording happens to use as shorthand. An
+issue's test names are a convenient fixture vocabulary, not necessarily the production data shape;
+grep the actual `SKILL.md`/call-site `--verdict` values before trusting a sibling module's
+internal convention for the same field.
+
+**Refs.** Evidence-ledger KTDs at `{#evidence-ledger-ktds-398}`; closure-gate KTDs (KTD7) at
+`{#closure-gate-ktds-397}`.
+
+---
 
 ### Branch precedence can make a guard term dead while its outcome test still passes  {#precedence-deadens-guard-term-565}
 
@@ -2524,3 +2573,35 @@ merge (commit `5a92695`). The two dogfood defects shared one primitive — #495'
 **Generalizable rule.** Panels upholding 9/9 is evidence the units are built-as-claimed, not that the diff is sound — always run a whole-diff review pass after a multi-unit workflow, and treat two prompts as standing risks: any "lands in a later unit" doc line (assign the LAST unit a doc-currency sweep) and any "mirror <sibling>" instruction (audit the sibling's known gaps; file the parity fix both ways).
 
 **Refs.** Fix round: all 10 findings fixed in-PR (this commit); agy parity follow-up filed for the shared patterns. Panel-side guardrails from Wave A remain in `{#verify-panels-blind-to-uncommitted-tree}`.
+
+---
+
+### A CLI default under `Path.home()` silently pollutes the real home directory on every existing subprocess-driven test run {#cli-home-default-pollutes-tests-396}
+
+**Evidence.** Issue #396 added `--audit-store` (default `~/.claude/delegation-audit`) to
+`agy_delegate.py`. Before isolating the existing subprocess-driven CLI tests
+(`tests/test_agy_delegate_contract.py`, `tests/test_agy_run_lease.py`,
+`tests/test_agy_apply_policy.py`), a single run of `tests/test_agy_delegate_contract.py` alone left
+two real directories under `~/.claude/delegation-audit/runs/` on the machine running this session
+(`cli-run/`, `flags-run/`) — confirmed and cleaned up before proceeding, not hypothetical.
+
+**Mechanism.** `main()` is the CLI's outermost entry point, so it is the one place that must resolve
+the real-world default when `--audit-store` is omitted (the issue's own explicit requirement). Every
+one of the repo's existing subprocess-driven tests for this CLI invoked `main()` via
+`subprocess.run([sys.executable, str(WRAPPER), ...])` without an `env=` override and without the new
+flag, so they all inherited the pytest process's real `HOME` and silently wrote into it. The
+underlying library functions (`create_validation_bundle`/`create_supervised_bundle`) default their
+new `audit_store_root` parameter to `None` (skip) — but that only protects a *direct* Python caller,
+not a subprocess-spawned CLI invocation, which always goes through `main()`'s eager default
+resolution.
+
+**Generalizable rule.** When a CLI flag's documented default resolves under `Path.home()` (or any
+other real, shared, persistent location outside `tmp_path`), grep every existing
+`subprocess.run([..., str(WRAPPER), ...])` call site for that CLI before shipping the default —
+each one either needs the new flag pointed at an isolated path, or the test needs an isolated `HOME`
+via `monkeypatch.setenv`. A function-level `None`-means-skip default is necessary but not
+sufficient: it protects direct unit-test callers, not subprocess-driven CLI tests, which is a
+different call path entirely.
+
+**Refs.** Fixed in `plugins/agy/scripts/agy_delegate.py` (#396) by isolating all 7 existing
+subprocess call sites across the three test files with an explicit `--audit-store <tmp_path>/audit-store`.

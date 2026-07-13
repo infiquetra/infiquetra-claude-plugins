@@ -1119,6 +1119,7 @@ def production_harvester(
             store=child_store,
             github_runner=github_runner,
             child_state_reader=lambda cid: child_state_reader(cid, nxt),
+            repo_root=repo_root,
         )
         done_set = outcome_store.completed_subplots(child_store)
         all_done = all(n.subplot_id in done_set for n in child_spec.nodes)
@@ -1126,7 +1127,11 @@ def production_harvester(
 
     def harvester(spec: Any, store: Any) -> list[str]:
         return outcome_orchestrator.harvest(
-            spec, store=store, github_runner=github_runner, child_state_reader=child_state_reader
+            spec,
+            store=store,
+            github_runner=github_runner,
+            child_state_reader=child_state_reader,
+            repo_root=repo_root,
         )
 
     return harvester

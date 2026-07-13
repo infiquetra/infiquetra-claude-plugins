@@ -83,8 +83,8 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.82.0",
-      "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, trust-gated external-engine onboarding, provenance, and attestation.",
+      "version": "0.84.0",
+      "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, trust-gated external-engine onboarding, provenance, attestation, and durable delegation-audit reconciliation.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -108,8 +108,8 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.14.4",
-      "description": "Two-phase plan execution with reviewer consensus, non-scoring external advisory convergence diffs, validator gates, chaperone manifests, and guarded nonprod automation.",
+      "version": "2.14.5",
+      "description": "Two-phase plan execution with reviewer consensus, non-scoring external advisory convergence diffs, validator gates, chaperone manifests with write-once draft snapshots, and guarded nonprod automation.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -180,8 +180,8 @@
     {
       "name": "agy",
       "source": "./plugins/agy",
-      "version": "0.2.1",
-      "description": "Antigravity-backed coder reviewer bridge agents with guarded evidence bundles, output-attested receipts, patch import, and fail-loud provenance coercion.",
+      "version": "0.2.2",
+      "description": "Antigravity-backed coder reviewer bridge agents with guarded evidence bundles, output-attested receipts, a durable delegation-audit-store mirror, patch import, and fail-loud provenance coercion.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -200,8 +200,8 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.8.4",
-      "description": "Fleet-commons library plugin: canonical home for cross-plugin shared primitives, bridge receipts, output attestations, and the vendored resolution shim. Scripts-only \u2014 no skills, commands, or agents.",
+      "version": "0.8.5",
+      "description": "Fleet-commons library plugin: shared primitives, bridge receipts, output attestations, the durable delegation audit store, and the resolution shim. Scripts-only \u2014 no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"

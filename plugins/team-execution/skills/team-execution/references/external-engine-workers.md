@@ -266,10 +266,23 @@ here.
 
 ## 5. Verify → reconcile → gate → apply → test → manifest
 
-1. **Verify.** The chaperone reads `evidence.evidence` (the engine's returned patch/output) and
-   reviews it itself — never self-attested. Only after review does the chaperone set
-   `evidence.verified_by_claude = True`; this is the bit `satisfy_gate()` requires (§ "Never a
-   gatekeeper"). If review rejects an otherwise dispatched offload, the chaperone calls
+1. **Verify.** Before anything else, the chaperone snapshots the engine's raw, pre-fix returned
+   patch/output write-once to the durable audit store (#396, R3), keyed by the unit's
+   `execution_id` (one identity namespace with agy's `run_id`, KTD8):
+   ```python
+   audit_store = fleet_commons_shim.load("audit_store")
+   store = audit_store.Store.for_root(None).ensure()
+   audit_store.write_once_draft(store, evidence.execution_id, evidence.evidence)
+   ```
+   This captures the immutable measurement baseline — the engine's output exactly as returned,
+   before any adjudication or fix — so a later diff against the chaperone's applied fix recovers
+   the fix-delta even though only the fixed file survives in the working tree. A second snapshot
+   attempt for the same `execution_id` raises `AuditStoreError`; the chaperone does not retry the
+   snapshot on a re-review of the same unit (a re-dispatch mints a new `execution_id`). Only after
+   this snapshot does the chaperone read `evidence.evidence` and review it itself — never
+   self-attested. Only after review does the chaperone set `evidence.verified_by_claude = True`;
+   this is the bit `satisfy_gate()` requires (§ "Never a gatekeeper"). If review rejects an
+   otherwise dispatched offload, the chaperone calls
    `engine_dispatch.reject_offload(evidence, rejection_note)` with its normalized, non-empty
    reason. It does not apply the rejected patch.
 2. **Build and record the normal reconciliation.** This step is mandatory for accepted `offload`,
@@ -336,8 +349,17 @@ here.
        store, evidence,
        execution_id=f"{worker_id}-{unit_id}", saga_ref=saga_ref, created_at=created_at,
        effort=resolution.effort, protocol="\n".join(resolution.protocol),
+       audit_store_root=fleet_commons_shim.load("audit_store").Store.for_root(None).root,
    )
    ```
+   `audit_store_root` (#396) mirrors the manifest — and the raw `bridge_receipt.v1` when
+   `evidence.runner_receipt` carries one — to the durable delegation-audit store
+   (`~/.claude/delegation-audit` by default), independent of `manifest_store`'s own git-common-dir
+   cache. `engine_dispatch.py` carries no CLI layer of its own, so (KTD5) this is the one
+   documented call site that resolves the real-world default explicitly — `record_dispatch_manifest`
+   itself defaults `audit_store_root` to `None` (skip), so a direct unit-test caller never touches a
+   real developer's home directory unless it opts in. Pass the same resolved root to
+   `adjudicate_manifest(...)` so an adjudicated manifest re-mirrors the updated version.
    `build_dispatch_manifest` derives the disposition from the
    evidence alone: `evidence.halt is not None` → `FELL_BACK_TO_CLAUDE` (carrying the
    halt/downgrade note as `disposition_note`); otherwise, when the evidence's provenance carries

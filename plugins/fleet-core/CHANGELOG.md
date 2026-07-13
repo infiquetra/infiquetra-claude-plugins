@@ -5,6 +5,18 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-07-12
+
+### Added
+- Add `scripts/fleet_commons/audit_store.py`, the durable delegation audit store
+  (`~/.claude/delegation-audit` by default): mirrors receipts, agy result snapshots, and provenance
+  manifests keyed by run id/execution id, plus a write-once pre-fix draft snapshot primitive for the
+  chaperone-dispatch path (#396). Deliberately machine-local and uncommitted, unlike
+  `evidence_ledger.py`'s committed-per-saga store — different durability requirement, different home.
+- Extend `scripts/fleet_commons/delegation_audit.py` with `reconcile_store(...)`, reconciling the
+  durable audit store against claimed dispositions and flagging exactly the delegations whose
+  disposition claims real execution but carry no schema-valid receipt as no-ops.
+
 ## [0.8.4] - 2026-07-09
 
 ### Added

@@ -3834,3 +3834,99 @@ add cross-process locking mirroring `outcome_store`'s locks_dir — or when sub-
 kinds beyond `evidence`/`criteria`/`closure` (the open `payload` dict is the extension seam).
 
 ---
+
+### Delegation audit store (#396): machine-local durable mirror, fleet-core home, write-once drafts {#delegation-audit-store-ktds-396}
+
+**Date:** 2026-07-12 · **Plan:** `docs/plans/2026-07-12-issue-396-delegation-audit-store-plan.md` ·
+**Issue:** #396 (leaf `sub-396` of outcome `evidence-integrity`; depends on #398/PR #567 and #383
+`bridge_receipt.v1`, both already landed)
+
+**Decision.** `agy_delegate.py` and `engine_dispatch.py` mirror every receipt and provenance manifest
+to a new durable store (`~/.claude/delegation-audit` by default), the chaperone-dispatch path
+snapshots the external engine's raw pre-fix output write-once before applying any fix, and a new
+`/delegation-audit` surface reconciles the durable store to flag claimed-but-unproven delegations as
+no-ops.
+
+- **KTD1 — shared primitives live in fleet-core** (`fleet_commons/audit_store.py`), not saga: agy,
+  saga, and team-execution all need symmetric access, and fleet-core is the existing install-boundary-
+  safe home for exactly this shape of cross-plugin primitive (the same rationale `bridge_receipt.py`
+  already documents).
+- **KTD2 — duplicate, don't cross-import, the small atomic-write/write-once/safe-name primitives.**
+  Importing `plugins/saga/scripts/outcome_store.py` from fleet-core would reintroduce the install-time
+  break `bridge_receipt.py`'s docstring warns against; the duplicated surface is ~25 lines.
+  Deliberately mirrors the opposite call evidence_ledger.py's KTD1 made (see above) — that ledger
+  answers "does a fresh clone on a different machine need to verify this," this store answers "does
+  this survive worktree teardown on the same machine" — different requirements, different homes.
+- **KTD3 — machine-local, uncommitted store root**, chosen deliberately opposite to
+  evidence_ledger's committed-per-saga home: delegation evidence must outlive a torn-down worktree on
+  the *same* machine, never needs to reach a different developer's clone, and committing raw
+  diffs/receipts to every PR would bloat history for no reader.
+- **KTD4 — new, distinctly-named module** (`audit_store.py`) beside the existing
+  `fleet_commons/delegation_audit.py` (#384) rather than folding into or renaming it: that module
+  already owns live-transcript classification and bundle corroboration over the disposable location
+  this issue exists to escape; the new `reconcile_store` function extends it to read the durable store
+  instead, reusing its `REAL`/`FALLBACK_SUSPECTED` vocabulary rather than inventing a parallel one.
+- **KTD5 — default-on lives at the outermost entry point only.** `agy_delegate.py`'s CLI resolves the
+  home-dir default when `--audit-store` is omitted; every underlying function defaults its
+  `audit_store_root` parameter to `None` (skip), so direct unit-test callers never touch a real
+  developer's home directory unless they ask to. `engine_dispatch.py` has no CLI, so its default-on
+  behavior lives in the documented chaperone call site instead.
+- **KTD6 — every existing subprocess-driven CLI test for `agy_delegate.py` isolates `--audit-store`
+  explicitly**, named so the home-directory-pollution risk a CLI-level home-dir default creates is
+  never an implicit landmine for a later contributor.
+
+**Revisit when** a future issue asks for cross-machine aggregation of the audit store (KTD3
+deliberately keeps it machine-local today) or a retention/pruning policy is needed as
+`~/.claude/delegation-audit` grows unbounded.
+### Closure gate (#397): required-check set + SHA override in `node.evidence`, supersession is a payload convention {#closure-gate-ktds-397}
+
+**Date:** 2026-07-12 · **Plan:** `docs/plans/2026-07-12-closure-gate-plan.md` · **Issue:** #397
+(consumer of #398's evidence ledger; sub-397 of outcome `evidence-integrity`)
+
+**Decision.** `plugins/saga/scripts/closure_gate.py` wires the evidence ledger into
+`outcome_orchestrator.harvest()`'s completion barrier: a leaf is never harvested `done` without
+passing its declared required checks at the exact SHA the outcome is closing at, and a FAIL can
+never be silently cleared by an unexplained later PASS.
+
+- **KTD1 — required-check set + optional SHA override live in `Node.evidence`.** `evidence` was
+  already documented as an open pass-through map whose schema lands with its consuming units
+  (`references/outcome-spec.md:54`); this is the first consumer to give it one:
+  `required_checks: list[str]` + optional `reviewed_sha` override. Rejected: a new top-level
+  `Node` field (schema surgery on an already-reserved seam).
+- **KTD2 — close-SHA resolution: explicit override wins; else the PR's pre-merge head SHA for a
+  `code` node** (`outcome_github.head_ref_oid`), never the post-squash merge-commit SHA on `main`
+  (which never matches any evidence entry — `/qa`/`/code-review` reviewed the branch head, not the
+  merge commit). A `non-code` node with no override and no PR HALTs `unresolvable-close-sha`
+  rather than silently skipping a declared required check.
+- **KTD3 — supersession is a `payload["supersession_reason"]` convention, not a new ledger entry
+  kind.** `evidence_ledger.write()`'s `payload` is explicitly reserved for downstream extension
+  (evidence-ledger plan R10 names sub-397 directly); adding a `kind: "supersession"` entry type
+  would be schema surgery on an already-merged, already-tested module for a distinction the open
+  payload dict already carries.
+- **KTD4 — one additive read helper, `evidence_ledger.history(store, check_id=...)`.**
+  `latest()` is scoped to one exact `(check_id, reviewed_sha)`, so it alone cannot distinguish
+  "never ran" (missing-evidence) from "ran, but only at a different SHA" (stale-sha); `history()`
+  returns every entry for a check across every SHA so the gate can tell them apart.
+- **KTD5 — the gate calls the already-shipped `verify_chain()` once per evaluation** before
+  trusting any read, so a tampered chain HALTs rather than silently trusting a compromised log.
+- **KTD6 — `harvest()`/`barrier_report()` gain a defaulted `repo_root: Path = Path(".")`.** The
+  ledger is a committed repo-tree path, distinct from the git-common-dir cache `store` already
+  resolves. Defaulted so every existing test call site and every outcome spec that declares no
+  `required_checks` (all of them, today) is unaffected; the two real production call sites
+  (`outcome.py`'s `production_harvester`) already have `repo_root` in scope.
+- **KTD7 — verdict classification is closure_gate's own closed vocabulary, found during
+  implementation self-review, not `evidence_ledger.latest()`'s `superseded_fail` flag.**
+  `latest()` hardcodes a literal `"FAIL"` sentinel — correct for a synthetic fixture, but blind to
+  what the shipped producers actually write (`/qa`: `ship`/`ship-with-deferred`/`no-ship`;
+  `/code-review`: `clean`/`blocked`; neither ever writes literal `"FAIL"`/`"PASS"`). Relying on the
+  literal sentinel would have silently treated a real `no-ship`/`blocked` verdict as satisfied —
+  exactly the silent-pass failure this issue exists to kill. `closure_gate.py` reads
+  `evidence_ledger.history()` directly and classifies against its own closed vocabulary; an
+  unrecognized verdict HALTs `unrecognized-verdict:<check_id>` rather than being assumed to pass.
+
+**Revisit when** a non-`code` node needs native close-SHA gating without an explicit override
+(a tracking-issue close-event hash, e.g.), or when an operator wants closure-gate HALTs surfaced
+through `outcome_report.py`'s `TIER_AMBIGUITY` scan rather than only via `barrier_report()`'s
+per-node `closure_gate` key.
+
+---

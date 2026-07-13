@@ -391,7 +391,9 @@ def dispatch(
       supplying it (or ``gated=True``) enables observer corroboration after the run:
       observer-yes = bundle ``launch_key`` true (``delegation_audit.corroborate``) AND a
       ``_receipt_problems()``-clean receipt. A missing launch flag is observer-NO
-      (conservative).
+      (conservative). HTTP-transport lanes (#524) have no bundle directory, so their
+      observer signal is receipt-only (:func:`_http_receipt_corroborates`): full receipt
+      schema + emitter signature policy + output attestation bound to the returned output.
     - ``gated`` — a self-report "ok" with observer-no becomes ``DELEGATION_INTEGRITY``:
       dispatch returns a typed :class:`RequeueDisposition` ONCE, and a second consecutive
       divergence for the same session+engine raises :class:`DispatchError` (HALT, KTD7).
@@ -543,7 +545,12 @@ def dispatch(
         # bundle launch flag plus a schema-valid receipt. Opt-in (gated or workspace_root) so
         # every existing single-signal advisory caller stays byte-identical.
         two_signal = gated or workspace_root is not None
-        if two_signal:
+        # HTTP-transport lanes have no runs/ bundle directory and no ENGINE_CONFIGS row —
+        # the bridge's receipt IS the observer artifact (#524) — so they corroborate
+        # receipt-only and never consult delegation_audit. Keyed off the registry-built
+        # invocation (authoritative), never off the runner-controlled receipt's own claim.
+        http_lane = invocation.get("transport") == "http"
+        if two_signal and not http_lane:
             # Version-skew guard (#520 F5): a fleet-core lacking delegation_audit degrades
             # NAMED on the provenance; the observer predicate below then reads conservative
             # observer-NO, never a silent accept and never an import/dispatch crash.
@@ -555,6 +562,9 @@ def dispatch(
             runner_receipt,
             workspace_root=workspace_root,
             since_ts=armed_at,
+            transport="http" if http_lane else "",
+            variant=resolution.variant,
+            evidence_text=output,
         )
         integrity_key = _integrity_key(session_id, resolution.engine_id)
         if two_signal and not observer_yes:
@@ -997,6 +1007,9 @@ def _observer_corroborates(
     *,
     workspace_root: Path | str | None,
     since_ts: float | None,
+    transport: str = "",
+    variant: str = "",
+    evidence_text: str = "",
 ) -> bool:
     """The independent observer signal (#384 U5): launch flag true + schema-valid receipt.
 
@@ -1006,9 +1019,17 @@ def _observer_corroborates(
     is observer-NO too (#520 F5) — ``dispatch`` records the named
     ``delegation-audit-unavailable`` degradation on the provenance. The observer never
     raises -- divergence handling (not this predicate) decides what a "no" costs.
+
+    HTTP-transport lanes (#524) have no runs/ bundle directory and no ``ENGINE_CONFIGS``
+    row — the HTTP bridge's own receipt IS the observer artifact — so ``transport="http"``
+    routes to :func:`_http_receipt_corroborates` (receipt-only, proof extensions and output
+    attestation included) instead of the bundle scan. The subprocess-bundle path below is
+    byte-identical for every non-HTTP engine (issue #524 non-goal: agy/codex unchanged).
     """
     if _base_receipt_problems(runner_receipt):
         return False
+    if transport == "http":
+        return _http_receipt_corroborates(engine_id, variant, runner_receipt, evidence_text)
     delegation_audit, _ = _load_fleet_module("delegation_audit")
     if delegation_audit is None:
         return False
@@ -1017,6 +1038,37 @@ def _observer_corroborates(
     except Exception:  # noqa: BLE001 - observer-no beats crashing the dispatch path
         return False
     return bool(corroboration.launched)
+
+
+def _http_receipt_corroborates(
+    engine_id: str,
+    variant: str,
+    runner_receipt: dict[str, Any] | None,
+    evidence_text: str,
+) -> bool:
+    """Receipt-only observer signal for HTTP-bridge lanes (#524, fix direction 1).
+
+    Observer-yes requires ALL of: a fully schema-valid ``bridge_receipt.v1`` (proof
+    extensions INCLUDED, unlike the base check every lane already passed), the receipt's
+    own ``transport`` being ``http`` and its engine/variant identity matching the
+    resolution, and the emitter's ``bridge_signatures`` policy passing with the output
+    attestation bound to the ACTUAL returned output — so a receipt attesting different
+    bytes than the evidence the engine handed back is a genuine divergence and still
+    trips the tripwire. Anything short of all of that is observer-NO; never raises.
+    """
+    if runner_receipt is None or _receipt_problems(runner_receipt):
+        return False
+    if runner_receipt.get("transport") != "http":
+        return False
+    if runner_receipt.get("engine_id") != engine_id or runner_receipt.get("variant") != variant:
+        return False
+    try:
+        problems = bridge_signatures.validate_receipt_signature(
+            runner_receipt, evidence_text=evidence_text
+        )
+    except Exception:  # noqa: BLE001 - observer-no beats crashing the dispatch path
+        return False
+    return not problems
 
 
 def _reject_gatekeeper_keys(result: dict[str, Any]) -> None:

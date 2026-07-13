@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.87.0] - 2026-07-13
+
+### Fixed - HTTP-bridge lanes corroborate receipt-only instead of structurally failing (#524)
+
+- **`plugins/saga/scripts/engine_dispatch.py`:** two-signal dispatch through an HTTP-transport
+  lane (ollama-cloud, deepseek — any `via: engine-bridge-http` registry row) no longer discards
+  honest ok output as a `DELEGATION_INTEGRITY` divergence. `fleet_commons.delegation_audit`'s
+  `ENGINE_CONFIGS` has no row for HTTP engines (they write no `runs/` bundle directory), so
+  `corroborate()` raised `UnknownEngineError` and the observer answered NO on every HTTP
+  dispatch that supplied `workspace_root` — the exact discard observed in the #468 drill
+  (narrative OBS-1). HTTP lanes now corroborate receipt-only (`_http_receipt_corroborates`):
+  the bridge's `bridge_receipt.v1` is the observer artifact, and observer-yes requires the
+  full receipt schema (proof extensions included), the `http-bridge` signature policy, the
+  output attestation binding the receipt to the ACTUAL returned output, and engine/variant/
+  transport identity matching the resolution. A receipt attesting different bytes than the
+  returned output, a missing or zero-token receipt, or an identity mismatch is still
+  observer-NO and still trips the KTD7 requeue-once-then-HALT tripwire. The lane is keyed
+  off the registry-built invocation's `transport`, never the runner-controlled receipt's own
+  claim; the agy/codex bundle-corroboration path is byte-identical (issue non-goal).
+
 ## [0.86.0] - 2026-07-13
 
 ### Fixed - delegation tripwires hardening: durable requeue counter, skew-safe dispatch imports (#520; #384 review F1/F5)

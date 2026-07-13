@@ -1,5 +1,38 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-13
+
+### HTTP-bridge lanes corroborate receipt-only; no ENGINE_CONFIGS receipt-store row (#524) {#http-receipt-only-corroboration-524}
+
+**Decision.** Two-signal dispatch corroboration for HTTP-transport engines (ollama-cloud,
+deepseek — any `via: engine-bridge-http` registry row) validates the observer signal against the
+HTTP bridge's own `bridge_receipt.v1` (`engine_dispatch._http_receipt_corroborates`): full receipt
+schema including proof extensions, the `http-bridge` `bridge_signatures` emitter policy, the
+output attestation bound to the ACTUAL returned output, and engine/variant/transport identity
+matching the registry-built resolution. The lane is selected by the invocation dict's `transport`
+(built from the registry row, so runner-untouchable), never by the receipt's own transport claim.
+`fleet_commons.delegation_audit.ENGINE_CONFIGS` stays a subprocess-bundle-engine table (agy,
+codex) and the bundle path is byte-identical (issue #524 fix direction 1).
+
+**Rationale.** The HTTP bridge writes no durable per-run artifact: its receipt travels inside the
+runner result (`engine_bridge_http._invoke`), so there is no independent `runs/` bundle for
+`delegation_audit.corroborate()` to scan — calling it raised `UnknownEngineError`, the observer
+answered NO, and every honest HTTP ok was discarded as `DELEGATION_INTEGRITY` (the #468 drill's
+OBS-1). The receipt's output attestation is the strongest observer check available for that lane:
+it binds the receipt to the exact returned bytes, so a fabricated-ok or tampered-output run still
+diverges and still trips the KTD7 requeue-once-then-HALT tripwire.
+
+**Rejected alternative.** An `ENGINE_CONFIGS` row keyed to a receipt store (fix direction 2):
+it would require the bridge to start persisting receipts to disk purely so the bundle-scan
+algorithm has something to read — a second copy of the same runner-produced bytes with extra
+moving parts (store location, retention, mtime filtering) and no independence gain, since both
+"signals" would originate from the identical runner result. Receipt-only names that honestly.
+
+**Revisit when.** An HTTP-lane runner gains a genuinely independent observer artifact (e.g. a
+provider-side usage/billing probe, or the bridge moves out-of-process and persists receipts
+under its own authority) — then a true second signal becomes possible and the receipt-only
+posture should be upgraded rather than trusted further.
+
 ## 2026-07-12
 
 ### Spend observability reads the leaf-produced ledger at two granularities; no new fallback-tier or ledger schema where one already exists (#402) {#spend-observability-ktds-402}

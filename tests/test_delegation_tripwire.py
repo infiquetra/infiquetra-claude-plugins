@@ -770,6 +770,195 @@ class TestTwoSignalAcceptanceMatrix:
 
 
 # ---------------------------------------------------------------------------
+# #524 -- HTTP-bridge lanes corroborate receipt-only: no ENGINE_CONFIGS row and no
+# runs/ bundle directory exist for them, so the bridge's receipt IS the observer
+# artifact. Honest ok output must be corroborated and KEPT; a receipt attesting
+# different bytes than the returned output is a genuine divergence and still trips.
+# ---------------------------------------------------------------------------
+
+_HTTP_OUTPUT = "external http finding"
+
+
+def _http_resolution(engine_id: str = "ollama-cloud", variant: str = "gpt-oss-120b") -> Any:
+    return _R.Resolution(
+        engine_id=engine_id,
+        variant=variant,
+        effort="default",
+        recipe="recipe",
+        protocol=["Run."],
+        payload="do the delegated thing",
+        write_capable=False,
+        fallback=None,
+        halt=None,
+        invocation={
+            "via": "engine-bridge-http",
+            "base_url": "https://ollama.example.invalid/v1",
+            "model": "gpt-oss:120b",
+            "effort": "default",
+            "auth": {"mode": "bearer", "key_env": "OLLAMA_API_KEY"},
+        },
+    )
+
+
+def _http_receipt(
+    *,
+    engine_id: str = "ollama-cloud",
+    variant: str = "gpt-oss-120b",
+    attested_content: str = _HTTP_OUTPUT,
+    external_tokens: float = 42.0,
+) -> dict[str, Any]:
+    """A receipt shaped exactly like ``engine_bridge_http._invoke`` emits (http runner section)."""
+    output_attestation = _D.fleet_commons_shim.load("output_attestation")
+    return dict(
+        _D._bridge_receipt.emit_receipt(
+            engine_id=engine_id,
+            variant=variant,
+            transport="http",
+            wall_time_s=0.25,
+            bytes_produced=len(attested_content.encode("utf-8")),
+            runner={
+                "url": "https://ollama.example.invalid/v1/chat/completions",
+                "status_code": 200,
+                "model": "gpt-oss:120b",
+            },
+            receipt_emitter="http-bridge",
+            run_id="http:ollama-cloud:gpt-oss-120b:1.000000000",
+            external_tokens=external_tokens,
+            output_attestation=output_attestation.emit_attestation(
+                artifact="evidence",
+                content=attested_content,
+            ),
+        )
+    )
+
+
+def _http_dispatch(
+    tmp_path: Path, *, gated: bool = True, session_id: str = "", runner: Any = None
+) -> Any:
+    return _D.dispatch(
+        _http_resolution(),
+        runner=runner,
+        model=None,
+        gated=gated,
+        session_id=session_id,
+        workspace_root=tmp_path,
+    )
+
+
+class TestHttpLaneReceiptCorroboration:
+    def test_honest_ok_without_engine_configs_row_is_corroborated_and_kept(
+        self, tmp_path: Path
+    ) -> None:
+        """#524 acceptance: an honest ok from an engine with NO ENGINE_CONFIGS row and NO
+        runs/ bundle dir (workspace_root supplied, gated) is corroborated receipt-only and
+        the engine's output is KEPT -- not discarded as a DELEGATION_INTEGRITY divergence."""
+        assert "ollama-cloud" not in _D._delegation_audit.ENGINE_CONFIGS
+
+        def honest_runner(invocation: dict[str, Any]) -> dict[str, Any]:
+            assert invocation["transport"] == "http"
+            return {"status": "ok", "output": _HTTP_OUTPUT, "receipt": _http_receipt()}
+
+        evidence = _http_dispatch(tmp_path, session_id="sess-524-honest", runner=honest_runner)
+
+        assert isinstance(evidence, _D.AdvisoryEvidence)
+        assert evidence.halt is None
+        assert evidence.evidence == _HTTP_OUTPUT
+        assert evidence.provenance["observer_corroborated"] is True
+        assert "integrity" not in evidence.provenance
+
+        manifest = _manifest_for(tmp_path, evidence, "exec-524-honest")
+        assert manifest.disposition is _PM.Disposition.RAN_AS_REQUESTED
+
+    def test_advisory_http_ok_keeps_output_too(self, tmp_path: Path) -> None:
+        """Non-gated (workspace_root only) HTTP dispatch of an honest ok also keeps the
+        output -- the exact #468 OBS-1 discard path."""
+
+        def honest_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+            return {"status": "ok", "output": _HTTP_OUTPUT, "receipt": _http_receipt()}
+
+        evidence = _http_dispatch(tmp_path, gated=False, runner=honest_runner)
+        assert isinstance(evidence, _D.AdvisoryEvidence)
+        assert evidence.halt is None
+        assert evidence.evidence == _HTTP_OUTPUT
+        assert evidence.provenance["observer_corroborated"] is True
+
+    def test_divergent_attestation_still_trips_tripwire(self, tmp_path: Path) -> None:
+        """A receipt attesting DIFFERENT bytes than the returned output is a genuine
+        divergence: requeue once, then HALT on the second consecutive divergence (KTD7)."""
+        session = "sess-524-divergent"
+
+        def tampered_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "status": "ok",
+                "output": "tampered output the receipt never attested",
+                "receipt": _http_receipt(attested_content=_HTTP_OUTPUT),
+            }
+
+        first = _http_dispatch(tmp_path, session_id=session, runner=tampered_runner)
+        assert isinstance(first, _D.RequeueDisposition)
+        assert first.attempt == 1
+        assert "delegation-integrity" in first.reason
+        assert first.evidence.evidence == ""
+        assert first.evidence.provenance["integrity"] == _PM.Disposition.DELEGATION_INTEGRITY.value
+
+        with pytest.raises(_D.DispatchError, match="HALT"):
+            _http_dispatch(tmp_path, session_id=session, runner=tampered_runner)
+
+    def test_missing_receipt_is_observer_no(self, tmp_path: Path) -> None:
+        """An HTTP ok with no receipt at all has no observer artifact -- divergence."""
+
+        def receiptless_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+            return {"status": "ok", "output": _HTTP_OUTPUT, "receipt": None}
+
+        disposition = _http_dispatch(
+            tmp_path, session_id="sess-524-noreceipt", runner=receiptless_runner
+        )
+        assert isinstance(disposition, _D.RequeueDisposition)
+        assert "delegation-integrity" in disposition.reason
+
+    def test_zero_external_tokens_receipt_is_observer_no(self, tmp_path: Path) -> None:
+        """The http-bridge signature policy disallows zero external tokens -- a
+        zero-token receipt fails receipt-only corroboration."""
+
+        def zero_token_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "status": "ok",
+                "output": _HTTP_OUTPUT,
+                "receipt": _http_receipt(external_tokens=0.0),
+            }
+
+        disposition = _http_dispatch(
+            tmp_path, session_id="sess-524-zerotok", runner=zero_token_runner
+        )
+        assert isinstance(disposition, _D.RequeueDisposition)
+        assert "delegation-integrity" in disposition.reason
+
+    def test_receipt_identity_mismatch_is_observer_no(self, tmp_path: Path) -> None:
+        """A receipt naming a different engine than the resolution fails corroboration."""
+
+        def mismatched_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "status": "ok",
+                "output": _HTTP_OUTPUT,
+                "receipt": _http_receipt(engine_id="deepseek"),
+            }
+
+        disposition = _http_dispatch(
+            tmp_path, session_id="sess-524-mismatch", runner=mismatched_runner
+        )
+        assert isinstance(disposition, _D.RequeueDisposition)
+        assert "delegation-integrity" in disposition.reason
+
+    def test_bundle_engines_are_unchanged_by_the_http_lane(self, tmp_path: Path) -> None:
+        """Non-goal guard: agy's bundle corroboration path is untouched -- a launch-flag-false
+        bundle still diverges exactly as before the #524 change."""
+        _write_bundle(tmp_path, "run-524-agy", payload={"status": "ok", "agy_launched": False})
+        disposition = _dispatch(tmp_path, gated=True, session_id="sess-524-agy")
+        assert isinstance(disposition, _D.RequeueDisposition)
+        assert "delegation-integrity" in disposition.reason
+
+
+# ---------------------------------------------------------------------------
 # U6 -- cross-mechanism integration scenarios (arm -> PreToolUse -> Stop) that
 # no single unit's tests prove: the *same* armed session is walked through both
 # hooks in sequence, in a scratch repo, exactly as a real turn would.

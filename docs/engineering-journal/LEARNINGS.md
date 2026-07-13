@@ -55,6 +55,42 @@ landed spine — never duplicate it to match the issue's indicative file list.
 
 **Refs.** DECISIONS `{#earned-ratings-proposal-only-459}`.
 
+### The consensus panel already computes its own agreement signal every cycle — and throws it away  {#panel-agreement-signal-discarded-462}
+
+**Context.** Exploration #462 asked when the team-execution consensus panel can safely shrink.
+The blocking question was whether measuring reviewer agreement/independence needs new review
+machinery or just persistence of what already happens.
+
+**Evidence.** `docs/analysis/2026-07-13-panel-economics-exploration.md` (this commit).
+`consensus-protocol.md:153-161` — fix consolidation groups fix requests by file/section and
+"deduplicates identical fixes", i.e. it computes findings-overlap between reviewers on every
+multi-failure cycle, then discards it; `:43-49`/`:165-180` render per-reviewer scores as
+display-only tables; `:184-196` keeps only a prose summary after 3 cycles. Meanwhile the merged
+ledger substrate is ready to receive the data: `run_ledger.py:43` (`FACT_KINDS` closed set —
+one-line extension), `reconcile.py:715-757` (typed run-fact writer precedent),
+`evidence_ledger.py:213-231` (consensus gate custody fits `write()` with zero schema change).
+
+**Mechanism.** The protocol was authored as an in-session ceremony: every signal a calibration
+loop needs (scores, verdicts, overlapping findings, panel composition) is produced transiently
+for the operator's eyes and never crosses into a machine-readable store, because no store
+existed when the protocol was written. The substrate (#398/#401) landed later, substrate-first
+by design, so the gap is now pure wiring, not architecture.
+
+**Fix (or queued).** Recommendation document shipped this commit; Priority-1 follow-up issue
+(agreement-ledger instrumentation) is the concrete action, per the document's section 10.
+
+**What surprised.** Two of the issue's own evidence anchors had drifted
+(`consensus-protocol.md:142-157`→`:43-49`/`:165-180`, `execution_spec.py:114`→`:156` for
+`VERIFY_N_CAP`) — the claims held but the lines moved, in a document written nine days ago.
+
+**Generalizable rule.** Before designing new measurement machinery, check whether the ceremony
+already computes the signal transiently — persisting an existing intermediate is an order of
+magnitude cheaper than adding a measurement step, and it cannot change behavior. And treat
+file:line anchors in issues as hypotheses to re-verify, not facts: they rot in days in an
+active repo.
+
+**Refs.** #462, #338, #398, #401, #402; `{#external-engines-never-gatekeepers}` (#283).
+
 ### A tool-boundary schema that is looser than the runtime predicate re-opens the gap it was built to close  {#verifier-schema-predicate-alignment-527}
 
 **Context.** #527 hardens the refute-N verify panels against prose verdicts (workflow

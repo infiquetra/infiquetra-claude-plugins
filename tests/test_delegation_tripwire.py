@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import ModuleType
@@ -899,3 +903,282 @@ class TestFleetCoreUnavailableFailOpen:
         }
         with patch.dict(sys.modules, {"fleet_commons_shim": self._broken_shim()}):
             assert _run_main(stop_hook, payload) == 0
+
+
+# ---------------------------------------------------------------------------
+# #520 hardening — F1 durable requeue counter, F4 marker locking, F5 version-
+# skew-safe dispatch imports, and the audit-record filename traversal guard.
+# ---------------------------------------------------------------------------
+
+FLEET_CORE_ROOT = ROOT / "plugins" / "fleet-core"
+
+# Subprocess driver for the cross-process KTD7 proof: each invocation is its own Python
+# process (its own `engine_dispatch` module, its own in-process dict), so the requeue-once-
+# then-HALT guarantee can only hold if the divergence count is read back from durable state.
+_XPROC_DRIVER = """\
+import sys
+
+SAGA_SCRIPTS = sys.argv[1]
+WORKSPACE = sys.argv[2]
+sys.path.insert(0, SAGA_SCRIPTS)
+
+import engine_dispatch as D
+import engine_resolver as R
+
+output_attestation = D.fleet_commons_shim.load("output_attestation")
+output = "external finding"
+receipt = dict(
+    D._bridge_receipt.emit_receipt(
+        engine_id="agy",
+        variant="gemini-3.1-pro-high",
+        transport="cli",
+        wall_time_s=0.5,
+        bytes_produced=len(output),
+        runner={"pid": 4242, "argv": ["agy", "run"], "exit_code": 0},
+        receipt_emitter="agy-delegate",
+        run_id="agy-run-xproc",
+        external_tokens=17,
+        output_attestation=output_attestation.emit_attestation(
+            artifact="evidence", content=output
+        ),
+    )
+)
+
+resolution = R.Resolution(
+    engine_id="agy",
+    variant="gemini-3.1-pro-high",
+    effort="high",
+    recipe="recipe",
+    protocol=["Run."],
+    payload="do the delegated thing",
+    write_capable=False,
+    fallback=None,
+    halt=None,
+)
+
+
+def runner(_invocation):
+    return {"status": "ok", "output": output, "receipt": receipt}
+
+
+try:
+    result = D.dispatch(
+        resolution,
+        runner=runner,
+        model="opus",
+        gated=True,
+        session_id="sess-xproc",
+        workspace_root=WORKSPACE,
+    )
+except D.DispatchError as exc:
+    print(f"halt:{exc}")
+    sys.exit(3)
+if isinstance(result, D.RequeueDisposition):
+    print(f"requeue:{result.attempt}")
+    sys.exit(0)
+print(f"unexpected:{type(result).__name__}")
+sys.exit(4)
+"""
+
+
+class TestDurableIntegrityCounter:
+    """#520 F1: the KTD7 counter must survive process boundaries."""
+
+    def test_second_divergence_halts_across_separate_processes(self, tmp_path: Path) -> None:
+        """DoD: two SEPARATE dispatch processes; the second consecutive divergence HALTs."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        _write_bundle(workspace, "run-xproc", payload={"status": "ok", "agy_launched": False})
+        driver = tmp_path / "driver.py"
+        driver.write_text(_XPROC_DRIVER, encoding="utf-8")
+        env = dict(os.environ)
+        env["FLEET_COMMONS_ROOT"] = str(FLEET_CORE_ROOT)
+        cmd = [sys.executable, str(driver), str(SAGA_SCRIPTS), str(workspace)]
+
+        first = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120)
+        assert first.returncode == 0, first.stdout + first.stderr
+        assert first.stdout.strip() == "requeue:1"
+        # The divergence count is durable, not process memory.
+        integrity_file = workspace / ".claude" / "delegation" / "integrity.json"
+        assert integrity_file.is_file()
+        assert _delegation_state.integrity_attempts("sess-xproc", "agy", root=workspace) == 1
+
+        second = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120)
+        assert second.returncode == 3, second.stdout + second.stderr
+        assert second.stdout.startswith("halt:")
+        assert "second consecutive delegation-integrity divergence" in second.stdout
+        # Post-HALT the streak resets, so a fresh cycle gets its one requeue again.
+        assert _delegation_state.integrity_attempts("sess-xproc", "agy", root=workspace) == 0
+
+    def test_integrity_counter_persists_increments_and_clears(self, tmp_path: Path) -> None:
+        assert _delegation_state.integrity_attempts("s1", "agy", root=tmp_path) == 0
+        assert _delegation_state.record_integrity_divergence("s1", "agy", root=tmp_path) == 1
+        assert _delegation_state.integrity_attempts("s1", "agy", root=tmp_path) == 1
+        assert _delegation_state.record_integrity_divergence("s1", "agy", root=tmp_path) == 2
+        # Keyed session+engine: neighbors are isolated in both directions.
+        assert _delegation_state.integrity_attempts("s1", "codex", root=tmp_path) == 0
+        assert _delegation_state.integrity_attempts("s2", "agy", root=tmp_path) == 0
+        _delegation_state.clear_integrity_attempts("s1", "agy", root=tmp_path)
+        assert _delegation_state.integrity_attempts("s1", "agy", root=tmp_path) == 0
+
+    def test_stale_counter_is_invisible_and_a_new_streak_starts_at_one(
+        self, tmp_path: Path
+    ) -> None:
+        stale_now = time.time() - _delegation_state.DEFAULT_TTL_SECONDS - 60
+        _delegation_state.record_integrity_divergence("s-ttl", "agy", root=tmp_path, now=stale_now)
+        assert _delegation_state.integrity_attempts("s-ttl", "agy", root=tmp_path) == 0
+        assert _delegation_state.record_integrity_divergence("s-ttl", "agy", root=tmp_path) == 1
+
+    def test_integrity_read_fails_open_on_corrupt_file(self, tmp_path: Path) -> None:
+        path = tmp_path / ".claude" / "delegation" / "integrity.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("{corrupt", encoding="utf-8")
+        assert _delegation_state.integrity_attempts("s", "agy", root=tmp_path) == 0
+
+    def test_clear_never_creates_the_delegation_dir(self, tmp_path: Path) -> None:
+        _delegation_state.clear_integrity_attempts("s", "agy", root=tmp_path)
+        assert not (tmp_path / ".claude").exists()
+
+
+class TestConcurrentMarkerWriters:
+    """#520 F4: arm()/disarm() read-modify-write is serialized; no entry may be lost."""
+
+    def test_concurrent_arms_lose_no_entries(self, tmp_path: Path) -> None:
+        count = 16
+        barrier = threading.Barrier(count)
+        errors: list[Exception] = []
+
+        def _worker(index: int) -> None:
+            try:
+                barrier.wait(timeout=30)
+                _delegation_state.arm("agy", f"sess-conc-{index}", "test-dispatcher", root=tmp_path)
+            except Exception as exc:  # noqa: BLE001 - surfaced via the errors list
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_worker, args=(i,)) for i in range(count)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        assert errors == []
+        for index in range(count):
+            assert _delegation_state.active(f"sess-conc-{index}", root=tmp_path) is not None, (
+                f"lost marker entry for sess-conc-{index} (fail-open tripwire loss)"
+            )
+
+    def test_concurrent_divergence_records_lose_no_counts(self, tmp_path: Path) -> None:
+        count = 8
+        barrier = threading.Barrier(count)
+        results: list[int] = []
+        errors: list[Exception] = []
+        lock = threading.Lock()
+
+        def _worker() -> None:
+            try:
+                barrier.wait(timeout=30)
+                attempt = _delegation_state.record_integrity_divergence(
+                    "sess-conc-div", "agy", root=tmp_path
+                )
+                with lock:
+                    results.append(attempt)
+            except Exception as exc:  # noqa: BLE001 - surfaced via the errors list
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_worker) for _ in range(count)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        assert errors == []
+        assert sorted(results) == list(range(1, count + 1))
+        assert _delegation_state.integrity_attempts("sess-conc-div", "agy", root=tmp_path) == count
+
+
+def _skewed_fleet_core_root(tmp_path: Path) -> Path:
+    """A fake fleet-core install predating the delegation modules (< 0.8.0 era)."""
+    fake_root = tmp_path / "old-fleet-core"
+    shutil.copytree(
+        FLEET_CORE_ROOT / "scripts" / "fleet_commons",
+        fake_root / "scripts" / "fleet_commons",
+    )
+    for too_new in ("delegation_audit.py", "delegation_state.py", "audit_store.py"):
+        (fake_root / "scripts" / "fleet_commons" / too_new).unlink()
+    return fake_root
+
+
+class TestVersionSkewSafeDispatchImports:
+    """#520 F5: engine_dispatch must import and degrade NAMED under fleet-core skew."""
+
+    def test_import_succeeds_against_fleet_core_without_delegation_modules(
+        self, tmp_path: Path
+    ) -> None:
+        fake_root = _skewed_fleet_core_root(tmp_path)
+        env = dict(os.environ)
+        env["FLEET_COMMONS_ROOT"] = str(fake_root)
+        env["PYTHONPATH"] = str(SAGA_SCRIPTS)
+        proc = subprocess.run(
+            [sys.executable, "-c", "import engine_dispatch; print('imported-ok')"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "imported-ok" in proc.stdout
+
+    def test_dispatch_records_named_degradation_under_version_skew(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_root = _skewed_fleet_core_root(tmp_path)
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        monkeypatch.setenv("FLEET_COMMONS_ROOT", str(fake_root))
+
+        evidence = _dispatch(workspace, gated=False, session_id="sess-skew")
+
+        assert isinstance(evidence, _D.AdvisoryEvidence)
+        tripwire = str(evidence.provenance.get("tripwire", ""))
+        assert tripwire.startswith("delegation-audit-unavailable")
+        assert "delegation_state" in tripwire
+        degradation = str(evidence.provenance.get("degradation", ""))
+        assert degradation.startswith("delegation-audit-unavailable")
+        assert "delegation_audit" in degradation
+        # Conservative posture is preserved: no silent accept under skew.
+        assert evidence.provenance.get("integrity") == "delegation-integrity"
+        assert evidence.halt is not None
+
+    def test_lazy_module_attributes_still_resolve_against_a_healthy_root(self) -> None:
+        """PEP 562 back-compat: `engine_dispatch._delegation_state` etc. keep working."""
+        assert _D._delegation_state is not None
+        assert _D._delegation_audit is not None
+        assert _D._audit_store is not None
+        with pytest.raises(AttributeError):
+            _D._no_such_module  # noqa: B018 - attribute access IS the assertion
+
+
+class TestAuditRecordFilenameGuard:
+    """#384 review suppressed finding: session_id must never traverse the audits dir."""
+
+    def test_traversal_session_id_stays_inside_audits_dir(
+        self, stop_hook: Any, tmp_path: Path
+    ) -> None:
+        record = {"session_id": "../../evil", "verdict": "fallback_suspected"}
+        path_str = stop_hook._write_audit_record(tmp_path, record)
+        assert path_str is not None
+        written = Path(path_str).resolve()
+        audits_dir = (tmp_path / ".claude" / "delegation" / "audits").resolve()
+        assert written.parent == audits_dir
+        assert written.name.endswith("-evil.json")
+        assert written.is_file()
+        assert not (tmp_path / "evil.json").exists()
+
+    def test_absolute_and_empty_session_ids_degrade_to_safe_names(
+        self, stop_hook: Any, tmp_path: Path
+    ) -> None:
+        audits_dir = tmp_path / ".claude" / "delegation" / "audits"
+        for session, expected in (("/etc/passwd", "passwd"), ("", "unknown")):
+            path_str = stop_hook._write_audit_record(tmp_path, {"session_id": session})
+            assert path_str is not None
+            written = Path(path_str)
+            assert written.parent == audits_dir
+            assert written.name.endswith(f"-{expected}.json")

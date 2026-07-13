@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.86.0] - 2026-07-13
+
+### Fixed - delegation tripwires hardening: durable requeue counter, skew-safe dispatch imports (#520; #384 review F1/F5)
+
+- **`plugins/saga/scripts/engine_dispatch.py`:** the KTD7 re-queue-once-then-HALT consecutive-
+  divergence counter is now read from and written to the durable delegation-state marker family
+  (`fleet_commons.delegation_state.record_integrity_divergence`,
+  `.claude/delegation/integrity.json`, keyed session + engine) instead of a module-level dict, so
+  a consumer driving `dispatch(gated=True)` one-process-per-attempt genuinely HALTs on the second
+  consecutive divergence instead of requeueing forever (#384 review F1, plan KTD7). The
+  in-process dict survives only as a fallback when the durable store is unavailable.
+- **`plugins/saga/scripts/engine_dispatch.py`:** the `delegation_audit` / `delegation_state` /
+  `audit_store` fleet-core modules load lazily with a named `delegation-audit-unavailable`
+  degradation (the `tripwire_unarmed` pattern) instead of crashing every `engine_dispatch` import
+  under version skew (saga >= 0.74.0 against fleet-core < 0.8.0; #384 review F5). Observer
+  corroboration stays conservative (observer-NO) under skew — degraded, named, never a silent
+  accept. Back-compat module attributes (`_delegation_audit` etc.) resolve via PEP 562.
+- **`plugins/saga/hooks/delegation_stop_audit_hook.py`:** audit-record filenames sanitize the
+  harness-supplied `session_id` through `Path(...).name`, closing the `../` path-traversal window
+  from the #384 review's suppressed hardening note.
+
 ## [0.85.0] - 2026-07-13
 
 ### Changed - verify-panel verdict schema: tool-boundary enforcement aligned with the reporter predicate (#527)

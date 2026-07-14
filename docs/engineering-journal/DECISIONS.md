@@ -2,6 +2,60 @@
 
 ## 2026-07-14
 
+### Posture renegotiation is one atomic verb over the existing vocabularies; merge/deploy gates are one-way; strand = andon, not a new stop surface (#433) {#outcome-posture-renegotiation-433}
+
+**Decision.** Mid-run posture renegotiation (#433) ships as ONE verb (`outcome repost`, engine
+`plugins/saga/scripts/outcome_intent.py`) that mutates ONLY the posture vocabularies that already
+exist — campaign posture is the #380 intent envelope (`run_mode` + `ceremony_gates`), node
+posture is the existing `degrade_policy`/`sandbox` — through the same atomic
+snapshot→validate→`bump_revision`→`decision_trail` shape as every structural edit. Five contract
+choices, as hardened by the adversarial verify round: (1) `ceremony_gates.merge`/`deploy_nonprod`
+ARE the issue's `merge_gate`/`deploy_gate` (no new fields), and they move only toward MORE gating
+— a gate→auto repost is rejected outright, even on an envelope-less campaign whose effective
+gates default to `gate`, and the SAME validation runs on a live `set-intent` first attach
+(`validate_live_attach`; any dispatch record, either phase, makes the campaign live), with every
+accepted attach writing a `set-intent` trail entry — one rule, one trail, no second-verb side
+door. They are, honestly, recorded posture with no engine consumer until #449. (2) Overlap
+safety is `intent_revision` plus a dispatch-time posture snapshot on each leaf's dispatch
+records — BOTH phases, the pre-dispatch `intent` record and the settled `commit` record, so the
+crash-after-intent window carries its era — that INCLUDES the campaign envelope
+(`posture.intent`, `null` = envelope-less): in-flight leaves finish under dispatch-time posture
+for dispatch AND completion (harvest / barrier_report evaluate implied closure checks against
+the dispatch-era envelope), pending leaves pick up the amendment — and a committed repost
+survives the demonstrated concurrent-tick clobber: `save_spec` is compare-and-swap on the
+load-time revision (`StaleSpecError`; the cost processor reloads-and-reapplies loudly) and the
+reconcile loop re-checks the on-disk revision per tick and per leaf before dispatching (the
+precisely-bounded residual sub-windows — the dispatch-side interleave AND `save_spec`'s own
+lockless check→write gap — are documented in `references/outcome-spec.md`, not claimed away). (3) A repost that would strand an in-flight
+`destructive` leaf's sandbox authorization — where in-flight fail-closed includes a bare
+intent-phase dispatch record (the TOCTOU window) — raises the EXISTING #372 stop surface (a
+`coordinator`-writer `andon_halt` via `raise_strand_halt`, append-once per `(writer, scope)`,
+with the ledger record append-once per `(phase, key)`) rather than a new campaign-halt
+mechanism — the amendment is rejected, spec untouched, no silent resolution either direction,
+no duplicate directives on repeats. (4) Approval interplay is derived from the revision-keyed
+R20 gate: any repost bump re-closes it; a PURE-tightening repost carries the prior approval
+forward with `carried-forward:tightening-repost:r<old>` provenance. (5) The two isolated
+`workspace_isolation` values are mutually incomparable, so a move between them classifies
+LOOSEN conservatively — the misread costs one extra re-approval, never skips one. The R8
+`scoped_repose` offer is restricted to the one halt class the offered verb can actually
+resolve (a `degrade_policy`-borne guarantee, no tags); attending / tag-borne / destructive /
+availability halts are honestly offer-less.
+
+**Rejected alternatives.** New `merge_gate`/`deploy_gate` fields on `OutcomeSpec` (forks the
+#380 vocabulary the issue explicitly says to compose with); a family of per-axis setter verbs
+(the issue-map consolidation rationale: one verb, one revision counter, one trail); overloading
+`set-intent` for renegotiation (its refuse-overwrite contract is load-bearing for #380's
+ask-once story); a rejected-repost error WITHOUT halting the campaign for the strand case
+(new work would keep dispatching under a posture the operator just declared unacceptable);
+applying #372's standalone `re-tier`/`add-reviewer` amendments through this path in the same PR
+(tier is not a #433 posture axis — stays #594 R2).
+
+**Revisit when.** #594 R2 routes standalone envelope amendments through the `intent_revision`
+overlap machinery (so `AdvanceResult.adjustment.applied` can become true), or #449's envelope
+tokens land and the carried-forward approval provenance should bind to a real authority.
+
+---
+
 ### #373 run-start dispatch posture: additive-optional v1 envelope fields, enforced by narrowing the existing seam, spend gate HALT-only and pre-backend (#373)  {#intent-dispatch-seam-shape-373}
 
 **Decision.** The #373 posture (`backends_permitted` / `degrade_policy` / `spend_envelope`)

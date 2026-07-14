@@ -1,5 +1,99 @@
 # Changelog
 
+## [0.94.0] - 2026-07-14
+
+### Added - mid-run posture renegotiation: the /outcome `repost`/set_intent verb (#433)
+
+- **`scripts/outcome_intent.py` + `outcome.py repost <id> [--scope <subplot>] --set FIELD=VALUE
+  --reason <why>`:** the ONE verb that changes a LIVE campaign's posture mid-run — the
+  renegotiation `set-intent` explicitly reserved for #433. Reuses the existing vocabularies
+  (campaign posture = the #380 intent envelope's `run_mode` + `ceremony_gates`; node posture =
+  the existing `degrade_policy`/`sandbox` fields) and the existing atomic mutation shape:
+  snapshot → validate → `bump_revision` → one structured `decision_trail` entry. A rejected
+  repost (unknown field, off-vocabulary value, wrong value TYPE, no-op value, monotonic
+  violation, strand) leaves `spec_revision`, `decision_trail`, and every posture field
+  byte-identical (R2, the R26 invariant). Never touches DAG structure.
+- **`intent_revision` dispatch-time overlap (R4/R5):** every accepted repost tags the spec with
+  `intent_revision` (the revision it introduced; absent key = the run-start baseline, so every
+  pre-existing spec round-trips byte-identical). Each leaf's dispatch records — the
+  pre-dispatch `intent` record AND the settled `commit` record, so a leaf stranded in the
+  crash-after-intent window still carries its era — capture
+  the `intent_revision` + posture snapshot active at its dispatch — including the campaign
+  envelope itself (`posture.intent`; `null` = explicitly dispatched envelope-less) — and
+  `DispatchRequest` carries `intent_revision` to the backend. An in-flight leaf finishes under
+  its dispatch-time posture at BOTH ends of the flight: `outcome_orchestrator.harvest` and
+  `barrier_report` evaluate an in-flight leaf's intent-implied closure checks (e.g.
+  `code-review` under `reviews_required: "gate"`) against its dispatch-era envelope, so a
+  loosening repost never retroactively releases an in-flight completion gate and a tightening
+  never retroactively imposes one; a pending leaf picks the new posture up at its next
+  dispatch. `set-intent` (first attach) tags `intent_revision` too.
+- **A committed repost survives a concurrent advance tick:** `save_spec` is now
+  compare-and-swap on the load-time revision (`OutcomeSpec.loaded_revision`, runtime-only) —
+  a save built on a superseded spec raises the new typed `StaleSpecError` instead of silently
+  reverting the repost's revision bump, envelope change, and trail entry. The production cost
+  processor (the one spec-persisting seam in the advance path) reloads-and-reapplies on top of
+  the newer revision, loudly (`reapplied_over_stale_revision` in the tick's cost record); the
+  reconcile loop re-checks the on-disk revision at every tick boundary AND per leaf after the
+  dispatch lock, stopping a stale pass before it can dispatch under a revoked posture
+  (`AdvanceResult.spec_reloads` reports each reload). The precisely-bounded sub-windows that
+  remain — the dispatch-side interleave AND `save_spec`'s own lockless check→write gap (a
+  writer landing inside it is still silently overwritten) — are documented in
+  `references/outcome-spec.md`, not claimed away.
+- **Strand HALT (R6):** a repost scoped to a `destructive` leaf that is in flight — where "in
+  flight" fail-closed includes a bare intent-phase dispatch record (the mid-dispatch TOCTOU
+  window) — and that would TIGHTEN its sandbox (revoking irreversible-op authorization the
+  leaf already carries) HALTs the campaign instead of resolving silently in either direction:
+  the amendment is rejected (spec untouched), ONE `coordinator`-writer `andon_halt` lands in
+  the #372 adjustment envelope append-once on `(writer, scope)`
+  (`adjustment_envelope.raise_strand_halt` is the new fifth writer; the next advance tick
+  stops dispatching), and ONE durable `phase: halt / kind: repost` ledger record — append-once
+  on `(phase, key)`, the reconcile-halt-path parity — names the stranded leaf. Repeats
+  re-raise, never duplicate.
+- **Monotonic merge/deploy gating (R7):** `ceremony_gates.merge` / `deploy_nonprod` may only
+  move toward MORE gating (`auto` → `gate`); any repost relaxing either from gated toward
+  autonomous is rejected outright — including against a campaign with no committed envelope
+  (effective gates default to `gate`), and equally through the sibling `set-intent` verb: a
+  first attach on a LIVE campaign (any dispatch record) passes the SAME monotonic validation
+  (`outcome_intent.validate_live_attach`), and every accepted attach writes a `set-intent`
+  decision-trail entry with classified deltas — one rule, one trail, no second-verb side door
+  (AC5). Pre-dispatch attaches keep the #380 interview-fallback contract (any posture).
+  One-directional by design; loosening takes a new campaign. Consumer honesty: `merge` /
+  `deploy_nonprod` are recorded posture with no engine consumer yet (only `reviews_required`
+  is consumed, via the implied closure checks) — the #449 token-checked write class is the
+  consumer this integrity guarantee is held for.
+- **Approval interplay (R3):** every repost bumps `spec_revision`, so the revision-keyed R20
+  frontier approval re-closes automatically on a loosening repost (affected leaves stay gated
+  until re-approval); a PURE-tightening repost carries an existing approval forward with
+  explicit `carried-forward:tightening-repost:r<old>` provenance — tightening never re-asks a
+  settled approval.
+- **HALT as a renegotiation point (R8/R9):** a gate HALT carries a `scoped_repose` option on
+  its `HaltReceipt` ONLY where the offered verb can actually resolve it — the guarantee class
+  when the guarantee is borne by the leaf's own `degrade_policy: "halt"` (a scoped
+  `repost --set degrade_policy=operator_away_one_rung` lifts it). Attending halts (the
+  operator is present; no repost value changes `attending`), `guarantee_tags`-borne
+  guarantees (spec-authored, not a repost axis), destructive/side-effected halts
+  (HALT-not-degrade by design), and availability halts are honestly offer-less. The option is
+  an offer, not a mechanism that acts: the leaf stays halted, re-derived every tick, until the
+  operator explicitly selects — no default, no timeout, silence is never consent. Composes
+  with, never overrides, HALT-not-degrade.
+- **Scope note (re #594 R2):** #372's standalone `re-tier`/`add-reviewer` envelope amendments
+  are still surfaced with `applied: false` — routing them through this overlap machinery so
+  `applied` can become true remains the #594 follow-up; tier is not a #433 posture axis.
+- **Tests:** `tests/test_outcome_intent.py` — rejected-repost-untouched (byte-identical, engine
+  + CLI), loosening-repost-recloses-approval + tightening-carries-forward control,
+  dispatch-time-posture-overlap, amendment-strands-irreversible-op-halts (+ non-destructive /
+  not-in-flight / terminal-flight controls), merge-deploy-gate-monotonic (+ no-envelope
+  baseline), live-set-intent-attach-monotonic (+ pre-dispatch interview-fallback control +
+  mid-dispatch-intent-record-counts-as-live), midtick-repost-survives-cost-processor-save
+  (+ save_spec-refuses-to-clobber baseline control), stale-spec-mid-pass-stops-dispatch,
+  strand-check-sees-mid-dispatch-intent-record, repeated-stranded-repost-appends-once
+  (+ different-scope control), reviews_required-overlap-gates-in-flight-completion (+
+  tightening-never-retroactively-imposes control), scoped-repose-no-timeout-default (+
+  availability-halt / attending-halt / guarantee-tag-halt controls), intent_revision
+  round-trip fail-closed, and a release-surface drift guard tying plugin.json ↔ CHANGELOG ↔
+  documented verb; `tests/test_outcome_command.py` — set-intent trail entry + live CLI
+  rejection parity.
+
 ## [0.93.0] - 2026-07-14
 
 ### Added - run-start intent envelope enforced at the /outcome dispatch seam (#373)

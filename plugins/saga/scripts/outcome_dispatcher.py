@@ -74,9 +74,16 @@ class HaltReceipt:
     backend: str
     reason: str
     available: tuple[str, ...]
+    # #433 R8: a POSTURE-caused gate HALT (the leaf halts because the current posture requires
+    # the operator — attending / guarantee-bearing / already-side-effected under
+    # HALT-not-degrade) carries the scoped-repose resolution option: renegotiate THIS leaf's
+    # posture via ``outcome repost --scope <subplot>``, not the whole campaign's. ``None``
+    # (an availability-caused halt, or a pre-#433 producer) emits no key — receipt shapes
+    # for every existing producer stay byte-identical.
+    scoped_repose: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "kind": "halt",
             "outcome_id": self.outcome_id,
             "subplot_id": self.subplot_id,
@@ -84,6 +91,9 @@ class HaltReceipt:
             "reason": self.reason,
             "available": list(self.available),
         }
+        if self.scoped_repose is not None:
+            out["scoped_repose"] = dict(self.scoped_repose)
+        return out
 
 
 class BackendHaltError(Exception):
@@ -221,6 +231,7 @@ def _receipt_kwargs(receipt: dict[str, Any]) -> dict[str, Any]:
         "backend": receipt["backend"],
         "reason": receipt["reason"],
         "available": tuple(receipt["available"]),
+        "scoped_repose": receipt.get("scoped_repose"),
     }
 
 
@@ -273,6 +284,36 @@ def resolve_available(
     if host_capable and workflow_available:
         avail.add("cc-workflows-ultracode")
     return tuple(b for b in outcome_spec.NODE_BACKENDS if b in avail)
+
+
+def scoped_repose_option(outcome_id: str, subplot_id: str) -> dict[str, Any]:
+    """The scoped-repose resolution option a resolvable POSTURE-caused gate HALT carries (#433 R8/R9).
+
+    Attached by the reconcile loop ONLY where the offered verb can actually resolve the halt:
+    the guarantee class, when the guarantee is borne by the leaf's own ``degrade_policy:
+    "halt"`` (a scoped ``repost --set degrade_policy=operator_away_one_rung`` lifts it and the
+    unchanged degrade machinery takes over). Every other halt class is honestly offer-less —
+    an ATTENDING halt (the operator is present and decides directly; no repost value changes
+    ``attending``), a ``guarantee_tags``-borne guarantee (spec-authored; repost cannot remove
+    tags), a side-effected/destructive halt (HALT-not-degrade by design), and an
+    availability halt (no lower rung — not posture at all). The option is an *offer*, not a
+    mechanism that acts: the leaf stays halted until the operator explicitly runs the scoped
+    ``repost`` (and re-approves, when it loosens) or explicitly leaves it halted. There is no
+    default and no timeout — silence is never consent (R9); the halt is simply re-derived on
+    every later tick until the operator selects.
+    """
+    return {
+        "scope": subplot_id,
+        "verb": "repost",
+        "hint": (
+            f"python3 plugins/saga/scripts/outcome.py repost {outcome_id} "
+            f"--scope {subplot_id} --set degrade_policy=operator_away_one_rung "
+            f"--reason <why> — lifts THIS leaf's degrade_policy-borne guarantee only, never "
+            f"the whole campaign's posture; the leaf then follows the normal one-rung "
+            f"degrade path (re-approve first: loosening re-closes the frontier)"
+        ),
+        "resolution": "explicit-operator-selection",
+    }
 
 
 def is_guarantee_bearing(node: Any) -> bool:

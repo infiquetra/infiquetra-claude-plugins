@@ -614,3 +614,44 @@ def test_set_intent_invalid_file_is_loud_and_never_lands(repo: Path, tmp_path: P
         M.set_intent(repo, "ship-y", bad)
     on_disk = SPEC.OutcomeSpec.from_json(M.spec_path(repo, "ship-y").read_text())
     assert on_disk.intent is None
+
+
+def test_set_intent_attach_records_decision_trail_entry(repo: Path, tmp_path: Path) -> None:
+    """#433 AC5 hand-finish: an accepted attach is a posture change — one verb, one revision
+    counter, ONE trail entry (never a bare revision bump with no audit record)."""
+    M.start(repo, "ship-x", "Ship feature X")
+    spec = M.set_intent(repo, "ship-x", _envelope_file(tmp_path))
+    entry = spec.decision_trail[-1]
+    assert entry["kind"] == "set-intent"
+    assert entry["revision"] == spec.spec_revision == 2
+    assert entry["live"] is False  # pre-dispatch: run-start posture, any gate values allowed
+    assert entry["intent_revision"] == spec.intent_revision == 2
+
+
+def test_set_intent_on_live_campaign_rejects_merge_auto_via_cli(repo: Path, tmp_path: Path) -> None:
+    """#433 AC5: once ANY dispatch exists, a first attach carrying merge/deploy_nonprod=auto is
+    rejected outright by the SAME monotonic rule repost enforces — no second-verb side door.
+    CLI parity: non-zero exit, on-disk spec byte-identical."""
+    import intent_envelope as ie
+
+    M.start(repo, "live-x", "Ship X", nodes=[{"subplot_id": "a", "title": "A", "kind": "code"}])
+    dispatcher, _calls = _recorder()
+    assert M.advance(repo, "live-x", dispatcher=dispatcher).dispatched == ["a"]
+
+    auto_env = tmp_path / "auto-envelope.json"
+    auto_env.write_text(
+        json.dumps(
+            {"schema_version": 1, "run_mode": "attended", "ceremony_gates": {"merge": "auto"}}
+        ),
+        encoding="utf-8",
+    )
+    file_before = M.spec_path(repo, "live-x").read_text(encoding="utf-8")
+    rc = M.main(["--repo-root", str(repo), "set-intent", "live-x", "--intent-file", str(auto_env)])
+    assert rc == 1
+    assert M.spec_path(repo, "live-x").read_text(encoding="utf-8") == file_before
+
+    # Control (the #380 interview-fallback flow preserved): the SAME envelope attaches cleanly
+    # BEFORE any dispatch — run-start posture may carry any gate values.
+    M.start(repo, "fresh-x", "Ship X", nodes=[{"subplot_id": "a", "title": "A", "kind": "code"}])
+    spec = M.set_intent(repo, "fresh-x", auto_env)
+    assert ie.IntentEnvelope.from_dict(spec.intent).ceremony_gates.merge == "auto"

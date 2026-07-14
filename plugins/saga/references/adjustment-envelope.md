@@ -6,10 +6,11 @@ A run-start intent envelope captures the operator's directives *before* a run st
 worker can steer a live run — pause, drain, stop, re-tier, add a reviewer — **without killing the
 run or hand-editing state**.
 
-One file, four writers. This is the load-bearing scope decision: quiesce, plan-declared pause
-points, and the worker-raised andon-cord all write into the **same** envelope. A design that gives
-each writer its own file is out of scope. The reversible-mutation default (the undo ledger) is the
-fourth concern that decides *when a pause is even needed*.
+One file, five writers. This is the load-bearing scope decision: quiesce, plan-declared pause
+points, the worker-raised andon-cord, and the coordinator strand-halt (#433) all write into the
+**same** envelope. A design that gives each writer its own file is out of scope. The
+reversible-mutation default (the undo ledger) is the adjacent concern that decides *when a pause
+is even needed*.
 
 Implemented by `plugins/saga/scripts/adjustment_envelope.py` (parser + poll + writers) and
 `plugins/saga/scripts/undo_ledger.py` (the reversible-mutation default). Polled by
@@ -55,7 +56,7 @@ vocabulary below.
 |---|---|---|---|
 | `quiesce` | operator | **drain** — in-flight leaves finish, dispatch nothing new, surface a resume point | — |
 | `pause_after` | plan | **pause** at exactly the named `segment`; resume only on an explicit continue (acknowledge) | `segment` (required), `resume_tier`, `resume_context` |
-| `andon_halt` | worker / reviewer | **halt** — block the next wave/tick from dispatching; write an operator-surface HALT record | `scope` |
+| `andon_halt` | worker / reviewer / coordinator | **halt** — block the next wave/tick from dispatching; write an operator-surface HALT record. The `coordinator` writer is the #433 strand-halt: a posture `repost` that would strand an in-flight leaf's irreversible-op authorization raises this (via `raise_strand_halt`, append-once per `(writer, scope)` — a repeated stranded repost re-raises to its caller but never piles up duplicate directives) instead of silently applying or dropping the amendment | `scope` |
 | `re-tier` | operator | amendment honored on resume (no stop) | `tier` (required) |
 | `add-reviewer` | operator | amendment honored on the next review cycle (no stop) | `reviewer` (required) |
 | `cancel` | operator | **halt** — stop this run at the next boundary | — |
@@ -97,8 +98,16 @@ The envelope reuses boundaries that already exist; it does **not** add a standin
   `/outcome` tick boundary** (outcome ticks have no plan segments) — the reachable `/outcome`
   directives are `quiesce` and `andon_halt`. A proceed decision carrying standalone amendments
   (re-tier / add-reviewer) is surfaced on `AdvanceResult.adjustment` with `applied: false` — the
-  coordinator never applies amendments to its own dispatches (mid-run application is #433's
-  renegotiation contract).
+  coordinator still never applies these envelope amendments to its own dispatches. #433 shipped
+  the *posture* renegotiation path (`outcome repost` — sandbox / degrade policy / run mode /
+  ceremony gates, with `intent_revision` dispatch-time overlap); routing the standalone
+  re-tier/add-reviewer directives through that overlap machinery so `applied` can become true
+  remains the #594 R2 follow-up. Consumer honesty for the renegotiated ceremony gates: of the
+  envelope's `ceremony_gates`, only `reviews_required` has an engine consumer today (the
+  intent-implied closure checks at harvest); `merge` / `deploy_nonprod` are **recorded posture
+  with no engine consumer yet** — nothing reads them (the auto-merge queue keys off node-level
+  flags), and the #433 monotonic rule protects the recorded value's integrity for the consumer
+  #449 lands (the token-checked merge/deploy write class), not for any behavior today.
 - **`/work` segment boundary** — `/work` polls the envelope at each phase/segment boundary (see
   `skills/work/SKILL.md`), honoring a `pause_after: <segment>` deterministically and applying any
   `resume_tier`/`resume_context` amendment on the explicit continue.
@@ -145,6 +154,7 @@ it never crosses the gh write-ownership lane.
 adjustment_envelope.raise_quiesce(path, reason=...)                 # operator writer 1
 adjustment_envelope.declare_pause_after(path, segment, resume_tier=...)  # plan writer 2
 adjustment_envelope.raise_andon(path, writer="worker", scope=...)  # worker writer 3
+adjustment_envelope.raise_strand_halt(path, scope=..., reason=...)  # coordinator writer (#433 R6)
 adjustment_envelope.acknowledge_pause(path, segment)               # the explicit continue signal
 undo_ledger.record(ledger, op_type, target=..., before=..., after=...)  # reversible default
 undo_ledger.undo(ledger, state)                                    # the /undo replay path

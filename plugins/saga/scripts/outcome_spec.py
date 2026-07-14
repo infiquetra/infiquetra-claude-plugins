@@ -397,8 +397,21 @@ class OutcomeSpec:
     # on recorded review evidence (consumed by ``outcome_orchestrator.harvest`` through the
     # closure gate).
     intent: dict[str, Any] | None = None
+    # The ``spec_revision`` at which posture was last (re)negotiated (#433 R4). ``None`` means
+    # the posture has never been renegotiated — the run-start posture (revision-1 baseline) is
+    # in force, and pre-existing specs round-trip byte-identical (no key emitted). Set by
+    # ``outcome.set_intent`` (first attach) and ``outcome_intent.repost`` (renegotiation); each
+    # leaf's dispatch record captures the value active at its dispatch (dispatch-time posture).
+    intent_revision: int | None = None
     created_at: str = ""
     updated_at: str = ""
+    # RUNTIME-ONLY (never serialized — ``to_dict`` does not emit it, ``from_dict`` never reads
+    # it): the ``spec_revision`` this instance was LOADED from disk at (0 = not loaded from
+    # disk). ``outcome.load_spec`` stamps it and ``outcome.save_spec`` compares it against the
+    # current on-disk revision before writing, so a save built on a spec another writer has
+    # since superseded (e.g. a mid-tick ``repost``) fails loudly instead of silently clobbering
+    # the newer revision (#433 overlap safety).
+    loaded_revision: int = 0
 
     def node_by_id(self, subplot_id: str) -> Node | None:
         for node in self.nodes:
@@ -500,6 +513,15 @@ class OutcomeSpec:
                         f"node {node.subplot_id}: depends_on {dep!r} is not a declared node"
                     )
 
+        # #433 R4: the posture tag can never point past the current revision — a repost tags
+        # the revision it itself introduced, so a larger value is a corrupted/hand-edited spec.
+        if self.intent_revision is not None and self.intent_revision > self.spec_revision:
+            raise OutcomeSpecError(
+                f"outcome {self.outcome_id}: intent_revision {self.intent_revision} exceeds "
+                f"spec_revision {self.spec_revision} — a posture tag names the revision that "
+                f"introduced it, never a future one"
+            )
+
         # The committed intent envelope (#380): schema-validated through the canonical
         # module, never shape-guessed here — an off-vocabulary run_mode, an unknown gate
         # field, or a foreign schema version fails BEFORE any dispatch (R20/R31 posture).
@@ -536,6 +558,12 @@ class OutcomeSpec:
             # Fail loudly on a mis-shaped field rather than coercing (R31): a string or list
             # here is an authoring error, and validate() could not schema-check it anyway.
             raise OutcomeSpecError(f"intent must be an object or absent, got {raw_intent!r}")
+        raw_intent_revision = data.get("intent_revision")
+        intent_revision = (
+            _positive_int(raw_intent_revision, field_name="intent_revision")
+            if raw_intent_revision is not None
+            else None
+        )
         return cls(
             outcome_id=str(data.get("outcome_id", "")),
             objective=str(data.get("objective", "")),
@@ -547,6 +575,7 @@ class OutcomeSpec:
             decision_trail=[copy.deepcopy(dict(d)) for d in data.get("decision_trail", [])],
             cost_rollup=copy.deepcopy(dict(data.get("cost_rollup", {}))),
             intent=copy.deepcopy(raw_intent),
+            intent_revision=intent_revision,
             created_at=str(data.get("created_at", "")),
             updated_at=str(data.get("updated_at", "")),
         )
@@ -567,6 +596,9 @@ class OutcomeSpec:
         # (#380 — mirrors the ExecutionSpec cost_budget/spend_envelope convention).
         if self.intent is not None:
             out["intent"] = copy.deepcopy(self.intent)
+        # Same convention for the posture tag (#433): never-renegotiated specs emit no key.
+        if self.intent_revision is not None:
+            out["intent_revision"] = self.intent_revision
         return out
 
     def to_json(self) -> str:

@@ -5,16 +5,19 @@ A run-start intent envelope captures the operator's *up-front* directives. This 
 its **mid-run counterpart** — one durable, polled control file that lets an operator or a
 worker steer a live ``/work`` or ``/outcome`` run without killing it or hand-editing state.
 
-Four writers converge on the *same* file (never four separate files):
+Five writers converge on the *same* file (never separate files):
 
 * **operator-raised quiesce** — drain in-flight work, dispatch nothing new, surface a resume
   point (``quiesce``);
 * **plan-declared pause points** — halt deterministically at a named segment boundary and
   resume only on an explicit continue signal (``pause_after``);
 * **worker-raised andon-cord** — any worker/reviewer inside a team can stop the line
-  (``andon_halt``); and
+  (``andon_halt``);
 * **operator amendments** — re-tier / add a reviewer / cancel / abort (``re-tier``,
-  ``add-reviewer``, ``cancel``, ``abort``).
+  ``add-reviewer``, ``cancel``, ``abort``); and
+* **coordinator strand-halt** (#433 R6) — the /outcome coordinator raises an ``andon_halt``
+  (``writer: "coordinator"``) when a posture repost would strand an in-flight leaf's
+  irreversible-op authorization (:func:`raise_strand_halt`).
 
 The envelope is **polled at existing boundaries** — the ``/outcome`` coordinator's
 tick-quiescence check (``outcome.py``) and the ``/work`` segment boundary — never on a new
@@ -73,7 +76,10 @@ _AMENDING = frozenset({"re-tier", "add-reviewer"})
 
 # Recognized writers. A directive from an unrecognized writer fails closed (fail-closed on
 # shape) — we authenticate the shape, not the authority (see module threat model).
-KNOWN_WRITERS = frozenset({"operator", "plan", "worker", "reviewer"})
+# ``coordinator`` (#433 R6): the /outcome coordinator itself raises a stop-the-line
+# ``andon_halt`` when a posture repost would strand an in-flight leaf's irreversible-op
+# authorization — the campaign HALTs through the SAME polled file, never a fifth surface.
+KNOWN_WRITERS = frozenset({"operator", "plan", "worker", "reviewer", "coordinator"})
 
 # Per-directive allowed keys. Every directive carries ``directive``/``writer``; the rest are
 # directive-specific. An unlisted key fails closed (strict — an input we cannot model is an
@@ -402,6 +408,35 @@ def raise_andon(
         raise EnvelopeError(f"andon writer must be worker/reviewer, got {writer!r}")
     extra = {"scope": scope} if scope else {}
     d = Directive(directive="andon_halt", writer=writer, reason=reason, at=at, extra=extra)
+    return _append(path, d)
+
+
+def raise_strand_halt(path: Path, *, scope: str, reason: str, at: str = "") -> AdjustmentEnvelope:
+    """Coordinator writer (#433 R6): a posture repost would strand an in-flight leaf's
+    irreversible-op authorization — stop the line through the SAME polled envelope file.
+
+    Semantically an ``andon_halt`` (the existing stop-the-line directive) with
+    ``writer: "coordinator"``: the next advance tick's poll HALTs dispatch, the in-flight
+    leaf drains under its dispatch-time posture (R5), and the rejected amendment is
+    surfaced to the operator — never silently applied, never silently dropped. ``scope``
+    names the stranded leaf so the surfaced record says exactly which op forced the stop.
+
+    **Append-once on (writer, scope)** — the envelope-side parity of the reconcile halt
+    path's ledger (phase, key) dedup: a repeated stranded repost against the same leaf
+    re-raises to its caller every time, but the ONE standing halt directive is never
+    duplicated (a directive pile-up would make the operator clear N records for one strand).
+    """
+    if not scope:
+        raise EnvelopeError("a strand halt needs a scope naming the stranded leaf")
+    existing = load(path)
+    if existing is not None and any(
+        d.directive == "andon_halt" and d.writer == "coordinator" and d.extra.get("scope") == scope
+        for d in existing.directives
+    ):
+        return existing
+    d = Directive(
+        directive="andon_halt", writer="coordinator", reason=reason, at=at, extra={"scope": scope}
+    )
     return _append(path, d)
 
 

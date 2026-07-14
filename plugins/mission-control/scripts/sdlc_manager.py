@@ -2682,7 +2682,10 @@ def flow_assign_mimir(repo: str, number: int, fmt: str) -> None:
         raise RuntimeError(
             f"GitHub authority for {actor} on {ORG}/{repo} was unreadable; no mutation performed"
         )
-    role = authority.get("role_name") or authority.get("permission")
+    # `role_name` may be an organization-defined custom role. GitHub's
+    # standardized `permission` is the effective base role we can compare
+    # against the command's closed authorization vocabulary.
+    role = authority.get("permission") or authority.get("role_name")
     if role not in MIMIR_AUTHORIZED_ROLES:
         raise RuntimeError(
             f"GitHub principal {actor} has insufficient authority ({role!r}) on {ORG}/{repo}; "

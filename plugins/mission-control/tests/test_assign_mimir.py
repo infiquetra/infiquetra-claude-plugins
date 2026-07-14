@@ -125,6 +125,23 @@ def test_assign_mimir_is_idempotent_when_trigger_already_present() -> None:
     assert out.call_args.args[0]["trigger"]["state"] == "already-triggered"
 
 
+def test_assign_mimir_uses_effective_permission_for_custom_repository_role() -> None:
+    reads = _assign_rest_reads(initial=TRIGGERED_ISSUE)
+    reads[1] = {"permission": "write", "role_name": "custom-issue-operator"}
+    with (
+        patch.object(sdlc_manager, "_load_live_mimir_coverage", return_value=COVERAGE),
+        patch.object(sdlc_manager, "_fetch_gh_login", return_value="operator"),
+        patch.object(sdlc_manager, "_rest_get", side_effect=reads),
+        patch.object(sdlc_manager, "_rest_post") as rest_post,
+        patch.object(sdlc_manager, "_mimir_objective_fields", return_value=[]),
+        patch.object(sdlc_manager, "_out") as out,
+    ):
+        sdlc_manager.flow_assign_mimir(REPO, 10, "json")
+
+    rest_post.assert_not_called()
+    assert out.call_args.args[0]["authority"] == "write"
+
+
 def test_assign_mimir_rejects_closed_issue_before_authority_or_mutation() -> None:
     with (
         patch.object(sdlc_manager, "_load_live_mimir_coverage", return_value=COVERAGE),

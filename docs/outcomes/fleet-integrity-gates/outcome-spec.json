@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "outcome_id": "fleet-integrity-gates",
+  "spec_revision": 9,
+  "objective": "objective: Gate fleet integrity (agent files, prompts, release surfaces)",
+  "nodes": [
+    {
+      "subplot_id": "sub-422",
+      "title": "\"capability: one agent-file CI lint \u2014 frontmatter schema, role-class tier audit, tool-scope floor, cache-prefix stability\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#422",
+        "sub_issue": 422
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-424",
+      "title": "\"defect: mission-control live-schema resolution and pagination exhaustion \u2014 no hardcoded board vocabulary, no silent truncation\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#424",
+        "sub_issue": 424
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-457",
+      "title": "\"enhancement: CI-level delegation integrity \u2014 marketplace proof gate on bridge version bumps + fleet delegation monitor\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#457",
+        "sub_issue": 457
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-458",
+      "title": "\"enhancement: fake-adapter integrity \u2014 shape lint, golden fixtures, fakes registry, real-adapter lane, boundary-crossing convention\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#458",
+        "sub_issue": 458
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-427",
+      "title": "\"capability: mutation canary proving drift guards have teeth\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#427",
+        "sub_issue": 427
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-428",
+      "title": "\"capability: end-to-end lifecycle regression harness on a fixture repo\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#428",
+        "sub_issue": 428
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-431",
+      "title": "\"enhancement: write-ownership lane manifest + marketplace-CI lint across saga / mission-control / deploy\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#431",
+        "sub_issue": 431
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    }
+  ],
+  "decision_trail": [
+    {
+      "revision": 2,
+      "reason": "prune sub-423"
+    },
+    {
+      "revision": 3,
+      "reason": "prune sub-425"
+    },
+    {
+      "revision": 4,
+      "reason": "prune sub-426"
+    },
+    {
+      "revision": 5,
+      "reason": "prune sub-429"
+    },
+    {
+      "revision": 6,
+      "reason": "prune sub-430"
+    },
+    {
+      "revision": 7,
+      "reason": "prune sub-464"
+    },
+    {
+      "revision": 8,
+      "reason": "prune sub-465"
+    },
+    {
+      "revision": 9,
+      "reason": "prune sub-466"
+    }
+  ],
+  "cost_rollup": {},
+  "created_at": "",
+  "updated_at": ""
+}

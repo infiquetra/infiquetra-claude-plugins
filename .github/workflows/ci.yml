@@ -81,6 +81,20 @@ jobs:
       - name: Engine Registry Conformance
         run: uv run python plugins/saga/scripts/engine_registry_conformance.py
 
+      # #424 T9-F4-5: static lint over mission-control's own scripts/skills/
+      # commands/agents docs for unguarded `gh` list calls (no cursor loop,
+      # no --limit) or bare per_page REST fetches. No network required.
+      - name: Mission-control pagination-completeness lint
+        run: uv run python plugins/mission-control/scripts/check_pagination.py
+
+      # #424 T9-F2-6: live-derived board schema census vs. the committed
+      # snapshot. Requires a Projects-scoped `gh` token; this runner has
+      # none, so the script prints an explicit SKIPPED line (never a silent
+      # pass) rather than failing -- mirrors check_issue_contract_parity.py's
+      # `--live` leg. Exit 0 covers both "in sync" and "skipped".
+      - name: Board schema census drift check (best-effort, live-gated)
+        run: uv run python plugins/mission-control/scripts/board_census.py --check
+
   release-surfaces:
     name: Release Surface Parity
     runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}

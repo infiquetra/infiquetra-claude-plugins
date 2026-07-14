@@ -405,6 +405,73 @@ def test_set_field_raises_with_helpful_message_on_unknown_option() -> None:
         assert "field-options" in msg
 
 
+def test_field_write_resolves_or_fails_loud() -> None:
+    """A board/field write must resolve the option's CURRENT live id every
+    call, never a cached/stale one (#424, T14-F6-4 -- generalizing the
+    schema-resolve-over-hardcode pattern landed for /outcome board status in
+    71faf92 to mission-control's own board/field write surface).
+
+    Simulates an upstream rename between two writes to the SAME field: the
+    first write targets the option by its old name; after the rename, a
+    write against the NEW name must resolve and succeed (proving live,
+    uncached resolution), while a write still using the OLD name must fail
+    loud with a helpful error (proving the write never silently falls back
+    to a stale id) rather than mis-targeting an option that no longer
+    exists."""
+
+    def _status_response(option_name: str) -> dict:
+        return {
+            "organization": {
+                "projectV2": {
+                    "id": "PVT_kwx",
+                    "fields": {
+                        "nodes": [
+                            {
+                                "id": "FLD_status",
+                                "name": "Status",
+                                "options": [{"id": "opt_new", "name": option_name}],
+                            }
+                        ]
+                    },
+                }
+            }
+        }
+
+    project_items = (
+        "PVT_kwx",
+        [_project_item(42, "PVTI_42", repo="campps-mvp")],
+    )
+
+    with (
+        patch.object(sdlc_manager, "load_config") as mock_load,
+        patch.object(sdlc_manager, "get_project_items") as mock_items,
+        patch.object(sdlc_manager, "_graphql") as mock_gql,
+    ):
+        mock_load.return_value = {
+            "project_mappings": {"projects": {"campps": {"number": 4, "name": "CAMPPS"}}},
+        }
+        mock_items.return_value = project_items
+
+        # Before the rename: live field query returns "Ready"; the write succeeds.
+        mock_gql.side_effect = [_status_response("Ready"), {}]
+        sdlc_manager.flow_set_field("campps", "campps-mvp", 42, "Status", "Ready", fmt="text")
+
+        # Upstream renames "Ready" -> "In Review". A write against the NEW
+        # name must resolve live (no caching from the previous call) and
+        # succeed.
+        mock_gql.side_effect = [_status_response("In Review"), {}]
+        sdlc_manager.flow_set_field("campps", "campps-mvp", 42, "Status", "In Review", fmt="text")
+
+        # A write still using the OLD (now-removed) name must fail loud with
+        # a retryable, helpful error -- never silently set a stale option id.
+        mock_gql.side_effect = [_status_response("In Review")]
+        with pytest.raises(RuntimeError) as exc:
+            sdlc_manager.flow_set_field("campps", "campps-mvp", 42, "Status", "Ready", fmt="text")
+        msg = str(exc.value)
+        assert "Ready" in msg
+        assert "In Review" in msg
+
+
 def _field_response() -> dict:
     return {
         "organization": {

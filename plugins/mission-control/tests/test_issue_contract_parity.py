@@ -27,7 +27,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = ROOT / "plugins" / "mission-control" / "config" / "sdlc-schema.json"
@@ -225,3 +228,145 @@ def test_vendored_shim_is_importable_data_only() -> None:
         "ACCEPTANCE_EXECUTABLE_RE_PATTERN",
     ):
         assert const in namespace, f"vendored shim missing {const}"
+
+
+# ===========================
+# Third, --live-gated leg (#424, T14-F5-3)
+# ===========================
+# The two legs above reconcile source schema vs. generated shim -- a two-way
+# match. sdlc-schema.json's own description admits it "intentionally
+# contains no live GitHub Projects field option IDs; tooling must resolve
+# those from GitHub at runtime" -- an unreconciled third leg. These tests
+# prove `live_status_option_errors` flags a mocked upstream Status-option
+# rename WHILE the two vendored-artifact legs above continue to pass
+# independently -- proof the third leg adds coverage rather than replacing
+# the first two.
+
+
+def test_live_leg_flags_rename(tmp_path) -> None:
+    """A mocked live field-option rename is flagged by the third leg, while
+    the existing two vendored-artifact legs continue to pass on their own
+    terms (T14-F5-3)."""
+    mod = _load_parity()
+
+    # The two vendored-artifact legs are unaffected by (and know nothing
+    # about) the live leg -- prove they still pass on their own terms.
+    assert mod.parity_errors() == []
+
+    schema = {
+        "boards": {"operations": {"workflow": "intent_flow"}},
+        "workflows": {"intent_flow": {"statuses": ["Idea", "Shaping", "Ready", "Done"]}},
+    }
+
+    def fake_fetch_fields_census(project_number):
+        # Upstream renamed "Ready" -> "In Review"; "Idea"/"Shaping"/"Done" unchanged.
+        return {
+            "fields": [
+                {
+                    "name": "Status",
+                    "options": [
+                        {"id": "1", "name": "Idea"},
+                        {"id": "2", "name": "Shaping"},
+                        {"id": "3", "name": "In Review"},
+                        {"id": "4", "name": "Done"},
+                    ],
+                }
+            ]
+        }
+
+    schema_path = tmp_path / "sdlc-schema.json"
+    schema_path.write_text(json.dumps(schema))
+
+    errors = mod.live_status_option_errors(
+        schema_path=schema_path,
+        fetch_fields_census=fake_fetch_fields_census,
+        project_mappings={"operations": {"number": 3}},
+    )
+
+    assert errors, "live leg did not flag the renamed Status option"
+    assert any("Ready" in e for e in errors)
+
+    # Re-confirm the two vendored-artifact legs are still green -- the third
+    # leg is additive coverage, not a replacement.
+    assert mod.parity_errors() == []
+
+
+def test_live_leg_passes_when_all_options_resolve(tmp_path) -> None:
+    mod = _load_parity()
+    schema = {
+        "boards": {"operations": {"workflow": "intent_flow"}},
+        "workflows": {"intent_flow": {"statuses": ["Idea", "Done"]}},
+    }
+
+    def fake_fetch_fields_census(project_number):
+        return {
+            "fields": [
+                {
+                    "name": "Status",
+                    "options": [{"id": "1", "name": "Idea"}, {"id": "2", "name": "Done"}],
+                }
+            ]
+        }
+
+    schema_path = tmp_path / "sdlc-schema.json"
+    schema_path.write_text(json.dumps(schema))
+    errors = mod.live_status_option_errors(
+        schema_path=schema_path,
+        fetch_fields_census=fake_fetch_fields_census,
+        project_mappings={"operations": {"number": 3}},
+    )
+    assert errors == []
+
+
+def test_live_leg_raises_unavailable_when_schema_missing(tmp_path) -> None:
+    mod = _load_parity()
+    with pytest.raises(mod.LiveParityUnavailableError):
+        mod.live_status_option_errors(
+            schema_path=tmp_path / "does-not-exist.json",
+            fetch_fields_census=lambda n: {"fields": []},
+            project_mappings={},
+        )
+
+
+def test_live_leg_raises_unavailable_when_fetch_fails(tmp_path) -> None:
+    """A live-access failure (no network / no auth) must raise
+    LiveParityUnavailableError -- a SKIP, never silently folded into
+    'no violations found'."""
+    mod = _load_parity()
+    schema_path = tmp_path / "sdlc-schema.json"
+    schema_path.write_text(
+        json.dumps(
+            {
+                "boards": {"operations": {"workflow": "intent_flow"}},
+                "workflows": {"intent_flow": {"statuses": ["Idea"]}},
+            }
+        )
+    )
+
+    def failing_fetch(project_number):
+        raise RuntimeError("no network")
+
+    with pytest.raises(mod.LiveParityUnavailableError):
+        mod.live_status_option_errors(
+            schema_path=schema_path,
+            fetch_fields_census=failing_fetch,
+            project_mappings={"operations": {"number": 3}},
+        )
+
+
+def test_main_live_flag_skips_not_passes_on_unavailable(monkeypatch, capsys) -> None:
+    """`main(--live)` prints an explicit SKIPPED line (not a silent pass)
+    when live derivation is unavailable, mirroring board_census.py's
+    offline posture."""
+    mod = _load_parity()
+    monkeypatch.setattr(sys, "argv", ["check_issue_contract_parity.py", "--live"])
+
+    def raise_unavailable():
+        raise mod.LiveParityUnavailableError("no gh auth in this environment")
+
+    monkeypatch.setattr(mod, "live_status_option_errors", raise_unavailable)
+    exit_code = mod.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "SKIPPED" in captured.out

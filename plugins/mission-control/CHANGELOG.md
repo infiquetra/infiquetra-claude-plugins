@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.8.0] - 2026-07-14
+
+### Fixed
+- Route every mission-control REST list-fetch (labels, milestones) and GraphQL cursor-paginated
+  fetch (project items, issue timelines) through a shared `paginate_or_raise` / `_rest_list_paginated`
+  helper that raises `PaginationExhaustedError` instead of silently returning a partial page when a
+  paginated fetch never reaches a real terminal signal — closes the "item-list pagination silently
+  truncating at 200 of 375 items" fleet defect pattern (#424).
+
+### Added
+- Add `board_census.py`: a live-derived board schema census (field/option shape, mirroring the
+  context-library's `context_census.py` pattern) committed as `config/board-schema.json`, with a
+  `--check` mode that fails on drift from a fresh live derivation and prints an explicit SKIPPED
+  line (never a silent pass) when live GitHub Projects access is unavailable.
+- Add `check_pagination.py`: a static lint over mission-control's own scripts, skills, commands, and
+  agent docs for unguarded `gh` list invocations, bare per-page REST fetches, and GraphQL queries
+  that set a page-size arg without ever checking `hasNextPage`.
+- Add a third, `--live`-gated reconciliation leg to `check_issue_contract_parity.py`
+  (`live_status_option_errors`) that resolves each tracked board's live Status field options and
+  flags any `sdlc-schema.json`-declared status that no longer resolves upstream — a genuine
+  three-way match (source schema, generated shim, live GitHub) where the prior gate only reconciled
+  the first two.
+
 ## [2.7.0] - 2026-07-10
 
 ### Changed

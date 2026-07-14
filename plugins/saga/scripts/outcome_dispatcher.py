@@ -477,7 +477,10 @@ class SpendHaltReceipt:
     Distinct from :class:`HaltReceipt` (backend unavailability) and from the degrade path:
     spend gating is HALT-only — an over-ceiling or tier-escalating leaf pauses for explicit
     step-up authorization and is NEVER silently run at a lower tier (T8-F5-7). The receipt
-    echoes the compared values so the report and the operator see exactly what tripped.
+    echoes the compared values so the operator sees exactly what tripped — surfaced per-tick
+    in the advance output (``AdvanceResult.halted``) and durably on the ``spend:<sid>`` ledger
+    lane. The consolidated report's ambiguity tier does not yet render halt receipts (it
+    filters on ``kind == "dispatch"``; backend halts on main are equally invisible there).
     """
 
     outcome_id: str

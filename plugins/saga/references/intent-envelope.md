@@ -52,7 +52,11 @@ The `approval_token` in the spend resolver is an opaque presence check, not a va
 credential. The #373 fields only ever **narrow** dispatch relative to the uncaptured default
 (intersected menus, at-most-one-rung degrade, a HALT-only spend gate) — they grant no write
 path — and the spend gate reads **leaf-produced, self-attested actuals**: a leaf that
-under-reports its cost is not measured against the ceiling.
+under-reports its cost is not measured against the ceiling. The ceiling also counts
+**in-spec leaves only** — cost recorded against a subplot later pruned from the spec moves
+to the R33 `sunk` bucket and stops counting, so a run's *total* burn (in-spec + sunk) can
+exceed `cost_ceiling_tokens` after an operator prune. Pruning is an operator-mediated spec
+edit (revision bump + re-approve), not an autonomously reachable path.
 
 ## Dispatch-seam enforcement (#373)
 

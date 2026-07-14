@@ -2,6 +2,49 @@
 
 ## 2026-07-14
 
+### Gates are durable records with a derived-not-presence answerer contract; the absence lint ratchets by exact count (#371) {#gate-record-absence-contract-371}
+
+**Decision.** #371 ships gates as **records, not widget calls**: `gate_record.py` persists the
+declaration (question, options, `absence_behavior` defaulting to HALT, transport, optional
+dispatch-era `binding`) BEFORE any transport is invoked, under a derived-on-read store
+(`.saga/gates/<id>/` — write-once declaration + write-once `os.link` resolution + append-only
+absence audit that deliberately records repeat silence, applying the #598 item-1 dedup lesson
+from day one). Transports are a collect-strategy seam (`ask-user-question` push / `file-sentinel`
+pull) sharing ONE satisfy path; `resolve-absent` applies only the DECLARED behavior. Three
+contract choices bind #449: (1) **derived provenance is not operator presence** — `satisfy`
+rejects reserved-prefix answerers (`carried-forward:` / `absence:`), tested in both directions
+and drift-guarded against the literal provenance `outcome_intent.repost` writes; a #449 consumer
+wanting a carried-forward frontier approval to authorize a merge-class write must mint a live
+gate-record answer (`is_operator_answerer` is the predicate). (2) The #598 item-2
+set-intent/repost carry-forward asymmetry is **composed with, not closed**: it is
+presence-conservative (the set-intent path demands a fresh live approval where repost derives
+one), and closing it would extend derived provenance to a second verb — the opposite direction
+of this contract; it stays queued in #598. (3) The CI lint
+(`lint_gate_absence_contract.py`) enforces declarations fail-closed (section-scoped
+`gate-record`/`gate-exempt` markers in markdown, literal `absence_behavior` on every `open_gate`
+call, the defining module excluded by documented rule) with legacy debt pinned EXACT-COUNT in a
+shrink-only baseline surfaced as `pending migration (applied: false)`. Gate records deliberately
+do NOT surface through the `/outcome` consolidated report until #597's halt-receipt kind-filter
+fix lands — inheriting that invisibility bug for a gate surface would defeat the point.
+
+**Rejected alternatives.** Fixing `AskUserQuestion` itself (struck by Gate-B as harness-level);
+a redis-channel second transport (file-sentinel proves the seam end-to-end in-process and the
+channel surfaces already reach records via `satisfy --answer-transport redis-channel`; a live
+Redis transport adds an external dependency the record contract does not need); free-text
+answers on the record (a diverging answer means the option set was wrong — open a corrected
+gate); a file-scoped (rather than section-scoped) marker rule (one marker would silently cover
+unrelated gates across a whole SKILL.md); baselining by file-only without counts (a new
+undeclared gate in a legacy file would ride in silently).
+
+**Revisit when.** #449 lands envelope tokens (the record's closed v1 schema grows
+additive-within-v1, same convention as #373 — tokens belong on the record, edited in
+`gate_record.py`, never consumer-tolerated unknowns); the #597 report fix lands (gate records
+can then join the report tier with a `kind` the filter matches); or the lint's candidate
+vocabulary needs a second widget family (the documented fast-follow — extend enumeration, roll
+out via the baseline).
+
+---
+
 ### Posture renegotiation is one atomic verb over the existing vocabularies; merge/deploy gates are one-way; strand = andon, not a new stop surface (#433) {#outcome-posture-renegotiation-433}
 
 **Decision.** Mid-run posture renegotiation (#433) ships as ONE verb (`outcome repost`, engine

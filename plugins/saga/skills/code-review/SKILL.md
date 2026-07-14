@@ -66,6 +66,17 @@ In a channel session (`redis-channel` active), `AskUserQuestion` cannot be calle
 in your reply text instead. Follow the canonical channel-inline convention in
 `saga/skills/brainstorm/SKILL.md` (do not duplicate its wording here).
 
+<!-- gate-record: id=code-review-interaction absence=HALT transport=ask-user-question -->
+**Durable gate-record contract (#371).** Every known-set gate above is a durable approval record,
+not a widget call. BEFORE invoking `AskUserQuestion` (or the channel-inline fallback), persist the
+record with `python3 plugins/saga/scripts/gate_record.py open --gate-id code-review-<decision>-<run-id>
+--question "..." --option "..." --option "..." --absence-behavior HALT --transport ask-user-question
+--opened-by saga:code-review`; after the answer, `satisfy --gate-id <same-id> --answer "<chosen option>"
+--answerer operator`; on silence (timeout, widget error, dropped session), `resolve-absent
+--gate-id <same-id> --reason "<what happened>"` — `HALT`: stop and wait, silence is never consent.
+Read the decision from the persisted record (`poll` → `status` / `answer`), never from the widget's
+raw return value. Full contract: `plugins/saga/references/gate-record.md`.
+
 Use repo-relative paths in every generated document. Absolute paths break portability across machines
 and worktrees. (The one exception is the saga `--review-paths` value — see Phase 5.)
 
@@ -76,6 +87,11 @@ Before offering an external-engine second opinion for code review, run
 If the helper reports `prompt_required`, `/code-review` owns the `AskUserQuestion` or channel-inline
 prompt and persists the selected preference with `engine_offer.py remember`. The offer is advisory
 only; `/code-review` still verifies every finding and owns the merge-readiness verdict.
+
+<!-- gate-record: id=code-review-engine-offer absence=HALT transport=ask-user-question -->
+The offer prompt rides the durable gate-record contract declared in Interaction method (gate id
+`code-review-engine-offer-<run-id>`): open before prompting, satisfy on answer, `resolve-absent`
+on silence (`HALT`).
 
 ---
 

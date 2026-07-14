@@ -49,6 +49,27 @@ recommended or pre-selected option, record the interaction as `gate_id`
 on the next `saga.py save` call. Open-ended questions with no offered default have nothing to
 record.
 
+<!-- gate-record: id=brainstorm-interrogation-choice absence=HALT transport=ask-user-question -->
+**Durable gate-record contract (#371).** Every known-set gate above is a durable approval record,
+not a widget call. BEFORE invoking `AskUserQuestion` (or the channel-inline fallback), persist the
+record; capture the answer into it; on silence (timeout, widget error, dropped session) resolve it
+by its declared absence behavior — `HALT` here: stop and wait, silence is never consent.
+
+```bash
+python3 plugins/saga/scripts/gate_record.py open --gate-id brainstorm-<decision>-<run-id> \
+  --question "<the question>" --option "<a>" --option "<b>" \
+  --absence-behavior HALT --transport ask-user-question --opened-by saga:brainstorm
+# after the operator answers:
+python3 plugins/saga/scripts/gate_record.py satisfy --gate-id <same-id> \
+  --answer "<chosen option>" --answerer operator
+# on silence / widget error / dropped call:
+python3 plugins/saga/scripts/gate_record.py resolve-absent --gate-id <same-id> \
+  --reason "<what happened>"
+```
+
+Read the decision from the persisted record (`poll` → `status` / `answer`), never from the
+widget's raw return value. Full contract: `plugins/saga/references/gate-record.md`.
+
 ## Engine Offer
 
 Before offering an external-engine lane for brainstorming, run
@@ -56,6 +77,11 @@ Before offering an external-engine lane for brainstorming, run
 If the helper reports `prompt_required`, this skill owns the `AskUserQuestion` or channel-inline
 prompt and then persists the selected preference with `engine_offer.py remember`. The offer is
 advisory only; it never dispatches, decides scope, or gates requirements.
+
+<!-- gate-record: id=brainstorm-engine-offer absence=HALT transport=ask-user-question -->
+The offer prompt rides the durable gate-record contract declared in Interaction rules (gate id
+`brainstorm-engine-offer-<run-id>`): open before prompting, satisfy on answer, `resolve-absent`
+on silence (`HALT`).
 
 ## Topic
 
@@ -346,6 +372,11 @@ Options:
 
 Use `AskUserQuestion` when 4 or fewer options are visible; render a numbered list ("Pick a number or
 describe what you want.") when 5 or more are visible. Never silently skip the question.
+
+<!-- gate-record: id=brainstorm-handoff-routing absence=HALT transport=ask-user-question -->
+This routing choice is a durable gate-record (`brainstorm-handoff-routing-<run-id>`) under the
+Interaction-rules contract above: open before prompting, satisfy on answer, `resolve-absent` on
+silence (`HALT`).
 
 When the run ends or hands off, close with the requirements doc's absolute path, the key decisions, and
 the recommended next step (`/plan` when ready, or `/office-hours` if it bounced back). When paused with

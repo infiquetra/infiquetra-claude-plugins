@@ -27,6 +27,26 @@
 
 ## 2026-07-14
 
+### A lint that eats its own documentation is the cheapest honesty check it will ever get {#gate-lint-self-scan-371}
+
+**Context.** #371's gate-absence lint scans every `*.md` under `plugins/saga` — which includes
+the new `references/gate-record.md` documenting the lint's own marker grammar. The doc's first
+draft used placeholder-syntax examples (`id=<slug>`, `absence=<HALT|...>`) and prose quoting the
+literal marker prefix; the lint immediately failed its own reference with `malformed marker` and
+`unparseable gate marker` violations. **Evidence.** First full-tree run of
+`plugins/saga/scripts/lint_gate_absence_contract.py` in the #371 build (violations at
+`references/gate-record.md:131/133/3/6/177`); fixed by making every in-doc example a VALID
+marker (`id=example-gate`) and describing the grammar in prose instead of placeholder brackets.
+**Mechanism.** A fail-closed marker parser cannot distinguish "documentation about a marker"
+from "a marker" — any doc under the scanned roots is production input to the lint. That is a
+feature: the failure proved the fail-closed path fires on real content before any test did.
+**Generalizable rule.** When a lint's contract doc lives inside the lint's own scan roots, write
+every example as a semantically-valid instance (self-demonstrating) rather than
+placeholder-bracket pseudo-syntax — and treat the lint's first red run on its own docs as the
+zero-cost baseline control that the guard has teeth.
+
+---
+
 ### Two verbs that perform one semantic transition need ONE validator, or the rule has a side door {#one-transition-one-validator-433}
 
 **Context.** #433's first cut enforced the R7 monotonic merge/deploy rule only in `repost` — and

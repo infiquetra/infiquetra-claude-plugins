@@ -67,6 +67,7 @@ Thumbs.db
 # surface + act-log; polled/replayed at boundaries, never committed (keeps git status clean)
 .saga/adjustment-envelope.json
 .saga/undo-ledger.jsonl
+.saga/gates/
 
 # Mutation-canary run log (#427) — appended each run, inspectable locally / uploaded as a CI
 # workflow artifact; never committed so a canary run never dirties the working tree.

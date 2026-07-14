@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.95.0] - 2026-07-14
+
+### Added - gates as durable approval records with a linted operator-absence contract (#371)
+
+- **`scripts/gate_record.py` — a gate is a record, not an `AskUserQuestion` call:** question,
+  options, machine-readable `absence_behavior` (`HALT` / `safe-default-with-record` / `escalate`,
+  default `HALT` per the fleet's HALT-not-degrade posture), answer, answerer, timestamps, and
+  transport, persisted BEFORE any transport is invoked under `.saga/gates/<gate_id>/`. Storage is
+  derived-on-read with write-once commits (`os.link` declaration + resolution, append-only absence
+  audit that records repeat silence rather than deduplicating it): a restarted session resumes the
+  same pending record (`open` on an identical declaration; a mismatch errors), status is never
+  held in memory, and of two concurrent satisfies exactly one wins. `poll` never returns a
+  consumable answer for a silent gate; `resolve-absent` applies the DECLARED behavior only — the
+  caller cannot pick one at resolution time — so silence never resolves to an implicit yes.
+- **Pluggable transports, `AskUserQuestion` demoted:** `ask-user-question` (push — the session
+  relays the widget answer via `satisfy`) and `file-sentinel` (pull — `poll` ingests a dropped
+  `answer.json` through the SAME satisfy path) share one schema and one validation path; a
+  sentinel dropped for a push gate is a transport-mismatch error, a malformed sentinel is
+  surfaced, never skipped. Late live answers over `redis-channel`/`discord` are accepted with the
+  real arrival transport recorded (the escalate flow).
+- **Operator-absence contract (binding on #449): derived provenance is not operator presence.**
+  `satisfy` rejects reserved-prefix answerers (`carried-forward:` — the #433 tightening-repost
+  approval provenance, drift-guarded against the production literal — and `absence:`) in both
+  directions of the seam; `classify_answerer` / `is_operator_answerer` are the exported
+  predicates for forward consumers. The #598 item-2 set-intent/repost carry-forward asymmetry is
+  deliberately COMPOSED WITH (presence-conservative), not closed — rationale in
+  `references/gate-record.md`. The closed `binding` vocabulary (`outcome_id` / `saga_id` /
+  `leaf_id` / `spec_revision` / `intent_revision`) gives #449 dispatch-era binding, filterable
+  via `gate_record.py list --binding`.
+- **`scripts/lint_gate_absence_contract.py` + CI wiring:** "we forgot to say what silence means"
+  is now a build failure. Every `AskUserQuestion` mention in scanned markdown must sit in a
+  section carrying a `<!-- gate-record: id=... absence=... transport=... -->` or
+  `<!-- gate-exempt: ... -->` marker (malformed markers fail closed); every Python `open_gate`
+  call must declare a literal in-vocabulary `absence_behavior` (the defining module is excluded
+  by documented rule and reported). Legacy debt is pinned exact-count in
+  `scripts/gate_absence_baseline.json` — surfaced as `pending migration (applied: false)`,
+  shrink-only, any drift fails.
+- **Six gate sites migrated** (`brainstorm`, `code-review`, `founder-review`, `ideate`,
+  `investigate`, `loop`): each declares gate-record markers (ids aligned with the #399
+  gate-divergence `gate_id` vocabulary) and instructs open-before-ask / satisfy-after /
+  resolve-absent-on-silence, reading decisions from the persisted record, never the widget's raw
+  return. `engine_dispatch.satisfy_gate()` (the external-engine gate precedent) is untouched.
+- **`references/gate-record.md`:** the full contract — schema, absence semantics, transport seam,
+  the operator-presence position, enumerated consumers per record phase, honest bounds
+  (self-attested answerer seams; the #597 report-tier kind-filter bug deliberately NOT inherited —
+  gate records stay out of the consolidated report until that filter is fixed).
+
 ## [0.94.0] - 2026-07-14
 
 ### Added - mid-run posture renegotiation: the /outcome `repost`/set_intent verb (#433)

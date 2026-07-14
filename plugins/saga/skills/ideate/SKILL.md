@@ -38,6 +38,17 @@ with `select:AskUserQuestion` first if its schema isn't loaded). Fall back to nu
 chat only when no blocking tool exists or the call errors. In a channel session, inline the
 choices in the reply text. Never silently skip a gate question. Ask one question at a time.
 
+<!-- gate-record: id=ideate-interaction absence=HALT transport=ask-user-question -->
+**Durable gate-record contract (#371).** Every known-set gate above is a durable approval record,
+not a widget call. BEFORE invoking `AskUserQuestion` (or any fallback), persist the record with
+`python3 plugins/saga/scripts/gate_record.py open --gate-id ideate-<decision>-<run-id>
+--question "..." --option "..." --option "..." --absence-behavior HALT --transport ask-user-question
+--opened-by saga:ideate`; after the answer, `satisfy --gate-id <same-id> --answer "<chosen option>"
+--answerer operator`; on silence (timeout, widget error, dropped session), `resolve-absent
+--gate-id <same-id> --reason "<what happened>"` — `HALT`: stop and wait, silence is never consent.
+Read the decision from the persisted record (`poll` → `status` / `answer`), never from the widget's
+raw return value. Full contract: `plugins/saga/references/gate-record.md`.
+
 ## Engine Offer
 
 Before offering an external-engine lane for ideation, run
@@ -45,6 +56,11 @@ Before offering an external-engine lane for ideation, run
 If the helper reports `prompt_required`, this skill owns the `AskUserQuestion` or channel-inline
 prompt and then persists the selected preference with `engine_offer.py remember`. The offer is
 advisory only; it never dispatches, scores, or gates ideas.
+
+<!-- gate-record: id=ideate-engine-offer absence=HALT transport=ask-user-question -->
+The offer prompt rides the durable gate-record contract declared in Interaction method (gate id
+`ideate-engine-offer-<run-id>`): open before prompting, satisfy on answer, `resolve-absent` on
+silence (`HALT`).
 
 ## Focus hint
 

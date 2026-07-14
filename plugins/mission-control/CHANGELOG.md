@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.10.0] - 2026-07-14
+
+### Added
+
+- Add idempotent `flow assign-mimir --repo REPO --number N`. Before its only mutation it reads
+  Team Mimir's exact live coverage from authenticated GitHub, requires an active issue route, an
+  open issue, triage-or-higher operator authority, and the repository's existing `intake:mimir`
+  label. Success is emitted only after issue readback and includes trigger state, coverage route,
+  issue URL, and live Objective project-field values when present.
+- Fail closed for unsupported repositories, closed issues, insufficient authority, missing or
+  malformed policy, missing trigger labels, API failures, and failed mutation readback. The
+  command creates no labels, comments, repository admissions, or alternate credential paths.
+
 ## [2.9.0] - 2026-07-14
 
 ### Added - ship-policy intent envelope at issue capture (#380)

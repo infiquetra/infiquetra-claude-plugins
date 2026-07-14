@@ -64,6 +64,7 @@ Environment Variables:
 """
 
 import argparse
+import base64
 import importlib.util
 import json
 import os
@@ -76,6 +77,9 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote
+
+import yaml
 
 # ===========================
 # CONFIGURATION
@@ -83,6 +87,10 @@ from typing import Any, cast
 
 ORG = "infiquetra"
 MAX_GITHUB_LABEL_DESCRIPTION_LENGTH = 100
+MIMIR_COVERAGE_REPO = "team-mimir"
+MIMIR_COVERAGE_PATH = "deploy/repository_coverage.yml"
+MIMIR_INTAKE_LABEL = "intake:mimir"
+MIMIR_AUTHORIZED_ROLES = frozenset({"triage", "write", "maintain", "admin"})
 
 
 def _normalize_repo_arg(value: str) -> str:
@@ -956,6 +964,28 @@ query($org: String!, $repo: String!, $number: Int!) {
       __typename
       ... on Issue { labels(first: 30) { nodes { name } } }
       ... on PullRequest { labels(first: 30) { nodes { name } } }
+    }
+  }
+}
+"""
+
+QUERY_GET_MIMIR_OBJECTIVE_FIELDS = """
+query($org: String!, $repo: String!, $number: Int!) {
+  repository(owner: $org, name: $repo) {
+    issue(number: $number) {
+      projectItems(first: 100) {
+        nodes {
+          project { title number }
+          fieldValues(first: 100) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                field { ... on ProjectV2SingleSelectField { name } }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -2539,6 +2569,175 @@ def flow_discover_project(repo: str, fmt: str) -> None:
         print(f"\n{repo} maps to:")
         for p in projects:
             print(f"  - {p['name']} (#{p['number']})")
+
+
+def _load_live_mimir_coverage(repo: str) -> dict[str, Any]:
+    """Read and validate Team Mimir's exact repository admission from GitHub main."""
+    encoded = _gh(
+        [
+            "api",
+            f"repos/{ORG}/{MIMIR_COVERAGE_REPO}/contents/{MIMIR_COVERAGE_PATH}?ref=main",
+            "--jq",
+            ".content",
+        ]
+    )
+    try:
+        document = yaml.safe_load(base64.b64decode(encoded).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise RuntimeError("Team Mimir coverage is unreadable; no mutation performed") from exc
+
+    if not isinstance(document, dict) or not isinstance(document.get("repository_coverage"), dict):
+        raise RuntimeError("Team Mimir coverage has an invalid root; no mutation performed")
+    coverage = cast(dict[str, Any], document["repository_coverage"])
+    if coverage.get("schema_version") != 1:
+        raise RuntimeError("Team Mimir coverage schema is unsupported; no mutation performed")
+    if coverage.get("policy_version") != "repository-coverage/v1":
+        raise RuntimeError("Team Mimir coverage policy is unsupported; no mutation performed")
+    if coverage.get("default_disposition") != "quarantine":
+        raise RuntimeError("Team Mimir coverage is not fail-closed; no mutation performed")
+
+    full_repo = f"{ORG}/{repo}"
+    entries = coverage.get("repositories")
+    if not isinstance(entries, list):
+        raise RuntimeError("Team Mimir coverage repository list is invalid; no mutation performed")
+    matches = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("repository") == full_repo
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Repository {full_repo} is not uniquely covered by Team Mimir; no mutation performed"
+        )
+    entry = cast(dict[str, Any], matches[0])
+    events = entry.get("events")
+    if entry.get("state") != "active" or not isinstance(events, list) or "issues" not in events:
+        raise RuntimeError(
+            f"Repository {full_repo} is not active for Team Mimir issue intake; no mutation performed"
+        )
+    if not isinstance(entry.get("route"), str) or not entry["route"]:
+        raise RuntimeError(f"Repository {full_repo} has no Team Mimir route; no mutation performed")
+    return {
+        "policy_version": coverage.get("policy_version"),
+        "repository": full_repo,
+        "route": entry["route"],
+    }
+
+
+def _mimir_objective_fields(repo: str, number: int) -> list[dict[str, Any]]:
+    """Return live Objective values on every project card carrying the issue."""
+    data = _graphql(
+        QUERY_GET_MIMIR_OBJECTIVE_FIELDS,
+        {"org": ORG, "repo": repo, "number": number},
+    )
+    issue = data.get("repository", {}).get("issue")
+    if not isinstance(issue, dict):
+        raise RuntimeError(f"Could not read back {ORG}/{repo}#{number} project state")
+
+    result: list[dict[str, Any]] = []
+    for item in issue.get("projectItems", {}).get("nodes", []):
+        if not isinstance(item, dict):
+            continue
+        project = item.get("project", {})
+        for field_value in item.get("fieldValues", {}).get("nodes", []):
+            if not isinstance(field_value, dict):
+                continue
+            if field_value.get("field", {}).get("name") != "Objective":
+                continue
+            value = field_value.get("name")
+            if value:
+                result.append(
+                    {
+                        "project": project.get("title"),
+                        "project_number": project.get("number"),
+                        "value": value,
+                    }
+                )
+    return result
+
+
+def flow_assign_mimir(repo: str, number: int, fmt: str) -> None:
+    """Apply the existing Mimir intake label after live, fail-closed preflight."""
+    coverage = _load_live_mimir_coverage(repo)
+    issue_path = f"repos/{ORG}/{repo}/issues/{number}"
+    issue = _rest_get(issue_path)
+    if not isinstance(issue, dict) or issue.get("pull_request"):
+        raise RuntimeError(f"{ORG}/{repo}#{number} is not an issue; no mutation performed")
+    if issue.get("state") != "open":
+        raise RuntimeError(f"{ORG}/{repo}#{number} is not open; no mutation performed")
+
+    actor = _fetch_gh_login()
+    if not actor:
+        raise RuntimeError("Current GitHub principal could not be verified; no mutation performed")
+    try:
+        authority = _rest_get(
+            f"repos/{ORG}/{repo}/collaborators/{quote(actor, safe='')}/permission"
+        )
+    except ApiNotFoundError as exc:
+        raise RuntimeError(
+            f"GitHub principal {actor} has no verified authority on {ORG}/{repo}; "
+            "no mutation performed"
+        ) from exc
+    if not isinstance(authority, dict):
+        raise RuntimeError(
+            f"GitHub authority for {actor} on {ORG}/{repo} was unreadable; no mutation performed"
+        )
+    # `role_name` may be an organization-defined custom role. GitHub's
+    # standardized `permission` is the effective base role we can compare
+    # against the command's closed authorization vocabulary.
+    role = authority.get("permission") or authority.get("role_name")
+    if role not in MIMIR_AUTHORIZED_ROLES:
+        raise RuntimeError(
+            f"GitHub principal {actor} has insufficient authority ({role!r}) on {ORG}/{repo}; "
+            "no mutation performed"
+        )
+
+    try:
+        _rest_get(f"repos/{ORG}/{repo}/labels/{quote(MIMIR_INTAKE_LABEL, safe='')}")
+    except ApiNotFoundError as exc:
+        raise RuntimeError(
+            f"Required trigger label {MIMIR_INTAKE_LABEL!r} is missing from {ORG}/{repo}; "
+            "no mutation performed"
+        ) from exc
+
+    labels = {
+        label.get("name")
+        for label in issue.get("labels", [])
+        if isinstance(label, dict) and isinstance(label.get("name"), str)
+    }
+    trigger_state = "already-triggered"
+    if MIMIR_INTAKE_LABEL not in labels:
+        _rest_post(f"{issue_path}/labels", {"labels": [MIMIR_INTAKE_LABEL]})
+        trigger_state = "applied"
+
+    readback = _rest_get(issue_path)
+    if not isinstance(readback, dict):
+        raise RuntimeError(f"Could not read back {ORG}/{repo}#{number}; refusing success")
+    readback_labels = {
+        label.get("name")
+        for label in readback.get("labels", [])
+        if isinstance(label, dict) and isinstance(label.get("name"), str)
+    }
+    if MIMIR_INTAKE_LABEL not in readback_labels:
+        raise RuntimeError(
+            f"{MIMIR_INTAKE_LABEL!r} was not present in issue readback; refusing success"
+        )
+
+    _out(
+        {
+            "action": "assign-mimir",
+            "issue_url": readback.get("html_url"),
+            "repository": coverage["repository"],
+            "number": number,
+            "trigger": {"label": MIMIR_INTAKE_LABEL, "state": trigger_state},
+            "coverage": coverage,
+            "objective_fields": _mimir_objective_fields(repo, number),
+            "expected_team_mimir_route": coverage["route"],
+            "actor": actor,
+            "authority": role,
+        },
+        fmt,
+    )
 
 
 # ===========================
@@ -5705,6 +5904,13 @@ def main() -> None:
     )
     flow_disc_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
+    flow_assign_mimir_p = flow_sp.add_parser(
+        "assign-mimir",
+        help="Apply the covered repository's Team Mimir intake trigger (idempotent)",
+    )
+    flow_assign_mimir_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
+    flow_assign_mimir_p.add_argument("--number", required=True, type=int)
+
     flow_link_p = flow_sp.add_parser(
         "link-sub-issue",
         help="Link child as native sub-issue of parent (cross-repo supported, idempotent)",
@@ -5914,6 +6120,8 @@ def main() -> None:
                 flow_field_options(args.project, args.field, fmt)
             elif args.action == "discover-project":
                 flow_discover_project(args.repo, fmt)
+            elif args.action == "assign-mimir":
+                flow_assign_mimir(args.repo, args.number, fmt)
             elif args.action == "link-sub-issue":
                 flow_link_sub_issue(
                     args.parent_repo, args.parent_number, args.child_repo, args.child_number, fmt

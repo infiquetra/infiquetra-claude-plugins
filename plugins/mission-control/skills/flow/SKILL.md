@@ -4,7 +4,7 @@ description: |
   Operator-facing GraphQL + REST helpers for the active project boards. Wraps
   the GitHub APIs the orchestrator uses, so Jeff can do per-card work
   (set Initiative/Objective fields, link or unlink sub-issues, validate card bodies,
-  self-heal labels, discover project mappings) without writing GraphQL by
+  self-heal labels, discover project mappings, assign covered issues to Team Mimir) without writing GraphQL by
   hand. Each command is idempotent where possible, and surfaces partial
   failures clearly.
 when_to_use: |
@@ -23,6 +23,10 @@ when_to_use: |
   Find which project a repo belongs to:
   - "Which project does athena-service map to?"
   - "Where do I add cards from this repo?"
+
+  Assign an issue to Team Mimir intake:
+  - "Assign this issue to Mimir"
+  - "Send infiquetra/mimir-pilot-claude-plugins#42 through Mimir intake"
 
   Link a child issue as a sub-issue of a parent:
   - "Link #43 as a sub-issue of #42"
@@ -85,6 +89,10 @@ sdlc_manager.py flow field-options \
 # Resolve which project a repo maps to
 sdlc_manager.py flow discover-project --repo athena-service
 
+# Apply the live-covered repository's existing Mimir intake trigger
+sdlc_manager.py flow assign-mimir \
+  --repo mimir-pilot-claude-plugins --number 42
+
 # Link child as native sub-issue of parent (cross-repo OK; idempotent)
 sdlc_manager.py flow link-sub-issue \
   --parent-repo campps-context-library --parent-number 1 \
@@ -111,6 +119,7 @@ sdlc_manager.py flow validate-card --repo campps-mvp --number 42
 | `set-field` | yes (same option = same final state) | Raises if an option doesn't exist; error message lists current options. With `--numbers` and repeated `--field/--option` pairs, reports every updated/failed issue-field update and exits non-zero after reporting if any item fails. |
 | `field-options` | read-only | Raises if project or field doesn't exist |
 | `discover-project` | read-only | Returns "not mapped" or "excluded" without erroring |
+| `assign-mimir` | yes (existing trigger label = no mutation) | Reads live Team Mimir coverage, open-issue state, current principal authority, and the existing trigger label before mutation; verifies label and Objective state after mutation. Unsupported, closed, unauthorized, missing-label, or unreadable cases fail closed. |
 | `link-sub-issue` | yes (re-POST returns 422 "already exists" → success) | Raises on non-422 errors; rejects PR-as-parent |
 | `unlink-sub-issue` | yes (verified issues + absent relationship returns 404 -> success) | Verifies both issues first; rejects PR-as-parent; propagates auth/rate-limit/server errors |
 | `verify-label` | yes (no-op if exists; create if 404) | Raises on auth/rate-limit/server errors (NOT silently treated as missing) |
@@ -122,6 +131,7 @@ sdlc_manager.py flow validate-card --repo campps-mvp --number 42
 - **Field option IDs rotate on rename/recreate.** Never cache them. Every command that reads field state calls `flow field-options` (or its equivalent GraphQL query) at start.
 - **Verify-label distinguishes 404 from other errors.** A 401/403/5xx must NOT be silently treated as missing — that would create labels under the wrong auth context or mask real failures.
 - **Link only real decomposition.** Capabilities are top-level by default and grouped by the `Objective` field. Both sub-issue commands require an issue parent; PRs are rejected.
+- **Assign-Mimir never creates policy.** It does not admit repositories, create `intake:mimir`, use alternate credentials, or comment. Team Mimir's live exact-repository coverage and the repository-owned label must already exist.
 
 ## Where this fits in the broader workflow
 

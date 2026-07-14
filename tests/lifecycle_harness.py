@@ -111,6 +111,7 @@ _ALLOWED_CLIS: dict[str, Path] = {
     "saga": SAGA_SCRIPTS / "saga.py",
     "execution_spec": SAGA_SCRIPTS / "execution_spec.py",
     "outcome": SAGA_SCRIPTS / "outcome.py",
+    "envelope_token": SAGA_SCRIPTS / "envelope_token.py",  # #449 merge-authorization credential
 }
 
 

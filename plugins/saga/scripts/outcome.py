@@ -1565,16 +1565,45 @@ def production_harvester(
 
 
 def production_merge_processor(
-    *, github_runner: Callable[..., Any] | None = None
+    *,
+    github_runner: Callable[..., Any] | None = None,
+    repo_root: Path | None = None,
 ) -> Callable[[Any, Any], Any]:
     """Build the merge processor ``advance`` runs each tick under the held coordinator lease (U6): it
-    auto-merges every clean, non-gated code leaf (serialized) and records GitHub negative terminals."""
+    auto-merges every clean, non-gated, **envelope-authorized** (#449) code leaf (serialized) and
+    records GitHub negative terminals. Without a ``ceremony_gates.merge: "auto"`` posture AND one
+    active merge token, every leaf ``waits-operator`` — the never-autonomous default is enforced.
+
+    ``repo_root`` (production wiring) makes the merge ceremony read the ON-DISK spec's committed
+    intent per authorization, so a mid-tick repost's posture is honored within the same tick; a
+    caller that omits it falls back to the tick's in-memory posture (residual documented in
+    ``outcome_merge``). An unreadable on-disk spec fails the authorization closed, never the tick.
+    """
     import outcome_merge
 
     ops = outcome_merge.github_merge_ops(github_runner)
 
     def processor(spec: Any, store: Any) -> Any:
-        return outcome_merge.process_merge_queue(spec, store, ops)
+        intent_reader: Callable[[], tuple[dict[str, Any] | None, int]] | None = None
+        if repo_root is not None:
+            root_now = repo_root
+            outcome_id = spec.outcome_id
+
+            def _on_disk_intent() -> tuple[dict[str, Any] | None, int]:
+                data = json.loads(spec_path(root_now, outcome_id).read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise OutcomeError("on-disk outcome spec is not a JSON object")
+                intent = data.get("intent")
+                if intent is not None and not isinstance(intent, dict):
+                    raise OutcomeError(f"on-disk intent is not an object: {intent!r}")
+                revision = data.get("intent_revision", 0)
+                if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+                    raise OutcomeError(f"on-disk intent_revision invalid: {revision!r}")
+                return (intent, revision)
+
+            intent_reader = _on_disk_intent
+
+        return outcome_merge.process_merge_queue(spec, store, ops, intent_reader=intent_reader)
 
     return processor
 
@@ -1926,7 +1955,7 @@ def main(argv: list[str] | None = None) -> int:
                 loop=args.loop,
                 dispatcher=outcome_dispatcher.make_dispatcher(available=outcome_spec.NODE_BACKENDS),
                 harvester=production_harvester(root),
-                merge_processor=production_merge_processor(),
+                merge_processor=production_merge_processor(repo_root=root),
                 worktree_processor=production_worktree_processor(root),
                 liveness_processor=production_liveness_processor(),
                 cost_processor=production_cost_processor(root),

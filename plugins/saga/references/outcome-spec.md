@@ -284,12 +284,14 @@ campaign is LIVE (any dispatch record, either phase), a first envelope attach ca
 decision-trail entry with its classified deltas — one rule, one trail, no second-verb side
 door (AC5). A PRE-dispatch attach may carry any posture (the #380 interview-fallback
 contract). One-directional by design: loosening merge/deploy posture back to autonomous takes
-a new campaign, not a repost. **Consumer honesty:** today the engine consumes
-`reviews_required` (implied closure checks) and the #373 dispatch-seam fields;
-`ceremony_gates.merge` / `deploy_nonprod` are *recorded posture with no engine consumer yet* —
-the auto-merge queue keys off node-level flags and nothing reads these two gates. R7 protects
-the recorded value's integrity so the consumer that #449 lands (the token-checked
-merge/deploy write class) inherits a trustworthy field, not so it changes behavior today.
+a new campaign, not a repost. **Consumer honesty:** the engine consumes `reviews_required`
+(implied closure checks), the #373 dispatch-seam fields, and — since #449 —
+`ceremony_gates.merge`: the auto-merge queue performs a GitHub write (rebase/squash) only
+under a committed `merge: "auto"` posture plus one active envelope token
+(`references/envelope-token.md`), re-checked fresh per attempt, so the R7-protected recorded
+value is now load-bearing engine behavior. `deploy_nonprod` remains *recorded posture with no
+engine consumer* (deploy is out of #449's scope); R7 keeps protecting it for the follow-on
+deploy write class.
 
 **Approval interplay (R3).** Every repost bumps `spec_revision` and the R20 approval gate is
 revision-keyed, so the frontier approval is consumed automatically. A repost whose deltas ONLY

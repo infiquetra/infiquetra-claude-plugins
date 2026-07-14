@@ -207,6 +207,95 @@ def authorize_and_write(
 
 
 # ---------------------------------------------------------------------------
+# #449: envelope-authorized merge attribution records (R5 — the board-sync ledger
+# schema's `authorizing_envelope_id` extension, merge-class records ONLY)
+# ---------------------------------------------------------------------------
+
+# Closed phase vocabulary: `authorized` is written BEFORE the squash (the durable proof
+# the merge was pre-authorized, and by which envelope); `merged` is written after GitHub
+# confirms the squash landed. Both phases carry the same attribution payload (the #433
+# lesson: an in-flight marker must carry its era for every consumer in every phase).
+MERGE_RECORD_PHASES = ("authorized", "merged")
+
+
+def merge_record_key(outcome_id: str, subplot_id: str, pr: str, phase: str, token_id: str) -> str:
+    """The deterministic ledger key for one envelope-authorized merge record phase.
+
+    ``token_id`` is the era coordinate: a token is minted per envelope era (content
+    fingerprint + intent_revision, exactly one active, ids unreusable after revocation),
+    so keying on it means an ``authorized`` record left by an attempt under a dead era
+    can never stand as — or write-once-suppress — the pre-attribution of a merge
+    performed under a later era. Both phases of one merge share the same token
+    coordinate; repeats within one era still dedup write-once.
+    """
+    return f"merge-under-envelope:{outcome_id}:{subplot_id}:{pr}:{phase}:{token_id}"
+
+
+def record_envelope_authorized_merge(
+    ledger_dir: Path,
+    *,
+    phase: str,
+    outcome_id: str,
+    subplot_id: str,
+    pr: str,
+    authorizing_envelope_id: str,
+    token_id: str,
+    now: Callable[[], float] = time.time,
+    write_once: Callable[[Path, str], bool] = _write_once,
+) -> dict[str, Any]:
+    """Write ONE envelope-authorized merge attribution record into the board-sync ledger.
+
+    #449 R5: every record written for a merge authorized under the
+    ``AUTONOMOUS_UNDER_ENVELOPE`` write class carries ``authorizing_envelope_id`` (and the
+    ``token_id`` that presented it) — non-merge ledger records are untouched (the field is
+    merge-record-specific, never a schema-wide change). Records are write-once under a
+    deterministic key; a repeat call returns ``{status: "skipped"}``. A write fault is
+    surfaced as ``{status: "error"}`` — never thrown past the caller, because for the
+    ``merged`` phase the side effect (the squash) has already committed.
+
+    Fail closed: an off-vocabulary ``phase`` or an empty attribution field is a caller
+    bug and raises — an unattributed merge record must be impossible to write here.
+    """
+    if phase not in MERGE_RECORD_PHASES:
+        raise ValueError(f"phase {phase!r} not in {MERGE_RECORD_PHASES} — closed vocabulary")
+    for field_name, value in (
+        ("outcome_id", outcome_id),
+        ("subplot_id", subplot_id),
+        ("pr", pr),
+        ("authorizing_envelope_id", authorizing_envelope_id),
+        ("token_id", token_id),
+    ):
+        if not isinstance(value, str) or not value:
+            raise ValueError(
+                f"record_envelope_authorized_merge: {field_name} must be a non-empty "
+                f"string, got {value!r} — an unattributed merge record is not writable"
+            )
+    key = merge_record_key(outcome_id, subplot_id, pr, phase, token_id)
+    ledger_file = Path(ledger_dir) / _safe_ledger_name(key)
+    base: dict[str, Any] = {
+        "key": key,
+        "op_kind": "merge-under-envelope",
+        "outcome_id": outcome_id,
+        "subplot_id": subplot_id,
+        "pr": pr,
+        "phase": phase,
+        "authorizing_envelope_id": authorizing_envelope_id,
+        "token_id": token_id,
+    }
+    if ledger_file.exists():
+        return {"status": "skipped", **base}
+    try:
+        created = write_once(ledger_file, json.dumps({**base, "ts": now()}))
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "error",
+            **base,
+            "error": f"merge attribution record failed: {exc}",
+        }
+    return {"status": "written" if created else "skipped", **base}
+
+
+# ---------------------------------------------------------------------------
 # The production board_writer (moved from outcome.py:_default_board_writer, #344 KTD6)
 # ---------------------------------------------------------------------------
 

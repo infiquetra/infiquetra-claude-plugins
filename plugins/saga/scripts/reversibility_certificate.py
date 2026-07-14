@@ -15,13 +15,21 @@ Design points:
 * ``authorize_write`` gates any op that is not explicitly enumerated, or is ``ALWAYS_OPERATOR``,
   or is merge/deploy (absent from the registry) — default GATE (R3/R7/R8/R20).
 * This module is dead-wired until U4 makes it a live producer+consumer (KTD8).
+* #449: the ``AUTONOMOUS_UNDER_ENVELOPE`` tier (sole member: ``MERGE_UNDER_ENVELOPE``) is
+  **inert through** ``authorize_write`` — it can only be AUTHORIZED via the sibling
+  :func:`authorize_write_under_envelope`, and only when a fresh envelope-token check
+  (``envelope_token.check_token`` / ``resolve_merge_token`` — re-read from disk at
+  authorization time, never cached) is valid AND the caller attests every other required
+  gate is green. Bare ``merge`` / ``deploy`` strings stay absent from the registry: R20's
+  default-GATE for every caller that presents no token is unchanged (#449 R2/R6/R7).
 
-Requirement traceability: R1–R9, R20; KTD1–KTD4, KTD8.
+Requirement traceability: R1–R9, R20; KTD1–KTD4, KTD8; #449 R1–R2.
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Verdict constants
@@ -62,6 +70,12 @@ class OpKind(StrEnum):
     # merged-worktree removal. Reversible — a merged-only reclaim leaves the branch/
     # commit on origin/main, so the worktree can be re-created via ``git worktree add``.
     WORKTREE_RECLAIM_MERGED = "worktree-reclaim-merged"
+    # #449: the envelope-authorized merge write class. NOT part of the base allowlist a
+    # caller gets for free — ``authorize_write`` always GATEs it (its tier is neither
+    # reversible nor additive); only ``authorize_write_under_envelope`` with a valid,
+    # unexpired, unrevoked merge-scope envelope token can AUTHORIZE it. Bare "merge" /
+    # "deploy" remain absent (R20 unchanged for every tokenless caller).
+    MERGE_UNDER_ENVELOPE = "merge-under-envelope"
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +89,9 @@ class Tier(StrEnum):
     REVERSIBLE = "reversible"  # Registered inverse exists; can be undone.
     ADDITIVE = "additive"  # Append-only; abort-cost bounded; no inverse.
     ALWAYS_OPERATOR = "always_operator"  # Gates even if otherwise reversible.
+    # #449: authorized ONLY through authorize_write_under_envelope with a live token
+    # check — authorize_write itself always GATEs this tier (inert without a token).
+    AUTONOMOUS_UNDER_ENVELOPE = "autonomous_under_envelope"
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +259,19 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         always_operator=True,
         key_recipe="N/A — never autonomous",
     ),
+    # --- AUTONOMOUS_UNDER_ENVELOPE tier (#449 R1) ---
+    # A squash-merge has NO registered inverse — it is irreversible, which is exactly why
+    # it may only be authorized under an explicit, expiring, revocable envelope token
+    # (authorize_write_under_envelope), never through the base allowlist. authorize_write
+    # GATEs this entry unconditionally (the tier is neither reversible nor additive).
+    OpKind.MERGE_UNDER_ENVELOPE: OpFacts(
+        op_kind=OpKind.MERGE_UNDER_ENVELOPE,
+        tier=Tier.AUTONOMOUS_UNDER_ENVELOPE,
+        inverse=None,
+        abort_cost=None,
+        always_operator=False,
+        key_recipe="merge-under-envelope:{outcome_id}:{subplot_id}:{pr}:{phase}:{token_id}",
+    ),
 }
 
 
@@ -266,6 +296,10 @@ def authorize_write(op_kind: str | OpKind) -> Verdict:
       * Anything not enumerated → GATE (default-deny).
       * Any ALWAYS_OPERATOR entry → GATE even if its tier is otherwise reversible.
       * Only enumerated reversible/additive ops that are NOT ALWAYS_OPERATOR → AUTHORIZED.
+      * The ``AUTONOMOUS_UNDER_ENVELOPE`` tier (#449) → GATE here, always — no token
+        parameter exists on this function by design (#449 R2: zero regression for every
+        existing caller); the envelope class flows only through
+        :func:`authorize_write_under_envelope`.
 
     ``op_kind`` may be a string or an ``OpKind`` instance; strings that match no ``OpKind``
     member return GATE without raising.
@@ -288,6 +322,129 @@ def authorize_write(op_kind: str | OpKind) -> Verdict:
         return AUTHORIZED
 
     return GATE  # belt-and-suspenders default
+
+
+class EnvelopeAuthorization:
+    """One #449 envelope-class authorization verdict — pure data, echoed facts.
+
+    ``authorizing_envelope_id`` / ``token_id`` are populated only on AUTHORIZED, so a
+    ledger writer can never attribute a merge to an envelope that did not authorize it.
+    """
+
+    __slots__ = ("verdict", "reason", "authorizing_envelope_id", "token_id")
+
+    def __init__(
+        self,
+        verdict: Verdict,
+        reason: str,
+        authorizing_envelope_id: str = "",
+        token_id: str = "",
+    ) -> None:
+        self.verdict = verdict
+        self.reason = reason
+        self.authorizing_envelope_id = authorizing_envelope_id
+        self.token_id = token_id
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "verdict": str(self.verdict.value),
+            "reason": self.reason,
+            "authorizing_envelope_id": self.authorizing_envelope_id,
+            "token_id": self.token_id,
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"EnvelopeAuthorization(verdict={self.verdict!r}, reason={self.reason!r}, "
+            f"authorizing_envelope_id={self.authorizing_envelope_id!r}, "
+            f"token_id={self.token_id!r})"
+        )
+
+
+def authorize_write_under_envelope(
+    op_kind: str | OpKind,
+    token_check: Any,
+    *,
+    other_gates_green: bool,
+) -> EnvelopeAuthorization:
+    """The #449 envelope-class verdict: AUTHORIZED only under a live token AND green gates.
+
+    This sibling deliberately leaves :func:`authorize_write` untouched (#449 R2/R7) and
+    can never WIDEN anything: an op kind whose tier is not ``AUTONOMOUS_UNDER_ENVELOPE``
+    GATEs here with a pointer back to ``authorize_write`` — presenting a token alongside
+    ``set-field-status`` (or anything else) grants nothing it did not already have.
+
+    Purity contract: this function performs **no I/O**. ``token_check`` must be the
+    result of a FRESH ``envelope_token.check_token`` / ``resolve_merge_token`` read made
+    by the caller at authorization time (the composed one-call surface is
+    ``envelope_token.authorize_merge_under_envelope``) — the token module's re-read is
+    what makes revocation effective on the very next call (#449 R3/R4). A stale or
+    cached check object defeats that contract; nothing here can detect one, so the
+    composed surface is the one consumers should call.
+
+    ``token_check`` may be ``None`` (no token presented → GATE) or an object with
+    ``valid``/``reason``/``envelope_id``/``token_id`` attributes. A wrong-TYPED
+    ``token_check.valid`` or ``other_gates_green`` is a caller bug and raises —
+    never a coerced comparison (fail closed, never enumerate).
+    """
+    if not isinstance(other_gates_green, bool):
+        raise TypeError(
+            f"other_gates_green must be a bool, got {type(other_gates_green).__name__} "
+            f"{other_gates_green!r} — a truthy stand-in is not an attestation"
+        )
+    if not isinstance(op_kind, OpKind):
+        try:
+            op_kind = OpKind(op_kind)
+        except ValueError:
+            return EnvelopeAuthorization(
+                GATE, f"op kind {op_kind!r} is not enumerated — default GATE (R8/R20)"
+            )
+    entry = _REGISTRY.get(op_kind)
+    if entry is None or entry.tier != Tier.AUTONOMOUS_UNDER_ENVELOPE:
+        return EnvelopeAuthorization(
+            GATE,
+            f"op kind {op_kind.value!r} is not an envelope-authorized class — its verdict "
+            "belongs to authorize_write; presenting a token widens nothing (#449 R7)",
+        )
+    if token_check is None:
+        return EnvelopeAuthorization(
+            GATE,
+            "no envelope token presented — merge-class writes GATE by default (R20; "
+            "#449 R1: the class is inert without a token)",
+        )
+    valid = getattr(token_check, "valid", None)
+    if not isinstance(valid, bool):
+        raise TypeError(
+            f"token_check.valid must be a bool, got {type(valid).__name__} {valid!r} — "
+            "pass a fresh envelope_token.TokenCheck, nothing looser"
+        )
+    reason = getattr(token_check, "reason", "")
+    if not isinstance(reason, str):
+        raise TypeError(f"token_check.reason must be a string, got {reason!r}")
+    if not valid:
+        return EnvelopeAuthorization(
+            GATE, f"envelope token check failed: {reason or 'no reason given'}"
+        )
+    envelope_id = getattr(token_check, "envelope_id", "")
+    token_id = getattr(token_check, "token_id", "")
+    if not isinstance(envelope_id, str) or not envelope_id:
+        raise TypeError(
+            f"a valid token_check must carry a non-empty envelope_id, got {envelope_id!r}"
+        )
+    if not isinstance(token_id, str) or not token_id:
+        raise TypeError(f"a valid token_check must carry a non-empty token_id, got {token_id!r}")
+    if not other_gates_green:
+        return EnvelopeAuthorization(
+            GATE,
+            "envelope authorization is necessary but not sufficient — other required "
+            "gates are not green (#449 AC2)",
+        )
+    return EnvelopeAuthorization(
+        AUTHORIZED,
+        "valid envelope token + all other gates attested green",
+        authorizing_envelope_id=envelope_id,
+        token_id=token_id,
+    )
 
 
 def side_effected(had_side_effect: bool) -> bool:
@@ -343,8 +500,10 @@ __all__ = [
     "GATE",
     "InverseDescriptor",
     "OpFacts",
+    "EnvelopeAuthorization",
     "facts",
     "authorize_write",
+    "authorize_write_under_envelope",
     "side_effected",
     "idempotency_key",
     "reversible_op_kinds",

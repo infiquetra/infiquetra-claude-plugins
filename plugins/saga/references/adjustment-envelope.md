@@ -102,12 +102,14 @@ The envelope reuses boundaries that already exist; it does **not** add a standin
   the *posture* renegotiation path (`outcome repost` — sandbox / degrade policy / run mode /
   ceremony gates, with `intent_revision` dispatch-time overlap); routing the standalone
   re-tier/add-reviewer directives through that overlap machinery so `applied` can become true
-  remains the #594 R2 follow-up. Consumer honesty for the renegotiated ceremony gates: of the
-  envelope's `ceremony_gates`, only `reviews_required` has an engine consumer today (the
-  intent-implied closure checks at harvest); `merge` / `deploy_nonprod` are **recorded posture
-  with no engine consumer yet** — nothing reads them (the auto-merge queue keys off node-level
-  flags), and the #433 monotonic rule protects the recorded value's integrity for the consumer
-  #449 lands (the token-checked merge/deploy write class), not for any behavior today.
+  remains the #594 R2 follow-up. Consumer honesty for the renegotiated ceremony gates:
+  `reviews_required` drives the intent-implied closure checks at harvest, and since #449
+  `merge` is consumed by the auto-merge queue (a GitHub write needs the committed
+  `merge: "auto"` posture PLUS one active envelope token, fresh per attempt — see
+  `references/envelope-token.md`; a tightening repost also ends the token's era via the
+  fingerprint/revision binding). `deploy_nonprod` remains **recorded posture with no engine
+  consumer** (deploy is out of #449's scope); the #433 monotonic rule keeps protecting it for
+  the follow-on deploy write class.
 - **`/work` segment boundary** — `/work` polls the envelope at each phase/segment boundary (see
   `skills/work/SKILL.md`), honoring a `pause_after: <segment>` deterministically and applying any
   `resume_tier`/`resume_context` amendment on the explicit continue.

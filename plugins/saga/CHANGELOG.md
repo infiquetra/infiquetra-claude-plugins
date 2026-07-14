@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.96.0] - 2026-07-14
+
+### Added - envelope-authorized merge: the `AUTONOMOUS_UNDER_ENVELOPE` write class (#449)
+
+- **`scripts/envelope_token.py` — the revocable merge-authorization credential.** A durable,
+  expiring token (closed exact-keys schema v1, merge-only scope) bound to one outcome AND one
+  exact committed envelope era: content fingerprint (`sha256:` of the canonical envelope JSON)
+  plus `intent_revision` — a #433 repost, or even an A→B→A posture round trip, ends the era and
+  the token stops authorizing. Status is derived on every read (active / expired / revoked /
+  malformed), never cached: `check_token` re-reads the token file AND the write-once revocation
+  marker per call, so `revoke` is effective on the very next authorization attempt (R4; the
+  honest freshness bound: a revocation cannot recall a single already-in-flight GitHub call —
+  every write after it GATEs). `resolve_merge_token` requires EXACTLY one active matching
+  token (ambiguity GATEs; a malformed document fails the whole lane closed). Operator CLI:
+  `mint` (refuses an envelope-less spec, any non-`merge: "auto"` posture, and the reserved
+  `.revoked` id suffix that would collide with a sibling's revocation-marker file — the write
+  seam enforces what the read seam enforces) / `revoke` / `check` / `list`. Threat model documented in-module: minting
+  is SELF-ATTESTED (local-filesystem trust boundary, same as every store artifact); the token
+  adds expiry, immediate revocation, era binding, and attribution — it does not authenticate
+  the minter. Gate records (#371) are deliberately not consulted in v1; an attended
+  mint-from-gate-answer flow is the issuance companion (classify with `is_operator_answerer`).
+- **`scripts/reversibility_certificate.py` — `Tier.AUTONOMOUS_UNDER_ENVELOPE` +
+  `OpKind.MERGE_UNDER_ENVELOPE`, inert without a token (R1).** Plain `authorize_write` GATEs
+  the new class unconditionally and gained NO token parameter (R2 — zero regression for every
+  existing caller; bare `merge`/`deploy` stay absent, R20 untouched). The new pure sibling
+  `authorize_write_under_envelope(op_kind, token_check, *, other_gates_green)` AUTHORIZEs only
+  a fresh valid token check AND an explicit all-other-gates-green attestation (necessary but
+  not sufficient, AC2); it can never widen a non-envelope op, and wrong-TYPED attestations
+  raise rather than coerce. The composed I/O surface is
+  `envelope_token.authorize_merge_under_envelope` (fresh disk reads at authorization time, R3).
+- **`scripts/outcome_merge.py` — the merge queue now CONSUMES `ceremony_gates.merge` (the #433
+  "recorded posture with no engine consumer" honesty note is closed).** Every GitHub WRITE the
+  queue can perform — `update_branch` (rebase) and `squash_merge` — is ceremony-gated, fresh
+  per attempt: committed `merge: "auto"` posture AND one active envelope token, or the leaf
+  records `waits-operator` with a precise, operator-actionable reason. **Behavior change,
+  deliberate (fail closed):** the pre-#449 tokenless auto-merge default is GONE — an
+  envelope-less campaign, a `merge: "gate"` posture, and a token-less `merge: "auto"` posture
+  all wait for the operator's keystroke. Read-only classification (dirty→conflict,
+  blocked/unknown→defer) still runs for every campaign, so conflict recording and /work
+  re-engagement never depend on merge authority. Revocation mid-tick stops the very next
+  squash, including a later leaf in the same tick. `production_merge_processor(repo_root=...)`
+  reads the ON-DISK committed intent per authorization so a mid-tick repost's tightened posture
+  is honored within the tick; direct callers without a reader fall back to the tick's in-memory
+  posture (residual documented in the module docstring, not claimed away).
+- **`scripts/board_progression.py` — board-sync ledger attribution (R5).**
+  `record_envelope_authorized_merge` writes two write-once phases per merge —
+  `authorized` BEFORE the squash (a merge that cannot be pre-attributed is NOT performed) and
+  `merged` after — both carrying `authorizing_envelope_id` + `token_id`, keyed
+  `merge-under-envelope:{outcome}:{subplot}:{pr}:{phase}:{token_id}`: the token era coordinate
+  means a stale `authorized` record from a dead envelope era (a capped or gated-later attempt)
+  never stands as — or write-once-suppresses — the pre-attribution of a merge performed under
+  a later era, so both phases of one merge always name the same token. Non-merge ledger
+  records are untouched (the field is merge-record-specific). A crash between squash and the
+  `merged` record loses only that record and is never backfilled — post-hoc attribution would
+  assert a pre-merge authorization nobody re-verified (documented honest bound).
+- **Reference:** `references/envelope-token.md` — token contract, era binding, threat model,
+  honest bounds, and the enforcement matrix. `references/gate-record.md` consumer item 4 and
+  `references/intent-envelope.md` forward notes updated to what actually landed;
+  `skills/outcome/SKILL.md`'s "Never autonomous" section now names the single scoped,
+  revocable, attributed exception (default stays GATE — intake §3 revisit engaged by #449).
+
 ## [0.95.0] - 2026-07-14
 
 ### Added - gates as durable approval records with a linted operator-absence contract (#371)

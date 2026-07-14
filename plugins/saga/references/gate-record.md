@@ -158,15 +158,20 @@ full schema for every consumer:
    ideate, investigate, loop) plus their marker declarations.
 2. **The CI lint** — consumes declarations (markers / call-site keywords), not runtime records.
 3. **Operator audit** — `gate_record.py list [--status ...] [--binding k=v]`.
-4. **#449 envelope-authorized merge (forward consumer, read-only contract)** — reads answered
-   records, classifies provenance via `is_operator_answerer`, and binds to dispatch era via
-   `binding.spec_revision` / `binding.intent_revision`. The schema is closed per
-   `schema_version`; #449 extensions (e.g. envelope tokens on the record) are made by editing
-   this module, never by consumers tolerating unknown keys — the same additive-within-v1
-   convention as #373. Note the mechanical cost: validation is exact-keys (missing keys are
-   errors too), so "additive" means the edit must also make the new key optional in the
-   validator or migrate already-written records — it is a deliberate schema step, not a free
-   field drop-in.
+4. **#449 envelope-authorized merge — landed WITHOUT consuming gate records (v1 honesty
+   note).** #449 shipped its token as a separate store artifact (`envelope_token.py`,
+   `references/envelope-token.md`) bound to the committed envelope's content fingerprint +
+   `intent_revision`; its authorization path reads the token lane fresh per merge attempt and
+   does **not** read gate records, so the record's closed v1 schema gained no token keys (the
+   forecast additive-within-v1 step was not needed). What #449 DOES inherit from this
+   contract, binding on any future attended flow: a carried-forward frontier approval never
+   authorizes a merge-class write — a flow that mints a token from an operator's live gate
+   answer must classify with `is_operator_answerer` (`carried-forward:` / `absence:`
+   provenance never mints) and bind the dispatch era via `binding.spec_revision` /
+   `binding.intent_revision`. If that flow ever puts token keys ON the record, the schema is
+   closed per `schema_version` and validation is exact-keys (missing keys are errors too), so
+   the edit must make the new key optional in the validator or migrate written records — a
+   deliberate schema step, not a free field drop-in.
 
 Gate records deliberately do **not** flow through the `/outcome` consolidated report in v1: the
 report's ambiguity tier currently filters halt receipts out by `kind` (#597), and surfacing gate

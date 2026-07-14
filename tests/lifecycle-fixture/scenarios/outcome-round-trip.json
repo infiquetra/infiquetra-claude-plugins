@@ -1,7 +1,7 @@
 {
   "id": "outcome-round-trip",
   "title": "outcome start / resume / status round trip",
-  "description": "Start an outcome in the fixture repo (branch-local spec + store), attach a run-start intent envelope carrying the #373 dispatch-seam posture (backends_permitted / degrade_policy / spend_envelope) via set-intent, resume it, and read status. Asserts the produced outcome-spec JSON — including the committed posture — passes the production loader/validator with the expected node set, and that derived-on-read state shows the starter DAG frontier (design ready, build blocked).",
+  "description": "Start an outcome in the fixture repo (branch-local spec + store), attach a run-start intent envelope carrying the #373 dispatch-seam posture (backends_permitted / degrade_policy / spend_envelope) plus a merge: auto ceremony posture via set-intent, mint and freshly re-check a #449 envelope merge token against the committed spec through the production envelope_token CLI (era-bound to the envelope fingerprint + intent_revision; the check step exiting 0 IS the validity assertion), resume it, and read status. Asserts the produced outcome-spec JSON — including the committed posture — passes the production loader/validator with the expected node set, and that derived-on-read state shows the starter DAG frontier (design ready, build blocked).",
   "steps": [
     {
       "kind": "run_saga_cli",
@@ -13,6 +13,7 @@
       "path": "envelope-373.json",
       "json": {
         "run_mode": "attended",
+        "ceremony_gates": { "reviews_required": "gate", "merge": "auto", "deploy_nonprod": "gate" },
         "backends_permitted": ["inline", "team-execution"],
         "degrade_policy": "operator_away_one_rung",
         "spend_envelope": { "tier_ceiling": "sonnet", "cost_ceiling_tokens": 250000 }
@@ -22,6 +23,16 @@
       "kind": "run_saga_cli",
       "script": "outcome",
       "args": ["--repo-root", ".", "set-intent", "fx-outcome", "--intent-file", "envelope-373.json"]
+    },
+    {
+      "kind": "run_saga_cli",
+      "script": "envelope_token",
+      "args": ["mint", "--outcome-id", "fx-outcome", "--repo-root", ".", "--outcome-spec", "docs/outcomes/fx-outcome/outcome-spec.json", "--ttl-hours", "24", "--token-id", "emt-fixture", "--issued-by", "harness"]
+    },
+    {
+      "kind": "run_saga_cli",
+      "script": "envelope_token",
+      "args": ["check", "--outcome-id", "fx-outcome", "--repo-root", ".", "--outcome-spec", "docs/outcomes/fx-outcome/outcome-spec.json", "--token-id", "emt-fixture"]
     },
     {
       "kind": "run_saga_cli",

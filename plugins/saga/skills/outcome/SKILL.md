@@ -118,9 +118,14 @@ At `start`:
 Downstream, the committed envelope is machinery, not prose: `ceremony_gates.reviews_required:
 "gate"` gates every code leaf's `done` transition on recorded `code-review` evidence at the
 close SHA (via the closure gate) — a merged-but-unreviewed leaf stays undone until the evidence
-lands. `merge` / `deploy_nonprod` record the operator's pre-declared ceremony posture; they do
-NOT create an autonomous write path — the reversibility certificate's merge/deploy GATE stands
-until #449's token-checked write class exists.
+lands. `ceremony_gates.merge` is consumed by the auto-merge queue (#449): every merge-class
+GitHub write (rebase, squash) requires the committed `merge: "auto"` posture AND one active
+envelope token (`envelope_token.py mint/revoke/check` against the outcome store; see
+`references/envelope-token.md`), re-checked fresh per attempt — an envelope-less campaign, a
+`gate` posture, or a token-less `auto` posture all wait for the operator's keystroke, and
+every authorized merge is attributed to its `authorizing_envelope_id` in the board-sync
+ledger. `deploy_nonprod` still records posture only; it does NOT create an autonomous write
+path (deploy is out of #449's scope — the certificate's deploy GATE stands).
 
 The envelope's optional **dispatch-seam posture** (#373 — `backends_permitted`,
 `degrade_policy`, `spend_envelope`) is enforced inside every `advance` tick: the effective
@@ -164,9 +169,25 @@ GATE**: a write happens only when the op is one of the enumerated, reversible-or
 - **Post one coalesced progress comment** per meaningful leaf transition — additive, append-only, and
   bounded by a coalescing idempotency key so rapid repeat ticks never spam duplicate comments.
 
-**Never autonomous — always the operator's keystroke (never allowlisted):**
+**Never autonomous by default — the operator's keystroke, with ONE scoped, revocable exception (#449):**
 
-- **Merging a PR** and **deploying** — irreversible side effects, permanently human-in-the-loop.
+- **Deploying** — irreversible side effect, permanently human-in-the-loop (no exception exists;
+  deploy is explicitly out of #449's scope).
+- **Merging a PR** — GATE by default, everywhere, for every campaign that has not explicitly
+  opted in. The single exception is #449's `AUTONOMOUS_UNDER_ENVELOPE` write class (the intake
+  §3 revisit condition, engaged deliberately — the default did not flip): the merge queue may
+  squash autonomously ONLY when the campaign's committed envelope declares
+  `ceremony_gates.merge: "auto"` AND exactly one active (unexpired, unrevoked,
+  era-bound) merge-scope envelope token resolves from the outcome store — re-checked fresh
+  before every rebase/squash, so `envelope_token.py revoke` stops the very next write (a
+  revocation cannot recall a GitHub call already in flight; every write after it GATEs). The
+  token is self-attested at the local-filesystem trust boundary — it proves posture, era,
+  expiry, and attribution, never the identity of the minter (`references/envelope-token.md`
+  "Honest bounds"). Every authorized merge is attributed to its `authorizing_envelope_id` in
+  the board-sync ledger, both pre-squash and post-squash, era-keyed by `token_id`. No envelope, a `gate` posture, a
+  token-less `auto` posture, an expired/revoked token, or an ambiguous token lane → the leaf
+  `waits-operator` with the precise reason. Bare `merge` stays absent from the certificate
+  allowlist — `authorize_write` still GATEs it for every caller.
 - **Closing the parent issue** — `parent-issue-close` is classified `ALWAYS_OPERATOR`, so it GATEs even
   though a close is mechanically reversible: declaring the whole outcome done stays a deliberate decision.
 

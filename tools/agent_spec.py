@@ -9,9 +9,12 @@ import ``parse_frontmatter`` / ``parse_frontmatter_file`` from here instead).
 Frontmatter is parsed with **real YAML semantics** (``yaml.safe_load`` via a duplicate-key-
 rejecting SafeLoader) -- the same resolution the agent runtime applies -- so comments, quoting,
 folded/literal block scalars, and multi-line flow lists resolve here exactly as they resolve at
-spawn time. A frontmatter block that fails strict parsing (invalid YAML, duplicate keys, or a
-non-mapping result) is a BLOCKING ``frontmatter-schema`` violation: the lint fails closed on
-anything it cannot resolve, it never guesses.
+spawn time. Block extraction is line-based and ambiguity-rejecting: opener/terminator must be a
+bare ``---`` line, and any interior line beginning with ``---`` (a pseudo-separator a different
+consumer might treat as the boundary) is an error. A frontmatter block that fails strict parsing
+(invalid YAML, duplicate keys, a non-mapping result, or an ambiguous boundary) is a BLOCKING
+``frontmatter-schema`` violation: the lint fails closed on anything it cannot resolve, it never
+guesses.
 
 Rule registry (see ``build_default_rules``):
 
@@ -47,10 +50,12 @@ Rule registry (see ``build_default_rules``):
    non-empty, and excludes the direct file-mutation tools (``Edit``/``Write``/``NotebookEdit``).
    The floor is "no direct file-mutation tools", NOT "read-only": ``Bash`` is deliberately
    allowed because review-class agents must run ``artifact_pointer.py deref`` (the required
-   verification path) and tests. The guarantee is fail-closed **by construction**: because the
-   value is resolved with the same YAML semantics the runtime uses and anything outside the two
-   recognized forms is an error, an authoring the lint cannot understand FAILS -- it never passes
-   unexamined. There is no punctuation enumeration here to evade. The ``tools:`` frontmatter
+   verification path) and tests. The guarantee is fail-closed **by construction** at BOTH
+   layers: block extraction rejects ambiguous boundaries (pseudo-``---`` lines) and value
+   resolution uses the same YAML semantics the runtime uses, with anything outside the two
+   recognized forms an error -- an authoring the lint cannot understand FAILS, it never passes
+   unexamined. Mutating-tool names are compared case-insensitively (a case variant is a typo
+   for the real tool, and blocking it costs nothing). The ``tools:`` frontmatter
    field IS the spawn-time capability roster a dispatcher reads to scope a leaf (the same
    mechanism saga's ``readonly-verifier`` uses); this lint checks that authored contract at CI
    time, which is orthogonal to ``plugins/saga/references/sandbox-spawn-sites.md``'s decision
@@ -102,6 +107,10 @@ from fleet_commons.tier_resolver import ROLE_TIER_ALIASES  # noqa: E402
 # can of course mutate files indirectly. The floor guards the authored file-mutation surface a
 # dispatcher grants from this roster.
 _MUTATING_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
+# Compared case-insensitively: `edit` grants nothing at runtime (tool names are
+# case-sensitive), but a case variant in an authored roster is a typo for the real tool, and
+# blocking it costs nothing (the fleet authors proper-case names).
+_MUTATING_CASEFOLD = frozenset(name.casefold() for name in _MUTATING_TOOLS)
 
 # A bare tool name: `Read`, `NotebookEdit`, `mcp__server__tool`. Anything else in a tools:
 # token (quotes, `#`, brackets, empty) fails closed as unparseable.
@@ -152,14 +161,35 @@ def parse_frontmatter_strict(text: str) -> dict[str, Any]:
     rejecting loader, so the lint sees exactly the values the agent runtime would grant.
 
     Raises :class:`FrontmatterError` on a missing/unterminated block, a YAML parse error, a
-    duplicate key, a non-mapping result, or a non-string key -- the caller fails closed.
+    duplicate key, a non-mapping result, a non-string key, or an ambiguous block boundary --
+    the caller fails closed.
+
+    Block extraction is line-based and ambiguity-rejecting: the opener and terminator must be
+    a line that is EXACTLY ``---``, and any line between them that begins with ``---`` (a
+    pseudo-separator like ``---key: v`` or an indented / trailing-whitespace ``---`` variant)
+    is an error. Different frontmatter consumers disagree on where such a line ends the block,
+    so a file containing one could be read by a dispatcher as granting keys this lint never
+    audited -- ambiguity itself fails closed.
     """
-    if not text.startswith("---"):
-        raise FrontmatterError("no leading `---` frontmatter block")
-    end = text.find("\n---", 3)
-    if end == -1:
-        raise FrontmatterError("unterminated frontmatter block (no closing `---`)")
-    block = text[3:end]
+    lines = text.split("\n")
+    if lines[0].rstrip("\r") != "---":
+        raise FrontmatterError("file does not open with a bare `---` frontmatter line")
+    close_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].rstrip("\r") == "---":
+            close_idx = i
+            break
+    if close_idx is None:
+        raise FrontmatterError("unterminated frontmatter block (no closing bare `---` line)")
+    body_lines = lines[1:close_idx]
+    for offset, line in enumerate(body_lines, start=2):
+        if line.strip().startswith("---"):
+            raise FrontmatterError(
+                f"ambiguous frontmatter boundary: line {offset} begins with `---` inside the "
+                "block; a different consumer could end the block there and resolve keys this "
+                "lint would not audit (fail closed -- remove the pseudo-separator line)"
+            )
+    block = "\n".join(body_lines)
     try:
         # _StrictLoader subclasses yaml.SafeLoader: construction is exactly safe_load's (no
         # arbitrary-object tags), plus duplicate-key rejection. Never a full/unsafe loader.
@@ -593,7 +623,7 @@ def make_tool_scope_floor_check(
                 f"and its `tools:` value could not be strictly validated ({exc}); the "
                 "tool-scope floor fails closed on any form it cannot resolve"
             ]
-        mutating = tools & _MUTATING_TOOLS
+        mutating = {name for name in tools if name.casefold() in _MUTATING_CASEFOLD}
         if mutating:
             return [
                 f"role class {class_name!r} (role-tier: {role_tier!r}) is review/verify-class "

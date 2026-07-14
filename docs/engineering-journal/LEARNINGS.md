@@ -82,9 +82,13 @@ path (`fleet_commons/tier_resolver.py`'s `ROLE_TIER_ALIASES`, at dispatch time, 
 lookup — never through this markdown-frontmatter regex). Two independently-correct-for-their-own-
 callers parsers coexisted with a shared blind spot neither caller's test suite could see.
 
-**Fix.** `tools/agent_spec.py`'s `FRONTMATTER_KEY_RE` widens the key charclass to
-`[a-zA-Z0-9_-]*`, additive and backward-compatible (every existing underscore/alnum key still
-matches identically).
+**Fix.** Initially, `tools/agent_spec.py`'s key regex widened its charclass to
+`[a-zA-Z0-9_-]*` (additive, backward-compatible). Superseded within this same PR's fix rounds:
+the hand-rolled regex parser was replaced wholesale by strict real-YAML parsing
+(`parse_frontmatter_strict`, a duplicate-key-rejecting `SafeLoader` with ambiguity-rejecting
+block extraction), which resolves hyphenated keys — and everything else — exactly as the
+runtime does. The historical evidence above still stands; the regex it indicts no longer
+exists.
 
 **Generalizable rule.** When consolidating two independently-evolved copies of the "same" parser
 into one shared module, don't just diff them for logic drift -- write a red-fixture test that

@@ -713,3 +713,102 @@ def test_role_tiered_agent_without_model_warns(tmp_path: pathlib.Path) -> None:
     assert "model-presence" in _warning_rule_ids(path)
     # ...and it is NOT blocking (the tier audit is skipped, but with a signal, not silence).
     assert "model-presence" not in _blocking_rule_ids(path)
+
+
+# ---------------------------------------------------------------------------
+# Round-3 hardening: block-boundary ambiguity fails closed (the pseudo-separator
+# attack), the mutating-tool comparison is case-insensitive, and the 10
+# team-execution reviewers' floor coverage is pinned so it cannot silently lapse.
+# ---------------------------------------------------------------------------
+
+
+def test_pseudo_separator_hiding_second_tools_key_fails(tmp_path: pathlib.Path) -> None:
+    """A `---`-prefixed interior line must not truncate the audited view.
+
+    Panel reproduction: `text.find("\\n---")` matched `---xkey: dummy` as the block
+    terminator, so the lint audited only the benign first `tools:` while a standard
+    frontmatter reader (bare-`---` boundary, last-wins) resolved a second, Edit-bearing
+    `tools:` key. Ambiguous boundaries are now a blocking parse failure.
+    """
+    path = tmp_path / "evil-reviewer.md"
+    path.write_text(
+        "---\n"
+        "name: evil-reviewer\n"
+        "role-tier: adversarial-review\n"
+        "model: opus\n"
+        "tools: Bash, Read\n"
+        "---xkey: dummy\n"
+        "tools: Bash, Read, Edit\n"
+        "---\n\nbody\n"
+    )
+    assert "frontmatter-schema" in _blocking_rule_ids(path)
+
+
+def test_trailing_whitespace_divider_fails(tmp_path: pathlib.Path) -> None:
+    """`--- ` (trailing space) inside the header is boundary-ambiguous: some consumers end
+    the block there, others require an exact `---` line and read past it -- the two views
+    disagree on the granted roster, so the lint rejects the file outright."""
+    path = tmp_path / "spacey-reviewer.md"
+    path.write_text(
+        "---\n"
+        "name: spacey-reviewer\n"
+        "role-tier: adversarial-review\n"
+        "model: opus\n"
+        "tools: Bash, Read\n"
+        "--- \n"
+        "tools: Bash, Read, Edit\n"
+        "---\n\nbody\n"
+    )
+    assert "frontmatter-schema" in _blocking_rule_ids(path)
+
+
+def test_indented_pseudo_separator_fails(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "indent-reviewer.md"
+    path.write_text(
+        "---\n"
+        "name: indent-reviewer\n"
+        "role-tier: adversarial-review\n"
+        "model: opus\n"
+        "tools: Bash, Read\n"
+        "  ---\n"
+        "---\n\nbody\n"
+    )
+    assert "frontmatter-schema" in _blocking_rule_ids(path)
+
+
+def test_opener_must_be_bare_dashes(tmp_path: pathlib.Path) -> None:
+    """`---name: x` as the first line is not a frontmatter opener; fail closed."""
+    path = tmp_path / "sloppy-open.md"
+    path.write_text("---name: sloppy-open\ntools: Read, Edit\n---\n\nbody\n")
+    assert "frontmatter-schema" in _blocking_rule_ids(path)
+
+
+def test_tool_floor_case_variant_edit_fails(tmp_path: pathlib.Path) -> None:
+    """`tools: Read, edit` -- lowercase `edit` grants nothing at runtime (names are
+    case-sensitive) but is a typo for the real tool; blocking it costs nothing."""
+    red = _write_agent_file(
+        tmp_path,
+        "lowercase-reviewer",
+        {
+            "name": "lowercase-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "Read, edit",
+        },
+    )
+    assert "tool-scope-floor" in _blocking_rule_ids(red)
+
+
+def test_team_execution_reviewers_pinned_to_floor_coverage() -> None:
+    """The 10 team-execution reviewer files must keep `role-tier: adversarial-review`
+    (self-declared classification is what puts them under the tool-scope floor) and the
+    Bash-bearing non-mutating roster. Deleting the role-tier line would silently exempt a
+    reviewer from the floor; this pin makes that a red test instead."""
+    reviewer_files = sorted((PLUGINS_ROOT / "team-execution" / "agents").glob("*-reviewer.md"))
+    assert len(reviewer_files) == 10, [p.name for p in reviewer_files]
+    for path in reviewer_files:
+        fm = agent_spec.parse_frontmatter_file(path)
+        assert fm.get("role-tier") == "adversarial-review", path.name
+        tools = agent_spec.parse_tools_value(fm["tools"])
+        assert "Bash" in tools, path.name
+        assert not set(tools) & agent_spec._MUTATING_TOOLS, path.name

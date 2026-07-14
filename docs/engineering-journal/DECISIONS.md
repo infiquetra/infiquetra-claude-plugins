@@ -54,8 +54,9 @@ by design. The added roster is `tools: Bash, Read, Grep, Glob` — `Bash` is ret
 these reviewers dereference artifact pointers by running
 `plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py deref` via `Bash` (the
 "required verification path" per
-`plugins/team-execution/skills/team-execution/references/artifact-pointers.md`, and each reviewer's
-own prompt, e.g. `security-reviewer.md:45`, `devils-advocate-reviewer.md:52`,
+`plugins/team-execution/skills/team-execution/references/artifact-pointers.md` — a contract that
+binds all ten reviewers; three of the ten additionally restate the deref mandate in their own
+prompts: `security-reviewer.md:45`, `devils-advocate-reviewer.md:52`,
 `architecture-reviewer.md:68`). The `tools:`
 frontmatter field IS the spawn-time capability roster a dispatcher reads to scope a leaf (the same
 mechanism saga's `readonly-verifier` uses to keep `tools: Bash, Read, Grep, Glob` so verifiers can

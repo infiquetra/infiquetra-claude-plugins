@@ -22,8 +22,27 @@ calls because the spawned teammate inherited Claude's full toolset and did the w
 present (`schema, plugin, version, run_id, bridge_command, external_tool_calls, actor`); the
 `bridge_command` matches the plugin's discriminator regex (a genuine `agy --model` invocation, not
 a label); `external_tool_calls` is non-empty (proves work, not a silent no-op); `actor` is non-empty
-(proves the write is attributable, not orphaned); and, when the attested transcript file is
-reachable, its sha256 matches `transcript_sha256` (an intact chain).
+(proves the write is attributable, not orphaned); and the proof chain is intact **fail-closed**:
+the attested `transcript` must resolve to a real file whose recomputed sha256 matches
+`transcript_sha256`. *(Corrected in the refute-panel fix round: the first cut compared hashes only
+when the attested file happened to exist, so a dangling reference verified cleanly — a demonstrated
+fail-open hole. Now a dangling reference, a hash with no file, a file with no hash, and a
+transcript-less proof — the distinct `unverifiable_proof` sweep category — each fail both modes,
+and a transcript-less proof does not satisfy the version gate. The artifact remains self-attested;
+`docs/delegation-proofs/README.md` carries the plain threat model.)*
+
+**KTD1a — fix-round hardening (refute panel).** Three further structural decisions from the same
+round: *(a)* `examples/` under the proofs directory is excluded from the enforcement surface
+entirely (never loaded as proofs, never swept as standalone transcripts) and the shipped example is
+version-pinned to `0.0.0-example` — a demonstrated probe had the example proof pre-attesting the
+reachable `agy` 0.4.0 version-gate bump. *(b)* The manifest's script-path discriminator alternative
+now requires an execution shape (`python`/`uv run` invoking the wrapper), so `cat`/`grep` of the
+bridge script no longer classifies as a genuine run. *(c)* The manifest's `proof_glob` field was
+**deleted as dead wiring** (declared, consumed by nothing — the journal dead-wiring rule requires a
+producer AND a consumer); proof-to-bridge scoping already flows from each proof's `plugin` field,
+which the sweep validates against the registered bridges, so a location glob added no signal.
+Standalone `.jsonl` transcripts under the proofs directory are swept by default (and CI passes
+`--transcripts-dir` explicitly), closing the untested standalone leg.
 
 **KTD2 — rejected alternatives.** *(a) Trusting the spawn-path name / a `bridge_delegated: true`
 label* — the exact failure `LEARNINGS.md:293` caught; a label is set by the same code path that can

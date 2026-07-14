@@ -25,7 +25,23 @@ the gate; no code change needed):
       ``#agy-delegate-silent-claude-fallback``);
     * **untokened orphan write** — a write attributed to no traceable actor;
     * **broken proof chain** — a proof artifact that does not verify against its claimed run
-      (schema/field/version invalid, discriminator miss, or transcript hash mismatch).
+      (schema/field/version invalid, discriminator miss, unparseable/non-object JSON, a dangling
+      transcript reference, a missing/mismatched transcript hash);
+    * **unverifiable proof** — a proof that attests no transcript at all, so nothing ties it to a
+      real run; the artifact is entirely self-attested.
+
+Fail-closed proof chain (#457 fix round)
+----------------------------------------
+The chain check is structural, never conditional: a verifying proof MUST name a transcript that
+resolves to a real file AND carry a ``transcript_sha256`` that matches its bytes. A dangling
+reference, a hash with no file, a file with no hash, or no transcript at all each fail
+verification — in both modes. ``examples/`` under the proofs directory is documentation, never
+enforcement surface: example proofs/transcripts can neither satisfy the version gate nor seed the
+sweep.
+
+Threat model: the proof and its transcript are files in the same repo, written by the same
+toolchain. An intact chain defends against accident, drift, and silent fallback — not against an
+author deliberately fabricating both files. See docs/delegation-proofs/README.md.
 
 Why the *name* of the spawn path is never trusted
 --------------------------------------------------
@@ -77,6 +93,14 @@ REQUIRED_PROOF_FIELDS = (
     "bridge_command",
     "external_tool_calls",
     "actor",
+)
+
+# The one verification reason that gets its own sweep category (``unverifiable_proof``) instead of
+# ``broken_proof_chain``: the proof attests NO transcript, so there is no chain to break — the
+# artifact is entirely self-attested and cannot be checked against its claimed run.
+UNVERIFIABLE_PROOF_REASON = (
+    "unverifiable proof: no transcript is attested, so the artifact is entirely self-attested "
+    "and cannot be verified against its claimed run"
 )
 
 
@@ -176,6 +200,7 @@ def detect_bridge_version_bumps(
 class Proof:
     path: Path
     data: dict[str, Any]
+    error: str | None = None
 
     @property
     def plugin(self) -> str:
@@ -186,21 +211,67 @@ class Proof:
         return str(self.data.get("version", ""))
 
 
+def _in_examples(path: Path, root: Path) -> bool:
+    """True when ``path`` sits inside an ``examples/`` subtree of ``root``.
+
+    ``examples/`` is documentation, never enforcement surface: an example proof must not be able
+    to satisfy the version gate, and example transcripts must not seed the fleet sweep.
+    """
+
+    try:
+        rel = path.resolve().relative_to(root.resolve())
+    except ValueError:
+        rel = path
+    return "examples" in rel.parts
+
+
 def load_proofs(proofs_dir: Path) -> list[Proof]:
-    """Load every ``*.json`` proof artifact under the proofs directory (recursively)."""
+    """Load every ``*.json`` proof artifact under the proofs directory (recursively).
+
+    ``examples/`` subtrees are skipped entirely (see ``_in_examples``). Unparseable or non-object
+    JSON is loaded as an *errored* proof — never silently dropped — so both modes fail closed on
+    a corrupt artifact instead of pretending it does not exist.
+    """
 
     if not proofs_dir.is_dir():
         return []
     proofs: list[Proof] = []
     for path in sorted(proofs_dir.rglob("*.json")):
+        if _in_examples(path, proofs_dir):
+            continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            proofs.append(Proof(path=path, data={"__parse_error__": True}))
+            proofs.append(Proof(path=path, data={}, error="proof artifact is not valid JSON"))
             continue
-        if isinstance(data, dict):
-            proofs.append(Proof(path=path, data=data))
+        if not isinstance(data, dict):
+            proofs.append(
+                Proof(
+                    path=path,
+                    data={},
+                    error="proof artifact must be a JSON object (got a non-object JSON document)",
+                )
+            )
+            continue
+        proofs.append(Proof(path=path, data=data))
     return proofs
+
+
+def discover_standalone_transcripts(transcripts_dir: Path, *, exclude: set[Path]) -> list[Path]:
+    """Every ``*.jsonl`` under ``transcripts_dir`` except ``examples/`` and ``exclude`` members.
+
+    ``exclude`` carries the resolved paths of transcripts already attested by a loaded proof, so
+    an attested transcript is swept once (through its proof), and a bare ``.jsonl`` with no proof
+    — the silent-no-op drop the fleet sweep exists to catch — is swept standalone.
+    """
+
+    if not transcripts_dir.is_dir():
+        return []
+    return [
+        path
+        for path in sorted(transcripts_dir.rglob("*.jsonl"))
+        if not _in_examples(path, transcripts_dir) and path.resolve() not in exclude
+    ]
 
 
 def _sha256_file(path: Path) -> str:
@@ -213,15 +284,19 @@ def verify_proof(proof: Proof, discriminator: re.Pattern[str], *, base_dir: Path
     A verifying proof: has the right schema, all required fields, a ``bridge_command`` that
     matches the plugin's discriminator (proving a genuine bridge invocation, not a spawn-path
     label), a non-empty ``external_tool_calls`` list (proving real work, not a silent no-op), a
-    non-empty ``actor`` token (proving the write is attributable, not orphaned), and — when the
-    attested transcript file exists — a ``transcript_sha256`` that matches it (an intact chain).
+    non-empty ``actor`` token (proving the write is attributable, not orphaned), and an intact
+    proof chain: a ``transcript`` reference that resolves to a real file whose sha256 matches
+    ``transcript_sha256``. The chain check is fail-closed — a dangling transcript reference, a
+    recorded hash with no resolvable file, an attested file with no recorded hash, and a proof
+    with no transcript at all each fail verification (the last with the distinct
+    ``UNVERIFIABLE_PROOF_REASON``, surfaced as its own sweep category).
     """
 
     data = proof.data
     reasons: list[str] = []
 
-    if data.get("__parse_error__"):
-        return ["proof artifact is not valid JSON"]
+    if proof.error:
+        return [proof.error]
     if data.get("schema") != PROOF_SCHEMA:
         reasons.append(f"schema must be {PROOF_SCHEMA!r} (got {data.get('schema')!r})")
     for key in REQUIRED_PROOF_FIELDS:
@@ -249,14 +324,31 @@ def verify_proof(proof: Proof, discriminator: re.Pattern[str], *, base_dir: Path
     if "actor" in data and (not isinstance(actor, str) or not actor.strip()):
         reasons.append("actor is empty (untokened orphan write: no traceable actor)")
 
-    # Chain link: recompute the transcript hash when the file is reachable.
+    # Chain link — fail closed. Every branch that cannot recompute-and-match the hash against a
+    # real attested file is a verification failure; nothing is skipped because a file is missing.
     transcript = data.get("transcript")
     recorded_hash = data.get("transcript_sha256")
-    if isinstance(transcript, str) and transcript:
+    has_hash = isinstance(recorded_hash, str) and bool(recorded_hash)
+    if not (isinstance(transcript, str) and transcript):
+        if has_hash:
+            reasons.append(
+                "broken proof chain: transcript_sha256 is recorded but the proof names no "
+                "transcript file to verify it against"
+            )
+        else:
+            reasons.append(UNVERIFIABLE_PROOF_REASON)
+    else:
         transcript_path = (base_dir / transcript).resolve()
         if not transcript_path.exists():
             transcript_path = (proof.path.parent / transcript).resolve()
-        if transcript_path.exists() and isinstance(recorded_hash, str):
+        if not transcript_path.exists():
+            reasons.append(f"broken proof chain: attested transcript does not exist ({transcript})")
+        elif not has_hash:
+            reasons.append(
+                f"broken proof chain: transcript is attested ({transcript}) but "
+                "transcript_sha256 is missing or empty"
+            )
+        else:
             actual = _sha256_file(transcript_path)
             if actual != recorded_hash:
                 reasons.append(
@@ -291,9 +383,9 @@ def find_valid_proof(
 
 @dataclass(frozen=True)
 class Finding:
-    category: (
-        str  # silent_no_op | unrecorded_fallback | untokened_orphan_write | broken_proof_chain
-    )
+    # silent_no_op | unrecorded_fallback | untokened_orphan_write | broken_proof_chain
+    # | unverifiable_proof
+    category: str
     source: str
     detail: str
 
@@ -459,6 +551,9 @@ def sweep(
     bridges = bridge_names(manifest)
 
     for proof in proofs:
+        if proof.error:
+            findings.append(Finding("broken_proof_chain", str(proof.path), proof.error))
+            continue
         plugin = proof.plugin
         if plugin not in bridges:
             findings.append(
@@ -470,9 +565,13 @@ def sweep(
             )
             continue
         discriminator = discriminator_for(manifest, plugin)
-        reasons = verify_proof(proof, discriminator, base_dir=base_dir)
-        for reason in reasons:
-            findings.append(Finding("broken_proof_chain", str(proof.path), reason))
+        for reason in verify_proof(proof, discriminator, base_dir=base_dir):
+            category = (
+                "unverifiable_proof"
+                if reason == UNVERIFIABLE_PROOF_REASON
+                else "broken_proof_chain"
+            )
+            findings.append(Finding(category, str(proof.path), reason))
 
         transcript_path = _resolve_transcript(proof, base_dir)
         if transcript_path is not None:
@@ -485,23 +584,42 @@ def sweep(
             )
 
     for transcript_path in standalone_transcripts or []:
-        # A standalone transcript is not tied to one plugin; check it against every registered
-        # bridge discriminator and only flag it when NO bridge's discriminator matches.
+        # A standalone transcript is not tied to one plugin: it is genuine if ANY registered
+        # bridge's discriminator matches a recorded command. Orphan-write and Claude-file-tool
+        # signals are discriminator-independent, so they are read once from any single scan —
+        # findings never depend on bridge iteration order (load_manifest guarantees at least one
+        # bridge, so per_bridge is never empty).
         text = transcript_path.read_text(encoding="utf-8")
-        matched = False
-        merged: list[Finding] = []
-        for plugin in sorted(bridges):
-            discriminator = discriminator_for(manifest, plugin)
-            plugin_findings = classify_transcript(text, discriminator, source=str(transcript_path))
-            if not any(
-                f.category in {"silent_no_op", "unrecorded_fallback"} for f in plugin_findings
-            ):
-                matched = True
-            merged = plugin_findings  # keep the last plugin's view for orphan/no-op detail
-        if matched:
-            findings.extend(f for f in merged if f.category == "untokened_orphan_write")
-        else:
-            findings.extend(merged)
+        source = str(transcript_path)
+        per_bridge = {
+            plugin: scan_transcript_signals(text, discriminator_for(manifest, plugin))
+            for plugin in sorted(bridges)
+        }
+        matched = any(signals.bridge_command_seen for signals in per_bridge.values())
+        reference = next(iter(per_bridge.values()))
+        for orphan in reference.orphan_writes:
+            findings.append(Finding("untokened_orphan_write", source, orphan))
+        if not matched:
+            if reference.claude_file_tool_seen:
+                findings.append(
+                    Finding(
+                        "unrecorded_fallback",
+                        source,
+                        "claimed bridge run but the transcript shows Claude file-edit tools and "
+                        "no command matching any registered bridge discriminator (the delegated "
+                        "teammate was really Claude)",
+                    )
+                )
+            else:
+                findings.append(
+                    Finding(
+                        "silent_no_op",
+                        source,
+                        "claimed bridge run with zero external-tool calls matching any "
+                        "registered bridge discriminator (bridge invoked but produced no "
+                        "attributable work)",
+                    )
+                )
     return findings
 
 
@@ -580,9 +698,18 @@ def run_version_gate(args: argparse.Namespace) -> tuple[int, list[str]]:
 def run_fleet_sweep(args: argparse.Namespace) -> tuple[int, list[str]]:
     manifest = load_manifest(args.manifest)
     proofs = load_proofs(args.proofs_dir)
-    standalone: list[Path] = []
-    if args.transcripts_dir is not None and args.transcripts_dir.is_dir():
-        standalone = sorted(args.transcripts_dir.rglob("*.jsonl"))
+
+    # Standalone transcripts default to the proofs directory itself, so a bare `.jsonl` dropped
+    # under docs/delegation-proofs/ is swept even when the invocation forgets --transcripts-dir
+    # (fail closed structurally, not by CI-invocation discipline). Transcripts already attested
+    # by a loaded proof are swept through that proof, not double-swept standalone.
+    attested: set[Path] = set()
+    for proof in proofs:
+        resolved = _resolve_transcript(proof, args.proofs_dir)
+        if resolved is not None:
+            attested.add(resolved)
+    transcripts_dir = args.transcripts_dir if args.transcripts_dir is not None else args.proofs_dir
+    standalone = discover_standalone_transcripts(transcripts_dir, exclude=attested)
 
     findings = sweep(manifest, proofs, base_dir=args.proofs_dir, standalone_transcripts=standalone)
     lines = [f.render() for f in findings]
@@ -618,7 +745,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--transcripts-dir",
         type=Path,
         default=None,
-        help="Additional directory of standalone bridge `.jsonl` transcripts (fleet-sweep).",
+        help=(
+            "Directory of standalone bridge `.jsonl` transcripts (fleet-sweep). Defaults to the "
+            "proofs directory, so unattested transcripts under it are always swept."
+        ),
     )
     parser.add_argument(
         "--dry-run",

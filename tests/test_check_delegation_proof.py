@@ -181,6 +181,143 @@ def test_invalid_proof_bridge_command_does_not_satisfy_gate(tmp_path: Path) -> N
     assert rc == 1
 
 
+def test_dangling_transcript_proof_does_not_satisfy_gate(tmp_path: Path) -> None:
+    """Fail closed: a proof attesting a NONEXISTENT transcript never backs a version bump.
+
+    Red fixture from the #457 refute panel: before the fix, a proof naming a phantom transcript
+    with a bogus transcript_sha256 verified cleanly because the hash was only compared when the
+    file happened to exist.
+    """
+    base = _write_json(tmp_path / "base.json", _marketplace("0.4.0"))
+    head = _write_json(tmp_path / "head.json", _marketplace("0.4.1"))
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "agy").mkdir(parents=True)
+    proof = _valid_proof("0.4.1", transcript_rel="agy/phantom.jsonl", transcript_sha="a" * 64)
+    _write_json(proofs_dir / "agy" / "phantom.json", proof)
+    rc = cdp.main(
+        [
+            "--mode",
+            "version-gate",
+            "--manifest",
+            str(REAL_MANIFEST),
+            "--marketplace",
+            str(head),
+            "--base-marketplace",
+            str(base),
+            "--proofs-dir",
+            str(proofs_dir),
+        ]
+    )
+    assert rc == 1
+
+
+def test_bogus_transcript_hash_does_not_satisfy_gate(tmp_path: Path) -> None:
+    """Fail closed: an existing attested transcript with a mismatched sha256 fails the gate."""
+    base = _write_json(tmp_path / "base.json", _marketplace("0.4.0"))
+    head = _write_json(tmp_path / "head.json", _marketplace("0.4.1"))
+    proofs_dir = tmp_path / "proofs"
+    _seed_valid_proof(proofs_dir, "0.4.1")
+    proof_path = proofs_dir / "agy" / "proof-0.4.1.json"
+    data = json.loads(proof_path.read_text(encoding="utf-8"))
+    data["transcript_sha256"] = "0" * 64  # deliberately wrong
+    _write_json(proof_path, data)
+    rc = cdp.main(
+        [
+            "--mode",
+            "version-gate",
+            "--manifest",
+            str(REAL_MANIFEST),
+            "--marketplace",
+            str(head),
+            "--base-marketplace",
+            str(base),
+            "--proofs-dir",
+            str(proofs_dir),
+        ]
+    )
+    assert rc == 1
+
+
+def test_transcriptless_proof_does_not_satisfy_gate(tmp_path: Path) -> None:
+    """Documented decision (#457 fix round): a proof with NO transcript is unverifiable —
+    entirely self-attested — and does not back a version bump."""
+    base = _write_json(tmp_path / "base.json", _marketplace("0.4.0"))
+    head = _write_json(tmp_path / "head.json", _marketplace("0.4.1"))
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "agy").mkdir(parents=True)
+    proof = _valid_proof("0.4.1", transcript_rel="", transcript_sha="")
+    del proof["transcript"], proof["transcript_sha256"]
+    _write_json(proofs_dir / "agy" / "bare.json", proof)
+    rc = cdp.main(
+        [
+            "--mode",
+            "version-gate",
+            "--manifest",
+            str(REAL_MANIFEST),
+            "--marketplace",
+            str(head),
+            "--base-marketplace",
+            str(base),
+            "--proofs-dir",
+            str(proofs_dir),
+        ]
+    )
+    assert rc == 1
+
+
+def test_examples_proof_never_satisfies_gate(tmp_path: Path) -> None:
+    """Red fixture from the #457 refute panel: a fully valid proof under examples/ must never
+    satisfy the version gate — examples/ is documentation, not enforcement surface."""
+    base = _write_json(tmp_path / "base.json", _marketplace("0.4.0"))
+    head = _write_json(tmp_path / "head.json", _marketplace("0.4.1"))
+    proofs_dir = tmp_path / "proofs"
+    examples = proofs_dir / "examples"
+    transcript = examples / "run.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "tool_use",
+                "tool_name": "Bash",
+                "command": "agy --model 'Gemini 3.1 Pro (High)' -p 'do the task'",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sha = hashlib.sha256(transcript.read_bytes()).hexdigest()
+    _write_json(
+        examples / "proof.json",
+        _valid_proof("0.4.1", transcript_rel="examples/run.jsonl", transcript_sha=sha),
+    )
+    assert cdp.load_proofs(proofs_dir) == []  # examples/ is never even loaded
+    rc = cdp.main(
+        [
+            "--mode",
+            "version-gate",
+            "--manifest",
+            str(REAL_MANIFEST),
+            "--marketplace",
+            str(head),
+            "--base-marketplace",
+            str(base),
+            "--proofs-dir",
+            str(proofs_dir),
+        ]
+    )
+    assert rc == 1
+
+
+def test_shipped_example_proof_cannot_collide_with_a_real_version() -> None:
+    """Belt and suspenders: the shipped example is version-pinned to 0.0.0-example, which no
+    real marketplace entry can carry."""
+    example = (
+        REPO_ROOT / "docs" / "delegation-proofs" / "examples" / "agy-genuine-example.proof.json"
+    )
+    data = json.loads(example.read_text(encoding="utf-8"))
+    assert data["version"] == "0.0.0-example"
+
+
 # ----------------------------------------------------------- pure-function coverage
 
 
@@ -258,3 +395,5 @@ def test_workflow_wires_both_jobs_on_correct_paths() -> None:
     # version gate keys off marketplace.json; fleet sweep keys off recorded proof artifacts
     assert "marketplace.json" in text
     assert "delegation-proofs" in text
+    # the sweep must run the standalone-transcript leg in CI (#457 fix round, FIX-C)
+    assert "--transcripts-dir docs/delegation-proofs" in text

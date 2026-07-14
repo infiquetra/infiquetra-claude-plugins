@@ -72,5 +72,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
 
+      # --transcripts-dir is explicit for visibility; the script also defaults standalone
+      # transcript discovery to the proofs directory, so a bare .jsonl under
+      # docs/delegation-proofs/ is swept even without the flag (fail closed structurally).
       - name: Sweep recorded bridge proofs/transcripts for silent no-ops
-        run: uv run python scripts/check_delegation_proof.py --mode fleet-sweep
+        run: uv run python scripts/check_delegation_proof.py --mode fleet-sweep --transcripts-dir docs/delegation-proofs

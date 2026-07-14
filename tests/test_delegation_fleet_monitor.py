@@ -227,12 +227,211 @@ def test_standalone_transcript_sweep(tmp_path: Path) -> None:
     assert rc == 1
 
 
+def test_standalone_transcript_swept_by_default_from_proofs_dir(tmp_path: Path) -> None:
+    """FIX-C: a bare silent-no-op .jsonl under the proofs dir is swept even when the invocation
+    omits --transcripts-dir (the standalone leg must not depend on CI-invocation discipline)."""
+    proofs_dir = tmp_path / "proofs"
+    _write_transcript(
+        proofs_dir / "agy" / "orphaned.jsonl", [{"type": "text", "text": "spawned agy, no work"}]
+    )
+    rc = cdp.main(
+        ["--mode", "fleet-sweep", "--manifest", str(REAL_MANIFEST), "--proofs-dir", str(proofs_dir)]
+    )
+    assert rc == 1
+
+
+# ------------------------------------------------------- fail-closed proof chain (#457 fix)
+
+
+def test_dangling_transcript_proof_fails_sweep(tmp_path: Path) -> None:
+    """Refute-panel red fixture: a proof attesting a NONEXISTENT transcript with a bogus
+    transcript_sha256 is a broken proof chain, not a clean verify."""
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "agy").mkdir(parents=True)
+    (proofs_dir / "agy" / "phantom.json").write_text(
+        json.dumps(
+            {
+                "schema": "delegation-proof.v1",
+                "plugin": "agy",
+                "version": "0.4.0",
+                "run_id": "phantom",
+                "bridge_command": "agy --model 'X' -p 'go'",
+                "external_tool_calls": ["agy --model 'X' -p 'go'"],
+                "actor": "agy:X",
+                "transcript": "agy/phantom.jsonl",  # does not exist
+                "transcript_sha256": "a" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    proofs = cdp.load_proofs(proofs_dir)
+    findings = cdp.sweep(_manifest(), proofs, base_dir=proofs_dir)
+    assert any(f.category == "broken_proof_chain" for f in findings)
+    rc = cdp.main(
+        ["--mode", "fleet-sweep", "--manifest", str(REAL_MANIFEST), "--proofs-dir", str(proofs_dir)]
+    )
+    assert rc == 1
+
+
+def test_transcriptless_proof_is_unverifiable_finding(tmp_path: Path) -> None:
+    """A proof with NO transcript at all emits the distinct unverifiable_proof finding: the
+    artifact is entirely self-attested, and the sweep makes that visible (and red)."""
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "agy").mkdir(parents=True)
+    (proofs_dir / "agy" / "bare.json").write_text(
+        json.dumps(
+            {
+                "schema": "delegation-proof.v1",
+                "plugin": "agy",
+                "version": "0.4.0",
+                "run_id": "bare",
+                "bridge_command": "agy --model 'X' -p 'go'",
+                "external_tool_calls": ["agy --model 'X' -p 'go'"],
+                "actor": "agy:X",
+            }
+        ),
+        encoding="utf-8",
+    )
+    proofs = cdp.load_proofs(proofs_dir)
+    findings = cdp.sweep(_manifest(), proofs, base_dir=proofs_dir)
+    assert [f.category for f in findings] == ["unverifiable_proof"]
+
+
+def test_hash_without_transcript_reference_fails_sweep(tmp_path: Path) -> None:
+    """A recorded transcript_sha256 with no transcript reference is a broken chain."""
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "agy").mkdir(parents=True)
+    (proofs_dir / "agy" / "hash-only.json").write_text(
+        json.dumps(
+            {
+                "schema": "delegation-proof.v1",
+                "plugin": "agy",
+                "version": "0.4.0",
+                "run_id": "hash-only",
+                "bridge_command": "agy --model 'X' -p 'go'",
+                "external_tool_calls": ["agy --model 'X' -p 'go'"],
+                "actor": "agy:X",
+                "transcript_sha256": "b" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    findings = cdp.sweep(_manifest(), cdp.load_proofs(proofs_dir), base_dir=proofs_dir)
+    assert [f.category for f in findings] == ["broken_proof_chain"]
+
+
+def test_non_object_json_proof_is_a_finding_not_a_silent_skip(tmp_path: Path) -> None:
+    """FIX-G: a proof file whose JSON parses to a non-object (list/string/number) is a
+    broken_proof_chain finding, never silently ignored."""
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "agy").mkdir(parents=True)
+    (proofs_dir / "agy" / "weird.json").write_text("[1, 2, 3]", encoding="utf-8")
+    proofs = cdp.load_proofs(proofs_dir)
+    assert len(proofs) == 1 and proofs[0].error
+    findings = cdp.sweep(_manifest(), proofs, base_dir=proofs_dir)
+    assert [f.category for f in findings] == ["broken_proof_chain"]
+
+
+# ------------------------------------------------- discriminator execution shape (FIX-D)
+
+
+def test_reading_the_bridge_script_is_not_a_bridge_run() -> None:
+    """Refute-panel red fixture: a transcript whose only path-matching event merely READS the
+    bridge script (cat/grep) plus Claude edits classifies as unrecorded_fallback, not genuine."""
+    text = "\n".join(
+        json.dumps(e)
+        for e in [
+            {
+                "type": "tool_use",
+                "tool_name": "Bash",
+                "command": "cat plugins/agy/scripts/agy_delegate.py",
+            },
+            {"type": "tool_use", "tool_name": "Edit"},
+        ]
+    )
+    findings = cdp.classify_transcript(text, _disc(), source="t")
+    assert any(f.category == "unrecorded_fallback" for f in findings)
+
+
+def test_executing_the_bridge_script_is_a_bridge_run() -> None:
+    """The execution shape (python/uv run invoking the wrapper) still counts as genuine."""
+    text = json.dumps(
+        {
+            "type": "tool_use",
+            "tool_name": "Bash",
+            "command": "python3 plugins/agy/scripts/agy_delegate.py submit envelope.json",
+        }
+    )
+    assert cdp.classify_transcript(text, _disc(), source="t") == []
+
+
+# ------------------------------------------------------- multi-bridge accumulation (FIX-E)
+
+
+def _two_bridge_manifest() -> dict[str, object]:
+    return {
+        "schema": "bridge-plugins.v1",
+        "bridges": {
+            "aaa": {"discriminator": r"alpha-bridge\s+--model"},
+            "zzz": {"discriminator": r"zulu-bridge\s+--model"},
+        },
+    }
+
+
+def test_standalone_transcript_matching_first_bridge_is_genuine(tmp_path: Path) -> None:
+    """A standalone transcript matched by the FIRST bridge (iteration-order probe) is genuine."""
+    t = _write_transcript(
+        tmp_path / "t.jsonl",
+        [{"type": "tool_use", "tool_name": "Bash", "command": "alpha-bridge --model X -p go"}],
+    )
+    findings = cdp.sweep(_two_bridge_manifest(), [], base_dir=tmp_path, standalone_transcripts=[t])
+    assert findings == [], [f.render() for f in findings]
+
+
+def test_standalone_transcript_matching_last_bridge_is_genuine(tmp_path: Path) -> None:
+    """Same probe from the other side: matched by the LAST bridge only."""
+    t = _write_transcript(
+        tmp_path / "t.jsonl",
+        [{"type": "tool_use", "tool_name": "Bash", "command": "zulu-bridge --model X -p go"}],
+    )
+    findings = cdp.sweep(_two_bridge_manifest(), [], base_dir=tmp_path, standalone_transcripts=[t])
+    assert findings == [], [f.render() for f in findings]
+
+
+def test_standalone_transcript_matching_no_bridge_reports_once(tmp_path: Path) -> None:
+    """A transcript unmatched by ALL bridges is the orphan case: exactly one no-op finding and
+    one orphan-write finding — no per-bridge duplicates, no iteration-order dependence."""
+    t = _write_transcript(
+        tmp_path / "t.jsonl",
+        [
+            {"type": "text", "text": "nothing external happened"},
+            {"type": "write", "event": "write", "paths": ["src/orphan.py"]},  # no actor
+        ],
+    )
+    findings = cdp.sweep(_two_bridge_manifest(), [], base_dir=tmp_path, standalone_transcripts=[t])
+    assert sorted(f.category for f in findings) == ["silent_no_op", "untokened_orphan_write"]
+
+
 # ------------------------------------------------------------- real shipped artifacts
 
 
-def test_real_proofs_directory_sweeps_clean() -> None:
-    """The example proof shipped in docs/delegation-proofs/ verifies and sweeps clean."""
+def test_real_proofs_directory_excludes_examples_and_sweeps_clean() -> None:
+    """examples/ is documentation, not enforcement surface: the shipped example proof and
+    transcript are never loaded, and the honest tree sweeps clean (exit 0)."""
     proofs = cdp.load_proofs(REAL_PROOFS_DIR)
-    assert proofs, "expected at least the shipped example proof"
+    assert proofs == [], "examples/ must be excluded from the enforcement surface"
     findings = cdp.sweep(_manifest(), proofs, base_dir=REAL_PROOFS_DIR)
     assert findings == [], [f.render() for f in findings]
+    rc = cdp.main(
+        [
+            "--mode",
+            "fleet-sweep",
+            "--manifest",
+            str(REAL_MANIFEST),
+            "--proofs-dir",
+            str(REAL_PROOFS_DIR),
+            "--transcripts-dir",
+            str(REAL_PROOFS_DIR),
+        ]
+    )
+    assert rc == 0

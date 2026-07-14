@@ -75,6 +75,12 @@ jobs:
       - name: Validate marketplace registry
         run: uv run python marketplace/validator/validate.py
 
+      # #431: fail the build if a plugin script reaches into another plugin's owned
+      # write-mutation surface (e.g. a deploy-lane script calling `gh issue`), per the
+      # machine-checked ownership lanes in marketplace/ownership_lanes.json.
+      - name: Validate ownership lanes
+        run: uv run python scripts/check_ownership_lanes.py --verbose
+
       - name: Engine Registry
         run: uv run python plugins/saga/scripts/check_engine_registry.py
 

@@ -384,6 +384,21 @@ Execute **one meaningful phase at a time** per `references/execution-strategy.md
   heuristic and commit-ownership-by-isolation-mode are in `references/execution-strategy.md`).
 - **Simplify at phase boundaries** — review recently changed files for consolidation after a cluster of
   units, not after every single one.
+- **Poll the mid-run adjustment envelope at each phase/segment boundary (#372).** Before starting the
+  next phase, read `.saga/adjustment-envelope.json` via `adjustment_envelope.poll(...)` (schema in
+  `plugins/saga/references/adjustment-envelope.md`) — this reuses the phase boundary, not a new poll
+  loop. The poll decision governs the boundary:
+  - `drain` (operator `quiesce`) or `halt` (`andon_halt`/`cancel`/`abort`) — finish the in-flight unit,
+    dispatch no new phase, and surface the resume point; do not start the next phase.
+  - `pause` — a plan-declared `pause_after: <this-segment>` halts **exactly** at this boundary and
+    resumes only on the explicit continue signal (`adjustment_envelope.acknowledge_pause(...)`); a
+    matching `resume_tier`/`resume_context` amendment is applied to the next phase and recorded in the
+    work-session writeup so the honored change is visible (verified, not silently dropped).
+  - A malformed/unknown directive **fails closed** — the run halts and names the offending directive
+    rather than proceeding.
+  - Absent any `pause_after`, only irreversible actions pause; reversible board/label/issue/branch/PR
+    mutations proceed under the `undo_ledger` act-log-inverse-notify path (`/undo` replays the inverse)
+    instead of pausing.
 
 ---
 

@@ -27,6 +27,26 @@
 
 ## 2026-07-14
 
+### Polling the adjustment envelope AFTER harvest but BEFORE dispatch is what makes "drain in-flight, dispatch nothing new" true {#adjustment-envelope-poll-placement-372}
+
+**Context.** #372's quiesce contract is "drain any in-flight leaf, dispatch no new work, surface a
+resume point." The natural instinct is to poll the envelope at the top of the `/outcome` `advance`
+tick, but the tick already runs merge/harvest/worktree/liveness processors *before* the dispatch
+step (`_reconcile_once`), and those are exactly what materialize an in-flight leaf's completion.
+**Evidence.** `plugins/saga/scripts/outcome.py` `advance` — the poll was placed immediately after
+the `liveness_processor` block and immediately before the `_reconcile_once` call, then `break`;
+`tests/test_adjustment_envelope.py::test_quiesce_drain` asserts `harvest_calls >= 2` (the harvest
+ran on the stop tick) AND `result.dispatched == []` (nothing new). **Mechanism.** Placing the poll
+between harvest and dispatch means a quiesce lets the harvest drain the just-finished leaf's
+completion into the store, then stops before any ready leaf is handed to a backend — "drain" and
+"dispatch nothing new" fall out of the ordering, not extra machinery. Polling at the very top of
+the tick would skip the drain; polling after `_reconcile_once` would already have dispatched.
+**Generalizable rule.** When a stop-signal must "let in-flight finish but start nothing new," poll
+it *between* the harvest/reap phase and the dispatch phase of a level-triggered reconcile loop —
+the loop's existing phase ordering does the draining for you.
+
+---
+
 ### A recorded idempotency key makes the next tick *skip* — so drift-detection must run BEFORE the ledger short-circuit, not after {#idempotency-key-skips-hide-drift-450}
 
 **Context.** #450 unified `/outcome`'s two board-consistency mechanisms into one shared

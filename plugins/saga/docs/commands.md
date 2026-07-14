@@ -452,3 +452,22 @@ Live fleet telemetry rendered from real signals (read-only).
 | Boundary | Owns rendering only; mission-control owns board mutation, saga writers own ticks, ledger writers own facts. |
 | Common mistakes | Treating an empty panel's "no data yet" as zero activity; expecting `/pulse` to feed `/optimize` automatically (settled: it stands beside it). |
 | Example | `/pulse --project operations` |
+
+### /undo
+
+Replay the inverse of the most recent reversible mutation(s) from the mid-run adjustment envelope's act-log-inverse-notify path.
+
+| Field | Value |
+|-------|-------|
+| Purpose | Replay the inverse of the most recent reversible mutation(s) recorded by the act-log-inverse-notify path, so reversible board/label/issue/branch/PR steps need not pause. |
+| Use when | A reversible mutation proceeded under act-log-inverse-notify and the operator wants it undone, or wants to inspect / roll back the pending-undo ledger for a run. |
+| Do not use when | The operation had no registered inverse (it went through a gated pause, not the ledger), or the goal is to change campaign posture or DAG structure (use `/outcome`). |
+| Inputs | Optional count of trailing records to replay (default 1); reads `.saga/undo-ledger.jsonl`. |
+| Outputs | Replayed inverse action(s) + an operator summary of what was undone. |
+| Saga state | Reads and rewrites the git-ignored per-run undo ledger; writes no saga tick and owns no status field. |
+| Routes in | Reversible mutation via adjustment-envelope act-log, operator rollback ask. |
+| Routes out | mission-control, `/outcome`, `/work`. |
+| Gates | Only registered reversible ops are in the ledger; gh-write inverses route through mission-control, saga-local inverses replay directly; an empty ledger fails closed. |
+| Boundary | Owns inverse computation and ledger replay only; mission-control owns the gh write-ownership lane for board/label/issue inverses. |
+| Common mistakes | Expecting `/undo` to reverse an irreversible op (those pause, they are never ledgered); calling `gh` directly from saga to replay a board inverse instead of routing through mission-control. |
+| Example | `/undo 1` |

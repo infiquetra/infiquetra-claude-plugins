@@ -4,6 +4,20 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.16.0] - 2026-07-14
+
+### Added - worker-raised andon-cord stop-the-line lane (#372)
+
+- **`skills/team-execution/references/andon-cord.md` + Step B1 rule in `SKILL.md`:** any worker or
+  reviewer inside a wave can raise an `andon_halt` into the shared mid-run adjustment envelope
+  (`.saga/adjustment-envelope.json`, schema in `plugins/saga/references/adjustment-envelope.md`) —
+  not a separate side channel. At the next wave/tick boundary the coordinator polls the envelope
+  and, on a raised andon, does not dispatch the next wave and writes an operator-surface HALT
+  record. This is an additional, orthogonal halt path that extends the existing HALT-not-degrade
+  posture; it explicitly does **not** replace or weaken the 3-cycle consensus cap
+  (`consensus-protocol.md`) or the 3-loop remediation cap (`validator-execution-order.md`) — an
+  andon and an iteration-cap "proceed-with-best-available" are distinct, coexisting outcomes.
+
 ## [2.15.0] - 2026-07-14
 
 ### Added - Step B1 posture check through the fleet IntentEnvelope (#380)

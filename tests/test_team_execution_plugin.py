@@ -62,8 +62,8 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
     assert (
-        plugin_json["version"] == "2.15.0"
-    )  # Step B1 posture check via the fleet IntentEnvelope (#380)
+        plugin_json["version"] == "2.16.0"
+    )  # andon-cord stop-the-line lane (#372), atop the Step B1 posture check (#380)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()

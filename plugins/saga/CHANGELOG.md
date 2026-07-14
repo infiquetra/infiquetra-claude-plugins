@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.92.0] - 2026-07-14
+
+### Added - mid-run adjustment envelope + reversible-mutation undo ledger (#372)
+
+- **`references/adjustment-envelope.md` + `scripts/adjustment_envelope.py`:** one documented,
+  versioned (`ENVELOPE_VERSION = 1`) control-file schema — the mid-run counterpart to the
+  run-start intent envelope — polled at the existing `/outcome` tick boundary and the `/work`
+  segment boundary (no new poll loop). Four writers converge on ONE file: an operator-raised
+  `quiesce` (drain in-flight, dispatch nothing new, surface a resume point), plan-declared
+  `pause_after: <segment>` points (deterministic halt + explicit-continue resume, honoring a
+  `resume_tier`/`resume_context` change), a worker/reviewer-raised `andon_halt`, and operator
+  `re-tier`/`add-reviewer`/`cancel`/`abort` directives. Poll precedence `halt > drain > pause >
+  proceed` composes with — never weakens — the existing HALT-not-degrade stance
+  (`{#outcome-backend-degrade-stance}`).
+- **Fail-closed parser (R3):** an unknown directive, unknown key, missing required field, wrong
+  version, unrecognized writer, or malformed/unreadable file raises `EnvelopeError` and HALTs the
+  run naming the offending token — never an enumerate-and-skip silent proceed. An absent file
+  means "no directives, proceed".
+- **`scripts/outcome.py` `advance`:** polls the envelope each tick after the in-flight harvest
+  drains and before dispatch; a halting/draining/pausing decision (or a fail-closed error) stops
+  the next tick from dispatching and is surfaced on the new `AdvanceResult.adjustment` field
+  (producer + consumer ship together — no dead wiring).
+- **`scripts/undo_ledger.py` + `/undo` command (`commands/undo.md`):** the reversible-mutation
+  default (R6/R10/R11) — registered reversible ops (`board_move`, `label_change`, `issue_edit`,
+  `saga_branch`, `saga_pr`) proceed under act-log-inverse-notify (write a proven round-trip
+  inverse, notify the operator) instead of pausing; `/undo` replays the inverse (LIFO). An op with
+  no registered inverse is definitionally irreversible and falls back to the gated pause
+  (`mutation_disposition` returns `"pause"`). Deliberately gh-free (computes/records inverses; the
+  mutation-owning subsystem replays them) so the gh write-ownership lane stays intact.
+- **Tests:** `tests/test_adjustment_envelope.py` (quiesce-drain, pause-after boundary,
+  pause-context/model-change, andon-blocks-next-wave, unknown-directive fail-closed — driving the
+  production `advance` wiring) and `tests/test_undo_ledger.py` (per-op round-trip inverse,
+  no-inverse-falls-back-to-pause). Envelope + ledger live under the git-ignored `.saga/` run state.
 ## [0.91.0] - 2026-07-14
 
 ### Added - one level-triggered reconcile controller for /work and /loop (#450)

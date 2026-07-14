@@ -1,0 +1,31 @@
+{
+  "id": "code-review-gate",
+  "title": "code-review pass against a seeded diff",
+  "description": "Seed a real diff on a review branch of the fixture repo, then record a code-review gate verdict on the saga. Asserts the saga log gained the tick and the gate record is present on the latest tick.",
+  "steps": [
+    { "kind": "git", "args": ["checkout", "-q", "-b", "review/toy-102"] },
+    {
+      "kind": "write_file",
+      "path": "fixture_app.py",
+      "text": "\"\"\"A tiny application module the lifecycle-fixture scenarios edit, review, and ship.\"\"\"\n\nfrom __future__ import annotations\n\n\ndef greet(name: str) -> str:\n    \"\"\"Return a deterministic, capitalized greeting for ``name``.\"\"\"\n    return f\"hello, {name}\".capitalize()\n"
+    },
+    { "kind": "git", "args": ["add", "-A"] },
+    { "kind": "git", "args": ["commit", "-q", "-m", "feat: capitalize the fixture greeting"] },
+    {
+      "kind": "run_saga_cli",
+      "script": "saga",
+      "args": [
+        "save",
+        "--id", "102",
+        "--kind", "issue",
+        "--lifecycle-phase", "review",
+        "--gate-verdict", "code-review:done:review/toy-102",
+        "--summary", "code-review pass recorded against the seeded diff"
+      ]
+    }
+  ],
+  "assertions": [
+    { "kind": "saga_log_appended", "saga_id": "issue-102", "min_ticks": 1 },
+    { "kind": "gate_record_present", "saga_id": "issue-102", "gate": "code-review", "state": "done" }
+  ]
+}

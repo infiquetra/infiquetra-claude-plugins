@@ -1,0 +1,26 @@
+{
+  "id": "outcome-round-trip",
+  "title": "outcome start / resume / status round trip",
+  "description": "Start an outcome in the fixture repo (branch-local spec + store), resume it, and read status. Asserts the produced outcome-spec JSON passes the production loader/validator with the expected node set, and that derived-on-read state shows the starter DAG frontier (design ready, build blocked).",
+  "steps": [
+    {
+      "kind": "run_saga_cli",
+      "script": "outcome",
+      "args": ["--repo-root", ".", "start", "fx-outcome", "toy objective: ship the fixture feature"]
+    },
+    {
+      "kind": "run_saga_cli",
+      "script": "outcome",
+      "args": ["--repo-root", ".", "resume", "fx-outcome"]
+    },
+    {
+      "kind": "run_saga_cli",
+      "script": "outcome",
+      "args": ["--repo-root", ".", "status", "fx-outcome"]
+    }
+  ],
+  "assertions": [
+    { "kind": "outcome_spec_valid", "outcome_id": "fx-outcome", "expect_nodes": ["design", "build"] },
+    { "kind": "outcome_state", "outcome_id": "fx-outcome", "states": { "design": "ready", "build": "blocked" } }
+  ]
+}

@@ -27,6 +27,36 @@
 
 ## 2026-07-14
 
+### A nested fixture `.git` is invisible to parent porcelain, but an untracked dir holding one gets staged as a gitlink {#nested-fixture-git-materialize-on-demand-428}
+
+**Context.** The lifecycle regression harness (#428) needs `tests/lifecycle-fixture/` to be "a
+minimal but real git repository (its own `.git`)" while living inside this repo, with the standing
+rule that no run artifact may ever dirty `git status --porcelain`.
+**Evidence.** Empirical probe during the #428 build (reproduced in
+`tests/test_lifecycle_regression_harness.py::test_fixture_repo_is_a_real_isolated_git_repo`): after
+`git -C tests/lifecycle-fixture init` inside a repo that already tracked files under that
+directory, parent `git status --porcelain` stayed empty — git hardcodes `.git` path-component
+exclusion, and files already in the parent index keep being tracked normally. But the converse
+bites at staging time: `git add` on a directory that is entirely UNTRACKED and contains a `.git`
+records a single gitlink (submodule-style) entry instead of the files.
+**Mechanism.** Git can never track a path with a `.git` component, and status/index code skips it
+unconditionally — which is why materializing the nested repo is porcelain-safe. The embedded-repo
+gitlink behavior only triggers when the *directory itself* is being added fresh; tracked files
+inside a directory that later gains a `.git` are unaffected.
+**Fix.** The fixture's repo-ness is materialized on demand (`lifecycle_harness.ensure_fixture_repo`:
+`git init -b main` + deterministic identity + a reserved-TLD remote `https://fixture.invalid/...`),
+never committed; the one staging hazard is handled by removing any locally materialized
+`tests/lifecycle-fixture/.git` before the directory's FIRST `git add`. Scenario runs never touch
+the in-tree fixture at all — every run copies `seed/` into a pytest tmpdir and inits there (the
+`wiring_canary` throwaway-checkout pattern), because lifecycle CLIs drop artifacts
+(`docs/outcomes/…`, `.claude/saga/…`) that WOULD show as parent-untracked if run in-tree.
+**Generalizable rule.** An in-repo "real git repo" fixture is safe to materialize but never safe
+to stage while untracked: commit the fixture's files first (or delete the nested `.git` before the
+first add), and run anything that writes artifacts against a throwaway copy, never the in-tree dir.
+**Refs.** DECISIONS `{#lifecycle-regression-harness-shape-428}`; `tests/lifecycle-fixture/README.md`.
+
+---
+
 ### A behavioral CI gate must key its trust signal off recorded tool-call commands, not the label on the spawn {#delegation-proof-discriminator-457}
 
 **Context.** Building the delegation-integrity gate (#457) for bridge plugins, the whole design

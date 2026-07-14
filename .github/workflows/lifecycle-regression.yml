@@ -1,0 +1,47 @@
+name: Lifecycle Regression
+
+# End-to-end lifecycle regression harness on the fixture repo (#428). The PR-blocking ci.yml
+# jobs verify the fleet's *parts* (manifests, agent files, contracts); this scheduled run drives
+# the canonical lifecycle scenarios headlessly against throwaway clones of
+# tests/lifecycle-fixture/ and asserts on artifact shape (spec JSON validity, saga-log append,
+# gate-record presence, worktree reclamation). It is a detection instrument for lifecycle-shape
+# regressions, deliberately cron-scheduled and separate from the merge-gating CI jobs (R5).
+
+on:
+  schedule:
+    # 06:43 UTC daily — off the top of the hour, offset from the 07:17 mutation canary.
+    - cron: "43 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  lifecycle-regression:
+    name: Lifecycle Regression (fixture-repo scenarios)
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Run the lifecycle regression harness (all fixture scenarios)
+        run: >
+          uv run pytest tests/test_lifecycle_regression_harness.py -v -rA
+          --junitxml=lifecycle-regression-report.xml
+
+      - name: Upload run report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-regression-report
+          path: lifecycle-regression-report.xml
+          if-no-files-found: warn

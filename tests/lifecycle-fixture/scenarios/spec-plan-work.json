@@ -1,0 +1,71 @@
+{
+  "id": "spec-plan-work",
+  "title": "spec -> plan -> work happy path",
+  "description": "The canonical healthy chain: author a plan + execution spec, record the plan tick, open the outcome-managed worktree, land a seeded change on a work branch, record the work tick with a code-review gate verdict, reclaim the worktree. Asserts all four canonical artifact-shape families.",
+  "steps": [
+    {
+      "kind": "write_file",
+      "path": "docs/plans/toy-feature-plan.md",
+      "text": "# Toy feature plan\n\nAdd a farewell function beside greet() in fixture_app.py.\n"
+    },
+    {
+      "kind": "write_file",
+      "path": "docs/plans/toy-feature-execution-spec.json",
+      "json": {
+        "name": "toy-feature",
+        "description": "add a farewell function to the fixture app",
+        "repo": ".",
+        "units": [
+          {
+            "unit_id": "U1",
+            "label": "implement farewell",
+            "tier": { "model": "sonnet", "effort": "high" },
+            "prompt": "add a farewell(name) function beside greet() and keep ruff/mypy green",
+            "returns": ["diff", "notes"]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "run_saga_cli",
+      "script": "saga",
+      "args": [
+        "save",
+        "--id", "101",
+        "--kind", "issue",
+        "--lifecycle-phase", "plan",
+        "--plan-path", "docs/plans/toy-feature-plan.md",
+        "--summary", "plan authored against the fixture repo"
+      ]
+    },
+    { "kind": "worktree_open", "outcome_id": "fx-101", "subplot_id": "build" },
+    { "kind": "git", "args": ["checkout", "-q", "-b", "work/toy-101"] },
+    {
+      "kind": "write_file",
+      "path": "fixture_app.py",
+      "text": "\"\"\"A tiny application module the lifecycle-fixture scenarios edit, review, and ship.\"\"\"\n\nfrom __future__ import annotations\n\n\ndef greet(name: str) -> str:\n    \"\"\"Return a deterministic greeting for ``name``.\"\"\"\n    return f\"hello, {name}\"\n\n\ndef farewell(name: str) -> str:\n    \"\"\"Return a deterministic farewell for ``name``.\"\"\"\n    return f\"goodbye, {name}\"\n"
+    },
+    { "kind": "git", "args": ["add", "-A"] },
+    { "kind": "git", "args": ["commit", "-q", "-m", "feat: add farewell to fixture app"] },
+    {
+      "kind": "run_saga_cli",
+      "script": "saga",
+      "args": [
+        "save",
+        "--saga-id", "issue-101",
+        "--id", "101",
+        "--lifecycle-phase", "work",
+        "--gate-verdict", "code-review:done:work/toy-101",
+        "--checks-run", "pytest",
+        "--summary", "work complete; code-review gate recorded"
+      ]
+    },
+    { "kind": "worktree_reclaim", "outcome_id": "fx-101", "subplot_id": "build" }
+  ],
+  "assertions": [
+    { "kind": "execution_spec_valid", "path": "docs/plans/toy-feature-execution-spec.json" },
+    { "kind": "saga_log_appended", "saga_id": "issue-101", "min_ticks": 2 },
+    { "kind": "gate_record_present", "saga_id": "issue-101", "gate": "code-review", "state": "done" },
+    { "kind": "worktree_reclaimed" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "id": "worktree-reclaim",
+  "title": "worktree open, use, reclaim",
+  "description": "Open a managed sub-outcome worktree through the production ensure_worktree path (real git worktree add), do leaf work inside it, then reclaim it through the production reap_worktree path. Asserts the worktree this scenario opened is absent from git worktree list and from .saga-worktrees/ at teardown.",
+  "steps": [
+    { "kind": "worktree_open", "outcome_id": "fx-wt", "subplot_id": "sub-a" },
+    {
+      "kind": "write_file",
+      "path": ".saga-worktrees/fx-wt/sub-a/scratch.txt",
+      "text": "leaf work happened here\n"
+    },
+    { "kind": "worktree_reclaim", "outcome_id": "fx-wt", "subplot_id": "sub-a" }
+  ],
+  "assertions": [
+    { "kind": "worktree_reclaimed" }
+  ]
+}

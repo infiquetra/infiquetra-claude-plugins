@@ -2,6 +2,48 @@
 
 ## 2026-07-14
 
+### One level-triggered reconcile controller supersedes the three hand-wired board paths (#450)  {#one-reconcile-controller-450}
+
+**Decision.** Board consistency across `/outcome`, `/work`, and `/loop` is now one shared,
+Kubernetes-style level-triggered controller — `plugins/saga/scripts/reconcile_controller.py` —
+rather than three independently hand-wired paths. It composes the two already-proven halves instead
+of re-deriving them: the idempotency-key write mechanism stays in `board_progression.authorize_and_write`
+(#344), and the drift vocabulary/record shape (`DRIFT_KINDS`, `_drift_record`, `_drift_id`,
+`_close_satisfies_contract`) is single-sourced in the controller and re-exported by
+`outcome_reconcile` (zero behavior change to `/outcome`, regression-tested). The controller's own
+addition is `reconcile_op`: a per-op tick that recomputes the expected board value from durable saga
+fields and re-reads the live board *every tick* (level-triggered, never an "already handled" cache),
+so a rapid double tick converges on one write, a crash between compute and ledger-write is retried
+not skipped, and an outside edit to a saga-owned field is re-detected — for `/work` and `/loop`, not
+just `/outcome`. Auto-correction is fail-closed and doubly gated (certificate `AUTHORIZED` AND op in
+the explicit `AUTO_CORRECT_OP_KINDS` allowlist, today exactly `set-field-status`); an irreversible
+outside open/closed change, or any certificate-GATE op, HALTs with a named `halt_reason` and is never
+overwritten. `/work` §4.4 and `/loop` §0.5 now route through the controller's `reconcile` CLI.
+
+**Rationale.** `outcome_reconcile.py`'s own docstring named the gap this closes: a recorded
+idempotency key makes the next tick *skip* an op, so an outside writer who moves a saga-owned field
+while saga rests is never noticed and the drift persists forever — and that detector only ran at
+`/outcome` resume time, unavailable to `/work`/`/loop`. Consolidating one *mechanism* (idempotency +
+drift detection), rather than re-deriving it a third and fourth time inside `/work` and `/loop`, was
+the deliberate scope-narrowing move recorded for this idea, deliberately sequenced behind
+`pf-board-progression-shared-writer` (`board_progression.py`, #344 — verified landed before this
+work). The auto-correct-vs-HALT line is a self-attested policy, not a certificate property (the
+certificate marks both `set-field-status` and `sub-issue-close` mechanically reversible): reversing a
+board Status field is safe (saga-owned, derived-on-read), but reversing an outside issue open/closed
+change would destroy a human/CI lifecycle decision, so only the former auto-corrects.
+
+**Rejected alternatives.** (1) A fourth bespoke drift detector inside `/work`/`/loop` — the exact
+re-derivation the consolidation exists to prevent. (2) Auto-correcting every reversible drift
+including `sub-issue-close`/`reopen` — silently overriding a human's issue-lifecycle action; HALT is
+the honest response. (3) A standing/scheduled reconcile daemon — out of scope; ticks stay
+invocation-triggered, matching the existing resume-time trigger model.
+
+**Revisit when.** A fourth lifecycle command needs board writes (route it through the controller, do
+not hand-wire), the `AUTO_CORRECT_OP_KINDS` allowlist is proposed to widen beyond `set-field-status`
+(that is a reviewed autonomy-scope change, never an accident of a new op_kind), or true simultaneous
+(non-lease-serialized) ticks appear and the `os.link` ledger dedup needs the board write itself to be
+provably idempotent under concurrency rather than by-nature.
+
 ### Lifecycle regression harness: declarative fail-closed scenarios over production CLIs, throwaway clones, scheduled non-gating CI (#428)  {#lifecycle-regression-harness-shape-428}
 
 **Decision.** The end-to-end lifecycle regression harness (#428) is shaped as: (a) strict

@@ -456,25 +456,40 @@ python3 plugins/saga/scripts/issue_progress.py \
 Record durable learnings/decisions in the engineering journal as they surface. `/work` **renders and
 hands** the comment to `mission-control`; it does not file or mutate the issue itself.
 
-### 4.4 Autonomous board progression (post-merge allowlisted moves, #344)
+### 4.4 Autonomous board progression — the shared reconcile controller (post-merge, #344/#450)
 
 After a merge, drive the **allowlisted** post-merge board moves autonomously through the shared
-certificate-gated writer instead of prompting — the same reversibility contract `/outcome` uses. For
-each move (Status → Done, then the sub-issue close):
+**level-triggered reconcile controller** instead of prompting — the same reversibility contract and
+idempotency ledger `/outcome` uses, now with the outside-drift detection `/work` previously lacked
+(#450). For each move (Status → Done, then the sub-issue close), run a reconcile tick:
 
 ```bash
-python3 plugins/saga/scripts/board_progression.py write \
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
   --op set-field-status --repo <owner/repo> --number <N> --target-state Done
-python3 plugins/saga/scripts/board_progression.py write \
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
   --op sub-issue-close --repo <owner/repo> --number <N>
 ```
 
-The CLI prints a record JSON. On `{"status":"written"}` (or `"skipped"`) the move fired with **no
-operator prompt**. On `{"status":"gated"}` — which merge/deploy and any non-allowlisted op **always**
-return, because the allowlist lives in `reversibility_certificate`, not in the writer — fall back to
-the existing operator-prompted `mission-control` path unchanged. A `gated` result is the certificate
-correctly withholding an op that needs a human, never a failure. `/work` still does **not** merge or
-deploy autonomously (permanently gated).
+The controller composes the certificate-gated idempotency writer (`board_progression`, #344) with a
+**level-triggered drift check**: every tick it re-reads the live board, so a rapid double tick
+collapses to one write and an outside edit made while `/work` was at rest is re-detected. The CLI
+prints a record JSON:
+
+- `{"status":"written"}` / `{"status":"skipped"}` — the move fired (or was already applied) with
+  **no operator prompt**.
+- `{"status":"corrected"}` — an outside actor moved the saga-owned **Status** field while `/work` was
+  at rest; the controller re-asserted the saga-derived value (reversible board-field drift, R5).
+- `{"status":"halt", ...}` with a named `halt_reason` — an **irreversible** outside change (an issue
+  reopened/closed under saga, an open/closed drift) that must NOT be silently overwritten. Surface
+  the `halt_reason` to the operator and fall back to the operator-prompted `mission-control` path.
+- `{"status":"gated"}` — which merge/deploy and any non-allowlisted op **always** return, because the
+  allowlist lives in `reversibility_certificate`, not in the controller — fall back to the existing
+  operator-prompted `mission-control` path unchanged. A `gated`/`halt` result is the controller
+  correctly withholding an op that needs a human, never a failure.
+
+`/work` still does **not** merge or deploy autonomously (permanently gated), and the controller never
+widens the autonomously-writable set beyond what `board_progression`/`reversibility_certificate`
+already establish (#450 non-goal).
 
 ---
 

@@ -27,7 +27,34 @@
 
 ## 2026-07-14
 
-### A nested fixture `.git` is invisible to parent porcelain, but an untracked dir holding one gets staged as a gitlink {#nested-fixture-git-materialize-on-demand-428}
+### A recorded idempotency key makes the next tick *skip* — so drift-detection must run BEFORE the ledger short-circuit, not after {#idempotency-key-skips-hide-drift-450}
+
+**Context.** #450 unified `/outcome`'s two board-consistency mechanisms into one shared
+level-triggered `reconcile_controller` and extended it to `/work` and `/loop`. The subtle part is
+why a pure idempotency-key writer can never self-heal outside drift.
+**Evidence.** `plugins/saga/scripts/board_progression.py:152` — `authorize_and_write` returns
+`{"status":"skipped"}` the instant `ledger_file.exists()`, with no live read. `outcome_reconcile.py:4-8`
+names the consequence: "a recorded key makes the next tick *skip* the op, so the drift persists
+forever." Repro is `tests/test_reconcile_controller.py::test_work_outside_drift_is_corrected` (correct)
+vs a hypothetical writer-only path (would skip).
+**Mechanism.** Idempotency and drift-correction pull in opposite directions on the same signal: a
+present ledger key means "already driven" (skip) to the writer, but "saga asserted X; is live still
+X?" (must re-read) to the reconciler. `reconcile_op` resolves it by ordering — an ABSENT key routes to
+`authorize_and_write` (idempotent write / crash-safe resume), a PRESENT key routes to a live re-read
+and drift branch. Put the drift check after the skip and it can never fire.
+**Fix.** `reconcile_controller.reconcile_op` (`plugins/saga/scripts/reconcile_controller.py`) — the
+present-key branch re-reads live and either no-ops (converged), corrects (reversible Status drift), or
+HALTs (irreversible open/closed drift). Shipped this PR.
+**Validation.** `uv run pytest tests/test_reconcile_controller.py` (20 passed, each green paired with a
+could-have-failed baseline control) + the unchanged `test_outcome_reconcile`/`test_outcome_board_sync`
+suites (75 passed) proving zero `/outcome` regression.
+**Generalizable rule.** When a cache/ledger short-circuit and a reconcile-against-reality both key off
+"have I done this?", the reconciler must inspect the world on the same tick the short-circuit would
+otherwise fire — level-triggered, not edge-triggered. A "skip because recorded" is only safe if
+nothing outside your writer can change the recorded field.
+**Refs.** DECISIONS `{#one-reconcile-controller-450}`; builds on `{#lifecycle-engine-merge-campaign}`
+dead-wiring discipline (a manifest field needs a producer AND a consumer — here the controller is a
+real consumer of `board_progression` + `reversibility_certificate`, wired into `/work` and `/loop`).
 
 **Context.** The lifecycle regression harness (#428) needs `tests/lifecycle-fixture/` to be "a
 minimal but real git repository (its own `.git`)" while living inside this repo, with the standing

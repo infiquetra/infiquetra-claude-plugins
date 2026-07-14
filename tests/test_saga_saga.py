@@ -483,19 +483,56 @@ def test_save_refreshes_head_and_last_commit_on_later_save(
 
 
 def test_restore_round_trips_including_extra(
-    saga: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    assert_reads_from_boundary: Any,
 ) -> None:
+    # Converted to the #458 T11-F4-7 boundary-crossing convention: the summary assertion re-reads
+    # from the persisted tick (the boundary), not the in-memory Saga the producer built.
     _stub_no_git(saga, monkeypatch)
-    saga.save(
+    result = saga.save(
         tmp_path,
         _make_saga(saga, summary="hello", adr_refs=["ADR-0004"], extra={"future": "v"}),
         now=FIXED_NOW,
     )
+    envelope_path = Path(result["envelope_path"])
+    assert_reads_from_boundary(
+        lambda: saga.restore(tmp_path, "issue-42").summary,
+        "hello",
+        boundary=envelope_path,
+        description="saga.summary",
+    )
     restored = saga.restore(tmp_path, "issue-42")
     assert restored is not None
-    assert restored.summary == "hello"
     assert restored.adr_refs == ["ADR-0004"]
     assert restored.extra["future"] == "v"
+
+
+def test_boundary_crossing_roundtrip(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    assert_reads_from_boundary: Any,
+) -> None:
+    """Worked example of the boundary-crossing convention (#458 T11-F4-7).
+
+    ``assert_reads_from_boundary`` first proves the tick file was actually written to disk (the
+    persistence boundary), THEN re-reads the value via ``restore`` from that boundary — never from
+    the in-memory ``Saga`` the producer built. Stubbing out the envelope write (a throwaway
+    ``monkeypatch`` of ``Path.write_text`` / ``saga.save``) makes the boundary-existence assertion
+    fail, which is the proof the assertion reads from disk rather than an in-memory shared variable.
+    """
+    _stub_no_git(saga, monkeypatch)
+    result = saga.save(tmp_path, _make_saga(saga, summary="persisted-value"), now=FIXED_NOW)
+    envelope_path = Path(result["envelope_path"])
+    read_back = assert_reads_from_boundary(
+        lambda: saga.restore(tmp_path, "issue-42").summary,
+        "persisted-value",
+        boundary=envelope_path,
+        description="saga.summary",
+    )
+    assert read_back == "persisted-value"
 
 
 def test_restore_picks_latest_by_filename_even_with_newer_mtime(

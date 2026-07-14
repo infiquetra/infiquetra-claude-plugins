@@ -27,12 +27,23 @@ heavy saga modules, no I/O at import. Requirement traceability: R1-R9; KTD1-KTD7
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+# The drift vocabulary + record shape are single-sourced in ``reconcile_controller`` (#450 — the ONE
+# shared controller) and re-exported here so ``/outcome``'s existing call sites (``outcome.py`` uses
+# ``outcome_reconcile.DRIFT_KINDS``) and this module's detect body keep their exact names and
+# behavior. ``reconcile_controller`` is pure at import (only stdlib + lazy heavy imports), so this
+# top-level import does not violate the house "no heavy import at import time" pattern.
+import reconcile_controller as _rc
+
+DRIFT_KINDS = _rc.DRIFT_KINDS
+_drift_id = _rc._drift_id
+_drift_record = _rc._drift_record
+_close_satisfies_contract = _rc._close_satisfies_contract
 
 # ---------------------------------------------------------------------------
 # Lazy module imports (house pattern — outcome pulls the whole engine graph,
@@ -73,9 +84,6 @@ _STATUS_FAMILY = "set-field-status"
 _CLOSE_FAMILY = "sub-issue-close"
 
 _OVERRIDE_KIND = "reconcile-override"
-
-# Drift kinds a detect() record can carry (the caller drift-holds / surfaces these).
-DRIFT_KINDS = ("status-drift", "external-close", "external-reopen")
 
 
 # ---------------------------------------------------------------------------
@@ -162,52 +170,6 @@ def _asserted_at_max_ts(records: list[dict[str, Any]], family: str) -> set[str]:
         _record_value(r, family)
         for r in records
         if r.get("op_kind") == family and float(r.get("ts", 0) or 0) == max_ts
-    }
-
-
-# ---------------------------------------------------------------------------
-# Classification helpers
-# ---------------------------------------------------------------------------
-
-
-def _close_satisfies_contract(node: Any) -> bool:
-    """Whether closing this leaf's issue satisfies its completion contract (mirrors
-    ``outcome_orchestrator.barrier_satisfied``).
-
-    A non-code, non-child leaf's contract IS "tracking issue closed", so a close satisfies it. A
-    code leaf's contract is "PR merged", so a closed issue does NOT satisfy it — a close there is
-    drift regardless of stateReason (KTD4).
-    """
-    return (not getattr(node, "is_outcome", False)) and getattr(node, "kind", "") != "code"
-
-
-def _drift_id(kind: str, repo: str, number: int, saga_value: str, board_value: str) -> str:
-    """Deterministic short id so the CLI can reference a drift across invocations (KTD5)."""
-    raw = f"{kind}:{repo}#{number}:{saga_value}->{board_value}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]  # nosec B324 — id, not a secret
-
-
-def _drift_record(
-    kind: str,
-    *,
-    repo: str,
-    number: int,
-    subplot_id: str,
-    op_kind: str,
-    saga_value: str,
-    board_value: str,
-    author: str = "",
-) -> dict[str, Any]:
-    return {
-        "kind": kind,
-        "repo": repo,
-        "number": number,
-        "subplot_id": subplot_id,
-        "op_kind": op_kind,
-        "saga_value": saga_value,
-        "board_value": board_value,
-        "author": author,
-        "drift_id": _drift_id(kind, repo, number, saga_value, board_value),
     }
 
 

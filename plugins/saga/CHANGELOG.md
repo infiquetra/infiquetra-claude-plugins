@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.91.0] - 2026-07-14
+
+### Added - one level-triggered reconcile controller for /work and /loop (#450)
+
+- **`plugins/saga/scripts/reconcile_controller.py`** (new): the ONE Kubernetes-style
+  level-triggered board-reconcile controller. Composes the extracted idempotency-key write
+  mechanism (`board_progression.authorize_and_write`, #344) with a per-op **level-triggered drift
+  check** — every tick it recomputes the expected board value from durable saga fields and re-reads
+  the live board. A rapid double tick converges on exactly one applied write and one ledger entry
+  (`reconcile_op` → `authorize_and_write` on an absent key, no-op on a present one); an outside edit
+  to the saga-owned Status field made while a command was at rest is re-detected and **corrected**
+  (`{"status":"corrected"}`); an irreversible outside open/closed change, or any certificate-GATE op,
+  **HALTs** with a named `halt_reason` and never overwrites. Fail-closed and doubly gated:
+  auto-correction fires only when `reversibility_certificate` returns `AUTHORIZED` AND the op is in
+  the explicit `AUTO_CORRECT_OP_KINDS` allowlist (today exactly `set-field-status`). Ships a
+  `reconcile` CLI (`--no-drift-check` for a write-only tick) so the markdown skills can invoke it.
+- **`plugins/saga/scripts/outcome_reconcile.py`**: the drift vocabulary + record shape
+  (`DRIFT_KINDS`, `_drift_record`, `_drift_id`, `_close_satisfies_contract`) is now single-sourced in
+  `reconcile_controller` and re-exported here — zero behavior change to `/outcome`'s detect/decide
+  call sites (regression-tested; the existing `test_outcome_reconcile` / `test_outcome_board_sync`
+  suites stay green).
+- **`plugins/saga/skills/work/SKILL.md`** (§4.4): post-merge board moves now route through
+  `reconcile_controller.py reconcile` instead of the raw `board_progression.py write`, gaining the
+  outside-drift detection `/work` previously lacked.
+- **`plugins/saga/skills/loop/SKILL.md`** (§0.5): `/loop` gains a level-triggered reconcile tick over
+  the already-asserted, allowlisted Status field (refining the #344 boundary) — it reconciles drift over
+  already-asserted fields; the no-new-forward-progression boundary is documented convention
+  enforced by the skill's instructions, not (yet) mechanically by the controller.
+
 ## [0.90.0] - 2026-07-14
 
 ### Added - one committed IntentEnvelope for run-start posture (#380)

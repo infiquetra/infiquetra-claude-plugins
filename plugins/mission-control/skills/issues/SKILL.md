@@ -145,6 +145,27 @@ The prepared workflow writes a markdown draft and JSON sidecar under
 plan, asks for confirmation, repairs missing labels/templates after confirmation, opens a mapping
 PR when needed, and only then creates the issue.
 
+### Ship-policy intent envelope on the issue (#380)
+
+When the operator's autonomy answers for the eventual run are already known at capture time,
+record them ONCE, on the issue, as a schema-validated block — so `/outcome start` reads them and
+never re-interrogates the operator (ask-once). Render the block and embed it in the draft body:
+
+```bash
+python3 sdlc_manager.py issue intent-envelope \
+  --run-mode unattended --merge auto --authored-by jeff
+```
+
+This emits a `### Intent envelope` heading plus a fenced `intent-envelope` JSON block validated
+against the fleet's closed envelope schema (canonical:
+`plugins/fleet-core/scripts/fleet_commons/intent_envelope.py`; contract:
+`plugins/saga/references/intent-envelope.md`). Answer values are typed against the single fleet
+interview — off-vocabulary values fail loudly at render. Prepared-issue readiness treats a
+present-but-invalid envelope block as a BLOCKING gap (fail closed at capture); an absent block
+stays fine — the envelope is optional, and `/outcome start` falls back to its run-start
+interview. Do not author the envelope as prose or invent a second posture question — the fleet
+drift-guard test fails on one.
+
 Prepared handoff drafts include `handoff_maturity` in the sidecar and a body section with the
 suggested next action. Maturity values are:
 

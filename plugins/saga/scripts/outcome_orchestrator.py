@@ -35,6 +35,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import closure_gate  # noqa: E402  (after the sys.path shim, by design)
+import intent_envelope  # noqa: E402
 import manifest_store  # noqa: E402
 import outcome_github  # noqa: E402
 import outcome_spec  # noqa: E402
@@ -167,6 +168,10 @@ def harvest(
     """
     already = outcome_store.completed_subplots(store)
     harvested: list[str] = []
+    # #380 (T8-F1-3): the committed intent envelope's ceremony gates imply closure checks —
+    # `reviews_required: "gate"` requires `code-review` evidence before a code leaf may harvest
+    # `done`. A spec with no intent (every pre-existing spec) implies nothing (unchanged).
+    spec_intent = getattr(spec, "intent", None)
     for node in spec.nodes:
         sid = node.subplot_id
         if sid in already:
@@ -179,7 +184,12 @@ def harvest(
         # Closure gate (#397): a second, additive check — never a rewrite of the GitHub barrier
         # above. A node with no declared `required_checks` is trivially satisfied (R8), so this is
         # a no-op for every pre-existing outcome spec.
-        gate_verdict = closure_gate.evaluate(node, repo_root=repo_root, github_runner=github_runner)
+        gate_verdict = closure_gate.evaluate(
+            node,
+            repo_root=repo_root,
+            github_runner=github_runner,
+            implied_checks=intent_envelope.implied_required_checks(spec_intent, node.kind),
+        )
         if not gate_verdict.satisfied:
             continue
         # Write to a FRESH attempt slot, never the implicit attempt 1: a subplot that already holds a
@@ -255,12 +265,19 @@ def barrier_report(
     evidence:<id>``, ...) even when the GitHub-only barrier above already reads satisfied.
     """
     report: dict[str, dict[str, Any]] = {}
+    # #380: mirror harvest() exactly — the report must evaluate the SAME gate the harvester
+    # enforces (intent-implied checks included), or the operator-facing verdict reads satisfied
+    # while the done transition is actually gated (enforcement/observability disagreement).
+    spec_intent = getattr(spec, "intent", None)
     for node in spec.nodes:
         verdict = barrier_satisfied(
             node, store=store, github_runner=github_runner, child_state_reader=child_state_reader
         ).to_dict()
         verdict["closure_gate"] = closure_gate.evaluate(
-            node, repo_root=repo_root, github_runner=github_runner
+            node,
+            repo_root=repo_root,
+            github_runner=github_runner,
+            implied_checks=intent_envelope.implied_required_checks(spec_intent, node.kind),
         ).to_dict()
         report[node.subplot_id] = verdict
     return report

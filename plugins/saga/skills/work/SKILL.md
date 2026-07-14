@@ -186,6 +186,15 @@ On a failure row, run the **between-rounds tier escalation proposal** (#364) in
 exactly one `escalate_tier` rung with its ordinal cost delta, gated on operator confirmation
 (end-clamped at the ladder top / session ceiling — never silently applied).
 
+**Resolve the spend decision through the intent envelope (#380).** When the run carries a committed
+run-start envelope (`spec.intent` — see `plugins/saga/references/intent-envelope.md`), the
+escalation ask above resolves through the fleet posture registry, never an ad hoc question:
+`python3 plugins/saga/scripts/intent_envelope.py spend --run-mode <mode> --spend-increase
+[--approval-token <tok>]`. An attended spend increase needs the operator's explicit approval
+token (the resolver raises `PostureError` without one); an unattended run holds at the
+cache-tight default silently — record the held escalation in the round summary instead of
+prompting.
+
 ### 0.5 Complexity triage
 
 For a fresh build (no `pr_refs`), size the execution strategy with the CE complexity triage in

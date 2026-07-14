@@ -2,6 +2,44 @@
 
 ## 2026-07-14
 
+### IntentEnvelope canonical home: fleet-core schema, saga re-export, three wired consumers (#380)  {#intent-envelope-canonical-home-380}
+
+**Decision.** The run-start `IntentEnvelope` schema (#380 — `run_mode` + `ceremony_gates`
+{`reviews_required`,`merge`,`deploy_nonprod`}, each `gate`|`auto` defaulting to `gate`) lives
+canonically in fleet-core (`fleet_commons/intent_envelope.py`), with
+`plugins/saga/scripts/intent_envelope.py` a thin re-export that adds only saga-sibling glue
+(`compute_stakes` over `outcome_costs.critical_path_wall`, `implied_required_checks`,
+`seeded_tier`, the CLI). The schema is CLOSED per `schema_version` (unknown keys / off-vocabulary
+values fail loudly); extensions (#373 `backends_permitted`/`degrade_policy`/`spend_envelope`,
+#449 tokens, #372/#433 amendments) are made by editing the canonical module, never by consumers
+tolerating unknowns. `reviews_required: "gate"` is consumed through the EXISTING closure gate
+(`closure_gate.evaluate` grew an `implied_checks` parameter; harvest derives
+`("code-review",)` for code leaves from the spec's intent) rather than a new gate mechanism.
+Team-execution consumes via a newly vendored `fleet_commons_shim` +
+`skills/team-execution/scripts/posture_check.py`; mission-control validates/renders the
+issue-carried block in `sdlc_manager.py`.
+
+**Rationale.** The issue proposed `plugins/saga/scripts/intent_envelope.py` as the home, but the
+envelope has consumers in three plugins and mission-control/team-execution have no mechanism to
+import saga scripts — fleet-commons (`{#fleet-commons-mechanism-463}`) is exactly the mover for a
+shared primitive, and the tier_palette re-export precedent keeps the issue's proposed saga path
+real without a second schema. Reusing closure_gate for the reviews gate keeps producer+consumer
+in one PR with zero new gate machinery (#397/#398 evidence chain already litigated supersession,
+SHA-pinning, and tamper detection).
+
+**Rejected.** (a) Canonical-in-saga with cross-plugin path imports — no precedent, couples
+mission-control tests to saga internals. (b) A new standalone review-gate mechanism in
+`derive_states` — would duplicate the closure gate's evidence semantics and create two
+disagreeing authorities for "reviewed". (c) Tolerant envelope parsing (ignore unknown keys) —
+directly contradicts the campaign's fail-closed lesson; forward compatibility is owned by the
+single schema authority instead.
+
+**Revisit when.** #373 lands backend/degrade/spend fields (same module, `schema_version`
+semantics), or #433's `set_intent` needs amendment/versioning hooks beyond `spec_revision`, or a
+fourth consumer plugin appears (consider promoting the saga-side glue down into fleet-core).
+
+---
+
 ### Lifecycle regression harness: declarative fail-closed scenarios over production CLIs, throwaway clones, scheduled non-gating CI (#428)  {#lifecycle-regression-harness-shape-428}
 
 **Decision.** The end-to-end lifecycle regression harness (#428) is shaped as: (a) strict

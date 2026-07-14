@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.9.0] - 2026-07-14
+
+### Added - ship-policy intent envelope at issue capture (#380)
+
+- **`sdlc_manager.py issue intent-envelope`** — renders the schema-validated ship-policy
+  envelope block (`### Intent envelope` + a fenced `intent-envelope` JSON block) for embedding
+  in an issue body at capture time, so the operator's autonomy answers are recorded ONCE on
+  the issue and `/outcome start` skips its run-start interview (ask-once, S-22). Answer values
+  are typed against the fleet interview's closed vocabulary (canonical schema: fleet-core
+  `fleet_commons/intent_envelope.py`, loaded through the vendored shim) — off-vocabulary
+  values fail loudly at render, never silently coerce.
+- **Prepared-issue readiness validates the envelope** — `_readiness_for_prepared_issue` treats
+  a present-but-invalid `intent-envelope` block as a BLOCKING gap (fail closed at capture: a
+  ship policy a downstream `/outcome start` will trust must be schema-valid the moment it is
+  authored). An absent block stays fine — the envelope is optional at capture.
+
 ## [2.8.0] - 2026-07-14
 
 ### Fixed

@@ -5,6 +5,28 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-07-14
+
+### Added
+- Issue-fence extraction is CRLF-safe: `` ```intent-envelope `` blocks on GitHub-web-authored
+  bodies (CRLF line endings) extract identically to LF — adoption on the consumer side and the
+  BLOCKING validity gate on the capture side both see the envelope (#380).
+- `scripts/fleet_commons/intent_envelope.py` (#380): the canonical fleet `IntentEnvelope` —
+  one committed run-start posture schema (`run_mode` + a `ceremony_gates` block of
+  `reviews_required` / `merge` / `deploy_nonprod`, each `gate`|`auto` defaulting to `gate`),
+  the single composed run-start posture interview (`INTERVIEW`, a typed challenge-response
+  manifest with closed options), the mode-keyed machinery (`recommend_tier(work_shape,
+  run_mode)` — unattended is exactly one ladder rung cheaper; `spend_posture(run_mode)` —
+  cache-tight/silent vs interactive/ask-on-spend-increase; `resolve_spend_action` raising
+  `PostureError` on an attended spend increase without an approval token;
+  `self_select_posture` for unattended defaults from the same matrix), and the issue-carried
+  envelope block (`render_issue_block` / `envelope_from_issue_body` /
+  `outcome_start_decision`). The schema is closed per `schema_version` — unknown keys and
+  off-vocabulary values fail loudly; provenance fields are documented self-attested and the
+  envelope authorizes nothing by itself (the token-checked write class is #449's mechanism).
+  Consumers: saga (`OutcomeSpec.intent` / `ExecutionSpec.intent` / `/outcome start`),
+  team-execution (Step B1 `posture_check.py`), mission-control (issue-capture block).
+
 ## [0.9.0] - 2026-07-13
 
 ### Added

@@ -370,6 +370,13 @@ class OutcomeSpec:
     # The cost rollup (R24). Populated by U10; empty here renders as "no data yet" (U8), never
     # a fabricated zero.
     cost_rollup: dict[str, Any] = field(default_factory=dict)
+    # The committed run-start intent envelope (#380, T8-F1-3): run_mode + ceremony_gates,
+    # schema-validated against ``intent_envelope.IntentEnvelope`` in ``validate()``. Absent
+    # (None) emits no key so every pre-existing spec round-trips byte-identical; when present,
+    # ``ceremony_gates.reviews_required == "gate"`` gates each code leaf's ``done`` transition
+    # on recorded review evidence (consumed by ``outcome_orchestrator.harvest`` through the
+    # closure gate).
+    intent: dict[str, Any] | None = None
     created_at: str = ""
     updated_at: str = ""
 
@@ -473,6 +480,19 @@ class OutcomeSpec:
                         f"node {node.subplot_id}: depends_on {dep!r} is not a declared node"
                     )
 
+        # The committed intent envelope (#380): schema-validated through the canonical
+        # module, never shape-guessed here — an off-vocabulary run_mode, an unknown gate
+        # field, or a foreign schema version fails BEFORE any dispatch (R20/R31 posture).
+        if self.intent is not None:
+            import intent_envelope  # noqa: PLC0415  (sibling; deferred, mirrors outcome_costs)
+
+            try:
+                intent_envelope.IntentEnvelope.from_dict(self.intent)
+            except intent_envelope.IntentEnvelopeError as exc:
+                raise OutcomeSpecError(
+                    f"outcome {self.outcome_id}: invalid intent envelope: {exc}"
+                ) from exc
+
         # Acyclicity (Kahn). A cycle has no valid layering -> fail validate (R31).
         dependency_layers(self)
 
@@ -480,6 +500,11 @@ class OutcomeSpec:
     def from_dict(cls, data: dict[str, Any]) -> OutcomeSpec:
         if "nodes" not in data or not isinstance(data["nodes"], list):
             raise OutcomeSpecError("outcome spec needs a 'nodes' list")
+        raw_intent = data.get("intent")
+        if raw_intent is not None and not isinstance(raw_intent, dict):
+            # Fail loudly on a mis-shaped field rather than coercing (R31): a string or list
+            # here is an authoring error, and validate() could not schema-check it anyway.
+            raise OutcomeSpecError(f"intent must be an object or absent, got {raw_intent!r}")
         return cls(
             outcome_id=str(data.get("outcome_id", "")),
             objective=str(data.get("objective", "")),
@@ -490,12 +515,13 @@ class OutcomeSpec:
             ),
             decision_trail=[copy.deepcopy(dict(d)) for d in data.get("decision_trail", [])],
             cost_rollup=copy.deepcopy(dict(data.get("cost_rollup", {}))),
+            intent=copy.deepcopy(raw_intent),
             created_at=str(data.get("created_at", "")),
             updated_at=str(data.get("updated_at", "")),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "schema_version": self.schema_version,
             "outcome_id": self.outcome_id,
             "spec_revision": self.spec_revision,
@@ -506,6 +532,11 @@ class OutcomeSpec:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        # Absent intent emits no key so every pre-existing spec round-trips byte-identical
+        # (#380 — mirrors the ExecutionSpec cost_budget/spend_envelope convention).
+        if self.intent is not None:
+            out["intent"] = copy.deepcopy(self.intent)
+        return out
 
     def to_json(self) -> str:
         """Deterministic JSON (stable key order, trailing newline) for the committed artifact."""

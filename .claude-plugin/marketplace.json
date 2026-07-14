@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.92.0",
+      "version": "0.93.0",
       "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, /pulse live telemetry, trust-gated external-engine onboarding, provenance, attestation, and delegation-audit reconciliation.",
       "author": {
         "name": "Infiquetra",
@@ -200,7 +200,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "description": "Fleet-commons library plugin: shared primitives, bridge receipts, output attestations, the durable delegation audit store, and the resolution shim. Scripts-only \u2014 no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",

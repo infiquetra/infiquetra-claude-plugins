@@ -594,7 +594,7 @@ class AdvanceResult:
     )  # completions materialized from GitHub (U5/R10)
     halted: list[dict[str, Any]] = field(
         default_factory=list
-    )  # HALT receipts (R5/R23 — backend down)
+    )  # HALT receipts — backend down (kind=halt, R5/R23) or spend gate (kind=spend-halt, #373)
     merges: list[Any] = field(default_factory=list)  # per-tick auto-merge queue results (U6/R12)
     worktrees: list[Any] = field(
         default_factory=list
@@ -706,6 +706,12 @@ def advance(
     ``project`` (#326) names the target mission-control board/workflow and is the single source
     threaded to both the default board writer and ``outcome_board_sync.reconcile_board`` — the two
     must never disagree about which board they're resolving statuses against.
+
+    The spec's committed run-start intent envelope (#373) is enforced inside each tick's
+    reconcile pass (see ``_reconcile_once``): ``backends_permitted`` intersects the runtime
+    ``available`` set, ``degrade_policy`` bounds the degrade path, and ``spend_envelope`` is a
+    HALT-only pre-dispatch authorization against the leaf-produced cost actuals. Specs without
+    a captured posture behave exactly as before.
     """
     holder = holder if holder is not None else _default_holder()
     dispatch = dispatcher if dispatcher is not None else _default_dispatcher
@@ -951,7 +957,34 @@ def _reconcile_once(
     next advance() call — a derived-on-read RESULT label, never a committed ``NODE_STATE``. The optional
     ``retriable_seen`` set is the per-call de-hammer guard: a sid that 429'd earlier in the SAME
     advance() call is skipped for the rest of the call (a fresh call re-derives + re-attempts it).
+
+    The **captured run-start posture** (#373) is enforced here, per pass: the spec's committed
+    intent envelope may carry ``backends_permitted`` (the effective menu becomes captured ∩
+    runtime — consumed, never re-derived ad hoc per call), ``degrade_policy`` (an unmet backend
+    HALTs by default; ``operator_away_one_rung`` lets the UNCHANGED presence-conditional
+    mechanism degrade at most ONE ladder rung, never a cascade), and ``spend_envelope`` (a
+    HALT-only pre-dispatch authorization read against ``outcome_costs``'s leaf-produced
+    actuals BEFORE any backend resolution — an over-ceiling or tier-escalating leaf records a
+    visible ``spend-halt`` receipt and never silently degrades). A spec with no intent — or a
+    #380 intent carrying none of the #373 fields — leaves every path byte-identical to before.
     """
+    # #373: parse the committed posture ONCE per pass. Captured at run start, consumed here.
+    posture = outcome_dispatcher.captured_posture(spec.intent)
+    permitted = posture.backends_permitted if posture is not None else None
+    posture_degrade_policy: str = posture.degrade_policy if posture is not None else ""
+    backend_posture_engaged = permitted is not None or bool(posture_degrade_policy)
+    spend_env = posture.spend_envelope if posture is not None else None
+    effective = outcome_dispatcher.effective_available(permitted, available)
+    actual_tokens: float | None = None
+    if spend_env is not None and spend_env.cost_ceiling_tokens is not None:
+        import outcome_costs  # noqa: PLC0415  (sibling; lazy, mirrors production_cost_processor)
+
+        # One consistent snapshot of the leaf-produced actuals per pass — read through the
+        # SAME rollup producer ``materialize`` uses (the R24 ledger), BEFORE any dispatch.
+        # An absent "tokens" total means no leaf has reported cost yet ("no data yet"):
+        # nothing is measured against the ceiling, so the cost gate does not engage.
+        actual_tokens = outcome_costs.rollup(spec, store).get("tokens")
+
     success = outcome_store.completed_subplots(store)  # success-only -> the frontier input
     settled = set(_dispatch_records(store))  # subplots with a COMMIT dispatch record
     dispatched: list[str] = []
@@ -975,17 +1008,59 @@ def _reconcile_once(
         if not outcome_store.acquire_dispatch(store, sid, holder, lease_ttl, now=now):
             continue
 
+        # #373 (T8-F5-7): the pre-dispatch spend-authorization gate — HALT-only, checked
+        # BEFORE any backend resolution so an unauthorized leaf never resolves a backend and
+        # never enters the degrade path (a spend denial must not silently degrade a tier).
+        if spend_env is not None:
+            try:
+                outcome_dispatcher.authorize_dispatch_spend(
+                    spend_env,
+                    outcome_id=spec.outcome_id,
+                    subplot_id=sid,
+                    backend=node.backend,
+                    requested_tier=node.tier or None,
+                    actual_tokens=actual_tokens,
+                )
+            except outcome_dispatcher.SpendHaltError as spend_halt:
+                outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+                receipt = spend_halt.receipt.to_dict()
+                # Append-once on (halt, spend:<sid>) — a persistently over-ceiling leaf
+                # re-surfaces on every advance without unbounded ledger growth. Its dedup
+                # lane is distinct from the backend-halt ``dispatch:<sid>`` lane so neither
+                # halt kind can mask the other.
+                _append_ledger_once(
+                    store,
+                    {"phase": "halt", "kind": "dispatch", "key": f"spend:{sid}", **receipt},
+                )
+                halted.append(receipt)
+                continue
+
         # The presence-conditional degrade decision (R23). Resolves the backend to dispatch on, or HALTs.
         resolved_backend = node.backend
         degrade_receipt: dict[str, Any] | None = None
-        if available is not None:
-            action, resolved_backend, reason = outcome_dispatcher.degrade_decision(
-                node.backend,
-                available=available,
-                attending=attending,
-                guarantee_bearing=outcome_dispatcher.is_guarantee_bearing(node),
-                had_side_effect=node.destructive,
-            )
+        if backend_posture_engaged or available is not None:
+            if backend_posture_engaged:
+                # #373 (T8-F6-8): consume the CAPTURED posture through the existing
+                # mechanism — effective menu = captured ∩ runtime, HALT by default,
+                # at most one ladder rung when the posture permits degrade.
+                action, resolved_backend, reason = outcome_dispatcher.captured_degrade_decision(
+                    node.backend,
+                    effective=effective,
+                    degrade_policy=posture_degrade_policy,
+                    attending=attending,
+                    guarantee_bearing=outcome_dispatcher.is_guarantee_bearing(node),
+                    had_side_effect=node.destructive,
+                )
+                receipt_available = tuple(effective or ())
+            else:
+                action, resolved_backend, reason = outcome_dispatcher.degrade_decision(
+                    node.backend,
+                    available=available or (),
+                    attending=attending,
+                    guarantee_bearing=outcome_dispatcher.is_guarantee_bearing(node),
+                    had_side_effect=node.destructive,
+                )
+                receipt_available = tuple(available or ())
             if action == "halt":
                 outcome_store.release_lease(store, f"dispatch-{sid}", holder)
                 receipt = outcome_dispatcher.HaltReceipt(
@@ -993,7 +1068,7 @@ def _reconcile_once(
                     subplot_id=sid,
                     backend=node.backend,
                     reason=reason,
-                    available=tuple(available),
+                    available=receipt_available,
                 ).to_dict()
                 # Append-once on (halt, key): an attended leaf polling against a persistently-unavailable
                 # backend must not re-append a halt record every tick (unbounded ledger growth).

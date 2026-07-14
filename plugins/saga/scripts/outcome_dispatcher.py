@@ -37,6 +37,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import execution_spec  # noqa: E402  (after the sys.path shim, by design)
+import intent_envelope  # noqa: E402  (the #373 run-start posture schema, by design)
 import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 
 # The always-available floor (R6): the agent can always run inline, emit a team-execution artifact, or
@@ -362,6 +363,199 @@ def degrade_decision(
         "halt",
         backend,
         f"{backend} unavailable and no lower rung is available -> HALT (no silent substitution, R5)",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Captured run-start posture — the #373 intent-envelope consumers at the seam
+# (T8-F6-8 backends/degrade + T8-F5-7 spend). The posture is captured ONCE on
+# the spec's committed intent envelope and CONSUMED here; the HALT/degrade
+# decision itself stays derived at dispatch time by the unchanged
+# ``degrade_decision`` machinery above, exactly per the U1-U11 register row
+# (derived-on-read, HALT-not-degrade, backend menu off-by-default).
+# ---------------------------------------------------------------------------
+
+
+def captured_posture(intent: Any) -> Any | None:
+    """Parse a spec's committed intent envelope (#373) — ``None`` when no intent is committed.
+
+    Returns the validated :class:`intent_envelope.IntentEnvelope` (fail closed on a malformed
+    dict — ``OutcomeSpec.validate`` already rejects one on every normal path, so a raise here
+    means the caller bypassed the spec house). The caller reads ``backends_permitted`` /
+    ``degrade_policy`` / ``spend_envelope`` off it; a pre-#373 envelope carries none of them
+    and every consumer below treats that as "posture not captured" (behavior unchanged).
+    """
+    if intent is None:
+        return None
+    return intent_envelope.IntentEnvelope.from_dict(intent)
+
+
+def effective_available(
+    backends_permitted: Sequence[str] | None, available: Sequence[str] | None
+) -> tuple[str, ...] | None:
+    """The run's effective backend menu: captured-permitted ∩ runtime-available (#373 AC1).
+
+    The captured half is the run-start authorization (what the operator permitted, once); the
+    runtime half stays the per-call host truth (KTD9 — the coordinator cannot self-probe host
+    availability, so ``--host-capable``/``--workflow-available`` remain runtime inputs). The
+    intersection can only NARROW: a captured backend the host cannot run is not effective, and
+    a host-available backend the envelope did not permit is not effective. ``None``/``None``
+    means no availability decision exists at all (the legacy direct-dispatch path). Ordered by
+    the spec's ``NODE_BACKENDS`` vocabulary for deterministic receipts.
+    """
+    if backends_permitted is None and available is None:
+        return None
+    if backends_permitted is None:
+        return tuple(b for b in outcome_spec.NODE_BACKENDS if b in set(available or ()))
+    if available is None:
+        return tuple(b for b in outcome_spec.NODE_BACKENDS if b in set(backends_permitted))
+    both = set(backends_permitted) & set(available)
+    return tuple(b for b in outcome_spec.NODE_BACKENDS if b in both)
+
+
+def captured_degrade_decision(
+    backend: str,
+    *,
+    effective: Sequence[str] | None,
+    degrade_policy: str,
+    attending: bool,
+    guarantee_bearing: bool,
+    had_side_effect: bool,
+) -> tuple[str, str, str]:
+    """Feed the captured run-start posture into the EXISTING degrade machinery (#373 AC1-AC3).
+
+    Returns the same ``(action, backend, reason)`` contract as :func:`degrade_decision`.
+    This function REUSES ``degrade_decision`` — it never re-implements the presence
+    conditions; it only restricts the inputs to what the captured posture permits:
+
+    * ``backend`` in the effective menu -> ``dispatch`` (unchanged).
+    * Unmet backend + no permissive captured posture (``degrade_policy`` absent or
+      ``halt``) -> ``halt`` by default (AC2) — the run never substitutes without an
+      explicit, captured permission.
+    * Unmet backend + ``operator_away_one_rung`` -> the available set handed to
+      ``degrade_decision`` is restricted to the IMMEDIATE lower ``DEGRADE_LADDER`` rung
+      only, so the unchanged mechanism can degrade AT MOST one rung and then HALTs —
+      a two-rung-unavailable scenario halts instead of silently cascading (AC3), and
+      every presence condition (attending / guarantee-bearing / side-effected -> HALT)
+      still decides exactly as before.
+
+    ``effective=None`` means no availability decision exists (no captured set and no runtime
+    set): there is nothing to enforce, so the leaf dispatches on its declared backend.
+    """
+    if effective is None:
+        return ("dispatch", backend, "")
+    avail = set(effective)
+    if backend in avail:
+        return ("dispatch", backend, "")
+    if degrade_policy != intent_envelope.INTENT_DEGRADE_ONE_RUNG:
+        return (
+            "halt",
+            backend,
+            f"{backend} is not in the run's effective backend menu {tuple(effective)} and the "
+            f"captured run-start posture permits no degrade (degrade_policy="
+            f"{degrade_policy or 'not captured'}) -> HALT by default (#373, R5/R23)",
+        )
+    if backend in DEGRADE_LADDER:
+        idx = DEGRADE_LADDER.index(backend)
+        one_rung = set(DEGRADE_LADDER[idx + 1 : idx + 2])
+    else:
+        one_rung = set()  # off-ladder backends have no defined lower rung -> HALT below
+    restricted = tuple(b for b in effective if b in one_rung)
+    return degrade_decision(
+        backend,
+        available=restricted,
+        attending=attending,
+        guarantee_bearing=guarantee_bearing,
+        had_side_effect=had_side_effect,
+    )
+
+
+@dataclass(frozen=True)
+class SpendHaltReceipt:
+    """A visible record that a leaf's dispatch was DENIED by the captured spend envelope (#373).
+
+    Distinct from :class:`HaltReceipt` (backend unavailability) and from the degrade path:
+    spend gating is HALT-only — an over-ceiling or tier-escalating leaf pauses for explicit
+    step-up authorization and is NEVER silently run at a lower tier (T8-F5-7). The receipt
+    echoes the compared values so the operator sees exactly what tripped — surfaced per-tick
+    in the advance output (``AdvanceResult.halted``) and durably on the ``spend:<sid>`` ledger
+    lane. The consolidated report's ambiguity tier does not yet render halt receipts (it
+    filters on ``kind == "dispatch"``; backend halts on main are equally invisible there).
+    """
+
+    outcome_id: str
+    subplot_id: str
+    backend: str
+    reason: str
+    tier_ceiling: str = ""
+    cost_ceiling_tokens: float | None = None
+    requested_tier: str | None = None
+    actual_tokens: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "spend-halt",
+            "outcome_id": self.outcome_id,
+            "subplot_id": self.subplot_id,
+            "backend": self.backend,
+            "reason": self.reason,
+            "tier_ceiling": self.tier_ceiling,
+            "cost_ceiling_tokens": self.cost_ceiling_tokens,
+            "requested_tier": self.requested_tier,
+            "actual_tokens": self.actual_tokens,
+        }
+
+
+class SpendHaltError(Exception):
+    """A spend-gate HALT (#373): the dispatch needs explicit step-up authorization.
+
+    Owned by this backend module (never run as ``__main__``) for the same class-identity
+    discipline as :class:`BackendHaltError`. Deliberately NOT a ``BackendHaltError`` subclass:
+    the spend gate is a distinct code path from the backend-menu HALT/degrade — a caller
+    handling backend unavailability must not accidentally swallow a spend denial.
+    """
+
+    def __init__(self, receipt: SpendHaltReceipt) -> None:
+        super().__init__(receipt.reason)
+        self.receipt = receipt
+
+
+def authorize_dispatch_spend(
+    spend: Any,
+    *,
+    outcome_id: str,
+    subplot_id: str,
+    backend: str,
+    requested_tier: str | None = None,
+    actual_tokens: float | None = None,
+) -> None:
+    """The #373 pre-dispatch spend-authorization check at the seam — raises on denial.
+
+    Resolves the pure decision through the canonical ``intent_envelope.authorize_spend``
+    (tier ceiling vs the leaf's declared tier; cost ceiling vs ``outcome_costs``'s
+    leaf-produced cumulative actuals) and raises a typed :class:`SpendHaltError` carrying a
+    :class:`SpendHaltReceipt` when the dispatch is not authorized. Authorization is silent
+    (returns ``None``) — an under-ceiling dispatch clears with no receipt and no interrupt
+    (AC5). ``spend=None`` (no captured spend envelope) is a no-op: pre-#373 behavior.
+    """
+    if spend is None:
+        return
+    decision = intent_envelope.authorize_spend(
+        spend, actual_tokens=actual_tokens, requested_tier=requested_tier
+    )
+    if decision.authorized:
+        return
+    raise SpendHaltError(
+        SpendHaltReceipt(
+            outcome_id=outcome_id,
+            subplot_id=subplot_id,
+            backend=backend,
+            reason=decision.reason,
+            tier_ceiling=decision.tier_ceiling,
+            cost_ceiling_tokens=decision.cost_ceiling_tokens,
+            requested_tier=decision.requested_tier,
+            actual_tokens=decision.actual_tokens,
+        )
     )
 
 

@@ -30,9 +30,12 @@
   `leaf_id` / `spec_revision` / `intent_revision`) gives #449 dispatch-era binding, filterable
   via `gate_record.py list --binding`.
 - **`scripts/lint_gate_absence_contract.py` + CI wiring:** "we forgot to say what silence means"
-  is now a build failure. Every `AskUserQuestion` mention in scanned markdown must sit in a
+  is now a build failure for new sections and files. Every `AskUserQuestion` mention in scanned
+  markdown must sit in a
   section carrying a `<!-- gate-record: id=... absence=... transport=... -->` or
-  `<!-- gate-exempt: ... -->` marker (malformed markers fail closed); every Python `open_gate`
+  `<!-- gate-exempt: ... -->` marker (malformed markers fail closed); coverage granularity is
+  the section, so an addition beside an existing marker rides it (named in the lint's
+  residuals); every Python `open_gate`
   call must declare a literal in-vocabulary `absence_behavior` (the defining module is excluded
   by documented rule and reported). Legacy debt is pinned exact-count in
   `scripts/gate_absence_baseline.json` — surfaced as `pending migration (applied: false)`,

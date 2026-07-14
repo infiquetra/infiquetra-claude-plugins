@@ -38,7 +38,8 @@ undeclared gate in a legacy file would ride in silently).
 
 **Revisit when.** #449 lands envelope tokens (the record's closed v1 schema grows
 additive-within-v1, same convention as #373 — tokens belong on the record, edited in
-`gate_record.py`, never consumer-tolerated unknowns); the #597 report fix lands (gate records
+`gate_record.py`, never consumer-tolerated unknowns; note validation is exact-keys, so the
+edit must also make the new key optional in the validator or migrate written records); the #597 report fix lands (gate records
 can then join the report tier with a `kind` the filter matches); or the lint's candidate
 vocabulary needs a second widget family (the documented fast-follow — extend enumeration, roll
 out via the baseline).

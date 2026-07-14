@@ -134,7 +134,11 @@ touched here.
   `escalate`, `transport=` one of `ask-user-question` / `file-sentinel`), like
   `<!-- gate-record: id=example-gate absence=HALT transport=ask-user-question -->`, or a non-gate
   exemption like `<!-- gate-exempt: prose mention, fires no gate -->`. An HTML comment beginning
-  with `gate-` that does not parse exactly as one of these fails the build.
+  with `gate-` that does not parse exactly as one of these fails the build. Coverage granularity
+  is the section: a new mention added inside an already-marked section rides that marker — the
+  build-failure guarantee holds for new sections and new files, not for additions beside an
+  existing marker (named in the lint's residuals, deliberately traded against one-marker-per-
+  mention noise).
 - **Python**: every `open_gate(...)` call must pass a literal, in-vocabulary
   `absence_behavior=` keyword (the runtime API defaults to `HALT`; shipping code must still
   declare — defense in depth). The module *defining* `open_gate` is the primitive's own surface,
@@ -159,7 +163,10 @@ full schema for every consumer:
    `binding.spec_revision` / `binding.intent_revision`. The schema is closed per
    `schema_version`; #449 extensions (e.g. envelope tokens on the record) are made by editing
    this module, never by consumers tolerating unknown keys — the same additive-within-v1
-   convention as #373.
+   convention as #373. Note the mechanical cost: validation is exact-keys (missing keys are
+   errors too), so "additive" means the edit must also make the new key optional in the
+   validator or migrate already-written records — it is a deliberate schema step, not a free
+   field drop-in.
 
 Gate records deliberately do **not** flow through the `/outcome` consolidated report in v1: the
 report's ambiguity tier currently filters halt receipts out by `kind` (#597), and surfacing gate

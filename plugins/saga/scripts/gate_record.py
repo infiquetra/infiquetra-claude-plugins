@@ -203,9 +203,14 @@ def classify_answerer(answerer: Any) -> str:
     ``operator`` — self-attested, per the module threat model.
     """
     value = _require_str(answerer, "answerer")
-    if value.startswith(CARRIED_FORWARD_PREFIX):
+    # Classification normalizes a COPY (strip + casefold) so trivial mutations of a reserved
+    # prefix (" carried-forward:x", "Carried-Forward:x") cannot re-class derived provenance as
+    # operator presence. The stored answerer string stays verbatim — only the class is derived
+    # from the normalized form.
+    probe = value.strip().casefold()
+    if probe.startswith(CARRIED_FORWARD_PREFIX):
         return "derived"
-    if value.startswith(ABSENCE_PREFIX):
+    if probe.startswith(ABSENCE_PREFIX):
         return "absence"
     return "operator"
 
@@ -291,7 +296,7 @@ def _validate_resolution(data: Mapping[str, Any], declaration: Mapping[str, Any]
     answer = _require_str(data["answer"], f"{where}: answer")
     if answer not in declaration["options"]:
         raise GateRecordError(f"{where}: answer {answer!r} is not one of the declared options")
-    _require_str(data["answerer"], f"{where}: answerer")
+    answerer = _require_str(data["answerer"], f"{where}: answerer")
     transport = _require_str(data["answer_transport"], f"{where}: answer_transport")
     if transport not in (*ANSWER_TRANSPORTS, ABSENCE_TRANSPORT):
         raise GateRecordError(f"{where}: answer_transport {transport!r} is unknown")
@@ -300,6 +305,23 @@ def _validate_resolution(data: Mapping[str, Any], declaration: Mapping[str, Any]
     if provenance not in (PROVENANCE_OPERATOR, PROVENANCE_ABSENCE_SAFE_DEFAULT):
         raise GateRecordError(f"{where}: provenance {provenance!r} is unknown")
     _require_bool(data["applied_by_absence"], f"{where}: applied_by_absence")
+    # Read-side cross-field invariant (re-panel hardening): the write seams already refuse a
+    # derived/absence-class answerer as a live operator answer, so a PERSISTED resolution that
+    # pairs operator provenance with a reserved-class answerer (or absence provenance with a
+    # non-absence answerer) is internally inconsistent — a tampered store or a buggy writer —
+    # and must not load as consumable. Same contract, enforced at read as well as write.
+    answerer_class = classify_answerer(answerer)
+    if provenance == PROVENANCE_OPERATOR and answerer_class != "operator":
+        raise GateRecordError(
+            f"{where}: provenance {PROVENANCE_OPERATOR!r} with a {answerer_class}-class "
+            f"answerer {answerer!r} — derived provenance is not operator presence"
+        )
+    if provenance == PROVENANCE_ABSENCE_SAFE_DEFAULT and answerer_class != "absence":
+        raise GateRecordError(
+            f"{where}: provenance {PROVENANCE_ABSENCE_SAFE_DEFAULT!r} with a "
+            f"{answerer_class}-class answerer {answerer!r} — an absence resolution must "
+            f"carry an {ABSENCE_PREFIX}* answerer"
+        )
     return dict(data)
 
 

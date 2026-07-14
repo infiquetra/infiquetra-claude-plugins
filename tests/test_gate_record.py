@@ -379,6 +379,61 @@ def test_absence_answerer_cannot_be_forged_as_a_live_answer(tmp_path: Path) -> N
         GR.satisfy_gate_record(gates, "cf-4", answer="proceed", answerer="absence:safe-default")
 
 
+def test_forged_operator_provenance_with_reserved_answerer_fails_closed(tmp_path: Path) -> None:
+    """Read-side cross-field invariant (re-panel hardening): a resolution.json forged directly
+    into the store pairing operator provenance with a derived-class answerer must not LOAD as
+    consumable — the write seams already refuse it, and read enforces the same contract."""
+    gates = tmp_path / "gates"
+    _open(gates, "forge-1")
+    forged = {
+        "schema_version": GR.SCHEMA_VERSION,
+        "gate_id": "forge-1",
+        "answer": "proceed",
+        "answerer": "carried-forward:tightening-repost:r3",
+        "answer_transport": "ask-user-question",
+        "answered_at": "2026-07-14T00:00:00Z",
+        "provenance": GR.PROVENANCE_OPERATOR,
+        "applied_by_absence": False,
+    }
+    (gates / "forge-1" / "resolution.json").write_text(json.dumps(forged), encoding="utf-8")
+    with pytest.raises(GR.GateRecordError, match="not operator presence"):
+        GR.load_gate(gates, "forge-1")
+    # Mirror: absence provenance demands an absence-class answerer.
+    _open(gates, "forge-2")
+    forged2 = dict(
+        forged,
+        gate_id="forge-2",
+        answerer="jeff",
+        answer_transport=GR.ABSENCE_TRANSPORT,
+        provenance=GR.PROVENANCE_ABSENCE_SAFE_DEFAULT,
+        applied_by_absence=True,
+    )
+    (gates / "forge-2" / "resolution.json").write_text(json.dumps(forged2), encoding="utf-8")
+    with pytest.raises(GR.GateRecordError, match="absence resolution"):
+        GR.load_gate(gates, "forge-2")
+    # Control (green through the intended door): a resolution written through the production
+    # seam loads as answered — the invariant discriminates, it doesn't just block.
+    _open(gates, "forge-3")
+    GR.satisfy_gate_record(gates, "forge-3", answer="proceed", answerer="jeff")
+    assert GR.load_gate(gates, "forge-3").status == "answered"
+
+
+def test_reserved_prefix_classification_survives_trivial_mutations(tmp_path: Path) -> None:
+    """Whitespace/case mutations of a reserved prefix still classify as derived/absence and
+    cannot satisfy a gate as a live answer — the stored answerer string stays verbatim, only
+    the classification normalizes."""
+    assert GR.classify_answerer(" carried-forward:x") == "derived"
+    assert GR.classify_answerer("Carried-Forward:x") == "derived"
+    assert GR.classify_answerer("ABSENCE:safe-default") == "absence"
+    gates = tmp_path / "gates"
+    _open(gates, "cf-5")
+    with pytest.raises(GR.GateRecordError, match="not operator presence"):
+        GR.satisfy_gate_record(gates, "cf-5", answer="proceed", answerer=" Carried-Forward:x")
+    # Control: an ordinary answerer still classifies as live operator presence and satisfies.
+    GR.satisfy_gate_record(gates, "cf-5", answer="proceed", answerer="jeff")
+    assert GR.load_gate(gates, "cf-5").status == "answered"
+
+
 # ---------------------------------------------------------------------------
 # Fail-closed schema validation — wrong types and unknown keys are errors, not no-ops.
 # ---------------------------------------------------------------------------

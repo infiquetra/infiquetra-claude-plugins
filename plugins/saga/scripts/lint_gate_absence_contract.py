@@ -30,10 +30,17 @@ enforced (applied: false)``. Any drift fails the build: a new uncovered mention 
 migrated mention (count shrank — shrink the baseline), a vanished file, or a stale entry. New
 files start unbaselined: fully enforced from their first mention.
 
-Residual, stated precisely: this lint enumerates ``AskUserQuestion`` mentions and ``open_gate``
-calls under the scanned roots. A gate built on some other widget, or living outside the scanned
-roots, is not enumerated here — extending the candidate vocabulary is the documented fast-follow
-path, and the baseline mechanism is how a newly enumerated family rolls out without a flag day.
+Residuals, stated precisely: (1) this lint enumerates ``AskUserQuestion`` mentions and
+``open_gate`` calls under the scanned roots — a gate built on some other widget, or living
+outside the scanned roots, is not enumerated here; extending the candidate vocabulary is the
+documented fast-follow path, and the baseline mechanism is how a newly enumerated family rolls
+out without a flag day. (2) Markdown coverage granularity is the SECTION, not the mention: a
+new ``AskUserQuestion`` mention added inside an already-marked section rides that section's
+marker with no declaration of its own — "a new gate site fails the build" holds for new
+sections and new files, not for additions beside an existing marker. (3) Python enumeration
+matches the literal call name ``open_gate``: an aliased import (``open_gate as og``) removes
+the site from enumeration entirely. Neither evasion exists in-repo today; both are named here
+so they are found by reading, not by incident.
 """
 
 from __future__ import annotations

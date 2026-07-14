@@ -10,11 +10,13 @@
   plus `intent_revision` — a #433 repost, or even an A→B→A posture round trip, ends the era and
   the token stops authorizing. Status is derived on every read (active / expired / revoked /
   malformed), never cached: `check_token` re-reads the token file AND the write-once revocation
-  marker per call, so `revoke` is effective on the very next authorization attempt — no grace
-  window (R4). `resolve_merge_token` requires EXACTLY one active matching token (ambiguity
-  GATEs; a malformed document fails the whole lane closed). Operator CLI: `mint` (refuses an
-  envelope-less spec and any non-`merge: "auto"` posture — the write seam enforces what the
-  read seam enforces) / `revoke` / `check` / `list`. Threat model documented in-module: minting
+  marker per call, so `revoke` is effective on the very next authorization attempt (R4; the
+  honest freshness bound: a revocation cannot recall a single already-in-flight GitHub call —
+  every write after it GATEs). `resolve_merge_token` requires EXACTLY one active matching
+  token (ambiguity GATEs; a malformed document fails the whole lane closed). Operator CLI:
+  `mint` (refuses an envelope-less spec, any non-`merge: "auto"` posture, and the reserved
+  `.revoked` id suffix that would collide with a sibling's revocation-marker file — the write
+  seam enforces what the read seam enforces) / `revoke` / `check` / `list`. Threat model documented in-module: minting
   is SELF-ATTESTED (local-filesystem trust boundary, same as every store artifact); the token
   adds expiry, immediate revocation, era binding, and attribution — it does not authenticate
   the minter. Gate records (#371) are deliberately not consulted in v1; an attended
@@ -45,7 +47,11 @@
 - **`scripts/board_progression.py` — board-sync ledger attribution (R5).**
   `record_envelope_authorized_merge` writes two write-once phases per merge —
   `authorized` BEFORE the squash (a merge that cannot be pre-attributed is NOT performed) and
-  `merged` after — both carrying `authorizing_envelope_id` + `token_id`. Non-merge ledger
+  `merged` after — both carrying `authorizing_envelope_id` + `token_id`, keyed
+  `merge-under-envelope:{outcome}:{subplot}:{pr}:{phase}:{token_id}`: the token era coordinate
+  means a stale `authorized` record from a dead envelope era (a capped or gated-later attempt)
+  never stands as — or write-once-suppresses — the pre-attribution of a merge performed under
+  a later era, so both phases of one merge always name the same token. Non-merge ledger
   records are untouched (the field is merge-record-specific). A crash between squash and the
   `merged` record loses only that record and is never backfilled — post-hoc attribution would
   assert a pre-merge authorization nobody re-verified (documented honest bound).

@@ -267,6 +267,14 @@ def _write_once(path: Path, content: str) -> bool:
 def _token_path(lane: Path, token_id: str) -> Path:
     if not _TOKEN_ID_RE.fullmatch(token_id):
         raise EnvelopeTokenError(f"token_id {token_id!r} must match {_TOKEN_ID_RE.pattern}")
+    if token_id.endswith(".revoked"):
+        # Reserved namespace: `<id>.revoked` would make this token's file collide with
+        # token `<id>`'s revocation marker — audit-invisible to list/resolve and able to
+        # shadow the sibling's revocation state. Refused at every verb (mint/check/revoke).
+        raise EnvelopeTokenError(
+            f"token_id {token_id!r} is reserved — '<id>.revoked' collides with the "
+            "revocation-marker namespace"
+        )
     return lane / f"{token_id}.json"
 
 

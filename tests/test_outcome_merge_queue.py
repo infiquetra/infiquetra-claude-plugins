@@ -635,3 +635,85 @@ def test_cli_describes_policy(capsys: Any) -> None:
     assert M.main(["--cap", "5"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["merge_cap"] == 5 and "squash" in out["policy"] and "envelope" in out["policy"]
+
+
+def test_cross_era_attribution_never_reuses_a_stale_authorized_record(tmp_path: Path) -> None:
+    """#449 panel hand-finish (P2, found by two verifiers): an `authorized` record written
+    under envelope era A by an attempt that never squashed must not stand as — or
+    write-once-suppress — the pre-attribution of the merge actually performed under era B.
+    The record key carries the token era, so the era-B ceremony writes its OWN record and
+    both phases of the real merge name the same (current) token."""
+    store = _store(tmp_path)
+    _mint(store, token_id="emt-era-a")
+    spec = _spec(
+        [{"subplot_id": "A", "title": "A", "kind": "code", "github": {"pr": "1"}}],
+        intent=_ENV_AUTO,
+    )
+    # Tick 1 under era A: base churns every cycle -> capped. The rebase ceremony ran, so
+    # the era-A `authorized` record is durably on disk — but nothing squashed.
+    result1 = M.process_merge_queue(spec, store, _ops(merge_state="behind"))
+    assert result1["outcomes"][0]["state"] == "capped"
+    # The era ends: revoke A; the operator re-mints for the renegotiated era (revision 1).
+    ET.revoke_token(ET.tokens_dir(store.root), "emt-era-a", reason="renegotiated")
+    ET.mint_token(
+        ET.tokens_dir(store.root),
+        outcome_id="o",
+        envelope=_ENV_AUTO,
+        intent_revision=1,
+        ttl_hours=24,
+        issued_by="operator",
+        token_id="emt-era-b",
+    )
+    # Tick 2 under era B merges cleanly (the on-disk posture reader agrees with the mint).
+    result2 = M.process_merge_queue(spec, store, _ops(), intent_reader=lambda: (_ENV_AUTO, 1))
+    (outcome,) = result2["outcomes"]
+    assert outcome["state"] == "merged"
+    records = [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted((store.root / "board-sync").glob("*.json"))
+    ]
+    by_phase_token = {(r["phase"], r["token_id"]) for r in records}
+    assert ("authorized", "emt-era-b") in by_phase_token  # the real merge's own pre-attribution
+    assert ("merged", "emt-era-b") in by_phase_token
+    assert ("authorized", "emt-era-a") in by_phase_token  # history kept — never rewritten
+    assert ("merged", "emt-era-a") not in by_phase_token  # era A never merged anything
+
+
+def test_record_write_fault_gates_the_squash(tmp_path: Path) -> None:
+    """#449 panel hand-finish (P2): the authorizer's record-status-error conversion — an
+    `authorized` attribution record that cannot be WRITTEN (ledger dir resolves but is
+    unwritable) converts AUTHORIZED into GATE before any squash. Distinct from
+    test_unattributable_merge_is_not_performed, which poisons the ledger DIR resolution
+    and trips the earlier unavailable-guard: this pins the later branch, which survived
+    mutation testing uncovered before this test."""
+    store = _store(tmp_path)
+    _mint(store)
+    spec = _spec(
+        [{"subplot_id": "A", "title": "A", "kind": "code", "github": {"pr": "1"}}],
+        intent=_ENV_AUTO,
+    )
+    squashes: list[str] = []
+
+    def squash(r: str) -> str:
+        squashes.append(r)
+        return "merged"
+
+    ops = M.MergeOps(
+        pr_state=lambda r: "open",
+        base_oid=lambda r: "A",
+        merge_state=lambda r: "clean",
+        update_branch=lambda r: True,
+        squash_merge=squash,
+        branch_exists=lambda b: True,
+    )
+    ledger = store.root / "board-sync"
+    ledger.mkdir(parents=True, exist_ok=True)
+    ledger.chmod(0o555)  # the dir resolves fine; the record write itself faults
+    try:
+        result = M.process_merge_queue(spec, store, ops)
+    finally:
+        ledger.chmod(0o755)
+    (outcome,) = result["outcomes"]
+    assert outcome["state"] == "waits-operator"
+    assert "attribution record could not be written" in outcome["reason"]
+    assert squashes == []  # fail closed: no unattributable squash

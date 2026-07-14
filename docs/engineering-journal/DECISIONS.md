@@ -30,6 +30,18 @@ boundary; `gate-record.md` item 4 updated to what actually landed); no fleet-cor
 change (the "tokens on the envelope" forecast was not needed — the token references the
 envelope, not vice versa), so fleet-core is not bumped.
 
+**Panel hand-finish (refute-3 survived 0/3; the two demonstrated P2s repaired pre-merge).**
+The attribution record key gained the token era coordinate
+(`merge-under-envelope:{outcome}:{subplot}:{pr}:{phase}:{token_id}`) — without it, an
+`authorized` record left by a capped/gated attempt under a dead era write-once-suppressed the
+pre-attribution of the merge actually performed under a later era, so the two phases of one
+merge could name different envelopes (found independently by two verifiers). The
+record-write-fault→GATE branch gained the red-capable test mutation testing showed it lacked.
+The token-id vocabulary now refuses the reserved `.revoked` suffix at the shared path seam
+(a `x.revoked` token file collides with token `x`'s revocation marker — audit-invisible to
+list/resolve). "No grace window" phrasing was scoped everywhere to the honest bound: a
+revocation cannot recall a single already-in-flight GitHub call; every write after it GATEs.
+
 **Rejected alternatives.** Posture-alone authorization (merge=auto with no token — the #380
 threat model says the envelope is recorded intent, never a credential); preserving legacy
 auto-merge for envelope-less specs (the absent-capture byte-identical convention — rejected

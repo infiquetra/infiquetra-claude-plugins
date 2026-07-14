@@ -985,3 +985,14 @@ def test_non_merge_ledger_records_carry_no_authorizing_envelope_id(tmp_path: Pat
     for record in records:
         assert "authorizing_envelope_id" not in record
         assert "token_id" not in record
+
+
+def test_cross_era_merge_records_do_not_collide(tmp_path: Path) -> None:
+    """#449 panel hand-finish (P2): the record key carries the token era — a second
+    authorization of the SAME merge (same outcome/subplot/pr/phase) under a NEW token
+    writes its own record instead of write-once-deduping against the dead era's, while
+    repeats within one era still dedup."""
+    store = _store(tmp_path)
+    assert _merge_record(store, token_id="emt-era-a")["status"] == "written"
+    assert _merge_record(store, token_id="emt-era-b")["status"] == "written"
+    assert _merge_record(store, token_id="emt-era-b")["status"] == "skipped"

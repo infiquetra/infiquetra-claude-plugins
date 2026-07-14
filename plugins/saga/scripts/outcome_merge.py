@@ -287,9 +287,18 @@ def make_merge_authorizer(
     attribution record — and converts a record-write fault into GATE, because a merge
     whose authorization cannot be attributed is not performed (fail closed, audit-first).
 
-    ``other_gates_green=True`` is the call-site fact: ``auto_merge_one`` invokes the
-    authorizer only after GitHub's own readiness (``merge_state`` clean/unstable), the
-    DAG dependency gate, and the gated/risky/destructive check have all passed.
+    ``other_gates_green=True`` is the call-site attestation of ``auto_merge_one``'s
+    ordering: the DAG dependency gate and the gated/risky/destructive check have passed
+    before ANY ceremony runs. On the squash sites GitHub's own readiness
+    (``merge_state`` clean/unstable) has also passed; on the rebase site the ceremony
+    deliberately runs while ``merge_state`` is ``behind`` — the write being authorized
+    there is the branch update itself, and GitHub's dirty/blocked/unknown states still
+    prevent any squash. So an ``authorized`` attribution record can exist for a merge
+    that never happened (a gated-later rebase, a capped attempt) — era-keyed, write-once,
+    and honest: it records an authorization, not a squash. ``ceremony_gates
+    .reviews_required`` is deliberately NOT consulted at this seam: it gates the leaf's
+    later ``done`` transition (the #380 closure checks), never the squash — a
+    merged-but-unreviewed leaf stays undone.
     """
     import board_progression  # noqa: PLC0415
     import envelope_token  # noqa: PLC0415

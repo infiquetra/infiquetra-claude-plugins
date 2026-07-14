@@ -218,9 +218,17 @@ def authorize_and_write(
 MERGE_RECORD_PHASES = ("authorized", "merged")
 
 
-def merge_record_key(outcome_id: str, subplot_id: str, pr: str, phase: str) -> str:
-    """The deterministic ledger key for one envelope-authorized merge record phase."""
-    return f"merge-under-envelope:{outcome_id}:{subplot_id}:{pr}:{phase}"
+def merge_record_key(outcome_id: str, subplot_id: str, pr: str, phase: str, token_id: str) -> str:
+    """The deterministic ledger key for one envelope-authorized merge record phase.
+
+    ``token_id`` is the era coordinate: a token is minted per envelope era (content
+    fingerprint + intent_revision, exactly one active, ids unreusable after revocation),
+    so keying on it means an ``authorized`` record left by an attempt under a dead era
+    can never stand as — or write-once-suppress — the pre-attribution of a merge
+    performed under a later era. Both phases of one merge share the same token
+    coordinate; repeats within one era still dedup write-once.
+    """
+    return f"merge-under-envelope:{outcome_id}:{subplot_id}:{pr}:{phase}:{token_id}"
 
 
 def record_envelope_authorized_merge(
@@ -262,7 +270,7 @@ def record_envelope_authorized_merge(
                 f"record_envelope_authorized_merge: {field_name} must be a non-empty "
                 f"string, got {value!r} — an unattributed merge record is not writable"
             )
-    key = merge_record_key(outcome_id, subplot_id, pr, phase)
+    key = merge_record_key(outcome_id, subplot_id, pr, phase, token_id)
     ledger_file = Path(ledger_dir) / _safe_ledger_name(key)
     base: dict[str, Any] = {
         "key": key,

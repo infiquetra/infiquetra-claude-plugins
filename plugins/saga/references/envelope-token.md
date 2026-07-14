@@ -81,8 +81,10 @@ current committed spec:
 `check_token` / `resolve_merge_token` re-read the token file and the revocation marker from
 disk on **every** call, and the merge queue invokes its authorizer immediately before every
 GitHub write. `envelope_token.py revoke <token-id> --reason ...` therefore stops the very
-next rebase/squash — including a later leaf inside the same reconcile tick — with no grace
-window and no cached-authorized state. `resolve_merge_token` requires EXACTLY one active
+next rebase/squash — including a later leaf inside the same reconcile tick — with no
+cached-authorized state. The precise freshness bound: a revocation landing after a write's
+fresh check but *during* that already-in-flight GitHub call cannot recall it (one network
+write, an unavoidable check-then-act); every write after it GATEs. `resolve_merge_token` requires EXACTLY one active
 matching token: zero, ambiguous (more than one), or a lane containing any document that
 cannot be strictly understood all GATE.
 
@@ -90,7 +92,10 @@ cannot be strictly understood all GATE.
 
 Every envelope-authorized merge writes two write-once records into the outcome's board-sync
 ledger via `board_progression.record_envelope_authorized_merge`, keyed
-`merge-under-envelope:{outcome_id}:{subplot_id}:{pr}:{phase}`:
+`merge-under-envelope:{outcome_id}:{subplot_id}:{pr}:{phase}:{token_id}`. The trailing
+`token_id` is the era coordinate: an `authorized` record left by an attempt under a dead
+envelope era (a capped or gated-later tick) can never satisfy the write-once dedup for a
+merge performed under a later era, so both phases of one merge always name the same token:
 
 - **`authorized`** — BEFORE the squash. A merge whose pre-authorization record cannot be
   written durably is **not performed** (audit-first fail-closed).

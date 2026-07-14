@@ -516,3 +516,23 @@ def test_authorize_with_explicit_token_id(tmp_path: Path) -> None:
         now=T1,
     )
     assert wrong.verdict == RC.GATE
+
+
+def test_reserved_revoked_suffix_token_id_refused_at_every_verb(tmp_path: Path) -> None:
+    """#449 panel hand-finish (P3): a token id ending '.revoked' would make its file
+    collide with token '<id>''s revocation-marker path — invisible to list/resolve yet
+    checkable by explicit id, and able to shadow the sibling's revocation state. The
+    shared path seam refuses the reserved suffix, so mint, check, and revoke ALL fail
+    closed on it and the collision is unmintable."""
+    lane = _lane(tmp_path)
+    lane.mkdir(parents=True)
+    with pytest.raises(ET.EnvelopeTokenError, match="reserved"):
+        _mint(lane, token_id="x.revoked")
+    # The read seam's contract is a fail-closed VERDICT, never an exception (its whole
+    # surface returns TokenCheck) — the reserved id checks invalid+malformed, not valid.
+    checked = _check(lane, "x.revoked")
+    assert not checked.valid and checked.malformed and "reserved" in checked.reason
+    with pytest.raises(ET.EnvelopeTokenError, match="reserved"):
+        ET.revoke_token(lane, "x.revoked", reason="r", now=T1)
+    # Control: the seam refuses ONLY the reserved suffix — a dotted id still mints.
+    assert _mint(lane, token_id="x.v2")["token_id"] == "x.v2"

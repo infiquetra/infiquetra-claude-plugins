@@ -179,9 +179,12 @@ GATE**: a write happens only when the op is one of the enumerated, reversible-or
   squash autonomously ONLY when the campaign's committed envelope declares
   `ceremony_gates.merge: "auto"` AND exactly one active (unexpired, unrevoked,
   era-bound) merge-scope envelope token resolves from the outcome store — re-checked fresh
-  before every rebase/squash, so `envelope_token.py revoke` stops the very next write with no
-  grace window. Every authorized merge is attributed to its `authorizing_envelope_id` in the
-  board-sync ledger, both pre-squash and post-squash. No envelope, a `gate` posture, a
+  before every rebase/squash, so `envelope_token.py revoke` stops the very next write (a
+  revocation cannot recall a GitHub call already in flight; every write after it GATEs). The
+  token is self-attested at the local-filesystem trust boundary — it proves posture, era,
+  expiry, and attribution, never the identity of the minter (`references/envelope-token.md`
+  "Honest bounds"). Every authorized merge is attributed to its `authorizing_envelope_id` in
+  the board-sync ledger, both pre-squash and post-squash, era-keyed by `token_id`. No envelope, a `gate` posture, a
   token-less `auto` posture, an expired/revoked token, or an ambiguous token lane → the leaf
   `waits-operator` with the precise reason. Bare `merge` stays absent from the certificate
   allowlist — `authorize_write` still GATEs it for every caller.

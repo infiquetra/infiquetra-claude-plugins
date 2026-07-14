@@ -47,7 +47,14 @@ the default.
 envelope is syntactically indistinguishable from a real one. The envelope records the
 operator's intent; **it authorizes nothing by itself**. Merge/deploy stay GATE-by-default in
 the reversibility certificate regardless of what the envelope says; the revocable
-`AUTONOMOUS_UNDER_ENVELOPE` write class with a real token check is #449's separate mechanism.
+`AUTONOMOUS_UNDER_ENVELOPE` write class with a real token check is #449's separate mechanism —
+**landed** (saga 0.96.0) as `envelope_token.py` + `references/envelope-token.md`: the token is
+its OWN store artifact bound to the envelope's content fingerprint + `intent_revision`, so #449
+added **no key to this schema** (the "tokens on the envelope" extension forecast was not
+needed). `ceremony_gates.merge` is now genuinely consumed by the `/outcome` merge queue: an
+envelope-less campaign or a `merge: "gate"` posture performs no autonomous merge, and
+`merge: "auto"` alone is still only recorded intent — the queue additionally requires one
+active token.
 The `approval_token` in the spend resolver is an opaque presence check, not a validated
 credential. The #373 fields only ever **narrow** dispatch relative to the uncaptured default
 (intersected menus, at-most-one-rung degrade, a HALT-only spend gate) — they grant no write

@@ -1,7 +1,30 @@
 #!/usr/bin/env python3
-"""Auto-merge queue + GitHub negative terminal states (U6).
+"""Auto-merge queue + GitHub negative terminal states (U6) — envelope-gated since #449.
 
-A non-gated, clean code subplot **auto-merges** (server-side squash) to unlock its dependents (R12).
+A non-gated, clean code subplot auto-merges (server-side squash) to unlock its dependents (R12)
+**only under an explicit envelope authorization** (#449): the queue is the engine consumer that
+``ceremony_gates.merge`` was recorded for. Per merge attempt, FRESH at authorization time, all of
+these must hold or the leaf ``waits-operator`` with a precise reason:
+
+* the campaign's committed intent envelope declares ``ceremony_gates.merge: "auto"`` — an
+  envelope-less campaign or a ``merge: "gate"`` posture waits for the operator's keystroke
+  (the never-autonomous default is the ENGINE's behavior now, not just recorded posture);
+* exactly ONE active (unexpired, unrevoked, fingerprint- and revision-bound) merge-scope
+  envelope token resolves from the outcome store's ``envelope-tokens`` lane — posture alone is
+  recorded intent, never a credential (#380 threat model); zero or ambiguous tokens GATE;
+* the pre-squash ``authorized`` attribution record lands durably in the board-sync ledger —
+  a merge that cannot be attributed is not performed (fail closed, audit-first).
+
+Revocation (``envelope_token.py revoke``) is re-read from disk before EVERY squash attempt, so
+it stops the very next merge — including later leaves within the same tick (R4). **Residual
+window, documented not claimed away:** the envelope posture itself is read through
+``intent_reader`` — the production wiring reads the ON-DISK spec per authorization, but a direct
+caller that passes no reader falls back to the tick's in-memory spec, where a mid-tick repost is
+seen only next tick; token revocation is the immediate stop verb in both wirings. A crash between
+the squash landing and the ``merged``-phase attribution record loses only that record (the
+``authorized``-phase record + GitHub's own merged-by audit survive); it is never backfilled,
+because post-hoc attribution would assert a pre-merge authorization nobody re-verified.
+
 The gate evidence (required CI green + review/consensus) is the leaf's own already-passed gate, surfaced
 to the coordinator as GitHub's ``mergeStateStatus`` (``blocked`` = gates not green yet -> wait). Because
 concurrent siblings can both look clean on stale bases, merges are **serialized** and guarded:
@@ -31,8 +54,10 @@ adapter, so the whole queue is unit-testable with no real ``gh``; ``github_merge
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,7 +104,12 @@ def github_merge_ops(runner: Callable[..., Any] | None = None) -> MergeOps:
 
 @dataclass
 class MergeOutcome:
-    """The result of attempting to auto-merge one subplot."""
+    """The result of attempting to auto-merge one subplot.
+
+    ``authorizing_envelope_id`` / ``token_id`` (#449) are set only on an
+    envelope-authorized ``merged`` outcome and emitted only when set, so every
+    pre-existing record shape round-trips byte-identical.
+    """
 
     subplot_id: str
     state: (
@@ -87,18 +117,31 @@ class MergeOutcome:
     )
     reason: str
     cycles: int = 0
+    authorizing_envelope_id: str = ""
+    token_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "subplot_id": self.subplot_id,
             "state": self.state,
             "reason": self.reason,
             "cycles": self.cycles,
         }
+        if self.authorizing_envelope_id:
+            out["authorizing_envelope_id"] = self.authorizing_envelope_id
+        if self.token_id:
+            out["token_id"] = self.token_id
+        return out
 
 
-def auto_merge_one(node: Any, ops: MergeOps, *, max_cycles: int = MERGE_CAP) -> MergeOutcome:
-    """Attempt to auto-merge one subplot (R12/R32/R34).
+def auto_merge_one(
+    node: Any,
+    ops: MergeOps,
+    *,
+    max_cycles: int = MERGE_CAP,
+    merge_authorizer: Callable[[], Any] | None = None,
+) -> MergeOutcome:
+    """Attempt to auto-merge one subplot (R12/R32/R34), under the #449 merge ceremony.
 
     **GitHub is the authoritative atomic guard**, not a local SHA check: ``squash_merge`` (with
     ``--match-head-commit``) is rejected by GitHub if the PR is not mergeable — base moved (behind),
@@ -108,12 +151,36 @@ def auto_merge_one(node: Any, ops: MergeOps, *, max_cycles: int = MERGE_CAP) -> 
     (R34, a gh outage never fails a leaf). A squash that GitHub rejects (``error`` — base/head moved or
     a transient blip) **reloops** to re-classify, never a stale merge; base churn is **capped** at
     ``max_cycles`` then halt + page (no starvation spin).
+
+    **#449 merge ceremony (fail closed).** ``merge_authorizer`` is a zero-arg callable that
+    performs the FRESH envelope-token authorization (posture + token + pre-squash attribution
+    record) and returns a ``reversibility_certificate.EnvelopeAuthorization``. It gates every
+    GitHub WRITE this loop can perform — ``update_branch`` (rebase) and ``squash_merge`` — and
+    is re-invoked before each one, so a revocation stops the very next write (R4). Read-only
+    classification (dirty -> conflict, blocked/unknown -> defer) runs for every campaign, so
+    conflict recording and /work re-engagement never depend on merge authority. ``None`` (no
+    authority supplied) behaves as an always-GATE authorizer: there is NO tokenless
+    auto-merge (or auto-rebase) path left.
     """
     sid = node.subplot_id
     pr = str(node.github.get("pr", ""))
     branch = str(node.github.get("branch", ""))
     if not pr:
         return MergeOutcome(sid, "not-ready", "no PR ref")
+
+    def _ceremony() -> Any:
+        if merge_authorizer is None:
+            return None  # no authority supplied -> always GATE (fail closed, #449)
+        return merge_authorizer()
+
+    def _gated(auth: Any, cycles: int) -> MergeOutcome:
+        reason = (
+            "no merge ceremony authority supplied — merge-class writes wait for the "
+            "operator (#449 fail-closed default)"
+            if auth is None
+            else f"merge ceremony gated: {getattr(auth, 'reason', 'no reason given')}"
+        )
+        return MergeOutcome(sid, "waits-operator", reason, cycles)
 
     # 1) Out-of-band / negative-terminal checks FIRST (never double-merge; reject hangs-free, R32).
     state = ops.pr_state(pr)
@@ -128,11 +195,13 @@ def auto_merge_one(node: Any, ops: MergeOps, *, max_cycles: int = MERGE_CAP) -> 
     if branch and not ops.branch_exists(branch):
         return MergeOutcome(sid, "rejected", "branch deleted (R32) — terminal")
 
-    # 2) Gated / risky / destructive subplots are never auto-merged — they wait for the operator (R12).
+    # 2) Gated / risky / destructive subplots are never auto-merged — they wait for the operator
+    #    (R12), envelope or no envelope: a #449 token never overrides a leaf's own gating flags.
     if node.gated or node.risky or node.destructive:
         return MergeOutcome(sid, "waits-operator", "gated/risky/destructive — operator merges")
 
-    # 3) The GitHub-guarded merge loop, base-churn capped (R12).
+    # 3) The GitHub-guarded merge loop, base-churn capped (R12). Reads classify for every
+    #    campaign; every WRITE (update_branch, squash_merge) is #449 ceremony-gated first.
     cycles = 0
     while cycles < max_cycles:
         ms = ops.merge_state(pr)
@@ -146,6 +215,10 @@ def auto_merge_one(node: Any, ops: MergeOps, *, max_cycles: int = MERGE_CAP) -> 
                 sid, "not-ready", "merge readiness unknown (gh degraded) — defer", cycles
             )
         if ms == "behind":
+            # #449: a rebase is a GitHub write — ceremony-gated exactly like the squash.
+            auth = _ceremony()
+            if str(getattr(auth, "verdict", "")) != "AUTHORIZED":
+                return _gated(auth, cycles)
             ops.update_branch(pr)  # rebase; the leaf re-verifies its own gate after the update
             cycles += 1
             continue
@@ -156,8 +229,20 @@ def auto_merge_one(node: Any, ops: MergeOps, *, max_cycles: int = MERGE_CAP) -> 
             return MergeOutcome(
                 sid, "not-ready", "base unreadable (gh degraded) — defer (R34)", cycles
             )
+        # #449: the envelope-token authorization, FRESH per squash attempt (revocation between
+        # attempts — or between two leaves in one tick — stops the very next squash, R4).
+        auth = _ceremony()
+        if str(getattr(auth, "verdict", "")) != "AUTHORIZED":
+            return _gated(auth, cycles)
         if ops.squash_merge(pr) == "merged":
-            return MergeOutcome(sid, "merged", "server-side squash-merged (GitHub-guarded)", cycles)
+            return MergeOutcome(
+                sid,
+                "merged",
+                "server-side squash-merged (GitHub-guarded, envelope-authorized #449)",
+                cycles,
+                authorizing_envelope_id=str(auth.authorizing_envelope_id),
+                token_id=str(auth.token_id),
+            )
         # GitHub rejected the squash (head/base moved, or transient) -> reloop and re-classify.
         cycles += 1
     return MergeOutcome(
@@ -168,6 +253,127 @@ def auto_merge_one(node: Any, ops: MergeOps, *, max_cycles: int = MERGE_CAP) -> 
 def _is_mergeable_kind(node: Any) -> bool:
     # Only code leaves with a PR auto-merge; non-code/child-outcome complete via their own contract (U5).
     return node.kind == "code" and not node.is_outcome and bool(node.github.get("pr"))
+
+
+# ---------------------------------------------------------------------------
+# #449 merge ceremony — the ceremony_gates.merge engine consumer
+# ---------------------------------------------------------------------------
+
+
+def _ledger_dir(store: Any) -> Path:
+    """The board-sync ledger dir (single-sourced against outcome_board_sync, KTD4)."""
+    import outcome_board_sync  # noqa: PLC0415
+
+    return outcome_board_sync._board_sync_dir(store)  # noqa: SLF001
+
+
+def make_merge_authorizer(
+    spec: Any,
+    store: Any,
+    node: Any,
+    *,
+    now: Callable[[], float] = time.time,
+    intent_reader: Callable[[], tuple[Mapping[str, Any] | None, int]] | None = None,
+) -> Callable[[], Any]:
+    """Build one leaf's per-squash merge authorizer (#449) — every call is fresh.
+
+    Each invocation re-derives EVERYTHING at authorization time: the committed envelope
+    posture via ``intent_reader`` (the production wiring reads the ON-DISK spec; the
+    default falls back to the in-memory ``spec`` — residual documented in the module
+    docstring), the single active merge token from the outcome store's token lane
+    (``envelope_token.resolve_merge_token``: fresh disk reads, revocation- and
+    expiry-checked, fingerprint- and revision-bound, ambiguity GATEs), and the
+    certificate verdict. On AUTHORIZED it durably writes the pre-squash ``authorized``
+    attribution record — and converts a record-write fault into GATE, because a merge
+    whose authorization cannot be attributed is not performed (fail closed, audit-first).
+
+    ``other_gates_green=True`` is the call-site fact: ``auto_merge_one`` invokes the
+    authorizer only after GitHub's own readiness (``merge_state`` clean/unstable), the
+    DAG dependency gate, and the gated/risky/destructive check have all passed.
+    """
+    import board_progression  # noqa: PLC0415
+    import envelope_token  # noqa: PLC0415
+    import reversibility_certificate as cert  # noqa: PLC0415
+
+    lane = envelope_token.tokens_dir(store.root)
+    pr = str(node.github.get("pr", ""))
+
+    def _read_intent() -> tuple[Mapping[str, Any] | None, int]:
+        if intent_reader is not None:
+            return intent_reader()
+        return (spec.intent, spec.intent_revision or 0)
+
+    def _authorize() -> Any:
+        try:
+            intent, revision = _read_intent()
+        except Exception as exc:  # noqa: BLE001 — an unreadable posture must GATE, not crash the tick
+            return cert.EnvelopeAuthorization(
+                cert.GATE,
+                f"committed posture could not be read at authorization time — failing "
+                f"closed: {exc}",
+            )
+        # Posture pre-check for a first-cause operator reason (the token layer re-checks
+        # both conditions independently — lesson 10: enforce at every seam).
+        if intent is None:
+            return cert.EnvelopeAuthorization(
+                cert.GATE,
+                "no committed intent envelope — merge-class writes stay operator-gated "
+                '(capture ceremony_gates.merge: "auto" at run start AND mint an envelope '
+                "token to enable auto-merge, #449)",
+            )
+        try:
+            envelope_mod = envelope_token._intent_envelope()  # noqa: SLF001
+            parsed = envelope_mod.IntentEnvelope.from_dict(dict(intent))
+            if parsed.ceremony_gates.merge != envelope_mod.AUTO:
+                return cert.EnvelopeAuthorization(
+                    cert.GATE,
+                    f"committed ceremony_gates.merge is {parsed.ceremony_gates.merge!r} — "
+                    "the operator's recorded posture does not permit autonomous merge (#449)",
+                )
+        except Exception as exc:  # noqa: BLE001 — an invalid envelope must GATE, not crash the tick
+            return cert.EnvelopeAuthorization(
+                cert.GATE,
+                f"committed intent envelope could not be strictly understood — failing "
+                f"closed: {exc}",
+            )
+        now_iso = datetime.fromtimestamp(now(), tz=UTC).isoformat()
+        auth = envelope_token.authorize_merge_under_envelope(
+            lane,
+            outcome_id=spec.outcome_id,
+            envelope=intent,
+            intent_revision=revision,
+            other_gates_green=True,
+            now=now_iso,
+        )
+        if auth.verdict != cert.AUTHORIZED:
+            return auth
+        try:
+            ledger = _ledger_dir(store)
+        except Exception as exc:  # noqa: BLE001 — an unattributable merge must GATE, not crash
+            return cert.EnvelopeAuthorization(
+                cert.GATE,
+                "authorized, but the board-sync ledger is unavailable — refusing to "
+                f"merge unattributed (fail closed): {exc}",
+            )
+        record = board_progression.record_envelope_authorized_merge(
+            ledger,
+            phase="authorized",
+            outcome_id=spec.outcome_id,
+            subplot_id=node.subplot_id,
+            pr=pr,
+            authorizing_envelope_id=auth.authorizing_envelope_id,
+            token_id=auth.token_id,
+            now=now,
+        )
+        if record["status"] == "error":
+            return cert.EnvelopeAuthorization(
+                cert.GATE,
+                "authorized, but the pre-squash attribution record could not be written — "
+                f"refusing to merge unattributed (fail closed): {record.get('error', '')}",
+            )
+        return auth
+
+    return _authorize
 
 
 # Terminal-negative states that should NOT be retried by the merge queue. ``failed`` is deliberately
@@ -190,7 +396,13 @@ def _skip_set(store: Any) -> set[str]:
 
 
 def process_merge_queue(
-    spec: Any, store: Any, ops: MergeOps, *, max_cycles: int = MERGE_CAP
+    spec: Any,
+    store: Any,
+    ops: MergeOps,
+    *,
+    max_cycles: int = MERGE_CAP,
+    now: Callable[[], float] = time.time,
+    intent_reader: Callable[[], tuple[Mapping[str, Any] | None, int]] | None = None,
 ) -> dict[str, Any]:
     """Serialize the auto-merge of every eligible code subplot (one at a time) and record negative
     terminals. Returns the per-subplot outcomes + the rejected set + its cascade.
@@ -206,7 +418,18 @@ def process_merge_queue(
     PR for a leaf whose upstream is incomplete (especially a *non-code* upstream that produces no
     base-blocking merge) would otherwise squash prematurely, out of dependency order. The frontier gate is
     the orchestrator's, not GitHub's.
+
+    **Envelope-gated (#449).** Every leaf gets a per-squash ``make_merge_authorizer`` closure —
+    posture + token + certificate, all fresh per attempt; a leaf that fails the ceremony records
+    ``waits-operator`` with the precise reason (visible in the tick result, retried next tick,
+    never a terminal). An envelope-authorized merge writes an ``authorized`` attribution record
+    BEFORE the squash and a ``merged`` record after it into the board-sync ledger, both carrying
+    ``authorizing_envelope_id`` (R5); the merged record's write status is surfaced on the outcome
+    as ``attribution`` (a post-squash ledger fault is loud, never thrown — the squash already
+    committed; the record is never backfilled later, see the module docstring).
     """
+    import board_progression  # noqa: PLC0415
+
     skip = _skip_set(store)
     success = outcome_store.completed_subplots(store)  # success-only -> the dependency gate
     outcomes: list[dict[str, Any]] = []
@@ -216,8 +439,29 @@ def process_merge_queue(
             continue
         if not all(dep in success for dep in node.depends_on):
             continue  # upstream not all done -> never merge out of dependency order (R12 + the DAG)
-        outcome = auto_merge_one(node, ops, max_cycles=max_cycles)
-        outcomes.append(outcome.to_dict())
+        authorizer = make_merge_authorizer(spec, store, node, now=now, intent_reader=intent_reader)
+        outcome = auto_merge_one(node, ops, max_cycles=max_cycles, merge_authorizer=authorizer)
+        outcome_dict = outcome.to_dict()
+        if outcome.state == "merged" and outcome.authorizing_envelope_id:
+            # R5: the post-squash `merged` attribution record (write-once; fault surfaced —
+            # never thrown, the squash already committed).
+            try:
+                outcome_dict["attribution"] = board_progression.record_envelope_authorized_merge(
+                    _ledger_dir(store),
+                    phase="merged",
+                    outcome_id=spec.outcome_id,
+                    subplot_id=node.subplot_id,
+                    pr=str(node.github.get("pr", "")),
+                    authorizing_envelope_id=outcome.authorizing_envelope_id,
+                    token_id=outcome.token_id,
+                    now=now,
+                )
+            except Exception as exc:  # noqa: BLE001 — surfaced loudly on the record, never raised
+                outcome_dict["attribution"] = {
+                    "status": "error",
+                    "error": f"merged, but the attribution record could not be written: {exc}",
+                }
+        outcomes.append(outcome_dict)
         if outcome.state == "rejected":
             _record_terminal(store, node.subplot_id, "rejected", outcome.reason)
             rejected.append(node.subplot_id)
@@ -259,8 +503,10 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(
             {
                 "merge_cap": args.cap,
-                "policy": "serialized squash-merge; base-SHA-guarded; rebase-reverify on behind; "
-                "conflict->work+page; closed-unmerged/branch-deleted->rejected cascade",
+                "policy": "envelope-gated (#449: ceremony_gates.merge=auto + one active merge "
+                "token, fresh per squash, attributed to the authorizing envelope); serialized "
+                "squash-merge; base-SHA-guarded; rebase-reverify on behind; conflict->work+page; "
+                "closed-unmerged/branch-deleted->rejected cascade",
             }
         )
     )

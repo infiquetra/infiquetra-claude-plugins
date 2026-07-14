@@ -12,6 +12,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 ROOT = Path(__file__).parent.parent
 SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
@@ -329,3 +330,192 @@ def test_only_non_always_operator_ops_are_authorized() -> None:
             assert verdict == RC.GATE, f"{ok!r} is ALWAYS_OPERATOR but got AUTHORIZED"
         elif f.tier in (RC.Tier.REVERSIBLE, RC.Tier.ADDITIVE):
             assert verdict == RC.AUTHORIZED, f"{ok!r} is {f.tier} but got GATE"
+
+
+# ---------------------------------------------------------------------------
+# #449 — AUTONOMOUS_UNDER_ENVELOPE: inert without a token (AC1), sibling-only
+# ---------------------------------------------------------------------------
+
+ET = _load("envelope_token")
+
+_ENVELOPE_AUTO_MERGE = {
+    "schema_version": 1,
+    "run_mode": "attended",
+    "ceremony_gates": {"reviews_required": "gate", "merge": "auto", "deploy_nonprod": "gate"},
+}
+
+
+class _Check:
+    """A minimal token_check stand-in for the PURE sibling's unit tests (the real
+    TokenCheck path is exercised in the envelope_token chain test below)."""
+
+    def __init__(self, valid: bool, reason: str = "", envelope_id: str = "", token_id: str = ""):
+        self.valid = valid
+        self.reason = reason
+        self.envelope_id = envelope_id
+        self.token_id = token_id
+
+
+def test_merge_under_envelope_authorize_write_gates_with_no_token() -> None:
+    """AC1: the merge-authorization op kind through plain authorize_write is GATE — the
+    class is inert without a token, and authorize_write has no token parameter (R2)."""
+    assert RC.authorize_write("merge-under-envelope") == RC.GATE
+    assert RC.authorize_write(RC.OpKind.MERGE_UNDER_ENVELOPE) == RC.GATE
+
+
+def test_merge_under_envelope_registry_facts() -> None:
+    """#449 R1: the write class is enumerated with its own tier — irreversible (no
+    inverse), not ALWAYS_OPERATOR (the sibling CAN authorize it), never 'reversible'."""
+    f = RC.facts(RC.OpKind.MERGE_UNDER_ENVELOPE)
+    assert f.tier == RC.Tier.AUTONOMOUS_UNDER_ENVELOPE
+    assert f.inverse is None, "a squash-merge has no registered inverse — it is irreversible"
+    assert f.always_operator is False
+    assert RC.OpKind.MERGE_UNDER_ENVELOPE not in RC.reversible_op_kinds()
+    assert RC.OpKind.MERGE_UNDER_ENVELOPE in RC.all_op_kinds()
+
+
+def test_bare_merge_and_deploy_strings_still_gate() -> None:
+    """#449 R6/R7: adding the envelope class does not enumerate bare merge/deploy —
+    R20's default-GATE for every tokenless caller is byte-identical."""
+    assert RC.authorize_write("merge") == RC.GATE
+    assert RC.authorize_write("deploy") == RC.GATE
+    assert RC.authorize_write("pr-merge") == RC.GATE
+
+
+def test_envelope_sibling_gates_without_token() -> None:
+    """No token presented -> GATE, with the R20 default named in the reason."""
+    auth = RC.authorize_write_under_envelope(
+        RC.OpKind.MERGE_UNDER_ENVELOPE, None, other_gates_green=True
+    )
+    assert auth.verdict == RC.GATE
+    assert "R20" in auth.reason
+    assert auth.authorizing_envelope_id == "" and auth.token_id == ""
+
+
+def test_envelope_sibling_never_widens_base_ops() -> None:
+    """#449 R7: presenting a (valid-looking) token alongside a base-allowlist op or an
+    unknown op grants NOTHING — the sibling only ever speaks for the envelope class."""
+    check = _Check(True, "active", envelope_id="sha256:" + "a" * 64, token_id="t1")
+    for op in ("set-field-status", "parent-issue-close", "some-invented-operation", ""):
+        auth = RC.authorize_write_under_envelope(op, check, other_gates_green=True)
+        assert auth.verdict == RC.GATE, f"{op!r} must GATE through the envelope sibling"
+        assert auth.authorizing_envelope_id == ""
+
+
+def test_envelope_sibling_gates_on_failed_check() -> None:
+    """An invalid token check -> GATE, echoing the check's precise reason."""
+    auth = RC.authorize_write_under_envelope(
+        RC.OpKind.MERGE_UNDER_ENVELOPE,
+        _Check(False, "token expired at 2026-01-01T00:00:00+00:00"),
+        other_gates_green=True,
+    )
+    assert auth.verdict == RC.GATE and "expired" in auth.reason
+
+
+def test_envelope_sibling_gates_when_other_gates_not_green() -> None:
+    """AC2 (negative): a VALID token is necessary but not sufficient — other gates
+    not green -> GATE."""
+    check = _Check(True, "active", envelope_id="sha256:" + "b" * 64, token_id="t2")
+    auth = RC.authorize_write_under_envelope(
+        RC.OpKind.MERGE_UNDER_ENVELOPE, check, other_gates_green=False
+    )
+    assert auth.verdict == RC.GATE
+    assert "necessary but not sufficient" in auth.reason
+
+
+def test_envelope_sibling_authorizes_valid_token_and_green_gates() -> None:
+    """AC2 (positive, cert level): valid check + green gates -> AUTHORIZED, echoing the
+    authorizing envelope id so the ledger can attribute the write."""
+    check = _Check(True, "active", envelope_id="sha256:" + "c" * 64, token_id="t3")
+    auth = RC.authorize_write_under_envelope(
+        RC.OpKind.MERGE_UNDER_ENVELOPE, check, other_gates_green=True
+    )
+    assert auth.verdict == RC.AUTHORIZED
+    assert auth.authorizing_envelope_id == "sha256:" + "c" * 64
+    assert auth.token_id == "t3"
+
+
+def test_envelope_sibling_is_type_strict() -> None:
+    """Wrong-TYPED attestations are caller bugs and raise — never coerced (lesson 1)."""
+    check = _Check(True, "active", envelope_id="sha256:" + "d" * 64, token_id="t4")
+    try:
+        RC.authorize_write_under_envelope(
+            RC.OpKind.MERGE_UNDER_ENVELOPE,
+            check,
+            other_gates_green=1,  # type: ignore[arg-type]
+        )
+        raise AssertionError("non-bool other_gates_green must raise")
+    except TypeError:
+        pass
+    bad_valid = _Check(True, "active", envelope_id="sha256:" + "e" * 64, token_id="t5")
+    bad_valid.valid = "yes"  # type: ignore[assignment]
+    try:
+        RC.authorize_write_under_envelope(
+            RC.OpKind.MERGE_UNDER_ENVELOPE, bad_valid, other_gates_green=True
+        )
+        raise AssertionError("non-bool token_check.valid must raise")
+    except TypeError:
+        pass
+    empty_id = _Check(True, "active", envelope_id="", token_id="t6")
+    try:
+        RC.authorize_write_under_envelope(
+            RC.OpKind.MERGE_UNDER_ENVELOPE, empty_id, other_gates_green=True
+        )
+        raise AssertionError("a valid check with no envelope_id must raise")
+    except TypeError:
+        pass
+
+
+def test_envelope_token_check_denied_authorized_revoked_chain(tmp_path: Path) -> None:
+    """DoD chain (`-k envelope_token`): DENIED with no token -> AUTHORIZED with a valid
+    token + green gates -> re-DENIED after revocation — one assertion chain through the
+    REAL envelope_token store and the composed authorization surface (AC1/AC2/AC3)."""
+    lane = tmp_path / "envelope-tokens"
+
+    def authorize(now: str) -> Any:
+        return ET.authorize_merge_under_envelope(
+            lane,
+            outcome_id="o",
+            envelope=_ENVELOPE_AUTO_MERGE,
+            intent_revision=0,
+            other_gates_green=True,
+            now=now,
+        )
+
+    # 1) DENIED: no token has ever been minted.
+    pre = authorize("2026-07-14T00:00:00+00:00")
+    assert pre.verdict == RC.GATE
+
+    # 2) AUTHORIZED: one active token, all gates attested green.
+    token = ET.mint_token(
+        lane,
+        outcome_id="o",
+        envelope=_ENVELOPE_AUTO_MERGE,
+        intent_revision=0,
+        ttl_hours=24,
+        issued_by="operator",
+        now="2026-07-14T00:00:00+00:00",
+    )
+    mid = authorize("2026-07-14T01:00:00+00:00")
+    assert mid.verdict == RC.AUTHORIZED
+    assert mid.authorizing_envelope_id == token["envelope_id"]
+    assert mid.token_id == token["token_id"]
+
+    # 2b) envelope authorization is necessary but NOT sufficient (AC2).
+    not_green = ET.authorize_merge_under_envelope(
+        lane,
+        outcome_id="o",
+        envelope=_ENVELOPE_AUTO_MERGE,
+        intent_revision=0,
+        other_gates_green=False,
+        now="2026-07-14T01:00:00+00:00",
+    )
+    assert not_green.verdict == RC.GATE
+
+    # 3) re-DENIED: revocation flips the VERY NEXT call, nothing cached (AC3/R4).
+    ET.revoke_token(
+        lane, token["token_id"], reason="operator stop", now="2026-07-14T01:30:00+00:00"
+    )
+    post = authorize("2026-07-14T01:31:00+00:00")
+    assert post.verdict == RC.GATE
+    assert "revoked" in post.reason

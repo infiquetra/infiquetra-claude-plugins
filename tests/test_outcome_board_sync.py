@@ -891,3 +891,97 @@ def test_hold_issues_none_is_byte_identical_to_today(tmp_path: Path) -> None:
     )
     assert [r["status"] for r in r_default] == [r["status"] for r in r_none]
     assert not [r for r in r_none if r.get("status") == "drift-hold"]
+
+
+# ---------------------------------------------------------------------------
+# #449 R5/AC4 — the board-sync ledger's authorizing_envelope_id extension
+# (merge-class records ONLY; every non-merge record is untouched)
+# ---------------------------------------------------------------------------
+
+BP_MOD = _load("board_progression")
+
+_FP = "sha256:" + "a" * 64
+
+
+def _merge_record(store: Any, **kw: Any) -> Any:
+    defaults: dict[str, Any] = {
+        "phase": "authorized",
+        "outcome_id": "o",
+        "subplot_id": "build",
+        "pr": "7",
+        "authorizing_envelope_id": _FP,
+        "token_id": "emt-1",
+    }
+    defaults.update(kw)
+    return BP_MOD.record_envelope_authorized_merge(SYNC_MOD._board_sync_dir(store), **defaults)
+
+
+def test_authorizing_envelope_id_on_merge_ledger_record(tmp_path: Path) -> None:
+    """AC4: the ledger JSON written for an envelope-authorized merge carries the correct
+    authorizing_envelope_id (and token_id), in BOTH phases, under the board-sync dir."""
+    store = _store(tmp_path)
+    for phase in ("authorized", "merged"):
+        result = _merge_record(store, phase=phase)
+        assert result["status"] == "written"
+    ledger_dir = SYNC_MOD._board_sync_dir(store)
+    records = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(ledger_dir.glob("*.json"))]
+    assert len(records) == 2
+    for record in records:
+        assert record["authorizing_envelope_id"] == _FP
+        assert record["token_id"] == "emt-1"
+        assert record["op_kind"] == "merge-under-envelope"
+        assert record["phase"] in ("authorized", "merged")
+        assert "ts" in record
+
+
+def test_authorizing_envelope_merge_record_is_write_once(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    assert _merge_record(store)["status"] == "written"
+    assert _merge_record(store)["status"] == "skipped"  # idempotent under the same key
+
+
+def test_authorizing_envelope_merge_record_refuses_missing_attribution(tmp_path: Path) -> None:
+    """An unattributed merge record must be impossible to write (fail closed)."""
+    store = _store(tmp_path)
+    with pytest.raises(ValueError, match="unattributed"):
+        _merge_record(store, authorizing_envelope_id="")
+    with pytest.raises(ValueError, match="unattributed"):
+        _merge_record(store, token_id="")
+    with pytest.raises(ValueError, match="closed vocabulary"):
+        _merge_record(store, phase="pending")  # off-vocabulary phase
+
+
+def test_authorizing_envelope_merge_record_write_fault_is_surfaced(tmp_path: Path) -> None:
+    """A ledger fault comes back as a status:error record — never an escaping exception
+    (the merged-phase caller's squash has already committed)."""
+    store = _store(tmp_path)
+
+    def broken_write_once(path: Path, content: str) -> bool:
+        raise OSError("disk full")
+
+    result = BP_MOD.record_envelope_authorized_merge(
+        SYNC_MOD._board_sync_dir(store),
+        phase="merged",
+        outcome_id="o",
+        subplot_id="build",
+        pr="7",
+        authorizing_envelope_id=_FP,
+        token_id="emt-1",
+        write_once=broken_write_once,
+    )
+    assert result["status"] == "error" and "disk full" in result["error"]
+
+
+def test_non_merge_ledger_records_carry_no_authorizing_envelope_id(tmp_path: Path) -> None:
+    """R5 boundary control: the schema extension is merge-record-specific — a normal
+    board-sync write's ledger record gains NO authorizing_envelope_id key."""
+    store = _store(tmp_path)
+    spec = _spec([_leaf("l1", "infiquetra/x#42")])
+    _done(store, "l1")
+    SYNC_MOD.reconcile_board(spec, store, board_writer=RecordingWriter())
+    ledger_dir = SYNC_MOD._board_sync_dir(store)
+    records = [json.loads(p.read_text(encoding="utf-8")) for p in ledger_dir.glob("*.json")]
+    assert records, "expected at least one non-merge ledger record"
+    for record in records:
+        assert "authorizing_envelope_id" not in record
+        assert "token_id" not in record

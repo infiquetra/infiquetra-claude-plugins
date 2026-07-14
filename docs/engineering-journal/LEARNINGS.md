@@ -27,6 +27,26 @@
 
 ## 2026-07-14
 
+### An authorization credential must bind content AND ordinal — either alone is forgeable by the system's own documented races {#token-era-binding-449}
+
+**Context.** #449's envelope token must stop authorizing the moment its envelope era ends (a
+#433 repost). The obvious binding is `intent_revision` alone — but #598 item 4 documents that
+`save_spec`'s check-then-write residual lets two simultaneous reposts mint the SAME revision;
+the other obvious binding is a content fingerprint alone — but an A→B→A posture round trip
+restores the fingerprint while the operator's intent history says the old authorization died
+twice over. **Evidence.** `plugins/saga/scripts/envelope_token.py` (`check_token` compares
+`envelope_id` = sha256 of the canonical schema-validated envelope JSON AND
+`intent_revision`); pinned by `tests/test_envelope_token.py::test_check_fingerprint_mismatch_after_renegotiation`
+and `::test_check_intent_revision_mismatch` (same content, new revision → invalid). PR for
+#449. **Mechanism.** Content hash and revision counter fail in disjoint ways: the hash is
+blind to history (round trips), the counter is blind to the lockless save seam (duplicate
+mints). Their conjunction is strictly narrower than either, and both mismatches are cheap to
+derive fresh per check. **Generalizable rule.** When a credential's validity is defined by
+"the era it was minted under," bind every independent era coordinate the system's own
+residuals can forge individually — and re-derive the comparison from current state on every
+check instead of trusting the mint-time snapshot. **Refs.** DECISIONS
+`{#envelope-authorized-merge-449}`; #598 item 4; `references/envelope-token.md`.
+
 ### A lint that eats its own documentation is the cheapest honesty check it will ever get {#gate-lint-self-scan-371}
 
 **Context.** #371's gate-absence lint scans every `*.md` under `plugins/saga` — which includes

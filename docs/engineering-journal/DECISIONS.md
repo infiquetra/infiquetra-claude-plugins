@@ -2,6 +2,57 @@
 
 ## 2026-07-14
 
+### Merge gained a scoped, revocable, attributed exception — and the engine's tokenless auto-merge default died with it (#449) {#envelope-authorized-merge-449}
+
+**Decision.** #449 ships the `AUTONOMOUS_UNDER_ENVELOPE` write class as three composed layers,
+engaging the intake §3 revisit condition on the never-autonomous merge binding WITHOUT
+flipping the default: (1) a **token store** (`envelope_token.py`, per-outcome
+`envelope-tokens/` lane) — closed exact-keys schema, merge-only scope, timezone-aware expiry,
+write-once revocation marker, validity derived fresh from disk on every check, era-bound to
+the committed envelope's content fingerprint AND `intent_revision` (either alone is forgeable
+by documented residuals — LEARNINGS `{#token-era-binding-449}`); (2) a **pure certificate
+sibling** (`authorize_write_under_envelope`) — `authorize_write` gained NO token parameter and
+still GATEs the class unconditionally (zero regression for every existing caller, R20
+untouched for bare merge/deploy), the sibling can never widen a non-envelope op, and a valid
+token is necessary-but-not-sufficient (the caller must attest all other gates green);
+(3) the **merge queue as the `ceremony_gates.merge` engine consumer** the #433 honesty note
+held the R7 monotonic invariant for — every GitHub WRITE (rebase, squash) requires committed
+`merge: "auto"` + exactly one active token, re-checked per attempt, with pre-squash
+`authorized` and post-squash `merged` attribution records (`authorizing_envelope_id`) in the
+board-sync ledger; a merge that cannot be pre-attributed is not performed. **The consequential
+call, made fail-closed:** the pre-#449 tokenless R12 auto-merge default is GONE — an
+envelope-less campaign now `waits-operator` (matching the #433 validator's "effective gates
+default to gate" stance and the SKILL.md binding), rather than keeping byte-identical legacy
+auto-merge under the absent-capture convention. Read-only classification (conflict/blocked)
+still runs unauthorized so /work re-engagement never depends on merge authority. Gate records
+are NOT consulted in v1 (the token is CLI-minted, self-attested at the same filesystem trust
+boundary; `gate-record.md` item 4 updated to what actually landed); no fleet-core schema
+change (the "tokens on the envelope" forecast was not needed — the token references the
+envelope, not vice versa), so fleet-core is not bumped.
+
+**Rejected alternatives.** Posture-alone authorization (merge=auto with no token — the #380
+threat model says the envelope is recorded intent, never a credential); preserving legacy
+auto-merge for envelope-less specs (the absent-capture byte-identical convention — rejected
+because here the recorded binding says "never autonomous" and the engine contradicted it;
+surfaced as an operator decision point on the PR); binding tokens to `intent_revision` only or
+fingerprint only (each forgeable — see the learning); any-valid-token-wins on an ambiguous
+lane (never pick); per-tick (rather than per-write) token freshness (a mid-tick revocation
+must stop the very next squash); backfilling a lost `merged` attribution record on
+already-merged detection (post-hoc attribution asserts a pre-merge authorization nobody
+re-verified); putting token keys on the gate-record or intent-envelope schemas (both closed;
+neither needed).
+
+**Revisit when.** Deploy-to-nonprod wants the same mechanism (new scope in the closed
+vocabulary + a deploy-path consumer — explicitly out of #449's scope); the envelope-issuance
+UX ships (run-start dialog minting the token alongside the envelope — the companion issue; the
+CLI mint verb is the v1 issuance surface) and this token shape needs extending; an attended
+flow wants a live gate-record answer to mint (then `is_operator_answerer` is the predicate and
+the #371 exact-keys schema step applies); or a real campaign demonstrates the one-tick
+in-memory-posture residual matters beyond the documented bound (then thread the on-disk
+`intent_reader` through the remaining direct callers).
+
+---
+
 ### Gates are durable records with a derived-not-presence answerer contract; the absence lint ratchets by exact count (#371) {#gate-record-absence-contract-371}
 
 **Decision.** #371 ships gates as **records, not widget calls**: `gate_record.py` persists the

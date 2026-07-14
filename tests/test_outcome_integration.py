@@ -49,6 +49,17 @@ REP = _load("outcome_report")
 PROJ = _load("outcome_projection")
 _load("outcome_liveness")
 C = _load("outcome_costs")
+ET = _load("envelope_token")
+
+# #449: the merge queue is envelope-gated — the end-to-end slice commits a merge=auto
+# posture at start and mints ONE active merge token, exercising the production
+# envelope-authorized auto-merge path (reviews_required stays "auto" here so the #380
+# closure gate does not additionally require code-review evidence for this slice).
+_INTENT_AUTO_MERGE = {
+    "schema_version": 1,
+    "run_mode": "attended",
+    "ceremony_gates": {"reviews_required": "auto", "merge": "auto", "deploy_nonprod": "gate"},
+}
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -149,8 +160,18 @@ def test_full_outcome_composes_end_to_end(tmp_path: Path) -> None:
                 "github": {"pr": "2", "branch": "feat-build"},
             },
         ],
+        intent=_INTENT_AUTO_MERGE,
     )
     store = ENG._store(repo, "ship-auth")
+    # #449: the auto-merge leg needs the envelope credential — one active merge token.
+    ET.mint_token(
+        ET.tokens_dir(store.root),
+        outcome_id="ship-auth",
+        envelope=_INTENT_AUTO_MERGE,
+        intent_revision=0,
+        ttl_hours=24,
+        issued_by="operator",
+    )
 
     # U7 approval gate: nothing dispatches until the operator approves the frontier (R20).
     pre = ENG.advance(repo, "ship-auth", gate_factory=lambda s, st: DEC.make_dispatch_gate(st, s))
@@ -181,7 +202,7 @@ def test_full_outcome_composes_end_to_end(tmp_path: Path) -> None:
             "ship-auth",
             dispatcher=D.make_dispatcher(available=SPEC.NODE_BACKENDS),
             harvester=ENG.production_harvester(repo, github_runner=gh),
-            merge_processor=ENG.production_merge_processor(github_runner=gh),
+            merge_processor=ENG.production_merge_processor(github_runner=gh, repo_root=repo),
             worktree_processor=ENG.production_worktree_processor(repo),
             liveness_processor=ENG.production_liveness_processor(),
             cost_processor=ENG.production_cost_processor(repo),

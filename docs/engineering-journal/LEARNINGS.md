@@ -27,6 +27,36 @@
 
 ## 2026-07-14
 
+### A lint that parses its input differently from the consumer it guards is an evasion channel; parse with the consumer's semantics or fail closed {#lint-parser-semantics-divergence-422}
+
+**Context.** #422's tool-scope floor read agent `tools:` frontmatter through a hand-rolled
+scalar tokenizer (bracket-strip + comma-split + quote-strip) while the agent runtime resolves the
+same block with real YAML. Round 1 "closed" two punctuation evasions by normalizing two more
+forms — and shipped the claim that a mutating tool "can never hide behind valid-YAML punctuation."
+**Evidence.** PR #581 round-2 panel: at tip `f2e2ab6`, `tools: Read, Edit # innocuous note`
+passed the floor rc=0 (token `Edit # innocuous note` != `Edit`) while `yaml.safe_load` resolves
+the value to `Read, Edit`; same for a folded block scalar (`>-`) and a multi-line flow list. Two
+Fable panelists found the class independently.
+**Mechanism.** Any divergence between the guard's parser and the consumer's parser is, by
+definition, a representation the consumer accepts and the guard mis-reads — and YAML has an
+open-ended supply of them (comments, folding, anchors, flow forms). Enumerating normalizations
+can never close an open-ended class; each round of "handle one more form" just moves the frontier.
+**Fix.** `tools/agent_spec.py` now parses the whole frontmatter block with a
+`yaml.SafeLoader` subclass (duplicate-key-rejecting), so the lint sees exactly the values the
+runtime grants, then validates the resolved `tools:` value against exactly two recognized shapes
+(comma-separated bare-name string, or list of bare-name strings) — ANY other resolved type/shape
+is a blocking error. The guarantee is fail-closed by construction: unrecognized forms FAIL, they
+never pass unexamined.
+**Validation.** Red fixtures for comment-suffix, folded scalar, literal block, multi-line flow
+list, trailing comma, explicit-empty, and duplicate-key all block; the 36-file fleet stays green
+under the new parser with an unchanged warning count.
+**Generalizable rule.** A guard must read its input with the same semantics as the system it
+protects — reuse the consumer's parser if at all possible — and anything it cannot resolve must
+be a blocking error, never a pass. If you catch yourself enumerating evasions, the parser is
+wrong, not the enumeration.
+**Refs.** DECISIONS `#422` KTD2/KTD4 (corrected in the same round); the sibling entry below on
+the pre-#422 hyphen gap — same root shape, smaller blast radius.
+
 ### The two pre-#422 hand-rolled agent frontmatter parsers never matched hyphenated keys, so `role-tier:` silently never parsed {#frontmatter-parser-hyphen-gap-422}
 
 **Context.** #422's shared parser (`tools/agent_spec.py`) replaces the two independently

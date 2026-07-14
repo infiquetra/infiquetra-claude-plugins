@@ -14,7 +14,8 @@ All notable changes to this plugin are documented here.
   `security-reviewer`, `testing-reviewer`). None of these files declared a `tools:` field before
   this change, which meant every one of them would have failed the new repo-wide tool-scope-floor
   lint (`tools/agent_spec.py`, `.github/workflows/ci.yml`'s "Agent-file spec lint" step): a
-  review/verify-class agent must carry an explicit, non-mutating (`Edit`/`Write`-free) tool list.
+  review/verify-class agent must carry an explicit tool list free of direct file-mutation tools
+  (`Edit`/`Write`/`NotebookEdit`).
 - `Bash` is retained deliberately: these reviewers are handed artifact pointers and their own
   prompts (`security-reviewer.md`, `devils-advocate-reviewer.md`, `architecture-reviewer.md`)
   mandate dereferencing them by running
@@ -23,8 +24,9 @@ All notable changes to this plugin are documented here.
   (`plugins/team-execution/skills/team-execution/references/artifact-pointers.md`, which forbids
   substituting a raw `git diff` read) -- so dropping `Bash` would break the pointer-deref contract.
   The `tools:` frontmatter field IS the spawn-time roster a dispatcher reads to scope a leaf's
-  capabilities; the least-privilege floor here forbids only the mutating `Edit`/`Write` tools while
-  keeping the read + `Bash`-deref capabilities these reviewers require.
+  capabilities; the least-privilege floor here forbids only the direct file-mutation tools
+  (`Edit`/`Write`/`NotebookEdit`) while keeping the read + `Bash`-deref capabilities these
+  reviewers require -- the floor is "no direct file-mutation tools", not "read-only".
 - No `model:` pins changed -- all 10 already carried `model: opus`, which the new
   model-vs-role-class audit's `review` role class already permits.
 

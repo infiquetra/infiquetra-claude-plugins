@@ -6,7 +6,8 @@
 
 **KTD1 — placement: repo-root `tools/agent_spec.py`, not `plugins/saga/scripts/`.** The issue
 left this open for `/plan`'s call. Chosen `tools/` because the lint operates fleet-wide
-(`plugins/*/agents/*.md` across all 8 plugins), matches the existing repo-root governance
+(`plugins/*/agents/*.md` — 36 agent files across the 9 plugins that carry an `agents/`
+directory), matches the existing repo-root governance
 scripts that already work this way (`tools/release_surface_diff_guard.py`,
 `tools/stale_main_guard.py`, `tools/sha_stamp_stager.py` — none of them are saga-scoped), and
 avoids implying the lint is a saga runtime concern when it is a CI-time authored-contract check
@@ -17,10 +18,15 @@ over a plain repo-root script.
 **KTD2 — role classes are anchored in the existing `role-tier:` frontmatter vocabulary, not a
 new taxonomy.** `agent-role-classes.json`'s classes (`review`, `tester`, `scanner`, `survey`) map
 onto team-execution's already-existing `role-tier:` values (`adversarial-review`,
-`contract-test`, `mechanical-scan`) via `role_tier_aliases`; each class's own canonical name is
-also a valid `role-tier:` value (so a fixture, or a future real agent, can select a class
-directly — e.g. the `survey` class has no current fleet member but is directly selectable via
-`role-tier: survey`). Agents that carry no `role-tier:` field at all (the 4 PINNED_AGENTS
+`contract-test`, `mechanical-scan`) via `role_tier_aliases`. *(Corrected in the #581 round-2
+fix: an earlier version of this KTD claimed a class's own key was "directly selectable" as a
+`role-tier:` value. It is not — the dispatch consumer, `fleet_commons/tier_resolver.py`,
+resolves `role-tier:` exclusively through `ROLE_TIER_ALIASES`, and the class-key set is disjoint
+from it. The lint now accepts exactly the dispatch vocabulary, and
+`agent_spec.role_tier_vocabulary_drift()` — run on every CLI invocation, plus a dedicated test —
+fails the lint if the two alias tables ever diverge. The `survey` class is reserved: it has no
+dispatch alias yet, so no authored `role-tier:` value can reach it until an alias is added to
+both tables.)* Agents that carry no `role-tier:` field at all (the 4 PINNED_AGENTS
 ecosystem-callable agents, the `agy`/`codex` bridge agents, saga's `mechanical-executor`/
 `readonly-verifier`) are **out of scope for the model-role-class and tool-scope-floor rules** —
 they already have their own governance (`tests/test_agent_tiering.py::PINNED_AGENTS`,
@@ -34,7 +40,9 @@ set** ({#tier-vocab-ordering}). Each class declares `min_model` (weakest permitt
 `review` = `{opus}` only (min=max=opus, matching all 10 current `adversarial-review` pins);
 `tester` = `{opus, sonnet}` (min=sonnet, allows escalation to opus, matching all 8 current
 `contract-test` pins); `scanner`/`survey` = `{sonnet, haiku}` (max=sonnet, forbids opus/fable —
-this ceiling is what makes the issue's "survey agent pinned to opus" red-fixture scenario fail).
+this ceiling is what makes the issue's "survey agent pinned to opus" red-fixture scenario fail;
+since round 2 the fixture drives it through the dispatch-valid `mechanical-scan` alias plus an
+injected survey alias, because class keys are not authorable `role-tier:` values, per KTD2).
 No current fleet agent needed a `model:` correction — every existing role-tier pin already falls
 inside its class's range.
 
@@ -47,12 +55,13 @@ these reviewers dereference artifact pointers by running
 `plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py deref` via `Bash` (the
 "required verification path" per
 `plugins/team-execution/skills/team-execution/references/artifact-pointers.md`, and each reviewer's
-own prompt, e.g. `security-reviewer.md:44`, `devils-advocate-reviewer.md:51`,
+own prompt, e.g. `security-reviewer.md:45`, `devils-advocate-reviewer.md:52`,
 `architecture-reviewer.md:68`). The `tools:`
 frontmatter field IS the spawn-time capability roster a dispatcher reads to scope a leaf (the same
 mechanism saga's `readonly-verifier` uses to keep `tools: Bash, Read, Grep, Glob` so verifiers can
-run tests) — so the floor forbids only the mutating `Edit`/`Write` tools while retaining the
-`Bash`-deref path these reviewers require. This does not contradict
+run tests) — so the floor forbids only the direct file-mutation tools (`Edit`/`Write`/
+`NotebookEdit` since round 2) while retaining the `Bash`-deref path these reviewers require: the
+floor is "no direct file-mutation tools", not "read-only". This does not contradict
 `plugins/saga/references/sandbox-spawn-sites.md`'s "out-of-scope" table: that decision is about NOT
 routing team-execution through saga's `mutation_policy`/`workspace_isolation` sandbox mechanism, not
 about whether an authored `tools:` roster may exist, scope the spawn, and be CI-checked.

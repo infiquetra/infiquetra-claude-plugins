@@ -135,24 +135,59 @@ def test_role_class_match_passes(tmp_path: pathlib.Path) -> None:
     assert "model-role-class" not in _blocking_rule_ids(green)
 
 
-def test_survey_opus_mismatch_fails(tmp_path: pathlib.Path) -> None:
-    """A survey-class agent pinned to opus trips the audit (proves the rule isn't vacuous)."""
+def test_scanner_opus_mismatch_fails(tmp_path: pathlib.Path) -> None:
+    """A sonnet-max-class agent pinned to opus trips the audit (proves the ceiling isn't vacuous).
+
+    Uses `mechanical-scan` (the scanner class's dispatch alias) rather than the issue AC's
+    original `role-tier: survey` spelling: a class key is no longer a valid `role-tier:` value
+    (FIX-2 round 2 -- the lint vocabulary is pinned to dispatch's ROLE_TIER_ALIASES, and
+    `survey` has no dispatch alias yet). Scanner shares survey's max_model=sonnet ceiling, so
+    this exercises the same "pinned to opus must fail" scenario through a dispatch-valid tier.
+    """
     red = _write_agent_file(
         tmp_path,
-        "survey-agent",
-        {"name": "survey-agent", "role-tier": "survey", "model": "opus"},
+        "scan-agent",
+        {"name": "scan-agent", "role-tier": "mechanical-scan", "model": "opus"},
     )
     assert "model-role-class" in _blocking_rule_ids(red)
 
 
-def test_survey_sonnet_passes(tmp_path: pathlib.Path) -> None:
+def test_scanner_sonnet_passes(tmp_path: pathlib.Path) -> None:
     """The same fixture corrected to sonnet passes (asserts both directions)."""
     green = _write_agent_file(
         tmp_path,
-        "survey-agent",
-        {"name": "survey-agent", "role-tier": "survey", "model": "sonnet"},
+        "scan-agent",
+        {"name": "scan-agent", "role-tier": "mechanical-scan", "model": "sonnet"},
     )
     assert "model-role-class" not in _blocking_rule_ids(green)
+
+
+def test_survey_class_reachable_only_through_an_alias(tmp_path: pathlib.Path) -> None:
+    """The reserved `survey` class still audits correctly once an alias maps onto it.
+
+    The real tables carry no survey alias today (dispatch has none), so this drives the audit
+    through an injected policy -- proving the class config is live, not dead weight.
+    """
+    survey_policy = {
+        "survey": {
+            "role_tier_aliases": ["read-only-survey"],
+            "min_model": "haiku",
+            "max_model": "sonnet",
+            "is_review_class": False,
+        }
+    }
+    rules = [
+        agent_spec.Rule(
+            "model-role-class", True, agent_spec.make_model_role_class_check(survey_policy)
+        )
+    ]
+    red = _write_agent_file(
+        tmp_path,
+        "survey-agent",
+        {"name": "survey-agent", "role-tier": "read-only-survey", "model": "opus"},
+    )
+    record = agent_spec.load_agent(red)
+    assert any(v.rule_id == "model-role-class" for v in agent_spec.lint_agent(record, rules))
 
 
 def test_unknown_role_tier_is_not_this_rules_job(tmp_path: pathlib.Path) -> None:
@@ -239,14 +274,15 @@ def test_tiering_exempt_skips_effort_and_role_class_rules(tmp_path: pathlib.Path
 
 
 # ---------------------------------------------------------------------------
-# FIX-2: the tool-scope floor must not be evadable by valid-YAML punctuation.
-# The issue AC's LITERAL red fixture "tools: [Read, Edit]" (and the quoted-scalar
-# variant) must FAIL the floor, not sail through on a comma-split artifact.
+# FIX-2 (round 2): tools: values are resolved with REAL YAML semantics (yaml.safe_load --
+# what the runtime grants) and then strictly validated fail-closed. A mutating tool cannot
+# hide behind ANY valid-YAML authoring, because unrecognized forms are errors, not passes.
+# Red fixtures: every one of these MUST produce a blocking violation.
 # ---------------------------------------------------------------------------
 
 
 def test_tool_floor_flow_list_edit_fails(tmp_path: pathlib.Path) -> None:
-    """YAML flow-list form `tools: [Read, Edit]` must trip the floor (bracket-split evasion)."""
+    """YAML flow-list form `tools: [Read, Edit]` must trip the floor (resolves to a real list)."""
     red = _write_agent_file(
         tmp_path,
         "flowlist-reviewer",
@@ -261,7 +297,7 @@ def test_tool_floor_flow_list_edit_fails(tmp_path: pathlib.Path) -> None:
 
 
 def test_tool_floor_single_quoted_edit_fails(tmp_path: pathlib.Path) -> None:
-    """Single-quoted scalar `tools: 'Read, Edit'` must trip the floor (quote-strip evasion)."""
+    """Single-quoted scalar `tools: 'Read, Edit'` must trip the floor (YAML strips the quotes)."""
     red = _write_agent_file(
         tmp_path,
         "quoted-reviewer",
@@ -275,8 +311,187 @@ def test_tool_floor_single_quoted_edit_fails(tmp_path: pathlib.Path) -> None:
     assert "tool-scope-floor" in _blocking_rule_ids(red)
 
 
+def test_tool_floor_trailing_comment_edit_fails(tmp_path: pathlib.Path) -> None:
+    """`tools: Read, Edit # innocuous note` -- YAML strips the comment; the floor must see Edit.
+
+    The round-1 tokenizer produced the token `Edit # innocuous note` != `Edit` and passed;
+    the runtime's yaml.safe_load resolves the value to 'Read, Edit' and grants Edit.
+    """
+    red = _write_agent_file(
+        tmp_path,
+        "comment-reviewer",
+        {
+            "name": "comment-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "Read, Edit # innocuous note",
+        },
+    )
+    assert "tool-scope-floor" in _blocking_rule_ids(red)
+
+
+def test_tool_floor_folded_scalar_edit_fails(tmp_path: pathlib.Path) -> None:
+    """Folded block scalar `tools: >-\\n  Read, Edit` resolves to 'Read, Edit' -- must fail."""
+    red = _write_agent_file(
+        tmp_path,
+        "folded-reviewer",
+        {
+            "name": "folded-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": ">-\n  Read, Edit",
+        },
+    )
+    assert "tool-scope-floor" in _blocking_rule_ids(red)
+
+
+def test_tool_floor_literal_block_edit_fails(tmp_path: pathlib.Path) -> None:
+    """Literal block scalar `tools: |\\n  Read, Edit` resolves to 'Read, Edit\\n' -- must fail."""
+    red = _write_agent_file(
+        tmp_path,
+        "literal-reviewer",
+        {
+            "name": "literal-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "|\n  Read, Edit",
+        },
+    )
+    assert "tool-scope-floor" in _blocking_rule_ids(red)
+
+
+def test_tool_floor_multiline_flow_list_edit_fails(tmp_path: pathlib.Path) -> None:
+    """Multi-line flow list `tools: [Read,\\n  Edit]` resolves to a real list -- must fail."""
+    red = _write_agent_file(
+        tmp_path,
+        "multiline-reviewer",
+        {
+            "name": "multiline-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "[Read,\n  Edit]",
+        },
+    )
+    assert "tool-scope-floor" in _blocking_rule_ids(red)
+
+
+def test_tool_floor_block_list_edit_fails(tmp_path: pathlib.Path) -> None:
+    """Block-list form resolves to a real list; Edit in it must fail the floor (was previously
+    mis-reported as 'has no tools: frontmatter field')."""
+    text = (
+        "---\n"
+        "name: blocklist-reviewer\n"
+        "role-tier: adversarial-review\n"
+        "model: opus\n"
+        "tools:\n"
+        "  - Read\n"
+        "  - Edit\n"
+        "---\n\nbody\n"
+    )
+    path = tmp_path / "blocklist-reviewer.md"
+    path.write_text(text)
+    blocking = _blocking_rule_ids(path)
+    assert "tool-scope-floor" in blocking
+    # ...and the message names the mutating tool, not a bogus "no tools: field" claim.
+    record = agent_spec.load_agent(path)
+    floor_msgs = [
+        v.message for v in agent_spec.lint_agent(record) if v.rule_id == "tool-scope-floor"
+    ]
+    assert floor_msgs and "Edit" in floor_msgs[0]
+    assert "no `tools:` frontmatter field" not in floor_msgs[0]
+
+
+def test_tool_floor_trailing_comma_fails_closed(tmp_path: pathlib.Path) -> None:
+    """A trailing comma (`Bash, Read,`) is not a recognized form -- fails closed even though
+    no mutating tool is present (the guarantee is fail-closed, not enumerate-and-allow)."""
+    red = _write_agent_file(
+        tmp_path,
+        "trailing-comma-reviewer",
+        {
+            "name": "trailing-comma-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "Bash, Read,",
+        },
+    )
+    blocking = _blocking_rule_ids(red)
+    assert "tool-scope-floor" in blocking
+    assert "tools-shape" in blocking
+
+
+def test_tool_floor_explicit_empty_list_fails(tmp_path: pathlib.Path) -> None:
+    """`tools: []` on a review-class agent is a blocking authoring mistake, not a floor pass."""
+    red = _write_agent_file(
+        tmp_path,
+        "empty-roster-reviewer",
+        {
+            "name": "empty-roster-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "[]",
+        },
+    )
+    blocking = _blocking_rule_ids(red)
+    assert "tool-scope-floor" in blocking
+    assert "tools-shape" in blocking
+
+
+def test_tool_floor_valueless_tools_key_fails(tmp_path: pathlib.Path) -> None:
+    """A bare `tools:` key with no value resolves to None -- blocking, never treated as a list."""
+    red = _write_agent_file(
+        tmp_path,
+        "valueless-reviewer",
+        {
+            "name": "valueless-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "",
+        },
+    )
+    blocking = _blocking_rule_ids(red)
+    assert "tool-scope-floor" in blocking
+    assert "tools-shape" in blocking
+
+
+def test_duplicate_tools_key_is_blocking(tmp_path: pathlib.Path) -> None:
+    """Two `tools:` keys in one block: last-wins vs first-wins ambiguity means a consumer could
+    execute an unaudited roster -- strict parsing rejects the duplicate outright."""
+    text = (
+        "---\n"
+        "name: duplicate-reviewer\n"
+        "role-tier: adversarial-review\n"
+        "model: opus\n"
+        "tools: Bash, Read, Grep, Glob\n"
+        "tools: Read, Edit\n"
+        "---\n\nbody\n"
+    )
+    path = tmp_path / "duplicate-reviewer.md"
+    path.write_text(text)
+    assert "frontmatter-schema" in _blocking_rule_ids(path)
+
+
+def test_tools_shape_applies_fleet_wide(tmp_path: pathlib.Path) -> None:
+    """A malformed tools: value blocks even on a non-review-class agent (unaudited roster)."""
+    red = _write_agent_file(
+        tmp_path,
+        "malformed-scanner",
+        {
+            "name": "malformed-scanner",
+            "role-tier": "mechanical-scan",
+            "model": "haiku",
+            "tools": "Bash,, Read",
+        },
+    )
+    blocking = _blocking_rule_ids(red)
+    assert "tools-shape" in blocking
+    assert "tool-scope-floor" not in blocking  # scanner is not review-class
+
+
+# --- Green fixtures: the recognized authored forms must still pass -----------------
+
+
 def test_tool_floor_bracketed_benign_list_passes(tmp_path: pathlib.Path) -> None:
-    """A bracketed benign flow-list must still PASS (normalization isn't over-broad)."""
+    """A bracketed benign flow-list must still PASS (strictness isn't over-broad)."""
     green = _write_agent_file(
         tmp_path,
         "flowlist-clean-reviewer",
@@ -290,18 +505,69 @@ def test_tool_floor_bracketed_benign_list_passes(tmp_path: pathlib.Path) -> None
     assert "tool-scope-floor" not in _blocking_rule_ids(green)
 
 
-def test_parse_tool_list_normalizes_forms() -> None:
-    """Direct coverage of the normalizer across bare / bracketed / quoted forms."""
-    assert agent_spec._parse_tool_list("Read, Edit") == {"Read", "Edit"}
-    assert agent_spec._parse_tool_list("[Read, Edit]") == {"Read", "Edit"}
-    assert agent_spec._parse_tool_list("'Read, Edit'") == {"Read", "Edit"}
-    assert agent_spec._parse_tool_list('"Read, Edit"') == {"Read", "Edit"}
-    assert agent_spec._parse_tool_list("[Bash, Read, Grep, Glob]") == {
+def test_tool_floor_quoted_benign_scalar_passes(tmp_path: pathlib.Path) -> None:
+    """A double-quoted benign comma list must still PASS (YAML resolves the quotes away)."""
+    green = _write_agent_file(
+        tmp_path,
+        "quoted-clean-reviewer",
+        {
+            "name": "quoted-clean-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": '"Bash, Read, Grep, Glob"',
+        },
+    )
+    blocking = _blocking_rule_ids(green)
+    assert "tool-scope-floor" not in blocking
+    assert "tools-shape" not in blocking
+
+
+def test_tool_floor_block_list_benign_passes(tmp_path: pathlib.Path) -> None:
+    """A benign block list is a recognized form (list of plain strings) and passes."""
+    text = (
+        "---\n"
+        "name: blocklist-clean-reviewer\n"
+        "role-tier: adversarial-review\n"
+        "model: opus\n"
+        "tools:\n"
+        "  - Bash\n"
+        "  - Read\n"
+        "  - Grep\n"
+        "  - Glob\n"
+        "---\n\nbody\n"
+    )
+    path = tmp_path / "blocklist-clean-reviewer.md"
+    path.write_text(text)
+    blocking = _blocking_rule_ids(path)
+    assert "tool-scope-floor" not in blocking
+    assert "tools-shape" not in blocking
+
+
+def test_parse_tools_value_recognized_and_fail_closed_forms() -> None:
+    """Direct coverage of the strict normalizer: two recognized forms, everything else raises."""
+    assert agent_spec.parse_tools_value("Bash, Read, Grep, Glob") == [
         "Bash",
         "Read",
         "Grep",
         "Glob",
-    }
+    ]
+    assert agent_spec.parse_tools_value(["Read", "Grep"]) == ["Read", "Grep"]
+    assert agent_spec.parse_tools_value("NotebookEdit") == ["NotebookEdit"]
+
+    for bad in (
+        None,  # key present, no value
+        "",  # explicit-empty scalar
+        [],  # explicit-empty list
+        "Read, Edit,",  # trailing comma -> empty token
+        "Read,, Edit",  # empty token
+        "'Read', 'Edit'",  # embedded quotes survive YAML -> not bare names
+        {"Read": True},  # mapping
+        ["Read", ["Edit"]],  # nested list
+        ["Read", 3],  # non-string item
+        3,  # non-collection scalar
+    ):
+        with pytest.raises(agent_spec.ToolsValueError):
+            agent_spec.parse_tools_value(bad)
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +605,63 @@ def test_recognized_role_tier_passes_vocab_rule(tmp_path: pathlib.Path) -> None:
         },
     )
     assert "role-tier-vocab" not in _blocking_rule_ids(green)
+
+
+# ---------------------------------------------------------------------------
+# FIX-3 (round 2): the lint's role-tier vocabulary is the DISPATCH vocabulary.
+# A class key (review/tester/scanner/survey) is not dispatch-resolvable
+# (fleet_commons.tier_resolver resolves role-tier: only via ROLE_TIER_ALIASES),
+# so it must fail the vocab rule instead of linting green and failing at dispatch.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("class_key", ["review", "tester", "scanner", "survey"])
+def test_class_key_as_role_tier_fails_vocab_rule(class_key: str, tmp_path: pathlib.Path) -> None:
+    red = _write_agent_file(
+        tmp_path,
+        "classkey-agent",
+        {
+            "name": "classkey-agent",
+            "role-tier": class_key,
+            "model": "opus",
+            "tools": "Bash, Read, Grep, Glob",
+        },
+    )
+    assert "role-tier-vocab" in _blocking_rule_ids(red)
+
+
+def test_role_tier_vocab_matches_dispatch_aliases() -> None:
+    """Drift guard: the classified aliases in tools/agent-role-classes.json must be identical
+    to the dispatch path's ROLE_TIER_ALIASES (fleet_commons/tier_resolver.py) -- both ways."""
+    assert agent_spec.role_tier_vocabulary_drift() == []
+    policy = agent_spec.load_role_class_policy()
+    classified = {alias for cfg in policy.values() for alias in cfg.get("role_tier_aliases", [])}
+    assert classified == set(agent_spec.ROLE_TIER_ALIASES)
+
+
+def test_synthetic_role_tier_vocab_drift_is_detected() -> None:
+    """Both drift directions produce messages (proves the guard isn't vacuous)."""
+    # A lint-only alias dispatch cannot resolve:
+    lint_only = {
+        "review": {"role_tier_aliases": ["adversarial-review", "lint-only-alias"]},
+    }
+    msgs = agent_spec.role_tier_vocabulary_drift(lint_only)
+    assert any("lint-only-alias" in m and "not dispatch-resolvable" in m for m in msgs)
+    # A dispatch alias the lint leaves unclassified (empty policy -> every alias unclassified):
+    msgs = agent_spec.role_tier_vocabulary_drift({})
+    assert msgs and all("unclassified" in m for m in msgs)
+
+
+def test_cli_blocks_on_vocab_drift(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI fails the whole lint when the alias tables drift (blocking, not advisory)."""
+    drifted = tmp_path / "agent-role-classes.json"
+    drifted.write_text(
+        '{"review": {"role_tier_aliases": ["adversarial-review", "lint-only-alias"], '
+        '"min_model": "opus", "max_model": "opus", "is_review_class": true}}'
+    )
+    monkeypatch.setattr(agent_spec, "ROLE_CLASSES_PATH", drifted)
+    good = _write_agent_file(tmp_path, "plain-agent", {"name": "plain-agent", "model": "sonnet"})
+    assert agent_spec.main([str(good)]) == 1
 
 
 # ---------------------------------------------------------------------------

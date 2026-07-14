@@ -2,6 +2,47 @@
 
 ## 2026-07-14
 
+### Lifecycle regression harness: declarative fail-closed scenarios over production CLIs, throwaway clones, scheduled non-gating CI (#428)  {#lifecycle-regression-harness-shape-428}
+
+**Decision.** The end-to-end lifecycle regression harness (#428) is shaped as: (a) strict
+declarative scenario JSONs under `tests/lifecycle-fixture/scenarios/` (unknown key / unknown
+step-or-assertion kind / id-vs-stem mismatch = hard error, never ignored — fail closed); (b) an
+engine (`tests/lifecycle_harness.py`) whose steps drive only production code paths — the real
+`saga.py` / `execution_spec.py` / `outcome.py` CLIs as subprocesses with a throwaway fixture clone
+as cwd, and the real `outcome_worktrees.ensure_worktree`/`reap_worktree` wired to
+`git_worktree_ops` — no harness-local re-implementation of lifecycle behavior; (c) four canonical
+artifact-shape assertion families (`spec-json-valid`, `saga-log-append`, `gate-record`,
+`worktree-reclaimed`) whose failures carry frozen named-violation phrases (`"worktree still
+present: <path>"`, `"saga log missing entry"`, …), with one `test_seeded_failure_*` baseline
+control per family proving each green could have gone red; (d) a cron-scheduled
+`.github/workflows/lifecycle-regression.yml` separate from the PR-blocking `ci.yml` jobs, while
+the pytest surface (fast, hermetic, ~3s) also runs in the normal suite.
+
+**Rationale.** The issue's negative-space gap is behavioral: nothing ran the lifecycle machinery
+and inspected what it left on disk. Driving the production CLIs headlessly against a real (toy)
+git repo is the cheapest honest cut of "execute the skills" — deterministic, no model calls, no
+network — and the refute-panel lessons (fail closed; every pass needs a
+could-have-failed control; no unfalsifiable guarantee wording) are structural here, not bolted on.
+A load-bearing quirk: the acceptance criterion counts collected pytest node lines containing
+`scenario`, so exactly two test callables carry that substring and
+`test_collected_names_match_fixture_definitions` pins the invariant mechanically.
+
+**Rejected alternatives.** (1) Skip-by-default scenario tests gated on an env var only the
+scheduled job sets — the issue's own verification commands (`pytest … -k healthy_scenario`) would
+then skip, and a skip is not a pass. (2) Running scenarios against the in-tree
+`tests/lifecycle-fixture/` directly — lifecycle CLIs drop `docs/outcomes/…` and `.claude/saga/…`
+artifacts that would dirty parent porcelain; throwaway tmpdir clones (the `wiring_canary` pattern)
+keep runs independently attributable. (3) Actually invoking the skills through a live Claude
+session in CI — nondeterministic, costly, and the issue's executor profile scopes this to
+mechanical infrastructure; the production CLIs are the drivable seam the skills themselves call.
+
+**Revisit when.** The scenario set wants to grow past 5 (the deliberate v1 cap — retire or merge
+first), team-execution scenarios land (the issue defers them), or a scenario needs to observe a
+skill-level behavior with no CLI seam — that is the signal to build a headless skill driver rather
+than stretch the JSON vocabulary.
+
+---
+
 ### Delegation-proof artifact schema + two-guard CI gate for bridge plugins (#457)  {#delegation-proof-schema-457}
 
 **Decision.** Behavioral proof-of-execution for bridge-carrying plugins (today only `agy`) is

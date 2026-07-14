@@ -31,6 +31,10 @@ when_to_use: |
   - "create issues for all the capabilities in this objective"
   - "set up the issues for the platform launch objective"
 
+  Existing issue assignment to Team Mimir:
+  - "assign this issue to Mimir"
+  - "route this covered issue through Mimir intake"
+
   Prepared issue creation:
   - "create an issue from the brainstorm", "handoff the plan as an issue"
   - "create a CAMPPS issue from this text"
@@ -43,6 +47,17 @@ when_to_use: |
 Create and manage SDLC issues across Infiquetra repositories using the 5-type taxonomy.
 Handles type selection, template-guided creation, Hermes label application, and project board
 assignment.
+
+For an already-created issue that should enter Team Mimir, use the flow helper rather than adding
+the trigger by hand:
+
+```bash
+python3 sdlc_manager.py flow assign-mimir --repo <repo> --number <N>
+```
+
+The command reads Team Mimir's live exact-repository coverage and verifies open issue state,
+current GitHub authority, the existing `intake:mimir` label, mutation readback, and any live
+Objective project-field value. It never admits a repository or creates the trigger label.
 
 ## Script Location
 

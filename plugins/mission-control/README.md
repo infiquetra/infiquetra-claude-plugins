@@ -12,7 +12,7 @@ All operations run locally via the `gh` CLI, providing:
 - **Flow metrics** — cycle time, throughput, WIP age using GitHub timeline events
 - **Rollout tracking** — gap analysis and full SDLC deployment to any Infiquetra repo
 - **Milestone management** — create and track Objectives via GitHub Milestones
-- **Flow helpers** — `flow set-field` / `flow link-sub-issue` / `flow verify-label` / `flow validate-card` / `flow field-options` / `flow discover-project`. Operator-facing GraphQL + REST helpers for project field assignment, native sub-issue linking, self-healing label create, and card pre-flight validation
+- **Flow helpers** — `flow set-field` / `flow assign-mimir` / `flow link-sub-issue` / `flow verify-label` / `flow validate-card` / `flow field-options` / `flow discover-project`. Operator-facing GraphQL + REST helpers for project field assignment, covered Team Mimir intake, native sub-issue linking, self-healing label create, and card pre-flight validation
 
 ## Quick Start
 
@@ -226,6 +226,10 @@ python3 $SCRIPT flow field-options --project campps --field Objective
 
 # Resolve which project a repo maps to
 python3 $SCRIPT flow discover-project --repo athena-service
+
+# Assign an open issue in a live-covered repository to Team Mimir (idempotent)
+python3 $SCRIPT flow assign-mimir \
+    --repo mimir-pilot-claude-plugins --number 42
 
 # Link child as native sub-issue of parent (cross-repo, idempotent)
 python3 $SCRIPT flow link-sub-issue \

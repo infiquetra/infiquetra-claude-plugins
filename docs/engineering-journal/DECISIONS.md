@@ -2,6 +2,28 @@
 
 ## 2026-07-14
 
+### Team Mimir assignment is a fail-closed label transition over live exact coverage (#557) {#mimir-intake-assignment-557}
+
+**Decision.** Mission Control exposes one idempotent operator verb, `flow assign-mimir`, whose
+only mutation is adding the repository-owned `intake:mimir` label. Before that mutation it reads
+Team Mimir's coverage registry from authenticated GitHub `main`, requires one exact active entry
+whose events include `issues`, verifies the target is an open issue, verifies the current GitHub
+principal has triage-or-higher repository authority, and verifies the trigger label already
+exists. It then reads the issue back and reports the coverage route plus live Objective field
+values from project cards. Repeated calls with the label present perform no mutation or comment.
+
+**Rejected alternatives.** Owner-wide coverage or a default route (would bypass quarantine);
+creating the label or admitting the repository from Mission Control (moves policy ownership out of
+Team Mimir); a success comment or local ledger (duplicate state beyond GitHub's unique label);
+reading a local Team Mimir checkout (stale and machine-specific); PAT or environment-token support
+(forks the existing authenticated `gh` rail); treating write failures as success without readback.
+
+**Revisit when.** Team Mimir publishes a versioned intake API that replaces the label contract, or
+the coverage schema advances beyond `repository-coverage/v1` and Mission Control can consume that
+version without weakening exact-repository quarantine.
+
+---
+
 ### Posture renegotiation is one atomic verb over the existing vocabularies; merge/deploy gates are one-way; strand = andon, not a new stop surface (#433) {#outcome-posture-renegotiation-433}
 
 **Decision.** Mid-run posture renegotiation (#433) ships as ONE verb (`outcome repost`, engine

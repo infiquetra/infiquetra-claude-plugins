@@ -45,6 +45,11 @@ def _blocking_rule_ids(path: pathlib.Path) -> set[str]:
     return {v.rule_id for v in agent_spec.lint_agent(record) if v.blocking}
 
 
+def _warning_rule_ids(path: pathlib.Path) -> set[str]:
+    record = agent_spec.load_agent(path)
+    return {v.rule_id for v in agent_spec.lint_agent(record) if not v.blocking}
+
+
 # ---------------------------------------------------------------------------
 # Sanity: the glob must find files, or the full-fleet sweep is inert.
 # ---------------------------------------------------------------------------
@@ -231,3 +236,157 @@ def test_tiering_exempt_skips_effort_and_role_class_rules(tmp_path: pathlib.Path
     assert "model-role-class" not in blocking
     # frontmatter schema and tool-scope-floor are NOT exempted -- exemption covers only the
     # tier-appropriateness/warn-only rules, not schema or least-privilege.
+
+
+# ---------------------------------------------------------------------------
+# FIX-2: the tool-scope floor must not be evadable by valid-YAML punctuation.
+# The issue AC's LITERAL red fixture "tools: [Read, Edit]" (and the quoted-scalar
+# variant) must FAIL the floor, not sail through on a comma-split artifact.
+# ---------------------------------------------------------------------------
+
+
+def test_tool_floor_flow_list_edit_fails(tmp_path: pathlib.Path) -> None:
+    """YAML flow-list form `tools: [Read, Edit]` must trip the floor (bracket-split evasion)."""
+    red = _write_agent_file(
+        tmp_path,
+        "flowlist-reviewer",
+        {
+            "name": "flowlist-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "[Read, Edit]",
+        },
+    )
+    assert "tool-scope-floor" in _blocking_rule_ids(red)
+
+
+def test_tool_floor_single_quoted_edit_fails(tmp_path: pathlib.Path) -> None:
+    """Single-quoted scalar `tools: 'Read, Edit'` must trip the floor (quote-strip evasion)."""
+    red = _write_agent_file(
+        tmp_path,
+        "quoted-reviewer",
+        {
+            "name": "quoted-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "'Read, Edit'",
+        },
+    )
+    assert "tool-scope-floor" in _blocking_rule_ids(red)
+
+
+def test_tool_floor_bracketed_benign_list_passes(tmp_path: pathlib.Path) -> None:
+    """A bracketed benign flow-list must still PASS (normalization isn't over-broad)."""
+    green = _write_agent_file(
+        tmp_path,
+        "flowlist-clean-reviewer",
+        {
+            "name": "flowlist-clean-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "[Bash, Read, Grep, Glob]",
+        },
+    )
+    assert "tool-scope-floor" not in _blocking_rule_ids(green)
+
+
+def test_parse_tool_list_normalizes_forms() -> None:
+    """Direct coverage of the normalizer across bare / bracketed / quoted forms."""
+    assert agent_spec._parse_tool_list("Read, Edit") == {"Read", "Edit"}
+    assert agent_spec._parse_tool_list("[Read, Edit]") == {"Read", "Edit"}
+    assert agent_spec._parse_tool_list("'Read, Edit'") == {"Read", "Edit"}
+    assert agent_spec._parse_tool_list('"Read, Edit"') == {"Read", "Edit"}
+    assert agent_spec._parse_tool_list("[Bash, Read, Grep, Glob]") == {
+        "Bash",
+        "Read",
+        "Grep",
+        "Glob",
+    }
+
+
+# ---------------------------------------------------------------------------
+# FIX-3: a role-tier value present but not in agent-role-classes.json must be a
+# BLOCKING error -- a typo must not silently exempt an agent from the audit + floor.
+# ---------------------------------------------------------------------------
+
+
+def test_misspelled_role_tier_with_edit_fails_vocab_rule(tmp_path: pathlib.Path) -> None:
+    """A typo'd tier carrying Edit must fail role-tier-vocab (not sail through green)."""
+    red = _write_agent_file(
+        tmp_path,
+        "typo-reviewer",
+        {
+            "name": "typo-reviewer",
+            "role-tier": "adversarial-reveiw",  # deliberate typo
+            "model": "opus",
+            "tools": "Read, Edit",
+        },
+    )
+    blocking = _blocking_rule_ids(red)
+    assert "role-tier-vocab" in blocking
+
+
+def test_recognized_role_tier_passes_vocab_rule(tmp_path: pathlib.Path) -> None:
+    """The corrected spelling passes the vocab rule (asserts both directions)."""
+    green = _write_agent_file(
+        tmp_path,
+        "typo-reviewer",
+        {
+            "name": "typo-reviewer",
+            "role-tier": "adversarial-review",
+            "model": "opus",
+            "tools": "Bash, Read, Grep, Glob",
+        },
+    )
+    assert "role-tier-vocab" not in _blocking_rule_ids(green)
+
+
+# ---------------------------------------------------------------------------
+# FIX-4: --strict promotes the warn-only effort-presence rule to blocking.
+# ---------------------------------------------------------------------------
+
+
+def test_strict_flag_makes_effort_absence_blocking(tmp_path: pathlib.Path) -> None:
+    path = _write_agent_file(
+        tmp_path,
+        "no-effort-agent",
+        {"name": "no-effort-agent", "model": "sonnet"},
+    )
+    record = agent_spec.load_agent(path)
+
+    default_blocking = {v.rule_id for v in agent_spec.lint_agent(record) if v.blocking}
+    assert "effort-presence" not in default_blocking
+
+    strict_rules = agent_spec.build_default_rules(strict=True)
+    strict_blocking = {v.rule_id for v in agent_spec.lint_agent(record, strict_rules) if v.blocking}
+    assert "effort-presence" in strict_blocking
+
+
+def test_strict_cli_exits_nonzero_on_effort_absence(tmp_path: pathlib.Path) -> None:
+    path = _write_agent_file(
+        tmp_path,
+        "no-effort-agent",
+        {"name": "no-effort-agent", "model": "sonnet"},
+    )
+    assert agent_spec.main([str(path)]) == 0
+    assert agent_spec.main(["--strict", str(path)]) == 1
+
+
+# ---------------------------------------------------------------------------
+# FIX-5: a role-tiered agent with no model: emits a warn-only warning, not silence.
+# ---------------------------------------------------------------------------
+
+
+def test_role_tiered_agent_without_model_warns(tmp_path: pathlib.Path) -> None:
+    path = _write_agent_file(
+        tmp_path,
+        "modelless-reviewer",
+        {
+            "name": "modelless-reviewer",
+            "role-tier": "adversarial-review",
+            "tools": "Bash, Read, Grep, Glob",
+        },
+    )
+    assert "model-presence" in _warning_rule_ids(path)
+    # ...and it is NOT blocking (the tier audit is skipped, but with a signal, not silence).
+    assert "model-presence" not in _blocking_rule_ids(path)

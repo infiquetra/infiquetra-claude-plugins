@@ -10,7 +10,7 @@ description: |
 
   NOT for: general security concerns (security-reviewer); legal determinations (flags for legal review).
 role-tier: adversarial-review
-tools: Read, Grep, Glob
+tools: Bash, Read, Grep, Glob
 model: opus
 color: magenta
 ---

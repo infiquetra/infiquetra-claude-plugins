@@ -10,7 +10,7 @@ description: |
   NOT for: blocking on theoretical concerns; redesigning the solution; doing the security
   reviewer's job (auth/secrets); doing the architecture reviewer's job (patterns/conventions).
 role-tier: adversarial-review
-tools: Read, Grep, Glob
+tools: Bash, Read, Grep, Glob
 model: opus
 color: red
 ---

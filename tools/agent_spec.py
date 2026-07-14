@@ -12,19 +12,26 @@ Rule registry (see ``build_default_rules``):
    ``name:`` field matches the file stem.
 2. ``effort-presence`` (warn-only today; see ``docs/engineering-journal/DECISIONS.md`` for the
    flip-to-block condition) -- every agent file should eventually carry an ``effort:`` field.
-3. ``model-role-class`` (blocking) -- an agent's ``model:`` must fall within its declared role
+3. ``role-tier-vocab`` (blocking) -- a ``role-tier:`` value present in frontmatter must be a
+   recognized class or alias in ``agent-role-classes.json``. Guards against a typo'd tier silently
+   resolving to "no role class" and thereby escaping both the tier audit and the tool-scope floor.
+4. ``model-role-class`` (blocking) -- an agent's ``model:`` must fall within its declared role
    class's permitted tier range, per ``agent-role-classes.json`` (sibling file). Role class is
    resolved from the agent's ``role-tier:`` frontmatter value (the existing team-execution
    vocabulary, KTD7 in ``fleet_commons/tier_resolver.py``); agents with no ``role-tier:`` are not
    in scope for this rule (v1 does not invent a taxonomy for the ecosystem-callable agents
    already governed by ``tests/test_agent_tiering.py::PINNED_AGENTS``).
-4. ``tool-scope-floor`` (blocking) -- an agent whose role class is marked ``is_review_class`` in
+5. ``model-presence`` (warn-only) -- a role-tiered agent with no ``model:`` field is skipped by
+   the tier audit; this surfaces that skip as a warning instead of silence.
+6. ``tool-scope-floor`` (blocking) -- an agent whose role class is marked ``is_review_class`` in
    the policy fails unless its ``tools:`` frontmatter field is present and excludes ``Edit``/
-   ``Write``. Extends the same least-privilege posture saga's ``readonly-verifier`` already uses
-   operationally (``plugins/saga/references/sandbox-spawn-sites.md``) to team-execution's
-   review-class agents, as a CI-time authored-contract lint -- it does not route team-execution's
-   dispatch through the saga sandbox mechanism (team-execution runs `bypassPermissions` with no
-   per-leaf tool-restriction consumer; see the sandbox-spawn-sites.md "out-of-scope" table).
+   ``Write``. The ``tools:`` scalar is normalized (flow-list brackets, single/double quotes) so a
+   mutating tool cannot hide behind valid-YAML punctuation. Extends the same least-privilege
+   posture saga's ``readonly-verifier`` already uses operationally
+   (``plugins/saga/references/sandbox-spawn-sites.md``) to team-execution's review-class agents, as
+   a CI-time authored-contract lint -- it does not route team-execution's dispatch through the saga
+   sandbox mechanism (team-execution runs `bypassPermissions` with no per-leaf tool-restriction
+   consumer; see the sandbox-spawn-sites.md "out-of-scope" table).
 
 A ``tiering_exempt`` truthy frontmatter value (mirroring ``tests/test_agent_tier_lint.py``'s KTD6
 escape hatch) opts a file out of the ``effort-presence`` and ``model-role-class`` rules.
@@ -35,6 +42,8 @@ Usage::
                                                        # blocking violation
     python3 tools/agent_spec.py plugins/foo/agents/bar.md ...   # lint specific files
     python3 tools/agent_spec.py --report              # also print non-blocking warnings
+    python3 tools/agent_spec.py --strict              # promote `effort:` absence to blocking
+                                                       # (documented flip; not wired into CI today)
 """
 
 from __future__ import annotations
@@ -66,6 +75,32 @@ from fleet_commons.tier_palette import MODELS, model_rank  # noqa: E402
 FRONTMATTER_KEY_RE = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)")
 
 _MUTATING_TOOLS = frozenset({"Edit", "Write"})
+
+
+def _parse_tool_list(tools_raw: str) -> set[str]:
+    """Normalize a raw ``tools:`` scalar into a set of tool names.
+
+    Handles all three authored forms the tool-scope-floor rule must police, so a mutating tool
+    can never hide behind valid-YAML punctuation (#422 fix round):
+
+    * bare comma list -- ``Read, Grep, Glob``
+    * YAML flow-list form -- ``[Read, Edit]`` (surrounding ``[`` / ``]`` stripped before split)
+    * quoted scalar -- ``'Read, Edit'`` / ``"Read, Edit"`` (single AND double quotes stripped per
+      token, since ``parse_frontmatter`` only strips a surrounding double-quote pair off the whole
+      value and leaves single quotes intact)
+
+    Without this normalization, ``tools: [Read, Edit]`` splits into ``"[Read"`` and ``"Edit]"`` --
+    neither equals ``"Edit"`` -- so a review-class agent could carry ``Edit`` and pass the floor.
+    """
+    s = tools_raw.strip()
+    if s.startswith("[") and s.endswith("]"):
+        s = s[1:-1]
+    tokens: set[str] = set()
+    for raw in s.split(","):
+        token = raw.strip().strip("'\"").strip()
+        if token:
+            tokens.add(token)
+    return tokens
 
 
 # ---------------------------------------------------------------------------
@@ -172,8 +207,10 @@ def _check_effort_presence(agent: AgentRecord) -> list[str]:
         return []
     if "effort" not in agent.frontmatter:
         return [
-            "no `effort:` field in frontmatter (warn-only today -- see "
-            "docs/engineering-journal/DECISIONS.md for the flip-to-block condition)"
+            "no `effort:` field in frontmatter (warn-only today; blocks under `--strict`. "
+            "Flip condition: when the fleet-wide effort-warning count reaches zero, the CI "
+            "invocation gains `--strict` and this becomes blocking -- see "
+            "docs/engineering-journal/DECISIONS.md #422)"
         ]
     return []
 
@@ -227,6 +264,8 @@ def make_model_role_class_check(
             return []
         model = agent.frontmatter.get("model")
         if not model:
+            # No model to audit against -- the tier range cannot be checked. The skip itself is
+            # surfaced (warn-only) by the separate `model-presence` rule so it is never silent.
             return []
         cfg = resolved_policy[class_name]
         permitted = _permitted_models(cfg["min_model"], cfg["max_model"])
@@ -236,6 +275,71 @@ def make_model_role_class_check(
             return [
                 f"model `{model}` is not permitted for role class {class_name!r} "
                 f"(role-tier: {role_tier!r}); permitted tier(s): {ordered}"
+            ]
+        return []
+
+    return _check
+
+
+# --- Rule 3b: role-tier vocabulary (blocking) ------------------------------------
+
+
+def make_role_tier_vocab_check(
+    policy: dict[str, dict] | None = None,
+) -> Callable[[AgentRecord], list[str]]:
+    """A ``role-tier:`` value present in frontmatter must be a recognized class or alias.
+
+    Without this, an unrecognized ``role-tier:`` value (a typo like ``adversarial-reveiw``)
+    resolves to ``None`` in ``_resolve_role_class`` and silently exempts the agent from BOTH the
+    model-vs-role-class audit AND the tool-scope floor -- an agent could ship ``Edit``/``Write``
+    with a misspelled tier and pass CI green. This rule makes an out-of-vocabulary tier a blocking
+    error (#422 fix round).
+    """
+    resolved_policy = policy if policy is not None else load_role_class_policy()
+    lookup = _role_class_lookup(resolved_policy)
+
+    def _check(agent: AgentRecord) -> list[str]:
+        role_tier = agent.frontmatter.get("role-tier")
+        if not role_tier:
+            return []
+        if role_tier in lookup:
+            return []
+        allowed = sorted(lookup.keys())
+        return [
+            f"role-tier: {role_tier!r} is not a recognized value in "
+            f"tools/agent-role-classes.json (allowed role-tier values: {allowed}); an "
+            "unrecognized tier would silently skip both the tier audit and the tool-scope floor"
+        ]
+
+    return _check
+
+
+# --- Rule 3c: model presence on role-tiered agents (warn-only) -------------------
+
+
+def make_model_presence_check(
+    policy: dict[str, dict] | None = None,
+) -> Callable[[AgentRecord], list[str]]:
+    """Warn (never block) when a role-tiered agent has no ``model:`` field.
+
+    Previously ``make_model_role_class_check`` returned ``[]`` silently in this case, so a
+    role-tiered agent with no ``model:`` was skipped by the tier audit with zero signal. This
+    surfaces that skip as a warn-only warning (same channel as ``effort-presence``) instead of
+    silence (#422 fix round).
+    """
+    resolved_policy = policy if policy is not None else load_role_class_policy()
+    lookup = _role_class_lookup(resolved_policy)
+
+    def _check(agent: AgentRecord) -> list[str]:
+        if _is_exempt(agent):
+            return []
+        class_name = _resolve_role_class(agent, lookup)
+        if class_name is None:
+            return []
+        if not agent.frontmatter.get("model"):
+            return [
+                f"role-tiered agent (role class {class_name!r}) has no `model:` field, so the "
+                "model-vs-role-class tier audit is skipped for it (warn-only)"
             ]
         return []
 
@@ -265,7 +369,7 @@ def make_tool_scope_floor_check(
                 "but has no `tools:` frontmatter field (least-privilege floor requires an "
                 "explicit, non-mutating tool list)"
             ]
-        tools = {t.strip() for t in tools_raw.split(",") if t.strip()}
+        tools = _parse_tool_list(tools_raw)
         mutating = tools & _MUTATING_TOOLS
         if mutating:
             return [
@@ -277,12 +381,22 @@ def make_tool_scope_floor_check(
     return _check
 
 
-def build_default_rules(policy: dict[str, dict] | None = None) -> list[Rule]:
+def build_default_rules(policy: dict[str, dict] | None = None, strict: bool = False) -> list[Rule]:
+    """Build the rule registry.
+
+    ``strict=True`` promotes the warn-only ``effort-presence`` rule to blocking (the ``--strict``
+    CLI flag). This is the documented flip mechanism for the ``effort:`` grace period: when the
+    fleet-wide effort-warning count reaches zero, the CI invocation gains ``--strict`` and
+    ``effort:`` absence becomes blocking (see ``docs/engineering-journal/DECISIONS.md`` #422).
+    ``--strict`` is NOT wired into CI today.
+    """
     resolved_policy = policy if policy is not None else load_role_class_policy()
     return [
         Rule("frontmatter-schema", True, _check_frontmatter_schema),
-        Rule("effort-presence", False, _check_effort_presence),
+        Rule("effort-presence", strict, _check_effort_presence),
+        Rule("role-tier-vocab", True, make_role_tier_vocab_check(resolved_policy)),
         Rule("model-role-class", True, make_model_role_class_check(resolved_policy)),
+        Rule("model-presence", False, make_model_presence_check(resolved_policy)),
         Rule("tool-scope-floor", True, make_tool_scope_floor_check(resolved_policy)),
     ]
 
@@ -322,6 +436,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="also print non-blocking warnings (e.g. missing `effort:`)",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "promote the warn-only `effort:`-presence rule to blocking (the documented flip for "
+            "the `effort:` grace period; NOT wired into CI today)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     paths = [Path(p) for p in args.paths] if args.paths else iter_agent_paths()
@@ -329,10 +451,12 @@ def main(argv: list[str] | None = None) -> int:
         print("agent_spec: no agent files found", file=sys.stderr)
         return 1
 
+    rules = build_default_rules(strict=args.strict)
+
     blocking: list[str] = []
     warnings: list[str] = []
     for path in paths:
-        for violation in lint_agent(load_agent(path)):
+        for violation in lint_agent(load_agent(path), rules):
             line = f"{path}: [{violation.rule_id}] {violation.message}"
             (blocking if violation.blocking else warnings).append(line)
 

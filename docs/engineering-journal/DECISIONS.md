@@ -42,24 +42,41 @@ inside its class's range.
 `review` in v1), matching the non-goal's "v1 targets review/verify-class only."** This meant all
 10 team-execution `adversarial-review` agents needed a `tools:` field added (none had one before
 #422 — see `plugins/team-execution/CHANGELOG.md` 2.14.6) since an absent `tools:` fails the rule
-by design. This is a CI-time authored-contract addition only: team-execution's dispatch still
-runs `bypassPermissions` with no per-leaf tool-restriction consumer
-(`plugins/saga/references/sandbox-spawn-sites.md`'s "out-of-scope" table), so `tools:` is not
-newly *enforced* at spawn time by this change — it is now *lintable*. This does not contradict
-that out-of-scope table: that decision is about NOT routing team-execution through saga's
-`mutation_policy`/`workspace_isolation` sandbox mechanism, not about whether an authored `tools:`
-contract may exist and be CI-checked.
+by design. The added roster is `tools: Bash, Read, Grep, Glob` — `Bash` is retained deliberately:
+these reviewers dereference artifact pointers by running
+`plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py deref` via `Bash` (the
+"required verification path" per
+`plugins/team-execution/skills/team-execution/references/artifact-pointers.md`, and each reviewer's
+own prompt, e.g. `security-reviewer.md:44`, `devils-advocate-reviewer.md:51`,
+`architecture-reviewer.md:68`). The `tools:`
+frontmatter field IS the spawn-time capability roster a dispatcher reads to scope a leaf (the same
+mechanism saga's `readonly-verifier` uses to keep `tools: Bash, Read, Grep, Glob` so verifiers can
+run tests) — so the floor forbids only the mutating `Edit`/`Write` tools while retaining the
+`Bash`-deref path these reviewers require. This does not contradict
+`plugins/saga/references/sandbox-spawn-sites.md`'s "out-of-scope" table: that decision is about NOT
+routing team-execution through saga's `mutation_policy`/`workspace_isolation` sandbox mechanism, not
+about whether an authored `tools:` roster may exist, scope the spawn, and be CI-checked.
 
 **KTD5 — `effort:` absence stays warn-only via a `--report` flag, never a blocking exit code,
 per the issue's explicit non-goal** (no backfill in this capability). The CI step
 (`.github/workflows/ci.yml` "Agent-file spec lint") runs with `--report` so the 32 current
 warnings are visible in CI logs without ever failing the build on their account.
 
+**KTD6 — `effort:` warn→block flip has a concrete, implemented condition, not an open deferral.**
+`tools/agent_spec.py` ships a `--strict` flag that promotes the warn-only `effort-presence` rule to
+blocking. It is NOT wired into CI today (CI still runs `--report`), so the current 32 `effort:`
+warnings never fail the build. The documented flip condition: **when the fleet-wide effort-warning
+count reaches zero, the CI invocation gains `--strict` and `effort:` absence becomes blocking.**
+That ordering matters — flipping while warnings remain would fail the build on the very backlog the
+grace period exists to absorb; flipping once the count is zero makes the rule a ratchet that keeps
+new agent files from regressing without ever having blocked existing ones. The warn text
+(`_check_effort_presence`) points at this condition verbatim.
+
 **Rejected alternatives.** A single flat `permitted_models: [...]` set per class (rejected by
-KTD3's binding decision, since it invites an accidental gap/skip in the middle of the ladder). A
-`--strict` flag that also blocks on `effort:` absence (deferred — no flip-date is set yet;
-`docs/engineering-journal/LEARNINGS.md` and this file are the flip-condition's home when one is
-chosen).
+KTD3's binding decision, since it invites an accidental gap/skip in the middle of the ladder).
+Leaving the `--strict`/`effort:` flip fully deferred with no flip mechanism at all (rejected by
+KTD6 — the DoD requires a documented flip date/condition, so the flag exists now and the condition
+is written down, even though CI does not yet pass `--strict`).
 
 **Revisit when:** a real `role-tier: survey` (or any class beyond the current three team-execution
 aliases) agent is added to the fleet — verify its model pin against `survey`'s range still makes

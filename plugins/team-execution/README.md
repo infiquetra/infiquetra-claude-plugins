@@ -146,6 +146,7 @@ remediation loops, and final gate status.
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
 - `team-execution/skills/team-execution/references/external-engine-workers.md`
 - `team-execution/skills/team-execution/references/artifact-pointers.md`
+- `team-execution/skills/team-execution/references/andon-cord.md`
 
 ---
 

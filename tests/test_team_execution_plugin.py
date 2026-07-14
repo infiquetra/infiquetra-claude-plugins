@@ -61,7 +61,7 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
-    assert plugin_json["version"] == "2.14.6"  # least-privilege tools: on review agents (#422)
+    assert plugin_json["version"] == "2.15.0"  # worker-raised andon-cord stop-the-line lane (#372)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()

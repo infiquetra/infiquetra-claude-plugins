@@ -274,6 +274,7 @@ skills/plan/SKILL.md`). -->
 - `team-execution/skills/team-execution/references/worker-manifest.md`
 - `team-execution/skills/team-execution/references/external-engine-workers.md`
 - `team-execution/skills/team-execution/references/artifact-pointers.md`
+- `team-execution/skills/team-execution/references/andon-cord.md`
 ```
 
 Then submit the plan for approval. Do not start implementation during Phase A.
@@ -326,6 +327,15 @@ Workers execute approved tasks. Coordinate dependencies, keep work scoped to the
   writes the worker-exit manifest — the engine itself never joins wave scheduling or touches the
   working tree. Full protocol in
   `team-execution/skills/team-execution/references/external-engine-workers.md`.
+- **Andon-cord — worker-raised stop-the-line (#372):** any worker or reviewer that finds a
+  blocking problem (fabricated evidence, a wrong-direction build, an unsafe mutation) may raise an
+  `andon_halt` into the shared mid-run adjustment envelope (`.saga/adjustment-envelope.json`) via
+  `adjustment_envelope.raise_andon(...)`. At the next wave/tick boundary the coordinator polls the
+  envelope and, on a raised andon, **does not dispatch the next wave** and writes an operator-surface
+  HALT record. This is an additional, orthogonal halt path — it does **not** replace or weaken the
+  3-cycle consensus cap or the 3-loop remediation cap (an andon and an iteration-cap
+  "proceed-with-best-available" are distinct, coexisting outcomes). Full protocol in
+  `team-execution/skills/team-execution/references/andon-cord.md`.
 
 Each worker writes a provenance manifest at segment/unit exit — see
 `team-execution/skills/team-execution/references/worker-manifest.md` (attribution + disposition +,

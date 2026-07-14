@@ -2,6 +2,44 @@
 
 ## 2026-07-14
 
+### Mid-run adjustment envelope: one polled control file, four writers, fail-closed, reusing existing boundaries (#372)  {#midrun-adjustment-envelope-shape-372}
+
+**Decision.** The mid-run operator/worker control surface (#372) ships as **one** versioned JSON
+control file (`.saga/adjustment-envelope.json`, `adjustment_envelope.ENVELOPE_VERSION = 1`) that
+four writers share — operator `quiesce`, plan `pause_after`, worker/reviewer `andon_halt`, and
+operator `re-tier`/`add-reviewer`/`cancel`/`abort` amendments — never four separate files. The
+parser (`adjustment_envelope.parse`) **fails closed**: an unknown directive/key, missing required
+field, wrong version, unrecognized writer, or malformed file raises `EnvelopeError` and HALTs the
+run naming the token; an absent file means "proceed". It is polled at the **already-existing**
+boundaries — the `/outcome` `advance` tick (after the in-flight harvest drains, before dispatch)
+and the `/work` segment boundary — not a new standing poll loop. Poll precedence is `halt > drain
+> pause > proceed`, composing with the existing HALT-not-degrade stance
+(`{#outcome-backend-degrade-stance}`), not a second halt vocabulary. The reversible-mutation
+default (`undo_ledger.py`) is the load-bearing companion: registered reversible ops
+(`board_move`/`label_change`/`issue_edit`/`saga_branch`/`saga_pr`) proceed under
+act-log-inverse-notify while any op with no registered inverse falls back to the gated pause
+(`mutation_disposition` → `"pause"`) — that is what makes "only irreversibles pause by default"
+true rather than aspirational.
+
+**Rationale.** The four survivors are all "a durable surface the run polls for operator
+directives"; giving each its own file or a bespoke channel would multiply the poll sites and let
+the halt semantics diverge. Reusing the tick/segment boundary keeps the change additive and
+composable with HALT-not-degrade. `undo_ledger` is deliberately **gh-free** — it computes and
+records inverses; the mutation-owning subsystem (mission-control) replays gh writes — so
+`scripts/check_ownership_lanes.py` stays green (saga never calls `gh issue`/`gh project`).
+
+**Rejected alternatives.** (1) A file per writer — rejected by the issue's scope boundary (one
+schema, four writers). (2) A synchronous `AskUserQuestion`-style prompt — rejected: it silently
+auto-proceeds on timeout (theme-6 gate-primitive unreliability); a durable polled file never
+treats silence as consent. (3) Backfilling an inverse onto every fleet mutation — out of scope;
+only the R10 op set is registered in v1, and unregistered ops keep the gated pause.
+
+**Revisit when.** A second consumer needs authority binding on directives (v1 authenticates
+directive *shape*, not writer *authority* — the file is trusted because it lives in the run's
+private `.saga/` state); or when sibling #433 (`repost`/`set_intent` posture renegotiation) needs
+the pause-point primitives to carry campaign-posture amendments, at which point the amendment
+vocabulary here (`re-tier`/`resume_context`) may need to generalize.
+
 ### Lifecycle regression harness: declarative fail-closed scenarios over production CLIs, throwaway clones, scheduled non-gating CI (#428)  {#lifecycle-regression-harness-shape-428}
 
 **Decision.** The end-to-end lifecycle regression harness (#428) is shaped as: (a) strict

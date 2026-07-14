@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # exactly one ``BackendHaltError`` class regardless of how the engine is launched). The reconcile loop
 # catches ``outcome_dispatcher.BackendHaltError`` per leaf. outcome_dispatcher does NOT import this
 # module (it duck-types the request), so there is no import cycle.
+import adjustment_envelope  # noqa: E402  (the #372 mid-run control surface, polled per tick)
 import outcome_dispatcher  # noqa: E402
 import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 import outcome_store  # noqa: E402
@@ -552,6 +553,10 @@ class AdvanceResult:
     skipped_busy: bool = False  # coordinator lease held by another tick -> no-op (R13)
     ticks: int = 1
     status: dict[str, Any] = field(default_factory=dict)
+    adjustment: dict[str, Any] = field(
+        default_factory=dict
+    )  # #372: the mid-run adjustment-envelope poll decision that stopped dispatch, if any
+    # (action/surfaced/amendments); empty when the envelope was absent or said "proceed".
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -570,6 +575,7 @@ class AdvanceResult:
             "skipped_busy": self.skipped_busy,
             "ticks": self.ticks,
             "status": self.status,
+            "adjustment": self.adjustment,
         }
 
 
@@ -614,6 +620,8 @@ def advance(
     board_reader: Callable[[str], str] | None = None,
     issue_reader: Callable[[str], dict[str, str]] | None = None,
     project: str = "operations",
+    envelope_path: Path | None = None,
+    envelope_poll: Callable[[], adjustment_envelope.PollDecision] | None = None,
 ) -> AdvanceResult:
     """Run one (``loop=False``) or repeated (``loop=True``) reconcile ticks.
 
@@ -639,6 +647,23 @@ def advance(
     # a graph edit (which bumps the revision + re-closes the gate) is reflected on the next advance.
     dispatch_gate = gate_factory(spec, store) if gate_factory is not None else None
 
+    # #372: the mid-run adjustment-envelope poll. Reuses the EXISTING tick-quiescence boundary
+    # (no new poll loop): each tick re-reads the operator/worker control file so a quiesce, an
+    # andon_halt, or an unknown directive (fail-closed) stops dispatch after the in-flight harvest
+    # drains. A missing file polls "proceed". The poll is re-read every tick (not cached) so a
+    # directive written mid-run is seen on the very next tick.
+    if envelope_poll is not None:
+        _poll = envelope_poll
+    else:
+        _env_path = (
+            envelope_path
+            if envelope_path is not None
+            else adjustment_envelope.default_envelope_path(repo_root)
+        )
+
+        def _poll() -> adjustment_envelope.PollDecision:
+            return adjustment_envelope.poll(adjustment_envelope.load(_env_path))
+
     if not outcome_store.acquire_coordinator(store, holder, lease_ttl, now=now):
         return AdvanceResult(
             skipped_busy=True, ticks=0, status=status(repo_root, outcome_id, spec=spec, store=store)
@@ -660,6 +685,7 @@ def advance(
     worktree_runs: list[Any] = []
     liveness_runs: list[Any] = []
     cost_runs: list[Any] = []
+    adjustment_decision: dict[str, Any] = {}  # #372: set iff an envelope directive stops dispatch
     ticks = 0
     try:
         while True:
@@ -680,6 +706,29 @@ def advance(
                 # Reclaim any hung dispatched leaf as `stalled` (R31) BEFORE the frontier read so its
                 # downstream cascade is reflected this tick (R22).
                 liveness_runs.append(liveness_processor(spec, store))
+            # #372: poll the adjustment envelope at the tick boundary AFTER the in-flight harvest
+            # (so a quiesce drains the leaf that just completed) and BEFORE dispatch (so nothing new
+            # is handed out once stopped). A halting/draining/pausing decision — or a fail-closed
+            # EnvelopeError from an unrecognized directive — records the surfaced decision and breaks
+            # the loop; the in-flight leaves finish in their own worktrees, the coordinator dispatches
+            # nothing new, and status() below is the resume point. This composes with HALT-not-degrade
+            # (a halt here never dispatches on a lower rung; it just stops).
+            try:
+                decision = _poll()
+            except adjustment_envelope.EnvelopeError as exc:
+                adjustment_decision = {
+                    "action": "halt",
+                    "surfaced": [f"fail-closed: {exc}"],
+                    "amendments": [],
+                }
+                break
+            if decision.stops_dispatch:
+                adjustment_decision = {
+                    "action": decision.action,
+                    "surfaced": list(decision.surfaced),
+                    "amendments": list(decision.amendments),
+                }
+                break
             tick_dispatched, tick_halted, tick_gated, tick_degraded, tick_retriable = (
                 _reconcile_once(
                     repo_root,
@@ -774,6 +823,7 @@ def advance(
         drift=all_drift,
         ticks=ticks,
         status=status(repo_root, outcome_id, spec=spec, store=store),
+        adjustment=adjustment_decision,
     )
 
 

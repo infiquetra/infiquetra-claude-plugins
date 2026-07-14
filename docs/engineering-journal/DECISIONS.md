@@ -16,15 +16,17 @@ gates default to `gate`, and the SAME validation runs on a live `set-intent` fir
 (`validate_live_attach`; any dispatch record, either phase, makes the campaign live), with every
 accepted attach writing a `set-intent` trail entry — one rule, one trail, no second-verb side
 door. They are, honestly, recorded posture with no engine consumer until #449. (2) Overlap
-safety is `intent_revision` plus a dispatch-time posture snapshot on each leaf's `commit`
-dispatch record that INCLUDES the campaign envelope (`posture.intent`, `null` = envelope-less) —
-in-flight leaves finish under dispatch-time posture for dispatch AND completion (harvest /
-barrier_report evaluate implied closure checks against the dispatch-era envelope), pending
-leaves pick up the amendment — and a committed repost survives a concurrent tick structurally:
-`save_spec` is compare-and-swap on the load-time revision (`StaleSpecError`; the cost processor
-reloads-and-reapplies loudly) and the reconcile loop re-checks the on-disk revision per tick and
-per leaf before dispatching (the precisely-bounded residual sub-window is documented in
-`references/outcome-spec.md`, not claimed away). (3) A repost that would strand an in-flight
+safety is `intent_revision` plus a dispatch-time posture snapshot on each leaf's dispatch
+records — BOTH phases, the pre-dispatch `intent` record and the settled `commit` record, so the
+crash-after-intent window carries its era — that INCLUDES the campaign envelope
+(`posture.intent`, `null` = envelope-less): in-flight leaves finish under dispatch-time posture
+for dispatch AND completion (harvest / barrier_report evaluate implied closure checks against
+the dispatch-era envelope), pending leaves pick up the amendment — and a committed repost
+survives the demonstrated concurrent-tick clobber: `save_spec` is compare-and-swap on the
+load-time revision (`StaleSpecError`; the cost processor reloads-and-reapplies loudly) and the
+reconcile loop re-checks the on-disk revision per tick and per leaf before dispatching (the
+precisely-bounded residual sub-windows — the dispatch-side interleave AND `save_spec`'s own
+lockless check→write gap — are documented in `references/outcome-spec.md`, not claimed away). (3) A repost that would strand an in-flight
 `destructive` leaf's sandbox authorization — where in-flight fail-closed includes a bare
 intent-phase dispatch record (the TOCTOU window) — raises the EXISTING #372 stop surface (a
 `coordinator`-writer `andon_halt` via `raise_strand_halt`, append-once per `(writer, scope)`,

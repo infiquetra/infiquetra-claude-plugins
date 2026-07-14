@@ -2,6 +2,77 @@
 
 ## 2026-07-14
 
+### Delegation-proof artifact schema + two-guard CI gate for bridge plugins (#457)  {#delegation-proof-schema-457}
+
+**Decision.** Behavioral proof-of-execution for bridge-carrying plugins (today only `agy`) is
+enforced by one repo-root script, `scripts/check_delegation_proof.py`, with two separably
+testable modes wired as two jobs in a new `.github/workflows/delegation-integrity.yml`:
+`--mode version-gate` (a bridge plugin's `marketplace.json` version bump must ship a valid
+`delegation-proof.v1` artifact) and `--mode fleet-sweep` (every recorded proof/transcript is
+classified against the silent-no-op taxonomy). The set of bridge plugins and each one's genuine-run
+**discriminator regex** live in a declarative manifest, `marketplace/bridge_plugins.json` — add a
+plugin there to bring it under the gate, no code change (mirrors the `ownership_lanes.json` pattern
+from #431).
+
+**KTD1 — what counts as sufficient proof: a real recorded external-tool call, never the spawn-path
+name.** `LEARNINGS.md:293` (`#agy-delegate-silent-claude-fallback`) already disproved trusting the
+name of the spawn path: runs believed to be genuine `agy` delegation (#278/#279) made zero `agy`
+calls because the spawned teammate inherited Claude's full toolset and did the work itself. So a
+`delegation-proof.v1` artifact **verifies** only when: the schema and all required fields are
+present (`schema, plugin, version, run_id, bridge_command, external_tool_calls, actor`); the
+`bridge_command` matches the plugin's discriminator regex (a genuine `agy --model` invocation, not
+a label); `external_tool_calls` is non-empty (proves work, not a silent no-op); `actor` is non-empty
+(proves the write is attributable, not orphaned); and the proof chain is intact **fail-closed**:
+the attested `transcript` must resolve to a real file whose recomputed sha256 matches
+`transcript_sha256`. *(Corrected in the refute-panel fix round: the first cut compared hashes only
+when the attested file happened to exist, so a dangling reference verified cleanly — a demonstrated
+fail-open hole. Now a dangling reference, a hash with no file, a file with no hash, and a
+transcript-less proof — the distinct `unverifiable_proof` sweep category — each fail both modes,
+and a transcript-less proof does not satisfy the version gate. The artifact remains self-attested;
+`docs/delegation-proofs/README.md` carries the plain threat model.)*
+
+**KTD1a — fix-round hardening (refute panel).** Three further structural decisions from the same
+round: *(a)* `examples/` under the proofs directory is excluded from the enforcement surface
+entirely (never loaded as proofs, never swept as standalone transcripts) and the shipped example is
+version-pinned to `0.0.0-example` — a demonstrated probe had the example proof pre-attesting the
+reachable `agy` 0.4.0 version-gate bump. *(b)* The manifest's script-path discriminator alternative
+now requires an execution shape (`python`/`uv run` invoking the wrapper), so `cat`/`grep` of the
+bridge script no longer classifies as a genuine run. *(c)* The manifest's `proof_glob` field was
+**deleted as dead wiring** (declared, consumed by nothing — the journal dead-wiring rule requires a
+producer AND a consumer); proof-to-bridge scoping already flows from each proof's `plugin` field,
+which the sweep validates against the registered bridges, so a location glob added no signal.
+Standalone `.jsonl` transcripts under the proofs directory are swept by default (and CI passes
+`--transcripts-dir` explicitly), closing the untested standalone leg.
+
+**KTD2 — rejected alternatives.** *(a) Trusting the spawn-path name / a `bridge_delegated: true`
+label* — the exact failure `LEARNINGS.md:293` caught; a label is set by the same code path that can
+silently fall back. *(b) Folding the two guards into one undifferentiated check* — the grounding
+brief explicitly distinguishes F4-6 (per-PR version-bump gate) from F6-8 (broad per-run sweep); they
+have different triggers (`**/marketplace.json` vs recorded proof artifacts) and different failure
+surfaces, so they are two modes / two jobs, independently invocable (`--dry-run` smoke checks) and
+independently tested. *(c) Importing `plugins/agy/scripts/agy_delegate.classify_transcript`* — the
+gate is repo-root fleet governance that must not depend on one plugin's importability from CI; it
+re-implements the small transcript-grep with the same event-shape parsing but keys the discriminator
+off the manifest so it generalizes to any future bridge.
+
+**KTD3 — scope: no `agy` runtime behavior change, so no release-surface bump.** This PR only adds
+repo-root tooling (`scripts/`, `tests/`, `.github/`, `marketplace/bridge_plugins.json`,
+`docs/delegation-proofs/`) that inspects existing/future artifacts; it does not change what `agy`
+emits. Per CLAUDE.md step 6's own carve-out (and the issue's Release-Surface Checklist "if it does
+*not* touch `agy`'s runtime behavior … the plugin.json/marketplace/CHANGELOG items do not apply"),
+no `plugins/agy` version bump is required. A follow-up that makes `agy:delegate` *emit* a
+`delegation-proof.v1` artifact on every run would touch runtime behavior and would carry the bump.
+
+**Revisit when** a second bridge-carrying plugin ships (add it to `bridge_plugins.json` with its own
+discriminator and confirm the gate generalizes without code change), or when `agy` is made to emit
+proof artifacts natively (then wire the version-gate to require the emitted artifact and bump `agy`).
+
+**Refs.** `LEARNINGS.md` `#agy-delegate-silent-claude-fallback`; `#marketplace-drift` (structural
+layer this sits on); `{#external-engines-never-gatekeepers}` (#283 — this verifies a *claimed*
+delegation, it does not make `agy` a gatekeeper); DECISIONS `#lint-parser-semantics-divergence`
+sibling governance-gate pattern; `docs/delegation-proofs/README.md`.
+---
+
 ### Mutation canary: repo-root `tools/` script, data-driven registry, gitignored ephemeral log, scheduled workflow (#427)  {#mutation-canary-design-427}
 
 **KTD1 — placement: repo-root `tools/wiring_canary.py`, not inside a plugin.** The canary is a

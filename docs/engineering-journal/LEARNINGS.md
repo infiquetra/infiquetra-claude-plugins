@@ -27,6 +27,52 @@
 
 ## 2026-07-14
 
+### A behavioral CI gate must key its trust signal off recorded tool-call commands, not the label on the spawn {#delegation-proof-discriminator-457}
+
+**Context.** Building the delegation-integrity gate (#457) for bridge plugins, the whole design
+hinges on one question: what is trustworthy evidence that a delegated bridge *actually ran*?
+
+**Evidence.** `LEARNINGS.md` `#agy-delegate-silent-claude-fallback` (2026-06-29): transcript audits
+found runs labeled genuine `agy` delegation (#278/#279) that made **zero** `agy` calls — the spawned
+teammate inherited Claude's toolset and did the work itself. The only reliable discriminator was a
+transcript grep for a real `agy --model` Bash call. `scripts/check_delegation_proof.py` +
+`marketplace/bridge_plugins.json` operationalize exactly that: the manifest carries a per-plugin
+discriminator regex, and both the version-gate (`bridge_command` must match it) and the fleet-sweep
+(`external_tool_calls` in the transcript must match it) derive their verdict from recorded command
+strings, never from a `bridge_delegated: true`-style label.
+
+**Mechanism.** A label is written by the same code path that can silently fall back to Claude, so it
+carries zero independent signal. A recorded external-tool command is a *better* signal than a flag —
+but be precise about how much better: the proof artifact and its transcript are self-attested files
+written by the same toolchain that ran the delegation. The recorded-command check defends against
+accident, drift, and silent fallback (the run that *believed* it delegated), not against deliberate
+fabrication of a consistent proof + transcript pair. The threat model in
+`docs/delegation-proofs/README.md` says this plainly.
+
+**Fix.** Shipped in #457 (as hardened by the refute-panel fix round): two-mode gate, declarative
+bridge manifest, `delegation-proof.v1` schema whose validity requires a discriminator-matching
+`bridge_command`, non-empty `external_tool_calls`, a non-empty `actor`, and a **fail-closed** proof
+chain — the attested transcript must resolve to a real file whose recomputed sha256 matches
+`transcript_sha256`. A dangling reference, a hash with no file, a file with no hash, and a
+transcript-less proof (distinct `unverifiable_proof` sweep category) each fail both modes.
+
+**What surprised.** The first cut of the chain check was conditional — hashes were compared only
+*when the attested file happened to exist* — so a proof naming a phantom transcript with a bogus
+hash verified cleanly, and the shipped `examples/` proof sat inside the live enforcement surface
+pre-attesting a reachable version. A Fable refute-3 panel demonstrated both with running probes.
+A "chain" that skips its links when they are missing is not a chain; and example artifacts must be
+structurally excluded from the surface they document.
+
+**Generalizable rule.** When you add a CI guard against "did X actually happen," anchor the check on
+an artifact X *cannot avoid producing when it runs* (a recorded command, a written file, a signed
+receipt), not on a self-reported status field the failing path also controls. Then make every
+degraded evidence state a hard failure — a verifier that silently skips missing evidence is
+fail-open, and self-attested evidence should be labeled as such in the threat model.
+
+**Refs.** DECISIONS `{#delegation-proof-schema-457}`; `docs/delegation-proofs/README.md`;
+`LEARNINGS.md` `#agy-delegate-silent-claude-fallback`, `#marketplace-drift`.
+---
+
 ### A guard that never fails on today's clean tree cannot prove it still has teeth; mutate the invariant in a throwaway checkout and require RED {#mutation-canary-teeth-427}
 
 **Context.** #427 shipped `tools/wiring_canary.py` — a mutation canary over the fleet's drift

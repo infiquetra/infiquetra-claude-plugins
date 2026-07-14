@@ -1,0 +1,14 @@
+{
+  "schema": "delegation-proof.v1",
+  "plugin": "agy",
+  "version": "0.0.0-example",
+  "run_id": "example-0001",
+  "bridge_command": "python3 plugins/agy/scripts/agy_delegate.py --model 'Gemini 3.1 Pro (High)' -p 'implement the parser' --write-set src/parser.py",
+  "external_tool_calls": [
+    "python3 plugins/agy/scripts/agy_delegate.py --model 'Gemini 3.1 Pro (High)' -p 'implement the parser'"
+  ],
+  "actor": "agy:Gemini 3.1 Pro (High)",
+  "transcript": "examples/agy-genuine-example.transcript.jsonl",
+  "transcript_sha256": "88665056d10e02a1d3f2fc50522e61fa20342b931e1c88bda62c079df3d56818",
+  "note": "Illustrative, non-secret example documenting the delegation-proof.v1 schema. examples/ is EXCLUDED from the enforcement surface: the gate never loads proofs or transcripts from an examples/ subtree, and the version is pinned to the uncollidable 0.0.0-example so this artifact can never pre-attest a reachable plugin version (belt and suspenders). Real proofs land under docs/delegation-proofs/<plugin>/."
+}

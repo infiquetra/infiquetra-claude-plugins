@@ -37,6 +37,51 @@ applying #372's standalone `re-tier`/`add-reviewer` amendments through this path
 overlap machinery (so `AdvanceResult.adjustment.applied` can become true), or #449's envelope
 tokens land and the carried-forward approval provenance should bind to a real authority.
 
+---
+
+### #373 run-start dispatch posture: additive-optional v1 envelope fields, enforced by narrowing the existing seam, spend gate HALT-only and pre-backend (#373)  {#intent-dispatch-seam-shape-373}
+
+**Decision.** The #373 posture (`backends_permitted` / `degrade_policy` / `spend_envelope`)
+ships as three **OPTIONAL, additive keys of the canonical `IntentEnvelope` schema v1**
+(fleet-core `fleet_commons/intent_envelope.py`) — `SCHEMA_VERSION` stays 1, absent keys mean
+"not captured" and emit nothing, so every committed pre-#373 envelope round-trips
+byte-identical with unchanged meaning. Layered validation: fleet-core owns field SHAPE
+(type-strict, closed sub-schemas, `tier_ceiling` bound to `tier_palette.MODELS`);
+saga's `OutcomeSpec.validate` binds `backends_permitted` to `NODE_BACKENDS` (the spec house
+owns the executor vocabulary — the fleet schema does not import it). Enforcement lives at the
+existing seam: `outcome._reconcile_once` parses the posture once per pass and feeds it to the
+unchanged `degrade_decision` (effective menu = captured ∩ runtime per KTD9; unmet → HALT by
+default; `operator_away_one_rung` → the availability set is restricted to the immediate
+`DEGRADE_LADDER` rung, so at most one rung). The spend gate is **HALT-only and runs BEFORE any
+backend resolution** (`outcome_dispatcher.authorize_dispatch_spend` → typed `SpendHaltError`,
+deliberately NOT a `BackendHaltError` subclass), reading `outcome_costs.rollup` actuals in one
+per-pass snapshot; `Node.tier` (optional, ladder-validated) is the tier the ceiling ranks
+against. Authorized-while-strictly-below: actuals AT the ceiling exhaust the budget.
+
+**Rationale.** Bumping `SCHEMA_VERSION` to 2 under the exact-match validator would have
+force-invalidated every committed v1 envelope (issue bodies, started specs) — a forced
+migration AC7 forbids in spirit; additive-optional-within-v1 is the same convention
+`OutcomeSpec.intent` (#380) and `Node.sandbox` (#287) already use. Spend-before-backend makes
+"a spend denial never silently degrades" structural: an unauthorized leaf never reaches the
+degrade path at all. The distinct exception type keeps backend-unavailability handlers from
+swallowing spend denials.
+
+**Rejected alternatives.** (1) A second `Intent` dataclass on `OutcomeSpec` (the issue's
+fallback framing) — rejected: the canonical envelope already existed after #380 and its own
+docstring reserves the #373 field names; a second schema is exactly the drift the single-asker
+rule forbids. (2) `SCHEMA_VERSION = 2` with a v1→v2 migration shim — more machinery for zero
+semantic change; revisit when a key's MEANING changes. (3) Validating `backends_permitted`
+against the backend vocabulary in fleet-core — rejected: fleet-core would have to import (or
+mirror) saga's `NODE_BACKENDS`, inverting the dependency direction.
+
+**Revisit when.** #449's envelope-authorized merge needs tokens on the envelope (the next
+additive extension), or #433's mid-run renegotiation needs to AMEND a captured posture (today
+`set-intent` refuses to overwrite), or a leaf's tier stops being a single model name (e.g.
+model+effort pairs at the outcome seam) — at which point `Node.tier` and
+`spend_envelope.tier_ceiling` must grow together.
+
+---
+
 ### Mid-run adjustment envelope: one polled control file, four writers, fail-closed, reusing existing boundaries (#372)  {#midrun-adjustment-envelope-shape-372}
 
 **Decision.** The mid-run operator/worker control surface (#372) ships as **one** versioned JSON

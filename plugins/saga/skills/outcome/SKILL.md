@@ -116,6 +116,15 @@ lands. `merge` / `deploy_nonprod` record the operator's pre-declared ceremony po
 NOT create an autonomous write path — the reversibility certificate's merge/deploy GATE stands
 until #449's token-checked write class exists.
 
+The envelope's optional **dispatch-seam posture** (#373 — `backends_permitted`,
+`degrade_policy`, `spend_envelope`) is enforced inside every `advance` tick: the effective
+backend menu is captured ∩ runtime (`--host-capable`/`--workflow-available` stay the runtime
+half), an unmet backend HALTs by default and degrades **at most one rung** only under a
+captured `operator_away_one_rung`, and the spend envelope is a HALT-only pre-dispatch gate
+against the leaf-produced cost actuals — an over-ceiling or tier-escalating leaf surfaces a
+`spend-halt` receipt in `result.halted` and waits for explicit step-up (mid-run renegotiation
+is #433's contract). Full semantics: `plugins/saga/references/intent-envelope.md`.
+
 ## How a reconcile tick works (`advance`)
 
 1. Load the canonical spec (branch) and open the store (git-common-dir cache).

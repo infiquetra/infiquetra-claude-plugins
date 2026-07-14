@@ -207,6 +207,11 @@ class Node:
     destructive: bool = False
     guarantee_tags: list[str] = field(default_factory=list)
     degrade_policy: str = "none"
+    # The leaf's declared execution tier — a model name from the fleet ladder
+    # (``tier_palette.MODELS``), or "" when undeclared (#373). Read by the pre-dispatch
+    # spend-authorization gate against the spec intent's ``spend_envelope.tier_ceiling``;
+    # a tier-escalating leaf HALTs for step-up. Absent field emits no key (round-trip stable).
+    tier: str = ""
     timeout_seconds: int | None = None
     heartbeat_seconds: int | None = None
     depends_on: list[str] = field(default_factory=list)
@@ -256,6 +261,17 @@ class Node:
             raise OutcomeSpecError(
                 f"node {sid}: degrade_policy {self.degrade_policy!r} not in {DEGRADE_POLICIES}"
             )
+        if self.tier:
+            # #373: a declared tier must be on the fleet ladder so the spend gate can rank it
+            # — a typo'd tier fails validate BEFORE any dispatch, never a silent inert field.
+            # Lazy shim load mirrors the lazy intent_envelope import below (no I/O at import).
+            import fleet_commons_shim  # noqa: PLC0415  (sibling; deferred, mirrors intent import)
+
+            models = fleet_commons_shim.load("tier_palette").MODELS
+            if self.tier not in models:
+                raise OutcomeSpecError(
+                    f"node {sid}: tier {self.tier!r} not in the fleet tier ladder {models}"
+                )
         for label, value in (
             ("timeout_seconds", self.timeout_seconds),
             ("heartbeat_seconds", self.heartbeat_seconds),
@@ -302,6 +318,7 @@ class Node:
                 data.get("guarantee_tags"), where=where, field_name="guarantee_tags"
             ),
             degrade_policy=str(data.get("degrade_policy", "none")),
+            tier=str(data.get("tier", "")),
             timeout_seconds=_opt_int(data.get("timeout_seconds")),
             heartbeat_seconds=_opt_int(data.get("heartbeat_seconds")),
             depends_on=_str_list(data.get("depends_on"), where=where, field_name="depends_on"),
@@ -345,6 +362,9 @@ class Node:
         # profile-authored sandbox emits its expanded axes (canonical form, KTD1).
         if self.sandbox is not None:
             out["sandbox"] = self.sandbox.to_dict()
+        # Absent tier emits no key (#373) — same round-trip-stable convention as sandbox.
+        if self.tier:
+            out["tier"] = self.tier
         return out
 
 
@@ -502,11 +522,22 @@ class OutcomeSpec:
             import intent_envelope  # noqa: PLC0415  (sibling; deferred, mirrors outcome_costs)
 
             try:
-                intent_envelope.IntentEnvelope.from_dict(self.intent)
+                envelope = intent_envelope.IntentEnvelope.from_dict(self.intent)
             except intent_envelope.IntentEnvelopeError as exc:
                 raise OutcomeSpecError(
                     f"outcome {self.outcome_id}: invalid intent envelope: {exc}"
                 ) from exc
+            # #373: the fleet schema owns the SHAPE of ``backends_permitted``; THIS spec house
+            # owns the outcome executor vocabulary, so bind the captured set to NODE_BACKENDS
+            # here — an off-menu backend fails BEFORE any dispatch, never at the seam.
+            unknown_backends = [
+                b for b in (envelope.backends_permitted or ()) if b not in NODE_BACKENDS
+            ]
+            if unknown_backends:
+                raise OutcomeSpecError(
+                    f"outcome {self.outcome_id}: intent backends_permitted "
+                    f"{unknown_backends} not in the executor menu {NODE_BACKENDS}"
+                )
 
         # Acyclicity (Kahn). A cycle has no valid layering -> fail validate (R31).
         dependency_layers(self)

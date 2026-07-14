@@ -27,6 +27,29 @@
 
 ## 2026-07-14
 
+### Enforce a new policy by NARROWING the inputs to an existing decision mechanism, not by adding a second decision path {#narrow-inputs-not-second-mechanism-373}
+
+**Context.** #373 required the captured run-start posture to degrade "exactly one rung and never
+more" while the issue's out-of-scope explicitly forbade changing `degrade_decision` /
+`DEGRADE_LADDER` semantics — and the existing mechanism cascades to the *first available* lower
+rung (potentially two rungs when the immediate rung is missing). **Evidence.**
+`plugins/saga/scripts/outcome_dispatcher.py` `captured_degrade_decision` — it restricts the
+`available` set handed to the UNCHANGED `degrade_decision` to `{immediate DEGRADE_LADDER rung} ∩
+effective`, so the old mechanism can only ever pick that one rung or HALT ("no lower rung is
+available"); `tests/test_outcome_dispatcher.py::test_ac3_two_rung_unavailable_halts_never_cascades`
+plus the baseline control `test_ac3_baseline_legacy_path_still_cascades_without_a_captured_posture`
+proving legacy multi-rung behavior is untouched. **Mechanism.** A policy that is expressible as a
+*restriction of an input domain* (here: which backends count as available) composes with the
+existing decision function for free — every presence condition (attending / guarantee-bearing /
+side-effected → HALT) still decides identically, reasons/receipts stay uniform, and the
+out-of-scope "do not change the mechanism" constraint is honored *by construction* rather than by
+careful re-implementation. A parallel second decision path would have had to clone the presence
+conditions and would drift. **Generalizable rule.** Before writing a variant of an existing
+decision function to add a constraint, check whether the constraint is a restriction of one of its
+inputs — if it is, narrow the input at the call site and keep one mechanism.
+
+---
+
 ### Polling the adjustment envelope AFTER harvest but BEFORE dispatch is what makes "drain in-flight, dispatch nothing new" true {#adjustment-envelope-poll-placement-372}
 
 **Context.** #372's quiesce contract is "drain any in-flight leaf, dispatch no new work, surface a

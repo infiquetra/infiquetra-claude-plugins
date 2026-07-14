@@ -49,6 +49,7 @@ holds no authoritative in-memory DAG (R29):
 | `backend` | one of `NODE_BACKENDS` — the full executor menu (R6) |
 | `gated` / `risky` / `destructive` | risk flags that gate the degrade decision (U9) |
 | `guarantee_tags[]` / `degrade_policy` | the degrade contract (KTD9), enforced in the degrade path, **not** in `recompile_for_tier` |
+| `tier` | optional declared execution tier (#373) — a model name validated against the fleet ladder; read by the spend gate's tier-ceiling check (an escalating leaf HALTs for step-up); absent emits no key |
 | `timeout_seconds` / `heartbeat_seconds` | liveness budgets (R31); `null` = untimed (attended leaves) |
 | `depends_on[]` | dependency barriers — the DAG edges |
 | `leaf_saga_id` | the leaf saga this subplot dispatches to (set at dispatch) |

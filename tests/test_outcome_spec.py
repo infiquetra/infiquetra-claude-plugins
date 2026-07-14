@@ -711,3 +711,71 @@ def test_no_intent_does_not_gate_done(tmp_path: Path) -> None:
     assert outcome_orchestrator.harvest(
         spec, store=store, github_runner=_merged_pr_runner, repo_root=tmp_path
     ) == ["leaf"]
+
+
+# --------------------------------------------------------------------------- #373: Node.tier +
+# the intent's backends_permitted bound to the executor vocabulary at spec-validate time.
+
+
+def test_node_tier_round_trips_and_absent_emits_no_key() -> None:
+    """A declared tier round-trips; an undeclared tier emits NO key, so every pre-#373 node
+    spec round-trips byte-identical (the sandbox convention)."""
+    data = _valid_spec_dict()
+    data["nodes"][1]["tier"] = "sonnet"
+    spec = _spec(data)
+    spec.validate()
+    rebuilt = M.OutcomeSpec.from_json(spec.to_json())
+    rebuilt.validate()
+    assert rebuilt.node_by_id("build").tier == "sonnet"
+    assert "tier" in rebuilt.node_by_id("build").to_dict()
+    assert "tier" not in rebuilt.node_by_id("design").to_dict()
+    assert rebuilt.to_json() == spec.to_json()
+
+
+def test_node_tier_off_the_fleet_ladder_fails_validate() -> None:
+    """Fail closed before any dispatch: a typo'd tier cannot be ranked by the spend gate, so
+    it fails validate — never a silently inert field."""
+    data = _valid_spec_dict()
+    data["nodes"][0]["tier"] = "gpt-9"
+    spec = _spec(data)
+    with pytest.raises(M.OutcomeSpecError, match="tier ladder"):
+        spec.validate()
+
+
+def test_intent_backends_permitted_bound_to_executor_menu() -> None:
+    """The fleet schema owns the SHAPE of backends_permitted; THIS spec house binds it to
+    NODE_BACKENDS — an off-menu backend fails validate before any dispatch."""
+    import intent_envelope
+
+    data = _valid_spec_dict()
+    intent = intent_envelope.apply_answers({"run_mode": "attended"}).to_dict()
+    intent["backends_permitted"] = ["inline", "warp-drive"]
+    data["intent"] = intent
+    spec = _spec(data)
+    with pytest.raises(M.OutcomeSpecError, match="executor menu"):
+        spec.validate()
+
+    # Green control: an on-menu permitted set validates and round-trips intact.
+    intent["backends_permitted"] = ["inline", "team-execution"]
+    data["intent"] = intent
+    ok = _spec(data)
+    ok.validate()
+    rebuilt = M.OutcomeSpec.from_json(ok.to_json())
+    rebuilt.validate()
+    assert rebuilt.intent["backends_permitted"] == ["inline", "team-execution"]
+
+
+def test_intent_with_373_posture_round_trips_byte_identical() -> None:
+    """AC7 (capture half): a spec carrying the full #373 posture serializes deterministically
+    — serialize -> reparse -> reserialize is byte-identical."""
+    import intent_envelope
+
+    data = _valid_spec_dict()
+    intent = intent_envelope.apply_answers({"run_mode": "unattended"}).to_dict()
+    intent["backends_permitted"] = ["inline", "team-execution"]
+    intent["degrade_policy"] = "operator_away_one_rung"
+    intent["spend_envelope"] = {"tier_ceiling": "sonnet", "cost_ceiling_tokens": 250000}
+    data["intent"] = intent
+    spec = _spec(data)
+    spec.validate()
+    assert M.OutcomeSpec.from_json(spec.to_json()).to_json() == spec.to_json()

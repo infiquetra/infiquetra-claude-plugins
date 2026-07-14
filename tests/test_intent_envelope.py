@@ -641,3 +641,116 @@ def test_crlf_issue_body_extracts_identically(capsys: pytest.CaptureFixture[str]
     broken = body_crlf.replace('"unattended"', '"sideways"')
     error = sdlc_manager._intent_envelope_readiness_error(broken)
     assert error is not None and "Invalid intent envelope" in error
+
+
+# ---------------------------------------------------------------------------
+# #373: dispatch-seam posture fields — optional, additive, fail-closed — and the
+# HALT-only spend-authorization primitive the /outcome seam enforces.
+# ---------------------------------------------------------------------------
+
+
+def _envelope_373(**extra: Any) -> dict[str, Any]:
+    data: dict[str, Any] = ie.apply_answers({"run_mode": "attended"}).to_dict()
+    data.update(extra)
+    return data
+
+
+def test_373_fields_round_trip_and_absent_emits_no_key() -> None:
+    """The three #373 fields round-trip when captured, and a pre-#373 envelope emits NONE of
+    them — byte-identical round-trip, no forced migration (the AC7 envelope half)."""
+    bare = ie.apply_answers({"run_mode": "attended"}).to_dict()
+    assert not {"backends_permitted", "degrade_policy", "spend_envelope"} & set(bare)
+    assert ie.IntentEnvelope.from_dict(bare).to_dict() == bare
+
+    captured = ie.IntentEnvelope.from_dict(
+        _envelope_373(
+            backends_permitted=["inline", "team-execution"],
+            degrade_policy="operator_away_one_rung",
+            spend_envelope={"tier_ceiling": "sonnet", "cost_ceiling_tokens": 1000},
+        )
+    )
+    assert captured.backends_permitted == ("inline", "team-execution")
+    assert captured.degrade_policy == ie.INTENT_DEGRADE_ONE_RUNG
+    assert captured.spend_envelope is not None
+    assert captured.spend_envelope.tier_ceiling == "sonnet"
+    assert captured.spend_envelope.cost_ceiling_tokens == 1000.0
+    round_tripped = ie.IntentEnvelope.from_dict(captured.to_dict())
+    assert round_tripped.to_dict() == captured.to_dict()
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("backends_permitted", "inline"),  # a bare string is not a list
+        ("backends_permitted", [True]),  # a bool-coercible non-string entry is an error
+        ("backends_permitted", ["inline", 3]),
+        ("backends_permitted", []),  # an empty permitted set is an authoring error
+        ("backends_permitted", [""]),
+        ("backends_permitted", ["inline", "inline"]),  # duplicates are an error
+        ("degrade_policy", "one-rung"),  # off-vocabulary
+        ("degrade_policy", True),  # wrong type
+        ("spend_envelope", {}),  # an empty ceiling object is an authoring error
+        ("spend_envelope", {"tier_ceiling": "warp-9"}),  # off the fleet tier ladder
+        ("spend_envelope", {"cost_ceiling_tokens": True}),  # bool is not a number
+        ("spend_envelope", {"cost_ceiling_tokens": "1000"}),  # a numeric STRING is an error
+        ("spend_envelope", {"cost_ceiling_tokens": -5}),
+        ("spend_envelope", {"cost_ceiling_tokens": 0}),
+        ("spend_envelope", {"tier_ceiling": "sonnet", "surprise": 1}),  # closed sub-schema
+        ("spend_envelope", "sonnet"),  # not an object
+    ],
+)
+def test_373_fields_fail_closed_on_input_we_cannot_strictly_understand(
+    field_name: str, value: Any
+) -> None:
+    """Fail closed, never enumerate: a wrong type, off-vocabulary value, empty capture, or
+    unknown sub-key is an ERROR — never a silent no-op posture."""
+    with pytest.raises(ie.IntentEnvelopeError):
+        ie.IntentEnvelope.from_dict(_envelope_373(**{field_name: value}))
+
+
+def test_authorize_spend_under_ceiling_authorizes_and_over_denies() -> None:
+    """The cost gate's green needs its red control: strictly-below authorizes; at or past the
+    ceiling denies with a step-up reason (HALT-only — the reason never suggests a degrade)."""
+    spend = ie.SpendEnvelope.from_dict({"cost_ceiling_tokens": 1000})
+    under = ie.authorize_spend(spend, actual_tokens=999.9)
+    assert under.authorized
+
+    for actuals in (1000, 1000.0, 2500):
+        denied = ie.authorize_spend(spend, actual_tokens=actuals)
+        assert not denied.authorized
+        assert "step-up" in denied.reason and "degrade" in denied.reason
+
+
+def test_authorize_spend_tier_gate_denies_escalation_and_unrankable_tiers() -> None:
+    """The tier gate: within-ceiling passes; stronger-than-ceiling denies; an un-rankable tier
+    denies (fail closed — it cannot be proven within the ceiling)."""
+    spend = ie.SpendEnvelope.from_dict({"tier_ceiling": "sonnet"})
+    assert ie.authorize_spend(spend, requested_tier="sonnet").authorized  # at the ceiling is OK
+    assert ie.authorize_spend(spend, requested_tier="haiku").authorized  # weaker is OK
+    assert not ie.authorize_spend(spend, requested_tier="opus").authorized  # stronger denies
+    assert not ie.authorize_spend(spend, requested_tier="fable").authorized
+    off_ladder = ie.authorize_spend(spend, requested_tier="gpt-9")
+    assert not off_ladder.authorized and "fail closed" in off_ladder.reason
+
+
+def test_authorize_spend_unmeasured_inputs_do_not_engage_their_gate() -> None:
+    """No telemetry (None actuals) means nothing is measured against the cost ceiling — the
+    honest 'no data yet' state of a fresh run; an undeclared tier is not tier-escalating.
+    Both facts are self-attested-by-omission and documented in the module threat model."""
+    spend = ie.SpendEnvelope.from_dict({"tier_ceiling": "sonnet", "cost_ceiling_tokens": 100})
+    assert ie.authorize_spend(spend).authorized
+    assert ie.authorize_spend(spend, requested_tier="haiku").authorized
+
+
+def test_authorize_spend_rejects_wrong_typed_actuals_loudly() -> None:
+    """A bool / non-number / non-finite actual_tokens is a CALLER error and raises — never a
+    silent pass or a coerced comparison (even when the cost gate would not have engaged)."""
+    with_cost = ie.SpendEnvelope.from_dict({"cost_ceiling_tokens": 100})
+    tier_only = ie.SpendEnvelope.from_dict({"tier_ceiling": "sonnet"})
+    for bad in (True, False, "400", float("nan"), float("inf")):
+        with pytest.raises(ie.IntentEnvelopeError):
+            ie.authorize_spend(with_cost, actual_tokens=bad)
+        with pytest.raises(ie.IntentEnvelopeError):
+            ie.authorize_spend(tier_only, actual_tokens=bad)
+    with pytest.raises(ie.IntentEnvelopeError):
+        ie.authorize_spend(with_cost, requested_tier=7)  # wrong-typed tier is loud too

@@ -19,11 +19,17 @@ mission-control (issue-capture validation). saga re-exports this module through
 
 Vocabulary discipline: the schema is CLOSED at each ``SCHEMA_VERSION`` — an unknown
 top-level key, an off-vocabulary value, or a foreign schema version is an error,
-never a pass (fail closed, never enumerate-and-shrug). Extensions (#373's
-``backends_permitted`` / ``degrade_policy`` / ``spend_envelope``, #449's envelope
-tokens, #372/#433's mid-run amendment verbs) are made by EDITING this module and
-bumping ``SCHEMA_VERSION`` semantics here — never by consumers tolerating keys they
-do not understand.
+never a pass (fail closed, never enumerate-and-shrug). Extensions are made by
+EDITING this module — never by consumers tolerating keys they do not understand.
+#373 landed its extension here as OPTIONAL, additive keys of schema v1
+(``backends_permitted`` / ``degrade_policy`` / ``spend_envelope``): an absent key
+means "posture not captured" and every pre-#373 v1 envelope round-trips
+byte-identical with unchanged meaning, so no committed envelope is force-migrated.
+The closed-schema rule is unchanged — the three keys are now part of v1's closed
+key set, and anything outside it remains an error. Future extensions (#449's
+envelope tokens, #372/#433's mid-run amendment verbs) follow the same rule: edit
+here, additive-optional where the old meaning is preserved, version-bump where it
+is not.
 
 Threat model (read before trusting a field):
 
@@ -43,6 +49,16 @@ Threat model (read before trusting a field):
 * :func:`resolve_spend_action`'s ``approval_token`` is an opaque presence check
   (was an explicit operator approval supplied alongside the spend increase?) — it is
   not validated against an issuer or a revocation list in v1; #449 owns that.
+* The #373 dispatch-seam fields only ever NARROW what a dispatch may do relative to
+  the uncaptured default: ``backends_permitted`` intersects with (never extends) the
+  host's runtime-available set, ``degrade_policy`` restricts the existing
+  presence-conditional degrade to at most one ladder rung (or forbids it outright),
+  and ``spend_envelope`` adds a HALT-only pre-dispatch gate. None of them grants a
+  write path or capability the consumer did not already have.
+* :func:`authorize_spend` reads **leaf-produced, self-attested actuals** (the
+  ``outcome_costs`` ledger): a leaf that under-reports or never reports its cost is
+  not measured against the ceiling. The gate bounds honest spend drift; it is not a
+  defense against a lying leaf.
 
 No I/O at import; the only file the module reads is via the sibling tier registry
 (``tier_resolver`` -> ``tier_policy.json``), loaded lazily on first tier lookup.
@@ -51,6 +67,7 @@ No I/O at import; the only file the module reads is via the sibling tier registr
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 from collections.abc import Mapping
@@ -85,8 +102,35 @@ GATE_SETTINGS = (GATE, AUTO)
 CEREMONY_GATE_FIELDS = ("reviews_required", "merge", "deploy_nonprod")
 
 _ENVELOPE_KEYS = frozenset(
-    {"schema_version", "run_mode", "ceremony_gates", "source", "authored_at", "authored_by"}
+    {
+        "schema_version",
+        "run_mode",
+        "ceremony_gates",
+        "source",
+        "authored_at",
+        "authored_by",
+        # #373 dispatch-seam posture — optional additive keys of schema v1 (absent =
+        # "posture not captured"; every pre-#373 envelope round-trips byte-identical).
+        "backends_permitted",
+        "degrade_policy",
+        "spend_envelope",
+    }
 )
+
+# #373: the run-start degrade posture vocabulary (closed). Deliberately the SAME strings as
+# saga's per-node ``outcome_spec.DEGRADE_POLICIES`` axis so the operator learns one vocabulary:
+# ``halt`` — an unmet backend prerequisite always HALTs, never substitutes; ``operator_away_one_rung``
+# — the existing presence-conditional mechanism may degrade, but AT MOST one ladder rung
+# (never a silent cascade past the immediate rung). An uncaptured policy ("" / absent key)
+# means: when a backend posture is otherwise engaged, HALT by default.
+INTENT_DEGRADE_HALT = "halt"
+INTENT_DEGRADE_ONE_RUNG = "operator_away_one_rung"
+INTENT_DEGRADE_POLICIES = (INTENT_DEGRADE_HALT, INTENT_DEGRADE_ONE_RUNG)
+
+# #373: the spend-envelope sub-schema (closed keys). ``tier_ceiling`` is a model name from the
+# fleet tier ladder (``tier_palette.MODELS``); ``cost_ceiling_tokens`` is a cumulative
+# leaf-produced token budget. At least one must be set — an empty object is an authoring error.
+SPEND_ENVELOPE_FIELDS = ("tier_ceiling", "cost_ceiling_tokens")
 
 # Spend-posture vocabulary (T12-F3-7): machinery, not prose. The default posture names
 # how the run spends; the approval rule names when a spend increase needs the operator.
@@ -120,6 +164,10 @@ class PostureError(IntentEnvelopeError):
 
 def _tier_resolver() -> ModuleType:
     return fleet_commons_shim.load("tier_resolver")
+
+
+def _tier_palette() -> ModuleType:
+    return fleet_commons_shim.load("tier_palette")
 
 
 def _require_str(value: Any, *, where: str) -> str:
@@ -171,11 +219,123 @@ class CeremonyGates:
 
 
 @dataclass(frozen=True)
+class SpendEnvelope:
+    """The #373 run-start spend ceiling (T8-F5-7): a tier ceiling and/or a cost ceiling.
+
+    ``tier_ceiling`` is a model name from the ordered fleet ladder (``tier_palette.MODELS``);
+    a dispatch requesting a STRONGER model is tier-escalating. ``cost_ceiling_tokens`` is the
+    cumulative leaf-produced token budget; recorded actuals at or past it exhaust the budget.
+    At least one field must be set — capture a ceiling or omit the envelope, never an empty
+    object. Enforcement is HALT-only (:func:`authorize_spend`): an unauthorized dispatch halts
+    for explicit step-up, it never silently degrades to a cheaper tier.
+    """
+
+    tier_ceiling: str = ""
+    cost_ceiling_tokens: float | None = None
+
+    def validate(self, where: str = "spend_envelope") -> None:
+        if not self.tier_ceiling and self.cost_ceiling_tokens is None:
+            raise IntentEnvelopeError(
+                f"{where}: at least one of {list(SPEND_ENVELOPE_FIELDS)} must be set — "
+                f"capture a ceiling or omit the field, never an empty envelope"
+            )
+        if self.tier_ceiling:
+            models = _tier_palette().MODELS
+            if self.tier_ceiling not in models:
+                raise IntentEnvelopeError(
+                    f"{where}.tier_ceiling: {self.tier_ceiling!r} not in the fleet tier "
+                    f"ladder {models}"
+                )
+        if self.cost_ceiling_tokens is not None:
+            value = self.cost_ceiling_tokens
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) <= 0
+            ):
+                raise IntentEnvelopeError(
+                    f"{where}.cost_ceiling_tokens must be a finite number > 0, got {value!r}"
+                )
+
+    @classmethod
+    def from_dict(cls, data: Any, *, where: str = "spend_envelope") -> SpendEnvelope:
+        if not isinstance(data, Mapping):
+            raise IntentEnvelopeError(f"{where} must be an object, got {data!r}")
+        unknown = sorted(set(data) - set(SPEND_ENVELOPE_FIELDS))
+        if unknown:
+            raise IntentEnvelopeError(
+                f"{where}: unknown field(s) {unknown} — the spend-envelope vocabulary is "
+                f"closed ({list(SPEND_ENVELOPE_FIELDS)}); extend the schema here, never ad hoc"
+            )
+        raw_ceiling = data.get("cost_ceiling_tokens")
+        if raw_ceiling is not None and (
+            isinstance(raw_ceiling, bool) or not isinstance(raw_ceiling, (int, float))
+        ):
+            raise IntentEnvelopeError(
+                f"{where}.cost_ceiling_tokens must be a number or absent, got {raw_ceiling!r}"
+            )
+        envelope = cls(
+            tier_ceiling=_require_str(data.get("tier_ceiling", ""), where=f"{where}.tier_ceiling"),
+            cost_ceiling_tokens=float(raw_ceiling) if raw_ceiling is not None else None,
+        )
+        envelope.validate(where)
+        return envelope
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if self.tier_ceiling:
+            out["tier_ceiling"] = self.tier_ceiling
+        if self.cost_ceiling_tokens is not None:
+            out["cost_ceiling_tokens"] = self.cost_ceiling_tokens
+        return out
+
+
+def _backends_permitted_from(
+    value: Any, *, where: str = "backends_permitted"
+) -> tuple[str, ...] | None:
+    """Parse the #373 ``backends_permitted`` list — type-strict, fail closed.
+
+    ``None``/absent means "not captured" (dispatch-time availability resolution, exactly
+    today's behavior). When present it must be a non-empty list of unique, non-empty strings.
+    This module owns only the SHAPE; the backend VOCABULARY belongs to the consuming dispatch
+    seam (saga's ``outcome_spec.NODE_BACKENDS`` check at spec-validate time), because the
+    fleet schema does not own the outcome executor menu.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise IntentEnvelopeError(
+            f"{where} must be a list of backend names, got {type(value).__name__} {value!r}"
+        )
+    entries: list[str] = []
+    for i, item in enumerate(value):
+        name = _require_str(item, where=f"{where}[{i}]")
+        if not name:
+            raise IntentEnvelopeError(f"{where}[{i}]: backend name must be non-empty")
+        if name in entries:
+            raise IntentEnvelopeError(f"{where}: duplicate backend {name!r}")
+        entries.append(name)
+    if not entries:
+        raise IntentEnvelopeError(
+            f"{where}: an empty permitted set is an authoring error — capture at least one "
+            f"backend or omit the field (use the adjustment envelope to stop dispatch)"
+        )
+    return tuple(entries)
+
+
+@dataclass(frozen=True)
 class IntentEnvelope:
     """One committed run-start posture: run mode + pre-declared ceremony gates.
 
     ``source`` / ``authored_at`` / ``authored_by`` are self-attested provenance (see the
     module threat model) — carried for the audit trail, trusted for nothing.
+
+    The #373 dispatch-seam fields (``backends_permitted`` / ``degrade_policy`` /
+    ``spend_envelope``) are OPTIONAL: absent means "posture not captured" and the consuming
+    dispatch seam behaves exactly as it did before #373. When captured they only ever narrow
+    dispatch (see the module threat model) and are enforced at saga's ``/outcome`` seam
+    (``outcome_dispatcher`` + ``outcome._reconcile_once``), never here.
     """
 
     run_mode: str
@@ -184,6 +344,10 @@ class IntentEnvelope:
     source: str = ""
     authored_at: str = ""
     authored_by: str = ""
+    # #373 run-start dispatch posture (all optional; absent = not captured).
+    backends_permitted: tuple[str, ...] | None = None
+    degrade_policy: str = ""
+    spend_envelope: SpendEnvelope | None = None
 
     def validate(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
@@ -195,6 +359,13 @@ class IntentEnvelope:
         if self.run_mode not in RUN_MODES:
             raise IntentEnvelopeError(f"run_mode {self.run_mode!r} not in {RUN_MODES}")
         self.ceremony_gates.validate()
+        if self.degrade_policy and self.degrade_policy not in INTENT_DEGRADE_POLICIES:
+            raise IntentEnvelopeError(
+                f"degrade_policy {self.degrade_policy!r} not in {INTENT_DEGRADE_POLICIES} "
+                f"(or absent for 'not captured')"
+            )
+        if self.spend_envelope is not None:
+            self.spend_envelope.validate()
 
     @classmethod
     def from_dict(cls, data: Any) -> IntentEnvelope:
@@ -211,6 +382,7 @@ class IntentEnvelope:
         raw_version = data.get("schema_version", SCHEMA_VERSION)
         if not isinstance(raw_version, int) or isinstance(raw_version, bool):
             raise IntentEnvelopeError(f"schema_version must be an integer, got {raw_version!r}")
+        raw_spend = data.get("spend_envelope")
         envelope = cls(
             run_mode=_require_str(data["run_mode"], where="run_mode"),
             ceremony_gates=CeremonyGates.from_dict(data.get("ceremony_gates")),
@@ -218,6 +390,9 @@ class IntentEnvelope:
             source=_require_str(data.get("source", ""), where="source"),
             authored_at=_require_str(data.get("authored_at", ""), where="authored_at"),
             authored_by=_require_str(data.get("authored_by", ""), where="authored_by"),
+            backends_permitted=_backends_permitted_from(data.get("backends_permitted")),
+            degrade_policy=_require_str(data.get("degrade_policy", ""), where="degrade_policy"),
+            spend_envelope=SpendEnvelope.from_dict(raw_spend) if raw_spend is not None else None,
         )
         envelope.validate()
         return envelope
@@ -236,6 +411,14 @@ class IntentEnvelope:
             out["authored_at"] = self.authored_at
         if self.authored_by:
             out["authored_by"] = self.authored_by
+        # #373 posture fields emit only when captured, so every pre-#373 envelope
+        # round-trips byte-identical (the OutcomeSpec.intent / Node.sandbox convention).
+        if self.backends_permitted is not None:
+            out["backends_permitted"] = list(self.backends_permitted)
+        if self.degrade_policy:
+            out["degrade_policy"] = self.degrade_policy
+        if self.spend_envelope is not None:
+            out["spend_envelope"] = self.spend_envelope.to_dict()
         return out
 
     def to_json(self) -> str:
@@ -569,6 +752,125 @@ def resolve_spend_action(
         ACTION_PROCEED_INCREASE,
         False,
         f"attended run: spend increase approved by token {approval_token!r} (self-attested)",
+    )
+
+
+@dataclass(frozen=True)
+class SpendAuthorization:
+    """One pre-dispatch spend decision (#373 T8-F5-7): authorized or step-up-required.
+
+    ``authorized=False`` means the dispatch must HALT for explicit step-up authorization —
+    it is NEVER a degrade verdict (spend gating has no lower rung). The checked inputs are
+    echoed so the receipt/report can show exactly what was compared.
+    """
+
+    authorized: bool
+    reason: str
+    tier_ceiling: str = ""
+    cost_ceiling_tokens: float | None = None
+    requested_tier: str | None = None
+    actual_tokens: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "authorized": self.authorized,
+            "reason": self.reason,
+            "tier_ceiling": self.tier_ceiling,
+            "cost_ceiling_tokens": self.cost_ceiling_tokens,
+            "requested_tier": self.requested_tier,
+            "actual_tokens": self.actual_tokens,
+        }
+
+
+def authorize_spend(
+    spend: SpendEnvelope,
+    *,
+    actual_tokens: float | None = None,
+    requested_tier: str | None = None,
+) -> SpendAuthorization:
+    """The #373 pre-dispatch spend-authorization decision — pure, HALT-only, never a degrade.
+
+    * **Tier gate** (per leaf): with a ``tier_ceiling`` captured and a ``requested_tier``
+      declared, a tier STRONGER than the ceiling (``model_rank`` smaller — MODELS is
+      strongest-first) is denied; a tier not on the fleet ladder is denied (fail closed —
+      an un-rankable tier cannot be proven within the ceiling). A dispatch that declares
+      no tier is not tier-escalating and is not tier-gated.
+    * **Cost gate** (run-cumulative): with a ``cost_ceiling_tokens`` captured and recorded
+      ``actual_tokens`` supplied, dispatch is authorized only while actuals remain STRICTLY
+      below the ceiling — actuals at or past it exhaust the budget and deny. ``None``
+      actuals mean no telemetry has been recorded yet ("no data yet", the ``outcome_costs``
+      honesty stance): nothing is measured against the ceiling, so the cost gate does not
+      engage. Actuals are leaf-produced and self-attested (see the module threat model).
+
+    A wrong-TYPED ``actual_tokens`` (bool, non-number, NaN/inf) is a caller error and
+    raises — never a silent pass or a coerced comparison.
+    """
+    spend.validate()
+    if actual_tokens is not None and (
+        isinstance(actual_tokens, bool)
+        or not isinstance(actual_tokens, (int, float))
+        or not math.isfinite(float(actual_tokens))
+    ):
+        raise IntentEnvelopeError(
+            f"authorize_spend: actual_tokens must be a finite number or None, got {actual_tokens!r}"
+        )
+    if requested_tier is not None and not isinstance(requested_tier, str):
+        raise IntentEnvelopeError(
+            f"authorize_spend: requested_tier must be a string or None, got {requested_tier!r}"
+        )
+    if spend.tier_ceiling and requested_tier is not None:
+        palette = _tier_palette()
+        if requested_tier not in palette.MODELS:
+            return SpendAuthorization(
+                authorized=False,
+                reason=(
+                    f"requested tier {requested_tier!r} is not on the fleet tier ladder "
+                    f"{palette.MODELS} — it cannot be proven within the captured ceiling "
+                    f"{spend.tier_ceiling!r}; HALT for step-up authorization (fail closed)"
+                ),
+                tier_ceiling=spend.tier_ceiling,
+                cost_ceiling_tokens=spend.cost_ceiling_tokens,
+                requested_tier=requested_tier,
+                actual_tokens=actual_tokens,
+            )
+        if palette.model_rank(requested_tier) < palette.model_rank(spend.tier_ceiling):
+            return SpendAuthorization(
+                authorized=False,
+                reason=(
+                    f"tier-escalating dispatch: requested tier {requested_tier!r} is stronger "
+                    f"than the captured ceiling {spend.tier_ceiling!r} — HALT for explicit "
+                    f"step-up authorization, never a silent degrade to a lower tier"
+                ),
+                tier_ceiling=spend.tier_ceiling,
+                cost_ceiling_tokens=spend.cost_ceiling_tokens,
+                requested_tier=requested_tier,
+                actual_tokens=actual_tokens,
+            )
+    if (
+        spend.cost_ceiling_tokens is not None
+        and actual_tokens is not None
+        and float(actual_tokens) >= spend.cost_ceiling_tokens
+    ):
+        return SpendAuthorization(
+            authorized=False,
+            reason=(
+                f"over-ceiling dispatch: recorded leaf-produced actuals "
+                f"({float(actual_tokens):g} tokens) have reached the captured cost "
+                f"ceiling ({spend.cost_ceiling_tokens:g} tokens) — HALT for explicit "
+                f"step-up authorization, never a silent degrade"
+            ),
+            tier_ceiling=spend.tier_ceiling,
+            cost_ceiling_tokens=spend.cost_ceiling_tokens,
+            requested_tier=requested_tier,
+            actual_tokens=float(actual_tokens),
+        )
+    return SpendAuthorization(
+        authorized=True,
+        reason="within the captured spend envelope (checked against leaf-produced actuals)",
+        tier_ceiling=spend.tier_ceiling,
+        cost_ceiling_tokens=spend.cost_ceiling_tokens,
+        requested_tier=requested_tier,
+        actual_tokens=float(actual_tokens) if actual_tokens is not None else None,
     )
 
 

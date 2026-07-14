@@ -5,6 +5,26 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-07-14
+
+### Added
+- `intent_envelope.py` (#373): three OPTIONAL, additive schema-v1 fields on the canonical
+  `IntentEnvelope` — `backends_permitted` (a type-strict unique backend list; the consuming
+  dispatch seam owns the vocabulary), `degrade_policy` (closed vocabulary `halt` /
+  `operator_away_one_rung`; absent means "not captured" → HALT by default when a backend
+  posture is engaged), and `spend_envelope` (`SpendEnvelope`: `tier_ceiling` validated
+  against the fleet `tier_palette.MODELS` ladder and/or `cost_ceiling_tokens`, a finite
+  positive token budget; an empty object is an authoring error). Absent fields emit no keys,
+  so every pre-#373 v1 envelope round-trips byte-identical — no forced migration; the
+  closed-schema rule is unchanged (unknown keys still fail).
+- `authorize_spend(spend, *, actual_tokens, requested_tier)` (#373): the pure, HALT-only
+  pre-dispatch spend decision (`SpendAuthorization`) — a tier stronger than the ceiling or
+  actuals at/past the cost ceiling deny for explicit step-up; an un-rankable tier denies
+  (fail closed); wrong-typed actuals raise loudly. `None` actuals ("no data yet") and an
+  undeclared tier do not engage their gate — leaf-produced actuals are self-attested, and the
+  module threat model now says exactly that, plus the narrowing guarantee: the #373 fields
+  only ever narrow dispatch relative to the uncaptured default, never grant a write path.
+
 ## [0.10.0] - 2026-07-14
 
 ### Added

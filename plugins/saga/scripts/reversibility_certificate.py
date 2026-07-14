@@ -270,7 +270,7 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         inverse=None,
         abort_cost=None,
         always_operator=False,
-        key_recipe="merge-under-envelope:{outcome_id}:{subplot_id}:{pr}:{phase}",
+        key_recipe="merge-under-envelope:{outcome_id}:{subplot_id}:{pr}:{phase}:{token_id}",
     ),
 }
 

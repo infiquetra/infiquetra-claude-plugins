@@ -13,6 +13,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 TESTS_ROOT = Path(__file__).parent
 REPO_ROOT = TESTS_ROOT.parent
 SCRIPTS_ROOT = REPO_ROOT / "scripts"
@@ -435,3 +437,70 @@ def test_real_proofs_directory_excludes_examples_and_sweeps_clean() -> None:
         ]
     )
     assert rc == 0
+
+
+# --------------------------------------------- discriminator anchoring (round-3 hardening)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rg 'agy --model' docs/engineering-journal/LEARNINGS.md",
+        'grep -c "agy --model" transcript.jsonl',
+        "echo 'use agy --model X to delegate'",
+        "python3 -c \"print(open('plugins/agy/scripts/agy_delegate.py').read())\"",
+        "sed -n '1,50p' plugins/agy/scripts/agy_delegate.py",
+        "grep -n 'agy.*--model' plugins/agy/scripts/agy_delegate.py",
+    ],
+)
+def test_non_execution_mentions_are_not_bridge_runs(command: str) -> None:
+    """Panel red fixtures: quoted/read-only mentions of the bridge vocabulary must not
+    classify as genuine — a fallback teammate grepping the journal for 'agy --model'
+    (a string that literally appears there) is the realistic silent-fallback shape."""
+    text = "\n".join(
+        json.dumps(e)
+        for e in [
+            {"type": "tool_use", "tool_name": "Bash", "command": command},
+            {"type": "tool_use", "tool_name": "Edit"},
+        ]
+    )
+    findings = cdp.classify_transcript(text, _disc(), source="t")
+    assert any(f.category == "unrecorded_fallback" for f in findings), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'agy --model "Gemini 3.1 Pro (High)" -p "task"',
+        "cd /tmp/x && agy --model flash -p y",
+        "FOO=1 agy --model flash -p y",
+        "python3 plugins/agy/scripts/agy_delegate.py --task t",
+        "python3 /Users/someone/repo/plugins/agy/scripts/agy_delegate.py --task t",
+        "uv run python plugins/agy/scripts/agy_delegate.py --task t",
+        "uv run --frozen python3 plugins/agy/scripts/agy_delegate.py --task t",
+    ],
+)
+def test_genuine_execution_shapes_still_classify_genuine(command: str) -> None:
+    text = "\n".join(
+        json.dumps(e)
+        for e in [
+            {"type": "tool_use", "tool_name": "Bash", "command": command},
+            {"type": "tool_use", "tool_name": "Edit"},
+        ]
+    )
+    findings = cdp.classify_transcript(text, _disc(), source="t")
+    assert not any(f.category == "unrecorded_fallback" for f in findings), command
+
+
+def test_symlink_aliased_transcript_stays_on_the_sweep_surface(tmp_path: Path) -> None:
+    """A .jsonl visible at the enforcement root cannot be excluded from the standalone sweep
+    by symlinking it into examples/ — _in_examples judges the surface path, not the target."""
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "examples").mkdir(parents=True)
+    target = proofs_dir / "examples" / "noop.jsonl"
+    target.write_text("", encoding="utf-8")
+    (proofs_dir / "agy").mkdir()
+    alias = proofs_dir / "agy" / "alias.jsonl"
+    alias.symlink_to(target)
+    found = cdp.discover_standalone_transcripts(proofs_dir, exclude=set())
+    assert alias in found

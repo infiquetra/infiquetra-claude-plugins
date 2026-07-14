@@ -216,10 +216,16 @@ def _in_examples(path: Path, root: Path) -> bool:
 
     ``examples/`` is documentation, never enforcement surface: an example proof must not be able
     to satisfy the version gate, and example transcripts must not seed the fleet sweep.
+
+    Judged on the SURFACE path (as discovered under ``root``), never the symlink-resolved
+    target: a symlink visible at the enforcement root must stay on the enforcement surface even
+    if it points into ``examples/`` — otherwise aliasing could exclude a visible artifact from
+    the sweep. (Proof-attested transcripts get the opposite treatment: ``verify_proof`` checks
+    the RESOLVED path so attestation cannot escape the proofs directory via symlink.)
     """
 
     try:
-        rel = path.resolve().relative_to(root.resolve())
+        rel = path.absolute().relative_to(root.absolute())
     except ValueError:
         rel = path
     return "examples" in rel.parts
@@ -341,8 +347,23 @@ def verify_proof(proof: Proof, discriminator: re.Pattern[str], *, base_dir: Path
         transcript_path = (base_dir / transcript).resolve()
         if not transcript_path.exists():
             transcript_path = (proof.path.parent / transcript).resolve()
+        base_resolved = base_dir.resolve()
         if not transcript_path.exists():
             reasons.append(f"broken proof chain: attested transcript does not exist ({transcript})")
+        elif not transcript_path.is_relative_to(base_resolved):
+            # Attestation surface is the proofs directory, full stop. A proof may not vouch for
+            # arbitrary files on disk (../ traversal, absolute paths, symlinks resolving away).
+            reasons.append(
+                "broken proof chain: attested transcript resolves outside the proofs "
+                f"directory ({transcript})"
+            )
+        elif "examples" in transcript_path.relative_to(base_resolved).parts:
+            # The checked-in illustrative transcript's bytes and sha256 are public, so any
+            # hand-written proof could otherwise borrow it as a ready-made genuine-shaped run.
+            reasons.append(
+                "broken proof chain: attested transcript lives under examples/ — an "
+                f"illustrative artifact cannot back a real proof ({transcript})"
+            )
         elif not has_hash:
             reasons.append(
                 f"broken proof chain: transcript is attested ({transcript}) but "
@@ -354,6 +375,20 @@ def verify_proof(proof: Proof, discriminator: re.Pattern[str], *, base_dir: Path
                 reasons.append(
                     "broken proof chain: transcript_sha256 does not match the attested "
                     f"transcript ({transcript})"
+                )
+            else:
+                # Chain-valid is necessary but not sufficient: the attested CONTENT must itself
+                # evidence a genuine delegated run, or a proof attesting a zero-event / fallback
+                # transcript would back a version bump on the gate leg alone.
+                findings = classify_transcript(
+                    transcript_path.read_text(encoding="utf-8"),
+                    discriminator,
+                    source=transcript,
+                )
+                reasons.extend(
+                    "attested transcript does not evidence a genuine delegated run: "
+                    f"[{finding.category}] {finding.detail}"
+                    for finding in findings
                 )
     return reasons
 

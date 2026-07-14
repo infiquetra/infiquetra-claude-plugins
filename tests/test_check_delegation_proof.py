@@ -397,3 +397,98 @@ def test_workflow_wires_both_jobs_on_correct_paths() -> None:
     assert "delegation-proofs" in text
     # the sweep must run the standalone-transcript leg in CI (#457 fix round, FIX-C)
     assert "--transcripts-dir docs/delegation-proofs" in text
+
+
+# ------------------------------------------- attestation containment (round-3 hardening)
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_proof_borrowing_examples_transcript_fails(tmp_path: Path) -> None:
+    """Panel probe: the checked-in example transcript's bytes and sha256 are public, so a
+    live proof attesting it must fail the chain check — an illustrative artifact can never
+    back a real proof, no matter how valid the hash is."""
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "examples").mkdir(parents=True)
+    example_transcript = proofs_dir / "examples" / "genuine.jsonl"
+    example_transcript.write_text(
+        json.dumps(
+            {
+                "type": "tool_use",
+                "tool_name": "Bash",
+                "command": "agy --model 'Gemini 3.1 Pro (High)' -p 'do the task'",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (proofs_dir / "agy").mkdir()
+    _write_json(
+        proofs_dir / "agy" / "reuse.json",
+        _valid_proof(
+            "0.4.0",
+            transcript_rel="examples/genuine.jsonl",
+            transcript_sha=_sha(example_transcript),
+        ),
+    )
+    proofs = cdp.load_proofs(proofs_dir)
+    assert len(proofs) == 1
+    reasons = cdp.verify_proof(
+        proofs[0],
+        cdp.discriminator_for(cdp.load_manifest(REAL_MANIFEST), "agy"),
+        base_dir=proofs_dir,
+    )
+    assert any("examples/" in r for r in reasons), reasons
+
+
+def test_proof_attesting_out_of_tree_transcript_fails(tmp_path: Path) -> None:
+    """Attestation surface is the proofs directory: ../ traversal to a real file with a
+    matching hash is a broken chain, not a verified proof."""
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "agy").mkdir(parents=True)
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text(
+        json.dumps(
+            {
+                "type": "tool_use",
+                "tool_name": "Bash",
+                "command": "agy --model 'Gemini 3.1 Pro (High)' -p 'do the task'",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        proofs_dir / "agy" / "traversal.json",
+        _valid_proof("0.4.0", transcript_rel="../outside.jsonl", transcript_sha=_sha(outside)),
+    )
+    proofs = cdp.load_proofs(proofs_dir)
+    reasons = cdp.verify_proof(
+        proofs[0],
+        cdp.discriminator_for(cdp.load_manifest(REAL_MANIFEST), "agy"),
+        base_dir=proofs_dir,
+    )
+    assert any("outside the proofs directory" in r for r in reasons), reasons
+
+
+def test_chain_valid_proof_with_noop_transcript_fails(tmp_path: Path) -> None:
+    """Chain-valid is necessary but not sufficient: a proof attesting a zero-event transcript
+    (matching empty-bytes sha) must not verify — the attested CONTENT must itself evidence a
+    genuine delegated run, or the version gate alone would accept it."""
+    proofs_dir = tmp_path / "proofs"
+    (proofs_dir / "agy").mkdir(parents=True)
+    empty = proofs_dir / "agy" / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    _write_json(
+        proofs_dir / "agy" / "noop.json",
+        _valid_proof("0.4.0", transcript_rel="agy/empty.jsonl", transcript_sha=_sha(empty)),
+    )
+    proofs = cdp.load_proofs(proofs_dir)
+    reasons = cdp.verify_proof(
+        proofs[0],
+        cdp.discriminator_for(cdp.load_manifest(REAL_MANIFEST), "agy"),
+        base_dir=proofs_dir,
+    )
+    assert any("does not evidence a genuine delegated run" in r for r in reasons), reasons

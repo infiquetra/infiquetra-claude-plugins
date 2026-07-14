@@ -9,8 +9,10 @@ existing agent file, and the #325 fallback ladder is documented (Key Technical D
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import re
+import sys
 
 import pytest
 
@@ -29,25 +31,18 @@ SPAWN_CONTEXT_PATTERN = re.compile(
     r"(?:subagent_type|agentType)\s*[:=]\s*['\"]?saga:([a-zA-Z0-9_-]+)['\"]?"
 )
 
+# #422: the frontmatter parser is shared (tools/ is not an importable package, so we load it
+# the same way tests/test_release_rituals.py loads other tools/*.py modules).
+_AGENT_SPEC_PATH = REPO_ROOT / "tools" / "agent_spec.py"
+_spec = importlib.util.spec_from_file_location("agent_spec", _AGENT_SPEC_PATH)
+assert _spec is not None and _spec.loader is not None, f"Cannot load {_AGENT_SPEC_PATH}"
+_agent_spec = importlib.util.module_from_spec(_spec)
+# dataclasses.dataclass() looks its defining module up in sys.modules by name; register
+# before exec so tools/agent_spec.py's frozen dataclasses build cleanly.
+sys.modules[_spec.name] = _agent_spec
+_spec.loader.exec_module(_agent_spec)
 
-def _parse_frontmatter(text: str) -> dict[str, str]:
-    """Extract top-level YAML frontmatter key/value pairs from agent .md content.
-
-    Mirrors tests/test_agent_tiering.py's _parse_frontmatter — the repo's established
-    hand-rolled parser for agent files (scalar fields only, no block values).
-    """
-    if not text.startswith("---"):
-        return {}
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}
-    block = text[3:end]
-    result: dict[str, str] = {}
-    for line in block.splitlines():
-        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*):\s*(.*)", line)
-        if m:
-            result[m.group(1)] = m.group(2).strip().strip('"')
-    return result
+_parse_frontmatter = _agent_spec.parse_frontmatter
 
 
 def _saga_agent_files() -> list[pathlib.Path]:

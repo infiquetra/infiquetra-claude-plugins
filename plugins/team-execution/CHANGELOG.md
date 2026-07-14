@@ -4,6 +4,24 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.14.6] - 2026-07-14
+
+### Changed - least-privilege `tools:` on review-class agents for the new fleet-wide agent-file lint (#422)
+
+- Added `tools: Read, Grep, Glob` to the 10 `role-tier: adversarial-review` agent files
+  (`ai-usefulness-reviewer`, `api-reviewer`, `architecture-reviewer`, `clarity-reviewer`,
+  `code-quality-reviewer`, `devils-advocate-reviewer`, `infra-reviewer`, `privacy-reviewer`,
+  `security-reviewer`, `testing-reviewer`). None of these files declared a `tools:` field before
+  this change, which meant every one of them would have failed the new repo-wide tool-scope-floor
+  lint (`tools/agent_spec.py`, `.github/workflows/ci.yml`'s "Agent-file spec lint" step): a
+  review/verify-class agent must carry an explicit, non-mutating (`Edit`/`Write`-free) tool list.
+- This is a CI-time authored-contract change only -- team-execution's residents still run
+  `bypassPermissions` with no per-leaf tool-restriction consumer (see
+  `plugins/saga/references/sandbox-spawn-sites.md`'s "out-of-scope" table), so the `tools:`
+  field is not newly enforced at dispatch time by this change; it becomes lintable.
+- No `model:` pins changed -- all 10 already carried `model: opus`, which the new
+  model-vs-role-class audit's `review` role class already permits.
+
 ## [2.14.5] - 2026-07-12
 
 ### Changed - write-once pre-fix draft snapshot in the chaperone-dispatch path (#396)

@@ -1,5 +1,73 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-14
+
+### One agent-file CI lint: repo-root `tools/agent_spec.py`, role-tier-anchored role classes, floor-only scope for the tool guard (#422)
+
+**KTD1 — placement: repo-root `tools/agent_spec.py`, not `plugins/saga/scripts/`.** The issue
+left this open for `/plan`'s call. Chosen `tools/` because the lint operates fleet-wide
+(`plugins/*/agents/*.md` across all 8 plugins), matches the existing repo-root governance
+scripts that already work this way (`tools/release_surface_diff_guard.py`,
+`tools/stale_main_guard.py`, `tools/sha_stamp_stager.py` — none of them are saga-scoped), and
+avoids implying the lint is a saga runtime concern when it is a CI-time authored-contract check
+over every plugin, saga included. *Rejected:* `plugins/saga/scripts/agent_spec.py` — would need
+its own fleet-commons-style vendoring story to be importable from repo-root CI, for no benefit
+over a plain repo-root script.
+
+**KTD2 — role classes are anchored in the existing `role-tier:` frontmatter vocabulary, not a
+new taxonomy.** `agent-role-classes.json`'s classes (`review`, `tester`, `scanner`, `survey`) map
+onto team-execution's already-existing `role-tier:` values (`adversarial-review`,
+`contract-test`, `mechanical-scan`) via `role_tier_aliases`; each class's own canonical name is
+also a valid `role-tier:` value (so a fixture, or a future real agent, can select a class
+directly — e.g. the `survey` class has no current fleet member but is directly selectable via
+`role-tier: survey`). Agents that carry no `role-tier:` field at all (the 4 PINNED_AGENTS
+ecosystem-callable agents, the `agy`/`codex` bridge agents, saga's `mechanical-executor`/
+`readonly-verifier`) are **out of scope for the model-role-class and tool-scope-floor rules** —
+they already have their own governance (`tests/test_agent_tiering.py::PINNED_AGENTS`,
+their own hand-set `tools:` fields) and the issue's non-goal explicitly forbids inventing a
+taxonomy with no anchor in existing agent framing.
+
+**KTD3 — permitted model tiers per role class are a contiguous rank range, not an arbitrary
+set** ({#tier-vocab-ordering}). Each class declares `min_model` (weakest permitted) and
+`max_model` (strongest permitted); the permitted set is every model whose
+`fleet_commons.tier_palette.model_rank()` falls between the two ranks, inclusive. Concretely:
+`review` = `{opus}` only (min=max=opus, matching all 10 current `adversarial-review` pins);
+`tester` = `{opus, sonnet}` (min=sonnet, allows escalation to opus, matching all 8 current
+`contract-test` pins); `scanner`/`survey` = `{sonnet, haiku}` (max=sonnet, forbids opus/fable —
+this ceiling is what makes the issue's "survey agent pinned to opus" red-fixture scenario fail).
+No current fleet agent needed a `model:` correction — every existing role-tier pin already falls
+inside its class's range.
+
+**KTD4 — the tool-scope-floor rule targets exactly the `is_review_class: true` classes (only
+`review` in v1), matching the non-goal's "v1 targets review/verify-class only."** This meant all
+10 team-execution `adversarial-review` agents needed a `tools:` field added (none had one before
+#422 — see `plugins/team-execution/CHANGELOG.md` 2.14.6) since an absent `tools:` fails the rule
+by design. This is a CI-time authored-contract addition only: team-execution's dispatch still
+runs `bypassPermissions` with no per-leaf tool-restriction consumer
+(`plugins/saga/references/sandbox-spawn-sites.md`'s "out-of-scope" table), so `tools:` is not
+newly *enforced* at spawn time by this change — it is now *lintable*. This does not contradict
+that out-of-scope table: that decision is about NOT routing team-execution through saga's
+`mutation_policy`/`workspace_isolation` sandbox mechanism, not about whether an authored `tools:`
+contract may exist and be CI-checked.
+
+**KTD5 — `effort:` absence stays warn-only via a `--report` flag, never a blocking exit code,
+per the issue's explicit non-goal** (no backfill in this capability). The CI step
+(`.github/workflows/ci.yml` "Agent-file spec lint") runs with `--report` so the 32 current
+warnings are visible in CI logs without ever failing the build on their account.
+
+**Rejected alternatives.** A single flat `permitted_models: [...]` set per class (rejected by
+KTD3's binding decision, since it invites an accidental gap/skip in the middle of the ladder). A
+`--strict` flag that also blocks on `effort:` absence (deferred — no flip-date is set yet;
+`docs/engineering-journal/LEARNINGS.md` and this file are the flip-condition's home when one is
+chosen).
+
+**Revisit when:** a real `role-tier: survey` (or any class beyond the current three team-execution
+aliases) agent is added to the fleet — verify its model pin against `survey`'s range still makes
+sense once it's not just a fixture; or when the `effort:` warn-only grace period's flip condition
+is decided (a separate follow-up, not this capability).
+
+---
+
 ## 2026-07-13
 
 ### `/pulse` is a saga-resident read-only projection: status_card render, tri-state source honesty, beside-not-feeding `/optimize` (#400) {#pulse-live-telemetry-ktds-400}

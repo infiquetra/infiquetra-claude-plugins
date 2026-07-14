@@ -25,6 +25,48 @@
 
 ---
 
+## 2026-07-14
+
+### The two pre-#422 hand-rolled agent frontmatter parsers never matched hyphenated keys, so `role-tier:` silently never parsed {#frontmatter-parser-hyphen-gap-422}
+
+**Context.** #422's shared parser (`tools/agent_spec.py`) replaces the two independently
+hand-rolled `_parse_frontmatter` copies in `tests/test_agent_tiering.py` and
+`tests/test_agent_registration_drift.py`. Both used the same key regex,
+`^([a-zA-Z_][a-zA-Z0-9_]*):\s*(.*)`.
+
+**Evidence.** The new model-vs-role-class and tool-scope-floor rules read the `role-tier:`
+frontmatter field that 25 team-execution agent files already carry (e.g.
+`plugins/team-execution/agents/api-reviewer.md:11`). Ported verbatim, the rules silently never
+fired: every fixture test asserting a rule should trip on a mistiered fixture failed with an
+empty violation set, and a full-fleet run reported zero violations even against files
+constructed to be obviously wrong. The `[a-zA-Z0-9_]*` key charclass has no `-`, so a line like
+`role-tier: adversarial-review` was invisible to `_parse_frontmatter` under both pre-#422
+copies — the regex only ever matched the *value* side correctly; the *key* silently dropped out
+of the returned dict, and no caller anywhere had previously read `role-tier` through this parser
+to notice.
+
+**Mechanism.** Nothing before #422 needed `_parse_frontmatter` to see `role-tier:` --
+`test_agent_tiering.py` only reads `model` and `tiering_exempt`; `test_agent_registration_drift.py`
+only reads `name`. team-execution's own `role-tier:` convention is consumed by a *different* code
+path (`fleet_commons/tier_resolver.py`'s `ROLE_TIER_ALIASES`, at dispatch time, via its own
+lookup — never through this markdown-frontmatter regex). Two independently-correct-for-their-own-
+callers parsers coexisted with a shared blind spot neither caller's test suite could see.
+
+**Fix.** `tools/agent_spec.py`'s `FRONTMATTER_KEY_RE` widens the key charclass to
+`[a-zA-Z0-9_-]*`, additive and backward-compatible (every existing underscore/alnum key still
+matches identically).
+
+**Generalizable rule.** When consolidating two independently-evolved copies of the "same" parser
+into one shared module, don't just diff them for logic drift -- write a red-fixture test that
+exercises every field the *new* caller needs, even fields neither original caller happened to
+read. Two copies passing their own tests is not evidence the shared logic is complete; it's only
+evidence it was sufficient for the callers that already existed.
+
+**Refs.** `tools/agent_spec.py`, `tests/test_agent_spec_lint.py` (the fixture tests that caught
+this before merge). Capability #422.
+
+---
+
 ## 2026-07-13
 
 ### A wave-3 issue's "verified absent today" claims go stale as the wave-2 spine lands — re-verify at plan time and re-scope to gap closure  {#stale-absence-claims-rescope-459}

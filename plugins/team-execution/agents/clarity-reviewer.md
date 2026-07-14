@@ -12,6 +12,7 @@ description: |
 
   NOT for: copy editing or grammar (focuses on meaning and structure); code quality.
 role-tier: adversarial-review
+tools: Read, Grep, Glob
 model: opus
 color: cyan
 ---

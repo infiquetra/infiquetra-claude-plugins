@@ -12,6 +12,7 @@ description: |
   NOT for: dumbing down content; general documentation quality (clarity-reviewer).
   Focus: making specs structured and explicit for AI consumption.
 role-tier: adversarial-review
+tools: Read, Grep, Glob
 model: opus
 color: yellow
 ---

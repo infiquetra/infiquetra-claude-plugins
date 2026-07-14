@@ -63,6 +63,45 @@ def _no_live_gh(request, monkeypatch):
     monkeypatch.setattr(_sp, "run", _guard)
 
 
+# --- #458 T11-F4-7: boundary-crossing test convention ---
+# The generalizable rule from LEARNINGS {#test-shape-masks-dead-wiring-291}: "A round-trip test only
+# proves the round-trip if the consumer reads from the boundary it claims to validate." This helper
+# makes that read explicit — see docs/testing/boundary-crossing-convention.md.
+
+
+def _assert_reads_from_boundary(reader, expected, *, boundary, description="value"):
+    """Assert ``reader()`` == ``expected`` AND that the value genuinely crossed a persistence boundary.
+
+    ``boundary`` is a path (or iterable of paths) — the on-disk artifact the producer must have
+    written (a saga tick, a persisted JSON row). Both invariants are checked BEFORE comparing values:
+    the boundary artifact must exist and be non-empty. So a test that merely reads an in-memory shared
+    variable cannot masquerade as a round-trip, and stubbing out the persistence write makes this fail
+    at the boundary-existence check rather than passing on a stale in-memory value. ``reader`` MUST
+    re-read from the boundary (e.g. ``restore(...)``), never return a producer-side variable.
+    """
+    boundaries = [boundary] if isinstance(boundary, (str, Path)) else list(boundary)
+    for b in boundaries:
+        bp = Path(b)
+        assert bp.exists(), (
+            f"boundary artifact {bp} was never written — nothing crossed the persistence boundary "
+            "(a stubbed/absent write, or the assertion is reading an in-memory value, not disk)"
+        )
+        assert bp.stat().st_size > 0, (
+            f"boundary artifact {bp} is empty — the producer persisted nothing"
+        )
+    actual = reader()
+    assert actual == expected, (
+        f"{description}: value re-read from the boundary {actual!r} != expected {expected!r}"
+    )
+    return actual
+
+
+@pytest.fixture
+def assert_reads_from_boundary():
+    """The shared boundary-crossing assertion helper (#458 T11-F4-7)."""
+    return _assert_reads_from_boundary
+
+
 @pytest.fixture
 def mock_aws_client():
     """Mock boto3 AWS client."""

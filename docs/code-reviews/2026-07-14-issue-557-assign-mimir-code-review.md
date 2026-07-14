@@ -21,6 +21,6 @@ One-line verdict: **PASS** — one correctness finding found during merge-base r
 - Open-issue identity, current principal, effective triage-or-higher authority, and the repository-owned trigger label are all checked before the single label POST.
 - Already-triggered issues perform no mutation or comment. A new trigger is accepted only after issue-label readback; Objective values come only from live project fields.
 - Negative tests cover uncovered, inactive, malformed, closed, unauthenticated, unauthorized, missing-label, mutation-failure, and failed-readback paths.
-- Focused suite: 18 passed. Mission Control suite before the review fix: 271 passed; the final full suite and release gates are required before PR.
+- Focused suite: 18 passed. Mission Control suite before the review fix: 271 passed. Final repository suite after the fix: 3,988 passed and 1 skipped; Ruff, format, mypy, strict plugin/marketplace validation, release parity, and the high-severity Bandit gate passed.
 
 Residual risk: the Objective query reads at most 100 project memberships and 100 field values per membership. GitHub issues in this environment have far fewer, and the command fails rather than inventing Objective data if the query itself cannot be read. No additional dependency or credential path was introduced.

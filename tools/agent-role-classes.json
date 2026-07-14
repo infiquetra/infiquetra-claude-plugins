@@ -1,0 +1,31 @@
+{
+  "_comment": "Role-class -> permitted model-tier policy for #422's model-vs-role-class audit. Each class's permitted models are a CONTIGUOUS range on fleet-core's ordered MODELS ladder (rank 0 = fable strongest .. rank 3 = haiku weakest, see plugins/fleet-core/scripts/fleet_commons/models.json) between max_model (strongest permitted) and min_model (weakest permitted) -- never an arbitrary unordered set ({#tier-vocab-ordering}). role_tier_aliases maps the dispatch path's `role-tier:` frontmatter vocabulary (fleet_commons/tier_resolver.py ROLE_TIER_ALIASES -- the ONLY mechanism dispatch resolves role-tier through) onto a class. A class's own key (e.g. 'review') is NOT a valid role-tier value: dispatch would not resolve it, so tools/agent_spec.py rejects it too, and role_tier_vocabulary_drift() fails the lint if this file's aliases and ROLE_TIER_ALIASES ever diverge. is_review_class gates tools/agent_spec.py's tool-scope-floor rule (direct file-mutation tools Edit/Write/NotebookEdit forbidden, tools: required; Bash deliberately allowed for the artifact-pointer deref path).",
+  "review": {
+    "role_tier_aliases": ["adversarial-review"],
+    "min_model": "opus",
+    "max_model": "opus",
+    "is_review_class": true,
+    "rationale": "Adversarial review/verify judgment agents (team-execution's api-reviewer, architecture-reviewer, security-reviewer, etc.) need opus-grade reasoning; a weaker pin silently degrades review quality. Least-privilege tool floor applies: tools: must be present, non-empty, and exclude the direct file-mutation tools Edit/Write/NotebookEdit (Bash stays -- the artifact-pointer deref path requires it)."
+  },
+  "tester": {
+    "role_tier_aliases": ["contract-test"],
+    "min_model": "sonnet",
+    "max_model": "opus",
+    "is_review_class": false,
+    "rationale": "Contract/behavior testers (team-execution's api-contract-tester, event-flow-tester, etc.) need at least sonnet; escalation to opus is permitted, never required."
+  },
+  "scanner": {
+    "role_tier_aliases": ["mechanical-scan"],
+    "min_model": "haiku",
+    "max_model": "sonnet",
+    "is_review_class": false,
+    "rationale": "Mechanical scanners and monitors (team-execution's api-compat-scanner, dependency-scanner, deploy-watcher, etc.) are cheap deterministic work; pinning opus here is wasteful, not a quality risk."
+  },
+  "survey": {
+    "role_tier_aliases": [],
+    "min_model": "haiku",
+    "max_model": "sonnet",
+    "is_review_class": false,
+    "rationale": "Read-only survey/search/sampling agents never need opus-grade judgment. RESERVED: this class has no dispatch alias yet (role_tier_aliases is empty and class keys are not selectable), so no authored role-tier: value can reach it today. It goes live when a survey-shaped alias is added to BOTH fleet_commons/tier_resolver.py ROLE_TIER_ALIASES and this file's role_tier_aliases -- the lint's drift check enforces that both-places update."
+  }
+}

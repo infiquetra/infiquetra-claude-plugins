@@ -10,6 +10,7 @@ description: |
   NOT for: security concerns (security-reviewer); test coverage (testing-reviewer);
   style/formatting (linter handles that).
 role-tier: adversarial-review
+tools: Bash, Read, Grep, Glob
 model: opus
 color: cyan
 ---

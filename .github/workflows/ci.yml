@@ -87,6 +87,13 @@ jobs:
       - name: Engine Registry Conformance
         run: uv run python plugins/saga/scripts/engine_registry_conformance.py
 
+      # #422: one shared rule-registry lint over every plugins/*/agents/*.md file --
+      # frontmatter schema, model-vs-role-class tier audit, and the review-class
+      # tool-scope floor. `effort:` absence is warn-only (--report prints it) and never
+      # fails this step during the grace period.
+      - name: Agent-file spec lint (frontmatter, role-class tiers, tool-scope floor)
+        run: uv run python tools/agent_spec.py --report
+
       # #424 T9-F4-5: static lint over mission-control's own scripts/skills/
       # commands/agents docs for unguarded `gh` list calls (no cursor loop,
       # no --limit) or bare per_page REST fetches. No network required.

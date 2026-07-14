@@ -14,6 +14,7 @@ description: |
   NOT for: code quality specifics (code-quality-reviewer); security-specific concerns
   (security-reviewer's job); test coverage (testing-reviewer).
 role-tier: adversarial-review
+tools: Bash, Read, Grep, Glob
 model: opus
 color: purple
 ---

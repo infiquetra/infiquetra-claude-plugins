@@ -9,6 +9,7 @@ description: |
 
   NOT for: code quality concerns; architecture patterns; test coverage.
 role-tier: adversarial-review
+tools: Bash, Read, Grep, Glob
 model: opus
 color: orange
 ---

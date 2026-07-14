@@ -10,6 +10,7 @@ description: |
 
   NOT for: application-level security (security-reviewer's job); API design concerns.
 role-tier: adversarial-review
+tools: Bash, Read, Grep, Glob
 model: opus
 color: blue
 ---

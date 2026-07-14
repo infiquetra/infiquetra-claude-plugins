@@ -2,6 +2,98 @@
 
 ## 2026-07-14
 
+### One agent-file CI lint: repo-root `tools/agent_spec.py`, role-tier-anchored role classes, floor-only scope for the tool guard (#422)
+
+**KTD1 — placement: repo-root `tools/agent_spec.py`, not `plugins/saga/scripts/`.** The issue
+left this open for `/plan`'s call. Chosen `tools/` because the lint operates fleet-wide
+(`plugins/*/agents/*.md` — 36 agent files across the 9 plugins that carry an `agents/`
+directory), matches the existing repo-root governance
+scripts that already work this way (`tools/release_surface_diff_guard.py`,
+`tools/stale_main_guard.py`, `tools/sha_stamp_stager.py` — none of them are saga-scoped), and
+avoids implying the lint is a saga runtime concern when it is a CI-time authored-contract check
+over every plugin, saga included. *Rejected:* `plugins/saga/scripts/agent_spec.py` — would need
+its own fleet-commons-style vendoring story to be importable from repo-root CI, for no benefit
+over a plain repo-root script.
+
+**KTD2 — role classes are anchored in the existing `role-tier:` frontmatter vocabulary, not a
+new taxonomy.** `agent-role-classes.json`'s classes (`review`, `tester`, `scanner`, `survey`) map
+onto team-execution's already-existing `role-tier:` values (`adversarial-review`,
+`contract-test`, `mechanical-scan`) via `role_tier_aliases`. *(Corrected in the #581 round-2
+fix: an earlier version of this KTD claimed a class's own key was "directly selectable" as a
+`role-tier:` value. It is not — the dispatch consumer, `fleet_commons/tier_resolver.py`,
+resolves `role-tier:` exclusively through `ROLE_TIER_ALIASES`, and the class-key set is disjoint
+from it. The lint now accepts exactly the dispatch vocabulary, and
+`agent_spec.role_tier_vocabulary_drift()` — run on every CLI invocation, plus a dedicated test —
+fails the lint if the two alias tables ever diverge. The `survey` class is reserved: it has no
+dispatch alias yet, so no authored `role-tier:` value can reach it until an alias is added to
+both tables.)* Agents that carry no `role-tier:` field at all (the 4 PINNED_AGENTS
+ecosystem-callable agents, the `agy`/`codex` bridge agents, saga's `mechanical-executor`/
+`readonly-verifier`) are **out of scope for the model-role-class and tool-scope-floor rules** —
+they already have their own governance (`tests/test_agent_tiering.py::PINNED_AGENTS`,
+their own hand-set `tools:` fields) and the issue's non-goal explicitly forbids inventing a
+taxonomy with no anchor in existing agent framing.
+
+**KTD3 — permitted model tiers per role class are a contiguous rank range, not an arbitrary
+set** ({#tier-vocab-ordering}). Each class declares `min_model` (weakest permitted) and
+`max_model` (strongest permitted); the permitted set is every model whose
+`fleet_commons.tier_palette.model_rank()` falls between the two ranks, inclusive. Concretely:
+`review` = `{opus}` only (min=max=opus, matching all 10 current `adversarial-review` pins);
+`tester` = `{opus, sonnet}` (min=sonnet, allows escalation to opus, matching all 8 current
+`contract-test` pins); `scanner`/`survey` = `{sonnet, haiku}` (max=sonnet, forbids opus/fable —
+this ceiling is what makes the issue's "survey agent pinned to opus" red-fixture scenario fail;
+since round 2 the fixture drives it through the dispatch-valid `mechanical-scan` alias plus an
+injected survey alias, because class keys are not authorable `role-tier:` values, per KTD2).
+No current fleet agent needed a `model:` correction — every existing role-tier pin already falls
+inside its class's range.
+
+**KTD4 — the tool-scope-floor rule targets exactly the `is_review_class: true` classes (only
+`review` in v1), matching the non-goal's "v1 targets review/verify-class only."** This meant all
+10 team-execution `adversarial-review` agents needed a `tools:` field added (none had one before
+#422 — see `plugins/team-execution/CHANGELOG.md` 2.14.6) since an absent `tools:` fails the rule
+by design. The added roster is `tools: Bash, Read, Grep, Glob` — `Bash` is retained deliberately:
+these reviewers dereference artifact pointers by running
+`plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py deref` via `Bash` (the
+"required verification path" per
+`plugins/team-execution/skills/team-execution/references/artifact-pointers.md` — a contract that
+binds all ten reviewers; three of the ten additionally restate the deref mandate in their own
+prompts: `security-reviewer.md:45`, `devils-advocate-reviewer.md:52`,
+`architecture-reviewer.md:68`). The `tools:`
+frontmatter field IS the spawn-time capability roster a dispatcher reads to scope a leaf (the same
+mechanism saga's `readonly-verifier` uses to keep `tools: Bash, Read, Grep, Glob` so verifiers can
+run tests) — so the floor forbids only the direct file-mutation tools (`Edit`/`Write`/
+`NotebookEdit` since round 2) while retaining the `Bash`-deref path these reviewers require: the
+floor is "no direct file-mutation tools", not "read-only". This does not contradict
+`plugins/saga/references/sandbox-spawn-sites.md`'s "out-of-scope" table: that decision is about NOT
+routing team-execution through saga's `mutation_policy`/`workspace_isolation` sandbox mechanism, not
+about whether an authored `tools:` roster may exist, scope the spawn, and be CI-checked.
+
+**KTD5 — `effort:` absence stays warn-only via a `--report` flag, never a blocking exit code,
+per the issue's explicit non-goal** (no backfill in this capability). The CI step
+(`.github/workflows/ci.yml` "Agent-file spec lint") runs with `--report` so the 32 current
+warnings are visible in CI logs without ever failing the build on their account.
+
+**KTD6 — `effort:` warn→block flip has a concrete, implemented condition, not an open deferral.**
+`tools/agent_spec.py` ships a `--strict` flag that promotes the warn-only `effort-presence` rule to
+blocking. It is NOT wired into CI today (CI still runs `--report`), so the current 32 `effort:`
+warnings never fail the build. The documented flip condition: **when the fleet-wide effort-warning
+count reaches zero, the CI invocation gains `--strict` and `effort:` absence becomes blocking.**
+That ordering matters — flipping while warnings remain would fail the build on the very backlog the
+grace period exists to absorb; flipping once the count is zero makes the rule a ratchet that keeps
+new agent files from regressing without ever having blocked existing ones. The warn text
+(`_check_effort_presence`) points at this condition verbatim.
+
+**Rejected alternatives.** A single flat `permitted_models: [...]` set per class (rejected by
+KTD3's binding decision, since it invites an accidental gap/skip in the middle of the ladder).
+Leaving the `--strict`/`effort:` flip fully deferred with no flip mechanism at all (rejected by
+KTD6 — the DoD requires a documented flip date/condition, so the flag exists now and the condition
+is written down, even though CI does not yet pass `--strict`).
+
+**Revisit when:** a real `role-tier: survey` (or any class beyond the current three team-execution
+aliases) agent is added to the fleet — verify its model pin against `survey`'s range still makes
+sense once it's not just a fixture; or when the `effort:` warn-only grace period's flip condition
+is decided (a separate follow-up, not this capability).
+
+---
 ### Board census records field/option SHAPE only, never item counts; `--live` legs SKIP (not silently pass) when GitHub is unreachable (#424) {#board-census-shape-only-live-skip-424}
 
 **KTD1 — census scope excludes item counts and item content.** `board_census.py`'s committed

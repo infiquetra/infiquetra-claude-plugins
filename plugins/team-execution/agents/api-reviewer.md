@@ -9,6 +9,7 @@ description: |
 
   NOT for: implementation security (security-reviewer's job); infrastructure concerns.
 role-tier: adversarial-review
+tools: Bash, Read, Grep, Glob
 model: opus
 color: green
 ---

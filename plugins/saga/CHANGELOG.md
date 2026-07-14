@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.89.1] - 2026-07-14
+
+### Changed - docs-only: corrected the stale `sandbox-spawn-sites.md` out-of-scope wording (#422)
+
+- **`references/sandbox-spawn-sites.md`** out-of-scope table, team-execution row: the old text
+  claimed team-execution runs "with no per-leaf tool-restriction consumer", which contradicts the
+  corrected #422 record (`docs/engineering-journal/DECISIONS.md` KTD4, team-execution CHANGELOG
+  2.14.6): the authored `tools:` frontmatter IS the spawn-time capability roster a dispatcher
+  reads to scope a leaf, and `tools/agent_spec.py`'s tool-scope floor CI-lints it. The row now
+  says precisely what is out of scope — routing team-execution through saga's
+  `mutation_policy`/`workspace_isolation` sandbox mechanism — not the existence or consumption
+  of `tools:` rosters. No code, schema, command, or hook changes.
+
 ## [0.89.0] - 2026-07-13
 
 ### Added - /pulse live fleet-telemetry surface (#400)

@@ -6,36 +6,27 @@ their YAML frontmatter and that the redis-channel-coach is recorded as exempt (K
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
-import re
+import sys
 from typing import NamedTuple
 
 import pytest
 
 PLUGINS_ROOT = pathlib.Path(__file__).parent.parent / "plugins"
 
+# #422: the frontmatter parser is shared (tools/ is not an importable package, so we load it
+# the same way tests/test_release_rituals.py loads other tools/*.py modules).
+_AGENT_SPEC_PATH = pathlib.Path(__file__).parent.parent / "tools" / "agent_spec.py"
+_spec = importlib.util.spec_from_file_location("agent_spec", _AGENT_SPEC_PATH)
+assert _spec is not None and _spec.loader is not None, f"Cannot load {_AGENT_SPEC_PATH}"
+_agent_spec = importlib.util.module_from_spec(_spec)
+# dataclasses.dataclass() looks its defining module up in sys.modules by name; register
+# before exec so tools/agent_spec.py's frozen dataclasses build cleanly.
+sys.modules[_spec.name] = _agent_spec
+_spec.loader.exec_module(_agent_spec)
 
-def _parse_frontmatter(path: pathlib.Path) -> dict[str, str]:
-    """Extract YAML frontmatter key/value pairs from an agent .md file.
-
-    Returns a dict of top-level scalar fields only (no multi-line / block values).
-    Returns an empty dict if no frontmatter block is found.
-    """
-    text = path.read_text()
-    if not text.startswith("---"):
-        return {}
-    # Extract the block between the first --- and second ---
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}
-    block = text[3:end]
-    result: dict[str, str] = {}
-    for line in block.splitlines():
-        # Match top-level key: value lines (not indented block content)
-        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*):\s*(.*)", line)
-        if m:
-            result[m.group(1)] = m.group(2).strip().strip('"')
-    return result
+_parse_frontmatter = _agent_spec.parse_frontmatter_file
 
 
 class AgentSpec(NamedTuple):

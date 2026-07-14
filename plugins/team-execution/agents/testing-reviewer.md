@@ -9,6 +9,7 @@ description: |
 
   NOT for: code quality concerns (code-quality-reviewer); infrastructure testing.
 role-tier: adversarial-review
+tools: Bash, Read, Grep, Glob
 model: opus
 color: yellow
 ---

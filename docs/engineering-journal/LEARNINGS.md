@@ -27,6 +27,80 @@
 
 ## 2026-07-14
 
+### A lint that parses its input differently from the consumer it guards is an evasion channel; parse with the consumer's semantics or fail closed {#lint-parser-semantics-divergence-422}
+
+**Context.** #422's tool-scope floor read agent `tools:` frontmatter through a hand-rolled
+scalar tokenizer (bracket-strip + comma-split + quote-strip) while the agent runtime resolves the
+same block with real YAML. Round 1 "closed" two punctuation evasions by normalizing two more
+forms — and shipped the claim that a mutating tool "can never hide behind valid-YAML punctuation."
+**Evidence.** PR #581 round-2 panel: at tip `f2e2ab6`, `tools: Read, Edit # innocuous note`
+passed the floor rc=0 (token `Edit # innocuous note` != `Edit`) while `yaml.safe_load` resolves
+the value to `Read, Edit`; same for a folded block scalar (`>-`) and a multi-line flow list. Two
+Fable panelists found the class independently.
+**Mechanism.** Any divergence between the guard's parser and the consumer's parser is, by
+definition, a representation the consumer accepts and the guard mis-reads — and YAML has an
+open-ended supply of them (comments, folding, anchors, flow forms). Enumerating normalizations
+can never close an open-ended class; each round of "handle one more form" just moves the frontier.
+**Fix.** `tools/agent_spec.py` now parses the whole frontmatter block with a
+`yaml.SafeLoader` subclass (duplicate-key-rejecting), so the lint sees exactly the values the
+runtime grants, then validates the resolved `tools:` value against exactly two recognized shapes
+(comma-separated bare-name string, or list of bare-name strings) — ANY other resolved type/shape
+is a blocking error. The guarantee is fail-closed by construction: unrecognized forms FAIL, they
+never pass unexamined.
+**Validation.** Red fixtures for comment-suffix, folded scalar, literal block, multi-line flow
+list, trailing comma, explicit-empty, and duplicate-key all block; the 36-file fleet stays green
+under the new parser with an unchanged warning count.
+**Generalizable rule.** A guard must read its input with the same semantics as the system it
+protects — reuse the consumer's parser if at all possible — and anything it cannot resolve must
+be a blocking error, never a pass. If you catch yourself enumerating evasions, the parser is
+wrong, not the enumeration.
+**Refs.** DECISIONS `#422` KTD2/KTD4 (corrected in the same round); the sibling entry below on
+the pre-#422 hyphen gap — same root shape, smaller blast radius.
+
+### The two pre-#422 hand-rolled agent frontmatter parsers never matched hyphenated keys, so `role-tier:` silently never parsed {#frontmatter-parser-hyphen-gap-422}
+
+**Context.** #422's shared parser (`tools/agent_spec.py`) replaces the two independently
+hand-rolled `_parse_frontmatter` copies in `tests/test_agent_tiering.py` and
+`tests/test_agent_registration_drift.py`. Both used the same key regex,
+`^([a-zA-Z_][a-zA-Z0-9_]*):\s*(.*)`.
+
+**Evidence.** The new model-vs-role-class and tool-scope-floor rules read the `role-tier:`
+frontmatter field that 25 team-execution agent files already carry (e.g.
+`plugins/team-execution/agents/api-reviewer.md:11`). Ported verbatim, the rules silently never
+fired: every fixture test asserting a rule should trip on a mistiered fixture failed with an
+empty violation set, and a full-fleet run reported zero violations even against files
+constructed to be obviously wrong. The `[a-zA-Z0-9_]*` key charclass has no `-`, so a line like
+`role-tier: adversarial-review` was invisible to `_parse_frontmatter` under both pre-#422
+copies — the regex only ever matched the *value* side correctly; the *key* silently dropped out
+of the returned dict, and no caller anywhere had previously read `role-tier` through this parser
+to notice.
+
+**Mechanism.** Nothing before #422 needed `_parse_frontmatter` to see `role-tier:` --
+`test_agent_tiering.py` only reads `model` and `tiering_exempt`; `test_agent_registration_drift.py`
+only reads `name`. team-execution's own `role-tier:` convention is consumed by a *different* code
+path (`fleet_commons/tier_resolver.py`'s `ROLE_TIER_ALIASES`, at dispatch time, via its own
+lookup — never through this markdown-frontmatter regex). Two independently-correct-for-their-own-
+callers parsers coexisted with a shared blind spot neither caller's test suite could see.
+
+**Fix.** Initially, `tools/agent_spec.py`'s key regex widened its charclass to
+`[a-zA-Z0-9_-]*` (additive, backward-compatible). Superseded within this same PR's fix rounds:
+the hand-rolled regex parser was replaced wholesale by strict real-YAML parsing
+(`parse_frontmatter_strict`, a duplicate-key-rejecting `SafeLoader` with ambiguity-rejecting
+block extraction), which resolves hyphenated keys — and everything else — exactly as the
+runtime does. The historical evidence above still stands; the regex it indicts no longer
+exists.
+
+**Generalizable rule.** When consolidating two independently-evolved copies of the "same" parser
+into one shared module, don't just diff them for logic drift -- write a red-fixture test that
+exercises every field the *new* caller needs, even fields neither original caller happened to
+read. Two copies passing their own tests is not evidence the shared logic is complete; it's only
+evidence it was sufficient for the callers that already existed.
+
+**Refs.** `tools/agent_spec.py`, `tests/test_agent_spec_lint.py` (the fixture tests that caught
+this before merge). Capability #422.
+
+---
+
 ### Live board audit confirms the pagination-truncation defect is real today, not hypothetical — CAMPPS has 396 items, Operations 302  {#board-pagination-truncation-confirmed-live-424}
 
 **Context.** Issue #424 named a defect pattern ("item-list pagination silently truncating at 200

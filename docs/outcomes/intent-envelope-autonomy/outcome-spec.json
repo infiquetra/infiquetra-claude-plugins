@@ -1,0 +1,290 @@
+{
+  "schema_version": 1,
+  "outcome_id": "intent-envelope-autonomy",
+  "spec_revision": 6,
+  "objective": "objective: Ship run-start intent envelope for lifecycle autonomy",
+  "nodes": [
+    {
+      "subplot_id": "sub-344",
+      "title": "capability \u2014 board_progression.py, the certificate-gated autonomous status writer shared by /outcome, /work, and /loop",
+      "kind": "code",
+      "state": "done",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#344",
+        "sub_issue": 344,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/485"
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-371",
+      "title": "\"capability: gates as durable approval records with a linted operator-absence contract\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-373"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#371",
+        "sub_issue": 371
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-372",
+      "title": "capability: mid-run operator adjustment envelope (quiesce, pause points, andon-cord, act-log-notify)",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#372",
+        "sub_issue": 372
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-373",
+      "title": "\"enhancement: run-start intent envelope \u2014 backend/degrade posture + spend ceiling captured once, enforced at the /outcome dispatch seam\"",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-380"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#373",
+        "sub_issue": 373
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-375",
+      "title": "\"capability: /outcome start --from-objective \u2014 seed the DAG from a parent Objective with edge inference and provenance stamps\"",
+      "kind": "code",
+      "state": "done",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#375",
+        "sub_issue": 375,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/486"
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-379",
+      "title": "\"capability: remote gate approval over the fleet's own channel (redis-channel/Discord)\"",
+      "kind": "code",
+      "state": "done",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#379",
+        "sub_issue": 379,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/488"
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-380",
+      "title": "capability: one committed IntentEnvelope for run-start posture across the plugin fleet",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#380",
+        "sub_issue": 380
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-433",
+      "title": "capability: mid-run posture renegotiation for /outcome (repost/set_intent, overlap-safe amendment, monotonic gating, HALT-as-renegotiation-point)",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-372"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#433",
+        "sub_issue": 433
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-449",
+      "title": "capability: envelope-authorized merge \u2014 AUTONOMOUS_UNDER_ENVELOPE write class with token check, revocation, and ledger attribution",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-371"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#449",
+        "sub_issue": 449
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-450",
+      "title": "capability: one level-triggered reconcile controller for /work, /loop, /outcome",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#450",
+        "sub_issue": 450
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    }
+  ],
+  "decision_trail": [
+    {
+      "revision": 2,
+      "reason": "prune sub-374"
+    },
+    {
+      "revision": 3,
+      "reason": "prune sub-376"
+    },
+    {
+      "revision": 4,
+      "reason": "prune sub-377"
+    },
+    {
+      "revision": 5,
+      "reason": "prune sub-378"
+    }
+  ],
+  "cost_rollup": {},
+  "created_at": "",
+  "updated_at": ""
+}

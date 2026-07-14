@@ -426,6 +426,22 @@ def append_ledger(store: Store, record: dict[str, Any]) -> None:
         os.close(fd)
 
 
+def append_ledger_once(store: Store, record: dict[str, Any]) -> bool:
+    """Append a ledger record only if no record with the same ``(phase, key)`` already exists.
+
+    The shared append-once discipline for RE-DERIVABLE records (halts, degrades, strand
+    halts): a condition that re-surfaces on every reconcile tick or every repeated repost
+    must not grow the ledger unboundedly. Deduping on ``(phase, key)`` (the ``import_bundle``
+    pattern) bounds it. Returns True if the record was appended, False if already present.
+    """
+    phase, key = record.get("phase"), record.get("key")
+    for rec in read_ledger(store):
+        if rec.get("phase") == phase and rec.get("key") == key:
+            return False
+    append_ledger(store, record)
+    return True
+
+
 def read_ledger(store: Store) -> list[dict[str, Any]]:
     """Read every well-formed ledger record, tolerating a single torn **trailing** line.
 

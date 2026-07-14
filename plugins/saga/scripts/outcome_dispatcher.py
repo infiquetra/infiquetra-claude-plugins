@@ -287,23 +287,30 @@ def resolve_available(
 
 
 def scoped_repose_option(outcome_id: str, subplot_id: str) -> dict[str, Any]:
-    """The scoped-repose resolution option a POSTURE-caused gate HALT carries (#433 R8/R9).
+    """The scoped-repose resolution option a resolvable POSTURE-caused gate HALT carries (#433 R8/R9).
 
-    Attached by the reconcile loop when a leaf HALTs because the current posture requires the
-    operator (attending / guarantee-bearing / already-side-effected under HALT-not-degrade) —
-    never for an availability-caused halt (no lower rung / backend down), which posture cannot
-    resolve. The option is an *offer*, not a mechanism that acts: the leaf stays halted until
-    the operator explicitly runs the scoped ``repost`` (and re-approves, when it loosens) or
-    explicitly leaves it halted. There is no default and no timeout — silence is never consent
-    (R9); the halt is simply re-derived on every later tick until the operator selects.
+    Attached by the reconcile loop ONLY where the offered verb can actually resolve the halt:
+    the guarantee class, when the guarantee is borne by the leaf's own ``degrade_policy:
+    "halt"`` (a scoped ``repost --set degrade_policy=operator_away_one_rung`` lifts it and the
+    unchanged degrade machinery takes over). Every other halt class is honestly offer-less —
+    an ATTENDING halt (the operator is present and decides directly; no repost value changes
+    ``attending``), a ``guarantee_tags``-borne guarantee (spec-authored; repost cannot remove
+    tags), a side-effected/destructive halt (HALT-not-degrade by design), and an
+    availability halt (no lower rung — not posture at all). The option is an *offer*, not a
+    mechanism that acts: the leaf stays halted until the operator explicitly runs the scoped
+    ``repost`` (and re-approves, when it loosens) or explicitly leaves it halted. There is no
+    default and no timeout — silence is never consent (R9); the halt is simply re-derived on
+    every later tick until the operator selects.
     """
     return {
         "scope": subplot_id,
         "verb": "repost",
         "hint": (
             f"python3 plugins/saga/scripts/outcome.py repost {outcome_id} "
-            f"--scope {subplot_id} --set degrade_policy=<policy>|sandbox=<profile> "
-            f"--reason <why> — resolves THIS leaf's posture only, never the whole campaign's"
+            f"--scope {subplot_id} --set degrade_policy=operator_away_one_rung "
+            f"--reason <why> — lifts THIS leaf's degrade_policy-borne guarantee only, never "
+            f"the whole campaign's posture; the leaf then follows the normal one-rung "
+            f"degrade path (re-approve first: loosening re-closes the frontier)"
         ),
         "resolution": "explicit-operator-selection",
     }

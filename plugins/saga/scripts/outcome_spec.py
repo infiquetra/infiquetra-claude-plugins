@@ -405,6 +405,13 @@ class OutcomeSpec:
     intent_revision: int | None = None
     created_at: str = ""
     updated_at: str = ""
+    # RUNTIME-ONLY (never serialized — ``to_dict`` does not emit it, ``from_dict`` never reads
+    # it): the ``spec_revision`` this instance was LOADED from disk at (0 = not loaded from
+    # disk). ``outcome.load_spec`` stamps it and ``outcome.save_spec`` compares it against the
+    # current on-disk revision before writing, so a save built on a spec another writer has
+    # since superseded (e.g. a mid-tick ``repost``) fails loudly instead of silently clobbering
+    # the newer revision (#433 overlap safety).
+    loaded_revision: int = 0
 
     def node_by_id(self, subplot_id: str) -> Node | None:
         for node in self.nodes:

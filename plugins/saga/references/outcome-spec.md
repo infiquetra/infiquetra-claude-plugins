@@ -211,27 +211,74 @@ value, wrong value type, a no-op value, a monotonic violation, a strand — leav
 **Overlap contract (R4/R5) — dispatch-time posture.** Each accepted repost tags the spec with
 `intent_revision` (= the revision it introduced). Every leaf dispatch record captures the
 `intent_revision` + posture snapshot active at its dispatch (`outcome._reconcile_once` writes
-`intent_revision` and `posture` on the `commit` record; `DispatchRequest.intent_revision`
-carries it to the backend). An in-flight leaf finishes under its dispatch-time posture — a
-repost never retroactively re-evaluates it; a pending leaf picks the new posture up at its next
-dispatch. A repost lands for the *next* `advance()` call (an in-flight `advance` continues under
-the spec it loaded — the same tick-boundary semantics as the #372 envelope poll).
+`intent_revision` and `posture` — including the campaign envelope as `posture.intent`, where
+`null` explicitly means "dispatched with no committed envelope" — on the `commit` record;
+`DispatchRequest.intent_revision` carries it to the backend). An in-flight leaf finishes under
+its dispatch-time posture at BOTH ends of its flight: dispatch (backend/sandbox) and completion
+— `outcome_orchestrator.harvest` and `barrier_report` evaluate an in-flight leaf's
+intent-implied closure checks (e.g. `code-review` under `reviews_required: "gate"`) against its
+dispatch-era envelope, so a loosening repost never retroactively releases an in-flight leaf's
+completion gate and a tightening one never retroactively imposes new checks. A pending leaf
+picks the new posture up at its next dispatch. A running `advance` detects a mid-run repost:
+the on-disk `spec_revision` is re-checked at every tick boundary AND per leaf after the
+dispatch lock (before the intent record) — a moved revision stops the pass, reloads, and
+re-ticks (`AdvanceResult.spec_reloads` says it happened), so a tick never knowingly dispatches
+under a revoked posture.
 
-**Strand HALT (R6).** A repost scoped to a `destructive` leaf that is IN FLIGHT (settled
-dispatch, no terminal completion) and that TIGHTENS that leaf's sandbox would revoke
-irreversible-op authorization the leaf already carries and cannot be re-issued mid-op. The
-campaign HALTs instead of resolving silently in either direction: the amendment is rejected
-(spec untouched), a `coordinator` `andon_halt` lands in the #372 adjustment envelope (the next
-tick stops dispatching; in-flight leaves drain under dispatch-time posture), and a durable
-`{"phase": "halt", "kind": "repost"}` ledger record names the stranded leaf. Campaign-scoped
-fields and `degrade_policy` govern *future* dispatch decisions, not authorization already in the
-leaf's hands, so they never strand — R5 covers them.
+**Strand HALT (R6).** A repost scoped to a `destructive` leaf that is IN FLIGHT (a dispatch
+record in EITHER phase — `commit`, or the fail-closed mid-dispatch `intent` window — with no
+terminal completion) and that TIGHTENS that leaf's sandbox would revoke irreversible-op
+authorization the leaf already carries and cannot be re-issued mid-op. The campaign HALTs
+instead of resolving silently in either direction: the amendment is rejected (spec untouched),
+ONE `coordinator` `andon_halt` lands in the #372 adjustment envelope append-once on
+`(writer, scope)` (the next tick stops dispatching; in-flight leaves drain under dispatch-time
+posture), and ONE durable `{"phase": "halt", "kind": "repost"}` ledger record — append-once on
+`(phase, key)`, the same parity as the reconcile halt path — names the stranded leaf; a
+repeated stranded repost re-raises every time but never duplicates either record.
+Campaign-scoped fields and `degrade_policy` govern *future* dispatch and completion decisions
+(through the dispatch-era capture above), not authorization already in the leaf's hands, so
+they never strand — R5 covers them.
+
+**Remaining overlap window (R6, documented precisely).** The staleness check and the strand
+check close the two demonstrated races (a stale tick dispatching after a repost commits; a
+repost applying against a leaf whose dispatch intent is already declared), but one sub-window
+remains: a tick that has passed its per-leaf revision check but not yet written the dispatch
+`intent` record, interleaved with a repost whose ledger read happened before that write and
+whose spec save lands after the tick's check. Both then proceed — the leaf launches under the
+old (wider) posture and the tightening applies. The window is the intersection of two
+milliseconds-scale intervals inside single dispatch iterations, requires the repost to be
+scoped to exactly that destructive leaf, and self-heals for every non-destructive axis (R5
+dispatch-time semantics make "launched under the old posture" the *defined* behavior); for the
+destructive/strand class it means a strand can, in that sub-window, resolve as
+"dispatch-time posture finishes the flight" instead of a HALT. Closing it entirely would
+require the repost to take the per-subplot dispatch lease; deliberately not done in this
+change (blast radius), recorded here instead of claimed away.
+
+**Persistence guard — a committed repost survives a concurrent tick.** `save_spec` is
+compare-and-swap on the revision the spec was loaded at (`OutcomeSpec.loaded_revision`,
+runtime-only, never serialized): a save built on a spec another writer has since superseded
+raises `StaleSpecError` instead of silently reverting the newer revision's posture, bump, and
+trail entry. The one spec-persisting seam inside the advance path — the production cost
+processor's rollup save — catches it, reloads the newer spec, re-derives the rollup from the
+same ledger, and re-applies on top, reporting `reapplied_over_stale_revision` in the tick's
+cost record. A mid-tick repost therefore cannot be destroyed by a production advance tick.
 
 **Monotonic merge/deploy gating (R7).** `ceremony_gates.merge` / `deploy_nonprod` (the issue's
 `merge_gate`/`deploy_gate`) move only toward MORE gating: `auto -> gate` is accepted; `gate ->
 auto` is rejected outright — including against a campaign with NO committed envelope, whose
-effective gates default to `gate`. One-directional by design: loosening merge/deploy posture
-back to autonomous takes a new campaign, not a repost.
+effective gates default to `gate`, and equally through the sibling `set-intent` verb: once a
+campaign is LIVE (any dispatch record, either phase), a first envelope attach carrying
+`merge`/`deploy_nonprod: "auto"` is rejected by the same validation
+(`outcome_intent.validate_live_attach`), and every accepted attach writes a `set-intent`
+decision-trail entry with its classified deltas — one rule, one trail, no second-verb side
+door (AC5). A PRE-dispatch attach may carry any posture (the #380 interview-fallback
+contract). One-directional by design: loosening merge/deploy posture back to autonomous takes
+a new campaign, not a repost. **Consumer honesty:** today the engine consumes
+`reviews_required` (implied closure checks) and the #373 dispatch-seam fields;
+`ceremony_gates.merge` / `deploy_nonprod` are *recorded posture with no engine consumer yet* —
+the auto-merge queue keys off node-level flags and nothing reads these two gates. R7 protects
+the recorded value's integrity so the consumer that #449 lands (the token-checked
+merge/deploy write class) inherits a trustworthy field, not so it changes behavior today.
 
 **Approval interplay (R3).** Every repost bumps `spec_revision` and the R20 approval gate is
 revision-keyed, so the frontier approval is consumed automatically. A repost whose deltas ONLY
@@ -247,15 +294,21 @@ operator_away_one_rung < halt`; `sandbox.mutation_policy` `read-write < read-onl
 (`disposable-worktree`/`owned-worktree`) are mutually incomparable — a move between them
 classifies **loosen** conservatively (costs at most one extra re-approval, never skips one).
 
-**HALT as a renegotiation point (R8/R9).** A leaf that HALTs *because of posture* (the degrade
-decision's attending / guarantee-bearing / already-side-effected branches under
-HALT-not-degrade) carries a `scoped_repose` option on its `HaltReceipt`: resolve THIS leaf's
-posture via `repost --scope <subplot>`, not the whole campaign's. The option is an offer, not a
-mechanism that acts: the leaf stays halted — re-derived every tick — until the operator
-explicitly reposts (and re-approves, when loosening) or leaves it halted. There is no default
-and no timeout; silence is never consent. An availability-caused halt (no lower rung) carries no
-option — posture cannot resolve it. This composes with, never overrides, HALT-not-degrade: a
-scoped repose is a *path out of* an existing HALT, not a new degrade mode.
+**HALT as a renegotiation point (R8/R9).** A leaf HALT carries a `scoped_repose` option on its
+`HaltReceipt` ONLY where the offered verb can actually resolve the halt: the guarantee class
+when the guarantee is borne by the leaf's own `degrade_policy: "halt"` (no `guarantee_tags`) —
+a scoped `repost --set degrade_policy=operator_away_one_rung` lifts exactly that guarantee and
+the unchanged degrade machinery takes over. Every other halt class is honestly offer-less: an
+ATTENDING halt fires before `degrade_policy` is consulted (the operator is present — R23 pages
+them directly; no repost value changes `attending`); a `guarantee_tags`-borne guarantee is
+spec-authored (repost's node axes are `degrade_policy`/`sandbox` only); a
+side-effected/destructive halt is HALT-not-degrade by design; a captured #373 envelope
+`degrade_policy` that forbids degrade is not a repost axis; an availability halt (no lower
+rung) is not posture at all. The option is an offer, not a mechanism that acts: the leaf stays
+halted — re-derived every tick — until the operator explicitly reposts (and re-approves, when
+loosening) or leaves it halted. There is no default and no timeout; silence is never consent.
+This composes with, never overrides, HALT-not-degrade: a scoped repose is a *path out of* an
+existing HALT, not a new degrade mode.
 
 ## Board↔saga reconciliation (`outcome_reconcile`, #295)
 

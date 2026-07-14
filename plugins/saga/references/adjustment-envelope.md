@@ -56,7 +56,7 @@ vocabulary below.
 |---|---|---|---|
 | `quiesce` | operator | **drain** — in-flight leaves finish, dispatch nothing new, surface a resume point | — |
 | `pause_after` | plan | **pause** at exactly the named `segment`; resume only on an explicit continue (acknowledge) | `segment` (required), `resume_tier`, `resume_context` |
-| `andon_halt` | worker / reviewer / coordinator | **halt** — block the next wave/tick from dispatching; write an operator-surface HALT record. The `coordinator` writer is the #433 strand-halt: a posture `repost` that would strand an in-flight leaf's irreversible-op authorization raises this (via `raise_strand_halt`) instead of silently applying or dropping the amendment | `scope` |
+| `andon_halt` | worker / reviewer / coordinator | **halt** — block the next wave/tick from dispatching; write an operator-surface HALT record. The `coordinator` writer is the #433 strand-halt: a posture `repost` that would strand an in-flight leaf's irreversible-op authorization raises this (via `raise_strand_halt`, append-once per `(writer, scope)` — a repeated stranded repost re-raises to its caller but never piles up duplicate directives) instead of silently applying or dropping the amendment | `scope` |
 | `re-tier` | operator | amendment honored on resume (no stop) | `tier` (required) |
 | `add-reviewer` | operator | amendment honored on the next review cycle (no stop) | `reviewer` (required) |
 | `cancel` | operator | **halt** — stop this run at the next boundary | — |
@@ -102,7 +102,12 @@ The envelope reuses boundaries that already exist; it does **not** add a standin
   the *posture* renegotiation path (`outcome repost` — sandbox / degrade policy / run mode /
   ceremony gates, with `intent_revision` dispatch-time overlap); routing the standalone
   re-tier/add-reviewer directives through that overlap machinery so `applied` can become true
-  remains the #594 R2 follow-up.
+  remains the #594 R2 follow-up. Consumer honesty for the renegotiated ceremony gates: of the
+  envelope's `ceremony_gates`, only `reviews_required` has an engine consumer today (the
+  intent-implied closure checks at harvest); `merge` / `deploy_nonprod` are **recorded posture
+  with no engine consumer yet** — nothing reads them (the auto-merge queue keys off node-level
+  flags), and the #433 monotonic rule protects the recorded value's integrity for the consumer
+  #449 lands (the token-checked merge/deploy write class), not for any behavior today.
 - **`/work` segment boundary** — `/work` polls the envelope at each phase/segment boundary (see
   `skills/work/SKILL.md`), honoring a `pause_after: <segment>` deterministically and applying any
   `resume_tier`/`resume_context` amendment on the explicit continue.

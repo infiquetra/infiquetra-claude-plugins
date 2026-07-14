@@ -27,6 +27,51 @@
 
 ## 2026-07-14
 
+### Two verbs that perform one semantic transition need ONE validator, or the rule has a side door {#one-transition-one-validator-433}
+
+**Context.** #433's first cut enforced the R7 monotonic merge/deploy rule only in `repost` — and
+an adversarial verify panel (3/3) demonstrated the identical transition (default-gated →
+`merge: "auto"` on a live campaign) sailing through the sibling `set-intent` first-attach verb,
+which also bumped `spec_revision` with no decision-trail entry. **Evidence.** Refuted PR #595
+head `e2818c2` (`outcome.py set_intent`: bare `spec_revision += 1`, no validation against the
+effective posture); fix: `outcome_intent.validate_live_attach` + `campaign_live` wired into
+`set_intent`, with `tests/test_outcome_intent.py::test_live_set_intent_attach_passes_monotonic_validation`
+pinning repost-rejected AND attach-rejected AND pre-dispatch-attach-accepted on the same
+campaign shape. **Mechanism.** The rule was implemented as a property of the *verb* (repost's
+delta classifier) instead of a property of the *transition* (any posture write against the
+effective posture in force). Any second writer to the same state — even a "first attach" that
+looks like initialization — re-opens the decision unless it routes through the same validator.
+**Fix.** Once any dispatch record exists (either phase), the attach computes deltas against the
+default-gated effective envelope through the SAME classifier and rejects monotonic loosenings;
+every accepted attach writes a `set-intent` trail entry. **Generalizable rule.** Enumerate every
+writer to a guarded state and route them through one validator keyed on the transition, not the
+verb — "initialization" writers included; if a rule matters, ask "which OTHER verb can produce
+this state?" before shipping it.
+
+---
+
+### Every persistence seam that saves a previously-loaded document needs compare-and-swap, or a slow reader silently reverts a fast writer {#spec-save-needs-cas-433}
+
+**Context.** The `/outcome` advance tick loads the spec once, runs processors, and the
+production cost processor saves the (possibly mutated) spec at tick end. A repost committing
+mid-tick was silently DESTROYED: the tick's stale in-memory spec overwrote the bumped revision,
+the envelope change, and the trail entry — no error, under the feature's primary operating
+condition (renegotiating posture on a live, looping campaign). **Evidence.** Panel repro on
+PR #595 `e2818c2`; fix commit adds `OutcomeSpec.loaded_revision` (runtime-only) +
+`save_spec` CAS raising `StaleSpecError`, the cost processor's reload-and-reapply, and per-tick
++ per-leaf on-disk revision checks in the reconcile loop;
+`tests/test_outcome_intent.py::test_midtick_repost_survives_cost_processor_save` +
+`::test_save_spec_refuses_to_clobber_newer_revision` (the baseline control that used to be the
+silent clobber). **Mechanism.** Load-mutate-save with no version fence is last-writer-wins; in
+a level-triggered loop the coordinator is *usually* the slowest writer, so it reliably loses
+races it does not know it is in — and "loses" here means it wins the file and loses the truth.
+**Generalizable rule.** Any save of a document loaded earlier in the process must either CAS on
+the version it loaded (fail loudly / reload-reapply) or hold the lock that serializes writers;
+if a design records "revision" it must also *check* it at every write seam, or the revision is
+decoration. Document precisely whatever window the fence cannot close.
+
+---
+
 ### Enforce a new policy by NARROWING the inputs to an existing decision mechanism, not by adding a second decision path {#narrow-inputs-not-second-mechanism-373}
 
 **Context.** #373 required the captured run-start posture to degrade "exactly one rung and never

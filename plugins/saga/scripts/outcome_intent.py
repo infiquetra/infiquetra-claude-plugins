@@ -19,18 +19,26 @@ The four contract facets (issue #433):
   mutation — the R26 invariant).
 * **Overlap-safe amendment (R4/R5/R6)** — every repost tags the spec with ``intent_revision``
   (the revision it introduced); each leaf's dispatch record captures the ``intent_revision`` +
-  posture active at its dispatch (written by ``outcome._reconcile_once``). An in-flight leaf
-  finishes under its dispatch-time posture — it is never retroactively re-evaluated; a pending
-  leaf picks the new posture up at its next dispatch. A repost that would *strand* an in-flight
-  leaf's irreversible-op authorization (a ``destructive`` leaf whose node-scoped sandbox would
-  tighten mid-flight) HALTs the campaign instead: the amendment is rejected (spec untouched), a
-  ``coordinator`` ``andon_halt`` lands in the #372 adjustment envelope (the next advance tick
-  stops dispatching), and a durable ledger record names the stranded leaf — no silent
-  resolution in either direction.
+  posture (including the campaign envelope) active at its dispatch (written by
+  ``outcome._reconcile_once``). An in-flight leaf finishes under its dispatch-time posture —
+  dispatch AND completion: the harvest/closure-gate seam evaluates an in-flight leaf's
+  intent-implied checks against its dispatch-era envelope, never against a later loosening; a
+  pending leaf picks the new posture up at its next dispatch. A repost that would *strand* an
+  in-flight leaf's irreversible-op authorization (a ``destructive`` leaf whose node-scoped
+  sandbox would tighten mid-flight — where "in flight" fail-closed includes a bare
+  intent-phase dispatch record, the mid-dispatch window) HALTs the campaign instead: the
+  amendment is rejected (spec untouched), ONE ``coordinator`` ``andon_halt`` lands in the
+  #372 adjustment envelope append-once (the next advance tick stops dispatching), and ONE
+  durable ledger record (append-once on ``(phase, key)``) names the stranded leaf — no silent
+  resolution in either direction, no directive pile-up on repeats.
 * **Monotonic merge/deploy gating (R7)** — ``ceremony_gates.merge`` / ``deploy_nonprod`` (the
   campaign's merge/deploy gate posture) may only move toward MORE gating (``auto`` ->
-  ``gate``). Any repost moving either from gated toward autonomous is rejected outright.
-  One-directional by design: reverting a mistaken tightening takes a new campaign.
+  ``gate``). Any repost moving either from gated toward autonomous is rejected outright — and
+  the sibling ``set-intent`` verb enforces the SAME rule on a live campaign
+  (:func:`validate_live_attach`): once any dispatch record exists, a first envelope attach
+  carrying ``merge``/``deploy_nonprod: "auto"`` is rejected against the effective
+  default-gated posture, so the rule has no second-verb side door (AC5). One-directional by
+  design: reverting a mistaken tightening takes a new campaign.
 * **Loosening re-closes the frontier (R3)** — every repost bumps ``spec_revision``, and the R20
   approval gate is revision-keyed, so the frontier approval is consumed automatically. A repost
   that ONLY tightens carries the prior revision's approval forward (a new approval record with
@@ -365,14 +373,31 @@ def compute_deltas(spec: Any, changes: Mapping[str, str], scope: str) -> tuple[P
 
 
 def _in_flight_dispatch_record(store: Any, subplot_id: str) -> dict[str, Any] | None:
-    """The leaf's settled (``commit``) dispatch record iff it is in flight (not yet terminal)."""
+    """The leaf's latest dispatch record iff it is in flight (not yet terminal).
+
+    BOTH dispatch phases count as in flight (fail closed against the R6 TOCTOU): a settled
+    ``commit`` record is a live flight, and a bare ``intent`` record — the mid-dispatch
+    window where a concurrent tick has declared the dispatch but not yet committed it, or a
+    crashed/rate-limited dispatch ``replay_pending`` will re-drive — is treated as in flight
+    too. Resolving "mid-dispatch" as "not in flight" would let a tightening repost apply
+    cleanly while the leaf launches under the old, wider posture: the exact stranded state R6
+    exists to HALT on. The conservative read costs at most one deferred repost (retry after
+    the flight settles or is re-driven), never a silently-stranded authorization. A ``commit``
+    record wins over its ``intent`` (it carries the dispatch-time posture snapshot).
+    """
     record: dict[str, Any] | None = None
     for rec in outcome_store.read_ledger(store):
         if (
             rec.get("kind") == "dispatch"
-            and rec.get("phase") == "commit"
+            and rec.get("phase") in ("intent", "commit")
             and str(rec.get("subplot_id", "")) == subplot_id
         ):
+            if (
+                record is not None
+                and record.get("phase") == "commit"
+                and rec.get("phase") == "intent"
+            ):
+                continue  # keep the settled record: it carries the posture snapshot
             record = rec
     if record is None:
         return None
@@ -389,13 +414,17 @@ def _stranded_receipt(
     """The R6 strand receipt, or ``None`` when the repost strands nothing.
 
     Strand predicate: the repost is scoped to a ``destructive`` leaf (authorized for an
-    irreversible operation) that is IN FLIGHT (settled dispatch, no terminal completion), and
+    irreversible operation) that is IN FLIGHT (a dispatch record in either phase — ``commit``,
+    or the fail-closed mid-dispatch ``intent`` window — with no terminal completion), and
     at least one delta TIGHTENS that leaf's sandbox — revoking authorization the leaf already
     carried into its own process and cannot be re-issued mid-op. Campaign-scoped fields and
-    ``degrade_policy`` govern *future* dispatch decisions, not authorization already in the
-    leaf's hands, so they never strand (R5 covers them: dispatch-time posture finishes the
-    flight; the change lands at the next dispatch). Loosening deltas grant authorization and
-    never strand either — the tighter dispatch-time posture simply finishes the flight.
+    ``degrade_policy`` govern *future* dispatch AND completion decisions through the
+    dispatch-era posture capture (each leaf's commit record pins the envelope in force at its
+    dispatch, which the harvest seam reads back), not authorization already in the leaf's
+    hands, so they never strand (R5 covers them: dispatch-time posture finishes the flight —
+    dispatch and completion gates both; the change lands at the next dispatch). Loosening
+    deltas grant authorization and never strand either — the tighter dispatch-time posture
+    simply finishes the flight.
     """
     if not scope:
         return None
@@ -504,12 +533,15 @@ def repost(
             )
 
     # R6 — the strand check: HALT the campaign rather than silently resolve either direction.
+    # Both writes are APPEND-ONCE (the same (phase, key) / (writer, scope) parity as the
+    # reconcile halt path): a repeated stranded repost re-raises the error every time, but
+    # never duplicates the coordinator andon directive or the halt ledger record.
     receipt = _stranded_receipt(spec, store, deltas, scope)
     if receipt is not None:
         adjustment_envelope.raise_strand_halt(
             envelope_path, scope=scope, reason=str(receipt["reason"]), at=at
         )
-        outcome_store.append_ledger(
+        outcome_store.append_ledger_once(
             store,
             # receipt first: the ledger identity keys (phase/kind/key) must win the merge so
             # the record is queryable as a repost halt (the receipt's own kind is nested-only).
@@ -567,6 +599,67 @@ def repost(
         approval_carried_forward=carried,
         reapproval_required=not outcome_decompose.frontier_approved(store, new_revision),
     )
+
+
+def campaign_live(store: Any) -> bool:
+    """Whether the campaign is LIVE: ANY dispatch has been declared or settled (#433 AC5).
+
+    Both dispatch phases count — a bare ``intent`` record means a dispatch is mid-flight or
+    will be re-driven (``replay_pending``), so posture changes must already clear the
+    mid-run rules. Before the first dispatch record the campaign is still at run-start:
+    the #380 interview-fallback ``set-intent`` attach may carry any posture.
+    """
+    return any(
+        rec.get("kind") == "dispatch" and rec.get("phase") in ("intent", "commit")
+        for rec in outcome_store.read_ledger(store)
+    )
+
+
+def validate_live_attach(spec: Any, envelope_dict: Any) -> tuple[PostureDelta, ...]:
+    """AC5 (#433 R7) for the sibling ``set-intent`` verb: a first envelope attach on a LIVE
+    campaign is the same semantic transition as a repost against the effective
+    (default-gated) posture, so it passes the SAME monotonic validation — one rule, both
+    verbs, no side door.
+
+    Computes the envelope's deltas against the no-envelope effective posture (attended,
+    every ceremony gate at GATE) and rejects outright any delta that would move a monotonic
+    gate (``merge`` / ``deploy_nonprod``) from gated toward autonomous. Returns the
+    classified deltas so the caller records them on the decision trail — one verb, one
+    revision counter, one trail. Raises :class:`RepostError` on violation; the caller's
+    spec is untouched (nothing here mutates).
+    """
+    envelope = intent_envelope.IntentEnvelope.from_dict(envelope_dict)
+    current = effective_envelope(spec)
+    changes: dict[str, str] = {}
+    for field_name, new, old in (
+        ("run_mode", envelope.run_mode, current.run_mode),
+        (
+            "reviews_required",
+            envelope.ceremony_gates.reviews_required,
+            current.ceremony_gates.reviews_required,
+        ),
+        ("merge", envelope.ceremony_gates.merge, current.ceremony_gates.merge),
+        (
+            "deploy_nonprod",
+            envelope.ceremony_gates.deploy_nonprod,
+            current.ceremony_gates.deploy_nonprod,
+        ),
+    ):
+        if new != old:
+            changes[field_name] = new
+    if not changes:
+        return ()
+    deltas = compute_deltas(spec, changes, "")
+    for delta in deltas:
+        if delta.field in MONOTONIC_FIELDS and delta.direction == LOOSEN:
+            raise RepostError(
+                f"set-intent: attaching this envelope to a LIVE campaign would move "
+                f"{delta.field} from the effective gated default toward autonomous "
+                f"({delta.old!r} -> {delta.new!r}) — rejected outright, the same monotonic "
+                f"rule repost enforces (#433 R7/AC5). Attach a gated envelope, or start a "
+                f"new campaign for an autonomous merge/deploy posture."
+            )
+    return deltas
 
 
 def parse_set_args(sets: list[str]) -> dict[str, str]:

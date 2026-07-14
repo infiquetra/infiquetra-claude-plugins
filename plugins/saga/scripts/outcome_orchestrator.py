@@ -50,6 +50,38 @@ CONTRACT_CHILD = "child-outcome:terminal-success"
 # given its ``child_spec_ref`` — injected so the recursion is testable without a real child on disk.
 ChildStateReader = Callable[[str], str]
 
+# Sentinel: "this leaf has no dispatch-era envelope capture — evaluate under the spec's CURRENT
+# intent" (pre-#433 records and never-dispatched leaves). Distinct from a captured None, which
+# means "dispatched with NO committed envelope" and implies no checks even if one attaches later.
+_CURRENT_INTENT = object()
+
+
+def _dispatch_era_intents(store: Any) -> dict[str, Any]:
+    """Per-subplot campaign envelope in force at each leaf's dispatch (#433 R5).
+
+    Reads each subplot's settled (``commit``) dispatch records; the latest record wins. A
+    record whose ``posture`` carries the ``"intent"`` key pins that leaf's completion gate to
+    the campaign envelope captured at its dispatch — an in-flight leaf finishes under its
+    dispatch-time posture, so a later loosening repost (e.g. ``reviews_required`` gate ->
+    auto) never retroactively releases its implied closure checks, and a later tightening
+    never retroactively imposes new ones. ``"intent": null`` is an explicit capture:
+    dispatched with no committed envelope (implies no checks). A record with NO ``"intent"``
+    key predates dispatch-era capture and maps to :data:`_CURRENT_INTENT` (the pre-#433
+    behavior: the spec's current intent governs). Leaves with no settled dispatch record at
+    all (e.g. externally-completed non-code work) are absent from the map — same fallback.
+    """
+    era: dict[str, Any] = {}
+    for rec in outcome_store.read_ledger(store):
+        if rec.get("kind") != "dispatch" or rec.get("phase") != "commit":
+            continue
+        sid = str(rec.get("subplot_id", ""))
+        posture = rec.get("posture")
+        if isinstance(posture, dict) and "intent" in posture:
+            era[sid] = posture["intent"]
+        else:
+            era[sid] = _CURRENT_INTENT
+    return era
+
 
 @dataclass
 class BarrierVerdict:
@@ -171,7 +203,11 @@ def harvest(
     # #380 (T8-F1-3): the committed intent envelope's ceremony gates imply closure checks —
     # `reviews_required: "gate"` requires `code-review` evidence before a code leaf may harvest
     # `done`. A spec with no intent (every pre-existing spec) implies nothing (unchanged).
+    # #433 (R5): a dispatched leaf's implied checks come from its DISPATCH-ERA envelope (the
+    # commit record's posture capture), never the current one — a mid-run repost governs future
+    # dispatches, not in-flight completions.
     spec_intent = getattr(spec, "intent", None)
+    era_intents = _dispatch_era_intents(store)
     for node in spec.nodes:
         sid = node.subplot_id
         if sid in already:
@@ -184,11 +220,14 @@ def harvest(
         # Closure gate (#397): a second, additive check — never a rewrite of the GitHub barrier
         # above. A node with no declared `required_checks` is trivially satisfied (R8), so this is
         # a no-op for every pre-existing outcome spec.
+        node_intent = era_intents.get(sid, _CURRENT_INTENT)
         gate_verdict = closure_gate.evaluate(
             node,
             repo_root=repo_root,
             github_runner=github_runner,
-            implied_checks=intent_envelope.implied_required_checks(spec_intent, node.kind),
+            implied_checks=intent_envelope.implied_required_checks(
+                spec_intent if node_intent is _CURRENT_INTENT else node_intent, node.kind
+            ),
         )
         if not gate_verdict.satisfied:
             continue
@@ -268,16 +307,23 @@ def barrier_report(
     # #380: mirror harvest() exactly — the report must evaluate the SAME gate the harvester
     # enforces (intent-implied checks included), or the operator-facing verdict reads satisfied
     # while the done transition is actually gated (enforcement/observability disagreement).
+    # #433 (R5): the mirror includes the dispatch-era envelope — the report tells the same
+    # dispatch-time story harvest enforces, so an in-flight leaf never reads "released" after a
+    # loosening repost it does not follow.
     spec_intent = getattr(spec, "intent", None)
+    era_intents = _dispatch_era_intents(store)
     for node in spec.nodes:
         verdict = barrier_satisfied(
             node, store=store, github_runner=github_runner, child_state_reader=child_state_reader
         ).to_dict()
+        node_intent = era_intents.get(node.subplot_id, _CURRENT_INTENT)
         verdict["closure_gate"] = closure_gate.evaluate(
             node,
             repo_root=repo_root,
             github_runner=github_runner,
-            implied_checks=intent_envelope.implied_required_checks(spec_intent, node.kind),
+            implied_checks=intent_envelope.implied_required_checks(
+                spec_intent if node_intent is _CURRENT_INTENT else node_intent, node.kind
+            ),
         ).to_dict()
         report[node.subplot_id] = verdict
     return report

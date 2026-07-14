@@ -48,6 +48,9 @@ SPEC = _load("outcome_spec")
 STORE = _load("outcome_store")
 DEC = _load("outcome_decompose")
 DISPATCHER = _load("outcome_dispatcher")
+ORCH = _load("outcome_orchestrator")
+LEDGER = _load("evidence_ledger")
+COSTS = _load("outcome_costs")
 
 
 @pytest.fixture
@@ -657,6 +660,519 @@ def test_set_intent_first_attach_tags_intent_revision(repo: Path, tmp_path: Path
     )
     spec = M.set_intent(repo, "camp", envelope_file)
     assert spec.intent_revision == spec.spec_revision == 2
+
+
+# ---------------------------------------------------------------------------
+# AC5 parity for the sibling verb — a LIVE first-attach set-intent passes the SAME
+# monotonic validation as repost (no second-verb side door), and any accepted attach
+# writes a decision-trail entry (one verb, one revision counter, one trail).
+# ---------------------------------------------------------------------------
+
+
+def test_live_set_intent_attach_passes_monotonic_validation(repo: Path, tmp_path: Path) -> None:
+    # The panel repro: live campaign (leaf dispatched), NO committed envelope. Both verbs must
+    # reach the SAME verdict on the same semantic transition at the same moment.
+    _start(repo, "camp", [{"subplot_id": "a", "title": "A", "kind": "code"}])
+    store = _store(repo, "camp")
+    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["a"]
+
+    auto_env = tmp_path / "auto.json"
+    auto_env.write_text(
+        json.dumps(
+            {"schema_version": 1, "run_mode": "attended", "ceremony_gates": {"merge": "auto"}}
+        ),
+        encoding="utf-8",
+    )
+    file_before = M.spec_path(repo, "camp").read_text(encoding="utf-8")
+
+    # repost merge=auto: rejected (R7)...
+    with pytest.raises(OI.RepostError, match="MORE gating"):
+        OI.repost(
+            M.load_spec(repo, "camp"),
+            store,
+            changes={"merge": "auto"},
+            reason="loosen",
+            envelope_path=_env_path(repo),
+        )
+    # ...AND set-intent with an envelope carrying merge=auto: rejected by the SAME rule.
+    with pytest.raises(OI.RepostError, match="LIVE campaign"):
+        M.set_intent(repo, "camp", auto_env)
+    assert M.spec_path(repo, "camp").read_text(encoding="utf-8") == file_before
+
+    # deploy_nonprod=auto is rejected identically.
+    deploy_env = tmp_path / "deploy.json"
+    deploy_env.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_mode": "attended",
+                "ceremony_gates": {"deploy_nonprod": "auto"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(OI.RepostError, match="LIVE campaign"):
+        M.set_intent(repo, "camp", deploy_env)
+    assert M.spec_path(repo, "camp").read_text(encoding="utf-8") == file_before
+
+    # An all-gated envelope attaches cleanly on the SAME live campaign (the rejections above
+    # discriminate), and the attach records a structured decision-trail entry with its deltas.
+    gated_env = tmp_path / "gated.json"
+    gated_env.write_text(
+        json.dumps({"schema_version": 1, "run_mode": "unattended", "ceremony_gates": {}}),
+        encoding="utf-8",
+    )
+    spec = M.set_intent(repo, "camp", gated_env)
+    assert spec.intent_revision == spec.spec_revision == 2
+    entry = spec.decision_trail[-1]
+    assert entry["kind"] == "set-intent" and entry["live"] is True
+    assert {(d["field"], d["direction"]) for d in entry["deltas"]} == {("run_mode", "loosen")}
+
+    # Pre-dispatch control (the #380 interview-fallback contract preserved): the REJECTED
+    # merge=auto envelope attaches cleanly on a campaign with no dispatch record.
+    _start(repo, "fresh", [{"subplot_id": "a", "title": "A", "kind": "code"}])
+    fresh = M.set_intent(repo, "fresh", auto_env)
+    assert fresh.intent["ceremony_gates"]["merge"] == "auto"
+    assert fresh.decision_trail[-1]["kind"] == "set-intent"
+    assert fresh.decision_trail[-1]["live"] is False
+
+
+def test_mid_dispatch_intent_record_counts_as_live(repo: Path, tmp_path: Path) -> None:
+    # A bare intent-phase dispatch record (the mid-dispatch window) already makes the
+    # campaign LIVE for the attach rule — fail closed, same as the strand check.
+    _start(repo, "camp", [{"subplot_id": "a", "title": "A", "kind": "code"}])
+    store = _store(repo, "camp")
+    STORE.append_ledger(
+        store, {"phase": "intent", "kind": "dispatch", "key": "dispatch:a", "subplot_id": "a"}
+    )
+    auto_env = tmp_path / "auto.json"
+    auto_env.write_text(
+        json.dumps(
+            {"schema_version": 1, "run_mode": "attended", "ceremony_gates": {"merge": "auto"}}
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(OI.RepostError, match="LIVE campaign"):
+        M.set_intent(repo, "camp", auto_env)
+
+
+# ---------------------------------------------------------------------------
+# Overlap safety at the persistence seam — a committed repost survives a concurrent
+# production advance tick (the cost processor's spec save can never clobber it).
+# ---------------------------------------------------------------------------
+
+
+def test_save_spec_refuses_to_clobber_newer_revision(repo: Path) -> None:
+    # Baseline control for the mid-tick test below: this exact save was the silent-revert
+    # seam — a spec loaded at revision 1, saved after a repost committed revision 2, used to
+    # overwrite the repost wholesale. The guard makes it loud.
+    _start(repo, "camp", [{"subplot_id": "a", "title": "A", "kind": "code"}])
+    store = _store(repo, "camp")
+    stale = M.load_spec(repo, "camp")  # loaded at revision 1 (the tick's in-memory spec)
+
+    fresh = M.load_spec(repo, "camp")
+    OI.repost(
+        fresh,
+        store,
+        changes={"run_mode": "unattended"},
+        reason="operator repost",
+        envelope_path=_env_path(repo),
+    )
+    M.save_spec(repo, fresh)  # revision 2 (intent + trail) on disk
+
+    stale.cost_rollup = {"tokens": 1.0}
+    with pytest.raises(M.StaleSpecError, match="superseded"):
+        M.save_spec(repo, stale)
+    # The newer revision survives byte-for-byte semantics: posture, revision, trail.
+    on_disk = M.load_spec(repo, "camp")
+    assert on_disk.spec_revision == 2
+    assert on_disk.intent is not None and on_disk.intent["run_mode"] == "unattended"
+    assert on_disk.decision_trail[-1]["kind"] == "repost"
+
+    # Control: the same-object save at the CURRENT revision still works (the guard
+    # discriminates staleness, not all saves).
+    fresh.cost_rollup = {"tokens": 2.0}
+    M.save_spec(repo, fresh)
+    assert M.load_spec(repo, "camp").cost_rollup == {"tokens": 2.0}
+
+
+def test_midtick_repost_survives_cost_processor_save(repo: Path) -> None:
+    # The panel sequence, on the production cost processor: a leaf completes with a cost
+    # fact; a repost commits to disk while the tick is mid-flight (spec_revision bumped,
+    # intent updated, trail written); the tick's cost processor then persists. The repost
+    # must SURVIVE and the tick's record must say what happened — never a silent revert.
+    _start(repo, "camp", [{"subplot_id": "a", "title": "A", "kind": "code"}])
+    store = _store(repo, "camp")
+    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["a"]
+    COSTS.record_cost(store, "a", tokens=1234.0)
+    STORE.write_completion_event(
+        store, STORE.CompletionEvent(subplot_id="a", state="done", idempotency_key="k:a")
+    )
+
+    def midtick_repost(_spec: Any, _store: Any) -> list[str]:
+        # Runs INSIDE the advance tick (the harvester seam), after the tick loaded its spec:
+        # an operator repost commits run_mode=unattended to disk mid-flight.
+        s2 = M.load_spec(repo, "camp")
+        OI.repost(
+            s2,
+            store,
+            changes={"run_mode": "unattended"},
+            reason="mid-tick repost",
+            envelope_path=_env_path(repo),
+        )
+        M.save_spec(repo, s2)
+        return []
+
+    result = M.advance(
+        repo,
+        "camp",
+        dispatcher=_auto,
+        harvester=midtick_repost,
+        cost_processor=M.production_cost_processor(repo),
+    )
+    # The repost SURVIVED on disk: revision bump, envelope, decision-trail entry all intact.
+    on_disk = M.load_spec(repo, "camp")
+    assert on_disk.spec_revision == 2
+    assert on_disk.intent is not None and on_disk.intent["run_mode"] == "unattended"
+    assert on_disk.decision_trail[-1]["kind"] == "repost"
+    # ...AND the cost rollup was re-applied on top of the newer revision, loudly.
+    assert on_disk.cost_rollup.get("tokens") == 1234.0
+    cost_run = result.costs[0]
+    assert cost_run["reapplied_over_stale_revision"] == 1
+    assert cost_run["spec_revision"] == 2
+    assert cost_run["changed"] is True
+
+
+def test_stale_spec_mid_pass_stops_dispatch_under_revoked_posture(repo: Path) -> None:
+    # A repost that lands MID-pass (while the tick is dispatching) stops the pass: the next
+    # leaf is never handed out under the revoked posture; the loop reloads and re-ticks, and
+    # the leaf dispatches under the NEW posture era.
+    _start(
+        repo,
+        "camp",
+        [
+            {"subplot_id": "a", "title": "A", "kind": "code"},
+            {"subplot_id": "b", "title": "B", "kind": "code"},
+        ],
+    )
+    store = _store(repo, "camp")
+    requests: list[Any] = []
+
+    def reposting_dispatcher(req: Any) -> str:
+        requests.append(req)
+        if len(requests) == 1:
+            # While leaf a's dispatch is in the backend's hands, a repost tightens b.
+            s2 = M.load_spec(repo, "camp")
+            OI.repost(
+                s2,
+                store,
+                changes={"sandbox": "read-only-verify"},
+                scope="b",
+                reason="tighten b mid-pass",
+                envelope_path=_env_path(repo),
+            )
+            M.save_spec(repo, s2)
+        return f"leaf-{req.subplot_id}"
+
+    result = M.advance(repo, "camp", dispatcher=reposting_dispatcher, loop=True)
+    # b was NOT dispatched in the stale pass — it went out on the re-tick, under the NEW era.
+    assert result.dispatched == ["a", "b"]
+    assert result.spec_reloads >= 1
+    assert requests[0].intent_revision == 1 and requests[0].sandbox is None
+    assert requests[1].intent_revision == 2
+    assert requests[1].sandbox is not None
+    assert requests[1].sandbox.mutation_policy == "read-only"
+
+
+# ---------------------------------------------------------------------------
+# R6 TOCTOU — a bare intent-phase dispatch record (mid-dispatch window) counts as
+# in flight for the strand check; repeats never duplicate the halt records.
+# ---------------------------------------------------------------------------
+
+
+def test_strand_check_sees_mid_dispatch_intent_record(repo: Path) -> None:
+    spec = _start(
+        repo,
+        "camp",
+        [{"subplot_id": "deploy", "title": "Deploy", "kind": "code", "destructive": True}],
+    )
+    store = _store(repo, "camp")
+    # The mid-dispatch window: the tick has written the dispatch INTENT, not yet the commit.
+    STORE.append_ledger(
+        store,
+        {"phase": "intent", "kind": "dispatch", "key": "dispatch:deploy", "subplot_id": "deploy"},
+    )
+    before = spec.to_json()
+    with pytest.raises(OI.RepostStrandedError, match="strand"):
+        OI.repost(
+            spec,
+            store,
+            changes={"sandbox": "read-only-verify"},
+            scope="deploy",
+            reason="tighten mid-dispatch",
+            envelope_path=_env_path(repo),
+        )
+    assert spec.to_json() == before
+    # (The pre-dispatch control — NO dispatch record at all applies cleanly — is
+    # test_amendment_strands_irreversible_op_halts Control 2.)
+
+
+def test_repeated_stranded_repost_appends_once(repo: Path) -> None:
+    _start(
+        repo,
+        "camp",
+        [{"subplot_id": "deploy", "title": "Deploy", "kind": "code", "destructive": True}],
+    )
+    store = _store(repo, "camp")
+    env = _env_path(repo)
+    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["deploy"]
+
+    for _ in range(3):
+        spec = M.load_spec(repo, "camp")
+        with pytest.raises(OI.RepostStrandedError):  # every repeat still raises...
+            OI.repost(
+                spec,
+                store,
+                changes={"sandbox": "read-only-verify"},
+                scope="deploy",
+                reason="tighten it",
+                envelope_path=env,
+            )
+    # ...but the coordinator andon directive and the halt ledger record appear ONCE.
+    envelope = AE.load(env)
+    assert envelope is not None
+    andons = [
+        d for d in envelope.directives if d.directive == "andon_halt" and d.writer == "coordinator"
+    ]
+    assert len(andons) == 1
+    strand_records = [
+        r
+        for r in STORE.read_ledger(store)
+        if r.get("phase") == "halt" and r.get("kind") == "repost"
+    ]
+    assert len(strand_records) == 1
+    # Control: the dedup discriminates by scope — a strand halt for a DIFFERENT leaf appends.
+    AE.raise_strand_halt(env, scope="other-leaf", reason="different strand")
+    envelope2 = AE.load(env)
+    assert envelope2 is not None
+    assert len([d for d in envelope2.directives if d.directive == "andon_halt"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# R8 honesty — the scoped-repose offer appears ONLY on halts the hint can resolve
+# (a degrade_policy-borne guarantee); attending / guarantee-tag halts carry none.
+# ---------------------------------------------------------------------------
+
+
+def test_attending_halt_carries_no_scoped_repose(repo: Path) -> None:
+    # An ATTENDING halt fires before degrade_policy is consulted — no scoped repost value can
+    # clear it (the operator is present and decides directly), so offering the hint would be
+    # a false affordance.
+    _start(
+        repo,
+        "camp",
+        [
+            {
+                "subplot_id": "guard",
+                "title": "G",
+                "kind": "code",
+                "backend": "cc-workflows-ultracode",
+                "degrade_policy": "halt",
+            }
+        ],
+    )
+    result = M.advance(
+        repo,
+        "camp",
+        dispatcher=M.outcome_dispatcher.make_dispatcher(available=SPEC.NODE_BACKENDS),
+        available=DISPATCHER.ALWAYS_AVAILABLE,
+        attending=True,
+    )
+    assert len(result.halted) == 1
+    assert "attending" in result.halted[0]["reason"]
+    assert "scoped_repose" not in result.halted[0]
+
+
+def test_guarantee_tag_halt_carries_no_scoped_repose(repo: Path) -> None:
+    # A guarantee borne by spec-authored guarantee_tags cannot be lifted by a repost
+    # (degrade_policy/sandbox are the only node axes) — honestly offer-less.
+    _start(
+        repo,
+        "camp",
+        [
+            {
+                "subplot_id": "tagged",
+                "title": "T",
+                "kind": "code",
+                "backend": "cc-workflows-ultracode",
+                "guarantee_tags": ["deploy-window"],
+            }
+        ],
+    )
+    result = M.advance(
+        repo,
+        "camp",
+        dispatcher=M.outcome_dispatcher.make_dispatcher(available=SPEC.NODE_BACKENDS),
+        available=DISPATCHER.ALWAYS_AVAILABLE,
+        attending=False,
+    )
+    assert len(result.halted) == 1
+    assert "guarantee" in result.halted[0]["reason"]
+    assert "scoped_repose" not in result.halted[0]
+
+
+# ---------------------------------------------------------------------------
+# R5 completion-time overlap — an in-flight leaf's implied closure checks come from its
+# DISPATCH-ERA envelope; a loosening repost never retroactively releases its gate.
+# ---------------------------------------------------------------------------
+
+_SHA_A = "a" * 40
+_SHA_B = "b" * 40
+
+
+def _gh_runner(
+    pr_state: dict[str, str] | None = None, head_ref_oid: dict[str, str] | None = None
+) -> Any:
+    """A fake `gh` runner answering both `pr_state()` and `head_ref_oid()` for the same ref."""
+    pr_state = pr_state or {}
+    head_ref_oid = head_ref_oid or {}
+
+    def runner(args: list[str], **_kw: Any) -> SimpleNamespace:
+        ref = args[3]
+        st = pr_state.get(ref, "OPEN")
+        body = {
+            "state": st,
+            "mergedAt": "2026-07-14T00:00:00Z" if st == "MERGED" else None,
+            "headRefOid": head_ref_oid.get(ref, ""),
+        }
+        return SimpleNamespace(returncode=0, stdout=json.dumps(body), stderr="")
+
+    return runner
+
+
+def test_reviews_required_overlap_gates_in_flight_completion(repo: Path) -> None:
+    intent = {
+        "schema_version": 1,
+        "run_mode": "attended",
+        "ceremony_gates": {"reviews_required": "gate"},
+    }
+    M.start(
+        repo,
+        "camp",
+        "obj",
+        nodes=[
+            {
+                "subplot_id": "a",
+                "title": "A",
+                "kind": "code",
+                "github": {"pr": "1"},
+                "leaf_saga_id": "leaf-camp-a",
+            },
+            {
+                "subplot_id": "b",
+                "title": "B",
+                "kind": "code",
+                "github": {"pr": "2"},
+                "leaf_saga_id": "leaf-camp-b",
+                "depends_on": ["a"],
+            },
+        ],
+        intent=intent,
+    )
+    store = _store(repo, "camp")
+    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["a"]  # a in flight, gated era
+
+    # The loosening repost lands while a is in flight.
+    spec = M.load_spec(repo, "camp")
+    OI.repost(
+        spec,
+        store,
+        changes={"reviews_required": "auto"},
+        reason="loosen reviews",
+        envelope_path=_env_path(repo),
+    )
+    M.save_spec(repo, spec)
+
+    # b's PR stays OPEN until b actually runs (the realistic sequence); flipped below.
+    pr_state = {"1": "MERGED", "2": "OPEN"}
+    runner = _gh_runner(pr_state=pr_state, head_ref_oid={"1": _SHA_A, "2": _SHA_B})
+    # The in-flight leaf is NOT released by the loosening: its dispatch-era posture
+    # (reviews_required=gate) still requires code-review evidence at harvest.
+    assert (
+        ORCH.harvest(M.load_spec(repo, "camp"), store=store, github_runner=runner, repo_root=repo)
+        == []
+    )
+    # barrier_report mirrors harvest — the operator-facing verdict tells the SAME
+    # dispatch-era story (never "released" while the done transition is still gated).
+    report = ORCH.barrier_report(
+        M.load_spec(repo, "camp"), store=store, github_runner=runner, repo_root=repo
+    )
+    assert report["a"]["satisfied"] is True  # the GitHub-only barrier IS satisfied
+    assert report["a"]["closure_gate"]["satisfied"] is False
+    assert report["a"]["closure_gate"]["halt_reason"] == "missing-evidence:code-review"
+
+    # Green through the intended door: the dispatch-era gate is satisfiable — recording the
+    # code-review evidence releases the leaf (the gate discriminates, it doesn't just block).
+    lstore = LEDGER.Store.for_saga("leaf-camp-a", repo)
+    LEDGER.write(
+        lstore,
+        check_id="code-review",
+        reviewed_sha=_SHA_A,
+        producer="code-review",
+        verdict="clean",
+        content="ok",
+    )
+    assert ORCH.harvest(
+        M.load_spec(repo, "camp"), store=store, github_runner=runner, repo_root=repo
+    ) == ["a"]
+
+    # Red counterpart: b dispatches AFTER the repost -> the NEW era (reviews_required=auto)
+    # governs it, so it completes WITHOUT review evidence. Same campaign, same machinery —
+    # the only difference is the dispatch era, proving the gate binds to dispatch time.
+    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["b"]
+    pr_state["2"] = "MERGED"  # b's PR merges after its flight
+    assert ORCH.harvest(
+        M.load_spec(repo, "camp"), store=store, github_runner=runner, repo_root=repo
+    ) == ["b"]
+
+
+def test_tightening_repost_never_retroactively_imposes_checks(repo: Path) -> None:
+    # The mirror-image control: a leaf dispatched under NO committed envelope ("intent": null
+    # captured at dispatch) is not retroactively gated by a later live attach/tightening —
+    # dispatch-time posture cuts both ways.
+    M.start(
+        repo,
+        "camp",
+        "obj",
+        nodes=[
+            {
+                "subplot_id": "a",
+                "title": "A",
+                "kind": "code",
+                "github": {"pr": "1"},
+                "leaf_saga_id": "leaf-camp-a",
+            }
+        ],
+    )
+    store = _store(repo, "camp")
+    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["a"]  # envelope-less era
+
+    # An all-gated envelope attaches mid-run (tightening — passes the live monotonic rule).
+    spec = M.load_spec(repo, "camp")
+    spec.intent = {
+        "schema_version": 1,
+        "run_mode": "attended",
+        "ceremony_gates": {"reviews_required": "gate"},
+    }
+    spec.bump_revision(reason="test: attach gated envelope mid-run")
+    spec.intent_revision = spec.spec_revision
+    M.save_spec(repo, spec)
+
+    runner = _gh_runner(pr_state={"1": "MERGED"}, head_ref_oid={"1": _SHA_A})
+    # a completes under its dispatch-era (no-envelope) posture: no implied checks.
+    assert ORCH.harvest(
+        M.load_spec(repo, "camp"), store=store, github_runner=runner, repo_root=repo
+    ) == ["a"]
 
 
 # ---------------------------------------------------------------------------

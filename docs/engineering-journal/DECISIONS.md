@@ -9,20 +9,35 @@
 exist — campaign posture is the #380 intent envelope (`run_mode` + `ceremony_gates`), node
 posture is the existing `degrade_policy`/`sandbox` — through the same atomic
 snapshot→validate→`bump_revision`→`decision_trail` shape as every structural edit. Five contract
-choices: (1) `ceremony_gates.merge`/`deploy_nonprod` ARE the issue's `merge_gate`/`deploy_gate`
-(no new fields), and they move only toward MORE gating — a gate→auto repost is rejected outright,
-even on an envelope-less campaign whose effective gates default to `gate`. (2) Overlap safety is
-`intent_revision` (the revision a posture change introduced; absent = run-start baseline) plus a
-dispatch-time posture snapshot on each leaf's `commit` dispatch record — in-flight leaves finish
-under dispatch-time posture, pending leaves pick up the amendment. (3) A repost that would strand
-an in-flight `destructive` leaf's sandbox authorization raises the EXISTING #372 stop surface (a
-`coordinator`-writer `andon_halt` via `raise_strand_halt`) rather than a new campaign-halt
-mechanism — the amendment is rejected, spec untouched, no silent resolution either direction.
-(4) Approval interplay is derived from the revision-keyed R20 gate: any repost bump re-closes it;
-a PURE-tightening repost carries the prior approval forward with
-`carried-forward:tightening-repost:r<old>` provenance. (5) The two isolated
+choices, as hardened by the adversarial verify round: (1) `ceremony_gates.merge`/`deploy_nonprod`
+ARE the issue's `merge_gate`/`deploy_gate` (no new fields), and they move only toward MORE gating
+— a gate→auto repost is rejected outright, even on an envelope-less campaign whose effective
+gates default to `gate`, and the SAME validation runs on a live `set-intent` first attach
+(`validate_live_attach`; any dispatch record, either phase, makes the campaign live), with every
+accepted attach writing a `set-intent` trail entry — one rule, one trail, no second-verb side
+door. They are, honestly, recorded posture with no engine consumer until #449. (2) Overlap
+safety is `intent_revision` plus a dispatch-time posture snapshot on each leaf's `commit`
+dispatch record that INCLUDES the campaign envelope (`posture.intent`, `null` = envelope-less) —
+in-flight leaves finish under dispatch-time posture for dispatch AND completion (harvest /
+barrier_report evaluate implied closure checks against the dispatch-era envelope), pending
+leaves pick up the amendment — and a committed repost survives a concurrent tick structurally:
+`save_spec` is compare-and-swap on the load-time revision (`StaleSpecError`; the cost processor
+reloads-and-reapplies loudly) and the reconcile loop re-checks the on-disk revision per tick and
+per leaf before dispatching (the precisely-bounded residual sub-window is documented in
+`references/outcome-spec.md`, not claimed away). (3) A repost that would strand an in-flight
+`destructive` leaf's sandbox authorization — where in-flight fail-closed includes a bare
+intent-phase dispatch record (the TOCTOU window) — raises the EXISTING #372 stop surface (a
+`coordinator`-writer `andon_halt` via `raise_strand_halt`, append-once per `(writer, scope)`,
+with the ledger record append-once per `(phase, key)`) rather than a new campaign-halt
+mechanism — the amendment is rejected, spec untouched, no silent resolution either direction,
+no duplicate directives on repeats. (4) Approval interplay is derived from the revision-keyed
+R20 gate: any repost bump re-closes it; a PURE-tightening repost carries the prior approval
+forward with `carried-forward:tightening-repost:r<old>` provenance. (5) The two isolated
 `workspace_isolation` values are mutually incomparable, so a move between them classifies
-LOOSEN conservatively — the misread costs one extra re-approval, never skips one.
+LOOSEN conservatively — the misread costs one extra re-approval, never skips one. The R8
+`scoped_repose` offer is restricted to the one halt class the offered verb can actually
+resolve (a `degrade_policy`-borne guarantee, no tags); attending / tag-borne / destructive /
+availability halts are honestly offer-less.
 
 **Rejected alternatives.** New `merge_gate`/`deploy_gate` fields on `OutcomeSpec` (forks the
 #380 vocabulary the issue explicitly says to compose with); a family of per-axis setter verbs

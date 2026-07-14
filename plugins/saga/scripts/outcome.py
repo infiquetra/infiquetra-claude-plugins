@@ -49,7 +49,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # catches ``outcome_dispatcher.BackendHaltError`` per leaf. outcome_dispatcher does NOT import this
 # module (it duck-types the request), so there is no import cycle.
 import adjustment_envelope  # noqa: E402  (the #372 mid-run control surface, polled per tick)
+import intent_envelope  # noqa: E402  (the canonical #380 envelope schema, via the fleet shim)
 import outcome_dispatcher  # noqa: E402
+import outcome_intent  # noqa: E402  (the #433 posture-renegotiation engine; no import cycle)
 import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 import outcome_store  # noqa: E402
 
@@ -64,6 +66,18 @@ DEFAULT_LEASE_TTL = 900.0
 
 class OutcomeError(ValueError):
     """An ``/outcome`` operation violated an invariant (bad id, missing spec, etc.)."""
+
+
+class StaleSpecError(OutcomeError):
+    """A save was built on a spec revision another writer has since superseded (#433).
+
+    Raised by :func:`save_spec` when the on-disk ``spec_revision`` no longer matches the
+    revision this in-memory spec was loaded at — e.g. a mid-tick ``repost``/``set-intent``
+    committed a newer revision while an ``advance`` tick still held the older one in memory.
+    The stale write is REFUSED so the newer revision (its posture, its revision bump, its
+    decision-trail entry) survives; the caller either surfaces the error loudly or reloads
+    the newer spec and re-applies its change on top (the cost processor does the latter).
+    """
 
 
 # A dispatcher hands a ready leaf off to a backend and returns its leaf saga id. It MUST NOT run the
@@ -107,15 +121,11 @@ def _append_ledger_once(store: Any, record: dict[str, Any]) -> bool:
     degrade-then-crashed leaf never writes a commit, so it is re-evaluated every tick. Without this, an
     attended leaf polling ``advance`` against a persistently-unavailable backend re-appends a ``halt``
     record on every tick (unbounded ledger growth), and a crash in the degrade->commit window
-    double-lists the degradation. Deduping on ``(phase, key)`` (the ``import_bundle`` pattern) bounds
-    both. Returns True if the record was appended, False if it was already present.
+    double-lists the degradation. Delegates to :func:`outcome_store.append_ledger_once` — the ONE
+    (phase, key) append-once implementation, shared with the #433 repost strand-halt writer.
     """
-    phase, key = record.get("phase"), record.get("key")
-    for rec in outcome_store.read_ledger(store):
-        if rec.get("phase") == phase and rec.get("key") == key:
-            return False
-    outcome_store.append_ledger(store, record)
-    return True
+    appended: bool = outcome_store.append_ledger_once(store, record)
+    return appended
 
 
 def _default_holder() -> str:
@@ -150,7 +160,27 @@ def load_spec(repo_root: Path, outcome_id: str) -> outcome_spec.OutcomeSpec:
     except FileNotFoundError as exc:
         raise OutcomeError(f"no outcome spec at {path} — run `outcome start` first") from exc
     spec.validate()
+    # Stamp the revision this instance was loaded at — save_spec's stale-write guard compares
+    # it against the on-disk revision so a save built on a superseded load fails loudly (#433).
+    spec.loaded_revision = spec.spec_revision
     return spec
+
+
+def _on_disk_revision(repo_root: Path, outcome_id: str) -> int | None:
+    """The ``spec_revision`` currently on disk, or ``None`` when absent/unreadable.
+
+    ``None`` is deliberately never treated as "safe": a reader that cannot verify the on-disk
+    revision must fail toward NOT acting on possibly-stale posture (save_spec refuses the
+    write; the reconcile loop reloads, which raises loudly on a genuinely broken file).
+    """
+    try:
+        data = json.loads(spec_path(repo_root, outcome_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    revision = data.get("spec_revision") if isinstance(data, dict) else None
+    if isinstance(revision, bool) or not isinstance(revision, int):
+        return None
+    return revision
 
 
 def save_spec(repo_root: Path, spec: outcome_spec.OutcomeSpec) -> Path:
@@ -160,11 +190,32 @@ def save_spec(repo_root: Path, spec: outcome_spec.OutcomeSpec) -> Path:
     cross-machine-durability step) is :func:`commit_spec`, run explicitly via ``/outcome commit`` or
     ``/outcome advance --persist`` — never silently per tick. node live-state stays derived-on-read (R17),
     so the branch history is not polluted with state churn.
+
+    **Stale-write guard (#433 overlap safety).** The write is compare-and-swap on the revision
+    this spec was loaded at (``spec.loaded_revision``; a spec never loaded from disk compares
+    against its own ``spec_revision``): if the on-disk ``spec_revision`` has moved since our
+    load — a concurrent ``repost``/``set-intent``/edit committed a newer revision — the save
+    raises :class:`StaleSpecError` instead of silently reverting the newer revision's posture,
+    revision bump, and decision-trail entry. An unreadable-but-present spec file also refuses
+    (fail closed: a write we cannot verify is not a write we may make).
     """
     spec.validate()
     path = spec_path(repo_root, spec.outcome_id)
+    if path.exists():
+        on_disk = _on_disk_revision(repo_root, spec.outcome_id)
+        expected = spec.loaded_revision or spec.spec_revision
+        if on_disk != expected:
+            raise StaleSpecError(
+                f"refusing to save outcome {spec.outcome_id!r}: the on-disk spec_revision is "
+                f"{on_disk!r} but this spec was loaded at revision {expected} — a concurrent "
+                f"writer (e.g. a mid-run repost) has superseded it. Reload the spec and "
+                f"re-apply the change on top of the newer revision."
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(spec.to_json(), encoding="utf-8")
+    # This instance now IS the on-disk revision — later saves of the same object CAS
+    # against what was just written.
+    spec.loaded_revision = spec.spec_revision
     return path
 
 
@@ -330,15 +381,31 @@ def start(
     return spec
 
 
-def set_intent(repo_root: Path, outcome_id: str, intent_file: Path) -> outcome_spec.OutcomeSpec:
+def set_intent(
+    repo_root: Path,
+    outcome_id: str,
+    intent_file: Path,
+    *,
+    runner: Callable[..., Any] | None = None,
+) -> outcome_spec.OutcomeSpec:
     """Attach a run-start intent envelope to an ALREADY-started outcome (#380).
 
     The landing place for an interview captured after ``start`` reported
     ``interview_required: true`` — ``start`` is non-idempotent, so the captured envelope needs a
     verb of its own. Validated exactly like ``start --intent-file`` (an invalid file is a loud
-    error, never adopted); bumps ``spec_revision`` (a structural edit — re-``approve`` before the
-    next dispatch). Refuses to overwrite a committed envelope: mid-run posture renegotiation is
-    #433's contract, not this verb's.
+    error, never adopted); bumps ``spec_revision`` through ``bump_revision`` (one revision
+    counter, one decision-trail entry — re-``approve`` before the next dispatch). Refuses to
+    overwrite a committed envelope: mid-run posture renegotiation is #433's contract, not this
+    verb's.
+
+    **Live-campaign monotonic validation (#433 AC5).** Attaching a first envelope BEFORE any
+    dispatch is run-start posture and may carry any gate values (the #380 interview-fallback
+    contract). But once the campaign is LIVE (any dispatch ledger record exists), a first
+    attach is the same semantic transition as a repost against the effective (default-gated,
+    ``gate``-everywhere) posture — so it passes the SAME monotonic validation: an envelope
+    carrying ``merge: "auto"`` or ``deploy_nonprod: "auto"`` is rejected outright
+    (``outcome_intent.RepostError``), never accepted through the sibling verb. One rule, both
+    verbs.
     """
     spec = load_spec(repo_root, outcome_id)
     if getattr(spec, "intent", None):
@@ -347,11 +414,34 @@ def set_intent(repo_root: Path, outcome_id: str, intent_file: Path) -> outcome_s
             "mid-run renegotiation is the `repost` verb's contract (#433), not set-intent's"
         )
     resolution = resolve_start_intent(None, intent_file)
+    store = _store(repo_root, outcome_id, runner=runner)
+    live = outcome_intent.campaign_live(store)
+    deltas: tuple[Any, ...] = ()
+    if live:
+        # AC5: the attach must clear the same monotonic gate a repost would — computed against
+        # the effective (default-gated) no-envelope posture. Raises RepostError on a violation,
+        # leaving the spec (and the on-disk file) byte-identical.
+        deltas = outcome_intent.validate_live_attach(spec, resolution["intent"])
     spec.intent = resolution["intent"]
-    spec.spec_revision += 1
+    # One verb, one revision counter, one trail (#433): the attach is a posture change, so it
+    # records a structured decision-trail entry exactly like a repost does — never a bare
+    # revision bump with no audit record.
+    new_revision = spec.bump_revision(
+        reason="set-intent: attach run-start intent envelope"
+        + (" to a live campaign" if live else "")
+    )
+    spec.decision_trail[-1].update(
+        {
+            "kind": "set-intent",
+            "scope": "",
+            "live": live,
+            "deltas": [d.to_dict() for d in deltas],
+            "intent_revision": new_revision,
+        }
+    )
     # #433 R4: attaching the envelope IS a posture change — tag the revision that introduced
     # it so dispatch records distinguish pre- from post-envelope dispatches.
-    spec.intent_revision = spec.spec_revision
+    spec.intent_revision = new_revision
     spec.validate()
     save_spec(repo_root, spec)
     return spec
@@ -627,6 +717,7 @@ class AdvanceResult:
     )  # per-tick board<->saga drift/recovered records (#295 — only when autonomous=True)
     skipped_busy: bool = False  # coordinator lease held by another tick -> no-op (R13)
     ticks: int = 1
+    spec_reloads: int = 0  # mid-run on-disk revision moves detected -> spec re-read (#433 M2/M4)
     status: dict[str, Any] = field(default_factory=dict)
     adjustment: dict[str, Any] = field(
         default_factory=dict
@@ -649,6 +740,7 @@ class AdvanceResult:
             "drift": self.drift,
             "skipped_busy": self.skipped_busy,
             "ticks": self.ticks,
+            "spec_reloads": self.spec_reloads,
             "status": self.status,
             "adjustment": self.adjustment,
         }
@@ -770,9 +862,21 @@ def advance(
     # amendments/surfaced info (recorded with applied=False — surfaced, never silently dropped).
     adjustment_decision: dict[str, Any] = {}
     ticks = 0
+    spec_reloads = 0
     try:
         while True:
             ticks += 1
+            # #433 (M2/M4): the canonical spec can move under a running coordinator — a mid-run
+            # `repost`/`set-intent` bumps the on-disk revision while this process still holds
+            # the load-time spec in memory. Re-check at every tick boundary and reload so this
+            # tick's harvest/dispatch act on the posture actually in force, never on a revision
+            # the operator has already superseded. (load_spec raises loudly on a broken file —
+            # fail closed, never dispatch under a posture we cannot verify.)
+            if _on_disk_revision(repo_root, outcome_id) != spec.spec_revision:
+                spec = load_spec(repo_root, outcome_id)
+                if gate_factory is not None:
+                    dispatch_gate = gate_factory(spec, store)
+                spec_reloads += 1
             if merge_processor is not None:
                 # Auto-merge clean PRs FIRST (under the held coordinator lease, so serialized
                 # cross-process, R12/R13), then harvest reads the now-merged PRs as completions.
@@ -824,26 +928,40 @@ def advance(
                     "amendments": list(decision.amendments),
                     "applied": False,
                 }
-            tick_dispatched, tick_halted, tick_gated, tick_degraded, tick_retriable = (
-                _reconcile_once(
-                    repo_root,
-                    spec,
-                    store,
-                    dispatch,
-                    holder,
-                    lease_ttl,
-                    now,
-                    dispatch_gate=dispatch_gate,
-                    available=available,
-                    attending=attending,
-                    retriable_seen=retriable_seen,
-                )
+            (
+                tick_dispatched,
+                tick_halted,
+                tick_gated,
+                tick_degraded,
+                tick_retriable,
+                tick_stale,
+            ) = _reconcile_once(
+                repo_root,
+                spec,
+                store,
+                dispatch,
+                holder,
+                lease_ttl,
+                now,
+                dispatch_gate=dispatch_gate,
+                available=available,
+                attending=attending,
+                retriable_seen=retriable_seen,
             )
             all_dispatched.extend(tick_dispatched)
             all_halted.extend(tick_halted)
             all_gated.extend(tick_gated)
             all_degraded.extend(tick_degraded)
             all_retriable.extend(tick_retriable)
+            if tick_stale:
+                # #433 (M2/M4): the spec went stale MID-pass (a repost committed while this
+                # pass was dispatching) — the pass stopped handing out work under the revoked
+                # posture. Reload immediately so the processors below (and a loop=True re-tick)
+                # act on the revision actually in force.
+                spec = load_spec(repo_root, outcome_id)
+                if gate_factory is not None:
+                    dispatch_gate = gate_factory(spec, store)
+                spec_reloads += 1
             if cost_processor is not None:
                 # Materialize the realized-cost rollup into spec.cost_rollup AFTER dispatch/harvest so it
                 # reflects this tick's completions (U10/R24). The U8 report renders spec.cost_rollup.
@@ -896,7 +1014,7 @@ def advance(
                 )
             if not loop:
                 break
-            if not tick_dispatched:
+            if not tick_dispatched and not tick_stale:
                 break  # quiescent: nothing new to dispatch this tick (HALTed/gated leaves wait)
             if ticks >= max_ticks:
                 break
@@ -917,6 +1035,7 @@ def advance(
         board_synced=all_board_synced,
         drift=all_drift,
         ticks=ticks,
+        spec_reloads=spec_reloads,
         status=status(repo_root, outcome_id, spec=spec, store=store),
         adjustment=adjustment_decision,
     )
@@ -935,10 +1054,14 @@ def _reconcile_once(
     available: Sequence[str] | None = None,
     attending: bool = True,
     retriable_seen: set[str] | None = None,
-) -> tuple[list[str], list[dict[str, Any]], list[str], list[dict[str, Any]], list[str]]:
+) -> tuple[list[str], list[dict[str, Any]], list[str], list[dict[str, Any]], list[str], bool]:
     """One level-triggered pass: dispatch every ready, not-yet-settled leaf exactly once.
 
-    Returns ``(dispatched, halted, gated, degraded, retriable)``. Each dispatch is recorded
+    Returns ``(dispatched, halted, gated, degraded, retriable, stale)``. ``stale`` (#433
+    M2/M4) is True when the on-disk ``spec_revision`` moved mid-pass (a concurrent
+    ``repost``/``set-intent`` committed): the pass STOPS dispatching immediately — a tick
+    whose spec went stale must never hand out work under a revoked posture — and the caller
+    reloads before the next pass. Each dispatch is recorded
     **intent -> effect ->
     commit** (the store's replay protocol): the intent is written BEFORE the backend is invoked, so a
     crash/append-failure after the effect leaves a durable dangling intent that ``replay_pending``
@@ -999,6 +1122,7 @@ def _reconcile_once(
     gated: list[str] = []
     degraded: list[dict[str, Any]] = []
     retriable: list[str] = []
+    stale = False
     # #433 R4: the posture era every dispatch THIS pass happens under. None (never renegotiated)
     # reads as the revision-1 run-start baseline.
     active_intent_revision = getattr(spec, "intent_revision", None) or 1
@@ -1017,6 +1141,17 @@ def _reconcile_once(
         # is the durable dedup. If another tick holds the lock right now, skip — it owns this leaf.
         if not outcome_store.acquire_dispatch(store, sid, holder, lease_ttl, now=now):
             continue
+
+        # #433 (M2/M4): re-verify the on-disk revision per leaf, AFTER the lock and BEFORE the
+        # dispatch intent is written. A mid-pass repost/set-intent means the posture this pass
+        # loaded may be revoked — stop dispatching (the caller reloads and re-ticks) rather
+        # than hand this leaf out under a posture the operator has already superseded. The
+        # residual sub-window this cannot close is documented in references/outcome-spec.md
+        # (§Mid-run posture renegotiation — remaining overlap window).
+        if _on_disk_revision(repo_root, spec.outcome_id) != spec.spec_revision:
+            outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+            stale = True
+            break
 
         # #373 (T8-F5-7): the pre-dispatch spend-authorization gate — HALT-only, checked
         # BEFORE any backend resolution so an unauthorized leaf never resolves a backend and
@@ -1073,13 +1208,25 @@ def _reconcile_once(
                 receipt_available = tuple(available or ())
             if action == "halt":
                 outcome_store.release_lease(store, f"dispatch-{sid}", holder)
-                # #433 R8: a POSTURE-caused halt (attending / guarantee-bearing / side-effected
-                # — the exact three flags whose truth routed degrade_decision to halt instead
-                # of degrade) carries the scoped-repose resolution option. A halt with all
-                # three false is availability-caused (no lower rung) — posture cannot resolve
-                # it, so no option is offered.
-                posture_caused = (
-                    attending or outcome_dispatcher.is_guarantee_bearing(node) or node.destructive
+                # #433 R8: the scoped-repose option is offered ONLY where the offered hint
+                # (`repost --scope <sid> --set degrade_policy=...`) can actually resolve the
+                # halt — the guarantee class, when the guarantee is borne by the node's own
+                # `degrade_policy: "halt"` (no `guarantee_tags`, which a repost cannot remove).
+                # Every other halt class is honestly offer-less: an ATTENDING halt fires before
+                # degrade_policy is even consulted (the operator is present — R23 pages them
+                # directly); a side-effected/destructive halt is HALT-not-degrade by design (no
+                # posture value re-runs a side-effected leaf on a lesser backend); a captured
+                # #373 envelope degrade_policy that forbids degrade is not a repost axis; an
+                # availability halt (no lower rung) is not posture at all.
+                offers_repose = (
+                    not attending
+                    and not node.destructive
+                    and outcome_dispatcher.is_guarantee_bearing(node)
+                    and not getattr(node, "guarantee_tags", None)
+                    and (
+                        not backend_posture_engaged
+                        or posture_degrade_policy == intent_envelope.INTENT_DEGRADE_ONE_RUNG
+                    )
                 )
                 receipt = outcome_dispatcher.HaltReceipt(
                     outcome_id=spec.outcome_id,
@@ -1089,7 +1236,7 @@ def _reconcile_once(
                     available=receipt_available,
                     scoped_repose=(
                         outcome_dispatcher.scoped_repose_option(spec.outcome_id, sid)
-                        if posture_caused
+                        if offers_repose
                         else None
                     ),
                 ).to_dict()
@@ -1169,10 +1316,17 @@ def _reconcile_once(
                 # #433 R4: dispatch-time posture. The leaf finishes under THIS posture even if
                 # a later repost amends the campaign (R5); the repost strand check (R6) reads
                 # it back to decide whether an amendment would revoke authorization the leaf
-                # already carries.
+                # already carries, and the harvest/closure-gate seam reads "intent" back so an
+                # in-flight leaf's COMPLETION gate (e.g. an implied code-review check under
+                # reviews_required: "gate") is evaluated against the campaign envelope in
+                # force at dispatch — never against a later loosening. "intent": null says
+                # explicitly "dispatched with no committed envelope" (implies no checks, even
+                # if an envelope attaches later); an absent key is a pre-capture record and
+                # falls back to the spec's current intent.
                 "intent_revision": active_intent_revision,
                 "posture": {
                     "intent_revision": active_intent_revision,
+                    "intent": spec.intent,
                     "degrade_policy": node.degrade_policy,
                     "mutation_policy": (
                         node.sandbox.mutation_policy if node.sandbox is not None else "read-write"
@@ -1184,7 +1338,7 @@ def _reconcile_once(
             },
         )
         dispatched.append(sid)
-    return dispatched, halted, gated, degraded, retriable
+    return dispatched, halted, gated, degraded, retriable, stale
 
 
 # ---------------------------------------------------------------------------
@@ -1442,14 +1596,37 @@ def production_liveness_processor(
 def production_cost_processor(repo_root: Path) -> Callable[[Any, Any], Any]:
     """Build the cost processor ``advance`` runs each tick (U10): it materializes the realized-cost
     rollup (R24) into ``spec.cost_rollup`` and persists the spec WHEN the rollup changed, so the U8
-    report renders it (the producer -> spec -> consumer edge, no U8->U10 code dependency)."""
+    report renders it (the producer -> spec -> consumer edge, no U8->U10 code dependency).
+
+    **Never clobbers a mid-tick repost (#433 M2).** The save runs through ``save_spec``'s
+    stale-write guard: when a concurrent ``repost``/``set-intent`` committed a newer revision
+    after this tick loaded the spec, the stale save is refused, the NEWER spec is reloaded,
+    and the rollup is re-derived from the same ledger and re-applied on top of it — the
+    repost's revision bump, envelope change, and decision-trail entry all survive, and the
+    tick's record says so loudly (``reapplied_over_stale_revision``). A silent revert is
+    structurally impossible at this seam.
+    """
     import outcome_costs
 
     def processor(spec: Any, store: Any) -> Any:
         changed = outcome_costs.materialize(spec, store)
-        if changed:
+        if not changed:
+            return {"rollup": spec.cost_rollup, "changed": False}
+        try:
             save_spec(repo_root, spec)
-        return {"rollup": spec.cost_rollup, "changed": changed}
+        except StaleSpecError as exc:
+            fresh = load_spec(repo_root, spec.outcome_id)
+            rechanged = outcome_costs.materialize(fresh, store)
+            if rechanged:
+                save_spec(repo_root, fresh)  # a second concurrent bump here fails loudly
+            return {
+                "rollup": fresh.cost_rollup,
+                "changed": rechanged,
+                "reapplied_over_stale_revision": spec.spec_revision,
+                "spec_revision": fresh.spec_revision,
+                "stale_reason": str(exc),
+            }
+        return {"rollup": spec.cost_rollup, "changed": True}
 
     return processor
 
@@ -1686,8 +1863,6 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "repost":
-            import outcome_intent
-
             spec = load_spec(root, args.outcome_id)
             store = _store(root, args.outcome_id)
             repost_result = outcome_intent.repost(

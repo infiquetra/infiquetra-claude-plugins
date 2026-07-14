@@ -420,9 +420,20 @@ def raise_strand_halt(path: Path, *, scope: str, reason: str, at: str = "") -> A
     leaf drains under its dispatch-time posture (R5), and the rejected amendment is
     surfaced to the operator — never silently applied, never silently dropped. ``scope``
     names the stranded leaf so the surfaced record says exactly which op forced the stop.
+
+    **Append-once on (writer, scope)** — the envelope-side parity of the reconcile halt
+    path's ledger (phase, key) dedup: a repeated stranded repost against the same leaf
+    re-raises to its caller every time, but the ONE standing halt directive is never
+    duplicated (a directive pile-up would make the operator clear N records for one strand).
     """
     if not scope:
         raise EnvelopeError("a strand halt needs a scope naming the stranded leaf")
+    existing = load(path)
+    if existing is not None and any(
+        d.directive == "andon_halt" and d.writer == "coordinator" and d.extra.get("scope") == scope
+        for d in existing.directives
+    ):
+        return existing
     d = Directive(
         directive="andon_halt", writer="coordinator", reason=reason, at=at, extra={"scope": scope}
     )

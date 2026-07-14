@@ -1,0 +1,44 @@
+name: Mutation Canary
+
+# Prove the fleet's drift guards have teeth (#427). ci.yml only ever proves a guard did not fire on
+# a clean tree — it cannot tell "the tree is clean" from "the guard is dead". This scheduled run
+# breaks one guarded invariant per registered guard in a throwaway checkout, runs the guard, and
+# fails the run if any guard stays green (toothless). The canary log is uploaded as an artifact so
+# toothless-guard history is inspectable without re-running.
+
+on:
+  schedule:
+    # 07:17 UTC daily — off the top of the hour to avoid the Actions scheduling stampede.
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  mutation-canary:
+    name: Mutation Canary (drift guards)
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Run mutation canary against the full guard registry
+        run: uv run python tools/wiring_canary.py
+
+      - name: Upload canary log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-canary-log
+          path: docs/engineering-journal/canary-log.jsonl
+          if-no-files-found: warn

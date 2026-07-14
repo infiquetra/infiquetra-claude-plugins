@@ -27,6 +27,41 @@
 
 ## 2026-07-14
 
+### A guard that never fails on today's clean tree cannot prove it still has teeth; mutate the invariant in a throwaway checkout and require RED {#mutation-canary-teeth-427}
+
+**Context.** #427 shipped `tools/wiring_canary.py` — a mutation canary over the fleet's drift
+guards (`test_agent_registration_drift`, `test_release_triad`, `test_manifest_consumer_matrix`,
+`test_team_execution_pointers::test_byte_drift_raises_hash_mismatch`). CI only ever proves a guard
+did NOT fire on a clean tree; it cannot distinguish "the tree is clean" from "the guard regressed
+to a no-op." The canary copies the repo to a system tempdir, breaks the guarded invariant in the
+copy, runs the guard, and asserts it goes red (`caught`); a guard that stays green is `toothless`.
+**Evidence.** `tools/wiring_canary.py`, `tools/canary_registry.json`; all four seed guards report
+`caught` (`python3 tools/wiring_canary.py` exits 0, appends 4 records to the gitignored
+`docs/engineering-journal/canary-log.jsonl`). Fixture-guard tests in `tests/test_wiring_canary.py`
+prove the `caught`/`toothless`/`error` branches independent of the real guards.
+**Mechanism (three gotchas that actually bit).** (1) *pytest exit codes alone cannot classify* —
+0 = toothless, 1 = caught, 2/3/4/5 = error is necessary but NOT sufficient: an interpreter with no
+pytest at all also exits 1 ("No module named pytest"), which the verify panel demonstrated
+masquerading as four green "caught" verdicts with zero guard code executed. The fix is a
+**baseline control run**: `caught` is credited only when the guard was GREEN on the unmutated
+copy first (which also proves pytest ran) and went red after the mutation; a baseline red is
+`error`, never `caught`. (2) *The guards resolve their `REPO_ROOT` from
+`Path(__file__).parent.parent`, not cwd* — so running the copied test file against the mutated copy
+Just Works; the canary runs each guard as a subprocess with `cwd=<checkout>` and `-o addopts=` to
+drop the repo's `--cov` default. (3) *A stale mutation anchor must surface as `error`, never silent
+green* — `apply_mutation` raises `CanaryError` when its `find` string is absent, so a guarded file
+being refactored out from under the registry fails loud instead of reporting a false `caught`.
+**What surprised.** The canary log has to be gitignored: `--target X && git status --porcelain`
+(AC5) requires an empty status, but the run appends to the log, so a tracked log would dirty the
+tree and fail the very "no leak" property it documents. Ephemeral-artifact log, not a committed one.
+**Generalizable rule.** For any guard/gate/assertion you rely on, add a companion that deliberately
+violates the guarded property and requires the guard to fail — a guard unproven against its own
+failure mode is indistinguishable from a dead one.
+**Refs.** DECISIONS `{#mutation-canary-design-427}`; extends the drift-guard precedent
+`{#readonly-verifier-fallback-ladder-325}`.
+
+---
+
 ### A fake-only test suite is invisible to green CI unless a gate reads the test's *shape*, not its result {#fake-adapter-integrity-458}
 
 **Context.** #458 shipped the mechanical, always-on gates for the recurring "100%-green suite that

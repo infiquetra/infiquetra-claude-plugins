@@ -142,12 +142,28 @@ saga fields** (`lifecycle_phase`, `phase_status`, `status`, `plan_path`, `review
 `destination`) — it reads no writable board Status column, board cache, or `board_progression`
 write-record, so it renders what the saga asserts, never what the board says (KD4 derived-on-read).
 
-**Boundary (#344 KTD3): `/loop` renders and sequences; it does not write the board.** `/loop`'s first
-principle is route-and-sequence, not execute-phase-work — `mission-control` and the destination command
-own board writes. The autonomous, allowlisted board progression (Status → Done, sub-issue close) fires
-from **`/work`'s post-merge path** (which owns the merge), never from `/loop`. `/loop`'s board
-contribution is the arc render plus sequencing the destination command that performs the allowlisted
-write — the same end-to-end closure without `/loop` mutating the board itself.
+**Boundary (#344 KTD3, refined #450): `/loop` renders, sequences, and reconciles; it never drives NEW
+forward progression.** `/loop`'s first principle is route-and-sequence, not execute-phase-work — the
+autonomous, allowlisted *forward* board progression (Status → Done, sub-issue close on merge) fires
+from **`/work`'s post-merge path** (which owns the merge), never from `/loop`. What `/loop` DOES own
+(#450) is a **level-triggered reconcile tick** over the saga-owned Status field the lifecycle has
+already asserted: at Route/Drive/Resume entry, alongside the arc render, run the shared controller in
+drift-detect mode so an outside edit made while `/loop` was at rest is re-detected and reconciled:
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> --target-state <saga-derived Status>
+```
+
+This is the SAME shared controller `/work` uses post-merge (`/outcome` composes the same
+`board_progression` + drift-vocabulary primitives underneath, but its `advance` loop is not yet a
+controller consumer — tracked in #593). It re-asserts the saga-derived value on a reversible
+Status drift (`{"status":"corrected"}`), and HALTs with a named `halt_reason` on an irreversible
+open/closed drift (surface it, never overwrite). It reconciles only the already-asserted,
+allowlisted field — it does **not** widen `/loop`'s autonomy or make it execute phase work (#450
+non-goal). The no-new-forward-progression boundary (a first-time forward move belongs to `/work`)
+is documented convention enforced by this skill's instructions, not mechanically by the controller
+— pass a `--target-state` only for a Status `/loop` has already asserted.
 
 ---
 

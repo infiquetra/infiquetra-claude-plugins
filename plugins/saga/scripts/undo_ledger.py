@@ -335,9 +335,26 @@ def _main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("show", help="list pending-undo records (oldest first)")
     sub.add_parser("ops", help="list the registered reversible op types")
+    p_u = sub.add_parser("undo", help="replay the inverse of the last N recorded ops (LIFO)")
+    p_u.add_argument("--count", type=int, default=1)
+    p_u.add_argument(
+        "--state-file",
+        type=Path,
+        default=None,
+        help="JSON state the inverses replay against (updated in place); default: empty state",
+    )
 
     args = parser.parse_args(argv)
     path = default_ledger_path(args.repo_root)
+    if args.command == "undo":
+        state: dict[str, Any] = {}
+        if args.state_file is not None:
+            state = json.loads(args.state_file.read_text(encoding="utf-8"))
+        new_state, undone = undo(path, state, count=args.count)
+        if args.state_file is not None:
+            args.state_file.write_text(json.dumps(new_state, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps({"undone": [r.to_dict() for r in undone], "state": new_state}))
+        return 0
     if args.command == "show":
         for rec in read_ledger(path):
             print(json.dumps(rec.to_dict()))

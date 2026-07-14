@@ -214,6 +214,24 @@ def _parse_directive(raw: Any, *, index: int) -> Directive:
     if writer not in KNOWN_WRITERS:
         raise EnvelopeError(f"directive {name!r} has unrecognized writer: {writer!r}")
 
+    # Value-type strictness (panel hand-finish): shape-valid but wrong-typed values must be
+    # errors, not silent no-ops. bool('no') is True, so a hand-authored acknowledged: "no"
+    # would silently SKIP a declared pause; a non-string segment can never match any boundary,
+    # leaving a declared pause silently unreachable.
+    acknowledged = raw.get("acknowledged", False)
+    if not isinstance(acknowledged, bool):
+        raise EnvelopeError(
+            f"directive {name!r}: 'acknowledged' must be a JSON boolean, got {acknowledged!r}"
+        )
+    if name == "pause_after":
+        segment = raw.get("segment")
+        if not isinstance(segment, str) or not segment:
+            raise EnvelopeError(
+                "directive 'pause_after': 'segment' must be a non-empty string naming a "
+                f"boundary, got {segment!r} — a non-string segment matches no boundary, "
+                "which would make the declared pause a silent no-op"
+            )
+
     extra = {k: raw[k] for k in raw if k not in _COMMON_KEYS}
     return Directive(
         directive=name,
@@ -221,7 +239,7 @@ def _parse_directive(raw: Any, *, index: int) -> Directive:
         reason=str(raw.get("reason", "")),
         at=str(raw.get("at", "")),
         id=str(raw.get("id", "")),
-        acknowledged=bool(raw.get("acknowledged", False)),
+        acknowledged=acknowledged,
         extra=extra,
     )
 
@@ -451,6 +469,7 @@ def _main(argv: list[str] | None = None) -> int:
     p_a.add_argument("--reason", default="")
     p_c = sub.add_parser("continue", help="acknowledge a pause_after and continue")
     p_c.add_argument("segment")
+    sub.add_parser("clear", help="remove the envelope (all directives resolved / andon cleared)")
 
     args = parser.parse_args(argv)
     path = default_envelope_path(args.repo_root)
@@ -474,6 +493,10 @@ def _main(argv: list[str] | None = None) -> int:
     if args.command == "continue":
         acknowledge_pause(path, args.segment)
         print(f"continued past pause_after {args.segment!r}")
+        return 0
+    if args.command == "clear":
+        clear(path)
+        print(f"envelope cleared at {path}")
         return 0
     return 1
 

@@ -299,3 +299,59 @@ def test_unknown_directive_in_envelope_halts_advance(repo: Path) -> None:
     assert result.dispatched == []  # no dispatch under a fail-closed envelope
     assert result.adjustment["action"] == "halt"
     assert any("fail-closed" in s and "explode" in s for s in result.adjustment["surfaced"])
+
+
+# ---------------------------------------------------------------------------
+# Panel hand-finish: value-type strictness (shape-valid but wrong-typed values
+# must be errors, never silent no-ops) + surfaced-not-dropped amendments.
+# ---------------------------------------------------------------------------
+
+
+def test_string_acknowledged_fails_closed() -> None:
+    """acknowledged: 'no' bool-coerces truthy and would silently SKIP a declared pause."""
+    data = {
+        "version": 1,
+        "directives": [
+            {
+                "directive": "pause_after",
+                "writer": "plan",
+                "segment": "code-review",
+                "acknowledged": "no",
+            }
+        ],
+    }
+    with pytest.raises(AE.EnvelopeError, match="acknowledged"):
+        AE.parse(data)
+
+
+def test_non_string_segment_fails_closed() -> None:
+    """segment: 5 parses cleanly but matches no boundary — a silently unreachable pause."""
+    data = {
+        "version": 1,
+        "directives": [{"directive": "pause_after", "writer": "plan", "segment": 5}],
+    }
+    with pytest.raises(AE.EnvelopeError, match="segment"):
+        AE.parse(data)
+
+
+def test_clear_cli_removes_envelope(tmp_path: Path) -> None:
+    path = AE.default_envelope_path(tmp_path)
+    AE.raise_quiesce(path, reason="drain")
+    assert path.exists()
+    assert AE._main(["--repo-root", str(tmp_path), "clear"]) == 0
+    assert not path.exists()
+
+
+def test_undo_cli_replays_and_pops(tmp_path: Path) -> None:
+    ledger = UL.default_ledger_path(tmp_path)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    notification = UL.record(
+        ledger,
+        "board_move",
+        target="repo#1",
+        before={"status": "In Progress"},
+        after={"status": "Done"},
+    )
+    assert notification
+    assert UL._main(["--repo-root", str(tmp_path), "undo", "--count", "1"]) == 0
+    assert UL.read_ledger(ledger) == []

@@ -45,6 +45,68 @@ the tick would skip the drain; polling after `_reconcile_once` would already hav
 it *between* the harvest/reap phase and the dispatch phase of a level-triggered reconcile loop —
 the loop's existing phase ordering does the draining for you.
 
+---
+
+### A recorded idempotency key makes the next tick *skip* — so drift-detection must run BEFORE the ledger short-circuit, not after {#idempotency-key-skips-hide-drift-450}
+
+**Context.** #450 unified `/outcome`'s two board-consistency mechanisms into one shared
+level-triggered `reconcile_controller` and extended it to `/work` and `/loop`. The subtle part is
+why a pure idempotency-key writer can never self-heal outside drift.
+**Evidence.** `plugins/saga/scripts/board_progression.py:152` — `authorize_and_write` returns
+`{"status":"skipped"}` the instant `ledger_file.exists()`, with no live read. `outcome_reconcile.py:4-8`
+names the consequence: "a recorded key makes the next tick *skip* the op, so the drift persists
+forever." Repro is `tests/test_reconcile_controller.py::test_work_outside_drift_is_corrected` (correct)
+vs a hypothetical writer-only path (would skip).
+**Mechanism.** Idempotency and drift-correction pull in opposite directions on the same signal: a
+present ledger key means "already driven" (skip) to the writer, but "saga asserted X; is live still
+X?" (must re-read) to the reconciler. `reconcile_op` resolves it by ordering — an ABSENT key routes to
+`authorize_and_write` (idempotent write / crash-safe resume), a PRESENT key routes to a live re-read
+and drift branch. Put the drift check after the skip and it can never fire.
+**Fix.** `reconcile_controller.reconcile_op` (`plugins/saga/scripts/reconcile_controller.py`) — the
+present-key branch re-reads live and either no-ops (converged), corrects (reversible Status drift), or
+HALTs (irreversible open/closed drift). Shipped this PR.
+**Validation.** `uv run pytest tests/test_reconcile_controller.py` (20 passed, each green paired with a
+could-have-failed baseline control) + the unchanged `test_outcome_reconcile`/`test_outcome_board_sync`
+suites (60 passed; 75 including `tests/test_board_progression.py`) proving zero `/outcome`
+regression.
+**Generalizable rule.** When a cache/ledger short-circuit and a reconcile-against-reality both key off
+"have I done this?", the reconciler must inspect the world on the same tick the short-circuit would
+otherwise fire — level-triggered, not edge-triggered. A "skip because recorded" is only safe if
+nothing outside your writer can change the recorded field.
+**Refs.** DECISIONS `{#one-reconcile-controller-450}`; builds on `{#lifecycle-engine-merge-campaign}`
+dead-wiring discipline (a manifest field needs a producer AND a consumer — here the controller is a
+real consumer of `board_progression` + `reversibility_certificate`, wired into `/work` and `/loop`).
+
+---
+
+### The closure gate is the reusable seam for any "X gates a leaf done transition" ceremony {#closure-gate-implied-checks-380}
+
+**Context.** #380's `ceremony_gates.reviews_required: "gate"` had to gate a code leaf's `done`
+transition on recorded review evidence, and the tempting build was a new check inside
+`derive_states`/`harvest`.
+
+**Evidence.** PR for #380 — `plugins/saga/scripts/closure_gate.py` (`evaluate` grew a
+single `implied_checks: tuple[str, ...] = ()` parameter merged with the node's declared
+`required_checks`) + `plugins/saga/scripts/outcome_orchestrator.py` (harvest derives
+`("code-review",)` per code leaf from `spec.intent`). Verified end to end in
+`tests/test_outcome_spec.py::test_reviews_required_gates_done`: a merged-but-unreviewed leaf
+does not harvest `done`; writing `code-review` evidence at the PR head SHA via
+`evidence_ledger.write` unlocks the same tick; `reviews_required: "auto"` and no-intent
+controls harvest immediately.
+
+**Mechanism.** The closure gate (#397) already evaluates named checks against the evidence
+ledger at the resolved close SHA, with the whole halt-reason vocabulary (missing-evidence /
+stale-sha / unresolved-fail / unsuperseded-fail / chain-tamper) already litigated and tested.
+A spec-level ceremony only needs to CONTRIBUTE check ids per node — everything downstream
+(SHA pinning, supersession, tamper detection) comes for free, and `implied_checks=()` keeps
+every pre-existing caller byte-identical.
+
+**Generalizable rule.** When a new policy needs to gate an /outcome leaf's completion, express
+it as implied closure-gate check ids derived from committed spec state — never a second gate
+mechanism beside the evidence chain (two authorities for "proven" will disagree).
+
+---
+
 ### A nested fixture `.git` is invisible to parent porcelain, but an untracked dir holding one gets staged as a gitlink {#nested-fixture-git-materialize-on-demand-428}
 
 **Context.** The lifecycle regression harness (#428) needs `tests/lifecycle-fixture/` to be "a

@@ -574,3 +574,43 @@ def test_attend_not_dispatched_still_raises(repo: Path) -> None:
     M.start(repo, "o", "obj", nodes=[{"subplot_id": "build", "title": "B", "kind": "code"}])
     with pytest.raises(M.OutcomeError, match="not dispatched"):
         M.attend(repo, "o", "build")
+
+
+# ---------------------------------------------------------------------------
+# set-intent (#380 hand-finish): the landing place for a post-start interview capture.
+# ---------------------------------------------------------------------------
+
+
+def _envelope_file(tmp_path: Path, run_mode: str = "attended") -> Path:
+    import intent_envelope as ie
+
+    path = tmp_path / "envelope.json"
+    path.write_text(ie.apply_answers({"run_mode": run_mode}).to_json(), encoding="utf-8")
+    return path
+
+
+def test_set_intent_attaches_envelope_to_started_outcome(repo: Path, tmp_path: Path) -> None:
+    started = M.start(repo, "ship-x", "Ship feature X")
+    spec = M.set_intent(repo, "ship-x", _envelope_file(tmp_path))
+    assert spec.intent is not None and spec.intent["run_mode"] == "attended"
+    assert spec.spec_revision == started.spec_revision + 1  # structural edit -> re-approve
+    on_disk = SPEC.OutcomeSpec.from_json(M.spec_path(repo, "ship-x").read_text())
+    assert on_disk.intent == spec.intent
+
+
+def test_set_intent_refuses_to_overwrite_committed_envelope(repo: Path, tmp_path: Path) -> None:
+    M.start(repo, "ship-x", "Ship feature X")
+    env = _envelope_file(tmp_path)
+    M.set_intent(repo, "ship-x", env)
+    with pytest.raises(M.OutcomeError, match="already carries"):
+        M.set_intent(repo, "ship-x", env)
+
+
+def test_set_intent_invalid_file_is_loud_and_never_lands(repo: Path, tmp_path: Path) -> None:
+    M.start(repo, "ship-y", "Ship feature Y")
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"run_mode": "sideways"}', encoding="utf-8")
+    with pytest.raises(M.OutcomeError):
+        M.set_intent(repo, "ship-y", bad)
+    on_disk = SPEC.OutcomeSpec.from_json(M.spec_path(repo, "ship-y").read_text())
+    assert on_disk.intent is None

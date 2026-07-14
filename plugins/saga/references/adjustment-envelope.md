@@ -92,10 +92,21 @@ The envelope reuses boundaries that already exist; it does **not** add a standin
 
 - **`/outcome` tick boundary** — `advance` re-reads the envelope each tick, after the in-flight
   harvest drains and before dispatch, so a `quiesce`/`andon_halt`/fail-closed directive stops the
-  next tick from dispatching. The decision is surfaced on `AdvanceResult.adjustment`.
+  next tick from dispatching. The decision is surfaced on `AdvanceResult.adjustment`. Scope
+  honesty: `advance` polls with no segment identifier, so **`pause_after` never fires at an
+  `/outcome` tick boundary** (outcome ticks have no plan segments) — the reachable `/outcome`
+  directives are `quiesce` and `andon_halt`. A proceed decision carrying standalone amendments
+  (re-tier / add-reviewer) is surfaced on `AdvanceResult.adjustment` with `applied: false` — the
+  coordinator never applies amendments to its own dispatches (mid-run application is #433's
+  renegotiation contract).
 - **`/work` segment boundary** — `/work` polls the envelope at each phase/segment boundary (see
   `skills/work/SKILL.md`), honoring a `pause_after: <segment>` deterministically and applying any
   `resume_tier`/`resume_context` amendment on the explicit continue.
+
+Delivery scope: the envelope lives at the run's private `.saga/adjustment-envelope.json` under the
+polling command's `--repo-root` — per-worktree, while outcome state is deliberately
+worktree-shared. A worker in an isolated worktree raising andon writes its OWN worktree's
+envelope; delivery to a coordinator polling a different root is not yet wired (follow-up).
 
 ## The reversible-mutation default (R6, R10, R11) — why pauses are rare
 
@@ -103,6 +114,13 @@ Absent an explicit `pause_after`, **only irreversible actions pause by default**
 mutations proceed under an act-log-inverse-notify path instead: the run performs the mutation, writes
 a proven inverse to `undo-ledger.jsonl`, and notifies the operator post-hoc. `/undo` replays the
 inverse.
+
+Enforcement honesty (v1): the act-log-inverse path is **prompt-mediated** — the `/undo` command
+and the skills instruct runs to call `undo_ledger.record()` around reversible mutations, but no
+production mutation site (mission-control board/label/issue writes included) is mechanically
+wired to the ledger yet. The ledger, replay (`undo` CLI), and disposition classifier are real and
+tested; the producer wiring is tracked as follow-up. Until then an unrecorded reversible mutation
+simply has nothing for `/undo` to replay.
 
 Registered reversible operations (the v1 set — the fleet is **not** backfilled):
 

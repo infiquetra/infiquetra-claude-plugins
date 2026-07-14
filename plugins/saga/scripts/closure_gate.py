@@ -197,15 +197,23 @@ def evaluate(
     *,
     repo_root: Path,
     github_runner: Callable[..., Any] | None = None,
+    implied_checks: tuple[str, ...] = (),
 ) -> GateVerdict:
     """The closure gate's verdict for one outcome-spec node.
 
     Pure read-time derivation (R9): no new committed or cached closure-status field, no writes.
     A node with no `required_checks` declared is trivially satisfied (R8) — every existing outcome
     spec, none of which declares this key today, keeps its current harvest behavior unchanged.
+
+    ``implied_checks`` (#380) are spec-level checks the caller derives from the committed
+    intent envelope (``ceremony_gates.reviews_required == "gate"`` implies ``code-review``
+    on code leaves); they merge with the node's declared ``required_checks`` (declared order
+    first, no duplicates) and are evaluated identically. Empty (every caller today that
+    passes nothing) leaves behavior byte-identical.
     """
     sid = node.subplot_id
-    required = node.evidence.get(REQUIRED_CHECKS_KEY) or []
+    declared = node.evidence.get(REQUIRED_CHECKS_KEY) or []
+    required = list(declared) + [c for c in implied_checks if c not in declared]
     if not required:
         return GateVerdict(sid, True, None, "no required checks declared", [])
 
@@ -215,7 +223,7 @@ def evaluate(
             sid,
             False,
             "unresolvable-close-sha",
-            "node declares required_checks but has no leaf_saga_id to resolve the evidence store",
+            "node requires closure checks but has no leaf_saga_id to resolve the evidence store",
             [],
         )
 

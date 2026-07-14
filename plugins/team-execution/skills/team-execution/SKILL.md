@@ -315,6 +315,20 @@ here in Phase B preflight.
 
 Workers execute approved tasks. Coordinate dependencies, keep work scoped to the plan, and run execution waves using the resident-worker residency protocol:
 
+- **Run-posture check (#380):** when the run carries a committed intent envelope (the plan's
+  `ExecutionSpec.intent`, or an envelope file handed down by `/outcome`), resolve every spend
+  decision — wave spawn at an escalated tier, a worker/reviewer-proposed tier or verify-depth
+  increase — through the fleet posture registry, never an ad hoc question:
+  `python3 plugins/team-execution/skills/team-execution/scripts/posture_check.py
+  --envelope-file <envelope.json> [--spend-increase] [--approval-token <tok>]`. An attended
+  spend increase without an explicit approval token exits `2` (a structural `PostureError` —
+  surface it to the operator; never escalate silently); an unattended run proceeds at the
+  cache-tight default silently and a requested increase is held at the default and recorded.
+  No envelope means no new gate — today's behavior, unchanged. The single posture interview
+  lives in the envelope registry (`plugins/saga/references/intent-envelope.md`); Step B1 only
+  READS posture — it never re-asks a question the envelope already answers (the fleet
+  drift-guard test fails on one).
+
 - **Wave Scheduling & Reactive Unblocking (R8, R10):** A resident worker with unmet segment-level `Depends-on` must not be spawned (avoiding premature creation costs) until its upstream segments complete. Segments with no dependencies can start in parallel. This within-run segment frontier is strictly subordinate to saga's coordinator-level `ready_frontier`.
 - **Persistent Resident Workers (R3):** Spawn exactly one named, persistent teammate per resident worker (segment) using an Agent with a specific `name` (the resident id) and `run_in_background` enabled, rather than spawning anonymous workers per unit. Before that Agent-tool spawn, run the segment's cascade-resolved `effort` (R5 cascade result; falls back to the worker's agent-frontmatter `effort:` default when no plan-unit or team-level override applies) through `fleet_commons.effort_rider.inject_effort(prompt, resolved_effort, "agent")` (load via `fleet_commons_shim.load("effort_rider")`) and spawn with the returned prompt — this is the only dispatch path with no real per-call effort knob (KTD1/KTD2), so `EFFORT_RIDER[resolved_effort]` is prepended as a labeled proxy directive. The `workflow` and `external-engine` spawn kinds already pass `effort` as a real knob (`agent({effort})` / `effort=resolution.effort`) and should route through the same seam with their own `spawn_kind` so it passes through unchanged instead of double-injecting.
 - **Worker Reuse (R3):** Reuse the resident worker across all units in its segment via `SendMessage`. Never re-spawn the worker per unit; reusing the persistent teammate preserves its warm context/cache across all units it owns.

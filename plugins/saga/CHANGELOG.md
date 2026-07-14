@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.90.0] - 2026-07-14
+## [0.92.0] - 2026-07-14
 
 ### Added - mid-run adjustment envelope + reversible-mutation undo ledger (#372)
 
@@ -33,6 +33,78 @@
   pause-context/model-change, andon-blocks-next-wave, unknown-directive fail-closed — driving the
   production `advance` wiring) and `tests/test_undo_ledger.py` (per-op round-trip inverse,
   no-inverse-falls-back-to-pause). Envelope + ledger live under the git-ignored `.saga/` run state.
+## [0.91.0] - 2026-07-14
+
+### Added - one level-triggered reconcile controller for /work and /loop (#450)
+
+- **`plugins/saga/scripts/reconcile_controller.py`** (new): the ONE Kubernetes-style
+  level-triggered board-reconcile controller. Composes the extracted idempotency-key write
+  mechanism (`board_progression.authorize_and_write`, #344) with a per-op **level-triggered drift
+  check** — every tick it recomputes the expected board value from durable saga fields and re-reads
+  the live board. A rapid double tick converges on exactly one applied write and one ledger entry
+  (`reconcile_op` → `authorize_and_write` on an absent key, no-op on a present one); an outside edit
+  to the saga-owned Status field made while a command was at rest is re-detected and **corrected**
+  (`{"status":"corrected"}`); an irreversible outside open/closed change, or any certificate-GATE op,
+  **HALTs** with a named `halt_reason` and never overwrites. Fail-closed and doubly gated:
+  auto-correction fires only when `reversibility_certificate` returns `AUTHORIZED` AND the op is in
+  the explicit `AUTO_CORRECT_OP_KINDS` allowlist (today exactly `set-field-status`). Ships a
+  `reconcile` CLI (`--no-drift-check` for a write-only tick) so the markdown skills can invoke it.
+- **`plugins/saga/scripts/outcome_reconcile.py`**: the drift vocabulary + record shape
+  (`DRIFT_KINDS`, `_drift_record`, `_drift_id`, `_close_satisfies_contract`) is now single-sourced in
+  `reconcile_controller` and re-exported here — zero behavior change to `/outcome`'s detect/decide
+  call sites (regression-tested; the existing `test_outcome_reconcile` / `test_outcome_board_sync`
+  suites stay green).
+- **`plugins/saga/skills/work/SKILL.md`** (§4.4): post-merge board moves now route through
+  `reconcile_controller.py reconcile` instead of the raw `board_progression.py write`, gaining the
+  outside-drift detection `/work` previously lacked.
+- **`plugins/saga/skills/loop/SKILL.md`** (§0.5): `/loop` gains a level-triggered reconcile tick over
+  the already-asserted, allowlisted Status field (refining the #344 boundary) — it reconciles drift over
+  already-asserted fields; the no-new-forward-progression boundary is documented convention
+  enforced by the skill's instructions, not (yet) mechanically by the controller.
+
+## [0.90.0] - 2026-07-14
+
+### Added - one committed IntentEnvelope for run-start posture (#380)
+
+- **`outcome.py set-intent <id> --intent-file <envelope.json>`** — attaches an
+  interview-captured envelope to an ALREADY-started outcome (`start` is non-idempotent, so the
+  post-start interview needs its own landing verb). Validates exactly like
+  `start --intent-file`, refuses to overwrite a committed envelope (mid-run renegotiation is
+  #433's contract), bumps `spec_revision`.
+- **`barrier_report` enforcement/observability parity** — the operator-facing report now
+  evaluates the closure gate with the SAME intent-implied checks `harvest()` enforces, so a
+  merged-but-review-gated leaf never reads "satisfied" in the cockpit while its done
+  transition is actually gated.
+- **`scripts/intent_envelope.py`** — saga's surface over the canonical fleet envelope
+  (fleet-core `fleet_commons/intent_envelope.py`, re-exported exactly as `execution_spec.py`
+  re-exports `tier_palette` — never a second schema), plus the saga-only glue:
+  `compute_stakes` (parallel width + unit-weight `critical_path_wall` critical-path depth, the
+  data-backed interview numbers), `implied_required_checks` (the `reviews_required` consumer),
+  `seeded_tier` (per-unit tier defaults from the committed posture), and the CLI
+  (`interview` / `capture` / `from-issue` / `recommend` / `spend`). Contract doc:
+  `references/intent-envelope.md`.
+- **`OutcomeSpec.intent`** and **`ExecutionSpec.intent`** — the committed run-start envelope,
+  schema-validated in `validate()` (fail closed on off-vocabulary values / unknown keys);
+  absent emits no key so every pre-existing spec round-trips byte-identical.
+- **`/outcome start` reads the issue-carried envelope** (S-22): `start --from-objective` now
+  fetches the parent Objective's body, and a valid `intent-envelope` block skips the run-start
+  interview (ask-once — the operator already answered at issue capture); absent or invalid
+  falls back to the interview with the reason surfaced (an invalid envelope is never adopted).
+  New `start --intent-file <envelope.json>` commits an interview-captured envelope; the start
+  output reports `intent_source` / `interview_required` / `interview_reason`.
+  `nodes_from_objective` now returns `(nodes, dropped, title, parent_body)`.
+- **`reviews_required` gates a leaf `done` transition** (T8-F1-3): when the committed intent
+  declares `ceremony_gates.reviews_required: "gate"`, `outcome_orchestrator.harvest` implies a
+  `code-review` closure check on every code leaf — a merged-but-unreviewed leaf stays undone
+  until `code-review` evidence is recorded at the close SHA (`closure_gate.evaluate` grew an
+  `implied_checks` parameter; empty = byte-identical behavior). Specs without an intent are
+  unchanged.
+- **Single-asker rule, drift-guarded** (G-negative-space-1): no saga skill or script defines a
+  run-start posture question outside the envelope registry; `tests/test_intent_envelope.py`'s
+  fleet drift guard (with baseline red controls) enforces it. `/plan` Step 1 seeds its tier
+  table defaults via `seeded_tier`; `/work` resolves between-rounds spend decisions through
+  `intent_envelope.py spend` (attended increases need an explicit approval token —
+  `PostureError` otherwise; unattended holds cache-tight silently).
 
 ## [0.89.1] - 2026-07-14
 

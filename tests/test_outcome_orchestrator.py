@@ -142,3 +142,26 @@ def test_outcome_orchestrator_barrier_report_surfaces_closure_gate_halt(tmp_path
     assert report["sub397"]["satisfied"] is True  # the GitHub-only barrier IS satisfied
     assert report["sub397"]["closure_gate"]["satisfied"] is False
     assert report["sub397"]["closure_gate"]["halt_reason"] == "missing-evidence:qa"
+
+
+def test_barrier_report_evaluates_intent_implied_checks(tmp_path: Path) -> None:
+    """#380 hand-finish: the report runs the SAME gate harvest() enforces. With a committed
+    reviews_required envelope, a merged code leaf without code-review evidence must read
+    unsatisfied in the report too — never 'satisfied' while the done transition is gated
+    (enforcement/observability parity)."""
+    import intent_envelope
+
+    intent = intent_envelope.apply_answers({"run_mode": "attended"}).to_dict()
+    node = _node("sub380", kind="code", github={"pr": "42"}, leaf_saga_id="leaf-oc-sub380")
+    store = _store(tmp_path)
+    runner = _gh(pr_state={"42": "MERGED"}, head_ref_oid={"42": SHA})
+
+    gated = SPEC.OutcomeSpec(outcome_id="oc", objective="t", nodes=[node], intent=intent)
+    report = ORCH.barrier_report(gated, store=store, github_runner=runner, repo_root=tmp_path)
+    assert report["sub380"]["satisfied"] is True  # the GitHub-only barrier IS satisfied
+    assert report["sub380"]["closure_gate"]["satisfied"] is False  # ...but the gate is not
+
+    # Baseline control: the same spec WITHOUT intent implies nothing (unchanged behavior).
+    plain = SPEC.OutcomeSpec(outcome_id="oc", objective="t", nodes=[node])
+    report2 = ORCH.barrier_report(plain, store=store, github_runner=runner, repo_root=tmp_path)
+    assert report2["sub380"]["closure_gate"]["satisfied"] is True

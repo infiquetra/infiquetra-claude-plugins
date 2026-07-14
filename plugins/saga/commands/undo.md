@@ -15,8 +15,10 @@ write a proven inverse to the undo ledger; `/undo` replays those inverses (LIFO)
    `python3 plugins/saga/scripts/undo_ledger.py --repo-root . show` (schema + registered op set
    documented in `plugins/saga/references/adjustment-envelope.md`).
 2. For the last `$ARGUMENTS` (default 1) record(s), take each record's computed `inverse` action
-   and apply it to restore the pre-op state, then `undo_ledger.undo(ledger, state)` pops the
-   replayed record(s) off the ledger tail so the ledger stays truthful.
+   and apply it to restore the pre-op state, then pop the replayed record(s) off the ledger tail
+   so the ledger stays truthful:
+   `python3 plugins/saga/scripts/undo_ledger.py --repo-root . undo --count <N>`
+   (add `--state-file <state.json>` to replay the inverses against a persisted state document).
 3. Route any gh-write inverse (a board/label/issue move-back) through **mission-control** — saga
    never calls `gh issue`/`gh project` directly (the write-ownership lane). Saga-local inverses
    (delete a created branch, close an opened PR) replay directly.

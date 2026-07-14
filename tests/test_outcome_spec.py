@@ -549,3 +549,165 @@ def test_sandbox_vocabulary_matches_execution_spec_house() -> None:
     assert M.MUTATION_POLICIES == es_mod.MUTATION_POLICIES
     assert M.WORKSPACE_ISOLATIONS == es_mod.WORKSPACE_ISOLATIONS
     assert M.SANDBOX_PROFILES == es_mod.SANDBOX_PROFILES
+
+
+# --------------------------------------------------------------------------- #380: intent envelope
+
+SCRIPTS_DIR = ROOT / "plugins" / "saga" / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+
+def _intent(run_mode: str = "attended", **gates: str) -> dict[str, Any]:
+    """A valid intent dict built through the production interview path (never hand-shaped)."""
+    import intent_envelope
+
+    data: dict[str, Any] = intent_envelope.apply_answers({"run_mode": run_mode, **gates}).to_dict()
+    return data
+
+
+def test_intent_round_trip() -> None:
+    """T8-F1-3: the `intent` field round-trips to_dict/from_dict/validate unchanged."""
+    data = _valid_spec_dict()
+    data["intent"] = _intent("unattended", merge="auto")
+    spec = _spec(data)
+    spec.validate()
+    rebuilt = M.OutcomeSpec.from_json(spec.to_json())
+    rebuilt.validate()
+    assert rebuilt.intent == spec.intent
+    assert rebuilt.intent is not None
+    assert rebuilt.intent["run_mode"] == "unattended"
+    assert rebuilt.intent["ceremony_gates"]["merge"] == "auto"
+    assert rebuilt.intent["ceremony_gates"]["reviews_required"] == "gate"  # unset -> gate
+
+
+def test_intent_absent_emits_no_key_and_round_trips_byte_identical() -> None:
+    """Baseline control: every pre-existing spec (no intent) is untouched by #380."""
+    spec = _spec(_valid_spec_dict())
+    spec.validate()
+    assert spec.intent is None
+    assert "intent" not in spec.to_dict()
+    assert M.OutcomeSpec.from_json(spec.to_json()).to_json() == spec.to_json()
+
+
+def test_intent_invalid_envelope_fails_validate() -> None:
+    """Fail closed: an off-vocabulary intent is an error before any dispatch, never a pass."""
+    data = _valid_spec_dict()
+    data["intent"] = {"run_mode": "yolo"}
+    spec = _spec(data)
+    with pytest.raises(M.OutcomeSpecError, match="invalid intent envelope"):
+        spec.validate()
+
+
+def test_intent_unknown_field_fails_validate() -> None:
+    """The schema is closed: an unknown envelope key is rejected, not silently carried."""
+    data = _valid_spec_dict()
+    intent = _intent()
+    intent["surprise"] = True
+    data["intent"] = intent
+    spec = _spec(data)
+    with pytest.raises(M.OutcomeSpecError, match="unknown field"):
+        spec.validate()
+
+
+def test_intent_non_dict_rejected_at_from_dict() -> None:
+    data = _valid_spec_dict()
+    data["intent"] = "attended"
+    with pytest.raises(M.OutcomeSpecError, match="intent must be an object"):
+        _spec(data)
+
+
+_MERGED_HEAD_SHA = "a" * 40
+
+
+def _merged_pr_runner(cmd: list[str], **_kwargs: Any) -> Any:
+    """A gh stub whose PR always reads merged at a fixed head SHA (superset JSON payload)."""
+
+    class _Result:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps(
+            {"state": "MERGED", "mergedAt": "2026-07-14T00:00:00Z", "headRefOid": _MERGED_HEAD_SHA}
+        )
+
+    return _Result()
+
+
+def _gated_leaf_spec(intent: dict[str, Any] | None) -> Any:
+    data: dict[str, Any] = {
+        "outcome_id": "oc-380",
+        "objective": "gate the done transition",
+        "nodes": [
+            {
+                "subplot_id": "leaf",
+                "title": "Code leaf",
+                "kind": "code",
+                "github": {"pr": "https://github.com/o/r/pull/1"},
+                "leaf_saga_id": "saga-oc-380-leaf",
+            }
+        ],
+    }
+    if intent is not None:
+        data["intent"] = intent
+    spec = _spec(data)
+    spec.validate()
+    return spec
+
+
+def test_reviews_required_gates_done(tmp_path: Path) -> None:
+    """T8-F1-3: `ceremony_gates.reviews_required == "gate"` gates a leaf `done` transition.
+
+    Exercises the PRODUCTION harvest path (outcome_orchestrator.harvest -> closure_gate ->
+    evidence_ledger): a merged code leaf under a gate posture does NOT harvest done until
+    code-review evidence is recorded at the close SHA; recording it unlocks the same tick.
+    """
+    import evidence_ledger
+    import outcome_orchestrator
+    import outcome_store
+
+    store = outcome_store.Store(root=tmp_path / "store").ensure()
+    spec = _gated_leaf_spec(_intent("unattended"))  # reviews_required defaults to gate
+
+    assert (
+        outcome_orchestrator.harvest(
+            spec, store=store, github_runner=_merged_pr_runner, repo_root=tmp_path
+        )
+        == []
+    ), "a merged-but-unreviewed code leaf must not transition done under reviews_required=gate"
+
+    ledger = evidence_ledger.Store.for_saga("saga-oc-380-leaf", tmp_path)
+    evidence_ledger.write(
+        ledger,
+        check_id="code-review",
+        reviewed_sha=_MERGED_HEAD_SHA,
+        producer="code-review",
+        verdict="clean",
+        content="review artifact",
+    )
+    assert outcome_orchestrator.harvest(
+        spec, store=store, github_runner=_merged_pr_runner, repo_root=tmp_path
+    ) == ["leaf"], "recorded code-review evidence at the close SHA must unlock the done transition"
+
+
+def test_reviews_required_auto_does_not_gate_done(tmp_path: Path) -> None:
+    """Baseline control proving the gate could have failed: `auto` harvests immediately."""
+    import outcome_orchestrator
+    import outcome_store
+
+    store = outcome_store.Store(root=tmp_path / "store").ensure()
+    spec = _gated_leaf_spec(_intent("unattended", reviews_required="auto"))
+    assert outcome_orchestrator.harvest(
+        spec, store=store, github_runner=_merged_pr_runner, repo_root=tmp_path
+    ) == ["leaf"]
+
+
+def test_no_intent_does_not_gate_done(tmp_path: Path) -> None:
+    """Backward compat: a spec with no intent harvests exactly as before #380."""
+    import outcome_orchestrator
+    import outcome_store
+
+    store = outcome_store.Store(root=tmp_path / "store").ensure()
+    spec = _gated_leaf_spec(None)
+    assert outcome_orchestrator.harvest(
+        spec, store=store, github_runner=_merged_pr_runner, repo_root=tmp_path
+    ) == ["leaf"]

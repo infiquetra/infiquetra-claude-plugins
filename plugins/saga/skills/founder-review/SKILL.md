@@ -58,6 +58,8 @@ user-facing behavior is prominent" — that is the **inbound** edge. `/founder-r
 2. **User 100% in control.** Every scope change is an explicit opt-in (via `AskUserQuestion`, or
    inline in a channel). Never silently add or remove scope. Once a mode is chosen, **commit to it —
    no silent drift.** Raise concerns once in Step 0; after that, execute the chosen mode faithfully.
+   <!-- gate-exempt: principle prose restating operator control; the gate sites themselves declare gate-records at their own sections below -->
+
 3. **Internalize the CEO patterns, don't enumerate them.** The 18 CEO cognitive patterns and 9 Prime
    Directives (`references/ceo-cognition.md`) are thinking instincts that shape the whole review, not
    a checklist to read aloud. They turn a vibe into a named, concrete scope finding.
@@ -86,6 +88,17 @@ In a channel session (`redis-channel` active), `AskUserQuestion` cannot be calle
 in your reply text instead, and use the **digest** path for expansions (see Phase 2 and
 `references/review-modes.md`). Follow the canonical channel-inline convention in
 `saga/skills/brainstorm/SKILL.md` (do not duplicate its wording here).
+
+<!-- gate-record: id=founder-review-interaction absence=HALT transport=ask-user-question -->
+**Durable gate-record contract (#371).** Every known-set gate above is a durable approval record,
+not a widget call. BEFORE invoking `AskUserQuestion` (or the channel-inline fallback), persist the
+record with `python3 plugins/saga/scripts/gate_record.py open --gate-id founder-review-<decision>-<run-id>
+--question "..." --option "..." --option "..." --absence-behavior HALT --transport ask-user-question
+--opened-by saga:founder-review`; after the answer, `satisfy --gate-id <same-id> --answer
+"<chosen option>" --answerer operator`; on silence (timeout, widget error, dropped session),
+`resolve-absent --gate-id <same-id> --reason "<what happened>"` — `HALT`: stop and wait, silence is
+never consent. Read the decision from the persisted record (`poll` → `status` / `answer`), never
+from the widget's raw return value. Full contract: `plugins/saga/references/gate-record.md`.
 
 Use repo-relative paths in every generated document. Absolute paths break portability across machines
 and worktrees.
@@ -135,6 +148,10 @@ Run Step 0 (sub-steps detailed in `references/review-modes.md`):
   score"**; once selected, **commit, no silent drift.** Gate-divergence telemetry (optional, issue
   #399): record via `gate_id` `founder-review-mode-selection` per
   `plugins/saga/references/gate-divergence-instrumentation.md`.
+  <!-- gate-record: id=founder-review-mode-selection absence=HALT transport=ask-user-question -->
+  The mode selection is a durable gate-record (`founder-review-mode-selection-<run-id>`) under the
+  Interaction-method contract above: open before prompting, satisfy on answer, `resolve-absent` on
+  silence (`HALT`).
 
 ---
 
@@ -148,6 +165,10 @@ Run the branch for the committed mode (full ceremonies in `references/review-mod
   **A) add / B) defer (-> journal/QUEUED) / C) skip**. Gate-divergence telemetry (optional, issue
   #399): record each expansion decision via `gate_id` `founder-review-expansion-optin` per
   `plugins/saga/references/gate-divergence-instrumentation.md`.
+  <!-- gate-record: id=founder-review-expansion-optin absence=HALT transport=ask-user-question -->
+  Each expansion opt-in is a durable gate-record (`founder-review-expansion-optin-<n>-<run-id>`)
+  under the Interaction-method contract above: open before prompting, satisfy on answer,
+  `resolve-absent` on silence (`HALT`).
 - **SELECTIVE EXPANSION** — run the HOLD analysis (complexity + minimum-change) as the bulletproof
   baseline, then the expansion scan, then the **cherry-pick ceremony** (same A/B/C, **neutral**
   posture).

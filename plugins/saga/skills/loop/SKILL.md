@@ -78,6 +78,17 @@ In a channel session (`redis-channel` active), `AskUserQuestion` cannot be calle
 in your reply text instead. Follow the canonical channel-inline convention in
 `saga/skills/brainstorm/SKILL.md` (do not duplicate its wording here).
 
+<!-- gate-record: id=loop-interaction absence=HALT transport=ask-user-question -->
+**Durable gate-record contract (#371).** Every known-set gate above is a durable approval record,
+not a widget call. BEFORE invoking `AskUserQuestion` (or the channel-inline fallback), persist the
+record with `python3 plugins/saga/scripts/gate_record.py open --gate-id loop-<decision>-<run-id>
+--question "..." --option "..." --option "..." --absence-behavior HALT --transport ask-user-question
+--opened-by saga:loop`; after the answer, `satisfy --gate-id <same-id> --answer "<chosen option>"
+--answerer operator`; on silence (timeout, widget error, dropped session), `resolve-absent
+--gate-id <same-id> --reason "<what happened>"` — `HALT`: stop and wait, silence is never consent.
+Read the decision from the persisted record (`poll` → `status` / `answer`), never from the widget's
+raw return value. Full contract: `plugins/saga/references/gate-record.md`.
+
 Gate-divergence telemetry (optional, issue #399): record the mode/destination choice via `gate_id`
 `loop-mode-destination` per `plugins/saga/references/gate-divergence-instrumentation.md` when a
 context-default mode or destination is offered.

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "pending": {
+    "plugins/saga/references/gate-divergence-instrumentation.md": 3,
+    "plugins/saga/references/operator-choice.md": 5,
+    "plugins/saga/skills/doc-review/SKILL.md": 1,
+    "plugins/saga/skills/founder-review/references/review-modes.md": 3,
+    "plugins/saga/skills/ideate/references/convergence-and-partnership.md": 2,
+    "plugins/saga/skills/office-hours/SKILL.md": 5,
+    "plugins/saga/skills/optimize/SKILL.md": 5,
+    "plugins/saga/skills/outcome/SKILL.md": 3,
+    "plugins/saga/skills/plan/SKILL.md": 6,
+    "plugins/saga/skills/promote/SKILL.md": 4,
+    "plugins/saga/skills/qa/SKILL.md": 3,
+    "plugins/saga/skills/resume/SKILL.md": 4,
+    "plugins/saga/skills/retro/SKILL.md": 11,
+    "plugins/saga/skills/retro/references/retro-passes.md": 4,
+    "plugins/saga/skills/retro/references/self-edit-safety.md": 2,
+    "plugins/saga/skills/spec/SKILL.md": 3,
+    "plugins/saga/skills/strategy/SKILL.md": 5,
+    "plugins/saga/skills/work/SKILL.md": 3,
+    "plugins/saga/skills/work/references/execution-strategy.md": 1
+  }
+}

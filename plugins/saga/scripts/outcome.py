@@ -297,24 +297,65 @@ def start(
     objective: str,
     nodes: list[dict[str, Any]] | None = None,
     *,
+    intent: dict[str, Any] | None = None,
     runner: Callable[..., Any] | None = None,
 ) -> outcome_spec.OutcomeSpec:
     """Create the branch-local spec + its store. Idempotent only if no spec exists yet.
 
     ``nodes`` defaults to a minimal 2-node design->build DAG so the skeleton is usable immediately;
     the real graph is authored/decomposed via U7. Fails if a spec already exists (use ``resume``).
+    ``intent`` (#380) is the committed run-start intent envelope — schema-validated by
+    ``spec.validate()`` before anything is written, so an invalid envelope never lands on disk.
     """
     path = spec_path(repo_root, outcome_id)
     if path.exists():
         raise OutcomeError(f"outcome {outcome_id!r} already started ({path}); use `resume`")
     node_dicts = nodes if nodes is not None else _starter_nodes()
-    spec = outcome_spec.OutcomeSpec.from_dict(
-        {"outcome_id": outcome_id, "objective": objective, "nodes": node_dicts}
-    )
+    payload: dict[str, Any] = {
+        "outcome_id": outcome_id,
+        "objective": objective,
+        "nodes": node_dicts,
+    }
+    if intent is not None:
+        payload["intent"] = intent
+    spec = outcome_spec.OutcomeSpec.from_dict(payload)
     spec.validate()
     save_spec(repo_root, spec)
     _store(repo_root, outcome_id, runner=runner)  # materialize the cache tree
     return spec
+
+
+def resolve_start_intent(
+    parent_body: str | None, intent_file: Path | None = None
+) -> dict[str, Any]:
+    """Resolve the run-start intent for ``start`` (#380): explicit file, else issue-carried.
+
+    Precedence: an explicit ``--intent-file`` envelope wins (an invalid file is a loud error —
+    it is direct operator input); otherwise the parent issue's envelope block decides via
+    ``intent_envelope.outcome_start_decision`` — a valid issue envelope skips the run-start
+    interview, absent/invalid falls back to asking (surfaced, never silently adopted).
+    """
+    import intent_envelope  # noqa: PLC0415
+
+    if intent_file is not None:
+        try:
+            data = json.loads(intent_file.read_text(encoding="utf-8"))
+            envelope = intent_envelope.IntentEnvelope.from_dict(data)
+        except (OSError, ValueError) as exc:  # IntentEnvelopeError is a ValueError
+            raise OutcomeError(f"--intent-file {intent_file}: {exc}") from exc
+        return {
+            "intent": envelope.to_dict(),
+            "intent_source": "file",
+            "interview_required": False,
+            "interview_reason": f"envelope supplied via --intent-file {intent_file}",
+        }
+    decision = intent_envelope.outcome_start_decision(parent_body)
+    return {
+        "intent": decision.envelope.to_dict() if decision.envelope is not None else None,
+        "intent_source": "issue" if decision.envelope is not None else None,
+        "interview_required": decision.interview_required,
+        "interview_reason": decision.reason,
+    }
 
 
 def _starter_nodes() -> list[dict[str, Any]]:
@@ -337,14 +378,16 @@ def _ingest_state(state: Any, state_reason: Any) -> str:
 
 def nodes_from_objective(
     owner: str, repo: str, number: int, *, runner: Callable[..., Any] | None = None
-) -> tuple[list[dict[str, Any]], list[dict[str, str]], str]:
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], str, str]:
     """Build outcome node dicts from a GitHub Objective's sub-issues (#375 U3).
 
-    Returns ``(nodes, dropped_edges, objective_title)``. Each node carries a stable ``subplot_id``
-    derived from the sub-issue identity (repo-qualified only on same-number collisions), a ``kind``
-    from labels (``non-code`` -> ``non-code``, else ``code``), an authored ``state`` from the
-    sub-issue's state+reason, a ``github`` provenance stamp the reconcile/board-sync consumers read,
-    and ``depends_on`` from the inferred (cycle-safe) edges.
+    Returns ``(nodes, dropped_edges, objective_title, parent_body)``. Each node carries a stable
+    ``subplot_id`` derived from the sub-issue identity (repo-qualified only on same-number
+    collisions), a ``kind`` from labels (``non-code`` -> ``non-code``, else ``code``), an authored
+    ``state`` from the sub-issue's state+reason, a ``github`` provenance stamp the
+    reconcile/board-sync consumers read, and ``depends_on`` from the inferred (cycle-safe) edges.
+    ``parent_body`` (#380) is the Objective's issue body — the surface an issue-authored intent
+    envelope rides in on (``resolve_start_intent`` reads it).
     """
     import discover_subissues  # noqa: PLC0415
     import outcome_edges  # noqa: PLC0415
@@ -383,7 +426,8 @@ def nodes_from_objective(
 
     parent = data.get("parent")
     objective_title = str(parent.get("title") or "") if isinstance(parent, dict) else ""
-    return nodes, dropped, objective_title
+    parent_body = str(parent.get("body") or "") if isinstance(parent, dict) else ""
+    return nodes, dropped, objective_title, parent_body
 
 
 def _parse_objective_ref(ref: str) -> tuple[str, str, int]:
@@ -1227,6 +1271,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="seed the DAG from a GitHub Objective's sub-issues (#375)",
     )
+    p_start.add_argument(
+        "--intent-file",
+        metavar="<envelope.json>",
+        default=None,
+        help=(
+            "a run-start intent envelope to commit on the spec (#380) — e.g. the output of "
+            "`intent_envelope.py capture`; wins over an issue-carried envelope"
+        ),
+    )
 
     p_advance = sub.add_parser("advance", help="run a reconcile tick (dispatch the ready frontier)")
     p_advance.add_argument("outcome_id")
@@ -1345,18 +1398,37 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.repo_root).resolve()
     try:
         if args.command == "start":
+            intent_file = Path(args.intent_file) if args.intent_file else None
             if args.from_objective:
                 owner, repo, number = _parse_objective_ref(args.from_objective)
-                nodes, dropped, objective_title = nodes_from_objective(owner, repo, number)
+                nodes, dropped, objective_title, parent_body = nodes_from_objective(
+                    owner, repo, number
+                )
                 objective = args.objective or objective_title or args.from_objective
-                spec = start(root, args.outcome_id, objective, nodes=nodes)
+                # #380: read the issue-authored envelope (skip the run-start interview when a
+                # valid one is present; fall back to asking when absent or invalid).
+                resolution = resolve_start_intent(parent_body, intent_file)
+                spec = start(
+                    root, args.outcome_id, objective, nodes=nodes, intent=resolution["intent"]
+                )
                 if dropped:
                     print(json.dumps({"dropped_edges": dropped}), file=sys.stderr)
             else:
                 if not args.objective:
                     raise OutcomeError("start requires an objective (or --from-objective)")
-                spec = start(root, args.outcome_id, args.objective)
-            print(json.dumps({"started": spec.outcome_id, "nodes": len(spec.nodes)}))
+                resolution = resolve_start_intent(None, intent_file)
+                spec = start(root, args.outcome_id, args.objective, intent=resolution["intent"])
+            print(
+                json.dumps(
+                    {
+                        "started": spec.outcome_id,
+                        "nodes": len(spec.nodes),
+                        "intent_source": resolution["intent_source"],
+                        "interview_required": resolution["interview_required"],
+                        "interview_reason": resolution["interview_reason"],
+                    }
+                )
+            )
         elif args.command == "advance":
             # The production /outcome advance routes through the REAL backend seam (R5/R6), the REAL
             # completion barrier (U5, harvester), the REAL auto-merge queue (U6, merge_processor), the

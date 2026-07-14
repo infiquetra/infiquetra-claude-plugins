@@ -234,7 +234,9 @@ def test_nodes_from_objective_count_kind_state() -> None:
         _sub(3, "C", state="CLOSED", state_reason="COMPLETED"),  # -> done
         _sub(4, "D", state="CLOSED", state_reason="NOT_PLANNED"),  # -> rejected
     ]
-    nodes, _dropped, title = ENG.nodes_from_objective("o", "r", 100, runner=_runner_for(subs))
+    nodes, _dropped, title, _body = ENG.nodes_from_objective(
+        "o", "r", 100, runner=_runner_for(subs)
+    )
     assert len(nodes) == 4  # AC2
     by = {n["subplot_id"]: n for n in nodes}
     assert by["sub-1"]["kind"] == "code" and by["sub-1"]["state"] == "pending"
@@ -248,7 +250,7 @@ def test_nodes_from_objective_count_kind_state() -> None:
 
 def test_github_stamp_is_consumable_by_board_sync_parser() -> None:
     """AC7/AC8 foundation: the github stamp resolves through the parser both consumers use."""
-    nodes, _d, _t = ENG.nodes_from_objective("o", "r", 100, runner=_runner_for([_sub(5, "E")]))
+    nodes, _d, _t, _b = ENG.nodes_from_objective("o", "r", 100, runner=_runner_for([_sub(5, "E")]))
     stamp = nodes[0]["github"]
     issue_raw = str(stamp.get("issue", "") or stamp.get("sub_issue", ""))
     parsed = BOARD_MOD._parse_issue_ref(issue_raw)
@@ -264,7 +266,7 @@ def test_cross_repo_duplicate_numbers_ingest_with_unique_ids_and_child_repo_stam
         _sub(95, "Identity", repo=identity),
     ]
 
-    nodes, dropped, _title = ENG.nodes_from_objective(
+    nodes, dropped, _title, _body = ENG.nodes_from_objective(
         "infiquetra", "campps-context-library", 69, runner=_runner_for(subs)
     )
 
@@ -296,7 +298,7 @@ def test_same_repo_unique_numbers_keep_existing_subplot_ids() -> None:
         _sub(2, "B", repo="infiquetra/campps-tenant-setup", tracked=[1]),
     ]
 
-    nodes, dropped, _title = ENG.nodes_from_objective(
+    nodes, dropped, _title, _body = ENG.nodes_from_objective(
         "infiquetra", "campps-tenant-setup", 200, runner=_runner_for(subs)
     )
 
@@ -317,7 +319,7 @@ def test_start_from_objective_produces_valid_spec() -> None:
     exercise the ingestion->spec path offline, without ``start()``'s git-backed store setup.
     """
     subs = [_sub(1, "A"), _sub(2, "B", tracked=[1]), _sub(3, "C", tracked=[2])]
-    nodes, dropped, title = ENG.nodes_from_objective("o", "r", 100, runner=_runner_for(subs))
+    nodes, dropped, title, _body = ENG.nodes_from_objective("o", "r", 100, runner=_runner_for(subs))
     spec = SPEC_MOD.OutcomeSpec.from_dict(
         {"outcome_id": "oc-375", "objective": title, "nodes": nodes}
     )

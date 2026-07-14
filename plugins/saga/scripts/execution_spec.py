@@ -36,6 +36,7 @@ round-trips deterministically and offline.
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib.util
 import json
 import sys
@@ -1186,6 +1187,13 @@ class ExecutionSpec:
     # climb). It is a CLI-set field + accumulator primitive (SpendEnvelope), NOT an autonomous
     # runtime gate. Absent (None) emits no key (byte-identical round-trip, R10).
     spend_envelope: int | None = None
+    # The committed run-start intent envelope (#380, T12-F1-2): run_mode + ceremony_gates,
+    # schema-validated against ``intent_envelope.IntentEnvelope`` in ``validate()``. It seeds
+    # per-unit tier DEFAULTS at authoring time (``intent_envelope.seeded_tier`` resolves a work
+    # shape through the mode-keyed matrix) -- tier itself stays a required per-unit field; this
+    # is the run-start posture the defaults are derived from, never a runtime override. Absent
+    # (None) emits no key (byte-identical round-trip, R10).
+    intent: dict[str, Any] | None = None
 
     def unit_by_id(self, unit_id: str) -> Unit | None:
         for unit in self.units:
@@ -1292,10 +1300,26 @@ class ExecutionSpec:
         if self.spend_envelope is not None and self.spend_envelope < 1:
             raise SpecError(f"spec {self.name}: spend_envelope {self.spend_envelope} must be >= 1")
 
+        # #380: a committed run-start intent envelope is schema-validated through the canonical
+        # module -- an off-vocabulary run_mode or unknown gate field fails the spec loudly,
+        # never seeds defaults from an envelope nobody can strictly understand.
+        if self.intent is not None:
+            import intent_envelope  # noqa: PLC0415  (sibling; deferred, mirrors tier imports)
+
+            try:
+                intent_envelope.IntentEnvelope.from_dict(self.intent)
+            except intent_envelope.IntentEnvelopeError as exc:
+                raise SpecError(f"spec {self.name}: invalid intent envelope: {exc}") from exc
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExecutionSpec:
         if "units" not in data or not isinstance(data["units"], list):
             raise SpecError("spec needs a 'units' list")
+        raw_intent = data.get("intent")
+        if raw_intent is not None and not isinstance(raw_intent, dict):
+            # Fail loudly on a mis-shaped field rather than coercing: validate() could not
+            # schema-check a string/list intent anyway (#380).
+            raise SpecError(f"intent must be an object or absent, got {raw_intent!r}")
         return cls(
             name=str(data.get("name", "")),
             description=str(data.get("description", "")),
@@ -1303,6 +1327,7 @@ class ExecutionSpec:
             repo=str(data.get("repo", "")),
             cost_budget=_optional_int_field(data, "cost_budget"),
             spend_envelope=_optional_int_field(data, "spend_envelope"),
+            intent=copy.deepcopy(raw_intent),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1312,11 +1337,14 @@ class ExecutionSpec:
             "repo": self.repo,
             "units": [u.to_dict() for u in self.units],
         }
-        # Absent budget/envelope emit no key so existing specs round-trip byte-identical (R10).
+        # Absent budget/envelope/intent emit no key so existing specs round-trip
+        # byte-identical (R10).
         if self.cost_budget is not None:
             out["cost_budget"] = self.cost_budget
         if self.spend_envelope is not None:
             out["spend_envelope"] = self.spend_envelope
+        if self.intent is not None:
+            out["intent"] = copy.deepcopy(self.intent)
         return out
 
 

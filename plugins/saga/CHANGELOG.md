@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.90.0] - 2026-07-14
+
+### Added - one committed IntentEnvelope for run-start posture (#380)
+
+- **`scripts/intent_envelope.py`** — saga's surface over the canonical fleet envelope
+  (fleet-core `fleet_commons/intent_envelope.py`, re-exported exactly as `execution_spec.py`
+  re-exports `tier_palette` — never a second schema), plus the saga-only glue:
+  `compute_stakes` (parallel width + unit-weight `critical_path_wall` critical-path depth, the
+  data-backed interview numbers), `implied_required_checks` (the `reviews_required` consumer),
+  `seeded_tier` (per-unit tier defaults from the committed posture), and the CLI
+  (`interview` / `capture` / `from-issue` / `recommend` / `spend`). Contract doc:
+  `references/intent-envelope.md`.
+- **`OutcomeSpec.intent`** and **`ExecutionSpec.intent`** — the committed run-start envelope,
+  schema-validated in `validate()` (fail closed on off-vocabulary values / unknown keys);
+  absent emits no key so every pre-existing spec round-trips byte-identical.
+- **`/outcome start` reads the issue-carried envelope** (S-22): `start --from-objective` now
+  fetches the parent Objective's body, and a valid `intent-envelope` block skips the run-start
+  interview (ask-once — the operator already answered at issue capture); absent or invalid
+  falls back to the interview with the reason surfaced (an invalid envelope is never adopted).
+  New `start --intent-file <envelope.json>` commits an interview-captured envelope; the start
+  output reports `intent_source` / `interview_required` / `interview_reason`.
+  `nodes_from_objective` now returns `(nodes, dropped, title, parent_body)`.
+- **`reviews_required` gates a leaf `done` transition** (T8-F1-3): when the committed intent
+  declares `ceremony_gates.reviews_required: "gate"`, `outcome_orchestrator.harvest` implies a
+  `code-review` closure check on every code leaf — a merged-but-unreviewed leaf stays undone
+  until `code-review` evidence is recorded at the close SHA (`closure_gate.evaluate` grew an
+  `implied_checks` parameter; empty = byte-identical behavior). Specs without an intent are
+  unchanged.
+- **Single-asker rule, drift-guarded** (G-negative-space-1): no saga skill or script defines a
+  run-start posture question outside the envelope registry; `tests/test_intent_envelope.py`'s
+  fleet drift guard (with baseline red controls) enforces it. `/plan` Step 1 seeds its tier
+  table defaults via `seeded_tier`; `/work` resolves between-rounds spend decisions through
+  `intent_envelope.py spend` (attended increases need an explicit approval token —
+  `PostureError` otherwise; unattended holds cache-tight silently).
+
 ## [0.89.1] - 2026-07-14
 
 ### Changed - docs-only: corrected the stale `sandbox-spawn-sites.md` out-of-scope wording (#422)

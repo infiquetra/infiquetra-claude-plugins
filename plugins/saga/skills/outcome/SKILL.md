@@ -45,7 +45,7 @@ Coordinator-only verbs — run via `python3 plugins/saga/scripts/outcome.py <ver
 
 | verb | does |
 |---|---|
-| `start <id> <objective>` | create the branch-local spec (`docs/outcomes/<id>/outcome-spec.json`) + its store |
+| `start <id> <objective> [--intent-file <envelope.json>]` | create the branch-local spec (`docs/outcomes/<id>/outcome-spec.json`) + its store; commits the run-start intent envelope when one is supplied or issue-carried (#380 — see "Run-start intent envelope") |
 | `graph <id>` | print a Mermaid DAG annotated with each node's derived live state (one-glance topology) |
 | `advance <id> [--loop]` | one (or repeated) reconcile ticks — dispatch the ready frontier, idempotently |
 | `attend <id> <subplot>` | print the native `/resume <leaf-saga-id>` handoff for a leaf you want hands-on |
@@ -68,6 +68,44 @@ remain the cache-derived bundle for an ad-hoc move; the committed-branch path is
 
 Leaf work is **always** the native verbs on the leaf's own saga: `/resume <leaf-saga-id>`, `/work`,
 `/code-review`, `/qa`. Never shadow them.
+
+## Run-start intent envelope (#380)
+
+Run-start posture is captured **once**, as one committed envelope on the spec (`intent`:
+run_mode + ceremony_gates), through the fleet's single interview registry
+(`plugins/saga/scripts/intent_envelope.py`; full contract in
+`plugins/saga/references/intent-envelope.md`). Never ask your own posture question — the fleet
+drift-guard test fails the build on any posture question defined outside the registry.
+
+At `start`:
+
+1. `start --from-objective <owner>/<repo>#<N>` reads the parent Objective's body. A **valid**
+   issue-carried envelope (the `### Intent envelope` fenced block mission-control authors at
+   capture) is committed onto the spec and the interview is **skipped** — the operator already
+   answered once, on the issue. The start output reports
+   `{"intent_source": "issue", "interview_required": false}`.
+2. When the output says `interview_required: true` (no envelope, or an invalid one — the reason
+   is surfaced, an invalid envelope is never adopted): render the single interview with
+   data-backed stakes and capture the operator's typed answers, then re-run start with the
+   envelope:
+
+   ```bash
+   python3 plugins/saga/scripts/intent_envelope.py interview --outcome-spec <spec.json>
+   # present the manifest (AskUserQuestion, or inline in a channel session), then:
+   echo '<answers JSON {qid: option}>' | python3 plugins/saga/scripts/intent_envelope.py capture - > envelope.json
+   python3 plugins/saga/scripts/outcome.py start <id> <objective> --intent-file envelope.json
+   ```
+
+3. On a genuinely unattended start with no operator to interview, the run self-selects its
+   posture from the mode default matrix (`self_select_posture` — every ceremony gate stays
+   `gate`), never by inventing answers.
+
+Downstream, the committed envelope is machinery, not prose: `ceremony_gates.reviews_required:
+"gate"` gates every code leaf's `done` transition on recorded `code-review` evidence at the
+close SHA (via the closure gate) — a merged-but-unreviewed leaf stays undone until the evidence
+lands. `merge` / `deploy_nonprod` record the operator's pre-declared ceremony posture; they do
+NOT create an autonomous write path — the reversibility certificate's merge/deploy GATE stands
+until #449's token-checked write class exists.
 
 ## How a reconcile tick works (`advance`)
 

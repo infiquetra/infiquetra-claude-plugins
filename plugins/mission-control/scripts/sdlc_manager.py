@@ -23,6 +23,7 @@ Usage:
     sdlc_manager.py issue prepare --repo athena-service --type capability --team asgard \
       --project asgard --from docs/plans/example.md
     sdlc_manager.py issue create-prepared docs/sdlc-issue-drafts/<draft>.md
+    sdlc_manager.py issue intent-envelope --run-mode unattended --merge auto
 
     sdlc_manager.py labels sync-fields --repo athena-service --number 42
     sdlc_manager.py labels audit --repo athena-service
@@ -4011,9 +4012,79 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
     return issue
 
 
+def _load_intent_envelope() -> Any:
+    """Load the canonical fleet intent-envelope module (#380) through the vendored shim.
+
+    Lazy on purpose: only the issue-capture surfaces that touch an envelope pay the
+    fleet-core resolution cost; every other verb imports nothing new.
+    """
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import fleet_commons_shim  # noqa: PLC0415
+
+    return fleet_commons_shim.load("intent_envelope")
+
+
+def _intent_envelope_readiness_error(body: str) -> str | None:
+    """Schema-validate an issue draft's intent-envelope block at capture time (#380).
+
+    Absent block -> ``None`` (the envelope is optional at capture). A present-but-invalid
+    block is a BLOCKING gap — the ship policy an `/outcome start` will trust must be
+    schema-valid the moment it is authored, never discovered broken downstream.
+    """
+    intent_envelope = _load_intent_envelope()
+    try:
+        intent_envelope.envelope_from_issue_body(body)
+    except intent_envelope.IntentEnvelopeError as exc:
+        return f"Invalid intent envelope block: {exc}"
+    return None
+
+
+def issue_render_intent_envelope(
+    run_mode: str,
+    *,
+    reviews_required: str | None = None,
+    merge: str | None = None,
+    deploy_nonprod: str | None = None,
+    authored_by: str = "",
+) -> str:
+    """Render the schema-validated ship-policy envelope block for an issue body (#380).
+
+    This is the CAPTURE-side producer: the autonomy answers are recorded once, on the
+    issue, through the fleet's single interview registry (`apply_answers` — typed,
+    closed-vocabulary, fail-closed), so `/outcome start` can read them and skip the
+    run-start interview instead of re-interrogating the operator (S-22 / H-F2-9).
+    """
+    intent_envelope = _load_intent_envelope()
+    answers: dict[str, str] = {"run_mode": run_mode}
+    if reviews_required is not None:
+        answers["reviews_required"] = reviews_required
+    if merge is not None:
+        answers["merge"] = merge
+    if deploy_nonprod is not None:
+        answers["deploy_nonprod"] = deploy_nonprod
+    try:
+        envelope = intent_envelope.apply_answers(
+            answers,
+            source="issue-capture",
+            authored_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            authored_by=authored_by,
+        )
+    except intent_envelope.IntentEnvelopeError as exc:
+        raise RuntimeError(f"intent-envelope: {exc}") from exc  # main()'s clean-error path
+    block = str(intent_envelope.render_issue_block(envelope))
+    print(block, end="")
+    return block
+
+
 def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     blocking: list[str] = []
     warnings: list[str] = []
+
+    envelope_error = _intent_envelope_readiness_error(issue.body)
+    if envelope_error:
+        blocking.append(envelope_error)
 
     expected_status = _TEAM_SAFE_STATUSES.get(issue.team)
     if issue.status == "Ready":
@@ -5419,6 +5490,29 @@ def main() -> None:
         help="One or more prepared draft markdown paths to approve",
     )
 
+    # #380: capture-side producer of the ship-policy intent envelope. Answer values are
+    # validated against the fleet interview's closed vocabulary at render time (fail
+    # closed), never enumerated here a second time.
+    issue_intent_envelope_p = issue_sp.add_parser(
+        "intent-envelope",
+        help="Render the schema-validated intent-envelope block to embed in an issue body",
+    )
+    issue_intent_envelope_p.add_argument(
+        "--run-mode",
+        required=True,
+        help="The run_mode answer (typed against the fleet interview's closed options)",
+    )
+    issue_intent_envelope_p.add_argument(
+        "--reviews-required", default=None, help="Ceremony gate: gate|auto (default gate)"
+    )
+    issue_intent_envelope_p.add_argument(
+        "--merge", default=None, help="Ceremony gate: gate|auto (default gate)"
+    )
+    issue_intent_envelope_p.add_argument(
+        "--deploy-nonprod", default=None, help="Ceremony gate: gate|auto (default gate)"
+    )
+    issue_intent_envelope_p.add_argument("--authored-by", default="")
+
     # U3 (#279): issue write verbs — close / reopen / comment / label-add / label-remove
     issue_close_p = issue_sp.add_parser("close", help="Close a GitHub issue (idempotent)")
     issue_close_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
@@ -5728,6 +5822,14 @@ def main() -> None:
                 )
             elif args.action == "approve":
                 prepared_approve_batch([Path(d) for d in args.drafts], fmt=fmt)
+            elif args.action == "intent-envelope":
+                issue_render_intent_envelope(
+                    args.run_mode,
+                    reviews_required=args.reviews_required,
+                    merge=args.merge,
+                    deploy_nonprod=args.deploy_nonprod,
+                    authored_by=args.authored_by,
+                )
             # U3 (#279): issue write verbs
             elif args.action == "close":
                 issue_close(args.repo, args.number, fmt)

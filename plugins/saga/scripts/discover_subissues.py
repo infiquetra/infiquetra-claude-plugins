@@ -21,6 +21,7 @@ query SubIssues($owner: String!, $repo: String!, $number: Int!) {
       number
       title
       state
+      body
       subIssues(first: 50) {
         totalCount
         nodes {
@@ -121,6 +122,9 @@ def normalize(payload: dict[str, object]) -> dict[str, object]:
             "number": issue.get("number"),
             "title": issue.get("title"),
             "state": issue.get("state"),
+            # #380: the parent body carries the issue-authored intent envelope (when present);
+            # `/outcome start --from-objective` reads it to skip the run-start interview.
+            "body": issue.get("body"),
         },
         "totalCount": subissues.get("totalCount", 0),
         "subissues": [

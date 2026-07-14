@@ -35,6 +35,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import closure_gate  # noqa: E402  (after the sys.path shim, by design)
+import intent_envelope  # noqa: E402
 import manifest_store  # noqa: E402
 import outcome_github  # noqa: E402
 import outcome_spec  # noqa: E402
@@ -167,6 +168,10 @@ def harvest(
     """
     already = outcome_store.completed_subplots(store)
     harvested: list[str] = []
+    # #380 (T8-F1-3): the committed intent envelope's ceremony gates imply closure checks —
+    # `reviews_required: "gate"` requires `code-review` evidence before a code leaf may harvest
+    # `done`. A spec with no intent (every pre-existing spec) implies nothing (unchanged).
+    spec_intent = getattr(spec, "intent", None)
     for node in spec.nodes:
         sid = node.subplot_id
         if sid in already:
@@ -179,7 +184,12 @@ def harvest(
         # Closure gate (#397): a second, additive check — never a rewrite of the GitHub barrier
         # above. A node with no declared `required_checks` is trivially satisfied (R8), so this is
         # a no-op for every pre-existing outcome spec.
-        gate_verdict = closure_gate.evaluate(node, repo_root=repo_root, github_runner=github_runner)
+        gate_verdict = closure_gate.evaluate(
+            node,
+            repo_root=repo_root,
+            github_runner=github_runner,
+            implied_checks=intent_envelope.implied_required_checks(spec_intent, node.kind),
+        )
         if not gate_verdict.satisfied:
             continue
         # Write to a FRESH attempt slot, never the implicit attempt 1: a subplot that already holds a

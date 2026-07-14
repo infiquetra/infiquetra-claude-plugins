@@ -27,6 +27,34 @@
 
 ## 2026-07-14
 
+### The closure gate is the reusable seam for any "X gates a leaf done transition" ceremony {#closure-gate-implied-checks-380}
+
+**Context.** #380's `ceremony_gates.reviews_required: "gate"` had to gate a code leaf's `done`
+transition on recorded review evidence, and the tempting build was a new check inside
+`derive_states`/`harvest`.
+
+**Evidence.** PR for #380 — `plugins/saga/scripts/closure_gate.py` (`evaluate` grew a
+single `implied_checks: tuple[str, ...] = ()` parameter merged with the node's declared
+`required_checks`) + `plugins/saga/scripts/outcome_orchestrator.py` (harvest derives
+`("code-review",)` per code leaf from `spec.intent`). Verified end to end in
+`tests/test_outcome_spec.py::test_reviews_required_gates_done`: a merged-but-unreviewed leaf
+does not harvest `done`; writing `code-review` evidence at the PR head SHA via
+`evidence_ledger.write` unlocks the same tick; `reviews_required: "auto"` and no-intent
+controls harvest immediately.
+
+**Mechanism.** The closure gate (#397) already evaluates named checks against the evidence
+ledger at the resolved close SHA, with the whole halt-reason vocabulary (missing-evidence /
+stale-sha / unresolved-fail / unsuperseded-fail / chain-tamper) already litigated and tested.
+A spec-level ceremony only needs to CONTRIBUTE check ids per node — everything downstream
+(SHA pinning, supersession, tamper detection) comes for free, and `implied_checks=()` keeps
+every pre-existing caller byte-identical.
+
+**Generalizable rule.** When a new policy needs to gate an /outcome leaf's completion, express
+it as implied closure-gate check ids derived from committed spec state — never a second gate
+mechanism beside the evidence chain (two authorities for "proven" will disagree).
+
+---
+
 ### A nested fixture `.git` is invisible to parent porcelain, but an untracked dir holding one gets staged as a gitlink {#nested-fixture-git-materialize-on-demand-428}
 
 **Context.** The lifecycle regression harness (#428) needs `tests/lifecycle-fixture/` to be "a

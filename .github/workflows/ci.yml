@@ -176,6 +176,18 @@ jobs:
       - name: Run ruff format check
         run: uv run python -m ruff format --check .
 
+      # #458 T11-F2-8: AST-based test-shape lint — fail the build on a NEW test module that
+      # imports/patches only a fake and never imports or exercises the real production module it
+      # claims to cover. `--prod-module server` recognizes redis-channel's production code (imported
+      # as the `server` package) as a real crossing. No import/execution, no network.
+      - name: Test-shape lint (fake-only test suites)
+        run: uv run python scripts/lint_test_shape.py tests plugins --prod-module server
+
+      # #458 T11-F1-6: golden-fixture drift check. Advisory per the facet's advisory rollout — it
+      # reports a deleted/mutated golden but never fails the build.
+      - name: Golden-fixture drift check (advisory)
+        run: uv run python scripts/check_fake_fixtures.py --check --advisory
+
   type-check:
     name: Type Check
     runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}

@@ -205,17 +205,35 @@ def classify(exit_code: int) -> str:
 
 
 def run_entry(entry: dict[str, object], repo_root: Path) -> dict[str, object]:
-    """Copy the repo, apply the entry's mutation, run its guard, and return a structured record."""
+    """Copy the repo, baseline the guard, apply the entry's mutation, re-run, and record.
+
+    The baseline (unmutated) run is the canary's own self-check: ``caught`` is only credited
+    when the guard was GREEN on the pristine copy and went red after the mutation. Without it,
+    any environmental red — pytest missing from the interpreter, a mis-resolved node, a guard
+    that needs something ``copy_repo`` excludes — exits 1 and masquerades as ``caught``, which
+    is precisely the silently-dead-guard failure mode this tool exists to eliminate.
+    """
     mutation = Mutation.from_dict(entry["mutation"])  # type: ignore[arg-type]
     checkout = Path(tempfile.mkdtemp(prefix="wiring-canary-"))
     detail = ""
+    baseline_exit: int | None = None
     try:
         copy_repo(repo_root, checkout)
-        apply_mutation(checkout, mutation)
-        proc = run_guard(checkout, str(entry["guard"]))
-        result = classify(proc.returncode)
-        if result == ERROR:
-            detail = (proc.stdout + proc.stderr).strip()[-500:]
+        baseline = run_guard(checkout, str(entry["guard"]))
+        baseline_exit = baseline.returncode
+        if baseline.returncode != 0:
+            result = ERROR
+            detail = (
+                f"baseline (unmutated) guard run exited {baseline.returncode}; a red here is "
+                "not attributable to any mutation, so this entry cannot be evaluated: "
+                + (baseline.stdout + baseline.stderr).strip()[-500:]
+            )
+        else:
+            apply_mutation(checkout, mutation)
+            proc = run_guard(checkout, str(entry["guard"]))
+            result = classify(proc.returncode)
+            if result == ERROR:
+                detail = (proc.stdout + proc.stderr).strip()[-500:]
     except CanaryError as exc:
         result = ERROR
         detail = str(exc)
@@ -227,6 +245,7 @@ def run_entry(entry: dict[str, object], repo_root: Path) -> dict[str, object]:
         "guard_ref": str(entry["guard"]),
         "mutation": mutation.describe(),
         "result": result,
+        "baseline_exit": baseline_exit,
         "detail": detail,
         "timestamp": _now_iso(),
     }

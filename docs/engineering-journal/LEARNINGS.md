@@ -39,10 +39,13 @@ copy, runs the guard, and asserts it goes red (`caught`); a guard that stays gre
 `caught` (`python3 tools/wiring_canary.py` exits 0, appends 4 records to the gitignored
 `docs/engineering-journal/canary-log.jsonl`). Fixture-guard tests in `tests/test_wiring_canary.py`
 prove the `caught`/`toothless`/`error` branches independent of the real guards.
-**Mechanism (three gotchas that actually bit).** (1) *pytest exit codes are the classifier* — 0 =
-toothless (green on a broken invariant), 1 = caught (red as designed), anything else (5 = no tests
-collected, 2/3/4) = `error`. Treating only exit 1 as "caught" is what stops a mis-collected node
-from masquerading as a healthy guard. (2) *The guards resolve their `REPO_ROOT` from
+**Mechanism (three gotchas that actually bit).** (1) *pytest exit codes alone cannot classify* —
+0 = toothless, 1 = caught, 2/3/4/5 = error is necessary but NOT sufficient: an interpreter with no
+pytest at all also exits 1 ("No module named pytest"), which the verify panel demonstrated
+masquerading as four green "caught" verdicts with zero guard code executed. The fix is a
+**baseline control run**: `caught` is credited only when the guard was GREEN on the unmutated
+copy first (which also proves pytest ran) and went red after the mutation; a baseline red is
+`error`, never `caught`. (2) *The guards resolve their `REPO_ROOT` from
 `Path(__file__).parent.parent`, not cwd* — so running the copied test file against the mutated copy
 Just Works; the canary runs each guard as a subprocess with `cwd=<checkout>` and `-o addopts=` to
 drop the repo's `--cov` default. (3) *A stale mutation anchor must surface as `error`, never silent
@@ -56,6 +59,44 @@ violates the guarded property and requires the guard to fail — a guard unprove
 failure mode is indistinguishable from a dead one.
 **Refs.** DECISIONS `{#mutation-canary-design-427}`; extends the drift-guard precedent
 `{#readonly-verifier-fallback-ladder-325}`.
+
+---
+
+### A fake-only test suite is invisible to green CI unless a gate reads the test's *shape*, not its result {#fake-adapter-integrity-458}
+
+**Context.** #458 shipped the mechanical, always-on gates for the recurring "100%-green suite that
+proved nothing" failures (`{#test-shape-masks-dead-wiring-291}`, `{#fake-adapter-hides-real-path-mismatch}`).
+Five mechanisms: an AST shape lint, a golden-fixture drift checker, a fakes registry with
+signature-parity, a real-adapter lane, and a boundary-crossing assertion helper.
+**Evidence.** `scripts/lint_test_shape.py`, `scripts/check_fake_fixtures.py`,
+`tests/fakes_registry.py`, `tests/real_adapter/test_worktree_liveness.py`,
+`tests/conftest.py::assert_reads_from_boundary`, wired in `.github/workflows/ci.yml` (lint job).
+The real-adapter lane reproduces the U7 P0 directly: `WT.git_worktree_ops(symlinked_root).exists(p)`
+is `True` while a naive raw-string `p in porcelain_paths` is `False` (test
+`test_naive_noncanonical_comparison_fails_the_same_check`).
+**Mechanism.** A fake-only suite is structurally undetectable from test *results* — every assertion
+passes against the fake's hand-wired answer. The only signal is the test's *shape*: does it import /
+exercise the real production module, or only a fake? So the shape lint parses the AST for a fake
+signal (fake import / `class Fake…`) with no production signal (a `plugins` import, a `"plugins"`
+path-segment literal — the repo's `spec_from_file_location(name, ROOT/"plugins"/…)` idiom — or an
+importlib loader call).
+**Fix.** Shipped this PR. Shape lint + fakes registry are hard CI gates; golden-fixture drift is
+advisory per facet `T11-F1-6`.
+**Validation.** The two fixtures (`tests/fixtures/lint_shape/{fake_only,real_import}_module.py`)
+exit 1 / 0 respectively; the whole committed suite passes strict `--prod-module server` (redis-channel
+production imports as the `server` package).
+**What surprised.** The registry's own meta-test (`test_fakes_registry.py`) tripped the shape lint —
+it imports `fakes_registry` (matches the fake pattern) with the real class one hop away. Fixed
+honestly by having it load the real `outcome_worktrees` and assert the registered `real` mirrors the
+production contract, which is a stronger test *and* the production signal the lint needs.
+**Generalizable rule.** When a gate keys off a name-pattern (`fake`), a legitimate module that
+crosses into real production only *indirectly* (through a helper) reads as a violation — make it
+reference production directly (a better test), don't allowlist it. And: the CI invocation of a
+name-pattern lint needs a `--prod-module` escape hatch for real production packages whose import
+name doesn't say "plugins" (here, `server`).
+**Refs.** `{#fake-adapter-integrity-458-mechanisms}` (DECISIONS), `{#test-shape-masks-dead-wiring-291}`,
+`{#fake-adapter-hides-real-path-mismatch}`, `docs/testing/golden-fixtures.md`,
+`docs/testing/boundary-crossing-convention.md`.
 
 ### A lint that parses its input differently from the consumer it guards is an evasion channel; parse with the consumer's semantics or fail closed {#lint-parser-semantics-divergence-422}
 

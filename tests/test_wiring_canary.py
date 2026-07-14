@@ -230,3 +230,49 @@ def test_classify_maps_pytest_exit_codes() -> None:
     assert canary.classify(1) == canary.CAUGHT
     assert canary.classify(5) == canary.ERROR
     assert canary.classify(2) == canary.ERROR
+
+
+# ---------------------------------------------------------------------------
+# Baseline control (panel hardening): a guard that is red on the UNMUTATED copy
+# must be `error`, never a vacuous `caught` — this is also what catches a
+# pytest-less interpreter (its exit 1 happens at baseline, not post-mutation).
+# ---------------------------------------------------------------------------
+
+
+def _make_baseline_red_guard_repo(root: Path) -> None:
+    """A guard that fails regardless of the invariant (environmentally red)."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "marker.txt").write_text("GOOD\n", encoding="utf-8")
+    (root / "test_guard_baseline_red.py").write_text(
+        "def test_always_fails():\n    raise AssertionError('red before any mutation')\n",
+        encoding="utf-8",
+    )
+
+
+def test_baseline_red_guard_is_error_not_caught(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _make_baseline_red_guard_repo(repo)
+    entry = {
+        "id": "fixture-baseline-red",
+        "guard": "test_guard_baseline_red.py",
+        "invariant": "marker.txt contains GOOD",
+        "mutation": dict(_BREAK_MARKER),
+    }
+    record = canary.run_entry(entry, repo)
+    assert record["result"] == canary.ERROR, record
+    assert "baseline" in str(record["detail"]), record
+    assert record["baseline_exit"] == 1, record
+
+
+def test_caught_record_carries_green_baseline(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _make_effective_guard_repo(repo)
+    entry = {
+        "id": "fixture-effective",
+        "guard": "test_guard_effective.py",
+        "invariant": "marker.txt contains GOOD",
+        "mutation": dict(_BREAK_MARKER),
+    }
+    record = canary.run_entry(entry, repo)
+    assert record["result"] == canary.CAUGHT, record
+    assert record["baseline_exit"] == 0, record

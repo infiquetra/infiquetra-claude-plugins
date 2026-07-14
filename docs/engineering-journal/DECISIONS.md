@@ -52,6 +52,43 @@ proof artifacts natively (then wire the version-gate to require the emitted arti
 layer this sits on); `{#external-engines-never-gatekeepers}` (#283 — this verifies a *claimed*
 delegation, it does not make `agy` a gatekeeper); DECISIONS `#lint-parser-semantics-divergence`
 sibling governance-gate pattern; `docs/delegation-proofs/README.md`.
+---
+
+### Fake-adapter integrity: five mechanisms, repo-root tooling, hard vs advisory split (#458) {#fake-adapter-integrity-458-mechanisms}
+
+**KTD1 — the shape lint lives at repo-root `scripts/lint_test_shape.py`, not in a plugin.** It is a
+CI-time, fleet-wide authored-test-shape check (like `tools/release_surface_diff_guard.py`,
+`scripts/check_ownership_lanes.py`), not a saga runtime concern. Repo-root tooling is also exempt
+from the plugin release-surface tri-lock, so no plugin version bump — this PR touches zero
+`plugins/**` files. Same placement for `scripts/check_fake_fixtures.py`.
+
+**KTD2 — production detection is heuristic on the repo's import idioms, not an import graph.** The
+lint never imports/executes the linted module (safe, fast, offline). A "crosses into production"
+signal is any of: a `plugins` import, a `"plugins"` path-segment string literal (the
+`spec_from_file_location(name, ROOT/"plugins"/…)` idiom this repo uses everywhere), or an importlib
+loader call. Measured over the whole suite this yields zero false positives once redis-channel's
+`server` package is declared via `--prod-module server`. *Rejected:* resolving real imports by
+executing the module — a lint must not run arbitrary test code.
+
+**KTD3 — signature parity covers two contract shapes.** The worked example (`WorktreeOps`) is a
+*dataclass-of-callables* protocol, so its contract is the fields' `Callable[[…], …]` annotation
+arities (parsed from the string annotation under `from __future__ import annotations`). The registry
+also handles plain method-bearing classes. A rename on the real class → a name-set mismatch; an
+arity change → an arity-drift finding. `verify_registry()` runs at import time so importing
+`tests/fakes_registry.py` is itself the gate.
+
+**KTD4 — golden fixtures are advisory, real-adapter lane + shape lint + parity are hard.** Per facet
+`T11-F1-6`'s advisory rollout, `check_fake_fixtures.py` runs `--advisory` in CI (reports drift, exits
+0); the golden is *derived from the real producer* (a normalized real `git worktree list --porcelain`
+capture, paths→`<ROOT>` and SHAs→`<SHA>` for machine-stability) and regenerable via `--regenerate`.
+The shape lint, the fakes-registry parity test, and the real-adapter lane are hard CI gates.
+
+**KTD5 — v1 is one worked example per mechanism, by design.** Backfilling a golden/registry entry
+for every existing fake, or migrating every fake-backed suite to a real lane, is explicitly out of
+scope (#458 non-goals). The mechanisms + conventions ship now; breadth is a follow-on.
+
+**Refs.** `{#fake-adapter-integrity-458}` (LEARNINGS), `{#outcome-decompose-worktree-stance}`,
+`{#artifact-pointer-ktds-291}`.
 
 ### One agent-file CI lint: repo-root `tools/agent_spec.py`, role-tier-anchored role classes, floor-only scope for the tool guard (#422)
 

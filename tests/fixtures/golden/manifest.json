@@ -1,0 +1,12 @@
+{
+  "description": "Golden fixtures pinned to real-producer output (#458, T11-F1-6). Regenerate with: uv run python scripts/check_fake_fixtures.py --regenerate",
+  "goldens": [
+    {
+      "fake": "worktree-liveness-oracle (FakeWT / tests/fakes_registry._FakeWorktreeStore)",
+      "producer": "git worktree list --porcelain",
+      "path": "tests/fixtures/golden/worktree_list_porcelain.golden.txt",
+      "sha256": "30f6a50fdd2b9da20043dd6b2773d316b088801f81d0d0067c79734d2eb00bdb",
+      "note": "Real `git worktree list --porcelain` grammar (worktree/HEAD/branch lines, blank-line record separator), normalized for machine-independence: paths -> <ROOT>, commit SHAs -> <SHA>."
+    }
+  ]
+}

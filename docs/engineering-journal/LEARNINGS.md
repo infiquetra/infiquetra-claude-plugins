@@ -55,6 +55,43 @@ receipt), not on a self-reported status field the failing path also controls.
 
 **Refs.** DECISIONS `{#delegation-proof-schema-457}`; `docs/delegation-proofs/README.md`;
 `LEARNINGS.md` `#agy-delegate-silent-claude-fallback`, `#marketplace-drift`.
+---
+
+### A fake-only test suite is invisible to green CI unless a gate reads the test's *shape*, not its result {#fake-adapter-integrity-458}
+
+**Context.** #458 shipped the mechanical, always-on gates for the recurring "100%-green suite that
+proved nothing" failures (`{#test-shape-masks-dead-wiring-291}`, `{#fake-adapter-hides-real-path-mismatch}`).
+Five mechanisms: an AST shape lint, a golden-fixture drift checker, a fakes registry with
+signature-parity, a real-adapter lane, and a boundary-crossing assertion helper.
+**Evidence.** `scripts/lint_test_shape.py`, `scripts/check_fake_fixtures.py`,
+`tests/fakes_registry.py`, `tests/real_adapter/test_worktree_liveness.py`,
+`tests/conftest.py::assert_reads_from_boundary`, wired in `.github/workflows/ci.yml` (lint job).
+The real-adapter lane reproduces the U7 P0 directly: `WT.git_worktree_ops(symlinked_root).exists(p)`
+is `True` while a naive raw-string `p in porcelain_paths` is `False` (test
+`test_naive_noncanonical_comparison_fails_the_same_check`).
+**Mechanism.** A fake-only suite is structurally undetectable from test *results* — every assertion
+passes against the fake's hand-wired answer. The only signal is the test's *shape*: does it import /
+exercise the real production module, or only a fake? So the shape lint parses the AST for a fake
+signal (fake import / `class Fake…`) with no production signal (a `plugins` import, a `"plugins"`
+path-segment literal — the repo's `spec_from_file_location(name, ROOT/"plugins"/…)` idiom — or an
+importlib loader call).
+**Fix.** Shipped this PR. Shape lint + fakes registry are hard CI gates; golden-fixture drift is
+advisory per facet `T11-F1-6`.
+**Validation.** The two fixtures (`tests/fixtures/lint_shape/{fake_only,real_import}_module.py`)
+exit 1 / 0 respectively; the whole committed suite passes strict `--prod-module server` (redis-channel
+production imports as the `server` package).
+**What surprised.** The registry's own meta-test (`test_fakes_registry.py`) tripped the shape lint —
+it imports `fakes_registry` (matches the fake pattern) with the real class one hop away. Fixed
+honestly by having it load the real `outcome_worktrees` and assert the registered `real` mirrors the
+production contract, which is a stronger test *and* the production signal the lint needs.
+**Generalizable rule.** When a gate keys off a name-pattern (`fake`), a legitimate module that
+crosses into real production only *indirectly* (through a helper) reads as a violation — make it
+reference production directly (a better test), don't allowlist it. And: the CI invocation of a
+name-pattern lint needs a `--prod-module` escape hatch for real production packages whose import
+name doesn't say "plugins" (here, `server`).
+**Refs.** `{#fake-adapter-integrity-458-mechanisms}` (DECISIONS), `{#test-shape-masks-dead-wiring-291}`,
+`{#fake-adapter-hides-real-path-mismatch}`, `docs/testing/golden-fixtures.md`,
+`docs/testing/boundary-crossing-convention.md`.
 
 ### A lint that parses its input differently from the consumer it guards is an evasion channel; parse with the consumer's semantics or fail closed {#lint-parser-semantics-divergence-422}
 

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "agent-registration-drift",
+    "guard": "tests/test_agent_registration_drift.py::test_agent_frontmatter_name_matches_stem",
+    "invariant": "Every saga agent file's frontmatter `name:` matches its filename stem, so `saga:<name>` spawn references resolve to a real agent file (#325 R4).",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/agents/readonly-verifier.md",
+      "find": "name: readonly-verifier",
+      "replace": "name: readonly-verifier-canary-mutant"
+    },
+    "mutation_description": "Rename readonly-verifier's frontmatter `name:` so it no longer matches its file stem."
+  },
+  {
+    "id": "release-triad",
+    "guard": "tests/test_release_triad.py::test_release_triad_in_sync",
+    "invariant": "plugin.json, marketplace.json, and CHANGELOG.md agree on each plugin's version in lockstep (CLAUDE.md step 6, U15/R17).",
+    "mutation": {
+      "kind": "set_json_field",
+      "file": "plugins/deploy/.claude-plugin/plugin.json",
+      "key": "version",
+      "value": "9.9.9-canary-mutant"
+    },
+    "mutation_description": "Bump deploy's plugin.json version without touching marketplace.json or CHANGELOG.md (release-surface drift)."
+  },
+  {
+    "id": "manifest-consumer-matrix",
+    "guard": "tests/test_manifest_consumer_matrix.py::test_manifest_no_orphan_field",
+    "invariant": "Every provenance_manifest.py dataclass field has a named reader row in saga-spec.md §13.3 (R17, no orphan field).",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/provenance_manifest.py",
+      "find": "    execution_id: str\n    saga_ref: str",
+      "replace": "    execution_id: str\n    canary_mutant_field: str\n    saga_ref: str"
+    },
+    "mutation_description": "Add a schema field to the Manifest dataclass with no matching §13.3 matrix row (orphan field)."
+  },
+  {
+    "id": "team-execution-pointers",
+    "guard": "tests/test_team_execution_pointers.py::test_byte_drift_raises_hash_mismatch",
+    "invariant": "artifact_pointer.deref raises POINTER_HASH_MISMATCH when the holding ref is moved off the snapshot tree (KTD1 L1 integrity).",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py",
+      "find": "    if ref_oid.returncode != 0 or ref_oid.stdout.strip() != pointer.hash:",
+      "replace": "    if False and (ref_oid.returncode != 0 or ref_oid.stdout.strip() != pointer.hash):"
+    },
+    "mutation_description": "Neuter the L1 holding-ref integrity check so a moved ref no longer raises HASH_MISMATCH."
+  }
+]

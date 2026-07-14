@@ -73,6 +73,41 @@ delegation, it does not make `agy` a gatekeeper); DECISIONS `#lint-parser-semant
 sibling governance-gate pattern; `docs/delegation-proofs/README.md`.
 ---
 
+### Mutation canary: repo-root `tools/` script, data-driven registry, gitignored ephemeral log, scheduled workflow (#427)  {#mutation-canary-design-427}
+
+**KTD1 — placement: repo-root `tools/wiring_canary.py`, not inside a plugin.** The canary is a
+meta-guard over guards the whole fleet ships; it is not a plugin behavior/schema/command/prompt
+surface. Placing it in `tools/` (beside `agent_spec.py`, `release_surface_diff_guard.py`,
+`stale_main_guard.py`) keeps it exempt from the CLAUDE.md step-6 release-surface tri-lock — no
+plugin.json bump, no marketplace entry, no CHANGELOG. Rejected: living inside `saga` (would have
+forced a saga version bump + drift-guard update for a repo-governance tool with no runtime surface).
+
+**KTD2 — mutations are data, not code.** `tools/canary_registry.json` names each guard's pytest
+node, its one-sentence invariant, and a typed mutation (`replace_text` with a stable anchor, or
+`set_json_field`). Adding a guard is a registry entry, not new machinery — matching the issue's
+"registering a new guard is a follow-on registry addition" non-goal. A `replace_text` anchor that
+no longer matches raises `CanaryError` → `error` outcome, so registry rot fails loud.
+
+**KTD3 — toothless is proven by fixtures, never by weakening a real guard.** Deliberately
+regressing a live guard to exercise the `toothless` branch would leave the repo's actual guard
+regressed (explicit non-goal). `tests/test_wiring_canary.py` builds a tmp_path "repo" with an
+always-green fixture guard + a planted mutation and asserts `toothless` + non-zero canary exit — the
+canary's pass/fail logic is proven independent of which real guards are registered (R7).
+
+**KTD4 — canary log is a gitignored ephemeral artifact, not a committed file.** AC5 requires
+`git status --porcelain` empty after a run, but every run appends to
+`docs/engineering-journal/canary-log.jsonl`; a tracked log would dirty the tree. Gitignored locally
++ uploaded as a CI workflow artifact (`actions/upload-artifact`) gives inspectable history without
+committing churn. Revisit-when: if toothless history needs to be durable across machines, promote
+to a committed append-only log with a dedicated release-surface exemption note.
+
+**KTD5 — separate scheduled workflow, not a step in `ci.yml`.** `ci.yml` has no `schedule:` trigger
+and runs per-PR; the canary is a nightly unattended sweep (`cron: "17 7 * * *"` + `workflow_dispatch`).
+A new `.github/workflows/mutation-canary.yml` keeps the per-PR gate fast and the canary's failure
+signal distinct from a normal test failure.
+
+---
+
 ### Fake-adapter integrity: five mechanisms, repo-root tooling, hard vs advisory split (#458) {#fake-adapter-integrity-458-mechanisms}
 
 **KTD1 — the shape lint lives at repo-root `scripts/lint_test_shape.py`, not in a plugin.** It is a

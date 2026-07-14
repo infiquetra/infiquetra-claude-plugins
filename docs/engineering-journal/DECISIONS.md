@@ -2,6 +2,70 @@
 
 ## 2026-07-14
 
+### Tier campaign verification by leaf blast radius: full Fable refute-3 on trust-kernel leaves, single Fable spot-check on mechanical ones {#tiered-verification-by-leaf-risk}
+
+**Decision.** The next autonomy campaign's envelope tiers adversarial verification by leaf
+risk class instead of running a uniform full Fable-xhigh refute-3 panel on every leaf, as the
+2026-07 campaign (fleet-integrity-gates + intent-envelope-autonomy, 17 leaves, ~10.1M subagent
+tokens) did. Two modes, chosen per leaf at wave-planning time and recorded in the envelope:
+
+- **Full Fable xhigh refute-3 panel** — leaves that define contracts, invert a fail posture,
+  or touch the merge/authorization/attribution kernel. On an auto-merge campaign the panel is
+  the ONLY review before main, so this class never gets under-tiered.
+- **Single Fable xhigh spot-check** (~85K tokens vs ~821K for the one fully-attributed panel,
+  roughly 10×) — mechanical, additive, telemetry-surface, or doc-alignment leaves. A
+  spot-check that refutes anything escalates that leaf to a full panel.
+- Ambiguous classification defaults UP to the full panel; the hand-finish-residuals +
+  spot-check-only-the-repairs loop is kept unchanged (it was the campaign's best cost
+  discovery).
+
+**Evidence (2026-07 campaign scorecard).** Every P1 catch clustered on trust-kernel leaves and
+required cross-file invariant reasoning: #422's YAML tokenizer fail-open, #457's fail-open
+proof chain, #433's gate side-door + lost-update clobber, #449's era-attribution write-once
+honesty (two verifiers found it independently — refute-3 redundancy earned its keep exactly
+there). Mechanical leaves produced clean sweeps or P3-grade residuals a cheaper pass finds
+too. The #449 spot-check found a real residual the full panel had missed (the stale
+`key_recipe`) at ~10× less spend — the cheap mode demonstrably has teeth, it is not a rubber
+stamp. Building at Fable does not obviate verifying at Fable: #449 was Fable-built and the
+panel still surfaced two genuine P2s. The tiering signal is blast radius, not diff size — the
+era-attribution fix was ~15 lines whose absence would have let a dead-era authorization
+write-once-suppress a live-era merge record forever. Caveat, stated honestly: there was no
+A/B control; nobody measured what a Sonnet panel would have caught. The uniform-Fable envelope
+was the right first-campaign call for a campaign building its own trust machinery; the
+estimated over-spend it leaves on the table now is ~2–3M tokens per comparable campaign
+(extrapolated from the single attributed panel cost — an estimate, not a measurement).
+
+**Relation to the R4 same-tier rule.** This engages the
+[#parallel-refuteN-emitter-plan-work-wiring](#parallel-refuteN-emitter-plan-work-wiring)
+revisit-when clause ("the verify panel's same-tier rule proves too expensive → consider a
+tiered verifier vocab") — in the *mode* dimension, not the parity dimension. The 2026-07
+envelope already ran verify-above-build ("Fable reviews the juniors' work") and the asymmetry
+worked; what this decision tiers is panel-vs-spot-check per leaf, while whatever full panels
+remain keep running at or above the unit's tier.
+
+**Rejected alternatives.** (a) Uniform Fable refute-3 everywhere (the 2026-07 envelope) —
+right once, now demonstrably paying full-panel price for P3-grade findings on mechanical
+leaves. (b) Uniform cheaper panels (e.g. Sonnet refute-3, or 2 Sonnet + 1 Fable judge) — no
+evidence a cheaper panel catches the invariant-class P1s, and with auto-merge the panel is the
+last line of defense; under-tiering the kernel class is the one unrecoverable direction.
+(c) Skipping verification on Fable-built leaves — refuted directly by #449. (d) Refute-1 on
+kernel leaves — the era-attribution P2 was found independently by two of three verifiers;
+on the kernel class, redundancy is diversity insurance, not waste.
+
+**Revisit when.** A spot-check on a mechanical leaf misses a defect a full panel demonstrably
+would have caught (then fix the risk classifier, not the mechanism); per-panel spend data from
+a real tiered campaign contradicts the ~10× ratio or the ~2–3M savings estimate; wave-planning
+classification proves contentious often enough that "default UP" makes the tiering vacuous; or
+the #603 issuance era moves the merge trust boundary so that more leaf classes count as
+kernel.
+
+**Refs.** Campaign record: auto-memory `project_autonomy_campaign_2026_07.md`. The risk apex
+whose panel data anchors this: [#envelope-authorized-merge-449](#envelope-authorized-merge-449).
+Panel/spot-check mechanics: `plugins/saga/references/sandbox-spawn-sites.md` (readonly-verifier
++ worktree isolation), LEARNINGS `{#token-era-binding-449}`.
+
+---
+
 ### Merge gained a scoped, revocable, attributed exception — and the engine's tokenless auto-merge default died with it (#449) {#envelope-authorized-merge-449}
 
 **Decision.** #449 ships the `AUTONOMOUS_UNDER_ENVELOPE` write class as three composed layers,

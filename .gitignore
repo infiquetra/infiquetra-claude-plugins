@@ -64,6 +64,10 @@ Thumbs.db
 # Local Saga engine routing overlay (operator-specific, never committed)
 .saga/engine-overlay.json
 
+# Mutation-canary run log (#427) — appended each run, inspectable locally / uploaded as a CI
+# workflow artifact; never committed so a canary run never dirties the working tree.
+docs/engineering-journal/canary-log.jsonl
+
 # Local tool state & generated artifacts — regenerated from source each run, never committed
 .neuralmind/
 graphify-out/

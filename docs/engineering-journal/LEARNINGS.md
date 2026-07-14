@@ -27,6 +27,36 @@
 
 ## 2026-07-14
 
+### A guard that never fails on today's clean tree cannot prove it still has teeth; mutate the invariant in a throwaway checkout and require RED {#mutation-canary-teeth-427}
+
+**Context.** #427 shipped `tools/wiring_canary.py` — a mutation canary over the fleet's drift
+guards (`test_agent_registration_drift`, `test_release_triad`, `test_manifest_consumer_matrix`,
+`test_team_execution_pointers::test_byte_drift_raises_hash_mismatch`). CI only ever proves a guard
+did NOT fire on a clean tree; it cannot distinguish "the tree is clean" from "the guard regressed
+to a no-op." The canary copies the repo to a system tempdir, breaks the guarded invariant in the
+copy, runs the guard, and asserts it goes red (`caught`); a guard that stays green is `toothless`.
+**Evidence.** `tools/wiring_canary.py`, `tools/canary_registry.json`; all four seed guards report
+`caught` (`python3 tools/wiring_canary.py` exits 0, appends 4 records to the gitignored
+`docs/engineering-journal/canary-log.jsonl`). Fixture-guard tests in `tests/test_wiring_canary.py`
+prove the `caught`/`toothless`/`error` branches independent of the real guards.
+**Mechanism (three gotchas that actually bit).** (1) *pytest exit codes are the classifier* — 0 =
+toothless (green on a broken invariant), 1 = caught (red as designed), anything else (5 = no tests
+collected, 2/3/4) = `error`. Treating only exit 1 as "caught" is what stops a mis-collected node
+from masquerading as a healthy guard. (2) *The guards resolve their `REPO_ROOT` from
+`Path(__file__).parent.parent`, not cwd* — so running the copied test file against the mutated copy
+Just Works; the canary runs each guard as a subprocess with `cwd=<checkout>` and `-o addopts=` to
+drop the repo's `--cov` default. (3) *A stale mutation anchor must surface as `error`, never silent
+green* — `apply_mutation` raises `CanaryError` when its `find` string is absent, so a guarded file
+being refactored out from under the registry fails loud instead of reporting a false `caught`.
+**What surprised.** The canary log has to be gitignored: `--target X && git status --porcelain`
+(AC5) requires an empty status, but the run appends to the log, so a tracked log would dirty the
+tree and fail the very "no leak" property it documents. Ephemeral-artifact log, not a committed one.
+**Generalizable rule.** For any guard/gate/assertion you rely on, add a companion that deliberately
+violates the guarded property and requires the guard to fail — a guard unproven against its own
+failure mode is indistinguishable from a dead one.
+**Refs.** DECISIONS `{#mutation-canary-design-427}`; extends the drift-guard precedent
+`{#readonly-verifier-fallback-ladder-325}`.
+
 ### A lint that parses its input differently from the consumer it guards is an evasion channel; parse with the consumer's semantics or fail closed {#lint-parser-semantics-divergence-422}
 
 **Context.** #422's tool-scope floor read agent `tools:` frontmatter through a hand-rolled

@@ -427,3 +427,285 @@ def test_frontier_budget_downgrade_restamps_backends_enumeration() -> None:
         b["note"] for b in wide["backends"] if b["backend"] == "cc-workflows-ultracode"
     )
     assert ultra_note == wide["budget_note"]
+
+
+# --------------------------------------------------------------------------- #373: captured run-start
+# posture enforced at the dispatch seam (T8-F6-8 backends/degrade + T8-F5-7 spend envelope).
+
+IE = _load("intent_envelope")
+OC = _load("outcome_costs")
+
+
+def _intent_373(**extra: Any) -> dict[str, Any]:
+    """A valid committed intent built through the production capture path, plus #373 fields."""
+    data: dict[str, Any] = IE.apply_answers({"run_mode": "attended"}).to_dict()
+    data.update(extra)
+    # Round-trip through the canonical schema so a mis-shaped fixture fails HERE, not downstream.
+    return dict(IE.IntentEnvelope.from_dict(data).to_dict())
+
+
+def test_ac1_captured_posture_is_consumed_at_the_seam_not_re_derived(repo: Path) -> None:
+    """AC1: backends_permitted + degrade_policy captured ONCE at run start decide the seam —
+    dispatching a leaf whose backend is unmet reads the captured posture (no runtime
+    ``available`` flags are passed at all, so the decision can only have come from the spec)."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "build", "title": "B", "backend": "team-execution"}],
+        intent=_intent_373(backends_permitted=["inline"]),
+    )
+    result = OUTCOME.advance(repo, "oc373")
+    assert result.dispatched == []
+    assert len(result.halted) == 1
+    receipt = result.halted[0]
+    assert receipt["backend"] == "team-execution"
+    # The receipt's effective menu IS the captured set (captured ∩ runtime, runtime absent).
+    assert receipt["available"] == ["inline"]
+    assert "captured run-start posture" in receipt["reason"]
+
+
+def test_ac2_unmet_prerequisite_with_no_degrade_posture_halts_by_default(repo: Path) -> None:
+    """AC2: an unmet host prerequisite with NO degrade posture captured -> HALT by default,
+    surfacing through the same BackendHaltError path the existing mechanism uses."""
+    # Unit half: a restricted caller through make_dispatcher raises the SAME typed halt.
+    envelope = IE.IntentEnvelope.from_dict(_intent_373(backends_permitted=["inline"]))
+    effective = D.effective_available(envelope.backends_permitted, None)
+    dispatcher = D.make_dispatcher(available=effective)
+    with pytest.raises(D.BackendHaltError) as exc:
+        dispatcher(_req("team-execution"))
+    assert exc.value.receipt.backend == "team-execution"
+    assert exc.value.receipt.available == ("inline",)
+
+    # End-to-end half: the reconcile loop records the halt visibly, dispatches nothing.
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "build", "title": "B", "backend": "team-execution"}],
+        intent=_intent_373(backends_permitted=["inline"]),
+    )
+    result = OUTCOME.advance(repo, "oc373", attending=False)  # even unattended: no posture -> HALT
+    assert result.dispatched == [] and result.degraded == []
+    assert len(result.halted) == 1
+
+
+def test_ac3_captured_posture_degrades_exactly_one_rung(repo: Path) -> None:
+    """AC3 control: with operator_away_one_rung captured and the IMMEDIATE lower rung
+    permitted, an autonomous+away leaf degrades exactly one DEGRADE_LADDER rung."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "build", "title": "B", "backend": "cc-workflows-ultracode"}],
+        intent=_intent_373(
+            backends_permitted=["inline", "team-execution"],
+            degrade_policy="operator_away_one_rung",
+        ),
+    )
+    result = OUTCOME.advance(repo, "oc373", attending=False)
+    assert result.dispatched == ["build"]
+    assert len(result.degraded) == 1
+    assert result.degraded[0]["from_backend"] == "cc-workflows-ultracode"
+    assert result.degraded[0]["to_backend"] == "team-execution"  # exactly one rung, never two
+
+
+def test_ac3_two_rung_unavailable_halts_never_cascades(repo: Path) -> None:
+    """AC3: when the immediate lower rung is NOT permitted, the run HALTs — it never silently
+    cascades two rungs down to inline, even though inline is permitted and would run."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "build", "title": "B", "backend": "cc-workflows-ultracode"}],
+        intent=_intent_373(
+            backends_permitted=["inline"],  # team-execution (the immediate rung) NOT permitted
+            degrade_policy="operator_away_one_rung",
+        ),
+    )
+    result = OUTCOME.advance(repo, "oc373", attending=False)
+    assert result.dispatched == [] and result.degraded == []
+    assert len(result.halted) == 1
+    assert "no lower rung" in result.halted[0]["reason"]
+
+
+def test_ac3_baseline_legacy_path_still_cascades_without_a_captured_posture(repo: Path) -> None:
+    """Baseline control proving AC3 could go red: the SAME two-rung scenario WITHOUT a
+    captured posture still takes the unchanged legacy degrade path (first available lower
+    rung — here two rungs down to inline). The one-rung strictness is the captured posture's
+    doing, not a change to degrade_decision (the issue's out-of-scope guarantee)."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "build", "title": "B", "backend": "cc-workflows-ultracode"}],
+    )
+    result = OUTCOME.advance(repo, "oc373", available=("inline", "manual"), attending=False)
+    assert result.dispatched == ["build"]
+    assert len(result.degraded) == 1
+    assert result.degraded[0]["to_backend"] == "inline"  # legacy: cascades past team-execution
+
+
+def test_ac3_presence_conditions_still_halt_under_a_permissive_posture() -> None:
+    """The captured one-rung permission feeds the UNCHANGED presence-conditional mechanism:
+    attending / guarantee-bearing / side-effected still HALT exactly as before."""
+    for kwargs in (
+        {"attending": True, "guarantee_bearing": False, "had_side_effect": False},
+        {"attending": False, "guarantee_bearing": True, "had_side_effect": False},
+        {"attending": False, "guarantee_bearing": False, "had_side_effect": True},
+    ):
+        action, _, reason = D.captured_degrade_decision(
+            "cc-workflows-ultracode",
+            effective=("inline", "team-execution"),
+            degrade_policy="operator_away_one_rung",
+            **kwargs,
+        )
+        assert action == "halt", (kwargs, reason)
+
+
+def test_ac4_ac5_under_ceiling_dispatch_clears_silently(repo: Path) -> None:
+    """AC4+AC5: a spend envelope captured at run start is checked against outcome_costs's
+    leaf-produced actuals pre-dispatch; an under-ceiling dispatch clears with NO halt/receipt."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "a", "title": "A"}, {"subplot_id": "b", "title": "B"}],
+        intent=_intent_373(spend_envelope={"cost_ceiling_tokens": 1000}),
+    )
+    store = STORE.Store.for_outcome("oc373", repo)
+    OC.record_cost(store, "a", executor="inline", tokens=400)  # leaf-produced actuals, under
+    result = OUTCOME.advance(repo, "oc373")
+    assert sorted(result.dispatched) == ["a", "b"]
+    assert result.halted == [] and result.gated == []  # silent: no interrupt, no receipt
+
+
+def test_ac6_over_ceiling_dispatch_halts_for_step_up_never_degrades(repo: Path) -> None:
+    """AC6: an over-ceiling dispatch raises the typed spend halt and NEVER falls through to a
+    degraded tier/backend — the leaf stays ready (paused), nothing dispatched."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "a", "title": "A"}],
+        intent=_intent_373(spend_envelope={"cost_ceiling_tokens": 1000}),
+    )
+    store = STORE.Store.for_outcome("oc373", repo)
+    OC.record_cost(store, "a", executor="inline", tokens=1200)  # actuals past the ceiling
+    result = OUTCOME.advance(repo, "oc373", attending=False)  # even away: spend never degrades
+    assert result.dispatched == [] and result.degraded == []
+    assert len(result.halted) == 1
+    receipt = result.halted[0]
+    assert receipt["kind"] == "spend-halt"  # distinct code path from the backend-menu halt
+    assert "step-up" in receipt["reason"]
+    assert receipt["actual_tokens"] == 1200.0 and receipt["cost_ceiling_tokens"] == 1000.0
+    # The leaf is paused, not consumed: derived state stays ready for a stepped-up retry.
+    assert result.status["states"]["a"] == "ready"
+
+
+def test_ac6_at_ceiling_exhausts_the_budget(repo: Path) -> None:
+    """Boundary: actuals exactly AT the ceiling exhaust the budget (authorized only while
+    strictly below) — the documented claim a crafted just-at-ceiling input would falsify."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "a", "title": "A"}],
+        intent=_intent_373(spend_envelope={"cost_ceiling_tokens": 1000}),
+    )
+    store = STORE.Store.for_outcome("oc373", repo)
+    OC.record_cost(store, "a", executor="inline", tokens=1000)
+    result = OUTCOME.advance(repo, "oc373")
+    assert result.dispatched == []
+    assert len(result.halted) == 1 and result.halted[0]["kind"] == "spend-halt"
+
+
+def test_ac6_tier_escalating_leaf_halts_within_ceiling_leaf_dispatches(repo: Path) -> None:
+    """AC6 tier half: a leaf whose declared tier is STRONGER than the captured ceiling halts
+    for step-up; a within-ceiling sibling dispatches in the same tick (per-leaf gate)."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[
+            {"subplot_id": "hi", "title": "H", "tier": "opus"},
+            {"subplot_id": "lo", "title": "L", "tier": "haiku"},
+        ],
+        intent=_intent_373(spend_envelope={"tier_ceiling": "sonnet"}),
+    )
+    result = OUTCOME.advance(repo, "oc373")
+    assert result.dispatched == ["lo"]
+    assert len(result.halted) == 1
+    receipt = result.halted[0]
+    assert receipt["kind"] == "spend-halt" and receipt["subplot_id"] == "hi"
+    assert receipt["requested_tier"] == "opus" and receipt["tier_ceiling"] == "sonnet"
+
+
+def test_ac6_spend_halt_is_a_distinct_typed_error() -> None:
+    """AC6: the spend halt is its own typed error — NOT a BackendHaltError — so backend
+    unavailability handling can never accidentally swallow a spend denial."""
+    spend = IE.SpendEnvelope.from_dict({"cost_ceiling_tokens": 100})
+    with pytest.raises(D.SpendHaltError) as exc:
+        D.authorize_dispatch_spend(
+            spend, outcome_id="oc", subplot_id="a", backend="inline", actual_tokens=5000
+        )
+    assert not isinstance(exc.value, D.BackendHaltError)
+    assert exc.value.receipt.to_dict()["kind"] == "spend-halt"
+    # Silent-clear control: under the ceiling the same call returns None (no receipt at all).
+    assert (
+        D.authorize_dispatch_spend(
+            spend, outcome_id="oc", subplot_id="a", backend="inline", actual_tokens=50
+        )
+        is None
+    )
+
+
+def test_spend_halt_resurfaces_each_advance_with_bounded_ledger(repo: Path) -> None:
+    """A persistently over-ceiling run re-surfaces the spend halt on every advance while the
+    ledger stays bounded (append-once on its own spend:<sid> dedup lane)."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "a", "title": "A"}],
+        intent=_intent_373(spend_envelope={"cost_ceiling_tokens": 100}),
+    )
+    store = STORE.Store.for_outcome("oc373", repo)
+    OC.record_cost(store, "a", executor="inline", tokens=500)
+    r1 = OUTCOME.advance(repo, "oc373")
+    r2 = OUTCOME.advance(repo, "oc373")
+    assert len(r1.halted) == 1 and len(r2.halted) == 1  # re-surfaced both ticks
+    halts = [rec for rec in STORE.read_ledger(store) if rec.get("phase") == "halt"]
+    assert len(halts) == 1  # appended once
+
+
+def test_ac7_spec_with_no_intent_dispatches_unchanged(repo: Path) -> None:
+    """AC7: a fixture spec lacking the new fields round-trips byte-identical and dispatches
+    exactly as today (full menu through the production dispatcher, no spend gate)."""
+    spec = OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "build", "title": "B", "backend": "team-execution"}],
+    )
+    # Round-trip control: serialize -> reparse -> reserialize is byte-identical (no new keys).
+    assert OUTCOME.outcome_spec.OutcomeSpec.from_json(spec.to_json()).to_json() == spec.to_json()
+    assert "intent" not in spec.to_dict()
+    assert all("tier" not in n for n in spec.to_dict()["nodes"])
+    result = OUTCOME.advance(repo, "oc373", dispatcher=D.make_dispatcher())
+    assert result.dispatched == ["build"] and result.halted == []
+
+
+def test_ac7_pre_373_intent_leaves_the_seam_byte_identical(repo: Path) -> None:
+    """AC7 (the #380-envelope half): an intent carrying NONE of the #373 fields engages no
+    posture — the legacy degrade path decides identically to the no-intent baseline."""
+    OUTCOME.start(
+        repo,
+        "oc373",
+        "Objective",
+        nodes=[{"subplot_id": "build", "title": "B", "backend": "cc-workflows-ultracode"}],
+        intent=_intent_373(),  # run_mode + gates only — no backends/degrade/spend capture
+    )
+    result = OUTCOME.advance(repo, "oc373", available=("inline", "manual"), attending=False)
+    assert result.dispatched == ["build"]
+    assert result.degraded and result.degraded[0]["to_backend"] == "inline"  # legacy cascade

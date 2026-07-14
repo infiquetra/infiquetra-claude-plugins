@@ -72,6 +72,14 @@ recommend_tier = _canonical.recommend_tier
 spend_posture = _canonical.spend_posture
 SpendDecision = _canonical.SpendDecision
 resolve_spend_action = _canonical.resolve_spend_action
+# #373 dispatch-seam posture (optional additive v1 fields, enforced at the /outcome seam).
+INTENT_DEGRADE_HALT = _canonical.INTENT_DEGRADE_HALT
+INTENT_DEGRADE_ONE_RUNG = _canonical.INTENT_DEGRADE_ONE_RUNG
+INTENT_DEGRADE_POLICIES = _canonical.INTENT_DEGRADE_POLICIES
+SPEND_ENVELOPE_FIELDS = _canonical.SPEND_ENVELOPE_FIELDS
+SpendEnvelope = _canonical.SpendEnvelope
+SpendAuthorization = _canonical.SpendAuthorization
+authorize_spend = _canonical.authorize_spend
 SelfSelectedPosture = _canonical.SelfSelectedPosture
 self_select_posture = _canonical.self_select_posture
 render_issue_block = _canonical.render_issue_block

@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.93.0] - 2026-07-14
+
+### Added - run-start intent envelope enforced at the /outcome dispatch seam (#373)
+
+- **Captured backend/degrade posture consumed at the seam (T8-F6-8):** the committed intent
+  envelope's new optional `backends_permitted` + `degrade_policy` fields are enforced inside
+  every `advance` reconcile pass (`outcome._reconcile_once` via the new
+  `outcome_dispatcher.captured_posture` / `effective_available` / `captured_degrade_decision`
+  consumers). The effective backend menu is captured ∩ runtime (`--host-capable` /
+  `--workflow-available` stay the runtime half — KTD9); an unmet backend HALTs by default
+  (no captured degrade posture is never a permission), and `operator_away_one_rung` feeds the
+  UNCHANGED presence-conditional `degrade_decision` an availability set restricted to the
+  immediate `DEGRADE_LADDER` rung — at most one rung, a two-rung-unavailable scenario HALTs
+  instead of silently cascading. Specs with no intent, or a #380 intent carrying none of the
+  #373 fields, behave byte-identically to before.
+- **HALT-only pre-dispatch spend authorization (T8-F5-7):** a captured
+  `spend_envelope` (`tier_ceiling` from the fleet model ladder and/or `cost_ceiling_tokens`)
+  is checked BEFORE any backend resolution against `outcome_costs`'s leaf-produced actuals
+  (the same R24 rollup producer `materialize` uses, read pre-dispatch). Dispatch is authorized
+  while actuals stay strictly below the cost ceiling; an at/over-ceiling or tier-escalating
+  leaf raises the new typed `outcome_dispatcher.SpendHaltError` (deliberately NOT a
+  `BackendHaltError` subclass) and records a visible `spend-halt` receipt in `result.halted`
+  on its own append-once `spend:<sid>` ledger lane — never a silent degrade to a cheaper
+  tier. Actuals are leaf-produced and self-attested (documented in the envelope threat model).
+- **`Node.tier` (optional):** a leaf's declared execution tier — a model name validated
+  against the fleet ladder at spec-validate time (a typo fails before any dispatch) — read by
+  the tier-ceiling gate; absent emits no key so every pre-existing spec round-trips
+  byte-identical. `OutcomeSpec.validate` also binds the intent's `backends_permitted` to the
+  `NODE_BACKENDS` executor menu (the fleet schema owns shape; the spec house owns vocabulary).
+- `intent_envelope.py` (saga glue) re-exports the new canonical names: `SpendEnvelope`,
+  `SpendAuthorization`, `authorize_spend`, `INTENT_DEGRADE_POLICIES`, `SPEND_ENVELOPE_FIELDS`.
+  The capture surface is unchanged (`start --intent-file` / issue-carried / `set-intent`) —
+  the run-start envelope simply gained the three optional fields; no new interview questions
+  (an interactive authoring flow stays a fast-follow, per the issue's out-of-scope).
+
 ## [0.92.0] - 2026-07-14
 
 ### Added - mid-run adjustment envelope + reversible-mutation undo ledger (#372)

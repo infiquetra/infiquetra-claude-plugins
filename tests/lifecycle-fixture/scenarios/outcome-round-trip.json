@@ -1,12 +1,27 @@
 {
   "id": "outcome-round-trip",
   "title": "outcome start / resume / status round trip",
-  "description": "Start an outcome in the fixture repo (branch-local spec + store), resume it, and read status. Asserts the produced outcome-spec JSON passes the production loader/validator with the expected node set, and that derived-on-read state shows the starter DAG frontier (design ready, build blocked).",
+  "description": "Start an outcome in the fixture repo (branch-local spec + store), attach a run-start intent envelope carrying the #373 dispatch-seam posture (backends_permitted / degrade_policy / spend_envelope) via set-intent, resume it, and read status. Asserts the produced outcome-spec JSON — including the committed posture — passes the production loader/validator with the expected node set, and that derived-on-read state shows the starter DAG frontier (design ready, build blocked).",
   "steps": [
     {
       "kind": "run_saga_cli",
       "script": "outcome",
       "args": ["--repo-root", ".", "start", "fx-outcome", "toy objective: ship the fixture feature"]
+    },
+    {
+      "kind": "write_file",
+      "path": "envelope-373.json",
+      "json": {
+        "run_mode": "attended",
+        "backends_permitted": ["inline", "team-execution"],
+        "degrade_policy": "operator_away_one_rung",
+        "spend_envelope": { "tier_ceiling": "sonnet", "cost_ceiling_tokens": 250000 }
+      }
+    },
+    {
+      "kind": "run_saga_cli",
+      "script": "outcome",
+      "args": ["--repo-root", ".", "set-intent", "fx-outcome", "--intent-file", "envelope-373.json"]
     },
     {
       "kind": "run_saga_cli",

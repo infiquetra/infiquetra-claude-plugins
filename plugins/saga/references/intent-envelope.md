@@ -25,16 +25,23 @@ resolves through it. No plugin asks its own posture question; the fleet drift-gu
   },
   "source": "interview | issue-capture | defaults:unattended | ...",
   "authored_at": "2026-07-14T00:00:00Z",
-  "authored_by": "jeff"
+  "authored_by": "jeff",
+
+  "backends_permitted": ["inline", "team-execution"],
+  "degrade_policy": "halt | operator_away_one_rung",
+  "spend_envelope": {"tier_ceiling": "sonnet", "cost_ceiling_tokens": 250000}
 }
 ```
 
 The schema is **closed**: an unknown key, an off-vocabulary value, or a foreign
-`schema_version` is an error, never a pass. Extensions (#373's `backends_permitted` /
-`degrade_policy` / `spend_envelope`, #449's envelope tokens, #372/#433's mid-run amendment
-verbs) are made by editing the canonical module — never by consumers tolerating unknowns.
-Every unset ceremony gate defaults to `gate` (T7-F3-2); the emitted artifact always writes
-all three gates explicitly so a reader never needs to know the default.
+`schema_version` is an error, never a pass. Extensions are made by editing the canonical
+module — never by consumers tolerating unknowns. #373 landed its three dispatch-seam fields
+(last block above) as **optional, additive v1 keys**: absent means "posture not captured",
+every pre-#373 envelope round-trips byte-identical, and no committed envelope is
+force-migrated. Future extensions (#449's envelope tokens, #372/#433's mid-run amendment
+verbs) follow the same rule. Every unset ceremony gate defaults to `gate` (T7-F3-2); the
+emitted artifact always writes all three gates explicitly so a reader never needs to know
+the default.
 
 **Threat model.** `source` / `authored_by` / `authored_at` are self-attested labels — a forged
 envelope is syntactically indistinguishable from a real one. The envelope records the
@@ -42,7 +49,29 @@ operator's intent; **it authorizes nothing by itself**. Merge/deploy stay GATE-b
 the reversibility certificate regardless of what the envelope says; the revocable
 `AUTONOMOUS_UNDER_ENVELOPE` write class with a real token check is #449's separate mechanism.
 The `approval_token` in the spend resolver is an opaque presence check, not a validated
-credential.
+credential. The #373 fields only ever **narrow** dispatch relative to the uncaptured default
+(intersected menus, at-most-one-rung degrade, a HALT-only spend gate) — they grant no write
+path — and the spend gate reads **leaf-produced, self-attested actuals**: a leaf that
+under-reports its cost is not measured against the ceiling.
+
+## Dispatch-seam enforcement (#373)
+
+The captured posture is consumed at the `/outcome` dispatch seam
+(`outcome._reconcile_once` + `outcome_dispatcher`), once per reconcile pass — never
+re-derived ad hoc per call. The HALT/degrade decision itself stays derived at dispatch time
+by the unchanged `degrade_decision` mechanism, fed the captured posture:
+
+| field | enforcement |
+|---|---|
+| `backends_permitted` | the effective menu becomes **captured ∩ runtime-available** (`--host-capable`/`--workflow-available` stay the runtime half — the coordinator never self-probes, KTD9). A leaf whose backend is outside it HALTs with a visible receipt naming the effective menu. |
+| `degrade_policy` | absent or `halt` → an unmet backend **HALTs by default** (a captured menu is never an implicit degrade permission). `operator_away_one_rung` → the unchanged presence-conditional mechanism decides (attending / guarantee-bearing / side-effected still HALT), but its available set is restricted to the **immediate `DEGRADE_LADDER` rung only** — at most one rung, a two-rung-unavailable scenario HALTs rather than silently cascading. |
+| `spend_envelope` | a **HALT-only** pre-dispatch authorization checked BEFORE any backend resolution, against `outcome_costs`'s leaf-produced actuals (the R24 rollup, read pre-dispatch). Authorized while actuals stay strictly below `cost_ceiling_tokens`; an at/over-ceiling or tier-escalating leaf (its `Node.tier` stronger than `tier_ceiling` on the fleet ladder) records a `spend-halt` receipt and pauses for explicit step-up — never a silent degrade. |
+
+A spec with no intent — or a #380 envelope carrying none of the #373 fields — leaves the
+seam byte-identical to before (no menu restriction, legacy degrade, no spend gate). The
+fields are authored in the same envelope JSON the capture surface already commits
+(`/outcome start --intent-file`, the issue-carried block, `set-intent`); there are no new
+interview questions (the interactive authoring flow is a fast-follow).
 
 ## The single interview (the registry)
 

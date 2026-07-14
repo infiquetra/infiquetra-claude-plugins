@@ -4,6 +4,15 @@
 
 ### Added - one committed IntentEnvelope for run-start posture (#380)
 
+- **`outcome.py set-intent <id> --intent-file <envelope.json>`** — attaches an
+  interview-captured envelope to an ALREADY-started outcome (`start` is non-idempotent, so the
+  post-start interview needs its own landing verb). Validates exactly like
+  `start --intent-file`, refuses to overwrite a committed envelope (mid-run renegotiation is
+  #433's contract), bumps `spec_revision`.
+- **`barrier_report` enforcement/observability parity** — the operator-facing report now
+  evaluates the closure gate with the SAME intent-implied checks `harvest()` enforces, so a
+  merged-but-review-gated leaf never reads "satisfied" in the cockpit while its done
+  transition is actually gated.
 - **`scripts/intent_envelope.py`** — saga's surface over the canonical fleet envelope
   (fleet-core `fleet_commons/intent_envelope.py`, re-exported exactly as `execution_spec.py`
   re-exports `tier_palette` — never a second schema), plus the saga-only glue:

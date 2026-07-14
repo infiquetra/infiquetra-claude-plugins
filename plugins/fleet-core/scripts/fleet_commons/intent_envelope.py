@@ -104,7 +104,10 @@ ACTION_HOLD_AT_DEFAULT = "hold-at-default"
 # schema-validated JSON inside a ```intent-envelope fence, never prose.
 ISSUE_BLOCK_FENCE = "intent-envelope"
 ISSUE_BLOCK_HEADING = "### Intent envelope"
-_ISSUE_BLOCK_RE = re.compile(r"```intent-envelope[ \t]*\n(.*?)```", re.DOTALL)
+# \r?\n: GitHub web-UI authoring submits textarea content with CRLF line endings, so a
+# byte-identical envelope must extract identically on LF and CRLF bodies — a CRLF-blind fence
+# regex silently degrades the ask-once contract (and blinds the capture-side validity gate).
+_ISSUE_BLOCK_RE = re.compile(r"```intent-envelope[ \t]*\r?\n(.*?)```", re.DOTALL)
 
 
 class IntentEnvelopeError(ValueError):

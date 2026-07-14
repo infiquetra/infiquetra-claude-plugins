@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.10.0] - 2026-07-14
 
 ### Added
+- Issue-fence extraction is CRLF-safe: `` ```intent-envelope `` blocks on GitHub-web-authored
+  bodies (CRLF line endings) extract identically to LF — adoption on the consumer side and the
+  BLOCKING validity gate on the capture side both see the envelope (#380).
 - `scripts/fleet_commons/intent_envelope.py` (#380): the canonical fleet `IntentEnvelope` —
   one committed run-start posture schema (`run_mode` + a `ceremony_gates` block of
   `reviews_required` / `merge` / `deploy_nonprod`, each `gate`|`auto` defaulting to `gate`),

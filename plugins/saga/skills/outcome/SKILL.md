@@ -85,16 +85,21 @@ At `start`:
    answered once, on the issue. The start output reports
    `{"intent_source": "issue", "interview_required": false}`.
 2. When the output says `interview_required: true` (no envelope, or an invalid one — the reason
-   is surfaced, an invalid envelope is never adopted): render the single interview with
-   data-backed stakes and capture the operator's typed answers, then re-run start with the
-   envelope:
+   is surfaced, an invalid envelope is never adopted): the spec already exists (`start` is
+   non-idempotent — never re-run it), so render the single interview with data-backed stakes,
+   capture the operator's typed answers, and commit the envelope onto the started outcome with
+   `set-intent`:
 
    ```bash
    python3 plugins/saga/scripts/intent_envelope.py interview --outcome-spec <spec.json>
    # present the manifest (AskUserQuestion, or inline in a channel session), then:
    echo '<answers JSON {qid: option}>' | python3 plugins/saga/scripts/intent_envelope.py capture - > envelope.json
-   python3 plugins/saga/scripts/outcome.py start <id> <objective> --intent-file envelope.json
+   python3 plugins/saga/scripts/outcome.py set-intent <id> --intent-file envelope.json
    ```
+
+   `set-intent` validates exactly like `start --intent-file` (an invalid file is a loud error),
+   refuses to overwrite a committed envelope (mid-run renegotiation is #433's contract), and
+   bumps `spec_revision` — re-`approve` before the next dispatch.
 
 3. On a genuinely unattended start with no operator to interview, the run self-selects its
    posture from the mode default matrix (`self_select_posture` — every ceremony gate stays

@@ -265,12 +265,19 @@ def barrier_report(
     evidence:<id>``, ...) even when the GitHub-only barrier above already reads satisfied.
     """
     report: dict[str, dict[str, Any]] = {}
+    # #380: mirror harvest() exactly — the report must evaluate the SAME gate the harvester
+    # enforces (intent-implied checks included), or the operator-facing verdict reads satisfied
+    # while the done transition is actually gated (enforcement/observability disagreement).
+    spec_intent = getattr(spec, "intent", None)
     for node in spec.nodes:
         verdict = barrier_satisfied(
             node, store=store, github_runner=github_runner, child_state_reader=child_state_reader
         ).to_dict()
         verdict["closure_gate"] = closure_gate.evaluate(
-            node, repo_root=repo_root, github_runner=github_runner
+            node,
+            repo_root=repo_root,
+            github_runner=github_runner,
+            implied_checks=intent_envelope.implied_required_checks(spec_intent, node.kind),
         ).to_dict()
         report[node.subplot_id] = verdict
     return report

@@ -620,3 +620,24 @@ def test_unattended_run_self_selects_posture() -> None:
     assert selected.tier == expected
     # And nothing is left to ask.
     assert ie.unanswered_questions(envelope) == ()
+
+
+def test_crlf_issue_body_extracts_identically(capsys: pytest.CaptureFixture[str]) -> None:
+    """Panel hand-finish (#380): GitHub web-UI authoring submits CRLF bodies, so a
+    byte-identical envelope must extract on CRLF exactly as on LF — adoption on the saga
+    side, and the BLOCKING capture gate on the mission-control side (an invalid CRLF
+    envelope must never pass as absent)."""
+    sdlc_manager = _sdlc_manager()
+    block = sdlc_manager.issue_render_intent_envelope(
+        "unattended", merge="auto", authored_by="jeff"
+    )
+    capsys.readouterr()
+    body_crlf = f"## Problem\n\nX.\n\n{block}\n### Verification\n\ngreen.\n".replace("\n", "\r\n")
+
+    decision = ie.outcome_start_decision(body_crlf)
+    assert decision.interview_required is False
+    assert decision.envelope is not None and decision.envelope.run_mode == "unattended"
+
+    broken = body_crlf.replace('"unattended"', '"sideways"')
+    error = sdlc_manager._intent_envelope_readiness_error(broken)
+    assert error is not None and "Invalid intent envelope" in error

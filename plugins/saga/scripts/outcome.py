@@ -325,6 +325,30 @@ def start(
     return spec
 
 
+def set_intent(repo_root: Path, outcome_id: str, intent_file: Path) -> outcome_spec.OutcomeSpec:
+    """Attach a run-start intent envelope to an ALREADY-started outcome (#380).
+
+    The landing place for an interview captured after ``start`` reported
+    ``interview_required: true`` — ``start`` is non-idempotent, so the captured envelope needs a
+    verb of its own. Validated exactly like ``start --intent-file`` (an invalid file is a loud
+    error, never adopted); bumps ``spec_revision`` (a structural edit — re-``approve`` before the
+    next dispatch). Refuses to overwrite a committed envelope: mid-run posture renegotiation is
+    #433's contract, not this verb's.
+    """
+    spec = load_spec(repo_root, outcome_id)
+    if getattr(spec, "intent", None):
+        raise OutcomeError(
+            f"outcome {outcome_id!r} already carries a committed intent envelope; "
+            "mid-run renegotiation is #433's contract, not set-intent's"
+        )
+    resolution = resolve_start_intent(None, intent_file)
+    spec.intent = resolution["intent"]
+    spec.spec_revision += 1
+    spec.validate()
+    save_spec(repo_root, spec)
+    return spec
+
+
 def resolve_start_intent(
     parent_body: str | None, intent_file: Path | None = None
 ) -> dict[str, Any]:
@@ -1281,6 +1305,18 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    p_set_intent = sub.add_parser(
+        "set-intent",
+        help="attach a run-start intent envelope to an already-started outcome (#380)",
+    )
+    p_set_intent.add_argument("outcome_id")
+    p_set_intent.add_argument(
+        "--intent-file",
+        metavar="<envelope.json>",
+        required=True,
+        help="the captured envelope (e.g. `intent_envelope.py capture` output) to commit",
+    )
+
     p_advance = sub.add_parser("advance", help="run a reconcile tick (dispatch the ready frontier)")
     p_advance.add_argument("outcome_id")
     p_advance.add_argument("--loop", action="store_true")
@@ -1426,6 +1462,17 @@ def main(argv: list[str] | None = None) -> int:
                         "intent_source": resolution["intent_source"],
                         "interview_required": resolution["interview_required"],
                         "interview_reason": resolution["interview_reason"],
+                    }
+                )
+            )
+        elif args.command == "set-intent":
+            spec = set_intent(root, args.outcome_id, Path(args.intent_file))
+            print(
+                json.dumps(
+                    {
+                        "outcome_id": spec.outcome_id,
+                        "intent_source": "file",
+                        "spec_revision": spec.spec_revision,
                     }
                 )
             )

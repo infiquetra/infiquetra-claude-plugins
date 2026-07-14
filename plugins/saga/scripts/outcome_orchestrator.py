@@ -59,20 +59,27 @@ _CURRENT_INTENT = object()
 def _dispatch_era_intents(store: Any) -> dict[str, Any]:
     """Per-subplot campaign envelope in force at each leaf's dispatch (#433 R5).
 
-    Reads each subplot's settled (``commit``) dispatch records; the latest record wins. A
-    record whose ``posture`` carries the ``"intent"`` key pins that leaf's completion gate to
-    the campaign envelope captured at its dispatch — an in-flight leaf finishes under its
-    dispatch-time posture, so a later loosening repost (e.g. ``reviews_required`` gate ->
-    auto) never retroactively releases its implied closure checks, and a later tightening
-    never retroactively imposes new ones. ``"intent": null`` is an explicit capture:
-    dispatched with no committed envelope (implies no checks). A record with NO ``"intent"``
-    key predates dispatch-era capture and maps to :data:`_CURRENT_INTENT` (the pre-#433
-    behavior: the spec's current intent governs). Leaves with no settled dispatch record at
-    all (e.g. externally-completed non-code work) are absent from the map — same fallback.
+    Reads each subplot's dispatch records in BOTH phases — the pre-dispatch ``intent`` record
+    and the settled ``commit`` record (both capture the same posture snapshot); the latest
+    record wins, and a commit record always follows its intent record in ledger order, so the
+    settled snapshot governs whenever one exists. The intent phase matters on its own for the
+    crash-after-intent window: the backend effect may be live with no commit record ever
+    written, and that leaf is in flight for EVERY consumer — the strand check (R6) already
+    counts it, and this era map must too, or a loosening repost landing in that window would
+    retroactively release the leaf's completion gate at harvest. A record whose ``posture``
+    carries the ``"intent"`` key pins that leaf's completion gate to the campaign envelope
+    captured at its dispatch — an in-flight leaf finishes under its dispatch-time posture, so
+    a later loosening repost (e.g. ``reviews_required`` gate -> auto) never retroactively
+    releases its implied closure checks, and a later tightening never retroactively imposes
+    new ones. ``"intent": null`` is an explicit capture: dispatched with no committed
+    envelope (implies no checks). A record with NO ``"intent"`` key predates dispatch-era
+    capture and maps to :data:`_CURRENT_INTENT` (the pre-#433 behavior: the spec's current
+    intent governs). Leaves with no dispatch record at all (e.g. externally-completed
+    non-code work) are absent from the map — same fallback.
     """
     era: dict[str, Any] = {}
     for rec in outcome_store.read_ledger(store):
-        if rec.get("kind") != "dispatch" or rec.get("phase") != "commit":
+        if rec.get("kind") != "dispatch" or rec.get("phase") not in ("intent", "commit"):
             continue
         sid = str(rec.get("subplot_id", ""))
         posture = rec.get("posture")

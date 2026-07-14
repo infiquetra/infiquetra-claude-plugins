@@ -198,6 +198,16 @@ def save_spec(repo_root: Path, spec: outcome_spec.OutcomeSpec) -> Path:
     raises :class:`StaleSpecError` instead of silently reverting the newer revision's posture,
     revision bump, and decision-trail entry. An unreadable-but-present spec file also refuses
     (fail closed: a write we cannot verify is not a write we may make).
+
+    **Residual window — documented, not claimed away.** The guard is check-then-write with no
+    cross-process lock (the repost CLI deliberately takes no coordinator lease): a writer that
+    commits between this function's revision read and its ``write_text`` is still silently
+    overwritten, and two simultaneous writers can mint the same revision with the second
+    erasing the first's trail entry. The gap spans one JSON serialization plus one write
+    syscall — the same scale as the strand sub-window recorded in
+    ``references/outcome-spec.md`` (§Mid-run posture renegotiation). Closing it would take an
+    OS-level lock or lease on every spec save; deliberately not done in this change (blast
+    radius).
     """
     spec.validate()
     path = spec_path(repo_root, spec.outcome_id)
@@ -1258,8 +1268,33 @@ def _reconcile_once(
                 ).to_dict()
 
         key = f"dispatch:{sid}"
+        # #433 R4/R5: the posture era is captured on the INTENT record too — the same snapshot
+        # the commit record carries below. A leaf stranded in the crash-after-intent window
+        # (backend effect possibly live, commit record never written) is in flight for EVERY
+        # consumer: the strand check (R6) already counts it, so the harvest/closure-gate era
+        # map must see the same era — otherwise a loosening repost landing in that window
+        # retroactively releases the leaf's completion gate under the CURRENT-intent fallback.
+        era_posture = {
+            "intent_revision": active_intent_revision,
+            "intent": spec.intent,
+            "degrade_policy": node.degrade_policy,
+            "mutation_policy": (
+                node.sandbox.mutation_policy if node.sandbox is not None else "read-write"
+            ),
+            "workspace_isolation": (
+                node.sandbox.workspace_isolation if node.sandbox is not None else "ambient"
+            ),
+        }
         outcome_store.append_ledger(
-            store, {"phase": "intent", "kind": "dispatch", "key": key, "subplot_id": sid}
+            store,
+            {
+                "phase": "intent",
+                "kind": "dispatch",
+                "key": key,
+                "subplot_id": sid,
+                "intent_revision": active_intent_revision,
+                "posture": dict(era_posture),
+            },
         )
         try:
             leaf_saga_id = dispatch(
@@ -1324,17 +1359,7 @@ def _reconcile_once(
                 # if an envelope attaches later); an absent key is a pre-capture record and
                 # falls back to the spec's current intent.
                 "intent_revision": active_intent_revision,
-                "posture": {
-                    "intent_revision": active_intent_revision,
-                    "intent": spec.intent,
-                    "degrade_policy": node.degrade_policy,
-                    "mutation_policy": (
-                        node.sandbox.mutation_policy if node.sandbox is not None else "read-write"
-                    ),
-                    "workspace_isolation": (
-                        node.sandbox.workspace_isolation if node.sandbox is not None else "ambient"
-                    ),
-                },
+                "posture": dict(era_posture),
             },
         )
         dispatched.append(sid)
@@ -1603,8 +1628,12 @@ def production_cost_processor(repo_root: Path) -> Callable[[Any, Any], Any]:
     after this tick loaded the spec, the stale save is refused, the NEWER spec is reloaded,
     and the rollup is re-derived from the same ledger and re-applied on top of it — the
     repost's revision bump, envelope change, and decision-trail entry all survive, and the
-    tick's record says so loudly (``reapplied_over_stale_revision``). A silent revert is
-    structurally impossible at this seam.
+    tick's record says so loudly (``reapplied_over_stale_revision``). This closes the
+    demonstrated lost-update sequence — a stale in-memory spec persisted at tick end erasing
+    a committed repost. It does NOT close ``save_spec``'s own check->write race (a writer
+    landing between the guard's revision read and its write syscall is still overwritten) —
+    that residual is documented on ``save_spec`` and in references/outcome-spec.md, not
+    claimed away.
     """
     import outcome_costs
 

@@ -15,7 +15,9 @@
   byte-identical (R2, the R26 invariant). Never touches DAG structure.
 - **`intent_revision` dispatch-time overlap (R4/R5):** every accepted repost tags the spec with
   `intent_revision` (the revision it introduced; absent key = the run-start baseline, so every
-  pre-existing spec round-trips byte-identical). Each leaf's `commit` dispatch record captures
+  pre-existing spec round-trips byte-identical). Each leaf's dispatch records — the
+  pre-dispatch `intent` record AND the settled `commit` record, so a leaf stranded in the
+  crash-after-intent window still carries its era — capture
   the `intent_revision` + posture snapshot active at its dispatch — including the campaign
   envelope itself (`posture.intent`; `null` = explicitly dispatched envelope-less) — and
   `DispatchRequest` carries `intent_revision` to the backend. An in-flight leaf finishes under
@@ -33,8 +35,10 @@
   the newer revision, loudly (`reapplied_over_stale_revision` in the tick's cost record); the
   reconcile loop re-checks the on-disk revision at every tick boundary AND per leaf after the
   dispatch lock, stopping a stale pass before it can dispatch under a revoked posture
-  (`AdvanceResult.spec_reloads` reports each reload). The precisely-bounded sub-window that
-  remains is documented in `references/outcome-spec.md`, not claimed away.
+  (`AdvanceResult.spec_reloads` reports each reload). The precisely-bounded sub-windows that
+  remain — the dispatch-side interleave AND `save_spec`'s own lockless check→write gap (a
+  writer landing inside it is still silently overwritten) — are documented in
+  `references/outcome-spec.md`, not claimed away.
 - **Strand HALT (R6):** a repost scoped to a `destructive` leaf that is in flight — where "in
   flight" fail-closed includes a bare intent-phase dispatch record (the mid-dispatch TOCTOU
   window) — and that would TIGHTEN its sandbox (revoking irreversible-op authorization the

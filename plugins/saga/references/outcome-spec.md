@@ -212,8 +212,10 @@ value, wrong value type, a no-op value, a monotonic violation, a strand — leav
 `intent_revision` (= the revision it introduced). Every leaf dispatch record captures the
 `intent_revision` + posture snapshot active at its dispatch (`outcome._reconcile_once` writes
 `intent_revision` and `posture` — including the campaign envelope as `posture.intent`, where
-`null` explicitly means "dispatched with no committed envelope" — on the `commit` record;
-`DispatchRequest.intent_revision` carries it to the backend). An in-flight leaf finishes under
+`null` explicitly means "dispatched with no committed envelope" — on BOTH dispatch records:
+the pre-dispatch `intent` record and the settled `commit` record, so a leaf stranded in the
+crash-after-intent window still carries its era for every consumer that treats it as in
+flight; `DispatchRequest.intent_revision` carries it to the backend). An in-flight leaf finishes under
 its dispatch-time posture at BOTH ends of its flight: dispatch (backend/sandbox) and completion
 — `outcome_orchestrator.harvest` and `barrier_report` evaluate an in-flight leaf's
 intent-implied closure checks (e.g. `code-review` under `reviews_required: "gate"`) against its
@@ -261,7 +263,16 @@ raises `StaleSpecError` instead of silently reverting the newer revision's postu
 trail entry. The one spec-persisting seam inside the advance path — the production cost
 processor's rollup save — catches it, reloads the newer spec, re-derives the rollup from the
 same ledger, and re-applies on top, reporting `reapplied_over_stale_revision` in the tick's
-cost record. A mid-tick repost therefore cannot be destroyed by a production advance tick.
+cost record. This closes the demonstrated lost-update sequence: a stale in-memory spec
+persisted at tick end erasing a committed repost's revision bump, envelope, and trail entry.
+One residual window remains, documented precisely rather than claimed away (the same standard
+as the strand window above): the guard is check-then-write with no cross-process lock — the
+repost CLI deliberately takes no coordinator lease — so a repost whose save lands between a
+concurrent writer's revision read and its write syscall is still silently overwritten, and two
+simultaneous reposts can mint the same revision with the second erasing the first's trail
+entry. The gap spans one JSON serialization plus one write, the same milliseconds scale as the
+strand sub-window. Closing it entirely would require an OS-level lock or lease on every spec
+save; deliberately not done in this change (blast radius).
 
 **Monotonic merge/deploy gating (R7).** `ceremony_gates.merge` / `deploy_nonprod` (the issue's
 `merge_gate`/`deploy_gate`) move only toward MORE gating: `auto -> gate` is accepted; `gate ->

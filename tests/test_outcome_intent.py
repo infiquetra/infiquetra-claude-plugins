@@ -1175,6 +1175,153 @@ def test_tightening_repost_never_retroactively_imposes_checks(repo: Path) -> Non
     ) == ["a"]
 
 
+def _crash_after_intent(req: Any) -> str:
+    """Production dispatcher that HALTs after the intent record is written — the crash window.
+
+    ``outcome._reconcile_once`` appends the ``intent`` dispatch record, THEN calls the
+    dispatcher; a ``BackendHaltError`` here leaves the dangling intent record with no commit
+    record — exactly the crash-after-backend-effect state the era capture must survive.
+
+    Raised from ``M.outcome_dispatcher`` (the module instance the engine imported), not this
+    file's ``DISPATCHER`` load — ``_load`` creates a separate module object, and the engine's
+    per-leaf ``except`` only catches ITS class.
+    """
+    engine_dispatcher = M.outcome_dispatcher
+    raise engine_dispatcher.BackendHaltError(
+        engine_dispatcher.HaltReceipt(
+            outcome_id="camp",
+            subplot_id=req.subplot_id,
+            backend=req.backend,
+            reason="test: backend died after the intent record",
+            available=(),
+        )
+    )
+
+
+def _crash_window_ledger_phases(store: Any, sid: str) -> list[str]:
+    return [
+        str(r.get("phase"))
+        for r in STORE.read_ledger(store)
+        if r.get("kind") == "dispatch"
+        and r.get("subplot_id") == sid
+        and r.get("phase") in ("intent", "commit")
+    ]
+
+
+def test_loosening_repost_cannot_release_crash_window_leaf(repo: Path) -> None:
+    # Re-panel P1: a leaf stranded in the intent-only dispatch window (backend HALTed after
+    # the intent record, before the commit record) is in flight for EVERY consumer — a
+    # loosening repost landing in that window must not retroactively release its completion
+    # gate at harvest. Before the fix, the era map read only commit records and this leaf
+    # fell back to the CURRENT (loosened) intent.
+    intent = {
+        "schema_version": 1,
+        "run_mode": "attended",
+        "ceremony_gates": {"reviews_required": "gate"},
+    }
+    M.start(
+        repo,
+        "camp",
+        "obj",
+        nodes=[
+            {
+                "subplot_id": "a",
+                "title": "A",
+                "kind": "code",
+                "github": {"pr": "1"},
+                "leaf_saga_id": "leaf-camp-a",
+            }
+        ],
+        intent=intent,
+    )
+    store = _store(repo, "camp")
+    result = M.advance(repo, "camp", dispatcher=_crash_after_intent)
+    assert result.dispatched == []  # the dispatch HALTed mid-flight
+    # Pin the window this test exercises: the intent record dangles, no commit record.
+    assert _crash_window_ledger_phases(store, "a") == ["intent"]
+
+    # The loosening repost lands inside the window (the campaign IS live — the intent
+    # record counts).
+    spec = M.load_spec(repo, "camp")
+    OI.repost(
+        spec,
+        store,
+        changes={"reviews_required": "auto"},
+        reason="loosen mid-window",
+        envelope_path=_env_path(repo),
+    )
+    M.save_spec(repo, spec)
+
+    runner = _gh_runner(pr_state={"1": "MERGED"}, head_ref_oid={"1": _SHA_A})
+    # NOT released without evidence: the intent record's captured era still gates it.
+    assert (
+        ORCH.harvest(M.load_spec(repo, "camp"), store=store, github_runner=runner, repo_root=repo)
+        == []
+    )
+    report = ORCH.barrier_report(
+        M.load_spec(repo, "camp"), store=store, github_runner=runner, repo_root=repo
+    )
+    assert report["a"]["closure_gate"]["satisfied"] is False
+    assert report["a"]["closure_gate"]["halt_reason"] == "missing-evidence:code-review"
+
+    # Baseline control (green through the intended door): the dispatch-era gate is
+    # satisfiable — recording the evidence releases the leaf, proving the gate
+    # discriminates rather than just blocking.
+    lstore = LEDGER.Store.for_saga("leaf-camp-a", repo)
+    LEDGER.write(
+        lstore,
+        check_id="code-review",
+        reviewed_sha=_SHA_A,
+        producer="code-review",
+        verdict="clean",
+        content="ok",
+    )
+    assert ORCH.harvest(
+        M.load_spec(repo, "camp"), store=store, github_runner=runner, repo_root=repo
+    ) == ["a"]
+
+
+def test_tightening_attach_cannot_gate_crash_window_leaf(repo: Path) -> None:
+    # Mirror control: a crash-window leaf of an ENVELOPE-LESS campaign captured
+    # "intent": null on its intent record — a later tightening attach must not
+    # retroactively impose checks on it (dispatch-time posture cuts both ways inside
+    # the window, same as it does for settled records).
+    M.start(
+        repo,
+        "camp",
+        "obj",
+        nodes=[
+            {
+                "subplot_id": "a",
+                "title": "A",
+                "kind": "code",
+                "github": {"pr": "1"},
+                "leaf_saga_id": "leaf-camp-a",
+            }
+        ],
+    )
+    store = _store(repo, "camp")
+    assert M.advance(repo, "camp", dispatcher=_crash_after_intent).dispatched == []
+    assert _crash_window_ledger_phases(store, "a") == ["intent"]
+
+    # An all-gated envelope attaches mid-run (tightening — passes the live monotonic rule).
+    spec = M.load_spec(repo, "camp")
+    spec.intent = {
+        "schema_version": 1,
+        "run_mode": "attended",
+        "ceremony_gates": {"reviews_required": "gate"},
+    }
+    spec.bump_revision(reason="test: attach gated envelope mid-window")
+    spec.intent_revision = spec.spec_revision
+    M.save_spec(repo, spec)
+
+    runner = _gh_runner(pr_state={"1": "MERGED"}, head_ref_oid={"1": _SHA_A})
+    # a completes under its captured null era: no implied checks, no evidence needed.
+    assert ORCH.harvest(
+        M.load_spec(repo, "camp"), store=store, github_runner=runner, repo_root=repo
+    ) == ["a"]
+
+
 # ---------------------------------------------------------------------------
 # Release-surface drift guard (CLAUDE.md step 6): installed-plugin metadata must tell the
 # same story as this diff — the verb exists AND the release surfaces mention it.

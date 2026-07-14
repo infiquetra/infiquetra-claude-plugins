@@ -72,6 +72,29 @@ decoration. Document precisely whatever window the fence cannot close.
 
 ---
 
+### An in-flight marker with several consumers must carry the same era payload in every phase it exists in {#era-capture-every-phase-433}
+
+**Context.** #433's dispatch-era capture put the posture snapshot only on the `commit`
+dispatch record. The `intent` record (written just before the backend call) already counted a
+leaf as in flight for the strand check and `campaign_live` — but the harvest era map read only
+`commit` records, so a leaf stranded in the crash-after-intent window fell back to the spec's
+CURRENT intent, and a loosening repost landing in that window retroactively released its
+completion gate with zero evidence. **Evidence.** Re-panel probe on PR #595 head `7e7997a`
+(harvest returned the windowed leaf with no code-review evidence, end-to-end through
+`M.advance`); fix captures the identical `posture` snapshot on the `intent` record
+(`outcome._reconcile_once`) and lets `outcome_orchestrator._dispatch_era_intents` read either
+phase (ledger order makes the settled record win);
+`tests/test_outcome_intent.py::test_loosening_repost_cannot_release_crash_window_leaf` +
+`::test_tightening_attach_cannot_gate_crash_window_leaf` drive the window through a
+`BackendHaltError`-raising production dispatcher. **Mechanism.** The record had two roles —
+in-flight marker and era carrier — but only one phase carried the second role, so consumers
+disagreed about what "in flight" implies exactly where agreement mattered most (a crash
+window). **Generalizable rule.** When any phase of a record marks an entity in-flight for one
+consumer, every consumer of that state must read the same payload from that phase — when you
+add a phase, a field, or a consumer, re-enumerate the other two.
+
+---
+
 ### Enforce a new policy by NARROWING the inputs to an existing decision mechanism, not by adding a second decision path {#narrow-inputs-not-second-mechanism-373}
 
 **Context.** #373 required the captured run-start posture to degrade "exactly one rung and never

@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "_doc": [
+    "Write-ownership lane manifest (issue #431).",
+    "Machine-checkable contract for the saga / mission-control / deploy ship-ceremony seam:",
+    "each plugin declares which sensitive `gh` subcommands its checked-in scripts may invoke",
+    "directly. scripts/check_ownership_lanes.py statically scans every declared plugin's",
+    "scripts and fails CI when a script reaches across into another plugin's owned mutation",
+    "surface (e.g. a deploy-lane script calling `gh issue`, which is mission-control's domain).",
+    "This gate covers the WRITE-mutation subset of CLAUDE.md Development Workflow step 6; it does",
+    "NOT build the richer positive-ack handoff protocol (out of scope, tracked separately).",
+    "Extending it: add the plugin under `lanes` with its allowed_gh_subcommands, or add a path",
+    "prefix under `reserved_api_paths` to reserve a `gh api <path>` surface to one owner. Only",
+    "subcommands listed in `sensitive_subcommands` are enforced; benign reads (gh repo view,",
+    "gh auth status, gh search) are never policed."
+  ],
+  "sensitive_subcommands": [
+    "issue",
+    "pr",
+    "api",
+    "project",
+    "label",
+    "release",
+    "run",
+    "workflow",
+    "secret",
+    "variable",
+    "gist",
+    "cache"
+  ],
+  "reserved_api_paths": {
+    "projects/": "mission-control"
+  },
+  "lanes": {
+    "saga": {
+      "allowed_gh_subcommands": ["pr", "api"],
+      "rationale": [
+        "Owns the PR ship-ceremony (create / ready / view / merge / close) and read-only GitHub",
+        "queries (`gh api` GET for sub-issue graphql, deploy-strategy probing, board-progress",
+        "comment preflights). Board-field WRITES are delegated to mission-control's sdlc_manager.py",
+        "(the board_writer pattern, #279/#344) — saga never mutates `projects/` directly, which",
+        "reserved_api_paths enforces. Not granted `issue` (issue creation/edit is mission-control's)."
+      ]
+    },
+    "mission-control": {
+      "allowed_gh_subcommands": [
+        "issue",
+        "pr",
+        "api",
+        "project",
+        "label",
+        "release",
+        "run",
+        "workflow",
+        "secret",
+        "variable",
+        "gist",
+        "cache"
+      ],
+      "rationale": [
+        "The SDLC mutation hub: owns issue lifecycle, project/board field writes (`gh api",
+        "projects/...` and ProjectV2 graphql mutations), labels, milestones, and repo metadata.",
+        "This is the one plugin authorized to reach the board/status-write surface directly."
+      ]
+    },
+    "deploy": {
+      "allowed_gh_subcommands": ["api"],
+      "rationale": [
+        "Reads deployment + compare state via `gh api` (repos/*/deployments, repos/*/compare).",
+        "Mints tags via git, not gh. Must NOT touch issues, PRs, or board projects — those are",
+        "mission-control's (issues/boards) and saga's (PR ceremony) to own."
+      ]
+    }
+  }
+}

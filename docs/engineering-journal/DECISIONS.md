@@ -1,5 +1,39 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-14
+
+### Write-ownership lanes are an AST lint over a JSON manifest, not a text grep or prose contract (#431) {#ownership-lanes-lint-431}
+
+**Decision.** The saga / mission-control / deploy write-mutation boundary is enforced by
+`scripts/check_ownership_lanes.py` reading `marketplace/ownership_lanes.json`, wired as a
+marketplace-CI step. The manifest declares, per plugin, the sensitive `gh` subcommands its
+scripts may invoke; the lint fails CI when a script crosses lanes (e.g. a deploy-lane script
+calling `gh issue`). *Rejected:* a prose ownership contract + drift test (the `T7-F1-7` framing,
+explicitly killed upstream in favor of the machine-checked shape).
+
+**KTD1 — AST detection, never text grep.** The scan matches list/tuple literals whose first
+element is `"gh"` and reads the second token as the subcommand, so docstrings, comments, and
+error-message strings that merely mention `gh pr view` are never mistaken for real calls
+(saga's scripts are dense with such strings). Dynamically built commands (`["gh"] + args`, as in
+`sdlc_manager.py`) have no literal subcommand and are skipped — not statically attributable, and
+mission-control owns those subcommands anyway.
+
+**KTD2 — two-layer check because `gh api` is a catch-all.** Subcommand allow-listing alone is
+toothless for `gh api` (every GitHub-touching plugin uses it). A second `reserved_api_paths`
+layer reserves REST path prefixes (`projects/` → mission-control) so a saga/deploy script writing
+board fields via `gh api projects/...` is flagged even though `api` is in its lane. This
+formalizes the already-behavioral rule that saga routes board writes through mission-control's
+`sdlc_manager.py` (the board_writer pattern, #279/#344), never `gh api projects/` directly.
+
+**KTD3 — enforce only `sensitive_subcommands`.** Benign reads (`gh repo view`, `gh auth status`,
+`gh search`) are never policed, keeping the gate about write-ownership rather than every GitHub
+touch and avoiding false positives on read-only helpers. *Revisit when* a plugin needs a
+subcommand it doesn't own for a legitimate read — extend the manifest, not the lint code.
+
+**Release surfaces N/A.** Repo-root tooling only (`scripts/`, `marketplace/`, a CI step, tests);
+no plugin behavior, schema, command, or prompt changed, so the tri-lock does not apply per
+CLAUDE.md step 6.
+
 ## 2026-07-13
 
 ### `/pulse` is a saga-resident read-only projection: status_card render, tri-state source honesty, beside-not-feeding `/optimize` (#400) {#pulse-live-telemetry-ktds-400}

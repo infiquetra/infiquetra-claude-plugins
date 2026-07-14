@@ -1,0 +1,11 @@
+{
+  "schema": "bridge-plugins.v1",
+  "description": "Declares which marketplace plugins carry a delegation bridge (an external-engine teammate that does real work on Claude's behalf). The delegation-integrity CI gate (scripts/check_delegation_proof.py) reads this manifest as its whole contract: a version bump on any listed plugin's marketplace entry requires a schema-valid delegation-proof artifact, and the fleet sweep classifies each recorded proof/transcript against the silent-no-op taxonomy. Add a plugin here to bring it under the gate; no lint-code change is needed.",
+  "bridges": {
+    "agy": {
+      "description": "Antigravity-backed coder/reviewer bridge (plugins/agy). A genuine run shells out to the guarded agy wrapper with an explicit --model; the name of the spawn path is NOT a trustworthy signal (LEARNINGS.md #agy-delegate-silent-claude-fallback), so the discriminator below is the transcript-grep the audit operationalizes.",
+      "discriminator": "(?i)(?:\\bagy\\b[^\\n]*--model\\b|--launch-agy\\b|plugins/agy/scripts/agy_delegate\\.py)",
+      "proof_glob": "agy/*.json"
+    }
+  }
+}

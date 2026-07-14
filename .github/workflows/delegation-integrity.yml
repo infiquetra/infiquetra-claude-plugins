@@ -1,0 +1,76 @@
+name: Delegation Integrity
+
+# Behavioral proof-of-execution gates for bridge-carrying plugins (issue #457), sitting on top of
+# the structural marketplace-drift guard. Two separably testable jobs, both driven by
+# marketplace/bridge_plugins.json:
+#   * version-gate  — a bridge plugin's marketplace version bump must ship a valid proof artifact
+#                     (keys off **/marketplace.json)
+#   * fleet-sweep   — every recorded proof/transcript is classified against the silent-no-op
+#                     taxonomy (keys off docs/delegation-proofs/** bridge proof artifacts)
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      # version-gate trigger surface
+      - '**/marketplace.json'
+      # fleet-sweep trigger surface (recorded bridge transcripts / proof artifacts)
+      - 'docs/delegation-proofs/**'
+      # the gate's own machinery
+      - 'marketplace/bridge_plugins.json'
+      - 'scripts/check_delegation_proof.py'
+      - '.github/workflows/delegation-integrity.yml'
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  version-gate:
+    name: Delegation proof — version-bump gate
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      # PR-scoped: needs the PR's base ref to diff the marketplace version fields. A direct push to
+      # main has no "PR base" for the comparison, so this leg only runs on pull_request events.
+      - name: Bridge version-bump requires delegation proof
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch origin "$PR_BASE_SHA" --depth=1
+          uv run python scripts/check_delegation_proof.py --mode version-gate --base-ref "$PR_BASE_SHA"
+
+  fleet-sweep:
+    name: Delegation integrity — fleet sweep
+    runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Sweep recorded bridge proofs/transcripts for silent no-ops
+        run: uv run python scripts/check_delegation_proof.py --mode fleet-sweep

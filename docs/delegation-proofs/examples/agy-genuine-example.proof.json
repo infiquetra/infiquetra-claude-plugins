@@ -1,0 +1,14 @@
+{
+  "schema": "delegation-proof.v1",
+  "plugin": "agy",
+  "version": "0.4.0",
+  "run_id": "example-0001",
+  "bridge_command": "python3 plugins/agy/scripts/agy_delegate.py --model 'Gemini 3.1 Pro (High)' -p 'implement the parser' --write-set src/parser.py",
+  "external_tool_calls": [
+    "python3 plugins/agy/scripts/agy_delegate.py --model 'Gemini 3.1 Pro (High)' -p 'implement the parser'"
+  ],
+  "actor": "agy:Gemini 3.1 Pro (High)",
+  "transcript": "examples/agy-genuine-example.transcript.jsonl",
+  "transcript_sha256": "88665056d10e02a1d3f2fc50522e61fa20342b931e1c88bda62c079df3d56818",
+  "note": "Illustrative, non-secret example proof used to keep the fleet-sweep non-vacuous and to document the delegation-proof.v1 schema by example. Real proofs land under docs/delegation-proofs/<plugin>/ going forward."
+}

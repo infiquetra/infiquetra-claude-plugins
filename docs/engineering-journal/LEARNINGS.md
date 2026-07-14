@@ -27,6 +27,35 @@
 
 ## 2026-07-14
 
+### A behavioral CI gate must key its trust signal off recorded tool-call commands, not the label on the spawn {#delegation-proof-discriminator-457}
+
+**Context.** Building the delegation-integrity gate (#457) for bridge plugins, the whole design
+hinges on one question: what is trustworthy evidence that a delegated bridge *actually ran*?
+
+**Evidence.** `LEARNINGS.md` `#agy-delegate-silent-claude-fallback` (2026-06-29): transcript audits
+found runs labeled genuine `agy` delegation (#278/#279) that made **zero** `agy` calls — the spawned
+teammate inherited Claude's toolset and did the work itself. The only reliable discriminator was a
+transcript grep for a real `agy --model` Bash call. `scripts/check_delegation_proof.py` +
+`marketplace/bridge_plugins.json` operationalize exactly that: the manifest carries a per-plugin
+discriminator regex, and both the version-gate (`bridge_command` must match it) and the fleet-sweep
+(`external_tool_calls` in the transcript must match it) derive their verdict from recorded command
+strings, never from a `bridge_delegated: true`-style label.
+
+**Mechanism.** A label is written by the same code path that can silently fall back to Claude, so it
+carries zero independent signal. A recorded external-tool command is a side effect that only exists
+if the bridge was really invoked — it is adversarially harder to forge than a flag.
+
+**Fix.** Shipped in #457: two-mode gate, declarative bridge manifest, `delegation-proof.v1` schema
+whose validity requires a discriminator-matching `bridge_command`, non-empty `external_tool_calls`,
+a non-empty `actor`, and a matching transcript sha256 chain.
+
+**Generalizable rule.** When you add a CI guard against "did X actually happen," anchor the check on
+an artifact X *cannot avoid producing when it runs* (a recorded command, a written file, a signed
+receipt), not on a self-reported status field the failing path also controls.
+
+**Refs.** DECISIONS `{#delegation-proof-schema-457}`; `docs/delegation-proofs/README.md`;
+`LEARNINGS.md` `#agy-delegate-silent-claude-fallback`, `#marketplace-drift`.
+
 ### A lint that parses its input differently from the consumer it guards is an evasion channel; parse with the consumer's semantics or fail closed {#lint-parser-semantics-divergence-422}
 
 **Context.** #422's tool-scope floor read agent `tools:` frontmatter through a hand-rolled

@@ -67,6 +67,48 @@ this before merge). Capability #422.
 
 ---
 
+### Live board audit confirms the pagination-truncation defect is real today, not hypothetical — CAMPPS has 396 items, Operations 302  {#board-pagination-truncation-confirmed-live-424}
+
+**Context.** Issue #424 named a defect pattern ("item-list pagination silently truncating at 200
+of 375 items") sourced from a grounding-brief synthesis rather than a fresh repro. Before building
+`board_census.py`'s paginate-or-raise migration, ran it against the LIVE org boards to confirm the
+pattern still applies rather than trusting the brief's characterization at face value.
+
+**Evidence.** `board_census.count_project_items()` against live `gh api graphql` (this sandbox has
+a `project`-scoped token): `operations` (#3) = 302 items, `campps` (#4) = 396 items, `asgard` (#2) =
+82 items — two of three tracked boards exceed a single 100-item GraphQL page, and `campps` exceeds
+even a 300-item ceiling. Any REST/GraphQL list call using a single `first:`/`per_page=` fetch with
+no cursor loop on these boards silently drops the majority of items.
+
+**Mechanism.** `get_project_items()` already looped on `hasNextPage` (added at the Scheme-Y rename,
+long before #424), so the *item-fetch* path was already safe; the actual exposure was the REST
+label/milestone fetches (`_rest_get(...per_page=100)`, no loop at all) and the absence of any
+committed signal that would catch a *future* single-page-only call site being added.
+
+**Fix.** Shared `paginate_or_raise` / `_rest_list_paginated` helper (`sdlc_manager.py`, #424);
+`get_project_items` and `_get_issue_column_times` migrated onto it; REST label/milestone fetches
+migrated onto `_rest_list_paginated`; `check_pagination.py` lints future call sites.
+
+**Validation.** `board_census.py --write` against the live boards is what produced the numbers
+above and the committed `config/board-schema.json`; `board_census.py --check` re-derives and diffs
+live on every future run capable of reaching GitHub.
+
+**What surprised.** Running `check_issue_contract_parity.py --live` against the same live boards
+also surfaced a SECOND, unrelated pre-existing drift: `sdlc-schema.json`'s documented CAMPPS
+Status options (`Idea`/`Committed`/`In Progress`/`Done`/`Parked`) don't match the live field
+(`Todo`/`In Progress`/`Done`) at all. Left un-fixed — redesigning board schema is out of #424's
+explicit non-goals — but now has a standing, `--live`-gated detector instead of zero signal.
+
+**Generalizable rule.** When a defect report cites a pattern from secondary synthesis (a grounding
+brief, a prior audit) rather than a fresh reproduction, re-verify against the live system before
+building the fix — the verification itself is cheap (one `gh api graphql` call) and either
+confirms real urgency or catches a stale claim before scope is spent on a non-problem.
+
+**Refs.** `plugins/mission-control/scripts/board_census.py`, `check_pagination.py`; third parity
+leg in `config/generated/check_issue_contract_parity.py`.
+
+---
+
 ## 2026-07-13
 
 ### A wave-3 issue's "verified absent today" claims go stale as the wave-2 spine lands — re-verify at plan time and re-scope to gap closure  {#stale-absence-claims-rescope-459}

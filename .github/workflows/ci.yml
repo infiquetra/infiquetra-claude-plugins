@@ -75,6 +75,12 @@ jobs:
       - name: Validate marketplace registry
         run: uv run python marketplace/validator/validate.py
 
+      # #431: fail the build if a plugin script reaches into another plugin's owned
+      # write-mutation surface (e.g. a deploy-lane script calling `gh issue`), per the
+      # machine-checked ownership lanes in marketplace/ownership_lanes.json.
+      - name: Validate ownership lanes
+        run: uv run python scripts/check_ownership_lanes.py --verbose
+
       - name: Engine Registry
         run: uv run python plugins/saga/scripts/check_engine_registry.py
 
@@ -87,6 +93,20 @@ jobs:
       # fails this step during the grace period.
       - name: Agent-file spec lint (frontmatter, role-class tiers, tool-scope floor)
         run: uv run python tools/agent_spec.py --report
+
+      # #424 T9-F4-5: static lint over mission-control's own scripts/skills/
+      # commands/agents docs for unguarded `gh` list calls (no cursor loop,
+      # no --limit) or bare per_page REST fetches. No network required.
+      - name: Mission-control pagination-completeness lint
+        run: uv run python plugins/mission-control/scripts/check_pagination.py
+
+      # #424 T9-F2-6: live-derived board schema census vs. the committed
+      # snapshot. Requires a Projects-scoped `gh` token; this runner has
+      # none, so the script prints an explicit SKIPPED line (never a silent
+      # pass) rather than failing -- mirrors check_issue_contract_parity.py's
+      # `--live` leg. Exit 0 covers both "in sync" and "skipped".
+      - name: Board schema census drift check (best-effort, live-gated)
+        run: uv run python plugins/mission-control/scripts/board_census.py --check
 
   release-surfaces:
     name: Release Surface Parity

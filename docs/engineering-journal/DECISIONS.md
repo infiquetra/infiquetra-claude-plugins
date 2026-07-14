@@ -67,6 +67,81 @@ sense once it's not just a fixture; or when the `effort:` warn-only grace period
 is decided (a separate follow-up, not this capability).
 
 ---
+### Board census records field/option SHAPE only, never item counts; `--live` legs SKIP (not silently pass) when GitHub is unreachable (#424) {#board-census-shape-only-live-skip-424}
+
+**KTD1 — census scope excludes item counts and item content.** `board_census.py`'s committed
+`config/board-schema.json` records only field/option shape (id, name, dataType, options) per
+tracked project. *Rejected:* including live item counts in the committed snapshot — item counts
+mutate on every card move, so a CI `--check` step comparing against a committed count would fail
+on essentially every commit unrelated to the board schema itself, training operators to ignore the
+gate. Full-item-pagination correctness (the actual defect this issue fixes) is proven independently
+by `count_project_items()` / its own tests, which assert the FULL count on a mocked >200-item
+response — decoupled from what gets committed.
+
+**KTD2 — `--live`-gated legs (board census `--check`, `check_issue_contract_parity.py --live`)
+print an explicit SKIPPED line and exit 0 when live GitHub access is unavailable, never silently
+folding "couldn't check" into "passed."** This repo's CI runners have no Projects-scoped `gh`
+token, so both legs will SKIP on every normal CI run today — that's intended, not a bug: the
+capability exists, is unit-tested with mocked live-resolution, and produces real signal the moment
+an operator (or a future CI credential) runs it with access. *Rejected:* wiring a hard-fail `--live`
+CI job — this sandbox's live audit surfaced a genuine, pre-existing CAMPPS Status-option drift
+(schema says `Idea`/`Committed`/`Parked`; live is `Todo`/`In Progress`/`Done`) that redesigning
+board schema is explicitly out of scope to fix in this issue; a hard-fail job would either block
+unrelated PRs on a known, accepted drift or force an out-of-scope schema rewrite to unblock CI.
+
+**Revisit when** a CI credential with `read:project` scope is provisioned (upgrade both legs from
+SKIP-capable to actually-enforced in the standard pipeline) or when the CAMPPS Status-option drift
+found live is deliberately reconciled (separate issue — board-schema redesign is out of #424's
+non-goals).
+
+**Refs.** `{#board-pagination-truncation-confirmed-live-424}` (LEARNINGS); `71faf92` /
+`{#outcome-board-status-schema-resolve-326}` (the schema-resolve-over-hardcode pattern this
+generalizes to mission-control's own board/field write surface).
+
+---
+### Write-ownership lanes are an AST lint over a JSON manifest, not a text grep or prose contract (#431) {#ownership-lanes-lint-431}
+
+**Decision.** The saga / mission-control / deploy write-mutation boundary is enforced by
+`scripts/check_ownership_lanes.py` reading `marketplace/ownership_lanes.json`, wired as a
+marketplace-CI step. The manifest declares, per plugin, the sensitive `gh` subcommands its
+scripts may invoke; the lint fails CI when a script crosses lanes (e.g. a deploy-lane script
+calling `gh issue`). *Rejected:* a prose ownership contract + drift test (the `T7-F1-7` framing,
+explicitly killed upstream in favor of the machine-checked shape).
+
+**KTD1 — AST detection, never text grep.** The scan matches list/tuple literals whose first
+element is `"gh"` and reads the second token as the subcommand, so docstrings, comments, and
+error-message strings that merely mention `gh pr view` are never mistaken for real calls
+(saga's scripts are dense with such strings). The anchor requires the literal list to *start*
+with `"gh"`, which means wrapper-shaped invocations are skipped even when the subcommand is
+fully literal at the call site — `_run_gh(["issue", "view", ...])` over a `["gh", *args]`
+helper (saga's `outcome_github.py`) and `["gh"] + args` (`sdlc_manager.py`) are both invisible
+to the lint. saga performs `gh issue view` reads through such a wrapper today, so the clean
+pass on the real tree certifies only direct-literal call sites, not the wrapper idiom. This
+blind spot (and the verb-insensitive policing below) is tracked in #583.
+
+**KTD2 — two-layer check because `gh api` is a catch-all.** Subcommand allow-listing alone is
+toothless for `gh api` (every GitHub-touching plugin uses it). A second `reserved_api_paths`
+layer reserves REST path prefixes (`projects/` → mission-control) so a saga/deploy script writing
+board fields via `gh api projects/...` is flagged even though `api` is in its lane. This
+formalizes the already-behavioral rule that saga routes board writes through mission-control's
+`sdlc_manager.py` (the board_writer pattern, #279/#344), never `gh api projects/` directly.
+Coverage caveat: the layer reserves REST path prefixes only — the ProjectV2 GraphQL mutations
+`sdlc_manager.py` actually uses for board writes (`gh api graphql` +
+`updateProjectV2ItemFieldValue`) are not yet covered, so the reserved-path guard is a REST
+backstop, not a complete board-write gate (#583).
+
+**KTD3 — enforce only `sensitive_subcommands`.** Subcommands outside the sensitive list
+(`gh repo view`, `gh auth status`, `gh search`) are never policed, keeping the gate about
+write-ownership rather than every GitHub touch. Within a sensitive subcommand, though,
+enforcement is verb-insensitive: a direct-literal `gh issue view` (a read) from a non-owner
+lane fails CI the same as `gh issue create` — a latent false positive for the first saga
+script that inlines a read it currently makes via wrapper (#583). *Revisit when* a plugin
+needs a subcommand it doesn't own for a legitimate read — extend the manifest (or make
+policing verb-aware, #583), not the lint code.
+
+**Release surfaces N/A.** Repo-root tooling only (`scripts/`, `marketplace/`, a CI step, tests);
+no plugin behavior, schema, command, or prompt changed, so the tri-lock does not apply per
+CLAUDE.md step 6.
 
 ## 2026-07-13
 

@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.93.0] - 2026-07-14
+
+### Added - mid-run posture renegotiation: the /outcome `repost`/set_intent verb (#433)
+
+- **`scripts/outcome_intent.py` + `outcome.py repost <id> [--scope <subplot>] --set FIELD=VALUE
+  --reason <why>`:** the ONE verb that changes a LIVE campaign's posture mid-run — the
+  renegotiation `set-intent` explicitly reserved for #433. Reuses the existing vocabularies
+  (campaign posture = the #380 intent envelope's `run_mode` + `ceremony_gates`; node posture =
+  the existing `degrade_policy`/`sandbox` fields) and the existing atomic mutation shape:
+  snapshot → validate → `bump_revision` → one structured `decision_trail` entry. A rejected
+  repost (unknown field, off-vocabulary value, wrong value TYPE, no-op value, monotonic
+  violation, strand) leaves `spec_revision`, `decision_trail`, and every posture field
+  byte-identical (R2, the R26 invariant). Never touches DAG structure.
+- **`intent_revision` dispatch-time overlap (R4/R5):** every accepted repost tags the spec with
+  `intent_revision` (the revision it introduced; absent key = the run-start baseline, so every
+  pre-existing spec round-trips byte-identical). Each leaf's `commit` dispatch record now
+  captures the `intent_revision` + posture snapshot active at its dispatch, and
+  `DispatchRequest` carries `intent_revision` to the backend — an in-flight leaf finishes under
+  its dispatch-time posture (never retroactively re-evaluated); a pending leaf picks the new
+  posture up at its next dispatch. `set-intent` (first attach) now tags `intent_revision` too.
+- **Strand HALT (R6):** a repost scoped to a `destructive` leaf that is in flight and that
+  would TIGHTEN its sandbox (revoking irreversible-op authorization the leaf already carries)
+  HALTs the campaign instead of resolving silently in either direction: the amendment is
+  rejected (spec untouched), a `coordinator`-writer `andon_halt` lands in the #372 adjustment
+  envelope (the next advance tick stops dispatching; `adjustment_envelope.raise_strand_halt` is
+  the new fifth writer), and a durable `phase: halt / kind: repost` ledger record names the
+  stranded leaf.
+- **Monotonic merge/deploy gating (R7):** `ceremony_gates.merge` / `deploy_nonprod` may only
+  move toward MORE gating (`auto` → `gate`); any repost relaxing either from gated toward
+  autonomous is rejected outright — including against a campaign with no committed envelope
+  (effective gates default to `gate`). One-directional by design; loosening takes a new
+  campaign.
+- **Approval interplay (R3):** every repost bumps `spec_revision`, so the revision-keyed R20
+  frontier approval re-closes automatically on a loosening repost (affected leaves stay gated
+  until re-approval); a PURE-tightening repost carries an existing approval forward with
+  explicit `carried-forward:tightening-repost:r<old>` provenance — tightening never re-asks a
+  settled approval.
+- **HALT as a renegotiation point (R8/R9):** a POSTURE-caused gate HALT (the degrade decision's
+  attending / guarantee-bearing / already-side-effected branches) now carries a `scoped_repose`
+  option on its `HaltReceipt` — resolve THIS leaf's posture via `repost --scope <subplot>`, not
+  the whole campaign's. The option is an offer, not a mechanism that acts: the leaf stays
+  halted, re-derived every tick, until the operator explicitly selects — no default, no
+  timeout, silence is never consent. Availability-caused halts carry no option (posture cannot
+  resolve them). Composes with, never overrides, HALT-not-degrade.
+- **Scope note (re #594 R2):** #372's standalone `re-tier`/`add-reviewer` envelope amendments
+  are still surfaced with `applied: false` — routing them through this overlap machinery so
+  `applied` can become true remains the #594 follow-up; tier is not a #433 posture axis.
+- **Tests:** `tests/test_outcome_intent.py` — rejected-repost-untouched (byte-identical, engine
+  + CLI), loosening-repost-recloses-approval + tightening-carries-forward control,
+  dispatch-time-posture-overlap, amendment-strands-irreversible-op-halts (+ non-destructive /
+  not-in-flight / terminal-flight controls), merge-deploy-gate-monotonic (+ no-envelope
+  baseline), scoped-repose-no-timeout-default (+ availability-halt control), intent_revision
+  round-trip fail-closed, and a release-surface drift guard tying plugin.json ↔ CHANGELOG ↔
+  documented verb.
+
 ## [0.92.0] - 2026-07-14
 
 ### Added - mid-run adjustment envelope + reversible-mutation undo ledger (#372)

@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.92.0"
-    )  # mid-run adjustment envelope + undo ledger (#372), atop #450/#380
+        plugin_json["version"] == "0.93.0"
+    )  # mid-run posture renegotiation: /outcome repost (#433), atop #372/#380
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

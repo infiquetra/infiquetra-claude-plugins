@@ -54,6 +54,7 @@ Coordinator-only verbs — run via `python3 plugins/saga/scripts/outcome.py <ver
 | `commit <id> [--push]` | **commit (+ push) the spec to the outcome's own branch** — the R26/R27 cross-machine durability step (refuses on `main`/`master`) |
 | `report <id>` / `project <id>` | regenerate the derived-on-read status card via `project_outcome` (R19/R25); when a completion event carries a `manifest_ref` pointer, resolve it via `manifest_store.resolve_manifest_ref` to show the leaf's producer attribution and disposition (advisory, R8) — the single emitter of the operator-facing outcome summary; the card's cells (milestone health, leaf progress, frontier, blockers) are derived on read from the committed spec + completion events, never from an operator-writable status field |
 | `approve <id>` / `prune <id> <subplot>` / `promote <id> <subplot> <child>` | the R20 frontier approval + the R33 graph edits |
+| `repost <id> [--scope <subplot>] --set FIELD=VALUE --reason <why>` | renegotiate a LIVE campaign's posture mid-run (#433) — atomic snapshot→validate→bump→trail; merge/deploy gates are monotonic (auto→gate only); a loosening repost re-closes the frontier approval; in-flight leaves finish under dispatch-time posture (see `references/outcome-spec.md` §Mid-run posture renegotiation) |
 | `reconcile <id> [--resolve <drift-id> --action ...]` | detect board↔saga drift over the board-sync ledger (#295); silent unless divergent, `--resolve` applies an operator decision (see Reconcile-on-wake) |
 | `export <id>` / `import <bundle>` | a portable spec + completion bundle to move an outcome across machines |
 
@@ -98,8 +99,11 @@ At `start`:
    ```
 
    `set-intent` validates exactly like `start --intent-file` (an invalid file is a loud error),
-   refuses to overwrite a committed envelope (mid-run renegotiation is #433's contract), and
-   bumps `spec_revision` — re-`approve` before the next dispatch.
+   refuses to overwrite a committed envelope (mid-run renegotiation is the `repost` verb, #433),
+   and bumps `spec_revision` — re-`approve` before the next dispatch. To CHANGE posture on a
+   live campaign — run mode, ceremony gates, a leaf's degrade policy or sandbox — use `repost`
+   (one atomic verb; merge/deploy gates only ever tighten; a posture-caused leaf HALT offers a
+   scoped `repost --scope <subplot>` resolution instead of a dead stop).
 
 3. On a genuinely unattended start with no operator to interview, the run self-selects its
    posture from the mode default matrix (`self_select_posture` — every ceremony gate stays

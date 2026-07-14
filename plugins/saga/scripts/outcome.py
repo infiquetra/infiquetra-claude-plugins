@@ -84,6 +84,10 @@ class DispatchRequest:
     # The leaf's declared sandbox (#287 U3), so the dispatcher can probe backend enforceability and
     # HALT rather than silently run the leaf uncontained. Absent (None) => ambient x read-write.
     sandbox: outcome_spec.Sandbox | None = None
+    # The posture era this dispatch happens under (#433 R4): the spec's intent_revision at the
+    # moment of dispatch (1 = the never-renegotiated run-start baseline). The leaf finishes under
+    # THIS posture even if a later repost amends the campaign (R5 dispatch-time overlap).
+    intent_revision: int = 1
 
 
 def _default_dispatcher(req: DispatchRequest) -> str:
@@ -340,11 +344,14 @@ def set_intent(repo_root: Path, outcome_id: str, intent_file: Path) -> outcome_s
     if getattr(spec, "intent", None):
         raise OutcomeError(
             f"outcome {outcome_id!r} already carries a committed intent envelope; "
-            "mid-run renegotiation is #433's contract, not set-intent's"
+            "mid-run renegotiation is the `repost` verb's contract (#433), not set-intent's"
         )
     resolution = resolve_start_intent(None, intent_file)
     spec.intent = resolution["intent"]
     spec.spec_revision += 1
+    # #433 R4: attaching the envelope IS a posture change — tag the revision that introduced
+    # it so dispatch records distinguish pre- from post-envelope dispatches.
+    spec.intent_revision = spec.spec_revision
     spec.validate()
     save_spec(repo_root, spec)
     return spec
@@ -959,6 +966,9 @@ def _reconcile_once(
     gated: list[str] = []
     degraded: list[dict[str, Any]] = []
     retriable: list[str] = []
+    # #433 R4: the posture era every dispatch THIS pass happens under. None (never renegotiated)
+    # reads as the revision-1 run-start baseline.
+    active_intent_revision = getattr(spec, "intent_revision", None) or 1
     for sid in outcome_spec.ready_frontier(spec, success):
         if sid in settled:
             continue  # settled dispatch record exists -> idempotent skip (no double-dispatch)
@@ -988,12 +998,25 @@ def _reconcile_once(
             )
             if action == "halt":
                 outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+                # #433 R8: a POSTURE-caused halt (attending / guarantee-bearing / side-effected
+                # — the exact three flags whose truth routed degrade_decision to halt instead
+                # of degrade) carries the scoped-repose resolution option. A halt with all
+                # three false is availability-caused (no lower rung) — posture cannot resolve
+                # it, so no option is offered.
+                posture_caused = (
+                    attending or outcome_dispatcher.is_guarantee_bearing(node) or node.destructive
+                )
                 receipt = outcome_dispatcher.HaltReceipt(
                     outcome_id=spec.outcome_id,
                     subplot_id=sid,
                     backend=node.backend,
                     reason=reason,
                     available=tuple(available),
+                    scoped_repose=(
+                        outcome_dispatcher.scoped_repose_option(spec.outcome_id, sid)
+                        if posture_caused
+                        else None
+                    ),
                 ).to_dict()
                 # Append-once on (halt, key): an attended leaf polling against a persistently-unavailable
                 # backend must not re-append a halt record every tick (unbounded ledger growth).
@@ -1027,6 +1050,9 @@ def _reconcile_once(
                     # Producer half of the U3 sandbox probe: the resolved backend (post-degrade)
                     # must be able to enforce this node's declared containment or dispatch HALTs.
                     sandbox=node.sandbox,
+                    # #433 R4/R5: the posture era this leaf runs under — captured at dispatch,
+                    # never re-evaluated when a later repost amends the campaign.
+                    intent_revision=active_intent_revision,
                 )
             )
         except outcome_dispatcher.BackendRateLimitError:
@@ -1065,6 +1091,21 @@ def _reconcile_once(
                 "leaf_saga_id": leaf_saga_id,
                 "backend": resolved_backend,
                 "at": now(),  # dispatch timestamp for the U9 liveness check (R31)
+                # #433 R4: dispatch-time posture. The leaf finishes under THIS posture even if
+                # a later repost amends the campaign (R5); the repost strand check (R6) reads
+                # it back to decide whether an amendment would revoke authorization the leaf
+                # already carries.
+                "intent_revision": active_intent_revision,
+                "posture": {
+                    "intent_revision": active_intent_revision,
+                    "degrade_policy": node.degrade_policy,
+                    "mutation_policy": (
+                        node.sandbox.mutation_policy if node.sandbox is not None else "read-write"
+                    ),
+                    "workspace_isolation": (
+                        node.sandbox.workspace_isolation if node.sandbox is not None else "ambient"
+                    ),
+                },
             },
         )
         dispatched.append(sid)
@@ -1381,6 +1422,35 @@ def main(argv: list[str] | None = None) -> int:
         help="the captured envelope (e.g. `intent_envelope.py capture` output) to commit",
     )
 
+    p_repost = sub.add_parser(
+        "repost",
+        help=(
+            "renegotiate a LIVE campaign's posture mid-run (#433) — the set_intent renegotiation "
+            "form: atomic snapshot→validate→bump_revision→decision_trail; merge/deploy gates move "
+            "only toward MORE gating; a loosening repost re-closes the frontier approval"
+        ),
+    )
+    p_repost.add_argument("outcome_id")
+    p_repost.add_argument(
+        "--scope",
+        default="",
+        help=(
+            "subplot_id — scope the change to ONE leaf (degrade_policy / sandbox); omit for "
+            "campaign posture (run_mode / reviews_required / merge / deploy_nonprod)"
+        ),
+    )
+    p_repost.add_argument(
+        "--set",
+        dest="sets",
+        action="append",
+        required=True,
+        metavar="FIELD=VALUE",
+        help="a posture change (repeatable); the field vocabulary is closed per scope",
+    )
+    p_repost.add_argument(
+        "--reason", required=True, help="why posture changed — recorded on the decision trail (R1)"
+    )
+
     p_advance = sub.add_parser("advance", help="run a reconcile tick (dispatch the ready frontier)")
     p_advance.add_argument("outcome_id")
     p_advance.add_argument("--loop", action="store_true")
@@ -1540,6 +1610,23 @@ def main(argv: list[str] | None = None) -> int:
                     }
                 )
             )
+        elif args.command == "repost":
+            import outcome_intent
+
+            spec = load_spec(root, args.outcome_id)
+            store = _store(root, args.outcome_id)
+            repost_result = outcome_intent.repost(
+                spec,
+                store,
+                changes=outcome_intent.parse_set_args(args.sets),
+                scope=args.scope,
+                reason=args.reason,
+                envelope_path=adjustment_envelope.default_envelope_path(root),
+            )
+            # Persist ONLY after the atomic mutation succeeded — a rejected/stranded repost
+            # raises above and the on-disk spec stays byte-identical (R2).
+            save_spec(root, spec)
+            print(json.dumps(repost_result.to_dict()))
         elif args.command == "advance":
             # The production /outcome advance routes through the REAL backend seam (R5/R6), the REAL
             # completion barrier (U5, harvester), the REAL auto-merge queue (U6, merge_processor), the

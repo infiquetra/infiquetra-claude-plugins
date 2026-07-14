@@ -31,6 +31,8 @@ so a committed spec diffs cleanly.
 | `nodes[]` | the subplot DAG (see below) |
 | `decision_trail[]` | append-only "why" records (R26) — kept canonical so cold re-entry is non-lossy (KTD5/F5) |
 | `cost_rollup` | the economics rollup (R24); empty renders as "no data yet" (U8), never a fabricated zero |
+| `intent` | the committed run-start intent envelope (#380): `run_mode` + `ceremony_gates`; absent key = never captured |
+| `intent_revision` | the `spec_revision` at which posture was last (re)negotiated (#433 R4); absent key = the revision-1 run-start baseline is still in force |
 | `created_at` / `updated_at` | ISO timestamps (stamped by the writer, U3) |
 
 ## Node shape (`Node`, KTD2 — the operational state machine in data)
@@ -180,6 +182,79 @@ python3 plugins/saga/scripts/outcome_spec.py layers   docs/outcomes/<id>/outcome
 `validate` exits non-zero with a JSON `{"valid": false, "error": ...}` on a malformed spec; `layers`
 prints the topological layers. No I/O happens at import (pure functions), so the module is unit-testable
 offline — see `tests/test_outcome_spec.py`.
+
+## Mid-run posture renegotiation — `repost`/`set_intent` (#433)
+
+`outcome.py repost` (`plugins/saga/scripts/outcome_intent.py`) is the ONE verb that changes a
+live campaign's posture mid-run — the renegotiation form of `set-intent`, which itself only
+*attaches* a first envelope and refuses overwrite. It reuses the existing vocabularies, never a
+parallel one: campaign posture is the #380 intent envelope (`run_mode`, `ceremony_gates.
+reviews_required/merge/deploy_nonprod`); node posture is the existing `degrade_policy`/`sandbox`
+fields. It never touches DAG structure (node/edge edits stay `redirect_dependency`/decompose).
+
+```bash
+# campaign scope (envelope fields)
+python3 plugins/saga/scripts/outcome.py repost <id> --set run_mode=unattended --reason "..."
+# node scope (one leaf's degrade policy / sandbox) — the R8 scoped-repose form
+python3 plugins/saga/scripts/outcome.py repost <id> --scope <subplot> \
+  --set degrade_policy=operator_away_one_rung --reason "..."
+```
+
+**Atomic (R1/R2).** Same shape as every structural edit: the change set is applied to a deep-
+copied snapshot and validated first; only then is the real spec mutated, `spec_revision` bumped
+(one counter), and ONE structured `decision_trail` entry appended (`kind: "repost"`, the
+classified deltas, the new `intent_revision`). A rejected repost — unknown field, off-vocabulary
+value, wrong value type, a no-op value, a monotonic violation, a strand — leaves
+`spec_revision`, `decision_trail`, and every posture field byte-identical.
+
+**Overlap contract (R4/R5) — dispatch-time posture.** Each accepted repost tags the spec with
+`intent_revision` (= the revision it introduced). Every leaf dispatch record captures the
+`intent_revision` + posture snapshot active at its dispatch (`outcome._reconcile_once` writes
+`intent_revision` and `posture` on the `commit` record; `DispatchRequest.intent_revision`
+carries it to the backend). An in-flight leaf finishes under its dispatch-time posture — a
+repost never retroactively re-evaluates it; a pending leaf picks the new posture up at its next
+dispatch. A repost lands for the *next* `advance()` call (an in-flight `advance` continues under
+the spec it loaded — the same tick-boundary semantics as the #372 envelope poll).
+
+**Strand HALT (R6).** A repost scoped to a `destructive` leaf that is IN FLIGHT (settled
+dispatch, no terminal completion) and that TIGHTENS that leaf's sandbox would revoke
+irreversible-op authorization the leaf already carries and cannot be re-issued mid-op. The
+campaign HALTs instead of resolving silently in either direction: the amendment is rejected
+(spec untouched), a `coordinator` `andon_halt` lands in the #372 adjustment envelope (the next
+tick stops dispatching; in-flight leaves drain under dispatch-time posture), and a durable
+`{"phase": "halt", "kind": "repost"}` ledger record names the stranded leaf. Campaign-scoped
+fields and `degrade_policy` govern *future* dispatch decisions, not authorization already in the
+leaf's hands, so they never strand — R5 covers them.
+
+**Monotonic merge/deploy gating (R7).** `ceremony_gates.merge` / `deploy_nonprod` (the issue's
+`merge_gate`/`deploy_gate`) move only toward MORE gating: `auto -> gate` is accepted; `gate ->
+auto` is rejected outright — including against a campaign with NO committed envelope, whose
+effective gates default to `gate`. One-directional by design: loosening merge/deploy posture
+back to autonomous takes a new campaign, not a repost.
+
+**Approval interplay (R3).** Every repost bumps `spec_revision` and the R20 approval gate is
+revision-keyed, so the frontier approval is consumed automatically. A repost whose deltas ONLY
+tighten carries an existing approval forward (a new `r<rev>.json` approval record with
+`answerer: "carried-forward:tightening-repost:r<old>"` provenance — self-attested, like all
+approval provenance); any loosening delta leaves the new revision unapproved, and gated leaves
+do not dispatch until the operator re-approves.
+
+**Direction vocabulary** (closed; per axis, toward "more gated" = tighten): `run_mode`
+`unattended < attended`; every ceremony gate `auto < gate`; `degrade_policy` `none <
+operator_away_one_rung < halt`; `sandbox.mutation_policy` `read-write < read-only`;
+`sandbox.workspace_isolation` `ambient` is strictly loosest, and the two isolated values
+(`disposable-worktree`/`owned-worktree`) are mutually incomparable — a move between them
+classifies **loosen** conservatively (costs at most one extra re-approval, never skips one).
+
+**HALT as a renegotiation point (R8/R9).** A leaf that HALTs *because of posture* (the degrade
+decision's attending / guarantee-bearing / already-side-effected branches under
+HALT-not-degrade) carries a `scoped_repose` option on its `HaltReceipt`: resolve THIS leaf's
+posture via `repost --scope <subplot>`, not the whole campaign's. The option is an offer, not a
+mechanism that acts: the leaf stays halted — re-derived every tick — until the operator
+explicitly reposts (and re-approves, when loosening) or leaves it halted. There is no default
+and no timeout; silence is never consent. An availability-caused halt (no lower rung) carries no
+option — posture cannot resolve it. This composes with, never overrides, HALT-not-degrade: a
+scoped repose is a *path out of* an existing HALT, not a new degrade mode.
 
 ## Board↔saga reconciliation (`outcome_reconcile`, #295)
 

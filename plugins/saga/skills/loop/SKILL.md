@@ -155,11 +155,15 @@ python3 plugins/saga/scripts/reconcile_controller.py reconcile \
   --op set-field-status --repo <owner/repo> --number <N> --target-state <saga-derived Status>
 ```
 
-This is the SAME shared controller `/work` and `/outcome` use — it re-asserts the saga-derived value
-on a reversible Status drift (`{"status":"corrected"}`), and HALTs with a named `halt_reason` on an
-irreversible open/closed drift (surface it, never overwrite). It reconciles only the already-asserted,
+This is the SAME shared controller `/work` uses post-merge (`/outcome` composes the same
+`board_progression` + drift-vocabulary primitives underneath, but its `advance` loop is not yet a
+controller consumer — tracked in #593). It re-asserts the saga-derived value on a reversible
+Status drift (`{"status":"corrected"}`), and HALTs with a named `halt_reason` on an irreversible
+open/closed drift (surface it, never overwrite). It reconciles only the already-asserted,
 allowlisted field — it does **not** widen `/loop`'s autonomy or make it execute phase work (#450
-non-goal). A first-time forward move (no prior assertion, no ledger key) still belongs to `/work`.
+non-goal). The no-new-forward-progression boundary (a first-time forward move belongs to `/work`)
+is documented convention enforced by this skill's instructions, not mechanically by the controller
+— pass a `--target-state` only for a Status `/loop` has already asserted.
 
 ---
 

@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.90.0"
-    )  # one level-triggered reconcile controller for /work, /loop, /outcome (#450)
+        plugin_json["version"] == "0.91.0"
+    )  # reconcile controller for /work + /loop (#450), atop the IntentEnvelope (#380)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

@@ -344,6 +344,16 @@ tier from the work-shape heuristic (R10). Surface the tier table for operator ov
 Apply the heuristic per unit, then present the full tier table (U-ID, label, proposed tier, rationale)
 and ask the operator to confirm or override before proceeding. Do not lock tiers silently.
 
+**Run-start posture seeds the defaults (#380).** When the run carries a committed intent envelope
+(`ExecutionSpec.intent`, or the parent outcome's `OutcomeSpec.intent` — see
+`plugins/saga/references/intent-envelope.md`), derive each unit's PROPOSED tier through
+`intent_envelope.seeded_tier(spec, work_shape)` (equivalently `intent_envelope.py recommend
+--work-shape <shape> --run-mode <mode>`): the posture was asked ONCE at run start, and an
+unattended posture proposes one rung cheaper than the attended default for the same work shape.
+This changes only the table's proposed defaults — the table itself, the operator-override flow,
+and the `VERIFY_N_CAP` mechanics are unchanged, and no per-unit posture question is ever asked
+(the fleet drift guard fails on one).
+
 **Estimate column (#402).** Add a fourth `Estimate` column to this per-plan table (the U-ID/label/
 tier/rationale table above, never the GENERATED work-shape registry table) — the ordinal, index-weighted
 spend the assigned tier costs (never a dollar amount). Once the per-unit tiers are locked into a draft

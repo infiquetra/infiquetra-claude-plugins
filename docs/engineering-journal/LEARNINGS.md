@@ -47,7 +47,8 @@ present-key branch re-reads live and either no-ops (converged), corrects (revers
 HALTs (irreversible open/closed drift). Shipped this PR.
 **Validation.** `uv run pytest tests/test_reconcile_controller.py` (20 passed, each green paired with a
 could-have-failed baseline control) + the unchanged `test_outcome_reconcile`/`test_outcome_board_sync`
-suites (75 passed) proving zero `/outcome` regression.
+suites (60 passed; 75 including `tests/test_board_progression.py`) proving zero `/outcome`
+regression.
 **Generalizable rule.** When a cache/ledger short-circuit and a reconcile-against-reality both key off
 "have I done this?", the reconciler must inspect the world on the same tick the short-circuit would
 otherwise fire — level-triggered, not edge-triggered. A "skip because recorded" is only safe if
@@ -55,6 +56,38 @@ nothing outside your writer can change the recorded field.
 **Refs.** DECISIONS `{#one-reconcile-controller-450}`; builds on `{#lifecycle-engine-merge-campaign}`
 dead-wiring discipline (a manifest field needs a producer AND a consumer — here the controller is a
 real consumer of `board_progression` + `reversibility_certificate`, wired into `/work` and `/loop`).
+
+---
+
+### The closure gate is the reusable seam for any "X gates a leaf done transition" ceremony {#closure-gate-implied-checks-380}
+
+**Context.** #380's `ceremony_gates.reviews_required: "gate"` had to gate a code leaf's `done`
+transition on recorded review evidence, and the tempting build was a new check inside
+`derive_states`/`harvest`.
+
+**Evidence.** PR for #380 — `plugins/saga/scripts/closure_gate.py` (`evaluate` grew a
+single `implied_checks: tuple[str, ...] = ()` parameter merged with the node's declared
+`required_checks`) + `plugins/saga/scripts/outcome_orchestrator.py` (harvest derives
+`("code-review",)` per code leaf from `spec.intent`). Verified end to end in
+`tests/test_outcome_spec.py::test_reviews_required_gates_done`: a merged-but-unreviewed leaf
+does not harvest `done`; writing `code-review` evidence at the PR head SHA via
+`evidence_ledger.write` unlocks the same tick; `reviews_required: "auto"` and no-intent
+controls harvest immediately.
+
+**Mechanism.** The closure gate (#397) already evaluates named checks against the evidence
+ledger at the resolved close SHA, with the whole halt-reason vocabulary (missing-evidence /
+stale-sha / unresolved-fail / unsuperseded-fail / chain-tamper) already litigated and tested.
+A spec-level ceremony only needs to CONTRIBUTE check ids per node — everything downstream
+(SHA pinning, supersession, tamper detection) comes for free, and `implied_checks=()` keeps
+every pre-existing caller byte-identical.
+
+**Generalizable rule.** When a new policy needs to gate an /outcome leaf's completion, express
+it as implied closure-gate check ids derived from committed spec state — never a second gate
+mechanism beside the evidence chain (two authorities for "proven" will disagree).
+
+---
+
+### A nested fixture `.git` is invisible to parent porcelain, but an untracked dir holding one gets staged as a gitlink {#nested-fixture-git-materialize-on-demand-428}
 
 **Context.** The lifecycle regression harness (#428) needs `tests/lifecycle-fixture/` to be "a
 minimal but real git repository (its own `.git`)" while living inside this repo, with the standing

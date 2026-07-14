@@ -4,6 +4,24 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.15.0] - 2026-07-14
+
+### Added - Step B1 posture check through the fleet IntentEnvelope (#380)
+
+- **`skills/team-execution/scripts/posture_check.py`** — the wired Step B1 consumer of the
+  fleet's single run-start posture primitive (canonical schema: fleet-core
+  `fleet_commons/intent_envelope.py`, loaded through the newly vendored
+  `fleet_commons_shim.py` beside it). Spend decisions at wave spawn / mid-run escalation
+  resolve through `resolve_spend_action`: an attended spend increase without an explicit
+  operator approval token is a structural `PostureError` (CLI exit `2`, never a silent
+  escalation or an ad hoc re-ask); an unattended run returns the cache-tight default silently
+  and holds a requested increase at the default. A malformed envelope fails closed (exit `1`).
+- **SKILL.md Step B1** documents the check: team-execution READS posture from the envelope
+  registry and never defines its own posture question (enforced by the fleet drift-guard test
+  in `tests/test_intent_envelope.py`). No envelope -> no new gate (behavior unchanged).
+
+---
+
 ## [2.14.6] - 2026-07-14
 
 ### Changed - least-privilege `tools:` on review-class agents for the new fleet-wide agent-file lint (#422)

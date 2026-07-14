@@ -70,6 +70,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -713,6 +714,74 @@ def _rest_get(path: str) -> Any:
     return json.loads(result)
 
 
+# ===========================
+# PAGINATION EXHAUSTION (#424)
+# ===========================
+# A truncated list read silently treated as "the whole list" is the fleet
+# defect pattern named in docs/plans/2026-07-03-plugin-fleet-grounding-brief.md
+# §7 pattern 3 (item-list pagination silently truncating at 200 of 375
+# items). `paginate_or_raise` is the single shared loop every list-fetch call
+# site (GraphQL cursor-based or REST page-number-based) should route through:
+# it keeps fetching pages until the caller's `fetch_page` reports a real
+# terminal signal (`next_token is None`), and raises `PaginationExhaustedError`
+# — rather than silently returning whatever partial list it has accumulated —
+# if `max_pages` is exhausted first. A misbehaving/runaway upstream is a
+# defect to surface, never a partial result to swallow.
+
+
+class PaginationExhaustedError(RuntimeError):
+    """Raised when a paginated fetch does not reach a terminal page within
+    the safety cap — a truncated read is a defect, not a valid partial list."""
+
+
+def paginate_or_raise(
+    fetch_page: Callable[[Any], tuple[list[Any], Any | None]],
+    *,
+    max_pages: int = 200,
+) -> list[Any]:
+    """Fetch every page via `fetch_page` until it signals termination.
+
+    `fetch_page(token)` returns `(items, next_token)`. `token` starts as
+    `None` on the first call. `next_token is None` is the ONLY accepted
+    "no more pages" signal; any other value causes another call with that
+    token. If `max_pages` calls happen without a `None` next_token, raises
+    `PaginationExhaustedError` instead of returning the partial list — a
+    silent 200-of-375-item truncation must fail loud, not slip through.
+    """
+    all_items: list[Any] = []
+    token: Any = None
+    for _ in range(max_pages):
+        items, next_token = fetch_page(token)
+        all_items.extend(items)
+        if next_token is None:
+            return all_items
+        token = next_token
+    raise PaginationExhaustedError(
+        f"pagination did not terminate within {max_pages} pages "
+        f"({len(all_items)} items fetched so far); refusing to silently truncate"
+    )
+
+
+def _rest_list_paginated(path: str, *, per_page: int = 100, max_pages: int = 50) -> list[Any]:
+    """Fully paginate a REST GET that returns a JSON array (e.g. labels,
+    milestones), via `paginate_or_raise`. Uses the standard `page`/`per_page`
+    REST pagination params; a returned page shorter than `per_page` is the
+    terminal signal (GitHub REST never pads a final page)."""
+    sep = "&" if "?" in path else "?"
+
+    def _fetch_page(page: int | None) -> tuple[list[Any], int | None]:
+        page_num = page or 1
+        batch = _rest_get(  # pagination-lint: allow (this IS the paginated fetch)
+            f"{path}{sep}per_page={per_page}&page={page_num}"
+        )
+        if not isinstance(batch, list):
+            raise RuntimeError(f"expected a JSON array from {path!r}, got {type(batch).__name__}")
+        next_page = page_num + 1 if len(batch) == per_page else None
+        return batch, next_page
+
+    return paginate_or_raise(_fetch_page, max_pages=max_pages)
+
+
 def _rest_post(path: str, body: dict) -> Any:
     """Execute a REST POST via gh CLI."""
     result = _gh(["api", "--method", "POST", path, "--input", "-"], input_data=json.dumps(body))
@@ -925,12 +994,14 @@ query($org: String!, $repo: String!, $number: Int!, $cursor: String) {
 
 
 def get_project_items(project_number: int) -> tuple[str, list[dict]]:
-    """Fetch all items from a project, returning (project_id, items)."""
-    all_items = []
-    cursor = None
-    project_id = ""
+    """Fetch all items from a project, returning (project_id, items).
 
-    while True:
+    Routes through `paginate_or_raise` (#424) so a runaway/misbehaving
+    upstream response raises `PaginationExhaustedError` instead of this
+    function silently returning a partial item list."""
+    project_id_box: dict[str, str] = {"id": ""}
+
+    def _fetch_page(cursor: str | None) -> tuple[list[dict], str | None]:
         data = _graphql(
             QUERY_GET_PROJECT_ITEMS,
             {
@@ -940,18 +1011,16 @@ def get_project_items(project_number: int) -> tuple[str, list[dict]]:
             },
         )
         proj = data.get("organization", {}).get("projectV2", {})
-        if not project_id:
-            project_id = proj.get("id", "")
+        if not project_id_box["id"]:
+            project_id_box["id"] = proj.get("id", "")
 
         items_data = proj.get("items", {})
-        all_items.extend(items_data.get("nodes", []))
-
         page_info = items_data.get("pageInfo", {})
-        if not page_info.get("hasNextPage"):
-            break
-        cursor = page_info.get("endCursor")
+        next_cursor = page_info.get("endCursor") if page_info.get("hasNextPage") else None
+        return items_data.get("nodes", []), next_cursor
 
-    return project_id, all_items
+    all_items = paginate_or_raise(_fetch_page)
+    return project_id_box["id"], all_items
 
 
 def get_item_status(item: dict) -> str:
@@ -1466,7 +1535,7 @@ def labels_audit(repo: str, fmt: str) -> None:
 
     # Get existing labels
     try:
-        existing_raw = _rest_get(f"/repos/{ORG}/{repo}/labels?per_page=100")
+        existing_raw = _rest_list_paginated(f"/repos/{ORG}/{repo}/labels")
         existing = {la["name"] for la in existing_raw}
     except Exception as e:
         _error(f"Could not fetch labels from {repo}: {e}")
@@ -1662,21 +1731,17 @@ def fields_discover(project_name: str, fmt: str) -> None:
 
 def _get_issue_column_times(org: str, repo: str, number: int) -> list[dict]:
     """Get time spent in each column via timeline events."""
-    all_events = []
-    cursor = None
 
-    while True:
+    def _fetch_page(cursor: str | None) -> tuple[list[dict], str | None]:
         data = _graphql(
             QUERY_GET_ISSUE_TIMELINE, {"org": org, "repo": repo, "number": number, "cursor": cursor}
         )
-        issue = data.get("repository", {}).get("issue", {})
-        timeline = issue.get("timelineItems", {})
-        all_events.extend(timeline.get("nodes", []))
-
+        timeline = data.get("repository", {}).get("issue", {}).get("timelineItems", {})
         page_info = timeline.get("pageInfo", {})
-        if not page_info.get("hasNextPage"):
-            break
-        cursor = page_info.get("endCursor")
+        next_cursor = page_info.get("endCursor") if page_info.get("hasNextPage") else None
+        return timeline.get("nodes", []), next_cursor
+
+    all_events = paginate_or_raise(_fetch_page)
 
     # Calculate time in each column
     transitions = []
@@ -1919,7 +1984,7 @@ def milestones_create(repo: str, title: str, due_date: str, description: str, fm
 def milestones_list(repo: str, state: str, fmt: str) -> None:
     """List milestones in a repo."""
     try:
-        milestones = _rest_get(f"/repos/{ORG}/{repo}/milestones?state={state}&per_page=50")
+        milestones = _rest_list_paginated(f"/repos/{ORG}/{repo}/milestones?state={state}")
     except Exception as e:
         _error(f"Failed to list milestones: {e}")
         sys.exit(1)
@@ -2070,7 +2135,7 @@ def rollout_gap_analysis(repo: str, fmt: str) -> None:
 
     # Check labels
     try:
-        existing_labels_raw = _rest_get(f"/repos/{ORG}/{repo}/labels?per_page=100")
+        existing_labels_raw = _rest_list_paginated(f"/repos/{ORG}/{repo}/labels")
         existing_labels = {la["name"] for la in existing_labels_raw}
         missing_labels = [la for la in required_labels if la not in existing_labels]
         if missing_labels:
@@ -4152,7 +4217,7 @@ def _known_template_names() -> list[str]:
 
 
 def _repo_missing_labels(repo: str, required_labels: list[str]) -> list[str]:
-    existing_raw = _rest_get(f"/repos/{ORG}/{repo}/labels?per_page=100")
+    existing_raw = _rest_list_paginated(f"/repos/{ORG}/{repo}/labels")
     existing = {label.get("name") for label in existing_raw if isinstance(label, dict)}
     return [label for label in required_labels if label not in existing]
 

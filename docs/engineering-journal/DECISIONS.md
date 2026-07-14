@@ -2,6 +2,38 @@
 
 ## 2026-07-14
 
+### Board census records field/option SHAPE only, never item counts; `--live` legs SKIP (not silently pass) when GitHub is unreachable (#424) {#board-census-shape-only-live-skip-424}
+
+**KTD1 — census scope excludes item counts and item content.** `board_census.py`'s committed
+`config/board-schema.json` records only field/option shape (id, name, dataType, options) per
+tracked project. *Rejected:* including live item counts in the committed snapshot — item counts
+mutate on every card move, so a CI `--check` step comparing against a committed count would fail
+on essentially every commit unrelated to the board schema itself, training operators to ignore the
+gate. Full-item-pagination correctness (the actual defect this issue fixes) is proven independently
+by `count_project_items()` / its own tests, which assert the FULL count on a mocked >200-item
+response — decoupled from what gets committed.
+
+**KTD2 — `--live`-gated legs (board census `--check`, `check_issue_contract_parity.py --live`)
+print an explicit SKIPPED line and exit 0 when live GitHub access is unavailable, never silently
+folding "couldn't check" into "passed."** This repo's CI runners have no Projects-scoped `gh`
+token, so both legs will SKIP on every normal CI run today — that's intended, not a bug: the
+capability exists, is unit-tested with mocked live-resolution, and produces real signal the moment
+an operator (or a future CI credential) runs it with access. *Rejected:* wiring a hard-fail `--live`
+CI job — this sandbox's live audit surfaced a genuine, pre-existing CAMPPS Status-option drift
+(schema says `Idea`/`Committed`/`Parked`; live is `Todo`/`In Progress`/`Done`) that redesigning
+board schema is explicitly out of scope to fix in this issue; a hard-fail job would either block
+unrelated PRs on a known, accepted drift or force an out-of-scope schema rewrite to unblock CI.
+
+**Revisit when** a CI credential with `read:project` scope is provisioned (upgrade both legs from
+SKIP-capable to actually-enforced in the standard pipeline) or when the CAMPPS Status-option drift
+found live is deliberately reconciled (separate issue — board-schema redesign is out of #424's
+non-goals).
+
+**Refs.** `{#board-pagination-truncation-confirmed-live-424}` (LEARNINGS); `71faf92` /
+`{#outcome-board-status-schema-resolve-326}` (the schema-resolve-over-hardcode pattern this
+generalizes to mission-control's own board/field write surface).
+
+---
 ### Write-ownership lanes are an AST lint over a JSON manifest, not a text grep or prose contract (#431) {#ownership-lanes-lint-431}
 
 **Decision.** The saga / mission-control / deploy write-mutation boundary is enforced by

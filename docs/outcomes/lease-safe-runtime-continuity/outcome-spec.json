@@ -1,0 +1,434 @@
+{
+  "schema_version": 1,
+  "outcome_id": "lease-safe-runtime-continuity",
+  "spec_revision": 3,
+  "objective": "Ship lease-safe cross-runtime Outcome continuity with bounded concurrency, settlement, liveness, and reclamation",
+  "nodes": [
+    {
+      "subplot_id": "sub-350",
+      "title": "Concurrency policy as a first-class ExecutionSpec block",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "declared-concurrency-cap",
+        "dependency-preserving-wave-width"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#350",
+        "sub_issue": 350
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-351",
+      "title": "Dispatch settlement, casualty reconciliation, and dead-letter re-dispatch",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": true,
+      "destructive": false,
+      "guarantee_tags": [
+        "dispatch-manifest",
+        "at-least-once-settlement",
+        "casualty-accounting"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#351",
+        "sub_issue": 351
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-356",
+      "title": "Fleet-wide TTL lease broker with concurrency slots and write fencing",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": true,
+      "destructive": false,
+      "guarantee_tags": [
+        "fleet-wide-lease-authority",
+        "stale-write-fencing",
+        "resource-ownership"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-350",
+        "sub-351"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#356",
+        "sub_issue": 356
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-355",
+      "title": "Orphan runner containment, quarantine, and epoch fencing",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "orphan-write-blocked",
+        "expired-writer-quarantine"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-356"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#355",
+        "sub_issue": 355
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-357",
+      "title": "Fleet-shared liveness engine with acknowledged idle notifications",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "shared-liveness-classification",
+        "acknowledged-delivery"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-351",
+        "sub-356"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#357",
+        "sub_issue": 357
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-358",
+      "title": "Non-skippable teardown and reclamation contract for team execution",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "terminal-reclamation",
+        "idempotent-teardown"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-351",
+        "sub-356",
+        "sub-357"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#358",
+        "sub_issue": 358
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "claude-cross-runtime",
+      "title": "Claude-side cross-runtime Outcome authority, discovery, and handoff contract",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": true,
+      "destructive": false,
+      "guarantee_tags": [
+        "single-canonical-outcome-authority",
+        "duplicate-dispatch-prevention",
+        "receipt-freshness"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-351",
+        "sub-355"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#604",
+        "sub_issue": 604
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-353",
+      "title": "Fleet doctor for leaked resources, dead wiring, and receiptless delegations",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [
+        "independent-derived-on-read-audit"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-351",
+        "sub-355",
+        "sub-357",
+        "sub-358"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#353",
+        "sub_issue": 353
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "codex-substrate",
+      "title": "Codex shared lease, fencing, and dispatch-settlement substrate parity",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": true,
+      "destructive": false,
+      "guarantee_tags": [
+        "shared-fleet-lease-authority",
+        "shared-dispatch-settlement",
+        "codex-ack-semantics-preserved"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-355"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-codex-plugins",
+        "issue": "infiquetra/infiquetra-codex-plugins#33",
+        "sub_issue": 33
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "codex-parity",
+      "title": "Codex-side cross-runtime Outcome parity and release",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": true,
+      "destructive": false,
+      "guarantee_tags": [
+        "cross-runtime-schema-compatibility",
+        "independent-release-unit"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "claude-cross-runtime",
+        "codex-substrate"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-codex-plugins",
+        "issue": "infiquetra/infiquetra-codex-plugins#34",
+        "sub_issue": 34
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    },
+    {
+      "subplot_id": "cross-runtime-acceptance",
+      "title": "Cross-runtime Outcome acceptance proof for lease-safe continuity",
+      "kind": "code",
+      "state": "pending",
+      "backend": "manual",
+      "gated": true,
+      "risky": true,
+      "destructive": false,
+      "guarantee_tags": [
+        "no-duplicate-dispatch",
+        "cross-clone-reconstruction",
+        "zero-leaked-resources"
+      ],
+      "degrade_policy": "halt",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-353",
+        "codex-parity"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#605",
+        "sub_issue": 605
+      },
+      "worktree": {},
+      "evidence": {
+        "required_checks": [
+          "qa",
+          "code-review"
+        ]
+      },
+      "cost": {}
+    }
+  ],
+  "decision_trail": [
+    {
+      "revision": 2,
+      "reason": "set-intent: attach run-start intent envelope",
+      "kind": "set-intent",
+      "scope": "",
+      "live": false,
+      "deltas": [],
+      "intent_revision": 2
+    }
+  ],
+  "cost_rollup": {},
+  "created_at": "",
+  "updated_at": "2026-07-15T10:56:45Z",
+  "intent": {
+    "schema_version": 1,
+    "run_mode": "unattended",
+    "ceremony_gates": {
+      "reviews_required": "gate",
+      "merge": "auto",
+      "deploy_nonprod": "gate"
+    },
+    "source": "issue-capture",
+    "authored_at": "2026-07-15T10:46:43Z",
+    "authored_by": "codex",
+    "backends_permitted": [
+      "manual"
+    ],
+    "degrade_policy": "halt"
+  },
+  "intent_revision": 2
+}

@@ -1,0 +1,69 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-07-15T10:47:03.779444+00:00",
+  "created_at": "2026-07-15T10:47:13.045935+00:00",
+  "created_issue_number": 604,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/604",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-15-claude-side-cross-runtime-outcome-authority-disc-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "improve-claude-plugins",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-15-claude-side-cross-runtime-outcome-authority-disc-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\n\nDeliver the Claude-side authority and compatibility half of the `improve-claude-plugins`\nlease-safe runtime continuity outcome without creating a runtime-local source of truth.\n\n### Intent\n\nShip the Claude Saga contract that lets another conforming runtime discover and attach to an existing\nOutcome by repository identity and Outcome ID. The committed Outcome specification and GitHub\ncompletion evidence remain canonical. Same-clone coordination uses the rebuildable git-common-dir\nstore; cross-clone discovery reconstructs from committed specification plus GitHub. Claude exposes a\nversioned compatibility envelope, consumes the shared lease/fencing and dispatch-settlement contracts,\nand emits freshness- and repository-bound handoff evidence so a Codex runtime cannot duplicate an\nalready reserved or dispatched leaf.\n\n### Out-of-scope / non-goals\n\n- Implementing or releasing the Codex-side consumer.\n- Making `~/.claude`, `~/.claude-company`, transcripts, caches, or protected launch receipts canonical\n  Outcome status.\n- Copying git-common-dir coordination caches or mutable receipt stores between clones or hosts.\n- Defining another lease, concurrency, settlement, idempotenc",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/claude-cross-runtime-coordination.md",
+    "ref": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/claude-cross-runtime-coordination.md",
+    "title": "claude-cross-runtime-coordination",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Claude-side cross-runtime Outcome authority, discovery, and handoff contract",
+  "updated_at": "2026-07-15T10:47:29.130845+00:00"
+}

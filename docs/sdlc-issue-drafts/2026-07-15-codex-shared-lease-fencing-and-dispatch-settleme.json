@@ -1,0 +1,69 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-07-15T10:47:03.780875+00:00",
+  "created_at": "2026-07-15T10:50:05.982431+00:00",
+  "created_issue_number": 33,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-codex-plugins/issues/33",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-15-codex-shared-lease-fencing-and-dispatch-settleme.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-codex-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/codex-shared-runtime-substrate.md",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-codex-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-15-codex-shared-lease-fencing-and-dispatch-settleme.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\n\nPort the minimum lease, fencing, and dispatch-settlement substrate required for Codex to participate\nin lease-safe cross-runtime Outcomes without depending on Claude host paths or replacing Codex's\nstronger native dispatch acknowledgement contract.\n\n### Intent\n\nCreate a staged Claude-to-Codex proof port in `infiquetra-codex-plugins` after #351, #355, and #356\nmerge. Codex fleet-core must consume the same runtime-neutral host-local lease registry, resource\nheads, token classifications, and resource guard as Claude. Codex Saga must read and emit the same\ndispatch-settlement identities while preserving its existing `outcome.dispatch.v2` intent/ack,\nprotected launch receipt, `handed-off`, and `legacy-unverified` semantics. This substrate lands and\nreleases before the separate Codex Outcome compatibility consumer.\n\n### Out-of-scope / non-goals\n\n- Porting Claude Agent/Task hooks, Workflow JavaScript, team-execution teardown, agy, orphan\n  quarantine, or fleet-doctor behavior merely because they share source files or commits.\n- Replacing or weakening Codex `outcome.dispatch.v2` and protected launch-receipt validation.\n- Using `~/.claude`, `~/.codex`, installed caches, plugi",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/codex-shared-runtime-substrate.md",
+    "ref": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/codex-shared-runtime-substrate.md",
+    "title": "codex-shared-runtime-substrate",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Codex shared lease, fencing, and dispatch-settlement substrate parity",
+  "updated_at": "2026-07-15T10:50:23.715983+00:00"
+}

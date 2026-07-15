@@ -1,0 +1,69 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-07-15T10:47:03.782805+00:00",
+  "created_at": "2026-07-15T10:51:01.678039+00:00",
+  "created_issue_number": 605,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/605",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-15-cross-runtime-outcome-acceptance-proof-for-lease.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/cross-runtime-acceptance.md",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-15-cross-runtime-outcome-acceptance-proof-for-lease.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\n\nProduce the independent cross-runtime acceptance proof that closes #579 and the\n`lease-safe-runtime-continuity` outcome only when released Claude and Codex implementations preserve\none authority and one dispatch.\n\n### Intent\n\nBuild and run a revision-pinned acceptance harness against the merged Claude and Codex Saga releases.\nThe harness exercises same-clone discovery, both handoff directions, different-clone reconstruction,\nconcurrent advance, runtime-local authority rejection, compatibility skew, and leak/doctor closure.\nIt records a durable machine-readable evidence bundle containing both repository SHAs and plugin\nversions. Same-clone tests share one temporary target repository's git-common-dir and one explicitly\nselected runtime-neutral fleet-state root; different-clone tests share neither. This issue verifies\nthe two implementations; it does not silently repair either one.\n\n### Out-of-scope / non-goals\n\n- Implementing missing Claude or Codex runtime behavior inside the acceptance PR.\n- Treating copied local caches, transcripts, rollout history, or launch receipts as test fixtures for\n  canonical state.\n- Waiving a failed concurrency, freshness, compatibility, s",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/cross-runtime-acceptance.md",
+    "ref": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/cross-runtime-acceptance.md",
+    "title": "cross-runtime-acceptance",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Cross-runtime Outcome acceptance proof for lease-safe continuity",
+  "updated_at": "2026-07-15T10:51:19.213114+00:00"
+}

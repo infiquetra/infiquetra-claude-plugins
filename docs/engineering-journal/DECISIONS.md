@@ -4815,3 +4815,350 @@ behavior is then never worse than pre-#520.
 than session+engine (e.g. per-unit), or when the marker family moves out of the repo tree.
 
 ---
+
+### Concurrency policy has one nested ExecutionSpec block and one conservative product guard {#concurrency-policy-350}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-350-concurrency-policy-plan.md` · **Issue:** #350
+
+**Decision.** Concurrency configuration lives only in an optional `ExecutionSpec.concurrency` block.
+Its resolved order is spec default, environment, all-read-only cohort lift, tier-weighted admission,
+engine lane, then explicit run override. Dependency layers and verify panels share one ordered
+chunking primitive, and the aggregate guard uses AC8's conservative layer-width times verifier-width
+product even where current panel sequencing makes that an upper bound.
+
+- **KTD1 - no duplicate top-level `max_concurrent`.** The nested policy is the serialized authority;
+  absent policy blocks retain the compatibility behavior of existing optional ExecutionSpec fields.
+- **KTD2 - the explicit run request is last.** Read-only lift applies before tier admission; a lane is
+  the most-specific automatic input, but it cannot silently defeat the operator's explicit run
+  override. Every effective width remains subject to the aggregate ceiling.
+- **KTD3 - tier admission reuses fleet-core `cost_weights.to_spend`.** Saga does not create a second
+  model/effort weight table.
+- **KTD4 - read-only lifting requires explicit evidence.** Every unit in the cohort must carry the
+  existing read-only mutation policy; absence or a mixed cohort uses the base width.
+- **KTD5 - aggregate width follows AC8's product.** The guard multiplies worker-chunk width by the
+  largest co-running verifier-chunk width (factor 1 without a panel) and fails above the fleet
+  ceiling; it does not replace the published acceptance contract with an inferred schedule.
+- **KTD6 - concurrency gets a sibling spawn-site inventory.** Sandbox and concurrency inventories
+  cross-link, but each retains its own source rows, parser, and failure contract.
+
+**Revisit when** `/optimize` explicitly adopts the shared governor, a runtime scheduler can expose
+measured overlap instead of emit-time bounds, or a new executable fan-out site is added.
+
+---
+
+### Dispatch settlement extends the run-fact ledger; the DLQ is a derived view {#dispatch-settlement-351}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-351-dispatch-settlement-plan.md` · **Issue:** #351
+
+**Decision.** Dispatch manifests, pre-call spawn attempts, terminal settlements, and digest-bound
+late-delivery observations are append-only `run_fact.v1` records with `kind=dispatch-settlement`;
+they do not create another store beside the hash-chained run-fact ledger. Open positions, casualty
+reports, and retry-eligible dead letters are derived from a verified snapshot on every read.
+
+- **KTD1 - the facts are the manifest.** One aggregate manifest record plus per-attempt spawn and
+  settle records closes the atomicity gap a sidecar manifest or queue file would introduce.
+- **KTD2 - dispatch settlement does not overload `kind=reconciliation`.** That existing kind belongs
+  to external-engine finding adjudication; the event vocabularies remain distinct.
+- **KTD3 - stable identity is `(dispatch_id, unit_id, attempt)` and spawn means committed for
+  submission.** At-least-once retries increment the attempt but preserve the unit's idempotency key.
+  The coordinator appends immediately before the host call, so a crash or tool failure after append
+  stays visible. A late delivery appends evidence after a non-delivered settle instead of rewriting
+  history; the ledger never pretends exactly-once delivery.
+- **KTD4 - team-execution delivery is a valid worker-exit `saga.manifest.v1`.** `artifact_pointer.py`
+  is a post-work diff-transfer snapshot, not an acknowledgment, and receives no invented ACK role.
+- **KTD5 - site adapters normalize evidence; one classifier decides.** Agent prose cannot satisfy a
+  delivery. Trusted host receipts, manifest completeness, structured results, and worktree state are
+  the allowed inputs.
+- **KTD6 - an omitted casualty threshold means zero percent.** Permissive partial progress is an
+  explicit per-dispatch operator choice.
+- **KTD7 - stale worktrees are projected read-only.** `reconcile --leaks` may report a registry/on-disk
+  mismatch as an unsettled debit but does not append synthetic history or reap resources.
+- **KTD8 - workflow settlement is driver-materialized.** Generated leaves keep their no-filesystem
+  boundary; emitted expected-unit metadata and trusted host results let the root driver write facts.
+
+**Revisit when** a new fan-out site is introduced, trusted host APIs expose stronger liveness or
+rate-limit receipts, or a consumer can prove stronger idempotency than the current at-least-once
+contract.
+
+---
+
+### Fleet leases reserve before spawn and fence every delegated mutation {#fleet-ttl-lease-broker-356}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-356-ttl-lease-broker-plan.md` · **Issue:** #356
+
+**Decision.** One fleet-core registry, protected by one process lock, owns delegated-agent admission
+and outcome-worktree ownership in separate named pools. Provisional and workflow-batch leases reserve
+capacity before launch, trusted runtime identity binds the child after start, and every delegated
+file or Bash mutation verifies the current monotonic fencing token. Expiry is derived from renewal
+time plus TTL; Saga alone validates and reaps an expired outcome worktree.
+
+- **KTD1 - #350 owns resolution; fleet-core owns normalized limits.** Fleet-core holds the shared
+  default constants and admission record so Saga and team-execution cannot drift. Saga's #350
+  resolver alone interprets spec, environment, tier, lane, and run inputs; the broker records the
+  result and uses the minimum aggregate ceiling asserted by all live leases. Worktrees retain their
+  independent cap-four pool.
+- **KTD2 - fleet-core owns the schema.** Saga and team-execution use thin adapters around one
+  fleet-commons implementation and one lock/sequence authority. The authority root is runtime-neutral:
+  explicit safe `INFIQUETRA_FLEET_STATE_DIR`, then safe absolute XDG state, then
+  `~/.local/state/infiquetra/fleet-leases`; it never defaults through Claude, Codex, or plugin-data
+  directories. Consumers compare a redacted canonical-root digest before admission.
+- **KTD3 - reservation precedes launch.** `Agent|Task` calls get provisional leases in `PreToolUse`;
+  `/work` reserves an emitted workflow wave atomically before `Workflow(...)`. `SubagentStart` binds
+  trusted `agent_id` after launch but never creates uncounted capacity.
+- **KTD4 - foreground release needs both sides of the lifecycle.** Because hooks run independently,
+  another hook may block `SubagentStop`, and `SubagentStart` does not expose its parent tool-use ID.
+  A foreground lease is removed only after its bound child records terminal intent and the exact
+  provisional parent call records completion; resident workers release after explicit stop
+  confirmation. Cross-ordered same-type claims may delay release but cannot free a live child.
+- **KTD5 - fencing is looked up, not asserted.** Hooks use trusted `agent_id` to verify the broker's
+  current resource token. Retrying a logical unit atomically supersedes the old token, so a stale
+  process cannot write through file tools or Bash. A per-resource last-granted head survives lease
+  removal, allowing later consumers to derive current, expired, closed, or superseded without a
+  mutable status field.
+- **KTD6 - worktree deletion needs expiry plus dead-owner proof.** Same-boot monotonic time derives
+  expiry; a boot change invalidates process authority. Saga then proves the recorded PID/start identity
+  is absent or consumes explicit terminal evidence before `outcome_worktrees.reap_worktree`. A live
+  owner is diagnostic, and failed reaps remain visible for retry.
+- **KTD7 - hook enforcement is cooperative runtime safety.** Missing, corrupt, or version-skewed
+  authority fails closed on armed delegated paths. A local operator able to disable or replace hooks
+  remains outside the security boundary.
+
+**Revisit when** Claude exposes an atomic pre-spawn child identity, a durable host lease API replaces
+file-backed coordination, or team-execution gains a generic teardown contract under issue #358.
+
+---
+
+### Orphan evidence is rejected or quarantined under the fleet resource fence {#orphan-evidence-fencing-355}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-355-orphan-runner-containment-plan.md` · **Issue:** #355
+
+**Decision.** Agy and Saga bridge evidence writers consume #356's trusted lease and persistent
+resource head. A resource-scoped lock spans the final Python-owned commit: current writes follow the
+existing path, superseded writes are rejected, expired or closed writes are quarantined, and immutable
+events/seals feed a read-only orphan projection. `run-lease.json` remains forensic, never authority.
+
+- **KTD1 - one authority, four derived dispositions.** Resource head plus live lease classifies
+  current, expired, closed, or superseded; corrupt/unknown authority fails closed.
+- **KTD2 - the guard spans commit.** Same-resource grant/supersession and evidence commits share a
+  digest-named lock, ordered before the registry lock, so check-to-write cannot race.
+- **KTD3 - superseded rejects; latest-but-expired quarantines.** A newer head wins even when the old
+  TTL elapsed. Quarantine preserves only a still-latest expired/closed proposal and never makes it live.
+- **KTD4 - terminal bundles remain forensic truth.** Agy finishes its bundle and exposes a nonpassing
+  disposition even when live patch/mirror acceptance is denied.
+- **KTD5 - quarantine is write-once, bounded, and machine-local.** Digest paths, 0600 files, a
+  commit-last marker, and rejection at agy's existing 128 MiB output boundary reuse the delegation
+  audit store without becoming a retry queue.
+- **KTD6 - close seals cover supported artifact roots.** They detect post-close mutation at inventoried
+  terminal seams but make no claim to be a general filesystem monitor. Intermediate claimed manifests
+  remain unsealed until adjudication or another explicit terminal outcome, and a later authorized
+  resource generation makes an older seal historical instead of a false late-write alarm.
+- **KTD7 - orphan candidates are derived and owner-routed.** #355 flags evidence-backed candidates;
+  #356 owns worktree sweep, #357 owns advanced liveness, and #358 owns generic teardown.
+- **KTD8 - stable agy resource identity stays outside the untrusted envelope.** The outer coordinator
+  validates the retry key before dispatch; prompts, engine output, environment, and bundle contents
+  cannot replace it.
+
+**Revisit when** bridge evidence moves to a transactional database, a distributed fence replaces the
+host-local file lock, or quarantine retention/encryption becomes an explicit operator requirement.
+
+---
+
+### Liveness is a shared score plus bounded confirmation, never sole teardown authority {#fleet-shared-liveness-357}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-357-fleet-shared-liveness-engine-plan.md` · **Issue:** #357
+
+**Decision.** Fleet-core owns one pure liveness engine; Saga keeps coordinator-specific ledger and
+terminal adapters, and team-execution polls through Saga's canonical run-fact path. The engine fuses
+bounded phi-accrual suspicion, trusted baseline-relative path progress, and append-only idle-notice
+acknowledgment. Statistical suspicion requests a bounded reachability probe; it does not itself kill,
+release, retry, or delete.
+
+- **KTD1 - five intervals select adaptive scoring; sparse history keeps fixed behavior.** Outcome
+  absolute timeout and no-budget opt-out remain unchanged.
+- **KTD2 - phi 8 is a configurable suspicion threshold, not a magic terminal.** An armed trusted
+  transport may use recent scoped artifact progress or a host-correlated acknowledgment to refute it
+  and three unacknowledged probes to confirm it. An Outcome backend without that transport keeps its
+  exact fixed-gap terminal and treats phi as advisory.
+- **KTD3 - artifact progress is a changed digest of disjoint declared paths.** Whole-tree change,
+  pointer epoch, mtime, and chat activity do not count; overlap falls back to heartbeat-only.
+- **KTD4 - an idle acknowledgment proves consumption, never output delivery.** The #351 complete
+  worker manifest remains the delivery ACK.
+- **KTD5 - notice/re-ping state is projected from append-only facts.** No mutable queue, status file,
+  sleep loop, or second heartbeat registry is introduced.
+- **KTD6 - detection and reclamation remain separate.** #357 scores and requests; #358 later owns
+  non-skippable stop/release/teardown, while #355/#356 own write and lease safety.
+
+**Revisit when** the host exposes a durable native worker heartbeat/notification receipt API, the
+fleet spans multiple boots/hosts, or observed cadence data justifies tuning the committed policy
+defaults through `/optimize`.
+
+---
+
+### Team execution closes admission before idempotent B8 teardown {#team-execution-teardown-358}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-358-non-skippable-teardown-reclamation-plan.md` · **Issue:** #358
+
+**Decision.** Team-execution completion becomes a broker-fenced terminal transition. Step B8 first
+closes new admission for the exact run, then projects append-only teardown facts, executes only
+resource-specific trusted actions, and records completion only after a zero-open reconciliation.
+The #356 broker is live ownership, #351 run facts are history, and #357 confirmed liveness is input;
+there is no second reclamation ledger or reaper.
+
+- **KTD1 - closing admission prevents spawn-after-receipt.** Acquire, reserve, claim, and retry are
+  refused for a closed run while existing resources remain visible for reconciliation.
+- **KTD2 - B7 prepares; B8 completes.** A business result or report draft cannot use `complete`
+  until the B8 receipt proves zero open resources against the same closed broker generation.
+- **KTD3 - crash cleanup is eventual.** Observed terminals run B8 synchronously; `SIGKILL` and host
+  death wait for bounded SessionStart/explicit recovery plus TTL and dead-owner proof.
+- **KTD4 - actions are resource-specific.** Residents use trusted runtime stop receipts, owned
+  subprocesses require PID/start/boot identity, and outcome worktrees use only #356 sweep.
+- **KTD5 - CI plants its own leak.** Developer worktrees are attended evidence, never a destructive
+  test fixture or an implicit cleanup target.
+
+**Revisit when** the host provides a durable terminal finalizer, the broker becomes cross-host, or a
+native runtime can atomically stop and attest a resident without the current request/confirm pair.
+
+---
+
+### Fleet doctor correlates raw sources independently and never repairs {#fleet-doctor-independent-audit-353}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-353-fleet-doctor-plan.md` · **Issue:** #353
+
+**Decision.** Fleet doctor is a Saga-local, point-in-time tripwire with a stdlib-only runtime
+observation layer. It strictly reads documented raw contracts and independently joins Git worktrees,
+outcome registries, broker ownership, run facts, teardown facts, manifests, and durable receipts. It
+never calls the tolerant projections or mutation APIs it audits.
+
+- **KTD1 - corruption cannot look absent.** Missing, malformed, unsafe, changed, capped, and unknown
+  evidence remain distinct; any incomplete proof exits 2 rather than clean.
+- **KTD2 - launch needs two signals.** A #351 spawn fact is pre-submission intent; unledgered requires
+  an independent broker, Outcome, audit-store, or bundle observation.
+- **KTD3 - managed worktrees only.** Stale detection is confined to canonical
+  `.saga-worktrees/<outcome>/<subplot>` resources; unrelated developer worktrees are out of scope.
+- **KTD4 - strict doctor complements tolerant delegation audit.** `/delegation-audit` remains its
+  focused advisory query; doctor treats corrupt/cross-source receipt evidence as a tripwire error.
+- **KTD5 - no repair authority.** Findings point to owners but cannot settle, retry, release, recover,
+  quarantine, kill, or reap.
+
+**Revisit when** contracts move to a single independently queryable database, the fleet spans hosts,
+or a separate scheduler/alert outcome explicitly consumes the report schema.
+
+---
+
+### Cross-runtime Outcome portability ends at canonical observation {#claude-cross-runtime-outcome-contract-579}
+
+**Date:** 2026-07-15
+
+**Plan:** `docs/plans/2026-07-15-claude-cross-runtime-outcome-contract-plan.md`
+
+**Parent:** #579; executable child: `infiquetra/infiquetra-claude-plugins#604`
+
+**Decision.** The Claude-side cross-runtime contract separates same-clone coordination from
+cross-clone reconstruction. A conforming runtime discovers an Outcome from a committed Git object,
+canonical GitHub repository identity, Outcome ID, and GitHub completion evidence. Runtimes in one
+clone may mutate only after validating a protected local handoff and consuming the #356 fleet-broker
+fence plus #351 dispatch settlement identity. A different clone can reconstruct the same canonical
+completion/candidate-frontier projection, but its transient dispatch state is unknown and it has no
+mutation authority.
+
+- **A public handoff is a reference, not a bearer token.** Acceptance reloads protected local
+  evidence and checks current repository/spec/fence/settlement/freshness/use state. Copied or unsigned
+  JSON cannot authorize dispatch.
+- **Committed blobs anchor compatibility.** Repository identity, commit/blob digest, spec schema and
+  revision, capability range, and working-tree equality are checked before cache, broker, fact,
+  dispatch, board, GitHub, or spec mutation.
+- **Portable status omits transient authority.** Git plus GitHub can prove completion and dependency
+  candidates across clones, not the absence of an in-flight dispatch. Cross-clone output is therefore
+  read-only and says transient state is unknown.
+- **Legacy bundle import is retired as authority transfer.** Replaying a bundled spec, completion
+  events, or dispatch ledger into another repository creates a competing truth path and must fail
+  with an actionable discovery/attach migration receipt.
+- **The producer and consumer release separately.** Claude publishes the runtime-neutral schemas and
+  golden fixtures; Codex consumes them in its own linked issue and PR.
+
+**Rejected.** Copying git-common-dir state between hosts; trusting a serialized handoff without its
+protected local record; adding a second lease/settlement/completion ledger; treating the newest ref or
+matching filesystem path as repository identity; allowing cross-clone advance because the canonical
+candidate frontier looks ready; and hiding the Codex port inside the Claude release.
+
+**Revisit when.** A networked, atomic, canonical active-dispatch authority is deliberately added to
+the Outcome model. At that point cross-host mutation can be designed against that authority; GitHub
+completion evidence alone is insufficient to prove no live dispatch exists elsewhere.
+
+---
+
+### Codex ports shared safety before protocol parity and retains native launch proof {#codex-lease-settlement-parity-579}
+
+**Date:** 2026-07-15
+
+**Plans:** `docs/plans/2026-07-15-codex-shared-runtime-substrate-plan.md`,
+`docs/plans/2026-07-15-codex-cross-runtime-outcome-parity-plan.md`
+
+**Parent:** #579; executable children: `infiquetra/infiquetra-codex-plugins#33` and
+`infiquetra/infiquetra-codex-plugins#34`
+
+**Decision.** Codex cross-runtime support ships as two independently reviewed proof ports. The first
+ports #351/#355/#356's runtime-neutral broker, resource guard, fencing, and dispatch settlement into
+Fleet Core plus the Saga adapter. The second consumes that substrate and ports the Outcome
+compatibility/discovery/handoff protocol. Both follow the Codex runbook's fresh manifest,
+classification, unit/cutover, isolated-install, fresh-session, and rollback gates.
+
+- **The fleet root is shared; protected runtime receipts are not.** Both runtimes resolve one safe
+  neutral fleet-state root and compare its redacted canonical digest. Codex protected launch receipts
+  remain in their current protected boundary and correlate by dispatch identity.
+- **Settlement cannot manufacture a Codex launch.** Codex retains `outcome.dispatch.v2`; only a
+  protected `ack_kind=launched` acknowledgement proves dispatch. `handed-off` remains non-launched,
+  and legacy facts remain unverified unless the existing migration contract proves them.
+- **A handoff authorizes one operation, not a frontier.** Protected same-clone acceptance may enter
+  one `advance-one` path, which then creates/observes the normal Codex dispatch intent and launch ack.
+- **The dirty primary Codex worktree is not an implementation surface.** Each port starts from a
+  fresh `origin/main` worktree and binds its exact target-repo plan/review bytes to the port manifest.
+
+**Rejected.** One oversized Codex parity issue that silently invents its missing substrate; a
+runtime-local broker under Claude/Codex/plugin-data homes; treating shared settlement or a handoff as
+Codex launch proof; copying protected receipts across clones; and bypassing the port classification
+because neutral Claude fixtures exist.
+
+**Revisit when.** Codex replaces `outcome.dispatch.v2` through a separately reviewed native migration,
+or the two proof ports become one already-shipped stable substrate whose compatibility adapter can be
+changed without cross-package release coupling.
+
+---
+
+### Cross-runtime acceptance measures overlap and closes without repair {#cross-runtime-acceptance-579}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-cross-runtime-outcome-acceptance-plan.md`
+
+**Issue:** `infiquetra/infiquetra-claude-plugins#605`
+
+**Decision.** Acceptance runs the exact merged and installed Claude/Codex releases in contained Git
+fixtures. A same-clone scenario shares one common dir and neutral broker root; a separate clone gets
+only committed spec plus deterministic GitHub evidence. Concurrent advance proof requires two OS
+processes, a deterministic barrier with monotonic overlap evidence, and a write-once fake backend.
+The harness reports failure but never fixes production behavior.
+
+- **Portable parity excludes transient state.** Different clones compare canonical completion and
+  candidate frontier; leases, handoffs, launches, and in-flight dispatch remain unknown.
+- **Shared settlement and runtime acknowledgement are separate assertions.** Exactly one settlement
+  and effect must exist, and Codex must also carry its native protected launched ack when it launches.
+- **Cleanup is independently observed.** Idempotent teardown runs twice, then #353 reads raw sources
+  and must report zero open positions before QA or outcome close.
+- **Evidence is revision-bound and privacy-safe.** The closed bundle records SHAs, versions, digests,
+  commands, timings, verdicts, counts, and artifact hashes, never raw credentials, caches,
+  transcripts, prompts, child output, or GitHub bodies.
+
+**Rejected.** Sequential calls described as concurrency; copied handoffs in the second clone;
+working-tree code described as a released input; equal transient state across clones; a test harness
+that patches a failing runtime; and closing #579 with a waiver.
+
+**Revisit when.** A networked active-dispatch authority makes cross-host mutation an accepted product
+contract or the runtime packages provide a signed, standardized installed-attestation API that can
+replace the current isolated readback evidence.

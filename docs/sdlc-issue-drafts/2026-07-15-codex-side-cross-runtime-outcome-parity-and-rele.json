@@ -1,0 +1,69 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-07-15T10:47:03.781916+00:00",
+  "created_at": "2026-07-15T10:50:34.906534+00:00",
+  "created_issue_number": 34,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-codex-plugins/issues/34",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-15-codex-side-cross-runtime-outcome-parity-and-rele.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-codex-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/codex-cross-runtime-parity.md",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-codex-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-15-codex-side-cross-runtime-outcome-parity-and-rele.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\n\nDeliver the Codex-side parity and release half of the `improve-claude-plugins` lease-safe runtime\ncontinuity outcome against the Claude-authored cross-runtime contract.\n\n### Intent\n\nAdapt the merged Claude cross-runtime Outcome compatibility contract to Codex-native Saga surfaces.\nCodex must discover and attach to the same committed Outcome identity, share the git-common-dir\ncoordination substrate in the same clone, reconstruct canonical status from committed specification\nplus GitHub in a different clone, consume the already-merged Codex lease/settlement substrate, and\nemit/consume the same repository- and freshness-bound handoff evidence. This is a behavior-parity\nport and release, not a byte-copy of Claude host assumptions. It must preserve Codex's native\n`outcome.dispatch.v2` intent/acknowledgement contract: only a protected `ack_kind=launched` launch\nreceipt proves dispatch, while a handoff is not itself a launch.\n\n### Out-of-scope / non-goals\n\n- Redesigning or forking the merged Claude compatibility schema.\n- Making `~/.codex`, Codex rollout history, protected workflow evidence, or local launch receipts\n  canonical Outcome status.\n- Importing another host's git",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/codex-cross-runtime-parity.md",
+    "ref": "docs/outcomes/lease-safe-runtime-continuity/issue-sources/codex-cross-runtime-parity.md",
+    "title": "codex-cross-runtime-parity",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Codex-side cross-runtime Outcome parity and release",
+  "updated_at": "2026-07-15T10:50:52.144004+00:00"
+}

@@ -128,7 +128,7 @@ loop. Approval is batched per dependency wave; execution remains autonomous insi
 
 All eleven executable leaves now have local implementation plans and zero-finding doc-review gates; the
 outcome umbrella itself is tracking-only. Their exact Verified Workflow candidates are parser-valid
-and ready for operator approval; no agents or implementation have been launched. The two Codex plans
+and operator-approved; no implementation agent has been launched yet. The two Codex plans
 are explicitly `ready-to-freeze`: each gets copied/refreshed in the isolated target repo and bound to
 the exact upstream/target refs before its mandatory classification gate. #355 consumes #356's live broker,
 resource heads, and token dispositions while retaining only bridge-evidence quarantine, terminal

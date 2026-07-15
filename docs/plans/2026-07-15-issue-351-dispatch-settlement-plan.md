@@ -132,10 +132,10 @@ the ledger append and host acknowledgment detectable as `silent-no-op` rather th
 - The issue's first casualty-report AC maps to R1/R4/R5; threshold HALT to R3/R5; self-report
   rejection to R4; three-spawn/two-settle and stale-worktree checks to R8; bounded no-ACK retry and
   idempotent re-dispatch to R4/R6/R7; the full quality gate maps to R10.
-- The parent context is the local, unapproved
-  `docs/outcomes/lease-safe-runtime-continuity/proposal.md`; issue #351's published ACs remain the
-  implementation authority until the operator approves that outcome proposal. Execution is blocked
-  before dispatch on both outcome approval and the exact Verified Workflow candidate.
+- The parent context is the approved
+  `docs/outcomes/lease-safe-runtime-continuity/outcome-spec.json` revision 3; issue #351's published
+  ACs remain the implementation authority. The operator approved the exact Verified Workflow digest
+  recorded below; any digest or role/model/effort change reopens the gate.
 - The canonical run-fact ledger prerequisite (#401) is already merged. #351 has no behavioral
   dependency on #350 and must not add throttling. Both edit Saga release surfaces, so #351 starts from
   refreshed `main` after #350 merges; this is a Git/release collision barrier, not a schema dependency.

@@ -236,10 +236,10 @@ registered repository/worktree authority, and not symlinks escaping that authori
   AC2 maps to R4's session ceiling. AC3/AC4 map to R8/R9. AC5 maps to R11 with 15 registered
   worktrees. AC6 maps to R10. AC7 maps to R8/R11. AC8 maps to R2. AC9 maps to R12. AC10 maps to R4
   and explicitly proves that #350, not this broker, owns the agent cap.
-- The parent context is the local, unapproved
-  `docs/outcomes/lease-safe-runtime-continuity/proposal.md`; issue #356's published ACs remain the
-  implementation authority until the operator approves the outcome proposal. Execution is blocked
-  before dispatch on both outcome approval and the exact Verified Workflow candidate.
+- The parent context is the approved
+  `docs/outcomes/lease-safe-runtime-continuity/outcome-spec.json` revision 3; issue #356's published
+  ACs remain the implementation authority. The operator approved the exact Verified Workflow digest
+  recorded below; dependency completion still gates dispatch.
 - #350 is the behavioral prerequisite and must be merged: it supplies the canonical effective
   concurrency policy and spawn-site inventory. #351 is serialized first because both Wave 1 issues
   share Saga release surfaces; #356 starts from refreshed main with expected versions Saga 0.98,

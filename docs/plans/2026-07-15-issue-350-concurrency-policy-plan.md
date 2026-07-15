@@ -109,10 +109,10 @@ above the aggregate ceiling fail rather than clamp.
 
 - AC1 and AC3 map to R1/R2; AC2 to R3; AC4 to R3; AC5 to R4; AC6 to R5; AC7 to R2/R6; AC8 to R7;
   AC9 to R8; AC10 to R1; the issue's release checklist maps to R10.
-- The parent context is the local, unapproved
-  `docs/outcomes/lease-safe-runtime-continuity/proposal.md`; issue #350's published ACs remain the
-  implementation authority until the operator approves that outcome proposal. Execution is blocked
-  before dispatch on both outcome approval and the exact Verified Workflow candidate.
+- The parent context is the approved
+  `docs/outcomes/lease-safe-runtime-continuity/outcome-spec.json` revision 3; issue #350's published
+  ACs remain the implementation authority. The operator approved the exact Verified Workflow digest
+  recorded below; any digest or role/model/effort change reopens the gate.
 - There is no semantic code prerequisite: #350 and #351 are the two ready wave-1 leaves. Merged #350
   unblocks #356. Because both leaves edit Saga release surfaces, delivery is serialized: merge #350,
   refresh #351 from the new `main`, then implement/merge #351. This is a Git/release collision barrier,

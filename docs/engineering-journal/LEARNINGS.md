@@ -25,6 +25,27 @@
 
 ---
 
+## 2026-07-16
+
+### Reporting an error is not a failure contract until the process status agrees {#board-move-fail-loud-609}
+
+**Context.** Mission-control `board move` processed several possible Projects
+memberships and printed useful errors for missing items, fields, options, and
+mutations, but the function returned `None` and the CLI exited zero. **Evidence.**
+Issue #609 reproduces the old behavior with an unavailable Status; focused tests
+in `plugins/mission-control/tests/test_board_move_exit.py` cover every failure
+class and a mixed multi-project result. **Mechanism.** Output accumulation and
+process success were independent: the loop preserved diagnostics, while the CLI
+had no aggregate failure signal. **Fix.** `board_move()` now returns whether all
+projects succeeded; `main()` exits 1 only after the accumulated output is
+emitted. **Validation.** The invalid-option test proves the set-field mutation
+is never called, and the mixed test proves a later project is still processed
+after an earlier failure. **Generalizable rule.** For batch-style CLIs, collect
+every result and derive one explicit terminal status; neither a printed error
+nor a caught exception can substitute for a nonzero process contract.
+
+**Refs.** #609; #584.
+
 ## 2026-07-14
 
 ### An authorization credential must bind content AND ordinal — either alone is forgeable by the system's own documented races {#token-era-binding-449}

@@ -392,7 +392,9 @@ configured reviewer and its expected scored-review deliverable, then append that
 fact immediately before its Agent call. Use the canonical
 `plugins/saga/scripts/dispatch_settlement.py manifest|spawn|settle|report|dlq|claim-retry` CLI; never
 write a sidecar queue. At collection, settle only from the returned structured score/evidence plus a
-valid contract-bearing `saga.manifest.v1`; success prose or an artifact pointer is not delivery. Run
+valid contract-bearing `saga.manifest.v1` by passing that receipt to `settle --evidence-json`; the
+CLI derives classification and rejects a caller-selected result. Success prose or an artifact
+pointer is not delivery. Run
 `report` before the consensus decision and HALT when `halt_required=true`. At the next review boundary,
 claim the derived DLQ before dispatching new reviewer work; the idempotency key remains stable.
 

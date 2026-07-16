@@ -6,6 +6,8 @@ import importlib.util
 import json
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -144,6 +146,140 @@ def test_schema_rejects_duplicate_manifest_and_invalid_bounds(tmp_path: Path) ->
         )
 
 
+def test_appenders_reject_noncanonical_raw_fact_shapes(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    manifest = DS.manifest_fact(
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        site="outcome",
+        units=_units(1),
+    )
+    with pytest.raises(DS.DispatchSettlementError, match="extra"):
+        DS.append_manifest(ledger, {**manifest, "unexpected": True})
+    DS.append_manifest(ledger, manifest)
+
+    spawn = DS.spawn_fact(
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        unit_id="unit-0",
+        attempt=1,
+        idempotency_key="stable-0",
+    )
+    with pytest.raises(DS.DispatchSettlementError, match="integer >= 1"):
+        DS.append_spawn(ledger, {**spawn, "attempt": True})
+    DS.append_spawn(ledger, spawn)
+
+    settlement = DS.settle_fact(
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        unit_id="unit-0",
+        attempt=1,
+        classification=DS.DELIVERED,
+        reason="complete",
+        evidence_ref="receipt",
+        evidence_sha256=DIGEST,
+    )
+    settlement.pop("evidence_ref")
+    with pytest.raises(DS.DispatchSettlementError, match="evidence_ref"):
+        DS.append_settlement(ledger, settlement)
+
+    late = DS.late_delivery_fact(
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        unit_id="unit-0",
+        attempt=1,
+        evidence_ref="late",
+        evidence_sha256=DIGEST,
+    )
+    with pytest.raises(DS.DispatchSettlementError, match="extra"):
+        DS.append_late_delivery(ledger, {**late, "classification": DS.DELIVERED})
+
+
+def test_semantically_invalid_hash_valid_fact_breaks_settlement_reads(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    malformed = DS.spawn_fact(
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        unit_id="unit-0",
+        attempt=1,
+        idempotency_key="stable-0",
+    )
+    RL.append_fact(ledger, {**malformed, "unexpected": "hash-valid"})
+    assert RL.verify_chain(ledger).ok
+    with pytest.raises(DS.DispatchSettlementError, match="malformed dispatch-settlement fact"):
+        DS.settlement_report(ledger, "dispatch-1")
+
+
+def test_fact_timestamp_must_be_iso_utc() -> None:
+    with pytest.raises(DS.DispatchSettlementError, match="ISO-8601 UTC"):
+        DS.spawn_fact(
+            subplot_id="sub-351",
+            at="tomorrow",
+            dispatch_id="dispatch-1",
+            unit_id="unit-0",
+            attempt=1,
+            idempotency_key="stable-0",
+        )
+
+
+@pytest.mark.parametrize(
+    "bad", [None, True, 1, [], {}], ids=["null", "bool", "int", "list", "object"]
+)
+def test_closed_string_fields_reject_non_strings(bad: object) -> None:
+    with pytest.raises(DS.DispatchSettlementError, match="safe identifier characters"):
+        DS.manifest_fact(
+            subplot_id="sub-351",
+            at=AT,
+            dispatch_id=bad,
+            site="outcome",
+            units=_units(1),
+        )
+    with pytest.raises(DS.DispatchSettlementError, match="printable text"):
+        DS.settle_fact(
+            subplot_id="sub-351",
+            at=AT,
+            dispatch_id="dispatch-1",
+            unit_id="unit-0",
+            attempt=1,
+            classification=DS.SILENT_NOOP,
+            reason=bad,
+        )
+    with pytest.raises(DS.DispatchSettlementError, match="lowercase SHA-256"):
+        DS.settle_fact(
+            subplot_id="sub-351",
+            at=AT,
+            dispatch_id="dispatch-1",
+            unit_id="unit-0",
+            attempt=1,
+            classification=DS.DELIVERED,
+            reason="complete",
+            evidence_ref="receipt",
+            evidence_sha256=bad,
+        )
+
+
+def test_hash_valid_non_string_identifier_breaks_settlement_reads(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    malformed = DS.manifest_fact(
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        site="outcome",
+        units=_units(1),
+    )
+    malformed["units"][0]["unit_id"] = None
+    RL.append_fact(ledger, malformed)
+    assert RL.verify_chain(ledger).ok
+    with pytest.raises(DS.DispatchSettlementError, match="safe identifier characters"):
+        DS.settlement_report(ledger, "dispatch-1")
+
+
 def test_transition_rejects_spawn_without_manifest_and_settle_before_spawn(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     with pytest.raises(DS.DispatchSettlementError, match="no manifest"):
@@ -164,6 +300,48 @@ def test_transition_rejects_duplicate_spawn_settle_and_attempt_gap(tmp_path: Pat
         _settle(ledger, 0, DS.SILENT_NOOP)
     with pytest.raises(DS.DispatchSettlementError, match="attempt gap"):
         _spawn(ledger, 0, 3)
+
+
+def test_concurrent_duplicate_spawn_has_one_winner_and_valid_chain(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    barrier = threading.Barrier(2)
+
+    def write() -> str:
+        barrier.wait(timeout=10)
+        try:
+            _spawn(ledger, 0)
+        except DS.DispatchSettlementError as exc:
+            return str(exc)
+        return "written"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [future.result() for future in (pool.submit(write), pool.submit(write))]
+
+    assert sorted(results) == ["duplicate spawn attempt", "written"]
+    records = RL.read_facts(ledger)
+    spawns = [record for record in records if record.get("event") == DS.EVENT_SPAWN]
+    assert len(spawns) == 1
+    assert RL.verify_chain(ledger).ok
+
+
+def test_concurrent_distinct_spawns_are_not_lost(tmp_path: Path) -> None:
+    count = 8
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=count)
+    barrier = threading.Barrier(count)
+
+    def write(unit: int) -> None:
+        barrier.wait(timeout=10)
+        _spawn(ledger, unit)
+
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        list(pool.map(write, range(count)))
+
+    records = RL.read_facts(ledger)
+    spawns = [record for record in records if record.get("event") == DS.EVENT_SPAWN]
+    assert {record["unit_id"] for record in spawns} == {f"unit-{unit}" for unit in range(count)}
+    assert RL.verify_chain(ledger).ok
 
 
 def test_transition_rejects_idempotency_key_drift(tmp_path: Path) -> None:
@@ -242,6 +420,7 @@ def test_incomplete_cohort_never_claims_threshold_verdict(tmp_path: Path) -> Non
     report = DS.settlement_report(ledger, "dispatch-1")
     assert not report.cohorts[0].complete
     assert not report.cohorts[0].halt_required
+    assert report.halt_required
     assert {entry.classification for entry in report.entries} == {"silent-no-op", "unspawned"}
 
 
@@ -267,11 +446,12 @@ def test_complete_trusted_manifest_is_delivery_evidence(tmp_path: Path) -> None:
     evidence = {
         "receipt_type": "worker-manifest",
         "trusted": True,
+        "unit_id": "unit-0",
         "outputs": ["result-0"],
         "evidence_ref": "manifest-0",
         "evidence_sha256": DIGEST,
     }
-    result = DS.classify_evidence(["result-0"], evidence)
+    result = DS.classify_evidence(["result-0"], evidence, expected_unit_id="unit-0")
     assert result.classification == DS.DELIVERED
     assert result.evidence_ref == "manifest-0"
 
@@ -280,11 +460,12 @@ def test_incomplete_manifest_is_not_delivered(tmp_path: Path) -> None:
     evidence = {
         "receipt_type": "worker-manifest",
         "trusted": True,
+        "unit_id": "unit-0",
         "outputs": [],
         "evidence_ref": "manifest-0",
         "evidence_sha256": DIGEST,
     }
-    result = DS.classify_evidence(["result-0"], evidence)
+    result = DS.classify_evidence(["result-0"], evidence, expected_unit_id="unit-0")
     assert result.classification == DS.SILENT_NOOP
     assert "missing required outputs" in result.reason
 
@@ -298,10 +479,30 @@ def test_unknown_or_untrusted_evidence_halts(tmp_path: Path) -> None:
             {
                 "receipt_type": "artifact",
                 "trusted": False,
+                "unit_id": "unit-0",
                 "outputs": ["result"],
                 "evidence_ref": "result",
                 "evidence_sha256": DIGEST,
             },
+        )
+
+
+def test_evidence_schema_rejects_wrong_unit_and_extra_fields() -> None:
+    evidence = {
+        "receipt_type": "worker-manifest",
+        "trusted": True,
+        "unit_id": "other-unit",
+        "outputs": ["result-0"],
+        "evidence_ref": "manifest-0",
+        "evidence_sha256": DIGEST,
+    }
+    with pytest.raises(DS.DispatchSettlementError, match="does not match"):
+        DS.classify_evidence(["result-0"], evidence, expected_unit_id="unit-0")
+    with pytest.raises(DS.DispatchSettlementError, match="exactly"):
+        DS.classify_evidence(
+            ["result-0"],
+            {**evidence, "unit_id": "unit-0", "classification": DS.DELIVERED},
+            expected_unit_id="unit-0",
         )
 
 
@@ -416,6 +617,79 @@ def test_late_delivery_after_retry_does_not_cancel_inflight_retry(tmp_path: Path
     assert [(item["unit_id"], item["attempt"]) for item in positions] == [("unit-0", 2)]
 
 
+def test_attempt_bound_delivery_never_settles_a_newer_retry(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    _settle(ledger, 0, DS.SILENT_NOOP)
+    DS.claim_retry(
+        ledger,
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        unit_id="unit-0",
+    )
+
+    result = DS.settle_attempt(
+        ledger,
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        unit_id="unit-0",
+        attempt=1,
+        classification=DS.DELIVERED,
+        reason="attempt one arrived late",
+        evidence_ref="attempt-one-result",
+        evidence_sha256=DIGEST,
+    )
+
+    assert result["event"] == DS.EVENT_LATE_DELIVERY
+    assert [(item["unit_id"], item["attempt"]) for item in DS.open_positions(ledger)] == [
+        ("unit-0", 2)
+    ]
+
+
+def test_settle_attempt_rejects_contradictory_replay_evidence(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    _settle(ledger, 0, DS.DELIVERED)
+
+    with pytest.raises(DS.DispatchSettlementError, match="contradictory settlement evidence"):
+        DS.settle_attempt(
+            ledger,
+            subplot_id="sub-351",
+            at=AT,
+            dispatch_id="dispatch-1",
+            unit_id="unit-0",
+            attempt=1,
+            classification=DS.DELIVERED,
+            reason="different delivery claim",
+            evidence_ref="different-receipt",
+            evidence_sha256="b" * 64,
+        )
+
+
+def test_prepare_attempt_returns_retry_exhausted_without_raising(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1, max_attempts=1)
+    _spawn(ledger, 0)
+    _settle(ledger, 0, DS.SILENT_NOOP)
+
+    result = DS.prepare_attempt(
+        ledger,
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        site="outcome",
+        unit=_units(1)[0],
+        max_attempts=1,
+    )
+
+    assert result["status"] == "retry-exhausted"
+    assert result["attempt"] == 1
+
+
 def test_stale_worktrees_flagged_as_debit_without_mutation(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     before = set(tmp_path.rglob("*"))
@@ -433,6 +707,19 @@ def test_stale_worktrees_flagged_as_debit_without_mutation(tmp_path: Path) -> No
     assert result["open_count"] == 1
     assert result["stale_worktrees"][0]["classification"] == "leaked-worktree"
     assert set(tmp_path.rglob("*")) == before
+
+    with pytest.raises(DS.DispatchSettlementError, match="integer >= 1"):
+        DS.reconcile_leaks(
+            ledger,
+            stale_worktrees=[
+                {
+                    "dispatch_id": "outcome-1",
+                    "unit_id": "sub-stale",
+                    "attempt": True,
+                    "worktree": ".claude/worktrees/stale",
+                }
+            ],
+        )
 
 
 def test_broken_chain_refuses_reports_and_writes(tmp_path: Path) -> None:
@@ -472,6 +759,29 @@ def test_workflow_settlement_metadata_is_deterministic_and_filesystem_free() -> 
         "casualty_threshold_percent",
         "max_attempts",
     }
+
+
+def test_outcome_dispatch_identity_is_unambiguous_for_colon_ids(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    first_id, first_units = DS.outcome_frontier_identity("parent", ["unit-0"])
+    second_id, second_units = DS.outcome_frontier_identity("parent:child", ["unit-0"])
+    assert first_id != second_id
+    for outcome_id, dispatch_id, units in (
+        ("parent", first_id, first_units),
+        ("parent:child", second_id, second_units),
+    ):
+        DS.append_manifest(
+            ledger,
+            DS.manifest_fact(
+                subplot_id=outcome_id,
+                at=AT,
+                dispatch_id=dispatch_id,
+                site="outcome",
+                units=units,
+            ),
+        )
+    bindings = DS.outcome_dispatch_bindings(ledger, "parent", ["unit-0"])
+    assert bindings["unit-0"][0] == first_id
 
 
 def test_cli_manifest_spawn_settle_report_round_trip(tmp_path: Path, capsys: Any) -> None:
@@ -524,10 +834,8 @@ def test_cli_manifest_spawn_settle_report_round_trip(tmp_path: Path, capsys: Any
                 "unit-0",
                 "--attempt",
                 "1",
-                "--classification",
-                "silent-no-op",
-                "--reason",
-                "no trusted manifest",
+                "--evidence-json",
+                "null",
                 "--at",
                 AT,
             ]

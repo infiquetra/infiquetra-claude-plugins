@@ -621,6 +621,17 @@ def _dispatch_records(store: Any) -> dict[str, str]:
     return out
 
 
+def _dispatch_commit_records(store: Any) -> dict[str, dict[str, Any]]:
+    """Return the latest durable dispatch commit per subplot, including settlement binding."""
+    out: dict[str, dict[str, Any]] = {}
+    for rec in outcome_store.read_ledger(store):
+        if rec.get("kind") == "dispatch" and rec.get("phase") == "commit":
+            sid = str(rec.get("subplot_id", ""))
+            if sid:
+                out[sid] = dict(rec)
+    return out
+
+
 def _terminal_state_map(store: Any) -> dict[str, str]:
     """subplot_id -> its terminal completion state (done/failed/rejected/stalled), latest attempt wins."""
     out: dict[str, str] = {}
@@ -1132,18 +1143,72 @@ def _reconcile_once(
 
     success = outcome_store.completed_subplots(store)  # success-only -> the frontier input
     settled = set(_dispatch_records(store))  # subplots with a COMMIT dispatch record
+    frontier = outcome_spec.ready_frontier(spec, success)
     dispatched: list[str] = []
     halted: list[dict[str, Any]] = []
     gated: list[str] = []
     degraded: list[dict[str, Any]] = []
     retriable: list[str] = []
     stale = False
+    settlement_bindings: dict[str, tuple[str, dispatch_settlement.UnitSpec]] = {}
+    settlement_blocked: set[str] = set()
+    settlement_frontier = [sid for sid in frontier if sid not in settled]
+    if settlement_ledger is not None and settlement_frontier:
+        settlement_bindings = dispatch_settlement.outcome_dispatch_bindings(
+            settlement_ledger, spec.outcome_id, settlement_frontier
+        )
+        new_units = [sid for sid in settlement_frontier if sid not in settlement_bindings]
+        blocking_reports = [
+            report
+            for report in dispatch_settlement.outcome_reports(settlement_ledger, spec.outcome_id)
+            if report.halt_required
+        ]
+        if new_units and blocking_reports:
+            settlement_blocked.update(new_units)
+            for sid in new_units:
+                report_ids = ",".join(report.dispatch_id for report in blocking_reports)
+                gate_receipt: dict[str, Any] = {
+                    "kind": "settlement-halt",
+                    "outcome_id": spec.outcome_id,
+                    "subplot_id": sid,
+                    "reason": (
+                        "prior dispatch cohort has missing evidence or exceeds its casualty "
+                        f"threshold: {report_ids}"
+                    ),
+                    "dispatch_ids": [report.dispatch_id for report in blocking_reports],
+                }
+                _append_ledger_once(
+                    store,
+                    {
+                        "phase": "halt",
+                        "key": f"settlement-gate:{sid}:{dispatch_settlement.evidence_digest(report_ids)[:16]}",
+                        **gate_receipt,
+                    },
+                )
+                halted.append(gate_receipt)
+        elif new_units:
+            dispatch_id, units = dispatch_settlement.outcome_frontier_identity(
+                spec.outcome_id, new_units
+            )
+            dispatch_settlement.ensure_manifest(
+                settlement_ledger,
+                dispatch_settlement.manifest_fact(
+                    subplot_id=spec.outcome_id,
+                    at=dispatch_settlement.iso_at(now()),
+                    dispatch_id=dispatch_id,
+                    site="outcome",
+                    units=units,
+                ),
+            )
+            settlement_bindings.update({unit.unit_id: (dispatch_id, unit) for unit in units})
     # #433 R4: the posture era every dispatch THIS pass happens under. None (never renegotiated)
     # reads as the revision-1 run-start baseline.
     active_intent_revision = getattr(spec, "intent_revision", None) or 1
-    for sid in outcome_spec.ready_frontier(spec, success):
+    for sid in frontier:
         if sid in settled:
             continue  # settled dispatch record exists -> idempotent skip (no double-dispatch)
+        if sid in settlement_blocked:
+            continue  # a prior cohort blocks this new fan-out boundary until it is reconciled
         if retriable_seen is not None and sid in retriable_seen:
             continue  # already 429'd this advance() call -> don't hammer; re-picked on the next call
         if dispatch_gate is not None and not dispatch_gate(sid):
@@ -1275,22 +1340,37 @@ def _reconcile_once(
         key = f"dispatch:{sid}"
         settlement_dispatch_id = ""
         settlement_unit: dispatch_settlement.UnitSpec | None = None
-        settlement_at = ""
+        settlement_attempt: int | None = None
         if settlement_ledger is not None:
-            settlement_dispatch_id, settlement_unit = dispatch_settlement.outcome_identity(
-                spec.outcome_id, sid
-            )
-            settlement_at = dispatch_settlement.iso_at(now())
-            dispatch_settlement.ensure_manifest(
+            settlement_dispatch_id, settlement_unit = settlement_bindings[sid]
+            terminal = dispatch_settlement.terminal_attempt_status(
                 settlement_ledger,
-                dispatch_settlement.manifest_fact(
-                    subplot_id=sid,
-                    at=settlement_at,
-                    dispatch_id=settlement_dispatch_id,
-                    site="outcome",
-                    units=[settlement_unit],
-                ),
+                dispatch_id=settlement_dispatch_id,
+                unit_id=settlement_unit.unit_id,
             )
+            if terminal is not None:
+                outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+                preexisting_terminal_receipt: dict[str, Any] = {
+                    "kind": "settlement-halt",
+                    "outcome_id": spec.outcome_id,
+                    "subplot_id": sid,
+                    "dispatch_id": settlement_dispatch_id,
+                    "attempt": int(terminal["attempt"]),
+                    "reason": (
+                        f"settlement is terminal ({terminal['status']}): "
+                        f"{terminal.get('reason', '')}"
+                    ),
+                }
+                _append_ledger_once(
+                    store,
+                    {
+                        "phase": "halt",
+                        "key": f"settlement-terminal:{sid}:{terminal['attempt']}",
+                        **preexisting_terminal_receipt,
+                    },
+                )
+                halted.append(preexisting_terminal_receipt)
+                continue
         # #433 R4/R5: the posture era is captured on the INTENT record too — the same snapshot
         # the commit record carries below. A leaf stranded in the crash-after-intent window
         # (backend effect possibly live, commit record never written) is in flight for EVERY
@@ -1322,14 +1402,42 @@ def _reconcile_once(
         if settlement_ledger is not None and settlement_unit is not None:
             # The run-fact spawn is the last durable action before the host call. A crash or tool
             # failure after this point remains an open position instead of disappearing.
-            dispatch_settlement.prepare_attempt(
+            prepared = dispatch_settlement.prepare_attempt(
                 settlement_ledger,
                 subplot_id=sid,
-                at=settlement_at,
+                at=dispatch_settlement.iso_at(now()),
                 dispatch_id=settlement_dispatch_id,
                 site="outcome",
                 unit=settlement_unit,
             )
+            if prepared.get("status") in {
+                "retry-exhausted",
+                "already-delivered",
+                "late-delivered",
+            }:
+                outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+                terminal_receipt: dict[str, Any] = {
+                    "kind": "settlement-halt",
+                    "outcome_id": spec.outcome_id,
+                    "subplot_id": sid,
+                    "dispatch_id": settlement_dispatch_id,
+                    "attempt": int(prepared["attempt"]),
+                    "reason": (
+                        f"settlement is terminal ({prepared['status']}): "
+                        f"{prepared.get('reason', '')}"
+                    ),
+                }
+                _append_ledger_once(
+                    store,
+                    {
+                        "phase": "halt",
+                        "key": f"settlement-terminal:{sid}:{prepared['attempt']}",
+                        **terminal_receipt,
+                    },
+                )
+                halted.append(terminal_receipt)
+                continue
+            settlement_attempt = int(prepared["attempt"])
         try:
             leaf_saga_id = dispatch(
                 DispatchRequest(
@@ -1359,12 +1467,15 @@ def _reconcile_once(
                 retriable_seen.add(sid)
             if settlement_ledger is not None:
                 receipt = rate_limit.receipt.to_dict()
-                dispatch_settlement.settle_latest_open(
+                if settlement_attempt is None:
+                    raise OutcomeError("settlement attempt binding is missing") from rate_limit
+                dispatch_settlement.settle_attempt(
                     settlement_ledger,
                     subplot_id=sid,
                     at=dispatch_settlement.iso_at(now()),
                     dispatch_id=settlement_dispatch_id,
                     unit_id=sid,
+                    attempt=settlement_attempt,
                     classification=dispatch_settlement.RATE_KILLED,
                     reason="outcome backend returned a trusted rate-limit receipt",
                     evidence_ref="outcome-rate-limit",
@@ -1379,12 +1490,15 @@ def _reconcile_once(
             _append_ledger_once(store, {"phase": "halt", "kind": "dispatch", "key": key, **receipt})
             halted.append(receipt)
             if settlement_ledger is not None:
-                dispatch_settlement.settle_latest_open(
+                if settlement_attempt is None:
+                    raise OutcomeError("settlement attempt binding is missing") from halt
+                dispatch_settlement.settle_attempt(
                     settlement_ledger,
                     subplot_id=sid,
                     at=dispatch_settlement.iso_at(now()),
                     dispatch_id=settlement_dispatch_id,
                     unit_id=sid,
+                    attempt=settlement_attempt,
                     classification=dispatch_settlement.SILENT_NOOP,
                     reason="backend halted before returning a dispatch handle",
                 )
@@ -1417,6 +1531,15 @@ def _reconcile_once(
                 # falls back to the spec's current intent.
                 "intent_revision": active_intent_revision,
                 "posture": dict(era_posture),
+                "settlement": (
+                    {
+                        "dispatch_id": settlement_dispatch_id,
+                        "unit_id": sid,
+                        "attempt": settlement_attempt,
+                    }
+                    if settlement_attempt is not None
+                    else None
+                ),
             },
         )
         dispatched.append(sid)
@@ -1622,20 +1745,46 @@ def production_harvester(
             repo_root=repo_root,
         )
         if settlement_ledger is not None:
-            for sid in harvested:
+            completed = outcome_store.completed_subplots(store)
+            commits = _dispatch_commit_records(store)
+            bindings = dispatch_settlement.outcome_dispatch_bindings(
+                settlement_ledger, spec.outcome_id, completed
+            )
+            # Reconcile every durable canonical completion on every tick. This closes the
+            # completion-written/settlement-write crash gap even when harvest returns no new IDs.
+            for sid in sorted(completed):
+                binding = bindings.get(sid)
+                if binding is None:
+                    continue
                 node = spec.node_by_id(sid)
-                dispatch_id, _unit = dispatch_settlement.outcome_identity(spec.outcome_id, sid)
+                dispatch_id, _unit = binding
+                commit_binding = commits.get(sid, {}).get("settlement")
+                attempt: int | None = None
+                if isinstance(commit_binding, dict) and (
+                    commit_binding.get("dispatch_id") == dispatch_id
+                    and commit_binding.get("unit_id") == sid
+                    and isinstance(commit_binding.get("attempt"), int)
+                    and not isinstance(commit_binding.get("attempt"), bool)
+                ):
+                    attempt = int(commit_binding["attempt"])
+                if attempt is None:
+                    attempt = dispatch_settlement.latest_attempt(
+                        settlement_ledger, dispatch_id=dispatch_id, unit_id=sid
+                    )
+                if attempt is None:
+                    continue
                 evidence = {
                     "subplot_id": sid,
                     "github": dict(node.github) if node is not None else {},
                     "completion": "canonical",
                 }
-                dispatch_settlement.settle_latest_open(
+                dispatch_settlement.settle_attempt(
                     settlement_ledger,
                     subplot_id=sid,
                     at=dispatch_settlement.iso_at(now()),
                     dispatch_id=dispatch_id,
                     unit_id=sid,
+                    attempt=attempt,
                     classification=dispatch_settlement.DELIVERED,
                     reason="outcome parent harvested canonical completion evidence",
                     evidence_ref="github-completion",

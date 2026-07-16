@@ -64,7 +64,8 @@ The selected validator roster is a `site=team-execution` dispatch. Before any va
 the coordinator writes the complete manifest through
 `plugins/saga/scripts/dispatch_settlement.py manifest`; immediately before each call it appends that
 unit's `spawn`. The state file above is the validator's trusted expected deliverable and its digest is
-the settlement evidence. A required validator with no state file, an empty state file, or incomplete
+the settlement evidence passed through `settle --evidence-json`; callers never select a terminal
+classification directly. A required validator with no state file, an empty state file, or incomplete
 required evidence settles `silent-no-op` even if its agent returned success prose. Run `report` before
 the gate; a casualty threshold breach halts. `dlq` and `claim-retry` derive bounded at-least-once
 retry from the ledger and preserve the original idempotency key.

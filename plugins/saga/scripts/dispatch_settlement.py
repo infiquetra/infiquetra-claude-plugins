@@ -133,7 +133,11 @@ class DeadLetter:
 
 
 def _identifier(value: object, *, field: str) -> str:
-    text = str(value).strip()
+    if not isinstance(value, str):
+        raise DispatchSettlementError(
+            f"{field} must be 1..{MAX_ID_LENGTH} safe identifier characters"
+        )
+    text = value.strip()
     if not text or len(text) > MAX_ID_LENGTH or _ID_RE.fullmatch(text) is None:
         raise DispatchSettlementError(
             f"{field} must be 1..{MAX_ID_LENGTH} safe identifier characters"
@@ -142,16 +146,33 @@ def _identifier(value: object, *, field: str) -> str:
 
 
 def _bounded_text(value: object, *, field: str, limit: int = MAX_REASON_LENGTH) -> str:
-    text = str(value).strip()
+    if not isinstance(value, str):
+        raise DispatchSettlementError(f"{field} must be non-empty printable text <= {limit} chars")
+    text = value.strip()
     if not text or len(text) > limit or any(ord(char) < 32 for char in text):
         raise DispatchSettlementError(f"{field} must be non-empty printable text <= {limit} chars")
     return text
 
 
 def _digest(value: object, *, field: str = "evidence_sha256") -> str:
-    text = str(value).strip().lower()
+    if not isinstance(value, str):
+        raise DispatchSettlementError(f"{field} must be a lowercase SHA-256 digest")
+    text = value.strip().lower()
     if _SHA256_RE.fullmatch(text) is None:
         raise DispatchSettlementError(f"{field} must be a lowercase SHA-256 digest")
+    return text
+
+
+def _timestamp(value: object) -> str:
+    if not isinstance(value, str):
+        raise DispatchSettlementError("at must be an ISO-8601 UTC timestamp")
+    text = _bounded_text(value, field="at", limit=100)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise DispatchSettlementError("at must be an ISO-8601 UTC timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != datetime.min.replace(tzinfo=UTC).utcoffset():
+        raise DispatchSettlementError("at must be an ISO-8601 UTC timestamp")
     return text
 
 
@@ -210,6 +231,9 @@ def _units(values: Iterable[UnitSpec | Mapping[str, Any]]) -> tuple[UnitSpec, ..
 def _fact_records(snapshot: run_ledger.LedgerSnapshot, dispatch_id: str) -> list[dict[str, Any]]:
     if not snapshot.report.ok:
         raise DispatchSettlementError(f"broken run-fact chain: {snapshot.report.reason}")
+    for record in snapshot.records:
+        if record.get("kind") == FACT_KIND:
+            _validate_stored_fact(record)
     return [
         record
         for record in snapshot.records
@@ -249,7 +273,7 @@ def manifest_fact(
     return run_ledger.build_fact(
         FACT_KIND,
         subplot_id=_identifier(subplot_id, field="subplot_id"),
-        at=_bounded_text(at, field="at", limit=100),
+        at=_timestamp(at),
         event=EVENT_MANIFEST,
         dispatch_id=_identifier(dispatch_id, field="dispatch_id"),
         site=site_name,
@@ -271,7 +295,7 @@ def spawn_fact(
     return run_ledger.build_fact(
         FACT_KIND,
         subplot_id=_identifier(subplot_id, field="subplot_id"),
-        at=_bounded_text(at, field="at", limit=100),
+        at=_timestamp(at),
         event=EVENT_SPAWN,
         dispatch_id=_identifier(dispatch_id, field="dispatch_id"),
         unit_id=_identifier(unit_id, field="unit_id"),
@@ -314,7 +338,7 @@ def settle_fact(
     return run_ledger.build_fact(
         FACT_KIND,
         subplot_id=_identifier(subplot_id, field="subplot_id"),
-        at=_bounded_text(at, field="at", limit=100),
+        at=_timestamp(at),
         **fields,
     )
 
@@ -332,7 +356,7 @@ def late_delivery_fact(
     return run_ledger.build_fact(
         FACT_KIND,
         subplot_id=_identifier(subplot_id, field="subplot_id"),
-        at=_bounded_text(at, field="at", limit=100),
+        at=_timestamp(at),
         event=EVENT_LATE_DELIVERY,
         dispatch_id=_identifier(dispatch_id, field="dispatch_id"),
         unit_id=_identifier(unit_id, field="unit_id"),
@@ -342,21 +366,92 @@ def late_delivery_fact(
     )
 
 
+def _canonical_fact(
+    fact: Mapping[str, Any], *, expected_event: str | None = None
+) -> dict[str, Any]:
+    """Rebuild a settlement fact from its closed event schema and reject every extra field."""
+    event = str(fact.get("event", "")).strip()
+    if expected_event is not None and event != expected_event:
+        raise DispatchSettlementError(f"expected {expected_event!r} settlement event")
+    common = {
+        "subplot_id": fact.get("subplot_id", ""),
+        "at": fact.get("at", ""),
+        "dispatch_id": fact.get("dispatch_id", ""),
+    }
+    if event == EVENT_MANIFEST:
+        raw_units = fact.get("units", ())
+        if not isinstance(raw_units, Sequence) or isinstance(raw_units, (str, bytes)):
+            raise DispatchSettlementError("manifest units must be a list")
+        canonical = manifest_fact(
+            **common,
+            site=str(fact.get("site", "")),
+            units=raw_units,
+            casualty_threshold_percent=_threshold(fact.get("casualty_threshold_percent")),
+            max_attempts=_max_attempts(fact.get("max_attempts")),
+        )
+    elif event == EVENT_SPAWN:
+        canonical = spawn_fact(
+            **common,
+            unit_id=fact.get("unit_id", ""),
+            attempt=_attempt(fact.get("attempt")),
+            idempotency_key=fact.get("idempotency_key", ""),
+        )
+    elif event == EVENT_SETTLE:
+        canonical = settle_fact(
+            **common,
+            unit_id=fact.get("unit_id", ""),
+            attempt=_attempt(fact.get("attempt")),
+            classification=str(fact.get("classification", "")),
+            reason=fact.get("reason", ""),
+            evidence_ref=str(fact.get("evidence_ref", "")),
+            evidence_sha256=str(fact.get("evidence_sha256", "")),
+        )
+    elif event == EVENT_LATE_DELIVERY:
+        canonical = late_delivery_fact(
+            **common,
+            unit_id=fact.get("unit_id", ""),
+            attempt=_attempt(fact.get("attempt")),
+            evidence_ref=fact.get("evidence_ref", ""),
+            evidence_sha256=fact.get("evidence_sha256", ""),
+        )
+    else:
+        raise DispatchSettlementError(f"unknown dispatch-settlement event {event!r}")
+    if dict(fact) != canonical:
+        missing = sorted(set(canonical) - set(fact))
+        extra = sorted(set(fact) - set(canonical))
+        detail = []
+        if missing:
+            detail.append(f"missing={missing}")
+        if extra:
+            detail.append(f"extra={extra}")
+        if not detail:
+            detail.append("field values are not canonical")
+        raise DispatchSettlementError("malformed dispatch-settlement fact: " + "; ".join(detail))
+    return canonical
+
+
+def _validate_stored_fact(record: Mapping[str, Any]) -> None:
+    payload = {key: value for key, value in record.items() if key not in {"prev_hash", "this_hash"}}
+    _canonical_fact(payload)
+
+
 def append_manifest(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> dict[str, Any]:
-    dispatch_id = _identifier(fact.get("dispatch_id", ""), field="dispatch_id")
+    canonical = _canonical_fact(fact, expected_event=EVENT_MANIFEST)
+    dispatch_id = str(canonical["dispatch_id"])
 
     def validate(snapshot: run_ledger.LedgerSnapshot) -> None:
         if _manifest(_fact_records(snapshot, dispatch_id)) is not None:
             raise DispatchSettlementError(f"dispatch {dispatch_id!r} already has a manifest")
 
-    return run_ledger.append_fact_atomic(ledger, dict(fact), validate_snapshot=validate)
+    return run_ledger.append_fact_atomic(ledger, canonical, validate_snapshot=validate)
 
 
 def ensure_manifest(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> dict[str, Any]:
     """Append a manifest once; an identical existing manifest is an idempotent success."""
-    dispatch_id = _identifier(fact.get("dispatch_id", ""), field="dispatch_id")
+    canonical = _canonical_fact(fact, expected_event=EVENT_MANIFEST)
+    dispatch_id = str(canonical["dispatch_id"])
     try:
-        return append_manifest(ledger, fact)
+        return append_manifest(ledger, canonical)
     except DispatchSettlementError as exc:
         if "already has a manifest" not in str(exc):
             raise
@@ -373,7 +468,7 @@ def ensure_manifest(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> di
         "casualty_threshold_percent",
         "max_attempts",
     }
-    expected = {key: fact.get(key) for key in immutable}
+    expected = {key: canonical.get(key) for key in immutable}
     actual = {key: existing.get(key) for key in immutable}
     if actual != expected:
         raise DispatchSettlementError(f"manifest drift for dispatch {dispatch_id!r}")
@@ -388,10 +483,11 @@ def _require_manifest(records: Sequence[Mapping[str, Any]], dispatch_id: str) ->
 
 
 def append_spawn(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> dict[str, Any]:
-    dispatch_id = _identifier(fact.get("dispatch_id", ""), field="dispatch_id")
-    unit_id = _identifier(fact.get("unit_id", ""), field="unit_id")
-    attempt = _attempt(fact.get("attempt"))
-    key = _identifier(fact.get("idempotency_key", ""), field="idempotency_key")
+    canonical = _canonical_fact(fact, expected_event=EVENT_SPAWN)
+    dispatch_id = str(canonical["dispatch_id"])
+    unit_id = str(canonical["unit_id"])
+    attempt = int(canonical["attempt"])
+    key = str(canonical["idempotency_key"])
 
     def validate(snapshot: run_ledger.LedgerSnapshot) -> None:
         records = _fact_records(snapshot, dispatch_id)
@@ -441,13 +537,14 @@ def append_spawn(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> dict[
             if late:
                 raise DispatchSettlementError("late delivery observed before retry claim")
 
-    return run_ledger.append_fact_atomic(ledger, dict(fact), validate_snapshot=validate)
+    return run_ledger.append_fact_atomic(ledger, canonical, validate_snapshot=validate)
 
 
 def append_settlement(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> dict[str, Any]:
-    dispatch_id = _identifier(fact.get("dispatch_id", ""), field="dispatch_id")
-    unit_id = _identifier(fact.get("unit_id", ""), field="unit_id")
-    attempt = _attempt(fact.get("attempt"))
+    canonical = _canonical_fact(fact, expected_event=EVENT_SETTLE)
+    dispatch_id = str(canonical["dispatch_id"])
+    unit_id = str(canonical["unit_id"])
+    attempt = int(canonical["attempt"])
 
     def validate(snapshot: run_ledger.LedgerSnapshot) -> None:
         records = _fact_records(snapshot, dispatch_id)
@@ -469,13 +566,14 @@ def append_settlement(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> 
         if settled:
             raise DispatchSettlementError("duplicate settlement")
 
-    return run_ledger.append_fact_atomic(ledger, dict(fact), validate_snapshot=validate)
+    return run_ledger.append_fact_atomic(ledger, canonical, validate_snapshot=validate)
 
 
 def append_late_delivery(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> dict[str, Any]:
-    dispatch_id = _identifier(fact.get("dispatch_id", ""), field="dispatch_id")
-    unit_id = _identifier(fact.get("unit_id", ""), field="unit_id")
-    attempt = _attempt(fact.get("attempt"))
+    canonical = _canonical_fact(fact, expected_event=EVENT_LATE_DELIVERY)
+    dispatch_id = str(canonical["dispatch_id"])
+    unit_id = str(canonical["unit_id"])
+    attempt = int(canonical["attempt"])
 
     def validate(snapshot: run_ledger.LedgerSnapshot) -> None:
         records = _fact_records(snapshot, dispatch_id)
@@ -502,11 +600,14 @@ def append_late_delivery(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) 
         ):
             raise DispatchSettlementError("duplicate late delivery")
 
-    return run_ledger.append_fact_atomic(ledger, dict(fact), validate_snapshot=validate)
+    return run_ledger.append_fact_atomic(ledger, canonical, validate_snapshot=validate)
 
 
 def classify_evidence(
-    expected_deliverables: Sequence[str], evidence: Mapping[str, Any] | None
+    expected_deliverables: Sequence[str],
+    evidence: Mapping[str, Any] | None,
+    *,
+    expected_unit_id: str | None = None,
 ) -> Classification:
     """Classify trusted evidence; untrusted prose never produces a delivered result."""
     expected = {_identifier(item, field="deliverable") for item in expected_deliverables}
@@ -517,8 +618,19 @@ def classify_evidence(
         if set(evidence) <= {"self_report", "prose"}:
             return Classification(SILENT_NOOP, "agent self-report is not settlement evidence")
         raise DispatchSettlementError(f"unknown evidence receipt_type {receipt_type!r}")
+    common_keys = {"receipt_type", "trusted", "unit_id", "evidence_ref", "evidence_sha256"}
+    expected_keys = common_keys | ({"outputs"} if receipt_type in DELIVERY_RECEIPTS else set())
+    if set(evidence) != expected_keys:
+        raise DispatchSettlementError(
+            f"{receipt_type} evidence must contain exactly {sorted(expected_keys)}"
+        )
     if evidence.get("trusted") is not True:
         raise DispatchSettlementError("recognized settlement evidence must be host-trusted")
+    evidence_unit = _identifier(evidence.get("unit_id", ""), field="evidence unit_id")
+    if expected_unit_id is not None and evidence_unit != _identifier(
+        expected_unit_id, field="unit_id"
+    ):
+        raise DispatchSettlementError("settlement evidence unit_id does not match the spawned unit")
     evidence_ref = _identifier(evidence.get("evidence_ref", ""), field="evidence_ref")
     evidence_sha = _digest(evidence.get("evidence_sha256", ""))
     if receipt_type == RATE_RECEIPT:
@@ -530,7 +642,10 @@ def classify_evidence(
     outputs_raw = evidence.get("outputs", ())
     if not isinstance(outputs_raw, Sequence) or isinstance(outputs_raw, (str, bytes)):
         raise DispatchSettlementError("delivery evidence outputs must be a list")
-    outputs = {_identifier(item, field="output") for item in outputs_raw}
+    normalized_outputs = [_identifier(item, field="output") for item in outputs_raw]
+    if len(normalized_outputs) != len(set(normalized_outputs)):
+        raise DispatchSettlementError("delivery evidence outputs must be unique")
+    outputs = set(normalized_outputs)
     missing = sorted(expected - outputs)
     if missing:
         return Classification(
@@ -558,20 +673,18 @@ def settle_from_evidence(
     units = _manifest_units(manifest)
     if unit_id not in units:
         raise DispatchSettlementError(f"unit {unit_id!r} is not declared in the manifest")
-    result = classify_evidence(units[unit_id].deliverables, evidence)
-    return append_settlement(
+    result = classify_evidence(units[unit_id].deliverables, evidence, expected_unit_id=unit_id)
+    return settle_attempt(
         ledger,
-        settle_fact(
-            subplot_id=subplot_id,
-            at=at,
-            dispatch_id=dispatch_id,
-            unit_id=unit_id,
-            attempt=attempt,
-            classification=result.classification,
-            reason=result.reason,
-            evidence_ref=result.evidence_ref,
-            evidence_sha256=result.evidence_sha256,
-        ),
+        subplot_id=subplot_id,
+        at=at,
+        dispatch_id=dispatch_id,
+        unit_id=unit_id,
+        attempt=attempt,
+        classification=result.classification,
+        reason=result.reason,
+        evidence_ref=result.evidence_ref,
+        evidence_sha256=result.evidence_sha256,
     )
 
 
@@ -579,6 +692,9 @@ def _verified_snapshot(ledger: run_ledger.RunLedger) -> run_ledger.LedgerSnapsho
     snapshot = run_ledger.read_snapshot(ledger)
     if not snapshot.report.ok:
         raise DispatchSettlementError(f"broken run-fact chain: {snapshot.report.reason}")
+    for record in snapshot.records:
+        if record.get("kind") == FACT_KIND:
+            _validate_stored_fact(record)
     return snapshot
 
 
@@ -646,12 +762,36 @@ def settlement_report(ledger: run_ledger.RunLedger, dispatch_id: str) -> Casualt
                 halt_required=halt,
             )
         )
+    late_deliveries = {
+        (str(record.get("unit_id")), _attempt(record.get("attempt")))
+        for record in records
+        if record.get("event") == EVENT_LATE_DELIVERY
+    }
+    current: list[str] = []
+    for unit_id in sorted(units):
+        unit_spawns = [record for record in spawns if record.get("unit_id") == unit_id]
+        if not unit_spawns:
+            current.append("unspawned")
+            continue
+        latest_attempt = max(_attempt(record.get("attempt")) for record in unit_spawns)
+        settlement = settles.get((unit_id, latest_attempt))
+        if settlement is None:
+            current.append("open")
+        elif (unit_id, latest_attempt) in late_deliveries:
+            current.append(DELIVERED)
+        else:
+            current.append(str(settlement.get("classification")))
+    current_complete = all(value in LEDGER_CLASSIFICATIONS for value in current)
+    current_casualties = sum(value in CASUALTY_CLASSIFICATIONS for value in current)
+    progress_halt = not current_complete or current_casualties * 100 > threshold * len(units)
     return CasualtyReport(
         dispatch_id=dispatch,
         site=str(manifest.get("site")),
         entries=tuple(entries),
         cohorts=tuple(cohorts),
-        halt_required=any(cohort.halt_required for cohort in cohorts),
+        # Cohorts preserve historical casualty rates. The live gate uses each unit's latest attempt,
+        # so successful bounded retry can clear a prior casualty without erasing its audit trail.
+        halt_required=progress_halt,
     )
 
 
@@ -775,6 +915,72 @@ def claim_retry(
     )
 
 
+def terminal_attempt_status(
+    ledger: run_ledger.RunLedger,
+    *,
+    dispatch_id: str,
+    unit_id: str,
+) -> dict[str, Any] | None:
+    """Return a settled unit's non-retriable status without mutating either ledger."""
+    dispatch = _identifier(dispatch_id, field="dispatch_id")
+    unit = _identifier(unit_id, field="unit_id")
+    scoped = _fact_records(_verified_snapshot(ledger), dispatch)
+    manifest = _require_manifest(scoped, dispatch)
+    if unit not in _manifest_units(manifest):
+        raise DispatchSettlementError(f"unit {unit!r} is not declared in the manifest")
+    spawns = sorted(
+        (
+            record
+            for record in scoped
+            if record.get("event") == EVENT_SPAWN and record.get("unit_id") == unit
+        ),
+        key=lambda record: _attempt(record.get("attempt")),
+    )
+    if not spawns:
+        return None
+    latest_attempt = _attempt(spawns[-1].get("attempt"))
+    settlements = [
+        record
+        for record in scoped
+        if record.get("event") == EVENT_SETTLE
+        and record.get("unit_id") == unit
+        and record.get("attempt") == latest_attempt
+    ]
+    if not settlements:
+        return None
+    if len(settlements) != 1:
+        raise DispatchSettlementError("attempt has duplicate settlements")
+    settlement = settlements[0]
+    classification = str(settlement.get("classification"))
+    late = any(
+        record.get("event") == EVENT_LATE_DELIVERY
+        and record.get("unit_id") == unit
+        and record.get("attempt") == latest_attempt
+        for record in scoped
+    )
+    if (
+        classification in CASUALTY_CLASSIFICATIONS
+        and latest_attempt < _max_attempts(manifest.get("max_attempts"))
+        and not late
+    ):
+        return None
+    status = (
+        "late-delivered"
+        if late
+        else "already-delivered"
+        if classification == DELIVERED
+        else "retry-exhausted"
+    )
+    return {
+        "status": status,
+        "dispatch_id": dispatch,
+        "unit_id": unit,
+        "attempt": latest_attempt,
+        "classification": classification,
+        "reason": str(settlement.get("reason", "")),
+    }
+
+
 def prepare_attempt(
     ledger: run_ledger.RunLedger,
     *,
@@ -792,19 +998,30 @@ def prepare_attempt(
     same stable idempotency key. A settled casualty claims the next derived DLQ attempt.
     """
     normalized = _unit(unit)
-    ensure_manifest(
-        ledger,
-        manifest_fact(
-            subplot_id=subplot_id,
-            at=at,
-            dispatch_id=dispatch_id,
-            site=site,
-            units=[normalized],
-            casualty_threshold_percent=casualty_threshold_percent,
-            max_attempts=max_attempts,
-        ),
-    )
     scoped = _fact_records(_verified_snapshot(ledger), dispatch_id)
+    manifest = _manifest(scoped)
+    if manifest is None:
+        ensure_manifest(
+            ledger,
+            manifest_fact(
+                subplot_id=subplot_id,
+                at=at,
+                dispatch_id=dispatch_id,
+                site=site,
+                units=[normalized],
+                casualty_threshold_percent=casualty_threshold_percent,
+                max_attempts=max_attempts,
+            ),
+        )
+        scoped = _fact_records(_verified_snapshot(ledger), dispatch_id)
+        manifest = _require_manifest(scoped, dispatch_id)
+    declared = _manifest_units(manifest).get(normalized.unit_id)
+    if declared != normalized:
+        raise DispatchSettlementError(
+            f"unit {normalized.unit_id!r} does not match its dispatch manifest"
+        )
+    if manifest.get("site") != site:
+        raise DispatchSettlementError("attempt site does not match its dispatch manifest")
     spawns = sorted(
         (
             record
@@ -835,11 +1052,9 @@ def prepare_attempt(
     )
     if not has_settlement:
         return dict(latest)
-    eligible = [
-        item for item in dead_letters(ledger, dispatch_id) if item.unit_id == normalized.unit_id
-    ]
-    if len(eligible) != 1:
-        raise DispatchSettlementError("unit has no open or retry-eligible attempt")
+    terminal = terminal_attempt_status(ledger, dispatch_id=dispatch_id, unit_id=normalized.unit_id)
+    if terminal is not None:
+        return terminal
     return claim_retry(
         ledger,
         subplot_id=subplot_id,
@@ -849,27 +1064,91 @@ def prepare_attempt(
     )
 
 
-def settle_latest_open(
+def settle_attempt(
     ledger: run_ledger.RunLedger,
     *,
     subplot_id: str,
     at: str,
     dispatch_id: str,
     unit_id: str,
+    attempt: int,
     classification: str,
     reason: str,
     evidence_ref: str = "",
     evidence_sha256: str = "",
-) -> dict[str, Any] | None:
-    """Settle the latest open attempt; return ``None`` when it is already terminal."""
-    positions = [
-        item
-        for item in open_positions(ledger)
-        if item["dispatch_id"] == dispatch_id and item["unit_id"] == unit_id
+) -> dict[str, Any]:
+    """Settle one bound attempt; a delivered result after a casualty is a late delivery."""
+    bound_attempt = _attempt(attempt)
+    scoped = _fact_records(
+        _verified_snapshot(ledger), _identifier(dispatch_id, field="dispatch_id")
+    )
+    existing = [
+        record
+        for record in scoped
+        if record.get("event") == EVENT_SETTLE
+        and record.get("unit_id") == unit_id
+        and record.get("attempt") == bound_attempt
     ]
-    if not positions:
-        return None
-    latest = max(positions, key=lambda item: int(item["attempt"]))
+    if len(existing) > 1:
+        raise DispatchSettlementError("attempt has duplicate settlements")
+    if existing:
+        prior = existing[0]
+        prior_classification = str(prior.get("classification"))
+        if prior_classification == classification:
+            comparable = {"classification", "reason", "evidence_ref", "evidence_sha256"}
+            candidate = settle_fact(
+                subplot_id=subplot_id,
+                at=at,
+                dispatch_id=dispatch_id,
+                unit_id=unit_id,
+                attempt=bound_attempt,
+                classification=classification,
+                reason=reason,
+                evidence_ref=evidence_ref,
+                evidence_sha256=evidence_sha256,
+            )
+            if {key: prior.get(key) for key in comparable} != {
+                key: candidate.get(key) for key in comparable
+            }:
+                raise DispatchSettlementError(
+                    f"attempt {bound_attempt} has contradictory settlement evidence"
+                )
+            return dict(prior)
+        if classification == DELIVERED and prior_classification in CASUALTY_CLASSIFICATIONS:
+            prior_late = next(
+                (
+                    record
+                    for record in scoped
+                    if record.get("event") == EVENT_LATE_DELIVERY
+                    and record.get("unit_id") == unit_id
+                    and record.get("attempt") == bound_attempt
+                ),
+                None,
+            )
+            if prior_late is not None:
+                if (
+                    prior_late.get("evidence_ref") != evidence_ref
+                    or prior_late.get("evidence_sha256") != evidence_sha256
+                ):
+                    raise DispatchSettlementError(
+                        f"attempt {bound_attempt} has contradictory late-delivery evidence"
+                    )
+                return dict(prior_late)
+            return append_late_delivery(
+                ledger,
+                late_delivery_fact(
+                    subplot_id=subplot_id,
+                    at=at,
+                    dispatch_id=dispatch_id,
+                    unit_id=unit_id,
+                    attempt=bound_attempt,
+                    evidence_ref=evidence_ref,
+                    evidence_sha256=evidence_sha256,
+                ),
+            )
+        raise DispatchSettlementError(
+            f"attempt {bound_attempt} already settled as {prior_classification!r}"
+        )
     return append_settlement(
         ledger,
         settle_fact(
@@ -877,7 +1156,7 @@ def settle_latest_open(
             at=at,
             dispatch_id=dispatch_id,
             unit_id=unit_id,
-            attempt=int(latest["attempt"]),
+            attempt=bound_attempt,
             classification=classification,
             reason=reason,
             evidence_ref=evidence_ref,
@@ -900,7 +1179,7 @@ def reconcile_leaks(
                     raw.get("dispatch_id", "worktree-registry"), field="dispatch_id"
                 ),
                 "unit_id": _identifier(raw.get("unit_id", ""), field="unit_id"),
-                "attempt": int(raw.get("attempt", 1)),
+                "attempt": _attempt(raw.get("attempt", 1)),
                 "classification": "leaked-worktree",
                 "worktree": _bounded_text(raw.get("worktree", "unknown"), field="worktree"),
             }
@@ -945,19 +1224,95 @@ def iso_at(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, tz=UTC).isoformat().replace("+00:00", "Z")
 
 
-def outcome_identity(outcome_id: str, subplot_id: str) -> tuple[str, UnitSpec]:
-    """Stable one-leaf dispatch identity for the outcome adapter."""
+def outcome_unit(outcome_id: str, subplot_id: str) -> UnitSpec:
+    """Build the stable unit contract shared by every outcome frontier cohort."""
     outcome = _identifier(outcome_id, field="outcome_id")
     subplot = _identifier(subplot_id, field="subplot_id")
-    dispatch_id = f"outcome:{outcome}:{subplot}"
-    return (
-        dispatch_id,
-        UnitSpec(
-            unit_id=subplot,
-            idempotency_key=f"outcome:{outcome}:{subplot}",
-            deliverables=("canonical-completion",),
-        ),
+    key = f"outcome:{outcome}:{subplot}"
+    if len(key) > MAX_ID_LENGTH:
+        key = f"outcome:{hashlib.sha256(outcome.encode()).hexdigest()[:24]}:{hashlib.sha256(subplot.encode()).hexdigest()[:24]}"
+    return UnitSpec(
+        unit_id=subplot,
+        idempotency_key=key,
+        deliverables=("canonical-completion",),
     )
+
+
+def outcome_frontier_identity(
+    outcome_id: str, subplot_ids: Iterable[str]
+) -> tuple[str, tuple[UnitSpec, ...]]:
+    """Name one complete ready-frontier cohort before any member is spawned."""
+    outcome = _identifier(outcome_id, field="outcome_id")
+    units = tuple(
+        sorted((outcome_unit(outcome, sid) for sid in subplot_ids), key=lambda u: u.unit_id)
+    )
+    units = _units(units)
+    roster_digest = evidence_digest([unit.unit_id for unit in units])[:24]
+    dispatch_id = (
+        f"outcome:{hashlib.sha256(outcome.encode()).hexdigest()[:32]}:frontier:{roster_digest}"
+    )
+    return _identifier(dispatch_id, field="dispatch_id"), units
+
+
+def outcome_dispatch_bindings(
+    ledger: run_ledger.RunLedger, outcome_id: str, subplot_ids: Iterable[str]
+) -> dict[str, tuple[str, UnitSpec]]:
+    """Recover each outcome unit's original cohort so retries never invent a new dispatch."""
+    outcome = _identifier(outcome_id, field="outcome_id")
+    wanted = {_identifier(sid, field="subplot_id") for sid in subplot_ids}
+    if not wanted:
+        return {}
+    records = [
+        record
+        for record in _verified_snapshot(ledger).records
+        if record.get("kind") == FACT_KIND and record.get("event") == EVENT_MANIFEST
+    ]
+    bindings: dict[str, tuple[str, UnitSpec]] = {}
+    prefix = f"outcome:{hashlib.sha256(outcome.encode()).hexdigest()[:32]}:"
+    for manifest in records:
+        dispatch_id = str(manifest.get("dispatch_id", ""))
+        if manifest.get("site") != "outcome" or not dispatch_id.startswith(prefix):
+            continue
+        for unit_id, unit in _manifest_units(manifest).items():
+            if unit_id not in wanted:
+                continue
+            existing = bindings.get(unit_id)
+            if existing is not None and existing[0] != dispatch_id:
+                raise DispatchSettlementError(
+                    f"outcome unit {unit_id!r} is bound to multiple dispatch cohorts"
+                )
+            bindings[unit_id] = (dispatch_id, unit)
+    return bindings
+
+
+def outcome_reports(ledger: run_ledger.RunLedger, outcome_id: str) -> list[CasualtyReport]:
+    """Return every cohort report for one outcome in stable dispatch order."""
+    outcome = _identifier(outcome_id, field="outcome_id")
+    manifests = [
+        record
+        for record in _verified_snapshot(ledger).records
+        if record.get("kind") == FACT_KIND
+        and record.get("event") == EVENT_MANIFEST
+        and record.get("site") == "outcome"
+        and str(record.get("dispatch_id", "")).startswith(
+            f"outcome:{hashlib.sha256(outcome.encode()).hexdigest()[:32]}:"
+        )
+    ]
+    return [
+        settlement_report(ledger, dispatch_id)
+        for dispatch_id in sorted(str(record["dispatch_id"]) for record in manifests)
+    ]
+
+
+def latest_attempt(ledger: run_ledger.RunLedger, *, dispatch_id: str, unit_id: str) -> int | None:
+    """Return the latest spawned attempt for a bound unit, if one exists."""
+    records = _fact_records(_verified_snapshot(ledger), dispatch_id)
+    attempts = [
+        _attempt(record.get("attempt"))
+        for record in records
+        if record.get("event") == EVENT_SPAWN and record.get("unit_id") == unit_id
+    ]
+    return max(attempts) if attempts else None
 
 
 def _json_value(raw: str) -> Any:
@@ -1014,11 +1369,10 @@ def main(argv: list[str] | None = None) -> int:
     settle_cmd.add_argument("--unit-id", required=True)
     settle_cmd.add_argument("--attempt", type=int, required=True)
     settle_cmd.add_argument(
-        "--classification", required=True, choices=sorted(LEDGER_CLASSIFICATIONS)
+        "--evidence-json",
+        required=True,
+        help="trusted structured receipt object/path, or null when no evidence returned",
     )
-    settle_cmd.add_argument("--reason", required=True)
-    settle_cmd.add_argument("--evidence-ref", default="")
-    settle_cmd.add_argument("--evidence-sha256", default="")
     settle_cmd.add_argument("--at", required=True)
 
     late_cmd = sub.add_parser("late-delivery")
@@ -1078,20 +1432,18 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "settle":
+            evidence = _json_value(args.evidence_json)
+            if evidence is not None and not isinstance(evidence, dict):
+                raise DispatchSettlementError("--evidence-json must decode to an object or null")
             _print(
-                append_settlement(
+                settle_from_evidence(
                     ledger,
-                    settle_fact(
-                        subplot_id=subplot_id,
-                        at=args.at,
-                        dispatch_id=args.dispatch_id,
-                        unit_id=args.unit_id,
-                        attempt=args.attempt,
-                        classification=args.classification,
-                        reason=args.reason,
-                        evidence_ref=args.evidence_ref,
-                        evidence_sha256=args.evidence_sha256,
-                    ),
+                    subplot_id=subplot_id,
+                    at=args.at,
+                    dispatch_id=args.dispatch_id,
+                    unit_id=args.unit_id,
+                    attempt=args.attempt,
+                    evidence=evidence,
                 )
             )
         elif args.command == "late-delivery":

@@ -357,6 +357,7 @@ for `cc-workflows-ultracode` units. Once the Workflow returns, before moving on 
 0. Settle every spawned metadata unit from the trusted Workflow host handle and its collected
    structured result. A missing structured result is `silent-no-op`; a trusted 429/idle host receipt
    is `rate-killed`/`idle`; agent prose cannot satisfy delivery. Run
+   `dispatch_settlement.py settle --evidence-json <trusted-receipt.json>` for the bound attempt, then
    `dispatch_settlement.py report --dispatch-id <metadata.dispatch_id>` and HALT on evidence errors or
    `halt_required=true`. Claim retry-eligible derived DLQ units at the next Workflow boundary before
    new work. This is at-least-once and preserves the stable idempotency key; it never claims

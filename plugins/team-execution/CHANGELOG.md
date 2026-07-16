@@ -15,7 +15,9 @@ All notable changes to this plugin are documented here.
   casualty positions halt progression before downstream validators or completion; retries use a new
   attempt without erasing the prior record.
 - The worker-manifest and validator-evidence contracts now name the canonical settlement CLI and
-  preserve the boundary that agents cannot write the parent ledger themselves.
+  preserve the boundary that agents cannot write the parent ledger themselves. The public settle
+  path accepts structured evidence and derives classification rather than trusting a caller-selected
+  terminal value.
 
 ## [2.16.0] - 2026-07-14
 

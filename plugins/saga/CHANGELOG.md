@@ -14,8 +14,13 @@
 - Wired outcome dispatch and canonical GitHub harvest evidence into settlement. Workflow emission
   now publishes deterministic expected-unit metadata while the driving `/work` session remains the
   only ledger writer; generated agents receive no ledger or filesystem capability.
+- Outcome settlement uses one complete ready-frontier cohort, binds every result to its exact
+  attempt, reconciles already-canonical completions after crashes, and blocks new cohorts while an
+  earlier cohort has missing evidence or unresolved casualties. Successful bounded retry clears the
+  live gate without erasing the earlier casualty history.
 - Added `dispatch_settlement.py` operations for manifests, spawns, settlements, late delivery,
-  reports, dead-letter inspection, retry claims, and leak reconciliation. This release does not
+  reports, dead-letter inspection, retry claims, and leak reconciliation. The public `settle` verb
+  accepts only structured `--evidence-json` and derives classification. This release does not
   change fan-out concurrency limits or introduce a background reaper.
 - **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
   unchanged; settlement records the committed outcome dispatch without redefining operator posture.

@@ -3244,6 +3244,7 @@ def emit_workflow_script(
     )
     emission_registry = _load_emission_registry() if has_external_routes else None
     spec.validate(engine_registry=emission_registry)
+    settlement_metadata = workflow_settlement_metadata(spec, validate=False)
 
     # #365 U3: a session tier ceiling clamps every unit DOWN before rendering (the operator's live
     # cap is the final word and never raises a tier). Clamping the spec's units means spec.unit_by_id
@@ -3308,7 +3309,7 @@ def emit_workflow_script(
     lines.append(
         "export const settlement = "
         + json.dumps(
-            workflow_settlement_metadata(spec, validate=False),
+            settlement_metadata,
             sort_keys=True,
             separators=(",", ":"),
         )

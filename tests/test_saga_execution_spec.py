@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -32,6 +34,79 @@ def _load(name: str, path: Path) -> ModuleType:
 
 ES = _load("execution_spec", EXECUTION_SPEC_SCRIPT)
 _load("lifecycle_state", LIFECYCLE_STATE_SCRIPT)
+
+
+@pytest.fixture(autouse=True)
+def _external_engine_preflight_is_deterministically_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        ES.engine_resolver,
+        "preflight",
+        lambda *_args, **_kwargs: {"available": True, "reason": "test snapshot"},
+    )
+
+
+def _routing_snapshots() -> dict[str, object]:
+    return {
+        "routing_overlay": ES.engine_overlay.EngineOverlay(),
+        "routing_calibration": ES.engine_calibration.CalibrationSignals(),
+    }
+
+
+# Independent test oracle: ECMAScript built-ins, Node workflow globals, and CommonJS wrapper names.
+# This deliberately does not import or derive from execution_spec's reservation set.
+_JAVASCRIPT_GLOBAL_CANDIDATES = frozenset(
+    re.findall(
+        r"[A-Za-z_$][A-Za-z0-9_$]*",
+        """
+    AbortController AbortSignal AggregateError Array ArrayBuffer Atomics BigInt BigInt64Array
+    BigUint64Array Blob Boolean BroadcastChannel Buffer ByteLengthQueuingStrategy CompressionStream
+    CountQueuingStrategy Crypto CryptoKey CustomEvent DOMException DataView Date DecompressionStream
+    Error EvalError Event EventTarget File FinalizationRegistry Float32Array Float64Array FormData
+    Function Headers Infinity Int16Array Int32Array Int8Array Intl Iterator JSON Map Math
+    MessageChannel MessageEvent MessagePort NaN Navigator Number Object Performance PerformanceEntry
+    PerformanceMark PerformanceMeasure PerformanceObserver PerformanceObserverEntryList
+    PerformanceResourceTiming Promise Proxy RangeError ReadableByteStreamController ReadableStream
+    ReadableStreamBYOBReader ReadableStreamBYOBRequest ReadableStreamDefaultController
+    ReadableStreamDefaultReader ReferenceError Reflect RegExp Request Response Set SharedArrayBuffer
+    String SubtleCrypto Symbol SyntaxError TextDecoder TextDecoderStream TextEncoder TextEncoderStream
+    TransformStream TransformStreamDefaultController TypeError URIError URL URLSearchParams
+    Uint16Array Uint32Array Uint8Array Uint8ClampedArray WeakMap WeakRef WeakSet WebAssembly WebSocket
+    WritableStream WritableStreamDefaultController WritableStreamDefaultWriter __dirname __filename
+    assert async_hooks atob btoa buffer child_process clearImmediate clearInterval clearTimeout cluster
+    console constants crypto decodeURI decodeURIComponent dgram diagnostics_channel dns domain encodeURI
+    encodeURIComponent escape eval events exports fetch fs global globalThis http http2 https inspector
+    isFinite isNaN module navigator net os parseFloat parseInt path perf_hooks performance process
+    punycode querystring queueMicrotask readline repl require setImmediate setInterval setTimeout stream
+    string_decoder structuredClone sys timers tls trace_events tty undefined unescape url util v8 vm wasi
+    worker_threads zlib
+    """,
+    )
+)
+
+# Workflow host primitives are not properties of Node's ``globalThis`` inventory. Keep this
+# independent baseline separate so removing any one production reservation is observable.
+_WORKFLOW_HOST_GLOBAL_CANDIDATES = frozenset({"agent", "log", "parallel"})
+
+
+def _referenced_harness_globals(script: str) -> set[str]:
+    """Detect free standard globals in emitted harness code without executing it."""
+
+    alternatives = "|".join(
+        re.escape(identifier)
+        for identifier in sorted(
+            _JAVASCRIPT_GLOBAL_CANDIDATES | _WORKFLOW_HOST_GLOBAL_CANDIDATES,
+            key=len,
+            reverse=True,
+        )
+    )
+    found = set(re.findall(rf"(?<![.$\w'\"])(?:{alternatives})(?![\w'\"])", script))
+    found.update(re.findall(rf"\b(?:new|instanceof|typeof)\s+({alternatives})\b", script))
+    for bare_identifier in ("Infinity", "NaN", "undefined"):
+        if re.search(rf"\b{bare_identifier}\b", script):
+            found.add(bare_identifier)
+    return found
 
 
 def _spec_dict(**unit_overrides: object) -> dict[str, object]:
@@ -62,6 +137,384 @@ def test_engine_unit_validates_and_emits_external_engine_marker() -> None:
     assert 'engine: "codex/gpt-5.5-xhigh"' in script
 
 
+def _fake_resolution(
+    *,
+    engine_id: str = "codex",
+    variant: str = "gpt-5.6-sol-xhigh",
+    fallback: str | None = None,
+    halt: str | None = None,
+    capability: str | None = "code-generation",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        engine_id=engine_id,
+        variant=variant,
+        fallback=fallback,
+        halt=halt,
+        capability=capability,
+    )
+
+
+def test_capability_emit_requires_explicit_repo_root_without_snapshot_injection() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+
+    with pytest.raises(ES.SpecError, match="requires explicit repo_root"):
+        ES.emit_workflow_script(spec)
+
+
+def test_capability_workflow_recompile_forwards_explicit_repo_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+    captured: list[tuple[object, object]] = []
+
+    def fake_emit(routed_spec: object, *, repo_root: object = None) -> str:
+        captured.append((routed_spec, repo_root))
+        return "// workflow\n"
+
+    monkeypatch.setattr(ES, "emit_workflow_script", fake_emit)
+
+    assert ES.recompile_for_tier(spec, "cc-workflows-ultracode", repo_root=tmp_path) == (
+        "// workflow\n"
+    )
+    assert captured == [(spec, tmp_path)]
+
+
+def test_capability_workflow_recompile_requires_explicit_repo_root() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+
+    with pytest.raises(ES.SpecError, match="requires explicit repo_root"):
+        ES.recompile_for_tier(spec, "cc-workflows-ultracode")
+
+
+def test_capability_snapshot_injection_requires_the_pair() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+
+    with pytest.raises(ES.SpecError, match="must supply both"):
+        ES.emit_workflow_script(
+            spec,
+            routing_overlay=ES.engine_overlay.EngineOverlay(),
+        )
+
+
+def test_emit_freezes_prompts_routes_loaders_and_memo_across_unattended_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        {
+            "name": "frozen-route",
+            "description": "one immutable emission context",
+            "units": [
+                _escalate_unit(capability="code-generation"),
+                _verify_unit("U2", capability="code-generation"),
+            ],
+        }
+    )
+    registry_class = ES._engine_registry_module().Registry
+    original_registry_load = registry_class.load.__func__
+    registry_loads: list[Path] = []
+
+    def counted_registry_load(cls: type[object], path: Path) -> object:
+        registry_loads.append(Path(path))
+        return original_registry_load(cls, path)
+
+    monkeypatch.setattr(registry_class, "load", classmethod(counted_registry_load))
+    overlay = ES.engine_overlay.EngineOverlay()
+    calibration = ES.engine_calibration.CalibrationSignals()
+    overlay_loads: list[Path] = []
+    calibration_loads: list[Path] = []
+
+    def load_overlay(root: Path | str) -> object:
+        overlay_loads.append(Path(root))
+        return overlay
+
+    def load_calibration(root: Path | str) -> object:
+        calibration_loads.append(Path(root))
+        return calibration
+
+    monkeypatch.setattr(
+        ES.engine_overlay,
+        "load_overlay",
+        load_overlay,
+    )
+    monkeypatch.setattr(
+        ES,
+        "_load_repository_calibration",
+        load_calibration,
+    )
+    original_prompt = ES._agent_prompt
+    prompt_calls: list[str] = []
+
+    def counted_prompt(route_spec: Any, unit: Any) -> str:
+        prompt_calls.append(unit.unit_id)
+        return str(original_prompt(route_spec, unit))
+
+    monkeypatch.setattr(ES, "_agent_prompt", counted_prompt)
+    resolver_calls: list[tuple[dict[str, object], object, object, object]] = []
+
+    def fake_resolve(request: dict[str, object], **kwargs: object) -> SimpleNamespace:
+        resolver_calls.append((request, kwargs["memo"], kwargs["overlay"], kwargs["calibration"]))
+        return _fake_resolution()
+
+    monkeypatch.setattr(ES.engine_resolver, "resolve", fake_resolve)
+
+    script = ES.emit_workflow_script(
+        spec,
+        unattended=True,
+        repo_root=tmp_path,
+        environment={},
+    )
+
+    assert registry_loads == [ES._engine_registry_path()]
+    assert overlay_loads == [tmp_path]
+    assert calibration_loads == [tmp_path]
+    assert prompt_calls == ["U1", "U2", "U1"]
+    assert len(resolver_calls) == 2
+    assert len({id(call[1]) for call in resolver_calls}) == 1
+    assert all(call[2] is overlay and call[3] is calibration for call in resolver_calls)
+    for request, *_rest in resolver_calls:
+        task_context = request["task_context"]
+        assert request["role_kind"] == "worker"
+        assert isinstance(task_context, dict)
+        prompt = task_context["context"]
+        assert task_context["token_estimate"] == len(prompt.encode("utf-8"))
+        assert task_context["unit_id"] in {"U1", "U2"}
+    assert script.count('engine: "codex/gpt-5.6-sol-xhigh"') == 3
+    assert 'capability: "code-generation"' not in script
+    assert script.count("capability=code-generation resolved_engine=codex/gpt-5.6-sol-xhigh") == 3
+    assert spec.units[0].to_dict()["capability"] == "code-generation"
+    assert "engine" not in spec.units[0].to_dict()
+
+
+def test_exact_engine_route_never_calls_capability_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(engine="codex/gpt-5.5-xhigh"))
+
+    def unexpected_resolve(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("exact engine must use Registry.by_key directly")
+
+    monkeypatch.setattr(ES.engine_resolver, "resolve", unexpected_resolve)
+
+    script = ES.emit_workflow_script(spec, environment={})
+
+    assert 'engine: "codex/gpt-5.5-xhigh"' in script
+
+
+def test_exact_engine_workflow_recompile_loads_registry_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(engine="codex/gpt-5.5-xhigh"))
+    registry_class = ES._engine_registry_module().Registry
+    original_registry_load = registry_class.load.__func__
+    loads: list[Path] = []
+
+    def counted_registry_load(cls: type[object], path: Path) -> object:
+        loads.append(Path(path))
+        return original_registry_load(cls, path)
+
+    monkeypatch.setattr(registry_class, "load", classmethod(counted_registry_load))
+
+    script = ES.recompile_for_tier(spec, "cc-workflows-ultracode")
+
+    assert loads == [ES._engine_registry_path()]
+    assert 'engine: "codex/gpt-5.5-xhigh"' in script
+
+
+@pytest.mark.parametrize(
+    ("resolution", "message"),
+    [
+        (_fake_resolution(fallback="fallback"), "resolved to fallback"),
+        (_fake_resolution(halt="halt"), "halted"),
+        (_fake_resolution(engine_id=""), "empty route"),
+        (_fake_resolution(engine_id="claude", variant="default"), "Claude substitution"),
+        (_fake_resolution(engine_id="not-registered", variant="v1"), "non-registry engine"),
+        (
+            _fake_resolution(engine_id="ollama-cloud", variant="nomic-embed-text"),
+            "does not declare",
+        ),
+        (_fake_resolution(capability="second-opinion"), "does not match authored"),
+    ],
+)
+def test_capability_resolution_outputs_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    resolution: SimpleNamespace,
+    message: str,
+) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+    monkeypatch.setattr(
+        ES.engine_resolver,
+        "resolve",
+        lambda *_args, **_kwargs: resolution,
+    )
+
+    with pytest.raises(ES.SpecError, match=message):
+        ES.emit_workflow_script(spec, environment={}, **_routing_snapshots())
+
+
+def test_capability_resolver_exception_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("resolver exploded")
+
+    monkeypatch.setattr(ES.engine_resolver, "resolve", fail)
+
+    with pytest.raises(ES.SpecError, match="resolution failed: resolver exploded"):
+        ES.emit_workflow_script(spec, environment={}, **_routing_snapshots())
+
+
+def test_missing_overlay_loads_as_empty_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+    captured: list[tuple[object, object]] = []
+    monkeypatch.setattr(
+        ES,
+        "_load_repository_calibration",
+        lambda _root: ES.engine_calibration.CalibrationSignals(),
+    )
+
+    def capture(request: object, **kwargs: object) -> SimpleNamespace:
+        captured.append((kwargs["overlay"], kwargs["calibration"]))
+        return _fake_resolution()
+
+    monkeypatch.setattr(ES.engine_resolver, "resolve", capture)
+
+    ES.emit_workflow_script(spec, repo_root=tmp_path, environment={})
+
+    assert len(captured) == 1
+    assert captured[0][0] == ES.engine_overlay.EngineOverlay()
+    assert captured[0][1] == ES.engine_calibration.CalibrationSignals()
+
+
+def test_malformed_repository_overlay_fails_closed(tmp_path: Path) -> None:
+    overlay_path = tmp_path / ".saga" / "engine-overlay.json"
+    overlay_path.parent.mkdir()
+    overlay_path.write_text("{not-json", encoding="utf-8")
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+
+    with pytest.raises(ES.SpecError, match="cannot load repository engine overlay"):
+        ES.emit_workflow_script(spec, repo_root=tmp_path, environment={})
+
+
+def test_unreadable_repository_overlay_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+    monkeypatch.setattr(
+        ES.engine_overlay,
+        "load_overlay",
+        lambda _root: (_ for _ in ()).throw(
+            ES.engine_overlay.EngineOverlayError("cannot read overlay")
+        ),
+    )
+
+    with pytest.raises(ES.SpecError, match="cannot load repository engine overlay"):
+        ES.emit_workflow_script(spec, repo_root=tmp_path, environment={})
+
+
+def test_repository_calibration_absent_and_empty_are_empty_snapshots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = ES.engine_calibration.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
+    monkeypatch.setattr(
+        ES.engine_calibration.run_ledger.RunLedger,
+        "resolve",
+        classmethod(lambda _cls, _root: ledger),
+    )
+
+    assert ES._load_repository_calibration(tmp_path) == (ES.engine_calibration.CalibrationSignals())
+    ledger.path.write_text("\n", encoding="utf-8")
+    assert ES._load_repository_calibration(tmp_path) == (ES.engine_calibration.CalibrationSignals())
+
+
+@pytest.mark.parametrize("payload", ["{not-json\n", '{"schema":"run_fact.v1"}\n'])
+def test_repository_calibration_corruption_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: str,
+) -> None:
+    ledger = ES.engine_calibration.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
+    ledger.path.write_text(payload, encoding="utf-8")
+    monkeypatch.setattr(
+        ES.engine_calibration.run_ledger.RunLedger,
+        "resolve",
+        classmethod(lambda _cls, _root: ledger),
+    )
+
+    with pytest.raises(ES.engine_calibration.CalibrationError):
+        ES._load_repository_calibration(tmp_path)
+
+
+def test_repository_calibration_unreadable_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = ES.engine_calibration.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
+    monkeypatch.setattr(
+        ES.engine_calibration.run_ledger.RunLedger,
+        "resolve",
+        classmethod(lambda _cls, _root: ledger),
+    )
+    original_read_text = Path.read_text
+
+    def unreadable_read_text(path: Path, *, encoding: str) -> str:
+        if path == ledger.path:
+            raise PermissionError(f"denied ({encoding})")
+        return original_read_text(path, encoding=encoding)
+
+    monkeypatch.setattr(Path, "read_text", unreadable_read_text)
+
+    with pytest.raises(ES.engine_calibration.CalibrationError, match="cannot read"):
+        ES._load_repository_calibration(tmp_path)
+
+
+def test_repository_calibration_uses_one_immutable_ledger_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = ES.engine_calibration.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
+    fact = ES.engine_calibration.run_ledger.build_fact(
+        "spend",
+        subplot_id="snapshot-proof",
+        at="2026-07-15T00:00:00Z",
+        amount=1.0,
+    )
+    ES.engine_calibration.run_ledger.append_fact(ledger, fact)
+    monkeypatch.setattr(
+        ES.engine_calibration.run_ledger.RunLedger,
+        "resolve",
+        classmethod(lambda _cls, _root: ledger),
+    )
+
+    original_read_text = Path.read_text
+    original_write_text = Path.write_text
+    reads = 0
+
+    def interleaving_read_text(path: Path, *, encoding: str) -> str:
+        nonlocal reads
+        raw = original_read_text(path, encoding=encoding)
+        if path == ledger.path:
+            reads += 1
+            original_write_text(path, raw + "{interleaved-invalid-tail\n", encoding=encoding)
+        return raw
+
+    monkeypatch.setattr(Path, "read_text", interleaving_read_text)
+    monkeypatch.setattr(
+        ES.engine_calibration,
+        "load_calibration",
+        lambda _ledger: (_ for _ in ()).throw(AssertionError("must not reread the ledger")),
+    )
+
+    assert ES._load_repository_calibration(tmp_path) == ES.engine_calibration.CalibrationSignals()
+    assert reads == 1
+
+
 def test_unknown_engine_variant_fails() -> None:
     with pytest.raises(ES.SpecError, match="unknown engine variant"):
         ES.ExecutionSpec.from_dict(_spec_dict(engine="codex/nonexistent"))
@@ -77,6 +530,189 @@ def test_engine_and_capability_are_mutually_exclusive() -> None:
         ES.ExecutionSpec.from_dict(
             _spec_dict(engine="codex/gpt-5.5-xhigh", capability="code-generation")
         )
+
+
+@pytest.mark.parametrize(
+    "unit_id",
+    [
+        "bad\nawait_agent",
+        "bad*/\nnext",
+        "${agent}",
+        "`agent`",
+        "class",
+        "__gate",
+        "agent",
+    ],
+)
+def test_workflow_unit_id_rejects_unsafe_or_reserved_identifiers(unit_id: str) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(unit_id=unit_id))
+
+    with pytest.raises(ES.SpecError, match="unit_id|reserved JavaScript"):
+        ES.emit_workflow_script(spec)
+
+
+@pytest.mark.parametrize("unit_id", sorted(ES._WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS))
+def test_workflow_unit_id_rejects_harness_global_shadowing(unit_id: str) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(unit_id=unit_id))
+
+    with pytest.raises(ES.SpecError, match="reserved JavaScript identifier"):
+        ES.emit_workflow_script(spec)
+
+
+def test_workflow_harness_global_inventory_matches_emitted_source() -> None:
+    script = _emit_units([_verify_unit("ordinary_unit", verify={"n": 2, "pass_rule": "majority"})])
+
+    assert _referenced_harness_globals(script) <= ES._WORKFLOW_GLOBAL_IDENTIFIERS
+
+
+def test_workflow_host_global_inventory_is_independent_and_reserved() -> None:
+    assert ES._WORKFLOW_HOST_GLOBAL_IDENTIFIERS == _WORKFLOW_HOST_GLOBAL_CANDIDATES
+    assert ES._WORKFLOW_GLOBAL_IDENTIFIERS == (
+        ES._WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS | _WORKFLOW_HOST_GLOBAL_CANDIDATES
+    )
+    assert _WORKFLOW_HOST_GLOBAL_CANDIDATES <= ES._WORKFLOW_RESERVED_IDENTIFIERS
+
+
+@pytest.mark.parametrize("host_global", sorted(_WORKFLOW_HOST_GLOBAL_CANDIDATES))
+def test_workflow_rejects_every_independent_host_global_unit_id(host_global: str) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(unit_id=host_global))
+
+    with pytest.raises(ES.SpecError, match="reserved JavaScript identifier"):
+        ES.emit_workflow_script(spec)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_workflow_runtime_global_inventory_covers_node_global_this() -> None:
+    completed = subprocess.run(
+        [
+            "node",
+            "-e",
+            "process.stdout.write(JSON.stringify(Object.getOwnPropertyNames(globalThis)))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    node_globals = set(json.loads(completed.stdout))
+
+    assert _JAVASCRIPT_GLOBAL_CANDIDATES <= ES._WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS
+    assert node_globals <= ES._WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS
+
+
+def test_workflow_harness_global_inventory_detects_bare_and_shorthand_references() -> None:
+    injected = "const timer = setTimeout\nconst refs = { Promise }\nURL.parse('value')\n"
+
+    assert _referenced_harness_globals(injected) >= {"Promise", "URL", "setTimeout"}
+
+
+def test_workflow_harness_global_inventory_ignores_member_property_names() -> None:
+    injected = "holder.Promise\nholder['Promise']\n"
+
+    assert "Promise" not in _referenced_harness_globals(injected)
+
+
+def test_workflow_global_oracle_detects_removed_production_reservation() -> None:
+    injected = "const value = Reflect.get(target, 'field')\n"
+    reserved_without_reflect = ES._WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS - {"Reflect"}
+
+    assert _referenced_harness_globals(injected) - reserved_without_reflect == {"Reflect"}
+
+
+@pytest.mark.parametrize("host_global", sorted(_WORKFLOW_HOST_GLOBAL_CANDIDATES))
+def test_workflow_host_global_oracle_detects_each_removed_production_reservation(
+    host_global: str,
+) -> None:
+    script = _emit_units([_verify_unit("ordinary_unit", verify={"n": 2, "pass_rule": "majority"})])
+    reservations_without_one = ES._WORKFLOW_RESERVED_IDENTIFIERS - {host_global}
+
+    assert host_global in _referenced_harness_globals(script) - reservations_without_one
+
+
+@pytest.mark.parametrize("unit_id", sorted(ES._WORKFLOW_ITERATE_LOCAL_IDENTIFIERS))
+def test_workflow_iterate_unit_id_rejects_local_shadowing(unit_id: str) -> None:
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(
+            unit_id=unit_id,
+            verify={"n": 7, "pass_rule": "majority", "iterate_to_consensus": True},
+        )
+    )
+
+    with pytest.raises(ES.SpecError, match="reserved JavaScript loop identifier"):
+        ES.emit_workflow_script(spec)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_workflow_iterate_ordinary_identifier_executes_with_runtime_stubs() -> None:
+    script = _emit_units(
+        [
+            _verify_unit(
+                "ordinary_unit",
+                verify={"n": 2, "pass_rule": "majority", "iterate_to_consensus": True},
+            )
+        ]
+    )
+    prelude = """
+const log = () => {};
+const parallel = async (thunks) => Promise.all(thunks.map((thunk) => thunk()));
+const agent = async (_prompt, opts) => opts && opts.agentType
+  ? {refuted: [], upheld: [], verifier_identity: "stub", fallback_depth: 0,
+     examined_sha: "deadbeef"}
+  : {result: "ok"};
+"""
+    proc = subprocess.run(
+        [shutil.which("node") or "node", "--input-type=module"],
+        input=prelude + script + "\nconsole.log(JSON.stringify(ordinary_unit));\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip()) == {"result": "ok"}
+
+
+def test_workflow_rejects_unit_id_colliding_with_generated_panel_symbol() -> None:
+    payload = _spec_dict(verify={"n": 7, "pass_rule": "majority"})
+    units = payload["units"]
+    assert isinstance(units, list)
+    first = units[0]
+    assert isinstance(first, dict)
+    second = dict(first)
+    second.update({"unit_id": "U1_verdicts_chunk_2", "verify": None})
+    spec = ES.ExecutionSpec.from_dict(
+        {
+            "name": "symbol-collision",
+            "description": "d",
+            "units": [first, second],
+        }
+    )
+
+    with pytest.raises(ES.SpecError, match="reserved JavaScript identifier"):
+        ES.emit_workflow_script(spec, environment={})
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_workflow_comment_fields_are_inert_and_emitted_javascript_parses() -> None:
+    payload = _spec_dict(
+        label="label\r\nglobalThis.__injected = true",
+        escalation="${globalThis.__injected = true}`\u2028next",
+    )
+    payload["name"] = "demo\nglobalThis.__injected = true"
+    spec = ES.ExecutionSpec.from_dict(payload)
+
+    script = ES.emit_workflow_script(spec)
+
+    assert "\nglobalThis.__injected = true" not in script
+    assert r"\${globalThis.__injected = true}\`\u2028next" in script
+    proc = subprocess.run(
+        [shutil.which("node") or "node", "--check", "--input-type=module"],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 def test_existing_style_unit_has_no_external_engine_marker() -> None:
@@ -417,7 +1053,7 @@ def _emit_units(units: list[dict[str, object]]) -> str:
         {"name": "verify-demo", "description": "d", "repo": "/tmp/r", "units": units}
     )
     spec.validate()
-    return str(ES.emit_workflow_script(spec))
+    return str(ES.emit_workflow_script(spec, **_routing_snapshots()))
 
 
 def _verify_unit(uid: str, **kw: object) -> dict[str, object]:
@@ -624,6 +1260,8 @@ def test_schema_valid_verdict_is_counted_as_reporter_in_emitted_aggregation() ->
             + ", "
             + json.dumps(refuting)
             + ', "All findings upheld; examined SHA deadbeef.", null, {refuted: []}]',
+            # The historical `<var>_verdicts` aggregate remains authoritative after bounded
+            # chunks append their ordered results.
             predicate_line,
             reported_line,
             "const a_refute_count = a_reported.filter((v) => v.refuted.length > 0).length",
@@ -693,7 +1331,9 @@ def test_unit_agent_call_emits_return_schema() -> None:
 def test_external_engine_unit_emits_return_schema() -> None:
     script = _emit_units([_verify_unit("ext", capability="code-generation")])
     assert 'dispatch: "external-engine"' in script
-    assert 'capability: "code-generation"' in script
+    assert 'capability: "code-generation"' not in script
+    assert "capability=code-generation resolved_engine=" in script
+    assert 'engine: "codex/gpt-5.6-sol-xhigh"' in script
     assert _return_schema_fragment() in script
 
 
@@ -748,7 +1388,7 @@ def test_every_emitted_agent_schema_has_toplevel_type() -> None:
             _verify_unit("ext", capability="code-generation"),
             _verify_unit("panel", verify={"n": 2, "pass_rule": "majority"}),
             _verify_unit(
-                "iter",
+                "iter_unit",
                 verify={"n": 2, "pass_rule": "majority", "iterate_to_consensus": True},
             ),
         ]
@@ -1059,7 +1699,7 @@ def _emit_units_unattended(units: list[dict[str, object]]) -> str:
         {"name": "verify-demo", "description": "d", "repo": "/tmp/r", "units": units}
     )
     spec.validate()
-    return str(ES.emit_workflow_script(spec, unattended=True))
+    return str(ES.emit_workflow_script(spec, unattended=True, **_routing_snapshots()))
 
 
 def test_escalate_on_signal_one_rung_reemit() -> None:  # R2
@@ -1076,6 +1716,33 @@ def test_escalate_on_signal_unattended_retry_emits_return_schema() -> None:
     script = _emit_units_unattended([_escalate_unit()])
     assert "climbing ONE rung to sonnet/high" in script
     assert script.count(_return_schema_fragment()) == 2
+
+
+def test_unattended_model_climb_renders_retry_prompt_for_climbed_tier() -> None:
+    script = _emit_units_unattended(
+        [
+            _escalate_unit(
+                tier={"model": "haiku", "effort": "high"},
+                returns=["result"],
+                capability="code-generation",
+            )
+        ]
+    )
+
+    assert "climbing ONE rung to sonnet/high" in script
+    initial_start = script.index("let U1 = await agent(")
+    initial_call = script[initial_start : script.index("  )", initial_start)]
+    retry_start = script.index("  U1 = await agent(", script.index("climbing ONE rung"))
+    retry_call = script[retry_start : script.index("  )", retry_start)]
+    assert ES.BUDGET_RIDER in initial_call
+    assert "PULL-CORD (#364" in initial_call
+    assert ES.BUDGET_RIDER not in retry_call
+    assert "PULL-CORD (#364" not in retry_call
+    assert "RETURN CONTRACT (all tiers)" in retry_call
+    assert script.count(_return_schema_fragment()) == 1
+    assert script.count(_return_schema_fragment(cheap=True)) == 1
+    assert 'engine: "codex/gpt-5.6-sol-xhigh"' in initial_call
+    assert 'engine: "codex/gpt-5.6-sol-xhigh"' in retry_call
 
 
 def test_escalate_on_signal_top_of_ladder_halts() -> None:  # R3

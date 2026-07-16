@@ -307,6 +307,25 @@ def test_missing_or_non_integer_cost_speed_rank_errors(tmp_path: Path, value: ob
         M.Registry.load(_write_registry(tmp_path, data))
 
 
+def test_optional_max_concurrent_round_trips_on_engine_entry(tmp_path: Path) -> None:
+    data = _valid_registry_dict()
+    data["engines"][0]["max_concurrent"] = 2
+
+    registry = M.Registry.load(_write_registry(tmp_path, data))
+
+    assert registry.by_key("codex/gpt-5.5-xhigh").max_concurrent == 2
+    assert registry.by_key("agy/gemini-3.1-pro-high").max_concurrent is None
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, 1.5, "2"])
+def test_invalid_max_concurrent_errors(tmp_path: Path, value: object) -> None:
+    data = _valid_registry_dict()
+    data["engines"][0]["max_concurrent"] = value
+
+    with pytest.raises(M.RegistryError, match="max_concurrent must be a positive integer"):
+        M.Registry.load(_write_registry(tmp_path, data))
+
+
 def test_role_member_referencing_non_existent_variant_errors(tmp_path: Path) -> None:
     data = _valid_registry_dict()
     data["roles"]["cross-family-review-panel"]["members"] = ["codex/missing-variant"]

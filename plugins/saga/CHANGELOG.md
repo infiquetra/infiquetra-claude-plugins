@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.97.0] - 2026-07-15
+
+### Added - one bounded concurrency policy for Saga workflow fan-out (#350)
+
+- Added the optional, closed `ExecutionSpec.concurrency` policy with fleet defaults of three normal,
+  four explicit-read-only, and seven aggregate agents. Resolution now composes environment, shared
+  fleet tier weights, exact external-engine lane limits, and an explicit run override without
+  silently clamping invalid inputs.
+- Dependency layers and refute-N panels now share stable ordered chunking. Panel verdicts retain
+  their original order through concatenation, dependency barriers remain sequential, and emission
+  fails when the conservative worker-width times verifier-width product exceeds the aggregate
+  ceiling.
+- External-engine registry variants may declare an optional positive `max_concurrent` lane limit.
+  Exact-engine and capability selectors resolve to the selected registry lane before admission, so
+  both forms share that lane's cap while ordinary units keep their own limit. The new source-aware
+  concurrency inventory fails CI for unbounded executable fan-out sites or stale inventory rows
+  while ignoring documentation-only examples.
+- Workflow emission now rejects unsafe, reserved, generated-symbol-colliding, or runtime-global-
+  shadowing unit identifiers, including iterate-to-consensus loop locals, and renders free-form
+  comment text inert before producing executable JavaScript. The runtime-global boundary is
+  reserved independently of current harness syntax. Conformance tests normalize whitespace and
+  statically resolve constant f-string, concatenation, binding, and `.format()` fan-out emitters;
+  unresolved formatted callee slots fail closed. Static raw delimiter assignments outside the sole
+  framing helper also fail closed, so a local binding cannot hide an emitter from sink inspection.
+  JavaScript block and line comments cannot hide a fan-out call, and AST checks prove governor-result
+  dataflow through both chunk loops to emission. The runtime-global test oracle is independent of
+  production and cross-checks Node `globalThis`.
+- Unattended tier-climb retries now render the prompt contract for the climbed tier while retaining
+  the unit's frozen exact engine route. A cheap-to-non-cheap retry therefore drops the budget and
+  pull-cord riders and emits the non-cheap return schema expected by its gate.
+- **Compatibility:** capability-routed `recompile_for_tier(..., "cc-workflows-ultracode")` now
+  requires the authoritative `repo_root=` used for overlay and calibration loading. Exact-engine
+  workflow recompilation and non-workflow tiers retain the existing two-argument call.
+- **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
+  unchanged; bounded admission affects emitted workflow fan-out only.
+
 ## [0.96.0] - 2026-07-14
 
 ### Added - envelope-authorized merge: the `AUTONOMOUS_UNDER_ENVELOPE` write class (#449)

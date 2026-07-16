@@ -139,8 +139,10 @@ def test_engine_unit_validates_and_emits_external_engine_marker() -> None:
 
 def test_workflow_settlement_metadata_contains_each_unit_once() -> None:
     data = _spec_dict()
+    initial_units = data["units"]
+    assert isinstance(initial_units, list)
     data["units"] = [
-        data["units"][0],
+        initial_units[0],
         {
             "unit_id": "U2",
             "label": "validate",

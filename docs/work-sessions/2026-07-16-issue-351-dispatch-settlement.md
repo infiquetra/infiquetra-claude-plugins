@@ -18,7 +18,8 @@ from trusted evidence, derives casualty and dead-letter views, and never grants 
 
 Implementation, release surfaces, the corrected Verified Workflow review/validator panel,
 `/code-review`, all review repairs, and the final integration gate are complete in the issue
-worktree. Commit, PR, merge, board reconciliation, QA evidence, and outcome harvest remain.
+worktree. The repair is committed and current `origin/main` is merged. PR publication, merge, board
+reconciliation, QA evidence, and outcome harvest remain.
 
 ## Completed
 
@@ -87,15 +88,19 @@ worktree. Commit, PR, merge, board reconciliation, QA evidence, and outcome harv
 - Final repair gates: 516 focused tests passed; full repository gate passed 4,536 tests with 1 skip;
   repository-wide Ruff check/format, mypy, release parity, marketplace sync, release diff guard, and
   scoped medium/high Bandit gate all passed.
+- Repair commit `e03fa1d` and merge commit `935ac1d` preserve current `origin/main` as the second
+  parent. Post-merge release parity, marketplace sync, and release diff guards pass; the post-merge
+  full repository gate passes 4,542 tests with 1 skip.
 
 ## Next Steps
 
-1. Commit the verified review repair and publish the issue PR.
+1. Authenticate `gh` for `github.com`, then push the branch and publish the issue PR.
 2. Prove CI, merge, close issue #351, reconcile Operations, capture QA/closure evidence, and harvest
    outcome node `sub-351`.
 
 ## Blockers and Residual Risk
 
-No implementation or review blocker is known. Workflow agents cannot write the ledger, so
-driver-materialized host/result evidence remains the explicit trust boundary and fails closed when
-missing or contradictory.
+No implementation or review blocker is known. Publication is blocked because this shell's required
+GitHub CLI session is not authenticated (`gh auth status` reports no logged-in host). Workflow agents
+cannot write the ledger, so driver-materialized host/result evidence remains the explicit trust
+boundary and fails closed when missing or contradictory.

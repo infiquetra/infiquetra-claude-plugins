@@ -16,9 +16,9 @@ from trusted evidence, derives casualty and dead-letter views, and never grants 
 
 ## Current Phase
 
-Implementation, release surfaces, the corrected Verified Workflow review/validator panel, and the
-full integration gate are complete in the issue worktree. `/code-review`, PR, merge, board
-reconciliation, QA evidence, and outcome harvest remain.
+Implementation, release surfaces, the corrected Verified Workflow review/validator panel,
+`/code-review`, all review repairs, and the final integration gate are complete in the issue
+worktree. Commit, PR, merge, board reconciliation, QA evidence, and outcome harvest remain.
 
 ## Completed
 
@@ -74,15 +74,28 @@ reconciliation, QA evidence, and outcome harvest remain.
   `4eb13e5e15735d1ade8b9d3e4715cfcbbc666cd31d2133a7c80ea4ae4ca9a57c`, marketplace sync
   `c2a39a1f311285b8d0b53d138052a2cfc188215fd4d6bf6e3f6ed714b25b2786`, and release diff
   `cc5ae8f353da4c76bc8672d5cc61b93c0456a30abd0befff0348b5bda40115d9`.
+- `/code-review` recorded 14 findings: eight P1 correctness/trust/adapter gaps and six P2
+  durability, compatibility, race, crash, operator-view, and documentation gaps. The repair added
+  evidence-derived closed receipts, per-attempt casualty cohorts, negative-terminal settlement,
+  backend replay identity, invocation-bound workflow identities, installed Saga resolution, a real
+  team result adapter, executable workflow commands, durable fsync ordering, safe legacy-name
+  mapping, concurrency/crash regressions, text views, and corrected producer documentation.
+- A bounded Sol/high `review_high` pass verified 13 findings resolved and isolated one remaining P1:
+  the generic artifact still copied a caller-authored output list. Saga now accepts only closed
+  reviewer-result and validator-state artifact kinds, validates their payload contracts, and derives
+  deliverables internally. The same reviewer rechecked that finding and marked it resolved.
+- Final repair gates: 516 focused tests passed; full repository gate passed 4,536 tests with 1 skip;
+  repository-wide Ruff check/format, mypy, release parity, marketplace sync, release diff guard, and
+  scoped medium/high Bandit gate all passed.
 
 ## Next Steps
 
-1. Write and close `/code-review`, then commit and publish the issue PR.
+1. Commit the verified review repair and publish the issue PR.
 2. Prove CI, merge, close issue #351, reconcile Operations, capture QA/closure evidence, and harvest
    outcome node `sub-351`.
 
 ## Blockers and Residual Risk
 
-No implementation blocker is known. Workflow agents cannot write the ledger, so driver materialized
-host/result evidence remains the explicit trust boundary and fails closed when missing or
-contradictory.
+No implementation or review blocker is known. Workflow agents cannot write the ledger, so
+driver-materialized host/result evidence remains the explicit trust boundary and fails closed when
+missing or contradictory.

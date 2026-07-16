@@ -104,6 +104,11 @@ class DispatchRequest:
     # moment of dispatch (1 = the never-renegotiated run-start baseline). The leaf finishes under
     # THIS posture even if a later repost amends the campaign (R5 dispatch-time overlap).
     intent_revision: int = 1
+    # Dispatch-settlement identity. Empty identifiers preserve the pre-#351 dispatcher contract;
+    # settlement-backed production dispatches supply durable values for crash replay deduplication.
+    dispatch_id: str = ""
+    attempt: int = 1
+    idempotency_key: str = ""
 
 
 def _default_dispatcher(req: DispatchRequest) -> str:
@@ -1452,6 +1457,12 @@ def _reconcile_once(
                     # #433 R4/R5: the posture era this leaf runs under — captured at dispatch,
                     # never re-evaluated when a later repost amends the campaign.
                     intent_revision=active_intent_revision,
+                    # Preserve the durable pre-call spawn identity at the real runtime boundary.
+                    dispatch_id=settlement_dispatch_id,
+                    attempt=settlement_attempt if settlement_attempt is not None else 1,
+                    idempotency_key=(
+                        settlement_unit.idempotency_key if settlement_unit is not None else ""
+                    ),
                 )
             )
         except outcome_dispatcher.BackendRateLimitError as rate_limit:
@@ -1745,18 +1756,21 @@ def production_harvester(
             repo_root=repo_root,
         )
         if settlement_ledger is not None:
-            completed = outcome_store.completed_subplots(store)
             commits = _dispatch_commit_records(store)
             bindings = dispatch_settlement.outcome_dispatch_bindings(
-                settlement_ledger, spec.outcome_id, completed
+                settlement_ledger, spec.outcome_id, (node.subplot_id for node in spec.nodes)
             )
-            # Reconcile every durable canonical completion on every tick. This closes the
-            # completion-written/settlement-write crash gap even when harvest returns no new IDs.
-            for sid in sorted(completed):
+            # Reconcile every durable terminal completion on every tick. This closes the
+            # completion-written/settlement-write crash gap even when harvest returns no new IDs,
+            # including failed/rejected/stalled terminals absent from the success frontier.
+            for sid in sorted(bindings):
                 binding = bindings.get(sid)
                 if binding is None:
                     continue
-                node = spec.node_by_id(sid)
+                events = outcome_store.read_completion_events(store, sid)
+                if not events:
+                    continue
+                completion = events[-1]
                 dispatch_id, _unit = binding
                 commit_binding = commits.get(sid, {}).get("settlement")
                 attempt: int | None = None
@@ -1773,11 +1787,8 @@ def production_harvester(
                     )
                 if attempt is None:
                     continue
-                evidence = {
-                    "subplot_id": sid,
-                    "github": dict(node.github) if node is not None else {},
-                    "completion": "canonical",
-                }
+                evidence = completion.to_dict()
+                is_success = completion.is_success
                 dispatch_settlement.settle_attempt(
                     settlement_ledger,
                     subplot_id=sid,
@@ -1785,10 +1796,23 @@ def production_harvester(
                     dispatch_id=dispatch_id,
                     unit_id=sid,
                     attempt=attempt,
-                    classification=dispatch_settlement.DELIVERED,
-                    reason="outcome parent harvested canonical completion evidence",
-                    evidence_ref="github-completion",
-                    evidence_sha256=dispatch_settlement.evidence_digest(evidence),
+                    classification=(
+                        dispatch_settlement.DELIVERED
+                        if is_success
+                        else dispatch_settlement.SILENT_NOOP
+                    ),
+                    reason=(
+                        "outcome parent harvested durable successful completion evidence"
+                        if is_success
+                        else f"outcome terminal completion fail-closed: {completion.state}"
+                    ),
+                    # A silent-no-op is intentionally evidence-free in the closed settlement schema:
+                    # the durable negative event establishes fail-closed classification, while only a
+                    # successful delivery may carry digest-bound delivery evidence.
+                    evidence_ref=(f"outcome-completion:{completion.state}" if is_success else ""),
+                    evidence_sha256=(
+                        dispatch_settlement.evidence_digest(evidence) if is_success else ""
+                    ),
                 )
         return harvested
 

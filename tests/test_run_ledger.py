@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -133,6 +133,32 @@ def test_second_append_chains_onto_the_first(tmp_path: Path) -> None:
     second = RL.append_fact(ledger, _spend("s2", tokens=20, cached=0, fresh=20))
     assert first["prev_hash"] == ""  # genesis
     assert second["prev_hash"] == first["this_hash"]  # chained
+    assert RL.verify_chain(ledger).ok
+
+
+def test_append_fsyncs_after_writing_before_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = RL.RunLedger(tmp_path / "new-parent" / "run-facts.jsonl")
+    events: list[str] = []
+    original_write = RL.os.write
+    original_fsync = RL.os.fsync
+
+    def tracked_write(fd: int, payload: Any) -> int:
+        events.append("write")
+        return cast(int, original_write(fd, payload))
+
+    def tracked_fsync(fd: int) -> None:
+        events.append("fsync")
+        original_fsync(fd)
+
+    monkeypatch.setattr(RL.os, "write", tracked_write)
+    monkeypatch.setattr(RL.os, "fsync", tracked_fsync)
+
+    RL.append_fact(ledger, _spend("s1", tokens=10, cached=0, fresh=10))
+
+    last_write = max(index for index, event in enumerate(events) if event == "write")
+    assert "fsync" in events[last_write + 1 :]
     assert RL.verify_chain(ledger).ok
 
 

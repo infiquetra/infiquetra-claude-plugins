@@ -69,8 +69,8 @@ or validate and do not mutate the repository.
   `rate-killed` only for a trusted host/dispatcher `rate_limited` receipt;
   `idle` only for trusted runtime liveness evidence showing a launched but nonterminal idle worker at
   the deadline; `silent-no-op` when spawn is recorded but no recognized delivery or runtime evidence
-  exists by the deadline; and `leaked-worktree` in the worktree adapter when an owned live worktree has
-  no matching active or terminal attempt. Agent prose claiming success never changes classification.
+  exists by the deadline; and `leaked-worktree` as the KTD7 read-only projection when a registry-owned
+  worktree path is absent on disk. Agent prose claiming success never changes classification.
 - **R5. Casualty report and halt.** Produce a deterministic report containing every expected unit,
   classification, attempt, evidence reference, casualty rate, threshold, and `halt_required`. Unknown,
   corrupt, or contradictory evidence halts as an evidence error; it is never guessed into a passing

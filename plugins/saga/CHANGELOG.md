@@ -20,8 +20,16 @@
   live gate without erasing the earlier casualty history.
 - Added `dispatch_settlement.py` operations for manifests, spawns, settlements, late delivery,
   reports, dead-letter inspection, retry claims, and leak reconciliation. The public `settle` verb
-  accepts only structured `--evidence-json` and derives classification. This release does not
-  change fan-out concurrency limits or introduce a background reaper.
+  accepts only a descriptor for a persisted, schema-validated receipt, computes its digest from the
+  actual bytes, and derives classification. Team artifacts expose only closed reviewer-result and
+  validator-state payloads; Saga validates them and derives their deliverables instead of trusting a
+  caller-authored output list. Exact manifest replay is idempotent; terminal views also have
+  deterministic text output. This release does not change fan-out concurrency limits or introduce a
+  background reaper.
+- Retry thresholds use each attempt's own cohort, negative outcome terminals become retry-eligible,
+  runtime requests carry their stable dispatch identity, and pre-submit spawn appends are synced to
+  storage before the host call. Workflow drivers bind metadata to one persisted invocation identity
+  and safely map legacy result names into the settlement vocabulary.
 - **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
   unchanged; settlement records the committed outcome dispatch without redefining operator posture.
 

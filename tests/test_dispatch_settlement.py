@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -31,6 +32,7 @@ def _load(name: str) -> ModuleType:
 
 DS = _load("dispatch_settlement")
 RL = sys.modules["run_ledger"]
+PM = _load("provenance_manifest")
 AT = "2026-07-16T00:00:00Z"
 DIGEST = "a" * 64
 
@@ -108,6 +110,56 @@ def _settle(
             **kwargs,
         ),
     )
+
+
+def _descriptor(
+    path: Path, *, unit_id: str = "unit-0", receipt_type: str = "artifact"
+) -> dict[str, str]:
+    return {
+        "receipt_type": receipt_type,
+        "unit_id": unit_id,
+        "evidence_path": path.name,
+    }
+
+
+def _reviewer_artifact(
+    path: Path, *, unit_id: str = "unit-0", payload: dict[str, Any] | None = None
+) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "schema": DS.ARTIFACT_RECEIPT_SCHEMA,
+                "kind": "reviewer-result",
+                "unit_id": unit_id,
+                "payload": payload
+                or {
+                    "reviewer": unit_id,
+                    "score": 9.5,
+                    "dimension_scores": {"correctness": 9.5},
+                    "findings": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _worker_manifest(path: Path, *, produced: list[str], missing: list[str] | None = None) -> Path:
+    manifest = PM.Manifest(
+        execution_id="unit-0",
+        saga_ref="issue-351",
+        attribution=PM.Attribution(PM.ProducerKind.TEAM_EXECUTION, "unit-0"),
+        disposition=PM.Disposition.RAN_AS_REQUESTED,
+        created_at=AT,
+        output_completeness=PM.OutputCompleteness(
+            declared_keys=("result-0",),
+            produced_keys=tuple(produced),
+            missing_keys=tuple(missing or []),
+        ),
+    )
+    path.write_text(json.dumps(manifest.to_dict()), encoding="utf-8")
+    return path
 
 
 def test_manifest_is_first_and_file_mode_is_private(tmp_path: Path) -> None:
@@ -378,6 +430,28 @@ def test_late_delivery_requires_non_delivered_settle_and_is_write_once(tmp_path:
         DS.append_late_delivery(ledger, fact)
 
 
+def test_late_delivery_requires_complete_persisted_evidence(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    _settle(ledger, 0, DS.SILENT_NOOP)
+    artifact = _worker_manifest(tmp_path / "late.json", produced=["result-0"])
+
+    result = DS.append_late_delivery_from_evidence(
+        ledger,
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        unit_id="unit-0",
+        attempt=1,
+        evidence=_descriptor(artifact, receipt_type="worker-manifest"),
+        evidence_root=tmp_path,
+    )
+
+    assert result["event"] == DS.EVENT_LATE_DELIVERY
+    assert DS.dead_letters(ledger, "dispatch-1") == []
+
+
 def test_casualty_report_names_both(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     _manifest(ledger, count=5, threshold=50)
@@ -412,6 +486,28 @@ def test_casualty_rate_halts_only_when_strictly_above_threshold(tmp_path: Path) 
     assert DS.settlement_report(above, "dispatch-1").halt_required
 
 
+def test_retry_casualty_uses_retry_cohort_denominator(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=10, threshold=10)
+    for unit in range(10):
+        _spawn(ledger, unit)
+        _settle(ledger, unit, DS.SILENT_NOOP if unit == 0 else DS.DELIVERED)
+    assert not DS.settlement_report(ledger, "dispatch-1").halt_required
+
+    DS.claim_retry(
+        ledger,
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        unit_id="unit-0",
+    )
+    _settle(ledger, 0, DS.SILENT_NOOP, attempt=2)
+
+    report = DS.settlement_report(ledger, "dispatch-1")
+    assert report.cohorts[1].casualty_rate_percent == 100.0
+    assert report.halt_required
+
+
 def test_incomplete_cohort_never_claims_threshold_verdict(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     _manifest(ledger, count=2, threshold=0)
@@ -443,66 +539,85 @@ def test_settlement_ignores_self_report(tmp_path: Path) -> None:
 
 
 def test_complete_trusted_manifest_is_delivery_evidence(tmp_path: Path) -> None:
-    evidence = {
-        "receipt_type": "worker-manifest",
-        "trusted": True,
-        "unit_id": "unit-0",
-        "outputs": ["result-0"],
-        "evidence_ref": "manifest-0",
-        "evidence_sha256": DIGEST,
-    }
-    result = DS.classify_evidence(["result-0"], evidence, expected_unit_id="unit-0")
+    path = _worker_manifest(tmp_path / "manifest.json", produced=["result-0"])
+    evidence = _descriptor(path, receipt_type="worker-manifest")
+    result = DS.classify_evidence(
+        ["result-0"], evidence, expected_unit_id="unit-0", evidence_root=tmp_path
+    )
     assert result.classification == DS.DELIVERED
-    assert result.evidence_ref == "manifest-0"
+    assert result.evidence_ref.startswith("worker-manifest:sha256:")
+    assert result.evidence_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_incomplete_manifest_is_not_delivered(tmp_path: Path) -> None:
-    evidence = {
-        "receipt_type": "worker-manifest",
-        "trusted": True,
-        "unit_id": "unit-0",
-        "outputs": [],
-        "evidence_ref": "manifest-0",
-        "evidence_sha256": DIGEST,
-    }
-    result = DS.classify_evidence(["result-0"], evidence, expected_unit_id="unit-0")
+    path = _worker_manifest(tmp_path / "manifest.json", produced=[], missing=["result-0"])
+    result = DS.classify_evidence(
+        ["result-0"],
+        _descriptor(path, receipt_type="worker-manifest"),
+        expected_unit_id="unit-0",
+        evidence_root=tmp_path,
+    )
     assert result.classification == DS.SILENT_NOOP
     assert "missing required outputs" in result.reason
 
 
 def test_unknown_or_untrusted_evidence_halts(tmp_path: Path) -> None:
-    with pytest.raises(DS.DispatchSettlementError, match="unknown evidence"):
-        DS.classify_evidence(["result"], {"receipt_type": "agent-prose", "trusted": True})
-    with pytest.raises(DS.DispatchSettlementError, match="host-trusted"):
+    with pytest.raises(DS.DispatchSettlementError, match="exactly"):
         DS.classify_evidence(
             ["result"],
             {
                 "receipt_type": "artifact",
-                "trusted": False,
+                "trusted": True,
                 "unit_id": "unit-0",
                 "outputs": ["result"],
-                "evidence_ref": "result",
+                "evidence_ref": "fake",
                 "evidence_sha256": DIGEST,
             },
         )
+    with pytest.raises(DS.DispatchSettlementError, match="under evidence_root"):
+        DS.classify_evidence(
+            ["result"],
+            _descriptor(tmp_path / "missing.json"),
+            evidence_root=tmp_path,
+        )
 
 
-def test_evidence_schema_rejects_wrong_unit_and_extra_fields() -> None:
-    evidence = {
-        "receipt_type": "worker-manifest",
-        "trusted": True,
-        "unit_id": "other-unit",
-        "outputs": ["result-0"],
-        "evidence_ref": "manifest-0",
-        "evidence_sha256": DIGEST,
-    }
+def test_artifact_derives_review_output_only_from_validated_payload(tmp_path: Path) -> None:
+    path = _reviewer_artifact(tmp_path / "reviewer.json")
+    result = DS.classify_evidence(
+        ["scored-review"],
+        _descriptor(path),
+        expected_unit_id="unit-0",
+        evidence_root=tmp_path,
+    )
+    assert result.classification == DS.DELIVERED
+
+    forged = _reviewer_artifact(
+        tmp_path / "forged.json",
+        payload={"prose": "Everything passed.", "outputs": ["scored-review"]},
+    )
+    with pytest.raises(DS.DispatchSettlementError, match="reviewer artifact identity"):
+        DS.classify_evidence(
+            ["scored-review"],
+            _descriptor(forged),
+            expected_unit_id="unit-0",
+            evidence_root=tmp_path,
+        )
+
+
+def test_evidence_schema_rejects_wrong_unit_and_extra_fields(tmp_path: Path) -> None:
+    path = _worker_manifest(tmp_path / "artifact.json", produced=["result-0"])
+    evidence = _descriptor(path, unit_id="other-unit", receipt_type="worker-manifest")
     with pytest.raises(DS.DispatchSettlementError, match="does not match"):
-        DS.classify_evidence(["result-0"], evidence, expected_unit_id="unit-0")
+        DS.classify_evidence(
+            ["result-0"], evidence, expected_unit_id="unit-0", evidence_root=tmp_path
+        )
     with pytest.raises(DS.DispatchSettlementError, match="exactly"):
         DS.classify_evidence(
             ["result-0"],
             {**evidence, "unit_id": "unit-0", "classification": DS.DELIVERED},
             expected_unit_id="unit-0",
+            evidence_root=tmp_path,
         )
 
 
@@ -559,6 +674,43 @@ def test_dlq_redispatch_is_idempotent(tmp_path: Path) -> None:
             dispatch_id="dispatch-1",
             unit_id="unit-0",
         )
+
+
+def test_concurrent_retry_claim_has_one_winner_and_valid_chain(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    _settle(ledger, 0, DS.RATE_KILLED)
+    barrier = threading.Barrier(2)
+
+    def claim() -> str:
+        barrier.wait(timeout=10)
+        try:
+            result = DS.claim_retry(
+                ledger,
+                subplot_id="sub-351",
+                at=AT,
+                dispatch_id="dispatch-1",
+                unit_id="unit-0",
+            )
+        except DS.DispatchSettlementError as exc:
+            return str(exc)
+        assert result["idempotency_key"] == "stable-0"
+        return "written"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [future.result() for future in (pool.submit(claim), pool.submit(claim))]
+
+    assert results.count("written") == 1
+    assert len([result for result in results if result != "written"]) == 1
+    spawns = [
+        record
+        for record in RL.read_facts(ledger)
+        if record.get("event") == DS.EVENT_SPAWN and record.get("attempt") == 2
+    ]
+    assert len(spawns) == 1
+    assert spawns[0]["idempotency_key"] == "stable-0"
+    assert RL.verify_chain(ledger).ok
 
 
 def test_late_delivery_before_retry_removes_dlq_entry(tmp_path: Path) -> None:
@@ -845,3 +997,48 @@ def test_cli_manifest_spawn_settle_report_round_trip(tmp_path: Path, capsys: Any
     assert DS.main([*common, "report", "--dispatch-id", "cli-dispatch"]) == 0
     output = capsys.readouterr().out
     assert '"classification": "silent-no-op"' in output
+
+
+def test_cli_manifest_exact_replay_is_idempotent(tmp_path: Path, capsys: Any) -> None:
+    ledger_path = tmp_path / "facts.jsonl"
+    command = [
+        "--ledger-path",
+        str(ledger_path),
+        "--subplot-id",
+        "sub-351",
+        "manifest",
+        "--dispatch-id",
+        "cli-dispatch",
+        "--site",
+        "workflow",
+        "--units-json",
+        json.dumps([_units(1)[0].to_dict()]),
+        "--at",
+        AT,
+    ]
+
+    assert DS.main(command) == 0
+    assert DS.main(command) == 0
+
+    records = RL.read_facts(RL.RunLedger(ledger_path))
+    assert len([record for record in records if record.get("event") == DS.EVENT_MANIFEST]) == 1
+    capsys.readouterr()
+
+
+def test_cli_read_views_have_deterministic_text_format(tmp_path: Path, capsys: Any) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    _settle(ledger, 0, DS.SILENT_NOOP)
+    common = ["--ledger-path", str(ledger.path), "--subplot-id", "sub-351"]
+
+    assert DS.main([*common, "report", "--dispatch-id", "dispatch-1", "--format", "text"]) == 0
+    report = capsys.readouterr().out
+    assert "dispatch dispatch-1 site=outcome halt_required=true" in report
+    assert "unit-0 attempt=1 classification=silent-no-op" in report
+
+    assert DS.main([*common, "dlq", "--dispatch-id", "dispatch-1", "--format", "text"]) == 0
+    assert "dispatch-1/unit-0 attempt=1->2" in capsys.readouterr().out
+
+    assert DS.main([*common, "reconcile", "--leaks", "--format", "text"]) == 0
+    assert capsys.readouterr().out == "open_positions=0\n"

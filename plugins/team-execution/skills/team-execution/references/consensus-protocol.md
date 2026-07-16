@@ -29,11 +29,13 @@ For iteration 1..3:
         - Intended outcome (what success looks like)
         - Path to review-criteria.md for scoring rubrics
 
-        Before any Agent call, the Team Lead writes one canonical dispatch-settlement manifest for
-        the complete reviewer roster. It appends each reviewer's spawn attempt immediately before
-        that reviewer's Agent call, using the stable reviewer idempotency key. The manifest and
-        attempts are `run_fact.v1` facts written through
-        `plugins/saga/scripts/dispatch_settlement.py`; no mutable queue or second ledger is allowed.
+        Before any Agent call, the Team Lead runs the packaged `dispatch_settlement_adapter.py
+        preflight`; it resolves independently installed Saga and fails loud before the first Agent
+        call if unavailable. The adapter writes one canonical dispatch-settlement manifest for the
+        complete reviewer roster and appends each reviewer's spawn attempt immediately before that
+        reviewer's Agent call, using the stable reviewer idempotency key. The manifest and attempts
+        are `run_fact.v1` facts written through Saga's resolved canonical CLI; no mutable queue or
+        second ledger is allowed.
 
   B3b. Each reviewer:
         - Scores each APPLICABLE dimension (0-10) per its own prompt; for a reviewer whose
@@ -54,10 +56,13 @@ For iteration 1..3:
         External Advisory Seat: report-only — PARTICIPATED/HALTED/ABSENT (excluded from gate)
         Claude-vs-external convergence: converged / Claude-only / external-only / conflicting
 
-        Settle every attempted reviewer from its structured score/evidence and valid worker-exit
-        manifest. Missing/empty output, success prose, or an artifact pointer without the expected
-        contract is `silent-no-op`. Run the casualty report before B3d; `halt_required=true` blocks
-        consensus, and retry-eligible units are claimed from the derived DLQ at the next cycle.
+        Settle every attempted reviewer with `dispatch_settlement_adapter.py settle --kind reviewer`
+        from a persisted structured score result. The adapter validates reviewer identity, score,
+        non-empty dimension scores, and findings, materializes `dispatch.artifact.v1`, and submits an
+        actual-file evidence descriptor to Saga. Missing/empty output, success prose, or an artifact pointer
+        without that expected contract is `silent-no-op`. Run the casualty report before B3d;
+        `halt_required=true` blocks consensus, and retry-eligible units are claimed from the derived
+        DLQ at the next cycle.
 
   B3d. If ALL gated Claude reviewer scores >= 9.0 → consensus reached → proceed to Step B4
 

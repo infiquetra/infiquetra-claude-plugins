@@ -15,9 +15,11 @@ All notable changes to this plugin are documented here.
   casualty positions halt progression before downstream validators or completion; retries use a new
   attempt without erasing the prior record.
 - The worker-manifest and validator-evidence contracts now name the canonical settlement CLI and
-  preserve the boundary that agents cannot write the parent ledger themselves. The public settle
-  path accepts structured evidence and derives classification rather than trusting a caller-selected
-  terminal value.
+  preserve the boundary that agents cannot write the parent ledger themselves. A packaged
+  coordinator adapter resolves the independently installed Saga plugin before any Agent call,
+  validates real reviewer/validator artifacts, materializes a closed kind-tagged receipt with no
+  caller-selected outputs, and invokes the canonical engine. Missing or incomplete evidence settles
+  fail-closed; corrupt or contradictory evidence halts instead of being guessed into a result.
 
 ## [2.16.0] - 2026-07-14
 

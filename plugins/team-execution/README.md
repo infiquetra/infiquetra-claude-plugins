@@ -163,6 +163,8 @@ team-execution/
 │   │   └── SKILL.md
 │   └── team-execution/
 │       ├── SKILL.md
+│       ├── scripts/
+│       │   └── dispatch_settlement_adapter.py
 │       └── references/
 │           ├── consensus-protocol.md
 │           ├── review-criteria.md

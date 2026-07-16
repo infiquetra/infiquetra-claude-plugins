@@ -4896,15 +4896,26 @@ reports, and retry-eligible dead letters are derived from a verified snapshot on
   history; the ledger never pretends exactly-once delivery.
 - **KTD4 - team-execution delivery is a valid worker-exit `saga.manifest.v1`.** `artifact_pointer.py`
   is a post-work diff-transfer snapshot, not an acknowledgment, and receives no invented ACK role.
-- **KTD5 - site adapters normalize evidence; one classifier decides.** Agent prose cannot satisfy a
-  delivery. Trusted host receipts, manifest completeness, structured results, and worktree state are
-  the allowed inputs.
+- **KTD5 - site adapters normalize persisted evidence; one classifier decides.** Agent prose cannot
+  satisfy a delivery. A caller cannot establish trust with a Boolean, output list, reference, or
+  digest: the classifier loads the receipt under an explicit evidence root, validates its site
+  schema and unit/output binding, and computes the digest from the actual bytes. Team artifacts have
+  only closed `reviewer-result` and `validator-state` kinds; their deliverables are derived from
+  validated payloads and never copied from a caller-authored output list.
 - **KTD6 - an omitted casualty threshold means zero percent.** Permissive partial progress is an
   explicit per-dispatch operator choice.
 - **KTD7 - stale worktrees are projected read-only.** `reconcile --leaks` may report a registry/on-disk
   mismatch as an unsettled debit but does not append synthetic history or reap resources.
-- **KTD8 - workflow settlement is driver-materialized.** Generated leaves keep their no-filesystem
-  boundary; emitted expected-unit metadata and trusted host results let the root driver write facts.
+- **KTD8 - workflow settlement is driver-materialized and invocation-bound.** Generated leaves keep
+  their no-filesystem boundary; emitted expected-unit metadata and validated host results let the
+  root driver write facts. The driver persists one invocation ID before submission, reuses it only
+  for crash resume, and mints a new one for a later execution of an unchanged spec.
+- **KTD9 - a pre-submit spawn is storage-durable.** The writer synchronizes the appended ledger bytes
+  and new directory entry before the runtime call can proceed; advisory locking alone is not the
+  crash boundary the contract promises.
+- **KTD10 - team-execution resolves Saga rather than copying it.** The independently packaged plugin
+  preflights an explicit root, source checkout, installed registry, or cache sibling before any Agent
+  call, then invokes the one canonical Saga engine through a coordinator-owned evidence adapter.
 
 **Revisit when** a new fan-out site is introduced, trusted host APIs expose stronger liveness or
 rate-limit receipts, or a consumer can prove stronger idempotency than the current at-least-once

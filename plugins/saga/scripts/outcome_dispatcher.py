@@ -201,6 +201,11 @@ def dispatch(req: Any, *, available: Sequence[str] = DEFAULT_AVAILABLE) -> dict[
         "subplot_id": str(req.subplot_id),
         "backend": backend,
         "leaf_saga_id": leaf_saga_id,
+        # Keep settlement identity visible to concrete backend adapters. getattr keeps legacy
+        # duck-typed dispatch callers compatible with the expanded request shape.
+        "dispatch_id": str(getattr(req, "dispatch_id", "")),
+        "attempt": int(getattr(req, "attempt", 1)),
+        "idempotency_key": str(getattr(req, "idempotency_key", "")),
         # The R9 re-entry token OUT — a stable native handoff, not a drift-prone pasted prompt.
         "return_channel": f"/resume {leaf_saga_id}",
     }

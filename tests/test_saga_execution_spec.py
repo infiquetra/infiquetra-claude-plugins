@@ -34,6 +34,8 @@ def _load(name: str, path: Path) -> ModuleType:
 
 ES = _load("execution_spec", EXECUTION_SPEC_SCRIPT)
 _load("lifecycle_state", LIFECYCLE_STATE_SCRIPT)
+DS = _load("dispatch_settlement", SCRIPT_DIR / "dispatch_settlement.py")
+RL = sys.modules["run_ledger"]
 
 
 @pytest.fixture(autouse=True)
@@ -160,6 +162,153 @@ def test_workflow_settlement_metadata_contains_each_unit_once() -> None:
     assert metadata == ES.workflow_settlement_metadata(spec)
 
 
+def test_workflow_settlement_invocation_identity_replays_only_the_same_run() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+
+    first = ES.workflow_settlement_metadata(spec, invocation_id="wf-driver-run-1")
+    replay = ES.workflow_settlement_metadata(spec, invocation_id="wf-driver-run-1")
+    later = ES.workflow_settlement_metadata(spec, invocation_id="wf-driver-run-2")
+
+    assert first == replay
+    assert first["dispatch_id"] != later["dispatch_id"]
+    assert first["units"][0]["idempotency_key"] != later["units"][0]["idempotency_key"]
+    assert first["driver"]["invocation_id"] == "wf-driver-run-1"
+
+
+def test_workflow_settlement_maps_legacy_result_contracts_without_rewriting_them() -> None:
+    legacy_unit_id = "unit_" + "x" * 240
+    legacy_result_key = "finding title with whitespace " + "y" * 220
+    spec = ES.ExecutionSpec.from_dict(
+        _spec_dict(
+            unit_id=legacy_unit_id,
+            returns=[legacy_result_key, "already-safe", "already-safe"],
+        )
+    )
+
+    metadata = ES.workflow_settlement_metadata(spec, invocation_id="wf-legacy-contract")
+    unit = metadata["units"][0]
+    binding = metadata["driver"]["units"][0]
+
+    assert binding["workflow_unit_id"] == legacy_unit_id
+    assert binding["settlement_unit_id"] == unit["unit_id"]
+    assert len(unit["unit_id"]) <= DS.MAX_ID_LENGTH
+    assert binding["return_keys"] == [
+        {
+            "result_key": legacy_result_key,
+            "deliverable": "return:"
+            + DS.safe_contract_identifier(legacy_result_key, namespace="workflow-return"),
+        },
+        {"result_key": "already-safe", "deliverable": "return:already-safe"},
+        {"result_key": "already-safe", "deliverable": "return:already-safe"},
+    ]
+    assert unit["deliverables"].count("return:already-safe") == 1
+    assert spec.units[0].returns == [legacy_result_key, "already-safe", "already-safe"]
+
+
+def test_workflow_driver_settles_structured_missing_and_self_report_results(tmp_path: Path) -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+    ledger = RL.RunLedger(tmp_path / "run-facts.jsonl")
+    at = "2026-07-16T00:00:00Z"
+
+    delivered = ES.workflow_settlement_metadata(spec, invocation_id="wf-structured-result")
+    unit = delivered["units"][0]
+    DS.ensure_manifest(
+        ledger,
+        DS.manifest_fact(
+            subplot_id="sub-351",
+            at=at,
+            dispatch_id=delivered["dispatch_id"],
+            site="workflow",
+            units=delivered["units"],
+        ),
+    )
+    DS.append_spawn(
+        ledger,
+        DS.spawn_fact(
+            subplot_id="sub-351",
+            at=at,
+            dispatch_id=delivered["dispatch_id"],
+            unit_id=unit["unit_id"],
+            attempt=1,
+            idempotency_key=unit["idempotency_key"],
+        ),
+    )
+    evidence = tmp_path / "workflow-result.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema": "dispatch.workflow-result.v1",
+                "unit_id": unit["unit_id"],
+                "result": {"diff": "patch", "assumptions": "none"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    DS.settle_from_evidence(
+        ledger,
+        subplot_id="sub-351",
+        at=at,
+        dispatch_id=delivered["dispatch_id"],
+        unit_id=unit["unit_id"],
+        attempt=1,
+        evidence={
+            "receipt_type": "workflow-result",
+            "unit_id": unit["unit_id"],
+            "evidence_path": str(evidence),
+        },
+        evidence_root=tmp_path,
+    )
+    assert (
+        DS.settlement_report(ledger, delivered["dispatch_id"]).entries[0].classification
+        == DS.DELIVERED
+    )
+
+    missing = ES.workflow_settlement_metadata(spec, invocation_id="wf-missing-result")
+    missing_unit = missing["units"][0]
+    DS.ensure_manifest(
+        ledger,
+        DS.manifest_fact(
+            subplot_id="sub-351",
+            at=at,
+            dispatch_id=missing["dispatch_id"],
+            site="workflow",
+            units=missing["units"],
+        ),
+    )
+    DS.append_spawn(
+        ledger,
+        DS.spawn_fact(
+            subplot_id="sub-351",
+            at=at,
+            dispatch_id=missing["dispatch_id"],
+            unit_id=missing_unit["unit_id"],
+            attempt=1,
+            idempotency_key=missing_unit["idempotency_key"],
+        ),
+    )
+    DS.settle_from_evidence(
+        ledger,
+        subplot_id="sub-351",
+        at=at,
+        dispatch_id=missing["dispatch_id"],
+        unit_id=missing_unit["unit_id"],
+        attempt=1,
+        evidence=None,
+    )
+    assert (
+        DS.settlement_report(ledger, missing["dispatch_id"]).entries[0].classification
+        == DS.SILENT_NOOP
+    )
+    assert (
+        DS.classify_evidence(
+            missing_unit["deliverables"],
+            {"self_report": "done"},
+            expected_unit_id=missing_unit["unit_id"],
+        ).classification
+        == DS.SILENT_NOOP
+    )
+
+
 def test_emitted_workflow_exports_settlement_without_ledger_write_permission() -> None:
     spec = ES.ExecutionSpec.from_dict(_spec_dict())
     script = ES.emit_workflow_script(spec)
@@ -189,10 +338,11 @@ def test_settlement_cli_emits_driver_owned_metadata(
     spec_path = tmp_path / "spec.json"
     spec_path.write_text(json.dumps(_spec_dict()), encoding="utf-8")
 
-    assert ES.main(["settlement", str(spec_path)]) == 0
+    assert ES.main(["settlement", str(spec_path), "--invocation-id", "cli-run-1"]) == 0
 
     metadata = json.loads(capsys.readouterr().out)
     assert metadata["site"] == "workflow"
+    assert metadata["driver"]["invocation_id"] == "cli-run-1"
     assert [unit["unit_id"] for unit in metadata["units"]] == ["U1"]
     assert metadata["units"][0]["deliverables"] == [
         "structured-result",
@@ -657,7 +807,11 @@ def test_workflow_runtime_global_inventory_covers_node_global_this() -> None:
         capture_output=True,
         text=True,
     )
-    node_globals = set(json.loads(completed.stdout))
+    node_globals = {
+        name
+        for name in json.loads(completed.stdout)
+        if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", name)
+    }
 
     assert _JAVASCRIPT_GLOBAL_CANDIDATES <= ES._WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS
     assert node_globals <= ES._WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS

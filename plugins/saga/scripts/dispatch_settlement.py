@@ -43,6 +43,11 @@ RATE_RECEIPT = "rate_limited"
 IDLE_RECEIPT = "idle"
 TRUSTED_RECEIPTS = DELIVERY_RECEIPTS | {RATE_RECEIPT, IDLE_RECEIPT}
 
+ARTIFACT_RECEIPT_SCHEMA = "dispatch.artifact.v1"
+WORKFLOW_RESULT_SCHEMA = "dispatch.workflow-result.v1"
+HOST_RECEIPT_SCHEMA = "dispatch.host-receipt.v1"
+MAX_EVIDENCE_BYTES = 1_048_576
+
 DEFAULT_THRESHOLD_PERCENT = 0
 DEFAULT_MAX_ATTEMPTS = 3
 MAX_ATTEMPTS_LIMIT = 3
@@ -161,6 +166,24 @@ def _digest(value: object, *, field: str = "evidence_sha256") -> str:
     if _SHA256_RE.fullmatch(text) is None:
         raise DispatchSettlementError(f"{field} must be a lowercase SHA-256 digest")
     return text
+
+
+def safe_contract_identifier(value: str, *, namespace: str = "value") -> str:
+    """Map an external contract name into the bounded settlement identifier vocabulary.
+
+    Existing safe names remain byte-identical. Unsafe or oversized names receive a short readable
+    prefix plus a collision-resistant digest; driver metadata retains the original-to-safe mapping.
+    """
+    if not isinstance(value, str) or not value:
+        raise DispatchSettlementError("contract identifier source must be a non-empty string")
+    if len(value) <= MAX_ID_LENGTH and _ID_RE.fullmatch(value) is not None:
+        return value
+    normalized_namespace = _identifier(namespace, field="identifier namespace")
+    readable = re.sub(r"[^A-Za-z0-9._+-]+", "-", value).strip("-.")[:48] or "encoded"
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return _identifier(
+        f"{normalized_namespace}:{readable}:{digest}", field="encoded contract identifier"
+    )
 
 
 def _timestamp(value: object) -> str:
@@ -603,54 +626,246 @@ def append_late_delivery(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) 
     return run_ledger.append_fact_atomic(ledger, canonical, validate_snapshot=validate)
 
 
+def _strict_json_object(raw: bytes, *, where: str) -> dict[str, Any]:
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise DispatchSettlementError(f"{where} contains duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(raw, object_pairs_hook=object_pairs)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        if isinstance(exc, DispatchSettlementError):
+            raise
+        raise DispatchSettlementError(f"{where} must contain one valid JSON object") from exc
+    if not isinstance(value, dict):
+        raise DispatchSettlementError(f"{where} must contain one valid JSON object")
+    return value
+
+
+def _read_evidence_file(path_value: object, *, evidence_root: Path) -> tuple[Path, bytes]:
+    if not isinstance(path_value, str) or not path_value.strip():
+        raise DispatchSettlementError("evidence_path must be a non-empty path")
+    root = evidence_root.resolve()
+    candidate = Path(path_value).expanduser()
+    candidate = candidate if candidate.is_absolute() else root / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        raise DispatchSettlementError(
+            f"evidence_path must resolve to a file under evidence_root {root}"
+        ) from exc
+    if not resolved.is_file():
+        raise DispatchSettlementError("evidence_path must resolve to a regular file")
+    try:
+        raw = resolved.read_bytes()
+    except OSError as exc:
+        raise DispatchSettlementError("evidence_path could not be read") from exc
+    if not raw or len(raw) > MAX_EVIDENCE_BYTES:
+        raise DispatchSettlementError(f"evidence file must contain 1..{MAX_EVIDENCE_BYTES} bytes")
+    return resolved, raw
+
+
+def _receipt_outputs(
+    receipt_type: str,
+    payload: Mapping[str, Any],
+    *,
+    expected_unit_id: str,
+) -> tuple[set[str], bool]:
+    """Validate one persisted receipt and return ``(outputs, intrinsically_complete)``."""
+    if receipt_type == "artifact":
+        if set(payload) != {"schema", "kind", "unit_id", "payload"}:
+            raise DispatchSettlementError("artifact evidence has an incomplete schema")
+        if payload.get("schema") != ARTIFACT_RECEIPT_SCHEMA:
+            raise DispatchSettlementError("artifact evidence is not dispatch.artifact.v1")
+        artifact_payload = payload.get("payload")
+        if not isinstance(artifact_payload, Mapping):
+            raise DispatchSettlementError("artifact payload must be an object")
+        artifact_kind = payload.get("kind")
+        if artifact_kind == "reviewer-result":
+            if artifact_payload.get("reviewer") != expected_unit_id:
+                raise DispatchSettlementError(
+                    "reviewer artifact identity does not match the settlement unit"
+                )
+            score = artifact_payload.get("score")
+            if (
+                not isinstance(score, (int, float))
+                or isinstance(score, bool)
+                or not 0 <= score <= 10
+            ):
+                raise DispatchSettlementError(
+                    "reviewer artifact score must be numeric and within 0..10"
+                )
+            dimensions = artifact_payload.get("dimension_scores")
+            if not isinstance(dimensions, Mapping) or not dimensions:
+                raise DispatchSettlementError(
+                    "reviewer artifact requires non-empty dimension_scores"
+                )
+            for name, value in dimensions.items():
+                _bounded_text(name, field="reviewer dimension name", limit=200)
+                if (
+                    not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                    or not 0 <= value <= 10
+                ):
+                    raise DispatchSettlementError(
+                        "reviewer dimension scores must be numeric and within 0..10"
+                    )
+            if not isinstance(artifact_payload.get("findings"), list):
+                raise DispatchSettlementError("reviewer artifact requires a findings list")
+            outputs_raw = ["scored-review"]
+        elif artifact_kind == "validator-state":
+            if artifact_payload.get("validator") != expected_unit_id:
+                raise DispatchSettlementError(
+                    "validator artifact identity does not match the settlement unit"
+                )
+            if artifact_payload.get("required") is not True:
+                raise DispatchSettlementError(
+                    "validator artifact requires a required validator state"
+                )
+            _bounded_text(
+                artifact_payload.get("status"), field="validator artifact status", limit=100
+            )
+            evidence = artifact_payload.get("evidence")
+            if not isinstance(evidence, list) or not evidence:
+                raise DispatchSettlementError("validator artifact requires non-empty evidence")
+            for item in evidence:
+                _bounded_text(item, field="validator evidence path")
+            outputs_raw = ["validator-state"]
+        else:
+            raise DispatchSettlementError(
+                "artifact kind must be reviewer-result or validator-state"
+            )
+        intrinsically_complete = True
+    elif receipt_type == "workflow-result":
+        if set(payload) != {"schema", "unit_id", "result"}:
+            raise DispatchSettlementError("workflow evidence has an incomplete schema")
+        if payload.get("schema") != WORKFLOW_RESULT_SCHEMA:
+            raise DispatchSettlementError("workflow evidence is not dispatch.workflow-result.v1")
+        result = payload.get("result")
+        result_items: list[Mapping[str, Any]]
+        if isinstance(result, Mapping):
+            result_items = [result]
+        elif (
+            isinstance(result, list)
+            and result
+            and all(isinstance(item, Mapping) for item in result)
+        ):
+            result_items = list(result)
+        else:
+            return set(), False
+        common_keys = {str(key) for key in result_items[0]}
+        for item in result_items[1:]:
+            common_keys.intersection_update({str(key) for key in item})
+        outputs_raw = ["structured-result"] + [
+            f"return:{safe_contract_identifier(key, namespace='workflow-return')}"
+            for key in sorted(common_keys)
+        ]
+        intrinsically_complete = True
+    elif receipt_type == "worker-manifest":
+        import provenance_manifest  # noqa: PLC0415 - optional receipt adapter
+
+        try:
+            manifest = provenance_manifest.Manifest.from_dict(dict(payload))
+        except (provenance_manifest.ManifestError, TypeError, ValueError) as exc:
+            raise DispatchSettlementError(f"invalid saga.manifest.v1 evidence: {exc}") from exc
+        if manifest.execution_id != expected_unit_id:
+            raise DispatchSettlementError(
+                "worker manifest execution_id does not match the settlement unit"
+            )
+        problems = provenance_manifest.validate(
+            manifest,
+            provenance_manifest.tier_of(manifest),
+            contract_bearing=True,
+        )
+        if problems:
+            raise DispatchSettlementError(
+                "invalid contract-bearing worker manifest: " + "; ".join(problems)
+            )
+        completeness = manifest.output_completeness
+        if completeness is None:
+            raise DispatchSettlementError("worker manifest has no output_completeness")
+        outputs_raw = list(completeness.produced_keys)
+        intrinsically_complete = not completeness.missing_keys and not (
+            completeness.target_count is not None
+            and completeness.produced_count is not None
+            and completeness.produced_count < completeness.target_count
+        )
+    else:
+        raise DispatchSettlementError(f"unsupported delivery receipt {receipt_type!r}")
+
+    evidence_unit = _identifier(payload.get("unit_id", expected_unit_id), field="evidence unit_id")
+    if evidence_unit != expected_unit_id:
+        raise DispatchSettlementError("settlement evidence unit_id does not match the spawned unit")
+    if not isinstance(outputs_raw, Sequence) or isinstance(outputs_raw, (str, bytes)):
+        raise DispatchSettlementError("delivery evidence outputs must be a list")
+    outputs = [_identifier(item, field="output") for item in outputs_raw]
+    if len(outputs) != len(set(outputs)):
+        raise DispatchSettlementError("delivery evidence outputs must be unique")
+    return set(outputs), intrinsically_complete
+
+
 def classify_evidence(
     expected_deliverables: Sequence[str],
     evidence: Mapping[str, Any] | None,
     *,
     expected_unit_id: str | None = None,
+    evidence_root: Path | None = None,
 ) -> Classification:
-    """Classify trusted evidence; untrusted prose never produces a delivered result."""
+    """Classify a persisted receipt; caller assertions never establish trust or a digest."""
     expected = {_identifier(item, field="deliverable") for item in expected_deliverables}
     if not evidence:
         return Classification(SILENT_NOOP, "no trusted delivery or runtime evidence")
+    if set(evidence) <= {"self_report", "prose"}:
+        return Classification(SILENT_NOOP, "agent self-report is not settlement evidence")
+    if set(evidence) != {"receipt_type", "unit_id", "evidence_path"}:
+        raise DispatchSettlementError(
+            "evidence descriptor must contain exactly receipt_type, unit_id, and evidence_path"
+        )
     receipt_type = str(evidence.get("receipt_type", "")).strip()
     if receipt_type not in TRUSTED_RECEIPTS:
-        if set(evidence) <= {"self_report", "prose"}:
-            return Classification(SILENT_NOOP, "agent self-report is not settlement evidence")
         raise DispatchSettlementError(f"unknown evidence receipt_type {receipt_type!r}")
-    common_keys = {"receipt_type", "trusted", "unit_id", "evidence_ref", "evidence_sha256"}
-    expected_keys = common_keys | ({"outputs"} if receipt_type in DELIVERY_RECEIPTS else set())
-    if set(evidence) != expected_keys:
-        raise DispatchSettlementError(
-            f"{receipt_type} evidence must contain exactly {sorted(expected_keys)}"
-        )
-    if evidence.get("trusted") is not True:
-        raise DispatchSettlementError("recognized settlement evidence must be host-trusted")
-    evidence_unit = _identifier(evidence.get("unit_id", ""), field="evidence unit_id")
-    if expected_unit_id is not None and evidence_unit != _identifier(
-        expected_unit_id, field="unit_id"
-    ):
+    unit_id = _identifier(evidence.get("unit_id", ""), field="evidence unit_id")
+    expected_unit = _identifier(expected_unit_id or unit_id, field="unit_id")
+    if unit_id != expected_unit:
         raise DispatchSettlementError("settlement evidence unit_id does not match the spawned unit")
-    evidence_ref = _identifier(evidence.get("evidence_ref", ""), field="evidence_ref")
-    evidence_sha = _digest(evidence.get("evidence_sha256", ""))
-    if receipt_type == RATE_RECEIPT:
-        return Classification(
-            RATE_KILLED, "trusted host rate-limit receipt", evidence_ref, evidence_sha
-        )
-    if receipt_type == IDLE_RECEIPT:
-        return Classification(IDLE, "trusted runtime idle receipt", evidence_ref, evidence_sha)
-    outputs_raw = evidence.get("outputs", ())
-    if not isinstance(outputs_raw, Sequence) or isinstance(outputs_raw, (str, bytes)):
-        raise DispatchSettlementError("delivery evidence outputs must be a list")
-    normalized_outputs = [_identifier(item, field="output") for item in outputs_raw]
-    if len(normalized_outputs) != len(set(normalized_outputs)):
-        raise DispatchSettlementError("delivery evidence outputs must be unique")
-    outputs = set(normalized_outputs)
+    _path, raw = _read_evidence_file(
+        evidence.get("evidence_path"), evidence_root=evidence_root or Path.cwd()
+    )
+    payload = _strict_json_object(raw, where=f"{receipt_type} evidence")
+    evidence_sha = hashlib.sha256(raw).hexdigest()
+    evidence_ref = _identifier(f"{receipt_type}:sha256:{evidence_sha[:32]}", field="evidence_ref")
+
+    if receipt_type in {RATE_RECEIPT, IDLE_RECEIPT}:
+        if set(payload) != {"schema", "kind", "unit_id", "receipt"}:
+            raise DispatchSettlementError("host receipt has an incomplete schema")
+        if payload.get("schema") != HOST_RECEIPT_SCHEMA or payload.get("kind") != receipt_type:
+            raise DispatchSettlementError(
+                "host receipt schema or kind does not match its descriptor"
+            )
+        if _identifier(payload.get("unit_id", ""), field="host receipt unit_id") != expected_unit:
+            raise DispatchSettlementError("host receipt unit_id does not match the spawned unit")
+        if not isinstance(payload.get("receipt"), Mapping):
+            raise DispatchSettlementError("host receipt payload must be an object")
+        if receipt_type == RATE_RECEIPT:
+            return Classification(
+                RATE_KILLED, "verified host rate-limit receipt", evidence_ref, evidence_sha
+            )
+        return Classification(IDLE, "verified runtime idle receipt", evidence_ref, evidence_sha)
+
+    outputs, intrinsically_complete = _receipt_outputs(
+        receipt_type, payload, expected_unit_id=expected_unit
+    )
     missing = sorted(expected - outputs)
-    if missing:
+    if missing or not intrinsically_complete:
+        detail = f": {', '.join(missing)}" if missing else ""
         return Classification(
             SILENT_NOOP,
-            f"trusted delivery evidence missing required outputs: {', '.join(missing)}",
+            f"verified delivery evidence missing required outputs{detail}",
         )
     return Classification(
         DELIVERED, "all expected deliverables present", evidence_ref, evidence_sha
@@ -666,6 +881,7 @@ def settle_from_evidence(
     unit_id: str,
     attempt: int,
     evidence: Mapping[str, Any] | None,
+    evidence_root: Path | None = None,
 ) -> dict[str, Any]:
     snapshot = _verified_snapshot(ledger)
     records = _fact_records(snapshot, _identifier(dispatch_id, field="dispatch_id"))
@@ -673,7 +889,12 @@ def settle_from_evidence(
     units = _manifest_units(manifest)
     if unit_id not in units:
         raise DispatchSettlementError(f"unit {unit_id!r} is not declared in the manifest")
-    result = classify_evidence(units[unit_id].deliverables, evidence, expected_unit_id=unit_id)
+    result = classify_evidence(
+        units[unit_id].deliverables,
+        evidence,
+        expected_unit_id=unit_id,
+        evidence_root=evidence_root,
+    )
     return settle_attempt(
         ledger,
         subplot_id=subplot_id,
@@ -685,6 +906,45 @@ def settle_from_evidence(
         reason=result.reason,
         evidence_ref=result.evidence_ref,
         evidence_sha256=result.evidence_sha256,
+    )
+
+
+def append_late_delivery_from_evidence(
+    ledger: run_ledger.RunLedger,
+    *,
+    subplot_id: str,
+    at: str,
+    dispatch_id: str,
+    unit_id: str,
+    attempt: int,
+    evidence: Mapping[str, Any],
+    evidence_root: Path | None = None,
+) -> dict[str, Any]:
+    """Append late delivery only after re-validating persisted delivery evidence."""
+    snapshot = _verified_snapshot(ledger)
+    manifest = _require_manifest(_fact_records(snapshot, dispatch_id), dispatch_id)
+    units = _manifest_units(manifest)
+    if unit_id not in units:
+        raise DispatchSettlementError(f"unit {unit_id!r} is not declared in the manifest")
+    result = classify_evidence(
+        units[unit_id].deliverables,
+        evidence,
+        expected_unit_id=unit_id,
+        evidence_root=evidence_root,
+    )
+    if result.classification != DELIVERED:
+        raise DispatchSettlementError("late delivery requires complete verified delivery evidence")
+    return append_late_delivery(
+        ledger,
+        late_delivery_fact(
+            subplot_id=subplot_id,
+            at=at,
+            dispatch_id=dispatch_id,
+            unit_id=unit_id,
+            attempt=attempt,
+            evidence_ref=result.evidence_ref,
+            evidence_sha256=result.evidence_sha256,
+        ),
     )
 
 
@@ -767,30 +1027,43 @@ def settlement_report(ledger: run_ledger.RunLedger, dispatch_id: str) -> Casualt
         for record in records
         if record.get("event") == EVENT_LATE_DELIVERY
     }
-    current: list[str] = []
+    latest_states: dict[str, tuple[int, str]] = {}
     for unit_id in sorted(units):
         unit_spawns = [record for record in spawns if record.get("unit_id") == unit_id]
         if not unit_spawns:
-            current.append("unspawned")
+            latest_states[unit_id] = (1, "unspawned")
             continue
         latest_attempt = max(_attempt(record.get("attempt")) for record in unit_spawns)
         settlement = settles.get((unit_id, latest_attempt))
         if settlement is None:
-            current.append("open")
+            latest_states[unit_id] = (latest_attempt, "open")
         elif (unit_id, latest_attempt) in late_deliveries:
-            current.append(DELIVERED)
+            latest_states[unit_id] = (latest_attempt, DELIVERED)
         else:
-            current.append(str(settlement.get("classification")))
-    current_complete = all(value in LEDGER_CLASSIFICATIONS for value in current)
-    current_casualties = sum(value in CASUALTY_CLASSIFICATIONS for value in current)
-    progress_halt = not current_complete or current_casualties * 100 > threshold * len(units)
+            latest_states[unit_id] = (latest_attempt, str(settlement.get("classification")))
+
+    current_complete = all(state in LEDGER_CLASSIFICATIONS for _, state in latest_states.values())
+    unresolved_threshold_breach = False
+    for attempt in sorted(attempts):
+        attempt_units = {entry.unit_id for entry in entries if entry.attempt == attempt}
+        unresolved_casualties = sum(
+            1
+            for unit_id in attempt_units
+            if (settlement := settles.get((unit_id, attempt))) is not None
+            and settlement.get("classification") in CASUALTY_CLASSIFICATIONS
+            and latest_states[unit_id][1] != DELIVERED
+        )
+        if unresolved_casualties * 100 > threshold * len(attempt_units):
+            unresolved_threshold_breach = True
+            break
+    progress_halt = not current_complete or unresolved_threshold_breach
     return CasualtyReport(
         dispatch_id=dispatch,
         site=str(manifest.get("site")),
         entries=tuple(entries),
         cohorts=tuple(cohorts),
-        # Cohorts preserve historical casualty rates. The live gate uses each unit's latest attempt,
-        # so successful bounded retry can clear a prior casualty without erasing its audit trail.
+        # Cohorts preserve historical rates. The live gate evaluates unresolved casualties against
+        # each attempt's own denominator, so a small retry cohort cannot be diluted by attempt one.
         halt_required=progress_halt,
     )
 
@@ -1340,6 +1613,51 @@ def _print(value: object, *, as_json: bool = True) -> None:
         print(value)
 
 
+def _report_text(report: CasualtyReport) -> str:
+    lines = [
+        f"dispatch {report.dispatch_id} site={report.site} halt_required={str(report.halt_required).lower()}"
+    ]
+    for cohort in report.cohorts:
+        rate = (
+            "n/a"
+            if cohort.casualty_rate_percent is None
+            else f"{cohort.casualty_rate_percent:.1f}%"
+        )
+        lines.append(
+            f"attempt {cohort.attempt}: settled={cohort.settled}/{cohort.expected} "
+            f"casualties={cohort.casualties} rate={rate} threshold={cohort.threshold_percent}%"
+        )
+    for entry in report.entries:
+        evidence = f" evidence={entry.evidence_ref}" if entry.evidence_ref else ""
+        lines.append(
+            f"{entry.unit_id} attempt={entry.attempt} classification={entry.classification}{evidence}"
+        )
+    return "\n".join(lines)
+
+
+def _dlq_text(items: Sequence[DeadLetter]) -> str:
+    if not items:
+        return "DLQ empty"
+    return "\n".join(
+        f"{item.dispatch_id}/{item.unit_id} attempt={item.previous_attempt}->{item.next_attempt} "
+        f"classification={item.classification}"
+        for item in items
+    )
+
+
+def _reconcile_text(result: Mapping[str, Any]) -> str:
+    lines = [f"open_positions={result.get('open_count', 0)}"]
+    for item in result.get("open_positions", []):
+        lines.append(
+            f"open {item.get('dispatch_id')}/{item.get('unit_id')} attempt={item.get('attempt')}"
+        )
+    for item in result.get("stale_worktrees", []):
+        lines.append(
+            f"{item.get('classification')} {item.get('unit_id')} worktree={item.get('worktree')}"
+        )
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Dispatch settlement ledger and derive-on-read views"
@@ -1347,6 +1665,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-root", default=".")
     parser.add_argument("--ledger-path", default="")
     parser.add_argument("--subplot-id", default="")
+    parser.add_argument(
+        "--evidence-root",
+        default=".",
+        help="trusted root containing evidence files referenced by settle/late-delivery",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     manifest_cmd = sub.add_parser("manifest")
@@ -1379,8 +1702,7 @@ def main(argv: list[str] | None = None) -> int:
     late_cmd.add_argument("--dispatch-id", required=True)
     late_cmd.add_argument("--unit-id", required=True)
     late_cmd.add_argument("--attempt", type=int, required=True)
-    late_cmd.add_argument("--evidence-ref", required=True)
-    late_cmd.add_argument("--evidence-sha256", required=True)
+    late_cmd.add_argument("--evidence-json", required=True)
     late_cmd.add_argument("--at", required=True)
 
     claim_cmd = sub.add_parser("claim-retry")
@@ -1390,11 +1712,15 @@ def main(argv: list[str] | None = None) -> int:
 
     report_cmd = sub.add_parser("report")
     report_cmd.add_argument("--dispatch-id", required=True)
-    sub.add_parser("dlq").add_argument("--dispatch-id", default="")
+    report_cmd.add_argument("--format", choices=("json", "text"), default="json")
+    dlq_cmd = sub.add_parser("dlq")
+    dlq_cmd.add_argument("--dispatch-id", default="")
+    dlq_cmd.add_argument("--format", choices=("json", "text"), default="json")
     reconcile_cmd = sub.add_parser("reconcile")
     reconcile_cmd.add_argument("--leaks", action="store_true", required=True)
     reconcile_cmd.add_argument("--worktree-state-json", default="[]")
     reconcile_cmd.add_argument("--outcome-id", default="")
+    reconcile_cmd.add_argument("--format", choices=("json", "text"), default="json")
 
     args = parser.parse_args(argv)
     ledger = _ledger(args)
@@ -1404,7 +1730,7 @@ def main(argv: list[str] | None = None) -> int:
             raw_units = _json_value(args.units_json)
             if not isinstance(raw_units, list):
                 raise DispatchSettlementError("--units-json must decode to a list")
-            record = append_manifest(
+            record = ensure_manifest(
                 ledger,
                 manifest_fact(
                     subplot_id=subplot_id,
@@ -1444,21 +1770,23 @@ def main(argv: list[str] | None = None) -> int:
                     unit_id=args.unit_id,
                     attempt=args.attempt,
                     evidence=evidence,
+                    evidence_root=Path(args.evidence_root),
                 )
             )
         elif args.command == "late-delivery":
+            evidence = _json_value(args.evidence_json)
+            if not isinstance(evidence, dict):
+                raise DispatchSettlementError("--evidence-json must decode to an object")
             _print(
-                append_late_delivery(
+                append_late_delivery_from_evidence(
                     ledger,
-                    late_delivery_fact(
-                        subplot_id=subplot_id,
-                        at=args.at,
-                        dispatch_id=args.dispatch_id,
-                        unit_id=args.unit_id,
-                        attempt=args.attempt,
-                        evidence_ref=args.evidence_ref,
-                        evidence_sha256=args.evidence_sha256,
-                    ),
+                    subplot_id=subplot_id,
+                    at=args.at,
+                    dispatch_id=args.dispatch_id,
+                    unit_id=args.unit_id,
+                    attempt=args.attempt,
+                    evidence=evidence,
+                    evidence_root=Path(args.evidence_root),
                 )
             )
         elif args.command == "claim-retry":
@@ -1472,9 +1800,17 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "report":
-            _print(settlement_report(ledger, args.dispatch_id).to_dict())
+            report = settlement_report(ledger, args.dispatch_id)
+            _print(
+                report.to_dict() if args.format == "json" else _report_text(report),
+                as_json=args.format == "json",
+            )
         elif args.command == "dlq":
-            _print([asdict(item) for item in dead_letters(ledger, args.dispatch_id or None)])
+            letters = dead_letters(ledger, args.dispatch_id or None)
+            _print(
+                [asdict(item) for item in letters] if args.format == "json" else _dlq_text(letters),
+                as_json=args.format == "json",
+            )
         elif args.command == "reconcile":
             raw_worktrees = _json_value(args.worktree_state_json)
             if not isinstance(raw_worktrees, list):
@@ -1491,7 +1827,11 @@ def main(argv: list[str] | None = None) -> int:
                         outcome_id=args.outcome_id,
                     )
                 )
-            _print(reconcile_leaks(ledger, stale_worktrees=raw_worktrees))
+            result = reconcile_leaks(ledger, stale_worktrees=raw_worktrees)
+            _print(
+                result if args.format == "json" else _reconcile_text(result),
+                as_json=args.format == "json",
+            )
     except (DispatchSettlementError, run_ledger.RunLedgerError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

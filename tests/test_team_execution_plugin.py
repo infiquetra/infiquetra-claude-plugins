@@ -143,12 +143,20 @@ def test_reviewer_and_validator_protocols_wire_canonical_dispatch_settlement() -
         "validator": _read(references_dir / "validator-evidence-state.md"),
         "manifest": _read(references_dir / "worker-manifest.md"),
     }
-    assert "dispatch_settlement.py manifest|spawn|settle|report|dlq|claim-retry" in docs["skill"]
+    adapter = (
+        PLUGIN_ROOT / "skills" / "team-execution" / "scripts" / "dispatch_settlement_adapter.py"
+    )
+    assert adapter.exists()
+    assert "dispatch_settlement_adapter.py" in docs["skill"]
+    assert "SAGA_PLUGIN_ROOT" in docs["skill"]
+    assert "preflight" in docs["skill"]
     assert "manifest before any\nAgent call" in docs["skill"]
-    assert "immediately before\n        that reviewer's Agent call" in docs["consensus"]
-    assert "success prose, or an artifact pointer" in docs["consensus"]
+    assert "immediately before that\n        reviewer's Agent call" in docs["consensus"]
+    assert "success prose" in docs["consensus"]
+    assert "artifact pointer" in docs["consensus"]
     assert "required validator with no state file" in docs["validator"]
     assert "settles `silent-no-op`" in docs["validator"]
+    assert "dispatch.artifact.v1" in docs["validator"]
     assert "valid contract-bearing worker-exit manifest is the delivery" in docs["manifest"]
     assert "`artifact_pointer.py` snapshots are ignored for delivery" in docs["manifest"]
 

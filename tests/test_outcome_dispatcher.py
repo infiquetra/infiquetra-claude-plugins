@@ -64,6 +64,19 @@ def test_dispatch_inline_is_available() -> None:
     assert D.dispatch(_req("inline"))["status"] == "dispatched"
 
 
+def test_dispatch_preserves_optional_settlement_identity() -> None:
+    req = _req("inline")
+    req.dispatch_id = "outcome:ship-x:frontier:build"
+    req.attempt = 2
+    req.idempotency_key = "outcome:ship-x:build"
+
+    result = D.dispatch(req)
+
+    assert result["dispatch_id"] == req.dispatch_id
+    assert result["attempt"] == 2
+    assert result["idempotency_key"] == req.idempotency_key
+
+
 @pytest.mark.parametrize(
     # The host-dependent backends are unavailable under the conservative DEFAULT_AVAILABLE floor
     # (inline / team-execution / manual). `manual` is now always-available (U9), so it dispatches.
@@ -189,6 +202,92 @@ def test_settlement_manifest_and_spawn_precede_outcome_dispatch(repo: Path) -> N
     )
     assert result.dispatched == ["build"]
     assert SETTLEMENT.open_positions(ledger)[0]["unit_id"] == "build"
+
+
+def test_unexpected_dispatcher_crash_leaves_one_open_settlement_position(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+
+    def _crash(_req: Any) -> str:
+        raise RuntimeError("unexpected dispatcher failure")
+
+    with pytest.raises(RuntimeError, match="unexpected dispatcher failure"):
+        OUTCOME.advance(
+            repo,
+            "ship-x",
+            dispatcher=_crash,
+            holder="crashed-dispatcher",
+            settlement_ledger=ledger,
+            now=lambda: 1_700_000_000.0,
+        )
+
+    records = [
+        record
+        for record in RUN_LEDGER.read_facts(ledger)
+        if record.get("dispatch_id") == dispatch_id
+    ]
+    assert [record["event"] for record in records] == ["manifest", "spawn"]
+    assert SETTLEMENT.open_positions(ledger) == [
+        {
+            "dispatch_id": dispatch_id,
+            "unit_id": "build",
+            "attempt": 1,
+            "idempotency_key": "outcome:ship-x:build",
+            "classification": "open",
+        }
+    ]
+
+
+def test_crash_replay_preserves_backend_settlement_identity(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+    seen: list[Any] = []
+
+    def _crash(req: Any) -> str:
+        seen.append(req)
+        raise RuntimeError("backend accepted launch before coordinator crash")
+
+    with pytest.raises(RuntimeError, match="accepted launch"):
+        OUTCOME.advance(
+            repo,
+            "ship-x",
+            dispatcher=_crash,
+            holder="replay-holder",
+            settlement_ledger=ledger,
+            now=lambda: 1_700_000_000.0,
+        )
+
+    def _replay(req: Any) -> str:
+        seen.append(req)
+        return "leaf-ship-x-build"
+
+    replay = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_replay,
+        holder="replay-holder",
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_001.0,
+    )
+
+    assert replay.dispatched == ["build"]
+    assert [(req.dispatch_id, req.attempt, req.idempotency_key) for req in seen] == [
+        (dispatch_id, 1, "outcome:ship-x:build"),
+        (dispatch_id, 1, "outcome:ship-x:build"),
+    ]
+    assert len(SETTLEMENT.open_positions(ledger)) == 1
 
 
 def test_outcome_writes_one_complete_manifest_for_the_ready_frontier(repo: Path) -> None:
@@ -559,13 +658,61 @@ def test_outcome_harvest_settles_open_attempt_from_canonical_evidence(
     assert harvester(spec, STORE.Store.for_outcome("ship-x", repo).ensure()) == ["build"]
     report = SETTLEMENT.settlement_report(ledger, dispatch_id)
     assert report.entries[0].classification == "delivered"
-    assert report.entries[0].evidence_ref == "github-completion"
+    assert report.entries[0].evidence_ref == "outcome-completion:done"
     settlement = next(
         record
         for record in RUN_LEDGER.read_facts(ledger)
         if record.get("dispatch_id") == dispatch_id and record.get("event") == "settle"
     )
     assert settlement["at"] == "2023-11-14T22:13:22Z"
+    completion = STORE.read_completion_events(STORE.Store.for_outcome("ship-x", repo), "build")[-1]
+    assert settlement["evidence_sha256"] == SETTLEMENT.evidence_digest(completion.to_dict())
+
+
+@pytest.mark.parametrize("state", ["failed", "rejected", "stalled"])
+def test_outcome_harvest_negative_terminal_settles_fail_closed_and_enters_dlq(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    spec = OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+    OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=D.make_dispatcher(),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    event = STORE.CompletionEvent(
+        subplot_id="build",
+        state=state,
+        idempotency_key=f"terminal:build:{state}",
+        payload={"reason": "terminal evidence"},
+    )
+    STORE.write_completion_event(store, event)
+    orchestrator = sys.modules.get("outcome_orchestrator") or _load("outcome_orchestrator")
+    monkeypatch.setattr(orchestrator, "harvest", lambda *args, **kwargs: [])
+
+    OUTCOME.production_harvester(repo, settlement_ledger=ledger, now=lambda: 1_700_000_002.0)(
+        spec, store
+    )
+
+    settlement = next(
+        record
+        for record in RUN_LEDGER.read_facts(ledger)
+        if record.get("dispatch_id") == dispatch_id and record.get("event") == "settle"
+    )
+    assert settlement["classification"] == SETTLEMENT.SILENT_NOOP
+    assert settlement["reason"] == f"outcome terminal completion fail-closed: {state}"
+    assert "evidence_ref" not in settlement
+    assert "evidence_sha256" not in settlement
+    assert SETTLEMENT.dead_letters(ledger, dispatch_id)[0].unit_id == "build"
 
 
 def test_outcome_harvest_reconciles_prior_completion_when_nothing_is_new(

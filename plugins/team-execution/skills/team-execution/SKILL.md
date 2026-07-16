@@ -389,14 +389,41 @@ Run reviewers according to `consensus-protocol.md`.
 
 Before the first reviewer Agent call, create one `site=team-execution` dispatch manifest with every
 configured reviewer and its expected scored-review deliverable, then append that reviewer's `spawn`
-fact immediately before its Agent call. Use the canonical
-`plugins/saga/scripts/dispatch_settlement.py manifest|spawn|settle|report|dlq|claim-retry` CLI; never
-write a sidecar queue. At collection, settle only from the returned structured score/evidence plus a
-valid contract-bearing `saga.manifest.v1` by passing that receipt to `settle --evidence-json`; the
-CLI derives classification and rejects a caller-selected result. Success prose or an artifact
-pointer is not delivery. Run
-`report` before the consensus decision and HALT when `halt_required=true`. At the next review boundary,
-claim the derived DLQ before dispatching new reviewer work; the idempotency key remains stable.
+fact immediately before its Agent call. Use the packaged coordinator adapter, not a repository-relative
+Saga path: it resolves Saga from `SAGA_PLUGIN_ROOT`, an Infiquetra source checkout,
+`~/.claude/plugins/installed_plugins.json`, or the `CLAUDE_PLUGIN_ROOT` cache sibling. Its required
+preflight fails before any Agent call when no valid Saga plugin is installed.
+
+```bash
+TEAM_SETTLEMENT="${CLAUDE_PLUGIN_ROOT:-plugins/team-execution}/skills/team-execution/scripts/dispatch_settlement_adapter.py"
+python3 "$TEAM_SETTLEMENT" preflight
+python3 "$TEAM_SETTLEMENT" manifest --kind reviewer --repo-root "$REPO_ROOT" --subplot-id "$SAGA_ID" \
+  --dispatch-id "$DISPATCH_ID" --roster-json "$REVIEWER_ROSTER_JSON" --at "$NOW"
+python3 "$TEAM_SETTLEMENT" saga -- --repo-root "$REPO_ROOT" --subplot-id "$SAGA_ID" spawn \
+  --dispatch-id "$DISPATCH_ID" --unit-id "$REVIEWER" --attempt 1 \
+  --idempotency-key "team-execution:reviewer:$REVIEWER" --at "$NOW"
+```
+
+At collection, the coordinator stores the returned structured reviewer result in a JSON file and runs
+`settle --kind reviewer --source-json ... --receipt-path ...`. The adapter validates the real result,
+materializes a `dispatch.artifact.v1` file, and passes only its `{receipt_type, unit_id,
+evidence_path}` descriptor to Saga. Missing, incomplete, prose-only, or artifact-pointer-only output
+is settled as `silent-no-op`; trust flags, caller digests, and caller-selected outputs are never
+accepted. Source and receipt paths are relative to `--repo-root` by default. When team state lives
+under `~/.claude`, pass that state directory as `--evidence-root`; the adapter confines both paths to
+that root while validator-referenced evidence remains confined to `--repo-root`.
+
+```bash
+python3 "$TEAM_SETTLEMENT" settle --kind reviewer --repo-root "$REPO_ROOT" --subplot-id "$SAGA_ID" \
+  --dispatch-id "$DISPATCH_ID" --unit-id "$REVIEWER" --attempt 1 --at "$NOW" \
+  --source-json ".claude/team-execution/reviews/$REVIEWER.json" \
+  --receipt-path ".claude/team-execution/settlement/$DISPATCH_ID-$REVIEWER.json"
+python3 "$TEAM_SETTLEMENT" saga -- --repo-root "$REPO_ROOT" --subplot-id "$SAGA_ID" report \
+  --dispatch-id "$DISPATCH_ID"
+```
+
+HALT when `halt_required=true`. At the next review boundary, use `saga -- ... claim-retry` before new
+reviewer work; the idempotency key remains stable.
 
 - All confirmed reviewers score the implementation.
 - Consensus requires overall score >= 9.0/10 and no dimension < 7.0.
@@ -411,10 +438,12 @@ claim the derived DLQ before dispatching new reviewer work; the idempotency key 
 Run selected scanner validators only after reviewer consensus or explicit user override.
 
 Apply the same settlement sequence to the complete selected-validator roster: manifest before any
-Agent call, spawn immediately before each call, settle from the validator's required evidence record,
-then evaluate the casualty report before accepting the scanner gate. A required validator with no
-evidence is `silent-no-op`, enters the derived DLQ while attempts remain, and can never be counted as
-an implicit pass.
+Agent call, spawn immediately before each call, and settle from the validator's required state file.
+The state file's `evidence[]` entries must resolve to existing files inside `--repo-root`; the adapter
+then materializes the `dispatch.artifact.v1` receipt. A required validator with no state file,
+incomplete state, missing referenced evidence, success prose, or an artifact pointer is
+`silent-no-op`, enters the derived DLQ while attempts remain, and can never be counted as an implicit
+pass. The exact command is in `validator-evidence-state.md`.
 
 Scanners inspect local artifacts, code, dependency manifests, contracts, and infrastructure.
 Hard-fail scanner findings block auto-merge, nonprod deploy, and completion.

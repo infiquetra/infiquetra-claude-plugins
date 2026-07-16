@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.10.1] - 2026-07-16
+
+### Fixed
+
+- Make `board move` exit nonzero after reporting all project results when an
+  item, Status field or option, or mutation is unavailable. Invalid Status
+  requests still list provider-read options and never call the mutation.
+
 ## [2.10.0] - 2026-07-14
 
 ### Added

@@ -49,11 +49,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # catches ``outcome_dispatcher.BackendHaltError`` per leaf. outcome_dispatcher does NOT import this
 # module (it duck-types the request), so there is no import cycle.
 import adjustment_envelope  # noqa: E402  (the #372 mid-run control surface, polled per tick)
+import dispatch_settlement  # noqa: E402  (#351 shared fan-out accounting contract)
 import intent_envelope  # noqa: E402  (the canonical #380 envelope schema, via the fleet shim)
 import outcome_dispatcher  # noqa: E402
 import outcome_intent  # noqa: E402  (the #433 posture-renegotiation engine; no import cycle)
 import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 import outcome_store  # noqa: E402
+import run_ledger  # noqa: E402  (#351 canonical hash-chained run-fact store)
 
 # Where the canonical spec lives on the outcome's own branch (KTD1/R26). The committed spec is the
 # structural source of truth; the store under the git-common-dir is its performance cache.
@@ -799,6 +801,7 @@ def advance(
     project: str = "operations",
     envelope_path: Path | None = None,
     envelope_poll: Callable[[], adjustment_envelope.PollDecision] | None = None,
+    settlement_ledger: run_ledger.RunLedger | None = None,
 ) -> AdvanceResult:
     """Run one (``loop=False``) or repeated (``loop=True``) reconcile ticks.
 
@@ -957,6 +960,7 @@ def advance(
                 available=available,
                 attending=attending,
                 retriable_seen=retriable_seen,
+                settlement_ledger=settlement_ledger,
             )
             all_dispatched.extend(tick_dispatched)
             all_halted.extend(tick_halted)
@@ -1064,6 +1068,7 @@ def _reconcile_once(
     available: Sequence[str] | None = None,
     attending: bool = True,
     retriable_seen: set[str] | None = None,
+    settlement_ledger: run_ledger.RunLedger | None = None,
 ) -> tuple[list[str], list[dict[str, Any]], list[str], list[dict[str, Any]], list[str], bool]:
     """One level-triggered pass: dispatch every ready, not-yet-settled leaf exactly once.
 
@@ -1268,6 +1273,24 @@ def _reconcile_once(
                 ).to_dict()
 
         key = f"dispatch:{sid}"
+        settlement_dispatch_id = ""
+        settlement_unit: dispatch_settlement.UnitSpec | None = None
+        settlement_at = ""
+        if settlement_ledger is not None:
+            settlement_dispatch_id, settlement_unit = dispatch_settlement.outcome_identity(
+                spec.outcome_id, sid
+            )
+            settlement_at = dispatch_settlement.iso_at(now())
+            dispatch_settlement.ensure_manifest(
+                settlement_ledger,
+                dispatch_settlement.manifest_fact(
+                    subplot_id=sid,
+                    at=settlement_at,
+                    dispatch_id=settlement_dispatch_id,
+                    site="outcome",
+                    units=[settlement_unit],
+                ),
+            )
         # #433 R4/R5: the posture era is captured on the INTENT record too — the same snapshot
         # the commit record carries below. A leaf stranded in the crash-after-intent window
         # (backend effect possibly live, commit record never written) is in flight for EVERY
@@ -1296,6 +1319,17 @@ def _reconcile_once(
                 "posture": dict(era_posture),
             },
         )
+        if settlement_ledger is not None and settlement_unit is not None:
+            # The run-fact spawn is the last durable action before the host call. A crash or tool
+            # failure after this point remains an open position instead of disappearing.
+            dispatch_settlement.prepare_attempt(
+                settlement_ledger,
+                subplot_id=sid,
+                at=settlement_at,
+                dispatch_id=settlement_dispatch_id,
+                site="outcome",
+                unit=settlement_unit,
+            )
         try:
             leaf_saga_id = dispatch(
                 DispatchRequest(
@@ -1312,7 +1346,7 @@ def _reconcile_once(
                     intent_revision=active_intent_revision,
                 )
             )
-        except outcome_dispatcher.BackendRateLimitError:
+        except outcome_dispatcher.BackendRateLimitError as rate_limit:
             # #348/R4/KTD4: a 429 during dispatch is TRANSIENT, not a HALT. Release the lock and write
             # NO commit -> the leaf's derived state stays `ready`, so the ready frontier re-picks it on
             # the next advance() call. `retriable-pending` is a derived-on-read RESULT label, never a
@@ -1323,6 +1357,19 @@ def _reconcile_once(
             retriable.append(sid)
             if retriable_seen is not None:
                 retriable_seen.add(sid)
+            if settlement_ledger is not None:
+                receipt = rate_limit.receipt.to_dict()
+                dispatch_settlement.settle_latest_open(
+                    settlement_ledger,
+                    subplot_id=sid,
+                    at=dispatch_settlement.iso_at(now()),
+                    dispatch_id=settlement_dispatch_id,
+                    unit_id=sid,
+                    classification=dispatch_settlement.RATE_KILLED,
+                    reason="outcome backend returned a trusted rate-limit receipt",
+                    evidence_ref="outcome-rate-limit",
+                    evidence_sha256=dispatch_settlement.evidence_digest(receipt),
+                )
             continue
         except outcome_dispatcher.BackendHaltError as halt:
             # A dispatcher-raised HALT (legacy / a restricted injected dispatcher). Release the lock so a
@@ -1331,6 +1378,16 @@ def _reconcile_once(
             receipt = halt.receipt.to_dict()
             _append_ledger_once(store, {"phase": "halt", "kind": "dispatch", "key": key, **receipt})
             halted.append(receipt)
+            if settlement_ledger is not None:
+                dispatch_settlement.settle_latest_open(
+                    settlement_ledger,
+                    subplot_id=sid,
+                    at=dispatch_settlement.iso_at(now()),
+                    dispatch_id=settlement_dispatch_id,
+                    unit_id=sid,
+                    classification=dispatch_settlement.SILENT_NOOP,
+                    reason="backend halted before returning a dispatch handle",
+                )
             continue
         if degrade_receipt is not None:
             # A visible downgrade receipt (R23) — surfaced in the report's Degradations section.
@@ -1517,7 +1574,11 @@ def graph_mermaid(repo_root: Path, outcome_id: str, *, store: Any | None = None)
 
 
 def production_harvester(
-    repo_root: Path, *, github_runner: Callable[..., Any] | None = None
+    repo_root: Path,
+    *,
+    github_runner: Callable[..., Any] | None = None,
+    settlement_ledger: run_ledger.RunLedger | None = None,
+    now: Callable[[], float] = time.time,
 ) -> Callable[[Any, Any], list[str]]:
     """Build the harvester ``advance`` runs each tick: it materializes GitHub-canonical completions
     (a merged PR / closed issue) into the store so the frontier unlocks the next Kahn layer (U5).
@@ -1553,13 +1614,34 @@ def production_harvester(
         return "done" if all_done else "running"
 
     def harvester(spec: Any, store: Any) -> list[str]:
-        return outcome_orchestrator.harvest(
+        harvested = outcome_orchestrator.harvest(
             spec,
             store=store,
             github_runner=github_runner,
             child_state_reader=child_state_reader,
             repo_root=repo_root,
         )
+        if settlement_ledger is not None:
+            for sid in harvested:
+                node = spec.node_by_id(sid)
+                dispatch_id, _unit = dispatch_settlement.outcome_identity(spec.outcome_id, sid)
+                evidence = {
+                    "subplot_id": sid,
+                    "github": dict(node.github) if node is not None else {},
+                    "completion": "canonical",
+                }
+                dispatch_settlement.settle_latest_open(
+                    settlement_ledger,
+                    subplot_id=sid,
+                    at=dispatch_settlement.iso_at(now()),
+                    dispatch_id=dispatch_id,
+                    unit_id=sid,
+                    classification=dispatch_settlement.DELIVERED,
+                    reason="outcome parent harvested canonical completion evidence",
+                    evidence_ref="github-completion",
+                    evidence_sha256=dispatch_settlement.evidence_digest(evidence),
+                )
+        return harvested
 
     return harvester
 
@@ -1947,6 +2029,7 @@ def main(argv: list[str] | None = None) -> int:
             avail = outcome_dispatcher.resolve_available(
                 host_capable=args.host_capable, workflow_available=args.workflow_available
             )
+            settlement_ledger = run_ledger.RunLedger.resolve(root)
             # The dispatcher mints any backend the degrade decision resolves to (it never halts here —
             # _reconcile_once owns the HALT/degrade decision via degrade_decision with `avail`).
             result = advance(
@@ -1954,7 +2037,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.outcome_id,
                 loop=args.loop,
                 dispatcher=outcome_dispatcher.make_dispatcher(available=outcome_spec.NODE_BACKENDS),
-                harvester=production_harvester(root),
+                harvester=production_harvester(root, settlement_ledger=settlement_ledger),
                 merge_processor=production_merge_processor(repo_root=root),
                 worktree_processor=production_worktree_processor(root),
                 liveness_processor=production_liveness_processor(),
@@ -1963,6 +2046,7 @@ def main(argv: list[str] | None = None) -> int:
                 available=avail,
                 attending=not args.autonomous,
                 autonomous=args.autonomous,
+                settlement_ledger=settlement_ledger,
             )
             out = result.to_dict()
             if args.persist:

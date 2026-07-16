@@ -45,13 +45,27 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.97.0"  # bounded concurrency policy and fan-out guard (#350)
+    assert (
+        plugin_json["version"] == "0.98.0"
+    )  # dispatch settlement and casualty reconciliation (#351)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
     assert {"lifecycle", "strategy", "handoff", "doc-review", "code-review"} <= set(
         plugin_json["keywords"]
     )
+
+
+def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
+    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    for required in (
+        "execution_spec.py settlement",
+        "dispatch_settlement.py --repo-root .",
+        "Generated agents still receive no filesystem or ledger-write",
+        "A missing structured result is `silent-no-op`",
+        "This is at-least-once and preserves the stable idempotency key",
+    ):
+        assert required in work_skill
 
 
 def test_provider_onboarding_contract_is_packaged_and_documented() -> None:

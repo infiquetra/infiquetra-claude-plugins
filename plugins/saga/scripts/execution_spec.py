@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -346,6 +347,7 @@ _WORKFLOW_RESERVED_IDENTIFIERS = (
             "__retryBackoffMs",
             "__verifierPrompt",
             "meta",
+            "settlement",
         }
     )
     | _WORKFLOW_GLOBAL_IDENTIFIERS
@@ -3165,6 +3167,49 @@ def patch_spec_tiers(
     return replace(spec, units=patched)
 
 
+def workflow_settlement_metadata(
+    spec: ExecutionSpec,
+    *,
+    validate: bool = True,
+    engine_registry: Any | None = None,
+) -> dict[str, Any]:
+    """Export deterministic expected-unit contracts for driver-materialized settlement (#351).
+
+    Generated workflow agents remain filesystem-free. The trusted root driver persists this metadata
+    before submission, records host handles, and settles returned structured results.
+    """
+    import dispatch_settlement  # noqa: PLC0415 - sibling; avoid wider import-time coupling
+
+    if validate:
+        has_external_routes = any(
+            unit.engine is not None or unit.capability is not None for unit in spec.units
+        )
+        registry = (
+            _load_emission_registry()
+            if has_external_routes and engine_registry is None
+            else engine_registry
+        )
+        spec.validate(engine_registry=registry)
+    canonical = json.dumps(spec.to_dict(), sort_keys=True, separators=(",", ":"))
+    spec_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    units: list[dispatch_settlement.UnitSpec] = []
+    for unit in spec.units:
+        deliverables = ["structured-result"]
+        deliverables.extend(f"return:{name}" for name in unit.returns)
+        units.append(
+            dispatch_settlement.UnitSpec(
+                unit_id=unit.unit_id,
+                idempotency_key=f"workflow:{spec_digest[:24]}:{unit.unit_id}",
+                deliverables=tuple(deliverables),
+            )
+        )
+    return dispatch_settlement.settlement_metadata(
+        dispatch_id=f"workflow:{spec_digest[:24]}",
+        site="workflow",
+        units=units,
+    )
+
+
 def emit_workflow_script(
     spec: ExecutionSpec,
     session_ceiling: Tier | None = None,
@@ -3260,6 +3305,14 @@ def emit_workflow_script(
     lines.append(f"  name: {_js_string(spec.name)},")
     lines.append(f"  description: {_js_string(spec.description)},")
     lines.append("}")
+    lines.append(
+        "export const settlement = "
+        + json.dumps(
+            workflow_settlement_metadata(spec, validate=False),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
     lines.append("")
     if spec.repo:
         lines.append(f"const REPO = {_js_string(spec.repo)}")
@@ -3808,6 +3861,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_spend.add_argument("spec", type=Path)
 
+    p_settlement = sub.add_parser(
+        "settlement", help="emit driver-owned dispatch-settlement metadata (#351)"
+    )
+    p_settlement.add_argument("spec", type=Path)
+
     args = parser.parse_args(argv)
     try:
         spec = _load_spec(args.spec)
@@ -3873,6 +3931,9 @@ def main(argv: list[str] | None = None) -> int:
                 if spec.spend_envelope is not None
                 else "spend_envelope: unset"
             )
+            return 0
+        if args.cmd == "settlement":
+            print(json.dumps(workflow_settlement_metadata(spec), indent=2, sort_keys=True))
             return 0
         if args.cmd == "baseline":
             script = emit_inline_baseline(spec)

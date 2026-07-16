@@ -137,6 +137,57 @@ def test_engine_unit_validates_and_emits_external_engine_marker() -> None:
     assert 'engine: "codex/gpt-5.5-xhigh"' in script
 
 
+def test_workflow_settlement_metadata_contains_each_unit_once() -> None:
+    data = _spec_dict()
+    data["units"] = [
+        data["units"][0],
+        {
+            "unit_id": "U2",
+            "label": "validate",
+            "tier": {"model": "sonnet", "effort": "medium"},
+            "returns": ["verdict"],
+            "depends_on": ["U1"],
+        },
+    ]
+    spec = ES.ExecutionSpec.from_dict(data)
+    metadata = ES.workflow_settlement_metadata(spec)
+    assert metadata["schema"] == "dispatch_settlement.v1"
+    assert metadata["site"] == "workflow"
+    assert [unit["unit_id"] for unit in metadata["units"]] == ["U1", "U2"]
+    assert len({unit["idempotency_key"] for unit in metadata["units"]}) == 2
+    assert metadata == ES.workflow_settlement_metadata(spec)
+
+
+def test_emitted_workflow_exports_settlement_without_ledger_write_permission() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+    script = ES.emit_workflow_script(spec)
+    metadata = ES.workflow_settlement_metadata(spec)
+    assert (
+        "export const settlement = " + json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+        in script
+    )
+    assert "run_ledger.py" not in script
+    assert "dispatch_settlement.py" not in script
+
+
+def test_settlement_cli_emits_driver_owned_metadata(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps(_spec_dict()), encoding="utf-8")
+
+    assert ES.main(["settlement", str(spec_path)]) == 0
+
+    metadata = json.loads(capsys.readouterr().out)
+    assert metadata["site"] == "workflow"
+    assert [unit["unit_id"] for unit in metadata["units"]] == ["U1"]
+    assert metadata["units"][0]["deliverables"] == [
+        "structured-result",
+        "return:diff",
+        "return:assumptions",
+    ]
+
+
 def _fake_resolution(
     *,
     engine_id: str = "codex",

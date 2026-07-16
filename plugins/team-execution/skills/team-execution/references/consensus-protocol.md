@@ -29,6 +29,12 @@ For iteration 1..3:
         - Intended outcome (what success looks like)
         - Path to review-criteria.md for scoring rubrics
 
+        Before any Agent call, the Team Lead writes one canonical dispatch-settlement manifest for
+        the complete reviewer roster. It appends each reviewer's spawn attempt immediately before
+        that reviewer's Agent call, using the stable reviewer idempotency key. The manifest and
+        attempts are `run_fact.v1` facts written through
+        `plugins/saga/scripts/dispatch_settlement.py`; no mutable queue or second ledger is allowed.
+
   B3b. Each reviewer:
         - Scores each APPLICABLE dimension (0-10) per its own prompt; for a reviewer whose
           prompt defines a precondition-bearing dimension (currently only architecture-reviewer),
@@ -47,6 +53,11 @@ For iteration 1..3:
         [Optional reviewers if spawned...]
         External Advisory Seat: report-only — PARTICIPATED/HALTED/ABSENT (excluded from gate)
         Claude-vs-external convergence: converged / Claude-only / external-only / conflicting
+
+        Settle every attempted reviewer from its structured score/evidence and valid worker-exit
+        manifest. Missing/empty output, success prose, or an artifact pointer without the expected
+        contract is `silent-no-op`. Run the casualty report before B3d; `halt_required=true` blocks
+        consensus, and retry-eligible units are claimed from the derived DLQ at the next cycle.
 
   B3d. If ALL gated Claude reviewer scores >= 9.0 → consensus reached → proceed to Step B4
 

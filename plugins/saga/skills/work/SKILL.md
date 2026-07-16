@@ -295,6 +295,19 @@ python3 plugins/saga/scripts/execution_spec.py emit <orchestration_ref_spec.json
 
 Then launch it:
 
+Before launch, render the driver-owned expected-unit metadata and persist the manifest plus one spawn
+attempt per unit in deterministic order. Generated agents still receive no filesystem or ledger-write
+permission; the driving `/work` session is the only writer:
+
+```bash
+python3 plugins/saga/scripts/execution_spec.py settlement <orchestration_ref_spec.json>
+python3 plugins/saga/scripts/dispatch_settlement.py --repo-root . --subplot-id <saga-id> \
+  manifest --dispatch-id <metadata.dispatch_id> --site workflow \
+  --units-json '<metadata.units>' --at <iso-time>
+# Immediately before Workflow(...), append one `spawn` per metadata unit with attempt=1 and its
+# exported stable idempotency_key.
+```
+
 ```
 Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })
 ```
@@ -340,6 +353,14 @@ recorded as `orchestration_downgrade` WITH the divergence (operator-choice §6).
 **Post-run manifest persistence (U4/KTD7).** A Workflow script has no filesystem access, so it cannot
 write its own provenance manifest — the *driving session* (this `/work` run) is the producer of record
 for `cc-workflows-ultracode` units. Once the Workflow returns, before moving on to Phase 2 wrap-up:
+
+0. Settle every spawned metadata unit from the trusted Workflow host handle and its collected
+   structured result. A missing structured result is `silent-no-op`; a trusted 429/idle host receipt
+   is `rate-killed`/`idle`; agent prose cannot satisfy delivery. Run
+   `dispatch_settlement.py report --dispatch-id <metadata.dispatch_id>` and HALT on evidence errors or
+   `halt_required=true`. Claim retry-eligible derived DLQ units at the next Workflow boundary before
+   new work. This is at-least-once and preserves the stable idempotency key; it never claims
+   exactly-once delivery.
 
 1. Collect the run's per-unit returned results into a JSON object mapping `unit_id -> result` (the same
    shape each unit returned to the Workflow — a dict of the unit's `returns` keys, a fan-out list, or

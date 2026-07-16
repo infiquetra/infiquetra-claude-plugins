@@ -387,6 +387,15 @@ invariance, and the KTD7 capability-keyed fallback to inlined content).
 
 Run reviewers according to `consensus-protocol.md`.
 
+Before the first reviewer Agent call, create one `site=team-execution` dispatch manifest with every
+configured reviewer and its expected scored-review deliverable, then append that reviewer's `spawn`
+fact immediately before its Agent call. Use the canonical
+`plugins/saga/scripts/dispatch_settlement.py manifest|spawn|settle|report|dlq|claim-retry` CLI; never
+write a sidecar queue. At collection, settle only from the returned structured score/evidence plus a
+valid contract-bearing `saga.manifest.v1`; success prose or an artifact pointer is not delivery. Run
+`report` before the consensus decision and HALT when `halt_required=true`. At the next review boundary,
+claim the derived DLQ before dispatching new reviewer work; the idempotency key remains stable.
+
 - All confirmed reviewers score the implementation.
 - Consensus requires overall score >= 9.0/10 and no dimension < 7.0.
 - Security/auth/secrets dimension < 5.0 is a blocking stop.
@@ -398,6 +407,12 @@ Run reviewers according to `consensus-protocol.md`.
 ## Step B3: Scanners Run
 
 Run selected scanner validators only after reviewer consensus or explicit user override.
+
+Apply the same settlement sequence to the complete selected-validator roster: manifest before any
+Agent call, spawn immediately before each call, settle from the validator's required evidence record,
+then evaluate the casualty report before accepting the scanner gate. A required validator with no
+evidence is `silent-no-op`, enters the derived DLQ while attempts remain, and can never be counted as
+an implicit pass.
 
 Scanners inspect local artifacts, code, dependency manifests, contracts, and infrastructure.
 Hard-fail scanner findings block auto-merge, nonprod deploy, and completion.

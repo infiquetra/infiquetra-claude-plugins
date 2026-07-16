@@ -15,6 +15,7 @@ import re
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -349,6 +350,34 @@ def append_manifest(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> di
             raise DispatchSettlementError(f"dispatch {dispatch_id!r} already has a manifest")
 
     return run_ledger.append_fact_atomic(ledger, dict(fact), validate_snapshot=validate)
+
+
+def ensure_manifest(ledger: run_ledger.RunLedger, fact: Mapping[str, Any]) -> dict[str, Any]:
+    """Append a manifest once; an identical existing manifest is an idempotent success."""
+    dispatch_id = _identifier(fact.get("dispatch_id", ""), field="dispatch_id")
+    try:
+        return append_manifest(ledger, fact)
+    except DispatchSettlementError as exc:
+        if "already has a manifest" not in str(exc):
+            raise
+    records = _fact_records(_verified_snapshot(ledger), dispatch_id)
+    existing = _require_manifest(records, dispatch_id)
+    immutable = {
+        "schema",
+        "kind",
+        "subplot_id",
+        "event",
+        "dispatch_id",
+        "site",
+        "units",
+        "casualty_threshold_percent",
+        "max_attempts",
+    }
+    expected = {key: fact.get(key) for key in immutable}
+    actual = {key: existing.get(key) for key in immutable}
+    if actual != expected:
+        raise DispatchSettlementError(f"manifest drift for dispatch {dispatch_id!r}")
+    return dict(existing)
 
 
 def _require_manifest(records: Sequence[Mapping[str, Any]], dispatch_id: str) -> Mapping[str, Any]:
@@ -746,6 +775,117 @@ def claim_retry(
     )
 
 
+def prepare_attempt(
+    ledger: run_ledger.RunLedger,
+    *,
+    subplot_id: str,
+    at: str,
+    dispatch_id: str,
+    site: str,
+    unit: UnitSpec | Mapping[str, Any],
+    casualty_threshold_percent: int = DEFAULT_THRESHOLD_PERCENT,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+) -> dict[str, Any]:
+    """Ensure a one-unit manifest and atomically record or recover the current attempt.
+
+    A prior open attempt is returned unchanged: its pre-call spawn already exists and replay uses the
+    same stable idempotency key. A settled casualty claims the next derived DLQ attempt.
+    """
+    normalized = _unit(unit)
+    ensure_manifest(
+        ledger,
+        manifest_fact(
+            subplot_id=subplot_id,
+            at=at,
+            dispatch_id=dispatch_id,
+            site=site,
+            units=[normalized],
+            casualty_threshold_percent=casualty_threshold_percent,
+            max_attempts=max_attempts,
+        ),
+    )
+    scoped = _fact_records(_verified_snapshot(ledger), dispatch_id)
+    spawns = sorted(
+        (
+            record
+            for record in scoped
+            if record.get("event") == EVENT_SPAWN and record.get("unit_id") == normalized.unit_id
+        ),
+        key=lambda record: int(record["attempt"]),
+    )
+    if not spawns:
+        return append_spawn(
+            ledger,
+            spawn_fact(
+                subplot_id=subplot_id,
+                at=at,
+                dispatch_id=dispatch_id,
+                unit_id=normalized.unit_id,
+                attempt=1,
+                idempotency_key=normalized.idempotency_key,
+            ),
+        )
+    latest = spawns[-1]
+    latest_attempt = int(latest["attempt"])
+    has_settlement = any(
+        record.get("event") == EVENT_SETTLE
+        and record.get("unit_id") == normalized.unit_id
+        and record.get("attempt") == latest_attempt
+        for record in scoped
+    )
+    if not has_settlement:
+        return dict(latest)
+    eligible = [
+        item for item in dead_letters(ledger, dispatch_id) if item.unit_id == normalized.unit_id
+    ]
+    if len(eligible) != 1:
+        raise DispatchSettlementError("unit has no open or retry-eligible attempt")
+    return claim_retry(
+        ledger,
+        subplot_id=subplot_id,
+        at=at,
+        dispatch_id=dispatch_id,
+        unit_id=normalized.unit_id,
+    )
+
+
+def settle_latest_open(
+    ledger: run_ledger.RunLedger,
+    *,
+    subplot_id: str,
+    at: str,
+    dispatch_id: str,
+    unit_id: str,
+    classification: str,
+    reason: str,
+    evidence_ref: str = "",
+    evidence_sha256: str = "",
+) -> dict[str, Any] | None:
+    """Settle the latest open attempt; return ``None`` when it is already terminal."""
+    positions = [
+        item
+        for item in open_positions(ledger)
+        if item["dispatch_id"] == dispatch_id and item["unit_id"] == unit_id
+    ]
+    if not positions:
+        return None
+    latest = max(positions, key=lambda item: int(item["attempt"]))
+    return append_settlement(
+        ledger,
+        settle_fact(
+            subplot_id=subplot_id,
+            at=at,
+            dispatch_id=dispatch_id,
+            unit_id=unit_id,
+            attempt=int(latest["attempt"]),
+            classification=classification,
+            reason=reason,
+            evidence_ref=evidence_ref,
+            evidence_sha256=evidence_sha256,
+        ),
+    )
+
+
 def reconcile_leaks(
     ledger: run_ledger.RunLedger,
     *,
@@ -798,6 +938,26 @@ def settlement_metadata(
 def evidence_digest(payload: object) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def iso_at(timestamp: float) -> str:
+    """Deterministic UTC ISO rendering for an injected runtime clock."""
+    return datetime.fromtimestamp(timestamp, tz=UTC).isoformat().replace("+00:00", "Z")
+
+
+def outcome_identity(outcome_id: str, subplot_id: str) -> tuple[str, UnitSpec]:
+    """Stable one-leaf dispatch identity for the outcome adapter."""
+    outcome = _identifier(outcome_id, field="outcome_id")
+    subplot = _identifier(subplot_id, field="subplot_id")
+    dispatch_id = f"outcome:{outcome}:{subplot}"
+    return (
+        dispatch_id,
+        UnitSpec(
+            unit_id=subplot,
+            idempotency_key=f"outcome:{outcome}:{subplot}",
+            deliverables=("canonical-completion",),
+        ),
+    )
 
 
 def _json_value(raw: str) -> Any:
@@ -880,6 +1040,7 @@ def main(argv: list[str] | None = None) -> int:
     reconcile_cmd = sub.add_parser("reconcile")
     reconcile_cmd.add_argument("--leaks", action="store_true", required=True)
     reconcile_cmd.add_argument("--worktree-state-json", default="[]")
+    reconcile_cmd.add_argument("--outcome-id", default="")
 
     args = parser.parse_args(argv)
     ledger = _ledger(args)
@@ -966,6 +1127,18 @@ def main(argv: list[str] | None = None) -> int:
             raw_worktrees = _json_value(args.worktree_state_json)
             if not isinstance(raw_worktrees, list):
                 raise DispatchSettlementError("--worktree-state-json must decode to a list")
+            if args.outcome_id:
+                import outcome_store  # noqa: PLC0415 - optional outcome adapter
+                import outcome_worktrees  # noqa: PLC0415 - optional outcome adapter
+
+                store = outcome_store.Store.for_outcome(args.outcome_id, Path(args.repo_root))
+                raw_worktrees.extend(
+                    outcome_worktrees.stale_worktree_debits(
+                        store,
+                        outcome_worktrees.git_worktree_ops(Path(args.repo_root)),
+                        outcome_id=args.outcome_id,
+                    )
+                )
             _print(reconcile_leaks(ledger, stale_worktrees=raw_worktrees))
     except (DispatchSettlementError, run_ledger.RunLedgerError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)

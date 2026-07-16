@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.97.0",
+      "version": "0.98.0",
       "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, /pulse live telemetry, trust-gated external-engine onboarding, provenance, attestation, and delegation-audit reconciliation.",
       "author": {
         "name": "Infiquetra",
@@ -108,7 +108,7 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.16.0",
+      "version": "2.17.0",
       "description": "Two-phase plan execution with reviewer consensus, non-scoring external advisory convergence diffs, validator gates, chaperone manifests with write-once draft snapshots, and guarded nonprod automation.",
       "author": {
         "name": "Infiquetra",

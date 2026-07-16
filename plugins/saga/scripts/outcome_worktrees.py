@@ -132,6 +132,28 @@ def read_registry(store: Any) -> dict[str, dict[str, Any]]:
     return {str(k): dict(v) for k, v in entries.items() if isinstance(v, dict)}
 
 
+def _read_registry_without_repair(store: Any) -> dict[str, dict[str, Any]]:
+    """Read the registry without invoking the normal quarantine/repair path.
+
+    Settlement reconciliation is observational: even malformed input must not move, rewrite, or
+    create files. A malformed registry therefore fails visibly and leaves recovery to the worktree
+    lifecycle's mutation owner.
+    """
+    path = _registry_path(store)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise WorktreeError(f"cannot read worktree registry without repair: {exc}") from exc
+    if not isinstance(data, dict):
+        raise WorktreeError("worktree registry must be a JSON object")
+    entries = data.get("worktrees", {})
+    if not isinstance(entries, dict):
+        raise WorktreeError("worktree registry 'worktrees' must be an object")
+    return {str(k): dict(v) for k, v in entries.items() if isinstance(v, dict)}
+
+
 def _write_registry(store: Any, entries: dict[str, dict[str, Any]]) -> None:
     outcome_store._atomic_write(
         _registry_path(store), json.dumps({"worktrees": entries}, indent=2, sort_keys=True) + "\n"
@@ -171,6 +193,33 @@ def live_worktrees(store: Any, ops: WorktreeOps) -> set[str]:
         if path and ops.exists(path):
             live.add(sid)
     return live
+
+
+def stale_worktree_debits(
+    store: Any,
+    ops: WorktreeOps,
+    *,
+    outcome_id: str,
+) -> list[dict[str, Any]]:
+    """Project registered-but-absent worktrees as read-only settlement debits (#351).
+
+    This deliberately does not deregister, reap, append facts, or create files. The normal outcome
+    worktree harvester remains the only mutation owner; ``reconcile --leaks`` consumes this view.
+    """
+    outcome_store._safe_name(outcome_id, what="outcome_id")
+    debits: list[dict[str, Any]] = []
+    for sid, entry in sorted(_read_registry_without_repair(store).items()):
+        path = str(entry.get("path", ""))
+        if path and not ops.exists(path):
+            debits.append(
+                {
+                    "dispatch_id": f"outcome:{outcome_id}:worktrees",
+                    "unit_id": sid,
+                    "attempt": 1,
+                    "worktree": path,
+                }
+            )
+    return debits
 
 
 @dataclass

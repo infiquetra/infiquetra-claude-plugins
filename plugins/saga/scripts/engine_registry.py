@@ -367,6 +367,7 @@ class EngineEntry:
     receipt_emitter: str
     auth: dict[str, Any]
     transport: str = "cli"
+    max_concurrent: int | None = None
 
     @property
     def key(self) -> str:
@@ -414,6 +415,13 @@ class EngineEntry:
             raise RegistryError(f"{where}: missing last_validated")
 
         receipt_emitter = _require_string(data, "receipt_emitter", where)
+        max_concurrent = data.get("max_concurrent")
+        if max_concurrent is not None and (
+            isinstance(max_concurrent, bool)
+            or not isinstance(max_concurrent, int)
+            or max_concurrent < 1
+        ):
+            raise RegistryError(f"{where}: max_concurrent must be a positive integer")
 
         return cls(
             engine_id=engine_id,
@@ -444,6 +452,7 @@ class EngineEntry:
             receipt_emitter=receipt_emitter,
             auth=auth,
             transport=transport,
+            max_concurrent=max_concurrent,
         )
 
 

@@ -4,6 +4,11 @@ Every delegated-agent spawn site in the `saga` plugin, classified against the tw
 contract (`mutation_policy` x `workspace_isolation`, see `docs/plans/2026-07-02-capability-scoped-
 sandbox-plan.md`). Absent sandbox = R1 default (ambient x read-write, today's behavior).
 
+Executable fan-out admission is tracked separately in
+`plugins/saga/references/concurrency-spawn-sites.md`. Verify-panel rows appear conceptually in both
+inventories because they require both containment and bounded admission, but each inventory keeps
+its own machine contract.
+
 Three classes:
 
 - **in-scope** — attach the `read-only-verify` profile (`mutation_policy: read-only` x

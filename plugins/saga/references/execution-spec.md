@@ -22,6 +22,11 @@ by hand validated the spec by walking it (KTD1) before this emitter automated it
   "name": "my-campaign",
   "description": "one-line workflow purpose",
   "repo": "/abs/path/to/repo",        // optional; emitted as the REPO constant
+  "concurrency": {                    // optional; absent preserves legacy serialization
+    "max_concurrent": 3,
+    "readonly_max_concurrent": 4,
+    "aggregate_max_concurrent": 7
+  },
   "units": [
     {
       "unit_id": "U1",
@@ -41,12 +46,49 @@ by hand validated the spec by walking it (KTD1) before this emitter automated it
 }
 ```
 
+### Concurrency policy (optional)
+
+`concurrency` is a closed block of positive integers satisfying
+`max_concurrent <= readonly_max_concurrent <= aggregate_max_concurrent`. When omitted, emission
+uses the defaults shown above but round-trip serialization leaves the block absent. Every executable
+fan-out routes through the same stable chunking governor.
+
+Resolution is deterministic: spec default, `SAGA_MAX_CONCURRENT`, an all-explicit-read-only cohort
+lift, cost-weighted tier admission, a selected external-engine lane's optional `max_concurrent`, then
+the explicit emit-time `--max-concurrent` override. Before aggregate preflight, the emitter copies
+the environment once and builds one immutable routing context used by worker waves, ordinary and
+iterate-to-consensus verifier panels, thunk panels, and unattended retry panels. Exact-engine
+selectors use their registry row directly. Capability selectors resolve once to an exact registry
+row; the authored capability remains inert provenance in that frozen context, while runtime dispatch
+emits only the selected exact `engine` and never re-resolves or emits a capability selector. Tier
+admission can narrow but never widen the selected non-tier ceiling. A lane cap applies only to units
+resolved to that lane; ordinary units in a mixed layer keep their own resolved limit. The run
+override is the final operator instruction. Invalid values and values above the aggregate ceiling
+fail emission instead of being clamped.
+
+Dependency layers and verifier panels preserve declaration order while emitting bounded sequential
+chunks. Before rendering, the emitter checks each layer's conservative aggregate product: largest
+worker chunk width times largest co-running verifier chunk width. A product above
+`aggregate_max_concurrent` halts with the layer, both factors, product, and ceiling named.
+
+Workflow source generation is fail closed. `unit_id` must match
+`[A-Za-z_][A-Za-z0-9_.-]*`, must not map to a JavaScript keyword, harness binding, or supported
+JavaScript/Workflow runtime global, and must not collide with another unit's generated result,
+verifier, or chunk symbols. Runtime globals are reserved independently of whether the current
+harness happens to reference them, so a later bare, shorthand, or member call cannot create a new
+shadowing path. Iterate-to-consensus units additionally cannot claim loop-local or reconciliation
+names. Free-form values emitted in JavaScript line comments have line terminators and
+template-expression syntax escaped; values in executable expressions use JSON string encoding.
+
 ### Unit.verify — refute-N judge-panel (optional, KTD5)
 
 A unit may carry an optional `verify` block that attaches a **refute-N judge-panel** over that unit's
-output. When present, the emitter appends a `parallel([...])` of `n` verifier `agent()` calls (each at the
-**same `{model, effort}` tier** as the parent unit — R4), followed by a pass-rule reconciliation in the
-generated script:
+output. When present, the emitter appends one or more bounded, sequential `parallel([...])` chunks
+containing the `n` verifier `agent()` calls (each at the **same `{model, effort}` tier** as the parent
+unit when `verify.tier` is absent, or at the explicitly authored `verify.tier`), concatenates chunk
+results in verifier order, and then emits pass-rule reconciliation. Concurrency admission uses that
+effective verifier tier while preserving the subject unit's sandbox and resolved engine-lane
+context:
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -176,11 +218,13 @@ something the emitted script can detect.
 
 The emitter computes **topological dependency layers** (Kahn) from each unit's `depends_on` list and any
 implicit pilot barrier (`pilot` → fan-out). Units whose full dependency set is satisfied by earlier layers
-run together in one `parallel([...])` wave; layers are sequenced by `await`:
+run in one or more bounded, sequential `parallel([...])` chunks; the full layer completes before the next
+dependency layer begins:
 
 - **Singleton layer** → plain `const x = await agent(...)`.
-- **Multi-unit layer** → `const [x, y, z] = await parallel([...])` — one wave of thunks, destructured
-  back into per-unit vars so verify panels and dependents read them.
+- **Multi-unit layer** → each bounded chunk emits
+  `const [x, y, z] = await parallel([...])`, destructured back into per-unit vars. Chunks preserve
+  declaration order and form one dependency barrier as a group.
 
 Verify panels for units in a parallel wave are emitted **after** the wave closes (so the panel reads the
 result from the already-resolved var). Within a layer, units keep their declaration order for deterministic
@@ -241,10 +285,13 @@ The flow has three moving parts:
    `inline` rather than raising. Tiers ladder, most-capable first:
    `cc-workflows-ultracode → team-execution → inline`.
 
-2. **`execution_spec.recompile_for_tier(spec, mode)`** — re-emits the *same* spec for the
+2. **`execution_spec.recompile_for_tier(spec, mode, repo_root=...)`** — re-emits the *same* spec for the
    (possibly downgraded) tier: `cc-workflows-ultracode` → the dynamic `.workflow.js`; any
    other tier → the inline/serial baseline (`emit_inline_baseline`). Both preserve unit specs
-   and per-unit tiers; the function always returns a runnable artifact.
+   and per-unit tiers. Capability-routed workflow recompilation requires the authoritative target
+   repository root so routing overlays and calibration come from that repository; omitting it fails
+   closed with `capability emission requires explicit repo_root`. Exact-engine workflow specs and
+   non-workflow tiers remain compatible with the two-argument call.
 
 3. **`saga.orchestration_downgrade`** — the recorded note. The downgrade is durable, not
    silent: the one-line note from step 1 is written to the saga so a later `/retro`/`/optimize`

@@ -7,6 +7,8 @@
 #
 # cost_speed_rank is the KTD9 tie-break key: lower = cheaper+faster. It only breaks ties between
 # variants that rate a requested capability EQUALLY (rating dominates first).
+# Any variant may declare an optional positive `max_concurrent` lane override. Saga applies the
+# override only to units explicitly routed to that exact engine/variant key.
 
 capabilities:
   - code-generation

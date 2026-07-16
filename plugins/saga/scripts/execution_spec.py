@@ -39,14 +39,21 @@ import argparse
 import copy
 import importlib.util
 import json
+import os
+import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import concurrency_governor  # noqa: E402
+import engine_calibration  # noqa: E402
+import engine_overlay  # noqa: E402
+import engine_resolver  # noqa: E402
 import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
 from chaperone_economics import VERIFIABILITY_VALUES  # noqa: E402
 from engine_registry import PANEL_N_CAP as PANEL_N_CAP  # noqa: E402
@@ -91,6 +98,258 @@ PASS_RULES = ("majority", "unanimous")
 # wants a cheap chaperone (the delegation is net-negative otherwise); ``second-opinion``
 # and ``divergence`` want an expensive one (adversarial verification IS the product).
 ENGINE_INTENTS = _tier_palette.ENGINE_INTENTS
+
+_UNIT_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+_JS_RESERVED_IDENTIFIERS = frozenset(
+    {
+        "arguments",
+        "await",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "eval",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "implements",
+        "import",
+        "in",
+        "instanceof",
+        "interface",
+        "let",
+        "new",
+        "null",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "static",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
+        "yield",
+    }
+)
+_WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS = frozenset(
+    {
+        "AbortController",
+        "AbortSignal",
+        "AggregateError",
+        "Array",
+        "ArrayBuffer",
+        "Atomics",
+        "BigInt",
+        "BigInt64Array",
+        "BigUint64Array",
+        "Blob",
+        "Boolean",
+        "BroadcastChannel",
+        "Buffer",
+        "ByteLengthQueuingStrategy",
+        "CompressionStream",
+        "CountQueuingStrategy",
+        "Crypto",
+        "CryptoKey",
+        "CustomEvent",
+        "DOMException",
+        "DataView",
+        "Date",
+        "DecompressionStream",
+        "Error",
+        "EvalError",
+        "Event",
+        "EventTarget",
+        "File",
+        "FinalizationRegistry",
+        "Float32Array",
+        "Float64Array",
+        "FormData",
+        "Function",
+        "Headers",
+        "Infinity",
+        "Int16Array",
+        "Int32Array",
+        "Int8Array",
+        "Intl",
+        "Iterator",
+        "JSON",
+        "Map",
+        "Math",
+        "MessageChannel",
+        "MessageEvent",
+        "MessagePort",
+        "NaN",
+        "Navigator",
+        "Number",
+        "Object",
+        "Performance",
+        "PerformanceEntry",
+        "PerformanceMark",
+        "PerformanceMeasure",
+        "PerformanceObserver",
+        "PerformanceObserverEntryList",
+        "PerformanceResourceTiming",
+        "Promise",
+        "Proxy",
+        "RangeError",
+        "ReadableByteStreamController",
+        "ReadableStream",
+        "ReadableStreamBYOBReader",
+        "ReadableStreamBYOBRequest",
+        "ReadableStreamDefaultController",
+        "ReadableStreamDefaultReader",
+        "ReferenceError",
+        "Reflect",
+        "RegExp",
+        "Request",
+        "Response",
+        "Set",
+        "SharedArrayBuffer",
+        "String",
+        "SubtleCrypto",
+        "Symbol",
+        "SyntaxError",
+        "TextDecoder",
+        "TextDecoderStream",
+        "TextEncoder",
+        "TextEncoderStream",
+        "TransformStream",
+        "TransformStreamDefaultController",
+        "TypeError",
+        "URIError",
+        "URL",
+        "URLSearchParams",
+        "Uint16Array",
+        "Uint32Array",
+        "Uint8Array",
+        "Uint8ClampedArray",
+        "WeakMap",
+        "WeakRef",
+        "WeakSet",
+        "WebAssembly",
+        "WebSocket",
+        "WritableStream",
+        "WritableStreamDefaultController",
+        "WritableStreamDefaultWriter",
+        "__dirname",
+        "__filename",
+        "assert",
+        "async_hooks",
+        "atob",
+        "btoa",
+        "buffer",
+        "child_process",
+        "clearImmediate",
+        "clearInterval",
+        "clearTimeout",
+        "cluster",
+        "console",
+        "constants",
+        "crypto",
+        "decodeURI",
+        "decodeURIComponent",
+        "dgram",
+        "diagnostics_channel",
+        "dns",
+        "domain",
+        "encodeURI",
+        "encodeURIComponent",
+        "escape",
+        "eval",
+        "events",
+        "exports",
+        "fetch",
+        "fs",
+        "global",
+        "globalThis",
+        "http",
+        "http2",
+        "https",
+        "inspector",
+        "isFinite",
+        "isNaN",
+        "module",
+        "navigator",
+        "net",
+        "os",
+        "parseFloat",
+        "parseInt",
+        "path",
+        "perf_hooks",
+        "performance",
+        "process",
+        "punycode",
+        "querystring",
+        "queueMicrotask",
+        "readline",
+        "repl",
+        "require",
+        "setImmediate",
+        "setInterval",
+        "setTimeout",
+        "stream",
+        "string_decoder",
+        "structuredClone",
+        "sys",
+        "timers",
+        "tls",
+        "trace_events",
+        "tty",
+        "undefined",
+        "unescape",
+        "url",
+        "util",
+        "v8",
+        "vm",
+        "wasi",
+        "worker_threads",
+        "zlib",
+    }
+)
+_WORKFLOW_HOST_GLOBAL_IDENTIFIERS = frozenset({"agent", "log", "parallel"})
+# Scanner-facing union: Workflow primitives are supplied by the host and therefore do not appear
+# in Node's ``globalThis`` inventory, but they are still free globals in every emitted harness.
+_WORKFLOW_GLOBAL_IDENTIFIERS = (
+    _WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS | _WORKFLOW_HOST_GLOBAL_IDENTIFIERS
+)
+_WORKFLOW_RESERVED_IDENTIFIERS = (
+    frozenset(
+        {
+            "REPO",
+            "__gate",
+            "__is429",
+            "__pulledCords",
+            "__retry",
+            "__retryAfterMs",
+            "__retryBackoffMs",
+            "__verifierPrompt",
+            "meta",
+        }
+    )
+    | _WORKFLOW_GLOBAL_IDENTIFIERS
+)
 
 # Sandbox capability axes (issue #287 R1-R3) -- a delegated leaf's declared containment,
 # orthogonal to the model/effort tier. ``mutation_policy`` is enforced by tool-set omission at
@@ -154,7 +413,22 @@ TIER_ENFORCEABLE_BY_BACKEND: dict[str, frozenset[str]] = {
 # Hard upper bound on a verify panel's verifier count. N above this FAILS validate/emit --
 # the bound directly guards the rate-limit overcorrection (R3: the 22/23-judges panel that
 # tripped the concurrency cap). N <= CAP is allowed; a soft warn band starts at WARN below.
-VERIFY_N_CAP = 7
+ConcurrencyPolicy = concurrency_governor.ConcurrencyPolicy
+ConcurrencyPolicyError = concurrency_governor.ConcurrencyPolicyError
+VERIFY_N_CAP = concurrency_governor.DEFAULT_AGGREGATE_MAX_CONCURRENT
+_WORKFLOW_ITERATE_LOCAL_IDENTIFIERS = frozenset(
+    {
+        "fallback_marker",
+        "iter",
+        "missing_idx",
+        "refute_count",
+        "refuted",
+        "reported",
+        "threshold",
+        "valid_verifier_verdict",
+        "verdicts",
+    }
+) | frozenset(f"verdicts_chunk_{index}" for index in range(2, VERIFY_N_CAP + 1))
 
 # Soft threshold: a panel size in (WARN, CAP] validates but emits a stderr warning -- big
 # panels are legal but smell like the overcorrection, so they are surfaced, not silently run.
@@ -453,7 +727,11 @@ def _engine_registry_path() -> Path:
 
 
 def _validate_external_engine_selector(
-    where: str, engine: str | None, capability: str | None
+    where: str,
+    engine: str | None,
+    capability: str | None,
+    *,
+    registry: Any | None = None,
 ) -> None:
     if engine is not None and capability is not None:
         raise SpecError(f"{where}: engine and capability are mutually exclusive")
@@ -464,14 +742,14 @@ def _validate_external_engine_selector(
     if capability is not None and capability not in registry_module.CAPABILITIES:
         raise SpecError(f"{where}: unknown capability {capability!r}")
 
-    registry_path = _engine_registry_path()
-    if not registry_path.exists():
-        return
-
-    try:
-        registry = registry_module.Registry.load(registry_path)
-    except registry_module.RegistryError as exc:
-        raise SpecError(f"{where}: engine registry invalid: {exc}") from exc
+    if registry is None:
+        registry_path = _engine_registry_path()
+        if not registry_path.exists():
+            return
+        try:
+            registry = registry_module.Registry.load(registry_path)
+        except registry_module.RegistryError as exc:
+            raise SpecError(f"{where}: engine registry invalid: {exc}") from exc
 
     if engine is not None:
         engine_keys = {entry.key for entry in registry.engines}
@@ -884,16 +1162,47 @@ class Unit:
     worth_it_because: str = ""
     cheaper_fallback: Tier | None = None
 
-    def validate(self, where: str, *, require_receipts: bool = False) -> None:
+    def validate(
+        self,
+        where: str,
+        *,
+        require_receipts: bool = False,
+        engine_registry: Any | None = None,
+    ) -> None:
         if not self.unit_id:
             raise SpecError(f"{where}: a unit needs a non-empty unit_id")
+        if _UNIT_ID_RE.fullmatch(self.unit_id) is None:
+            raise SpecError(
+                f"{where}: unit_id {self.unit_id!r} must match "
+                "[A-Za-z_][A-Za-z0-9_.-]* so workflow source generation stays fail closed"
+            )
+        js_var = _js_var(self.unit_id)
+        if js_var in _JS_RESERVED_IDENTIFIERS:
+            raise SpecError(
+                f"{where}: unit_id {self.unit_id!r} maps to reserved JavaScript identifier "
+                f"{js_var!r}; rename the unit"
+            )
+        if (
+            self.verify is not None
+            and self.verify.iterate_to_consensus
+            and js_var in _WORKFLOW_ITERATE_LOCAL_IDENTIFIERS
+        ):
+            raise SpecError(
+                f"{where}: iterate-to-consensus unit_id {self.unit_id!r} maps to reserved "
+                f"JavaScript loop identifier {js_var!r}; rename the unit"
+            )
         # Engine/capability-routed units are engine-owned (chaperone-dispatch); they are
         # excluded from the per-teammate effort-ceiling HALT (#370 AC6, #318).
         self.tier.validate(
             f"unit {self.unit_id}",
             is_engine_owned=self.engine is not None or self.capability is not None,
         )
-        _validate_external_engine_selector(f"unit {self.unit_id}", self.engine, self.capability)
+        _validate_external_engine_selector(
+            f"unit {self.unit_id}",
+            self.engine,
+            self.capability,
+            registry=engine_registry,
+        )
         if self.engine_intent is not None:
             if self.engine is None and self.capability is None:
                 raise SpecError(f"unit {self.unit_id}: engine_intent requires engine or capability")
@@ -1108,6 +1417,15 @@ def _effective_verify_tier(unit: Unit) -> Tier:
     return unit.tier
 
 
+def _verify_panel_admission_unit(unit: Unit) -> Unit:
+    """Project a subject unit onto the tier its verifier panel actually uses.
+
+    ``replace`` preserves sandbox and exact-engine lane evidence, so concurrency resolution sees
+    the same policy context as the subject while tier weighting reflects the verifier calls.
+    """
+    return replace(unit, tier=_effective_verify_tier(unit))
+
+
 def unit_spend(unit: Unit) -> int:
     """Ordinal spend for one unit's full call footprint (#366 KTD8).
 
@@ -1187,6 +1505,9 @@ class ExecutionSpec:
     # climb). It is a CLI-set field + accumulator primitive (SpendEnvelope), NOT an autonomous
     # runtime gate. Absent (None) emits no key (byte-identical round-trip, R10).
     spend_envelope: int | None = None
+    # Optional closed concurrency policy (#350). Absent specs consume the fleet defaults at emit
+    # time but preserve their serialized shape; an explicit block round-trips all three values.
+    concurrency: ConcurrencyPolicy | None = None
     # The committed run-start intent envelope (#380, T12-F1-2): run_mode + ceremony_gates,
     # schema-validated against ``intent_envelope.IntentEnvelope`` in ``validate()``. It seeds
     # per-unit tier DEFAULTS at authoring time (``intent_envelope.seeded_tier`` resolves a work
@@ -1205,7 +1526,12 @@ class ExecutionSpec:
         """The multiplicity-aware summed ordinal spend across every unit (#366 KTD8)."""
         return sum(unit_spend(u) for u in self.units)
 
-    def validate(self, *, require_receipts: bool = False) -> None:
+    def validate(
+        self,
+        *,
+        require_receipts: bool = False,
+        engine_registry: Any | None = None,
+    ) -> None:
         """Validate the whole spec, enforcing the R3 + R10 authoring invariants.
 
         Raises ``SpecError`` on the first violation found (fail emit). Checks, in order:
@@ -1223,23 +1549,26 @@ class ExecutionSpec:
             raise SpecError("spec needs at least one unit")
 
         seen: set[str] = set()
-        var_owner: dict[str, str] = {}
+        symbol_owner = dict.fromkeys(_WORKFLOW_RESERVED_IDENTIFIERS, "workflow harness")
         for unit in self.units:
-            unit.validate(f"spec {self.name}", require_receipts=require_receipts)
+            unit.validate(
+                f"spec {self.name}",
+                require_receipts=require_receipts,
+                engine_registry=engine_registry,
+            )
             if unit.unit_id in seen:
                 raise SpecError(f"duplicate unit_id {unit.unit_id!r}")
             seen.add(unit.unit_id)
-            # The emitted result var is the sanitized unit_id; two ids that sanitize to the
-            # same JS identifier would emit a duplicate `const` (a SyntaxError in the ESM the
-            # emitter produces). Reject the collision here rather than emit unloadable JS.
-            js_var = _js_var(unit.unit_id)
-            if js_var in var_owner:
-                raise SpecError(
-                    f"unit_id {unit.unit_id!r} and {var_owner[js_var]!r} both map to the JS "
-                    f"identifier {js_var!r} (- and . both become _); rename one so the emitted "
-                    f"script has unique result vars"
-                )
-            var_owner[js_var] = unit.unit_id
+            # Reserve the primary result binding and every top-level symbol its panel can emit.
+            # A different unit id must not collide with a generated panel/chunk binding.
+            for symbol in _unit_script_symbols(unit):
+                owner = symbol_owner.get(symbol)
+                if owner is not None:
+                    raise SpecError(
+                        f"unit_id {unit.unit_id!r} emits reserved JavaScript identifier "
+                        f"{symbol!r}, already owned by {owner}; rename the unit"
+                    )
+                symbol_owner[symbol] = f"unit {unit.unit_id!r}"
 
         for unit in self.units:
             for dep in unit.depends_on:
@@ -1300,6 +1629,12 @@ class ExecutionSpec:
         if self.spend_envelope is not None and self.spend_envelope < 1:
             raise SpecError(f"spec {self.name}: spend_envelope {self.spend_envelope} must be >= 1")
 
+        if self.concurrency is not None:
+            try:
+                self.concurrency.validate(f"spec {self.name}.concurrency")
+            except ConcurrencyPolicyError as exc:
+                raise SpecError(str(exc)) from exc
+
         # #380: a committed run-start intent envelope is schema-validated through the canonical
         # module -- an off-vocabulary run_mode or unknown gate field fails the spec loudly,
         # never seeds defaults from an envelope nobody can strictly understand.
@@ -1320,6 +1655,17 @@ class ExecutionSpec:
             # Fail loudly on a mis-shaped field rather than coercing: validate() could not
             # schema-check a string/list intent anyway (#380).
             raise SpecError(f"intent must be an object or absent, got {raw_intent!r}")
+        raw_concurrency = data.get("concurrency")
+        if raw_concurrency is not None and not isinstance(raw_concurrency, dict):
+            raise SpecError(f"concurrency must be an object or absent, got {raw_concurrency!r}")
+        try:
+            concurrency = (
+                ConcurrencyPolicy.from_dict(raw_concurrency, "concurrency")
+                if raw_concurrency is not None
+                else None
+            )
+        except ConcurrencyPolicyError as exc:
+            raise SpecError(str(exc)) from exc
         return cls(
             name=str(data.get("name", "")),
             description=str(data.get("description", "")),
@@ -1327,6 +1673,7 @@ class ExecutionSpec:
             repo=str(data.get("repo", "")),
             cost_budget=_optional_int_field(data, "cost_budget"),
             spend_envelope=_optional_int_field(data, "spend_envelope"),
+            concurrency=concurrency,
             intent=copy.deepcopy(raw_intent),
         )
 
@@ -1343,6 +1690,8 @@ class ExecutionSpec:
             out["cost_budget"] = self.cost_budget
         if self.spend_envelope is not None:
             out["spend_envelope"] = self.spend_envelope
+        if self.concurrency is not None:
+            out["concurrency"] = self.concurrency.to_dict()
         if self.intent is not None:
             out["intent"] = copy.deepcopy(self.intent)
         return out
@@ -1357,8 +1706,9 @@ def dependency_layers(spec: ExecutionSpec) -> list[list[str]]:
     """Compute topological layers (Kahn) of unit ids ready to run together (KTD4).
 
     Each returned layer is a list of unit ids whose dependencies are all satisfied by
-    earlier layers, so a layer of >1 id renders as one ``parallel([...])`` wave and
-    layers are sequenced by ``await``. Edges come from each unit's ``depends_on`` AND --
+    earlier layers, so a layer of >1 id renders as one or more bounded, sequential
+    ``parallel([...])`` chunks and layers are sequenced by ``await``. Edges come from each unit's
+    ``depends_on`` AND --
     so R3 is preserved -- from a fan-out unit's ``pilot``: the pilot is an implicit
     barrier edge (pilot -> fan-out), guaranteeing the pilot lands in an EARLIER layer
     than the fan-out it gates (otherwise both would share a parallel wave and the gate
@@ -1399,6 +1749,471 @@ def dependency_layers(spec: ExecutionSpec) -> list[list[str]]:
     return layers
 
 
+def _concurrency_policy(spec: ExecutionSpec) -> ConcurrencyPolicy:
+    return spec.concurrency or ConcurrencyPolicy()
+
+
+@dataclass(frozen=True)
+class UnitRouting:
+    """One unit's immutable, emit-scoped prompt and exact lane decision."""
+
+    prompt: str
+    exact_engine: str | None
+    authored_capability: str | None
+    lane_max_concurrent: int | None
+
+
+@dataclass(frozen=True)
+class EmissionRoutingContext:
+    """Frozen routing inputs consumed by every admission and rendering site in one emit."""
+
+    units: Mapping[str, UnitRouting]
+    lane_limits: Mapping[str, int | None]
+    lane_assignments: Mapping[str, str]
+
+    def for_unit(self, unit: Unit) -> UnitRouting:
+        try:
+            return self.units[unit.unit_id]
+        except KeyError as exc:
+            raise SpecError(
+                f"unit {unit.unit_id}: missing from immutable emission routing context"
+            ) from exc
+
+
+_ROUTING_SNAPSHOT_UNSET = object()
+
+
+def _load_emission_registry() -> Any:
+    registry_module = _engine_registry_module()
+    try:
+        return registry_module.Registry.load(_engine_registry_path())
+    except Exception as exc:  # noqa: BLE001 - registry read/parse boundary must fail closed
+        raise SpecError(f"engine registry invalid while freezing emission routing: {exc}") from exc
+
+
+def _read_repository_calibration_snapshot(ledger: Any) -> Any:
+    """Return one strict, lock-consistent ledger snapshot without tolerating a torn tail."""
+
+    run_ledger = engine_calibration.run_ledger
+    try:
+        with run_ledger._read_locked(ledger):
+            raw = ledger.path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return run_ledger.LedgerSnapshot(
+            records=(),
+            report=run_ledger.ChainReport(True, None, "ok"),
+        )
+    records: list[dict[str, Any]] = []
+    for line_number, line in enumerate(raw.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise engine_calibration.CalibrationError(
+                f"corrupt repository calibration ledger {ledger.path} line {line_number}"
+            ) from exc
+        if not isinstance(record, dict):
+            raise engine_calibration.CalibrationError(
+                f"corrupt repository calibration ledger {ledger.path} line {line_number}: "
+                "expected a JSON object"
+            )
+        records.append(record)
+    return run_ledger.LedgerSnapshot(
+        records=tuple(records),
+        report=run_ledger._verify_records(records),
+    )
+
+
+def _calibration_signals_from_snapshot(snapshot: Any) -> Any:
+    """Derive Elo and drift signals from the same verified immutable ledger records."""
+
+    if not snapshot.report.ok:
+        raise engine_calibration.CalibrationError(
+            "run-fact chain verification failed: "
+            f"{snapshot.report.reason} (record {snapshot.report.break_index})"
+        )
+
+    capability_elo = engine_calibration.capability_elo
+    reconciliation_facts = capability_elo.reconcile._validated_reconciliation_facts(
+        snapshot.records,
+        snapshot.report,
+    )
+    derivation = capability_elo.derive_matches(reconciliation_facts)
+    elo: dict[tuple[str, str], float] = {}
+    for match in sorted(derivation.matches, key=lambda item: item.at):
+        capability_elo.apply_match(elo, match)
+
+    control_chart = engine_calibration.provider_control_chart
+    by_provider: dict[str, list[dict[str, Any]]] = {}
+    for fact in snapshot.records:
+        if fact.get("kind") != "engine":
+            continue
+        engine_id = str(fact.get("engine", ""))
+        if engine_id:
+            by_provider.setdefault(engine_id, []).append(fact)
+    drift_flagged: set[str] = set()
+    for engine_id, facts in by_provider.items():
+        ordered = sorted(facts, key=lambda fact: str(fact.get("at", "")))
+        for metric in control_chart.METRICS:
+            series = [
+                value
+                for fact in ordered
+                if (value := control_chart._metric_value(fact, metric)) is not None
+            ]
+            verdict = control_chart.control_chart(
+                series,
+                baseline_n=control_chart.DEFAULT_BASELINE_N,
+            )
+            if verdict.status == control_chart.STATUS_OUT_OF_CONTROL:
+                drift_flagged.add(engine_id)
+                break
+    return engine_calibration.CalibrationSignals(
+        elo=elo,
+        drift_flagged=frozenset(drift_flagged),
+    )
+
+
+def _load_repository_calibration(repo_root: Path | str) -> Any:
+    """Load one strict, chain-verified repository calibration snapshot for routing."""
+
+    try:
+        ledger = engine_calibration.run_ledger.RunLedger.resolve(Path(repo_root))
+    except Exception as exc:  # noqa: BLE001 - repository discovery boundary, fail closed
+        raise engine_calibration.CalibrationError(
+            f"cannot resolve repository calibration ledger: {exc}"
+        ) from exc
+
+    try:
+        snapshot = _read_repository_calibration_snapshot(ledger)
+        return _calibration_signals_from_snapshot(snapshot)
+    except OSError as exc:
+        raise engine_calibration.CalibrationError(
+            f"cannot read repository calibration ledger {ledger.path}: {exc}"
+        ) from exc
+    except engine_calibration.CalibrationError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - corrupt/hash-invalid derivation fails closed
+        raise engine_calibration.CalibrationError(
+            f"invalid repository calibration ledger {ledger.path}: {exc}"
+        ) from exc
+
+
+def _routing_snapshots(
+    *,
+    repo_root: Path | str | None,
+    routing_overlay: Any,
+    routing_calibration: Any,
+) -> tuple[Any, Any]:
+    overlay_injected = routing_overlay is not _ROUTING_SNAPSHOT_UNSET
+    calibration_injected = routing_calibration is not _ROUTING_SNAPSHOT_UNSET
+    if overlay_injected != calibration_injected:
+        raise SpecError(
+            "capability emission test injection must supply both immutable routing_overlay "
+            "and routing_calibration snapshots"
+        )
+    if overlay_injected:
+        return routing_overlay, routing_calibration
+    if repo_root is None:
+        raise SpecError(
+            "capability emission requires explicit repo_root (CWD and spec.repo are not routing "
+            "authorities)"
+        )
+    try:
+        overlay = engine_overlay.load_overlay(repo_root)
+    except Exception as exc:  # noqa: BLE001 - malformed/unreadable overlay must fail closed
+        raise SpecError(f"cannot load repository engine overlay: {exc}") from exc
+    try:
+        calibration = _load_repository_calibration(repo_root)
+    except Exception as exc:  # noqa: BLE001 - corrupt/unreadable/hash-invalid ledger must halt
+        raise SpecError(f"cannot load repository engine calibration: {exc}") from exc
+    return overlay, calibration
+
+
+def _resolved_capability_entry(
+    unit: Unit,
+    resolution: Any,
+    registry: Any,
+) -> Any:
+    if getattr(resolution, "fallback", None) is not None:
+        raise SpecError(
+            f"unit {unit.unit_id}: capability {unit.capability!r} resolved to fallback: "
+            f"{resolution.fallback}"
+        )
+    if getattr(resolution, "halt", None) is not None:
+        raise SpecError(
+            f"unit {unit.unit_id}: capability {unit.capability!r} halted: {resolution.halt}"
+        )
+    engine_id = getattr(resolution, "engine_id", None)
+    variant = getattr(resolution, "variant", None)
+    if (
+        not isinstance(engine_id, str)
+        or not engine_id
+        or not isinstance(variant, str)
+        or not variant
+    ):
+        raise SpecError(
+            f"unit {unit.unit_id}: capability {unit.capability!r} resolver returned an empty route"
+        )
+    if engine_id.lower() == "claude":
+        raise SpecError(
+            f"unit {unit.unit_id}: capability {unit.capability!r} resolved to Claude substitution"
+        )
+    resolved_capability = getattr(resolution, "capability", None)
+    if resolved_capability not in (None, unit.capability):
+        raise SpecError(
+            f"unit {unit.unit_id}: resolver capability provenance {resolved_capability!r} does "
+            f"not match authored {unit.capability!r}"
+        )
+    key = f"{engine_id}/{variant}"
+    try:
+        entry = registry.by_key(key)
+    except Exception as exc:  # noqa: BLE001 - resolver output must name a registry row
+        raise SpecError(
+            f"unit {unit.unit_id}: capability resolver returned non-registry engine {key!r}"
+        ) from exc
+    if unit.capability not in entry.capability_profile:
+        raise SpecError(
+            f"unit {unit.unit_id}: capability resolver substituted {key!r}, which does not "
+            f"declare {unit.capability!r}"
+        )
+    return entry
+
+
+def _build_emission_routing_context(
+    spec: ExecutionSpec,
+    *,
+    registry: Any | None = None,
+    repo_root: Path | str | None = None,
+    routing_overlay: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_calibration: Any = _ROUTING_SNAPSHOT_UNSET,
+) -> EmissionRoutingContext:
+    """Render prompts and freeze all exact routes once for one emission."""
+
+    routed_units = [
+        unit for unit in spec.units if unit.engine is not None or unit.capability is not None
+    ]
+    if routed_units and registry is None:
+        registry = _load_emission_registry()
+    capability_units = [unit for unit in routed_units if unit.capability is not None]
+    overlay: Any = None
+    calibration: Any = None
+    if capability_units:
+        overlay, calibration = _routing_snapshots(
+            repo_root=repo_root,
+            routing_overlay=routing_overlay,
+            routing_calibration=routing_calibration,
+        )
+
+    memo = engine_resolver.RunMemo()
+    known_revision_dates: Mapping[str, Any] | None = None
+    if capability_units:
+        try:
+            known_revision_dates = engine_resolver._load_release_dates()
+        except Exception as exc:  # noqa: BLE001 - routing inputs are all fail-closed
+            raise SpecError(f"cannot load engine model-release routing snapshot: {exc}") from exc
+
+    unit_routes: dict[str, UnitRouting] = {}
+    lane_limits: dict[str, int | None] = {}
+    lane_assignments: dict[str, str] = {}
+    for unit in spec.units:
+        prompt = _agent_prompt(spec, unit)
+        entry: Any | None = None
+        if unit.engine is not None:
+            assert registry is not None
+            try:
+                entry = registry.by_key(unit.engine)
+            except Exception as exc:  # noqa: BLE001 - exact selectors are registry-authoritative
+                raise SpecError(
+                    f"unit {unit.unit_id}: unknown exact engine route {unit.engine!r}"
+                ) from exc
+        elif unit.capability is not None:
+            assert registry is not None
+            request = {
+                "capability": unit.capability,
+                "role_kind": "worker",
+                "task_context": {
+                    "context": prompt,
+                    "token_estimate": len(prompt.encode("utf-8")),
+                    "unit_id": unit.unit_id,
+                },
+            }
+            try:
+                resolution = engine_resolver.resolve(
+                    request,
+                    mode="dispatch",
+                    registry=registry,
+                    memo=memo,
+                    known_revision_dates=known_revision_dates,
+                    repo_root=repo_root,
+                    overlay=overlay,
+                    calibration=calibration,
+                )
+            except Exception as exc:  # noqa: BLE001 - resolver exceptions never permit partial emit
+                raise SpecError(
+                    f"unit {unit.unit_id}: capability {unit.capability!r} resolution failed: {exc}"
+                ) from exc
+            entry = _resolved_capability_entry(unit, resolution, registry)
+
+        exact_engine = entry.key if entry is not None else None
+        lane_max_concurrent = entry.max_concurrent if entry is not None else None
+        unit_routes[unit.unit_id] = UnitRouting(
+            prompt=prompt,
+            exact_engine=exact_engine,
+            authored_capability=unit.capability,
+            lane_max_concurrent=lane_max_concurrent,
+        )
+        if exact_engine is not None:
+            lane_assignments[unit.unit_id] = exact_engine
+            lane_limits[exact_engine] = lane_max_concurrent
+
+    return EmissionRoutingContext(
+        units=MappingProxyType(unit_routes),
+        lane_limits=MappingProxyType(lane_limits),
+        lane_assignments=MappingProxyType(lane_assignments),
+    )
+
+
+def _engine_lane_context(
+    units: Iterable[Unit],
+    routing_context: EmissionRoutingContext,
+) -> tuple[dict[str, int | None], dict[str, str]]:
+    """Project frozen exact lanes for one admission cohort."""
+
+    assignments: dict[str, str] = {}
+    for unit in units:
+        route = routing_context.for_unit(unit)
+        if route.exact_engine is not None:
+            assignments[unit.unit_id] = route.exact_engine
+    return dict(routing_context.lane_limits), assignments
+
+
+def resolved_concurrency(
+    spec: ExecutionSpec,
+    units: list[Unit],
+    *,
+    environment: Mapping[str, str] | None = None,
+    run_override: int | None = None,
+    repo_root: Path | str | None = None,
+    routing_overlay: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_calibration: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_context: EmissionRoutingContext | None = None,
+) -> concurrency_governor.ResolvedConcurrency:
+    """Resolve one emitted cohort through the canonical #350 precedence ladder."""
+
+    try:
+        context = routing_context or _build_emission_routing_context(
+            spec,
+            repo_root=repo_root,
+            routing_overlay=routing_overlay,
+            routing_calibration=routing_calibration,
+        )
+        lane_limits, lane_assignments = _engine_lane_context(units, context)
+        return concurrency_governor.resolve_concurrency(
+            _concurrency_policy(spec),
+            units,
+            environment=os.environ if environment is None else environment,
+            lane_limits=lane_limits,
+            lane_assignments=lane_assignments,
+            run_override=run_override,
+        )
+    except ConcurrencyPolicyError as exc:
+        raise SpecError(f"spec {spec.name}: {exc}") from exc
+
+
+def concurrency_chunks(
+    spec: ExecutionSpec,
+    units: list[Unit],
+    *,
+    environment: Mapping[str, str] | None = None,
+    run_override: int | None = None,
+    repo_root: Path | str | None = None,
+    routing_overlay: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_calibration: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_context: EmissionRoutingContext | None = None,
+) -> list[list[Unit]]:
+    """Return stable chunks that preserve ordinary and exact-engine lane boundaries."""
+
+    try:
+        context = routing_context or _build_emission_routing_context(
+            spec,
+            repo_root=repo_root,
+            routing_overlay=routing_overlay,
+            routing_calibration=routing_calibration,
+        )
+        lane_limits, lane_assignments = _engine_lane_context(units, context)
+        return concurrency_governor.ordered_policy_chunks(
+            units,
+            _concurrency_policy(spec),
+            environment=os.environ if environment is None else environment,
+            lane_limits=lane_limits,
+            lane_assignments=lane_assignments,
+            run_override=run_override,
+        )
+    except ConcurrencyPolicyError as exc:
+        raise SpecError(f"spec {spec.name}: {exc}") from exc
+
+
+def max_concurrent_agents(
+    spec: ExecutionSpec,
+    *,
+    environment: Mapping[str, str] | None = None,
+    run_override: int | None = None,
+    repo_root: Path | str | None = None,
+    routing_overlay: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_calibration: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_context: EmissionRoutingContext | None = None,
+) -> int:
+    """Return the conservative layer-width times verifier-width aggregate bound."""
+
+    policy = _concurrency_policy(spec)
+    context = routing_context or _build_emission_routing_context(
+        spec,
+        repo_root=repo_root,
+        routing_overlay=routing_overlay,
+        routing_calibration=routing_calibration,
+    )
+    largest = 0
+    for layer_number, layer in enumerate(dependency_layers(spec), start=1):
+        layer_units = [cast(Unit, spec.unit_by_id(unit_id)) for unit_id in layer]
+        worker_width = max(
+            len(chunk)
+            for chunk in concurrency_chunks(
+                spec,
+                layer_units,
+                environment=environment,
+                run_override=run_override,
+                routing_context=context,
+            )
+        )
+        verifier_width = 1
+        for unit in layer_units:
+            if unit.verify is None:
+                continue
+            verifier_width = max(
+                verifier_width,
+                min(
+                    unit.verify.n,
+                    resolved_concurrency(
+                        spec,
+                        [_verify_panel_admission_unit(unit)],
+                        environment=environment,
+                        run_override=run_override,
+                        routing_context=context,
+                    ).width,
+                ),
+            )
+        product = worker_width * verifier_width
+        if product > policy.aggregate_max_concurrent:
+            raise SpecError(
+                f"spec {spec.name}: dependency layer {layer_number} aggregate concurrency "
+                f"{worker_width} x {verifier_width} = {product} exceeds "
+                f"aggregate_max_concurrent {policy.aggregate_max_concurrent} (HALT, not clamp)"
+            )
+        largest = max(largest, product)
+    return largest
+
+
 # ---------------------------------------------------------------------------
 # Emitter -- spec -> runnable Claude Code workflow script
 # ---------------------------------------------------------------------------
@@ -1413,6 +2228,20 @@ def _js_string(value: str) -> str:
     return json.dumps(value)
 
 
+def _js_comment_text(value: str) -> str:
+    """Render untrusted text inert inside one generated JavaScript line comment."""
+
+    return (
+        value.replace("\r", r"\r")
+        .replace("\n", r"\n")
+        .replace("\u2028", r"\u2028")
+        .replace("\u2029", r"\u2029")
+        .replace("${", r"\${")
+        .replace("`", r"\`")
+        .replace("*/", "* /")
+    )
+
+
 def _js_var(unit_id: str) -> str:
     """Sanitize a unit_id into a JS identifier used as the emitted result var.
 
@@ -1423,6 +2252,32 @@ def _js_var(unit_id: str) -> str:
     unloadable JS).
     """
     return unit_id.replace("-", "_").replace(".", "_")
+
+
+def _unit_script_symbols(unit: Unit) -> set[str]:
+    """Return every top-level JavaScript binding reserved by one unit's emission."""
+
+    result_var = _js_var(unit.unit_id)
+    symbols = {result_var}
+    if unit.verify is None or unit.verify.iterate_to_consensus:
+        return symbols
+
+    prefixes = [f"{result_var}_"]
+    if unit.escalate_on_signal:
+        prefixes.append(f"{result_var}_retry_")
+    suffixes = {
+        "fallback_marker",
+        "missing_idx",
+        "refute_count",
+        "refuted",
+        "reported",
+        "threshold",
+        "valid_verifier_verdict",
+        "verdicts",
+    }
+    suffixes.update(f"verdicts_chunk_{index}" for index in range(2, unit.verify.n + 1))
+    symbols.update(f"{prefix}{suffix}" for prefix in prefixes for suffix in suffixes)
+    return symbols
 
 
 def _emit_gate_call(unit: Unit, var: str, session_ceiling: Tier | None = None) -> str:
@@ -1477,20 +2332,13 @@ def _retry_close(unit: Unit) -> str:
     return f"), {_retry_opts_js(unit)}"
 
 
-def _external_engine_selector(unit: Unit) -> tuple[str, str] | None:
-    if unit.engine is not None:
-        return ("engine", unit.engine)
-    if unit.capability is not None:
-        return ("capability", unit.capability)
-    return None
-
-
-def _external_engine_marker(unit: Unit) -> str | None:
-    selector = _external_engine_selector(unit)
-    if selector is None:
+def _external_engine_marker(unit: Unit, route: UnitRouting) -> str | None:
+    if route.exact_engine is None:
         return None
-    key, value = selector
-    marker = f"{key}={value}"
+    if route.authored_capability is not None:
+        marker = f"capability={route.authored_capability} resolved_engine={route.exact_engine}"
+    else:
+        marker = f"engine={route.exact_engine}"
     if unit.verifiability is not None:
         marker += f" verifiability={unit.verifiability}"
     return marker
@@ -1526,13 +2374,11 @@ def _return_schema(unit: Unit) -> dict[str, object]:
     }
 
 
-def _agent_opts(unit: Unit) -> list[str]:
+def _agent_opts(unit: Unit, route: UnitRouting) -> list[str]:
     opts = [f"label: {_js_string(unit.label)}"]
-    selector = _external_engine_selector(unit)
-    if selector is not None:
-        key, value = selector
+    if route.exact_engine is not None:
         opts.append('dispatch: "external-engine"')
-        opts.append(f"{key}: {_js_string(value)}")
+        opts.append(f"engine: {_js_string(route.exact_engine)}")
         if unit.verifiability is not None:
             opts.append(f"verifiability: {_js_string(unit.verifiability)}")
     else:
@@ -1658,6 +2504,22 @@ def _verifier_schema() -> dict[str, object]:
     }
 
 
+def _emit_parallel_wave[T](
+    lines: list[str],
+    *,
+    binding: str,
+    bounded_members: Sequence[T],
+    render_member: Callable[[T], None],
+    indent: str = "",
+) -> None:
+    """Emit one bounded ``parallel`` wave over a stable member snapshot."""
+    member_snapshot = tuple(bounded_members)
+    lines.append(f"{indent}{binding} = await parallel([")
+    for member in member_snapshot:
+        render_member(member)
+    lines.append(f"{indent}])")
+
+
 def _emit_panel_reconciliation(
     lines: list[str],
     unit: Unit,
@@ -1665,6 +2527,7 @@ def _emit_panel_reconciliation(
     name_prefix: str,
     indent: str,
     *,
+    max_concurrent: int,
     direct_throw: bool,
     open_refuted_block: bool = False,
     throw_suffix: str = "",
@@ -1700,8 +2563,17 @@ def _emit_panel_reconciliation(
     threshold_var = f"{name_prefix}threshold"
     refuted_var = f"{name_prefix}refuted"
 
-    lines.append(f"{indent}const {verdicts_var} = await parallel([")
-    for _ in range(n):
+    panel_chunks = concurrency_governor.ordered_chunks(list(range(n)), max_concurrent)
+    if len(panel_chunks) == 1:
+        verdict_chunk_vars = [verdicts_var]
+    else:
+        # Keep the first bounded wave on the historical verdicts binding, then append later waves
+        # in order so existing consumers still see the COMPLETE reporter set under that name.
+        verdict_chunk_vars = [verdicts_var] + [
+            f"{verdicts_var}_chunk_{index}" for index in range(2, len(panel_chunks) + 1)
+        ]
+
+    def _emit_verifier_member(_index: int) -> None:
         lines.append(f"{indent}  () => {_retry_open()}")
         lines.append(f"{indent}    __verifierPrompt({_js_string(verifier_prompt)}, {result_var}),")
         lines.append(
@@ -1710,7 +2582,19 @@ def _emit_panel_reconciliation(
             + f", input: {{ unit_result: {result_var} }} }},"
         )
         lines.append(f"{indent}  {_retry_close(unit)}),")
-    lines.append(f"{indent}])")
+
+    for chunk_var, chunk in zip(verdict_chunk_vars, panel_chunks, strict=True):
+        _emit_parallel_wave(
+            lines,
+            binding=f"const {chunk_var}",
+            bounded_members=chunk,
+            render_member=_emit_verifier_member,
+            indent=indent,
+        )
+    reconciled_verdicts_var = verdicts_var
+    if len(panel_chunks) > 1:
+        joined_chunks = ", ".join(f"...{name}" for name in verdict_chunk_vars[1:])
+        lines.append(f"{indent}{verdicts_var}.push({joined_chunks})")
     # R1/R5: record which verifiers reported vs. runtime-missing; R3: recompute the pass-rule
     # threshold over the reporters, not the declared n (plan KTD1/KTD3). A verdict that is
     # non-null but lacks a usable `.refuted` array is a runtime failure too (a verifier that
@@ -1727,7 +2611,8 @@ def _emit_panel_reconciliation(
         f'typeof v.examined_sha === "string" && v.examined_sha.length > 0'
     )
     lines.append(
-        f"{indent}const {reported_var} = {verdicts_var}.filter((v) => {valid_verdict_var}(v))"
+        f"{indent}const {reported_var} = "
+        f"{reconciled_verdicts_var}.filter((v) => {valid_verdict_var}(v))"
     )
     # U6/R8/KTD7: attribute any reporter that descended the #325 fallback ladder. Each reporter
     # echoes verifier_identity + fallback_depth (default 0); this runtime marker mirrors the pure
@@ -1757,7 +2642,7 @@ def _emit_panel_reconciliation(
     )
     lines.append(f"{indent}}})()")
     lines.append(
-        f"{indent}const {missing_idx_var} = {verdicts_var}.map((v, i) => "
+        f"{indent}const {missing_idx_var} = {reconciled_verdicts_var}.map((v, i) => "
         f"(!{valid_verdict_var}(v) ? i + 1 : null)).filter((i) => i != null)"
     )
     lines.append(
@@ -1822,7 +2707,13 @@ def _emit_panel_reconciliation(
 
 
 def _emit_thunk(
-    lines: list[str], spec: ExecutionSpec, unit: Unit, session_ceiling: Tier | None = None
+    lines: list[str],
+    spec: ExecutionSpec,
+    unit: Unit,
+    session_ceiling: Tier | None = None,
+    *,
+    panel_max_concurrent: int,
+    routing_context: EmissionRoutingContext,
 ) -> None:
     """Append one thunk entry for ``unit`` inside a ``parallel([...])``.
 
@@ -1831,31 +2722,41 @@ def _emit_thunk(
     """
     if unit.verify is not None and unit.verify.iterate_to_consensus:
         panel = unit.verify
-        prompt = _agent_prompt(spec, unit)
-        opts = _agent_opts(unit)
-        marker = _external_engine_marker(unit)
+        route = routing_context.for_unit(unit)
+        prompt = route.prompt
+        opts = _agent_opts(unit, route)
+        marker = _external_engine_marker(unit, route)
 
         lines.append("  async () => {")
         lines.append("    let result;")
         lines.append(f"    for (let iter = 1; iter <= {panel.max_iterations}; iter++) {{")
         if marker is not None:
-            lines.append(f"      // external-engine dispatch: {marker}")
+            lines.append(f"      // external-engine dispatch: {_js_comment_text(marker)}")
         lines.append(f"      result = await {_retry_open()}")
         lines.append(f"        {_js_string(prompt)},")
         lines.append("        { " + ", ".join(opts) + " },")
         lines.append(f"      {_retry_close(unit)})")
         lines.append(f"      {_emit_gate_call(unit, 'result', session_ceiling)}")
-        _emit_panel_reconciliation(lines, unit, "result", "", "      ", direct_throw=False)
+        _emit_panel_reconciliation(
+            lines,
+            unit,
+            "result",
+            "",
+            "      ",
+            max_concurrent=panel_max_concurrent,
+            direct_throw=False,
+        )
         lines.append("    }")
         lines.append("    return result")
         lines.append("  },")
     else:
-        prompt = _agent_prompt(spec, unit)
-        opts = _agent_opts(unit)
-        marker = _external_engine_marker(unit)
+        route = routing_context.for_unit(unit)
+        prompt = route.prompt
+        opts = _agent_opts(unit, route)
+        marker = _external_engine_marker(unit, route)
         if marker is not None:
             lines.append("  () => {")
-            lines.append(f"    // external-engine dispatch: {marker}")
+            lines.append(f"    // external-engine dispatch: {_js_comment_text(marker)}")
             lines.append(f"    return {_retry_open()}")
             lines.append(f"      {_js_string(prompt)},")
             lines.append("      { " + ", ".join(opts) + " },")
@@ -1875,14 +2776,18 @@ def _emit_verify_loop_singleton(
     unit: Unit,
     var: str,
     session_ceiling: Tier | None = None,
+    *,
+    panel_max_concurrent: int,
+    routing_context: EmissionRoutingContext,
 ) -> None:
     """Emit the iterate-to-consensus loop for a singleton unit."""
     panel = unit.verify
     assert panel is not None
     n = panel.n
-    prompt = _agent_prompt(spec, unit)
-    opts = _agent_opts(unit)
-    marker = _external_engine_marker(unit)
+    route = routing_context.for_unit(unit)
+    prompt = route.prompt
+    opts = _agent_opts(unit, route)
+    marker = _external_engine_marker(unit, route)
 
     lines.append(f"let {var};")
     lines.append(
@@ -1891,13 +2796,21 @@ def _emit_verify_loop_singleton(
     )
     lines.append(f"for (let iter = 1; iter <= {panel.max_iterations}; iter++) {{")
     if marker is not None:
-        lines.append(f"  // external-engine dispatch: {marker}")
+        lines.append(f"  // external-engine dispatch: {_js_comment_text(marker)}")
     lines.append(f"  {var} = await agent(")
     lines.append(f"    {_js_string(prompt)},")
     lines.append("    { " + ", ".join(opts) + " },")
     lines.append("  )")
     lines.append(f"  {_emit_gate_call(unit, var, session_ceiling)}")
-    _emit_panel_reconciliation(lines, unit, var, "", "  ", direct_throw=False)
+    _emit_panel_reconciliation(
+        lines,
+        unit,
+        var,
+        "",
+        "  ",
+        max_concurrent=panel_max_concurrent,
+        direct_throw=False,
+    )
     lines.append("}")
     lines.append("")
 
@@ -1924,6 +2837,10 @@ def _emit_verify_panel(
     *,
     unattended: bool = False,
     session_ceiling: Tier | None = None,
+    panel_max_concurrent: int,
+    environment: Mapping[str, str] | None = None,
+    run_max_concurrent: int | None = None,
+    routing_context: EmissionRoutingContext,
 ) -> None:
     """Append a refute-N judge-panel + pass-rule reconciliation for ``unit`` to ``lines``.
 
@@ -1954,7 +2871,15 @@ def _emit_verify_panel(
         f"denominator))"
     )
     if not unit.escalate_on_signal:
-        _emit_panel_reconciliation(lines, unit, var, f"{var}_", "", direct_throw=True)
+        _emit_panel_reconciliation(
+            lines,
+            unit,
+            var,
+            f"{var}_",
+            "",
+            max_concurrent=panel_max_concurrent,
+            direct_throw=True,
+        )
         return
 
     # Runtime ladder climbing (#364): a refuted escalate_on_signal unit proposes (attended) or
@@ -1971,6 +2896,7 @@ def _emit_verify_panel(
             var,
             f"{var}_",
             "",
+            max_concurrent=panel_max_concurrent,
             direct_throw=True,
             throw_suffix=(
                 f" -- escalate_on_signal: {reason}, no rung above "
@@ -1991,6 +2917,7 @@ def _emit_verify_panel(
             var,
             f"{var}_",
             "",
+            max_concurrent=panel_max_concurrent,
             direct_throw=True,
             throw_suffix=(
                 f" -- escalation-proposal (#364 R5): re-run {unit.unit_id} at "
@@ -2003,17 +2930,29 @@ def _emit_verify_panel(
     # (R4: the panel matches the unit it verifies), then HALT if still refuted. Never a second
     # climb in the same run -- chained silent climbs are the unbounded-overspend failure.
     retry_unit = replace(unit, tier=climbed)
+    route = routing_context.for_unit(unit)
     _emit_panel_reconciliation(
-        lines, unit, var, f"{var}_", "", direct_throw=True, open_refuted_block=True
+        lines,
+        unit,
+        var,
+        f"{var}_",
+        "",
+        max_concurrent=panel_max_concurrent,
+        direct_throw=True,
+        open_refuted_block=True,
     )
     lines.append(
         f"  log(`escalate_on_signal: {unit.unit_id} refuted at "
         f"{unit.tier.model}/{unit.tier.effort}; climbing ONE rung to "
         f"{climbed.model}/{climbed.effort} and retrying once (unattended, #364 R6)`)"
     )
+    marker = _external_engine_marker(retry_unit, route)
+    if marker is not None:
+        lines.append(f"  // external-engine dispatch: {_js_comment_text(marker)}")
+    retry_prompt = _agent_prompt(spec, retry_unit)
     lines.append(f"  {var} = await agent(")
-    lines.append(f"    {_js_string(_agent_prompt(spec, retry_unit))},")
-    lines.append(f"    {{ {', '.join(_agent_opts(retry_unit))} }},")
+    lines.append(f"    {_js_string(retry_prompt)},")
+    lines.append(f"    {{ {', '.join(_agent_opts(retry_unit, route))} }},")
     lines.append("  )")
     lines.append(f"  {_emit_gate_call(retry_unit, var, session_ceiling)}")
     _emit_panel_reconciliation(
@@ -2022,6 +2961,13 @@ def _emit_verify_panel(
         var,
         f"{var}_retry_",
         "  ",
+        max_concurrent=resolved_concurrency(
+            spec,
+            [_verify_panel_admission_unit(retry_unit)],
+            environment=environment,
+            run_override=run_max_concurrent,
+            routing_context=routing_context,
+        ).width,
         direct_throw=True,
         throw_suffix=(
             f" -- still refuted after the one-rung climb to "
@@ -2223,6 +3169,12 @@ def emit_workflow_script(
     spec: ExecutionSpec,
     session_ceiling: Tier | None = None,
     unattended: bool = False,
+    *,
+    environment: Mapping[str, str] | None = None,
+    run_max_concurrent: int | None = None,
+    repo_root: Path | str | None = None,
+    routing_overlay: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_calibration: Any = _ROUTING_SNAPSHOT_UNSET,
 ) -> str:
     """Emit a runnable Claude Code workflow script (.workflow.js) from the spec.
 
@@ -2239,7 +3191,14 @@ def emit_workflow_script(
     Returns the script source as a string (the caller writes it beside the plan and
     records the path as the saga ``orchestration_ref``).
     """
-    spec.validate()
+    emission_environment = MappingProxyType(
+        dict(os.environ if environment is None else environment)
+    )
+    has_external_routes = any(
+        unit.engine is not None or unit.capability is not None for unit in spec.units
+    )
+    emission_registry = _load_emission_registry() if has_external_routes else None
+    spec.validate(engine_registry=emission_registry)
 
     # #365 U3: a session tier ceiling clamps every unit DOWN before rendering (the operator's live
     # cap is the final word and never raises a tier). Clamping the spec's units means spec.unit_by_id
@@ -2257,9 +3216,34 @@ def emit_workflow_script(
             clamped_units.append(replace(_u, tier=_eff))
         spec = replace(spec, units=clamped_units)
 
+    routing_context = _build_emission_routing_context(
+        spec,
+        registry=emission_registry,
+        repo_root=repo_root,
+        routing_overlay=routing_overlay,
+        routing_calibration=routing_calibration,
+    )
+
+    # #350 AC8: resolve and validate every layer/panel bound before emitting any workflow text.
+    max_concurrent_agents(
+        spec,
+        environment=emission_environment,
+        run_override=run_max_concurrent,
+        routing_context=routing_context,
+    )
+
+    def _panel_max_concurrent(unit: Unit) -> int:
+        return resolved_concurrency(
+            spec,
+            [_verify_panel_admission_unit(unit)],
+            environment=emission_environment,
+            run_override=run_max_concurrent,
+            routing_context=routing_context,
+        ).width
+
     lines: list[str] = []
     lines.append("// ===========================================================================")
-    lines.append(f"// {spec.name} -- emitted Claude Code workflow harness.")
+    lines.append(f"// {_js_comment_text(spec.name)} -- emitted Claude Code workflow harness.")
     lines.append("// AUTO-EMITTED from a structured execution-spec by execution_spec.py.")
     lines.append("// CONTROL FLOW ONLY -- every agent reads the plan as its authoritative spec.")
     lines.append("// Per-unit {model, effort} tiers (R2(b)); R3 pilot/fan-out same-tier +")
@@ -2292,21 +3276,32 @@ def emit_workflow_script(
     lines.append(_JS_VERIFIER_PROMPT_HELPER)
     lines.append("")
 
-    # Topological waves (KTD4): each layer's units are mutually independent and run in a
-    # single parallel() wave; layers are sequenced by await (the dependency barrier). A
-    # singleton layer renders as a plain `const x = await agent(...)`. _js_var (module-level)
+    # Topological waves (KTD4): each layer's units are mutually independent and run in one or
+    # more bounded parallel() chunks; all chunks finish before the next layer (the dependency
+    # barrier). A singleton layer renders as a plain `const x = await agent(...)`. _js_var
+    # (module-level)
     # sanitizes the unit_id into the result var; validate() has already rejected any two ids
     # that would collide to the same identifier.
     _var = _js_var
 
     def _emit_unit_header(unit: Unit) -> None:
-        lines.append(f"// ---- {unit.unit_id}: {unit.label} ----")
+        lines.append(f"// ---- {unit.unit_id}: {_js_comment_text(unit.label)} ----")
         if unit.depends_on:
             lines.append(f"// depends_on: {', '.join(unit.depends_on)} (barrier)")
         if unit.pilot:
             lines.append(f"// pilot: {unit.pilot} (R3 same-tier gate)")
         if unit.escalation:
-            lines.append(f"// escalation: {unit.escalation}")
+            lines.append(f"// escalation: {_js_comment_text(unit.escalation)}")
+
+    def _emit_worker_member(unit: Unit) -> None:
+        _emit_thunk(
+            lines,
+            spec,
+            unit,
+            session_ceiling,
+            panel_max_concurrent=_panel_max_concurrent(unit),
+            routing_context=routing_context,
+        )
 
     for layer in dependency_layers(spec):
         layer_units = [spec.unit_by_id(uid) for uid in layer]
@@ -2316,13 +3311,22 @@ def emit_workflow_script(
             _emit_unit_header(unit)
             var = _var(unit.unit_id)
             if unit.verify is not None and unit.verify.iterate_to_consensus:
-                _emit_verify_loop_singleton(lines, spec, unit, var, session_ceiling)
+                _emit_verify_loop_singleton(
+                    lines,
+                    spec,
+                    unit,
+                    var,
+                    session_ceiling,
+                    panel_max_concurrent=_panel_max_concurrent(unit),
+                    routing_context=routing_context,
+                )
             else:
-                prompt = _agent_prompt(spec, unit)
-                opts = _agent_opts(unit)
-                marker = _external_engine_marker(unit)
+                route = routing_context.for_unit(unit)
+                prompt = route.prompt
+                opts = _agent_opts(unit, route)
+                marker = _external_engine_marker(unit, route)
                 if marker is not None:
-                    lines.append(f"// external-engine dispatch: {marker}")
+                    lines.append(f"// external-engine dispatch: {_js_comment_text(marker)}")
                 # #364: an unattended escalate_on_signal retry reassigns the unit's var, so it
                 # needs `let`; everything else keeps today's `const` (byte-stable emission).
                 # `let` tracks ACTUAL reassignment: an at-top/ceiling-blocked unit emits no
@@ -2342,33 +3346,50 @@ def emit_workflow_script(
                         var,
                         unattended=unattended,
                         session_ceiling=session_ceiling,
+                        panel_max_concurrent=_panel_max_concurrent(unit),
+                        environment=emission_environment,
+                        run_max_concurrent=run_max_concurrent,
+                        routing_context=routing_context,
                     )
             continue
 
-        # A layer of >1 ready unit -> one parallel() wave of thunks. The wave's results
-        # are destructured back into the per-unit vars so dependents/verify panels read them.
+        # A layer of >1 ready unit is split into stable, sequential chunks. Each chunk is one
+        # parallel() wave; all chunks finish before any dependent layer or verify panel starts.
         for unit in layer_units:
             assert unit is not None
             _emit_unit_header(unit)
-        layer_vars = [_var(uid) for uid in layer]
-        # #364: `let` destructure when any wave unit may reassign its var in an unattended climb.
-        wave_decl = (
-            "let"
-            if any(
-                u is not None and _emits_climb_retry(u, unattended, session_ceiling)
-                for u in layer_units
-            )
-            else "const"
+        concrete_units = [cast(Unit, unit) for unit in layer_units]
+        layer_chunks = concurrency_chunks(
+            spec,
+            concrete_units,
+            environment=emission_environment,
+            run_override=run_max_concurrent,
+            routing_context=routing_context,
         )
-        lines.append(f"{wave_decl} [{', '.join(layer_vars)}] = await parallel([")
-        for unit in layer_units:
-            assert unit is not None
-            _emit_thunk(lines, spec, unit, session_ceiling)
-        lines.append("])")
-        for unit in layer_units:
-            assert unit is not None
-            lines.append(_emit_gate_call(unit, _var(unit.unit_id), session_ceiling))
-        lines.append("")
+        layer_width = max(len(chunk) for chunk in layer_chunks)
+        for chunk_number, chunk_units in enumerate(layer_chunks, start=1):
+            if len(layer_chunks) > 1:
+                lines.append(
+                    f"// concurrency chunk {chunk_number}/{len(layer_chunks)} "
+                    f"(max_concurrent={layer_width})"
+                )
+            chunk_vars = [_var(unit.unit_id) for unit in chunk_units]
+            wave_decl = (
+                "let"
+                if any(
+                    _emits_climb_retry(unit, unattended, session_ceiling) for unit in chunk_units
+                )
+                else "const"
+            )
+            _emit_parallel_wave(
+                lines,
+                binding=f"{wave_decl} [{', '.join(chunk_vars)}]",
+                bounded_members=chunk_units,
+                render_member=_emit_worker_member,
+            )
+            for unit in chunk_units:
+                lines.append(_emit_gate_call(unit, _var(unit.unit_id), session_ceiling))
+            lines.append("")
         for unit in layer_units:
             assert unit is not None
             if unit.verify is not None and not unit.verify.iterate_to_consensus:
@@ -2379,6 +3400,10 @@ def emit_workflow_script(
                     _var(unit.unit_id),
                     unattended=unattended,
                     session_ceiling=session_ceiling,
+                    panel_max_concurrent=_panel_max_concurrent(unit),
+                    environment=emission_environment,
+                    run_max_concurrent=run_max_concurrent,
+                    routing_context=routing_context,
                 )
 
     # #364 R8: pull-cord batch -- exactly ONE coordinator escalation entry, never one ask per
@@ -2498,7 +3523,12 @@ def _emit_team_structure(spec: ExecutionSpec) -> str:
     return module.emit_team_structure(spec)  # type: ignore[no-any-return]
 
 
-def recompile_for_tier(spec: ExecutionSpec, orchestration_mode: str) -> str:
+def recompile_for_tier(
+    spec: ExecutionSpec,
+    orchestration_mode: str,
+    *,
+    repo_root: Path | str | None = None,
+) -> str:
     """Re-emit the spec for a (possibly downgraded) orchestration tier (R11 recompile).
 
     ONLY the orchestration tier changes -- every unit survives in every emitter. The inline and
@@ -2509,11 +3539,14 @@ def recompile_for_tier(spec: ExecutionSpec, orchestration_mode: str) -> str:
     ``cc-workflows-ultracode`` re-emits the dynamic ``.workflow.js`` harness; ``inline`` or any
     unknown floor re-emits the inline/serial baseline, the always-runnable floor. This is the
     function an off-host resume calls after ``recheck_orchestration_capability`` decides the new
-    tier: it never errors and always returns a runnable artifact (AE3).
+    tier: it always returns a runnable artifact (AE3). Capability-routed workflow recompilation
+    requires the caller to pass the explicit repository root used to load routing snapshots.
     """
-    spec.validate()
     if orchestration_mode == _WORKFLOW_TIER:
-        return emit_workflow_script(spec)
+        # The workflow emitter validates with the same loaded registry it freezes for routing;
+        # pre-validating here would reload that registry for exact-engine specs.
+        return emit_workflow_script(spec, repo_root=repo_root)
+    spec.validate()
     if orchestration_mode == _TEAM_TIER:
         return _emit_team_structure(spec)
     # The inline floor and any other/unknown tier emit the host-independent serial baseline --
@@ -2740,6 +3773,16 @@ def main(argv: list[str] | None = None) -> int:
         help="operator is away (#364 KTD3): escalate_on_signal refutes climb one rung "
         "in-script instead of throwing the attended ask-gate proposal",
     )
+    p_emit.add_argument(
+        "--max-concurrent",
+        type=int,
+        help="explicit run width override; highest precedence but never above aggregate ceiling",
+    )
+    p_emit.add_argument(
+        "--repo-root",
+        type=Path,
+        help="explicit target repository root (required when any unit uses capability routing)",
+    )
 
     p_base = sub.add_parser(
         "baseline", help="emit the runnable inline/serial baseline (R11 floor) from a spec JSON"
@@ -2838,6 +3881,8 @@ def main(argv: list[str] | None = None) -> int:
                 spec,
                 session_ceiling=_read_session_ceiling(),
                 unattended=bool(getattr(args, "unattended", False)),
+                run_max_concurrent=getattr(args, "max_concurrent", None),
+                repo_root=getattr(args, "repo_root", None),
             )
     except (SpecError, _cost_weights.CostWeightsError) as exc:
         print(f"SPEC ERROR: {exc}", file=sys.stderr)

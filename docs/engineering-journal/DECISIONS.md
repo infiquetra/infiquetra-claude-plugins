@@ -4831,7 +4831,11 @@ product even where current panel sequencing makes that an upper bound.
   absent policy blocks retain the compatibility behavior of existing optional ExecutionSpec fields.
 - **KTD2 - the explicit run request is last.** Read-only lift applies before tier admission; a lane is
   the most-specific automatic input, but it cannot silently defeat the operator's explicit run
-  override. Every effective width remains subject to the aggregate ceiling.
+  override. A capability is resolved once with the repository overlay and calibration signals before
+  admission; the governor and emitted runtime selector consume that same exact engine key. The
+  authored capability remains provenance, not a second selector, because the runtime contract requires
+  capability XOR engine. Fallback, halt, or non-exact resolution fails emission. Every effective width
+  remains subject to the aggregate ceiling.
 - **KTD3 - tier admission reuses fleet-core `cost_weights.to_spend`.** Saga does not create a second
   model/effort weight table.
 - **KTD4 - read-only lifting requires explicit evidence.** Every unit in the cohort must carry the
@@ -4841,6 +4845,30 @@ product even where current panel sequencing makes that an upper bound.
   ceiling; it does not replace the published acceptance contract with an inferred schedule.
 - **KTD6 - concurrency gets a sibling spawn-site inventory.** Sandbox and concurrency inventories
   cross-link, but each retains its own source rows, parser, and failure contract.
+- **KTD7 - executable workflow source has one fail-closed naming boundary.** Unit identifiers use a
+  closed ASCII grammar and cannot claim JavaScript keywords, harness bindings, the supported
+  runtime-global namespace, generated panel/chunk symbols, or iterate-to-consensus loop locals.
+  Runtime globals are reserved independently of observed source syntax; an independent
+  ECMAScript/Node oracle checks bare, shorthand, call, and member references without treating
+  property names as globals, and compares the reservation boundary with Node `globalThis`.
+  Free-form comment text is rendered inert, while executable values remain JSON-encoded strings.
+  Fan-out framing has one private helper that snapshots a governor-derived chunk before invoking its
+  member renderer. Structural conformance requires exactly two inventoried helper call sites, direct
+  governor assignments and loop consumption, a helper-call expression directly in each governed loop
+  body, no mutation or alias escape of the governed collection before loop consumption, no mutation
+  or alias escape of the direct loop chunk before helper entry, the unchanged direct loop chunk as
+  the helper input, and no indirect helper loads. Raw parallel delimiters are rejected through direct
+  or directly aliased list sinks, including JavaScript trivia and unresolved formatted callees, and
+  at any static assignment site outside the helper so a local delimiter binding cannot hide the raw
+  emitter. The guard folds constant string concatenation but intentionally does not reconstruct
+  general Python alias dataflow or complete JavaScript grammar; centralizing the executable boundary
+  removes the need for that test-only mini-analyzer. The independent global oracle owns separate Node
+  and Workflow-host baselines, and every host-global identifier has a behavioral emission rejection
+  test.
+- **KTD8 - calibration is one immutable repository snapshot.** Capability emission reads the strict
+  hash-chained ledger once under its shared lock, constructs one verified `LedgerSnapshot`, and
+  derives Elo and provider-drift signals from exactly those records. Routing never composes signal
+  families from different concurrent ledger revisions.
 
 **Revisit when** `/optimize` explicitly adopts the shared governor, a runtime scheduler can expose
 measured overlap instead of emit-time bounds, or a new executable fan-out site is added.

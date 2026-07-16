@@ -17,6 +17,8 @@
 - Added `dispatch_settlement.py` operations for manifests, spawns, settlements, late delivery,
   reports, dead-letter inspection, retry claims, and leak reconciliation. This release does not
   change fan-out concurrency limits or introduce a background reaper.
+- **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
+  unchanged; settlement records the committed outcome dispatch without redefining operator posture.
 
 ## [0.97.0] - 2026-07-15
 

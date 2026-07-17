@@ -17,6 +17,13 @@ progression and remain visible through the derived dead-letter view until explic
 Validators are available as a roster. They are selected by task context; they are not spawned
 all at once.
 
+Every worker, reviewer, and validator Agent call is admitted by Saga's installed fleet lease hook.
+Phase B runs the packaged lease preflight before the first call, renews the trusted session at wave
+and result-collection boundaries, and releases only after Step B8 has explicit terminal evidence for
+every child. Missing or protocol-skewed fleet-core installs halt; timeout and silence never free
+capacity. The complete operator contract is in
+[`lease-protocol.md`](skills/team-execution/references/lease-protocol.md).
+
 ---
 
 ## Quick Start

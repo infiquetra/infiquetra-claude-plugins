@@ -18,19 +18,31 @@ import fleet_commons_shim  # noqa: E402
 
 authority = fleet_commons_shim.load("lease_broker")
 concurrency_policy = fleet_commons_shim.load("concurrency_policy")
+REQUIRED_PROTOCOL_VERSION = 1
 
 
 class LeaseProtocolError(RuntimeError):
     """A team wave cannot safely renew or tear down its lease authority."""
 
 
+def ensure_protocol() -> None:
+    observed = getattr(authority, "PROTOCOL_VERSION", None)
+    if observed != REQUIRED_PROTOCOL_VERSION:
+        raise LeaseProtocolError(
+            "fleet-core lease broker protocol "
+            f"{REQUIRED_PROTOCOL_VERSION} required (found {observed!r}); install/update fleet-core"
+        )
+
+
 def broker() -> Any:
+    ensure_protocol()
     return authority.LeaseBroker()
 
 
 def preflight(*, selected: Any | None = None) -> dict[str, Any]:
     """Prove that the canonical broker and default closed admission policy are installed."""
 
+    ensure_protocol()
     selected = broker() if selected is None else selected
     limits = concurrency_policy.AdmissionLimits()
     return {
@@ -45,6 +57,7 @@ def preflight(*, selected: Any | None = None) -> dict[str, Any]:
 def renew(session_id: str, *, selected: Any | None = None) -> dict[str, Any]:
     """Renew one team session at a cooperative wave or collection boundary."""
 
+    ensure_protocol()
     selected = broker() if selected is None else selected
     leases = selected.renew_session(session_id)
     return {
@@ -64,6 +77,7 @@ def teardown(
 ) -> dict[str, Any]:
     """Release a session only after every bound child is authoritatively terminal."""
 
+    ensure_protocol()
     selected = broker() if selected is None else selected
     snapshot = selected.inspect()
     session_leases = [

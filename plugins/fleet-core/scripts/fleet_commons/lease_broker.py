@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 SCHEMA = "fleet_lease_registry.v1"
+PROTOCOL_VERSION = 1
 STATE_ENV = "INFIQUETRA_FLEET_STATE_DIR"
 XDG_STATE_ENV = "XDG_STATE_HOME"
 REGISTRY_NAME = "registry.json"
@@ -1409,7 +1410,8 @@ class LeaseBroker:
             raise LeaseClosedError("resource token has been released")
         if state == "expired":
             raise LeaseExpiredError("resource token has expired")
-        assert lease is not None
+        if lease is None:
+            raise LeaseNotFoundError("current resource token has no live lease")
         if agent_id is not None and lease.agent_id != _bounded(agent_id, "agent_id"):
             raise LeaseOwnershipError("resource token is not bound to this agent")
         if owner_id is not None and lease.owner_id != _bounded(owner_id, "owner_id"):
@@ -1788,7 +1790,9 @@ class LeaseBroker:
             if worktree_reaper is None:
                 retained[candidate.lease_id] = "expired-no-reaper"
                 continue
-            assert candidate.resource_ref is not None
+            if candidate.resource_ref is None:
+                retained[candidate.lease_id] = "expired-resource-missing"
+                continue
             try:
                 successful = bool(worktree_reaper(candidate.resource_ref))
             except Exception:  # noqa: BLE001 - preserve authority for an operator-visible retry.

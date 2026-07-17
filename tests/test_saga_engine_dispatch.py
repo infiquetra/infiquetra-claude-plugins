@@ -1115,6 +1115,11 @@ def test_engine_runtime_dispatch_refuses_session_capacity(
         )
 
 
+def test_engine_runtime_dispatch_rejects_lease_protocol_skew() -> None:
+    with pytest.raises(D.DispatchError, match="install/update fleet-core"):
+        D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=99))
+
+
 def _store(tmp_path: Path) -> Any:
     return MS.Store(root=tmp_path / "saga-manifests" / "saga-1").ensure()
 

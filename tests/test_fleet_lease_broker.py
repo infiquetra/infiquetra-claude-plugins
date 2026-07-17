@@ -18,9 +18,7 @@ from typing import Any, cast
 import pytest
 
 ROOT = Path(__file__).parent.parent
-BROKER_PATH = (
-    ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "lease_broker.py"
-)
+BROKER_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "lease_broker.py"
 POLICY_PATH = (
     ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "concurrency_policy.py"
 )
@@ -385,9 +383,7 @@ def test_recreated_store_has_new_epoch_and_old_token_is_not_current(
     assert second_broker.classify_token(first.resource_ref, first.token) == "superseded"
 
 
-def test_write_fencing_and_missing_worktree_fail_loud(
-    tmp_path: Path, runtime: FakeRuntime
-) -> None:
+def test_write_fencing_and_missing_worktree_fail_loud(tmp_path: Path, runtime: FakeRuntime) -> None:
     root = tmp_path / "authority"
     worktree = tmp_path / "worktree"
     worktree.mkdir()
@@ -489,9 +485,7 @@ def test_symlinked_authority_nodes_are_rejected(
         _agent(broker)
 
 
-def test_unsafe_modes_and_unknown_schema_fail_closed(
-    tmp_path: Path, runtime: FakeRuntime
-) -> None:
+def test_unsafe_modes_and_unknown_schema_fail_closed(tmp_path: Path, runtime: FakeRuntime) -> None:
     root = tmp_path / "authority"
     root.mkdir(mode=0o700)
     broker = B.LeaseBroker(root, providers=runtime.providers())

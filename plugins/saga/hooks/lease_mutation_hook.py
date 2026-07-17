@@ -30,6 +30,7 @@ def dispatch(payload: dict[str, Any]) -> None:
     try:
         import lease_broker  # noqa: PLC0415
 
+        lease_broker.ensure_protocol()
         lease_broker.verify_hook_mutation(payload)
     except Exception as exc:  # noqa: BLE001 - armed delegated paths fail closed on every skew.
         _halt(str(exc))

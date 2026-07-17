@@ -99,9 +99,9 @@ def test_resolve_saga_plugin_reads_installed_registry(tmp_path: Path) -> None:
 
 
 def test_resolve_saga_plugin_scans_cache_sibling(tmp_path: Path) -> None:
-    plugin_root = tmp_path / "cache" / "marketplace" / "team-execution" / "2.17.0"
+    plugin_root = tmp_path / "cache" / "marketplace" / "team-execution" / "2.18.0"
     plugin_root.mkdir(parents=True)
-    saga = plugin_root.parent.parent / "saga" / "0.98.0"
+    saga = plugin_root.parent.parent / "saga" / "0.99.0"
     (saga / "scripts").mkdir(parents=True)
     (saga / "scripts" / "dispatch_settlement.py").write_text("# fixture\n", encoding="utf-8")
 

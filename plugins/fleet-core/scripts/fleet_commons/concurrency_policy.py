@@ -17,9 +17,7 @@ DEFAULT_MAX_CONCURRENT = 3
 DEFAULT_READONLY_MAX_CONCURRENT = 4
 DEFAULT_AGGREGATE_MAX_CONCURRENT = 7
 
-_POLICY_KEYS = frozenset(
-    {"max_concurrent", "readonly_max_concurrent", "aggregate_max_concurrent"}
-)
+_POLICY_KEYS = frozenset({"max_concurrent", "readonly_max_concurrent", "aggregate_max_concurrent"})
 
 
 class AdmissionPolicyError(ValueError):

@@ -217,9 +217,7 @@ def test_pretool_claim_collection_recycles_slot_and_renews_batch(tmp_path: Path)
     assert A.record_hook_terminal(_start(tmp_path, "child-1"), hook_env) is True
     before = B.LeaseBroker(authority).inspect()["leases"]
     assert any(lease["agent_id"] == "child-1" for lease in before)
-    A.record_hook_parent(
-        _spawn(tmp_path, "tool-1") | {"hook_event_name": "PostToolUse"}, hook_env
-    )
+    A.record_hook_parent(_spawn(tmp_path, "tool-1") | {"hook_event_name": "PostToolUse"}, hook_env)
     after = B.LeaseBroker(authority).inspect()["leases"]
     assert len(after) == metadata["reservation_width"]
     assert all(lease["derived_state"] == "live" for lease in after)

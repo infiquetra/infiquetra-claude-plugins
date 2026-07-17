@@ -28,10 +28,22 @@ MUTATION_ENV = "INFIQUETRA_FLEET_MUTATION"
 TTL_SECONDS_ENV = "INFIQUETRA_FLEET_TTL_SECONDS"
 CLAIM_TTL_SECONDS_ENV = "INFIQUETRA_FLEET_CLAIM_TTL_SECONDS"
 BATCH_ID_ENV = "INFIQUETRA_FLEET_BATCH_ID"
+REQUIRED_PROTOCOL_VERSION = 1
 
 
 class HookInputError(ValueError):
     """A required trusted hook field is missing or malformed."""
+
+
+def ensure_protocol() -> None:
+    """Fail closed when the installed fleet-core predates this lease contract."""
+
+    observed = getattr(authority, "PROTOCOL_VERSION", None)
+    if observed != REQUIRED_PROTOCOL_VERSION:
+        raise HookInputError(
+            "fleet-core lease broker protocol "
+            f"{REQUIRED_PROTOCOL_VERSION} required (found {observed!r}); install/update fleet-core"
+        )
 
 
 def _positive_env(environment: Mapping[str, str], name: str, default: int) -> int:
@@ -108,12 +120,14 @@ def admission_snapshot(
 def broker(environment: Mapping[str, str] | None = None) -> Any:
     """Resolve the one runtime-neutral authority selected by the current environment."""
 
+    ensure_protocol()
     return authority.LeaseBroker(environment=os.environ if environment is None else environment)
 
 
 def worktree_resource(repo_root: Path | str, outcome_id: str, subplot_id: str) -> dict[str, str]:
     """Build the canonical closed resource identity for an outcome-owned worktree."""
 
+    ensure_protocol()
     root = Path(repo_root).resolve()
     return cast(
         dict[str, str],
@@ -140,6 +154,7 @@ def acquire_outcome_worktree(
 ) -> Any:
     """Acquire one worktree-pool lease through the canonical broker."""
 
+    ensure_protocol()
     active = broker() if selected is None else selected
     return active.acquire_worktree(
         owner_id=owner_id,
@@ -163,6 +178,7 @@ def worktree_lease_receipt(lease: Any, selected: Any) -> dict[str, Any]:
 def parse_worktree_lease_receipt(value: Any, selected: Any) -> tuple[str, Any]:
     """Validate a closed registry receipt and return its exact lease id/token."""
 
+    ensure_protocol()
     if not isinstance(value, dict) or set(value) != {"lease_id", "token", "root_sha256"}:
         raise HookInputError(
             "worktree lease receipt requires exactly lease_id, token, and root_sha256"

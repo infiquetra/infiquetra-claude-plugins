@@ -56,10 +56,20 @@ DEFAULT_AVAILABLE: tuple[str, ...] = ALWAYS_AVAILABLE
 # (fork/subagent/goal/manual) has no defined lower rung, so an unavailable one HALTs rather than
 # silently substituting (R5). Mirrors lifecycle_state.ORCHESTRATION_TIERS.
 DEGRADE_LADDER: tuple[str, ...] = ("cc-workflows-ultracode", "team-execution", "inline")
+_REQUIRED_LEASE_PROTOCOL_VERSION = 1
 
 
 class DispatcherError(ValueError):
     """A dispatch was rejected for a malformed request (unknown backend vocabulary, etc.)."""
+
+
+def _require_lease_protocol(authority: Any) -> None:
+    observed = getattr(authority, "PROTOCOL_VERSION", None)
+    if observed != _REQUIRED_LEASE_PROTOCOL_VERSION:
+        raise DispatcherError(
+            "outcome dispatch requires fleet-core lease broker protocol "
+            f"{_REQUIRED_LEASE_PROTOCOL_VERSION} (found {observed!r}); install/update fleet-core"
+        )
 
 
 @dataclass(frozen=True)
@@ -218,11 +228,11 @@ def default_lease_authority() -> Any:
 
     try:
         authority = fleet_commons_shim.load("lease_broker")
+        _require_lease_protocol(authority)
         return authority.LeaseBroker()
     except Exception as exc:  # noqa: BLE001 - plugin skew must be named at the runtime boundary
         raise DispatcherError(
-            "outcome dispatch requires lease-capable fleet-core; install/update fleet-core: "
-            f"{exc}"
+            f"outcome dispatch requires lease-capable fleet-core; install/update fleet-core: {exc}"
         ) from exc
 
 
@@ -240,6 +250,7 @@ def make_dispatcher(
         if selected is not None:
             try:
                 authority = fleet_commons_shim.load("lease_broker")
+                _require_lease_protocol(authority)
                 policy = fleet_commons_shim.load("concurrency_policy")
                 limits = policy.AdmissionLimits()
                 dispatch_identity = str(getattr(req, "dispatch_id", "")) or str(
@@ -266,7 +277,8 @@ def make_dispatcher(
         try:
             result = dispatch(req, available=available)
             if lease is not None:
-                assert selected is not None
+                if selected is None:
+                    raise DispatcherError("outcome dispatch lost its lease authority")
                 try:
                     selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
                 except Exception as exc:  # noqa: BLE001 - normalize fleet version/expiry failures
@@ -275,7 +287,8 @@ def make_dispatcher(
                     ) from exc
         finally:
             if lease is not None:
-                assert selected is not None
+                if selected is None:
+                    raise DispatcherError("outcome dispatch lost its lease authority")
                 try:
                     released = selected.release(
                         lease.lease_id, owner_id=owner_id, token=lease.token

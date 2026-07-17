@@ -3287,3 +3287,32 @@ atomic-write mechanisms from `{#unit-panels-vs-whole-diff-lenses-476}`'s sibling
 Same "receipt schema-valid ≠ receipt honest" family as #384's two-signal observer design; sibling gap
 in the same batch: #520 (tripwire hardening). Pre-merge review hardening on PR #575 narrowed the
 condition from `stdout_bytes + stderr_bytes == 0` to `stdout_bytes == 0` (finding F1).
+
+---
+
+### Parallel hooks require two independent release signals, and workflow batch identity cannot rely on hook environment inheritance {#parallel-hook-lease-lifecycle-356}
+
+**Evidence.** Issue #356's lease lifecycle wiring. Claude runs matching hooks independently;
+`SubagentStart` carries trusted child identity but no parent `tool_use_id`, while parent
+`PostToolUse`/`PostToolUseFailure` carries the tool id but not authoritative child termination.
+Also, environment exported by the `/work` driver is not a durable child-hook communication channel:
+the hook subprocess receives the Claude session id, but an explicit Workflow batch id is not
+guaranteed to persist into every later hook invocation.
+
+**Mechanism.** Releasing on either signal alone creates a live-child capacity hole. The broker
+therefore records `child_terminal_at` and `parent_completed_at` independently and removes a claimed
+foreground lease only after both exist. Workflow reservations are discovered from the canonical
+registry by trusted session when no explicit batch id is present; more than one live batch for the
+same session halts as ambiguous instead of selecting one. Cross-ordered claims may retain capacity
+until TTL, but they cannot release or authorize the wrong child.
+
+**Generalizable rule.** Treat hook callbacks as unordered, isolated observations, not one process or
+one inherited environment. Any lifecycle transition that destroys authority must require all
+independent trusted signals the host exposes, and any identity that must survive across callbacks
+belongs in the locked durable authority keyed by stable host identity. Ambiguity should retain
+authority and fail closed; it must never be resolved by oldest/latest guessing at release time.
+
+**Refs.** `plugins/saga/hooks/hooks.json`, `plugins/saga/scripts/lease_broker.py`,
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
+`plugins/saga/references/concurrency-spawn-sites.md`; decision
+`{#fleet-ttl-lease-broker-356}`.

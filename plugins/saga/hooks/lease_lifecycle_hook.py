@@ -39,6 +39,8 @@ def dispatch(payload: dict[str, Any]) -> None:
     try:
         import lease_broker  # noqa: PLC0415
 
+        lease_broker.ensure_protocol()
+
         if event == "PreToolUse":
             lease_broker.reserve_hook_agent(payload)
         elif event == "SubagentStart":

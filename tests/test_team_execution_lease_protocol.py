@@ -91,6 +91,13 @@ def test_preflight_and_renew_expose_no_authority_path() -> None:
     assert "root" not in renewed
 
 
+def test_preflight_rejects_lease_protocol_skew(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(PROTOCOL.authority, "PROTOCOL_VERSION", 99)
+
+    with pytest.raises(PROTOCOL.LeaseProtocolError, match="install/update fleet-core"):
+        PROTOCOL.preflight(selected=FakeBroker([]))
+
+
 def test_teardown_refuses_unclaimed_or_unconfirmed_child_without_releasing() -> None:
     for lease in (_lease(agent_id=None), _lease(agent_id="child-1")):
         selected = FakeBroker([lease])
@@ -106,9 +113,7 @@ def test_teardown_accepts_persisted_or_explicit_terminal_evidence_then_sweeps() 
         (_lease(agent_id="child-1"), ("child-1",)),
     ):
         selected = FakeBroker([lease])
-        result = PROTOCOL.teardown(
-            "session-1", terminal_agent_ids=asserted, selected=selected
-        )
+        result = PROTOCOL.teardown("session-1", terminal_agent_ids=asserted, selected=selected)
         assert result["status"] == "released"
         assert result["released_lease_ids"] == ["lease-1"]
         assert selected.released == ["session-1"]

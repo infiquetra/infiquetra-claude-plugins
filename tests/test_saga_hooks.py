@@ -396,3 +396,14 @@ def test_hooks_json_arms_every_required_lifecycle_seam() -> None:
         "lease_lifecycle_hook.py" in command
         for command in _commands(events["PostToolUseFailure"], "Agent|Task")
     )
+
+
+def test_saga_adapter_rejects_lease_protocol_skew(monkeypatch: pytest.MonkeyPatch) -> None:
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    adapter = _load(scripts / "lease_broker.py", "saga_lease_adapter_skew_test")
+    monkeypatch.setattr(adapter.authority, "PROTOCOL_VERSION", 99)
+
+    with pytest.raises(adapter.HookInputError, match="install/update fleet-core"):
+        adapter.ensure_protocol()

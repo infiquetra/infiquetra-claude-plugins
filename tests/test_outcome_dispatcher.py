@@ -168,6 +168,11 @@ def test_make_dispatcher_refuses_capacity_before_backend_call(
         D.make_dispatcher(lease_authority=selected)(_req("inline"))
 
 
+def test_outcome_dispatch_rejects_lease_protocol_skew() -> None:
+    with pytest.raises(D.DispatcherError, match="install/update fleet-core"):
+        D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=99))
+
+
 # --------------------------------------------------------------------------- team_emitter wiring (R5)
 
 

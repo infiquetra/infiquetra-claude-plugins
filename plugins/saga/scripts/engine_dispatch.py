@@ -38,6 +38,7 @@ _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
 _LAZY_FLEET_MODULES = frozenset({"delegation_audit", "delegation_state", "audit_store"})
 
 _DELEGATION_AUDIT_UNAVAILABLE = "delegation-audit-unavailable"
+_REQUIRED_LEASE_PROTOCOL_VERSION = 1
 
 
 def _load_fleet_module(name: str) -> tuple[ModuleType | None, str]:
@@ -50,6 +51,15 @@ def _load_fleet_module(name: str) -> tuple[ModuleType | None, str]:
         return fleet_commons_shim.load(name), ""
     except Exception as exc:  # noqa: BLE001 - version skew degrades named, never crashes
         return None, f"{_DELEGATION_AUDIT_UNAVAILABLE}: {name}: {exc}"
+
+
+def _require_lease_protocol(module: ModuleType) -> None:
+    observed = getattr(module, "PROTOCOL_VERSION", None)
+    if observed != _REQUIRED_LEASE_PROTOCOL_VERSION:
+        raise DispatchError(
+            "engine dispatch requires fleet-core lease broker protocol "
+            f"{_REQUIRED_LEASE_PROTOCOL_VERSION} (found {observed!r}); install/update fleet-core"
+        )
 
 
 def __getattr__(name: str) -> ModuleType:
@@ -728,8 +738,10 @@ def dispatch(
     if lease_module is None or policy_module is None:
         reason = lease_degradation or policy_degradation
         raise DispatchError(
-            "engine dispatch requires lease-capable fleet-core; install/update fleet-core: " + reason
+            "engine dispatch requires lease-capable fleet-core; install/update fleet-core: "
+            + reason
         )
+    _require_lease_protocol(lease_module)
     selected = lease_module.LeaseBroker() if lease_authority is None else lease_authority
     limits = policy_module.AdmissionLimits()
     owner_id = f"engine-dispatch:{session_id}"

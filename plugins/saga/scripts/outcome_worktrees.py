@@ -40,7 +40,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -352,8 +352,8 @@ def ensure_worktree(
     )
     if not ops.add(path, branch):
         if lease is not None:
-            assert lease_authority is not None
-            lease_authority.release(lease.lease_id, owner_id=owner, token=lease.token)
+            selected = cast(Any, lease_authority)
+            selected.release(lease.lease_id, owner_id=owner, token=lease.token)
         raise WorktreeError(f"git worktree add failed for {sid!r} at {path}")
     entry = {
         "path": path,
@@ -371,8 +371,8 @@ def ensure_worktree(
     except Exception:
         ops.remove(path)
         if lease is not None:
-            assert lease_authority is not None
-            lease_authority.release(lease.lease_id, owner_id=owner, token=lease.token)
+            selected = cast(Any, lease_authority)
+            selected.release(lease.lease_id, owner_id=owner, token=lease.token)
         raise
     return WorktreeResult(sid, "created", path, "durable named+owned worktree provisioned (R15)")
 

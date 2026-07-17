@@ -82,8 +82,10 @@ def validate_metadata(value: Mapping[str, Any], *, launch_ready: bool = True) ->
     ]:
         raise WorkflowLeaseContractError("slots must enumerate the exact reservation width")
     unit_ids = data["workload_unit_ids"]
-    if not isinstance(unit_ids, list) or not unit_ids or any(
-        not isinstance(item, str) or not item for item in unit_ids
+    if (
+        not isinstance(unit_ids, list)
+        or not unit_ids
+        or any(not isinstance(item, str) or not item for item in unit_ids)
     ):
         raise WorkflowLeaseContractError("workload_unit_ids must be a non-empty string list")
     if data["mutation"] not in ("read-write", "none"):

@@ -3315,9 +3315,7 @@ def workflow_lease_metadata(
         else "read-write"
     )
     batch_id = (
-        None
-        if invocation_digest is None
-        else f"workflow:{spec_digest[:24]}:{invocation_digest}"
+        None if invocation_digest is None else f"workflow:{spec_digest[:24]}:{invocation_digest}"
     )
     return {
         "schema": "workflow_lease_reservation.v1",

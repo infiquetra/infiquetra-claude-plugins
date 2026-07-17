@@ -132,7 +132,7 @@ def test_boot_id_fallback_ignores_wall_jump_and_expires_on_reboot(
     def deny_linux_boot_id(path: Path, *args: Any, **kwargs: Any) -> str:
         if path == Path("/proc/sys/kernel/random/boot_id"):
             raise OSError("proc boot identity unavailable")
-        return original_read_text(path, *args, **kwargs)
+        return cast(str, original_read_text(path, *args, **kwargs))
 
     def deny_darwin_boot_time(command: list[str], *args: Any, **kwargs: Any) -> Any:
         if command == ["sysctl", "-n", "kern.boottime"]:

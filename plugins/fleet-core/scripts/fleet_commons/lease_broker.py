@@ -40,9 +40,19 @@ TokenState = Literal["current", "expired", "closed", "superseded"]
 ResourceRef = dict[str, str]
 
 _TOP_KEYS = frozenset(
-    {"schema", "broker_epoch", "next_fencing_sequence", "resource_fences", "leases"}
+    {
+        "schema",
+        "broker_epoch",
+        "next_fencing_sequence",
+        "resource_fences",
+        "leases",
+        "session_admissions",
+    }
 )
 _FENCE_KEYS = frozenset({"resource_ref", "broker_epoch", "fencing_sequence", "lease_id"})
+_SESSION_ADMISSION_KEYS = frozenset(
+    {"policy_sha256", "session_limit", "aggregate_limit", "mutation"}
+)
 _LEASE_KEYS = frozenset(
     {
         "pool",
@@ -75,6 +85,8 @@ _WORKTREE_RESOURCE_KEYS = frozenset({"repo_root", "outcome_id", "subplot_id"})
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _MAX_ID = 256
 _MAX_PATH = 4096
+_MAX_SESSION_ADMISSIONS = 64
+_MAX_CLOSED_AGENT_FENCES = 128
 
 
 class LeaseBrokerError(RuntimeError):
@@ -130,7 +142,7 @@ def _bounded(value: Any, name: str, *, maximum: int = _MAX_ID) -> str:
         raise RegistryCorruptError(f"{name} must be a non-empty string <= {maximum} characters")
     if any(ord(char) < 32 for char in value):
         raise RegistryCorruptError(f"{name} must not contain control characters")
-    return value
+    return cast(str, value)
 
 
 def _optional_bounded(value: Any, name: str, *, maximum: int = _MAX_ID) -> str | None:
@@ -142,13 +154,13 @@ def _optional_bounded(value: Any, name: str, *, maximum: int = _MAX_ID) -> str |
 def _positive(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise RegistryCorruptError(f"{name} must be a positive integer")
-    return value
+    return cast(int, value)
 
 
 def _nonnegative(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise RegistryCorruptError(f"{name} must be a nonnegative integer")
-    return value
+    return cast(int, value)
 
 
 def _sha256(value: str) -> str:
@@ -536,20 +548,63 @@ class ResourceFence:
         }
 
 
+@dataclass(frozen=True)
+class SessionAdmission:
+    """The resolved admission policy pinned to a coordinator session."""
+
+    policy_sha256: str
+    session_limit: int
+    aggregate_limit: int
+    mutation: MutationMode
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> SessionAdmission:
+        parsed = _closed_mapping(dict(data), _SESSION_ADMISSION_KEYS, "session_admission")
+        session_limit = _positive(parsed["session_limit"], "session_limit")
+        aggregate_limit = _positive(parsed["aggregate_limit"], "aggregate_limit")
+        if session_limit > aggregate_limit:
+            raise RegistryCorruptError("session_limit must not exceed aggregate_limit")
+        mutation = parsed["mutation"]
+        if mutation not in ("read-write", "none"):
+            raise RegistryCorruptError("session admission mutation must be read-write or none")
+        return cls(
+            policy_sha256=_sha256_text(parsed["policy_sha256"], "policy_sha256"),
+            session_limit=session_limit,
+            aggregate_limit=aggregate_limit,
+            mutation=cast(MutationMode, mutation),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "policy_sha256": self.policy_sha256,
+            "session_limit": self.session_limit,
+            "aggregate_limit": self.aggregate_limit,
+            "mutation": self.mutation,
+        }
+
+
 @dataclass
 class Registry:
     broker_epoch: str
     next_fencing_sequence: int
     resource_fences: dict[str, ResourceFence]
     leases: dict[str, Lease]
+    session_admissions: dict[str, SessionAdmission]
 
     @classmethod
     def fresh(cls, providers: Providers) -> Registry:
-        return cls(str(providers.uuid4()), 1, {}, {})
+        return cls(str(providers.uuid4()), 1, {}, {}, {})
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Registry:
-        parsed = _closed_mapping(dict(data), _TOP_KEYS, "registry")
+        raw = dict(data)
+        legacy_keys = _TOP_KEYS - {"session_admissions"}
+        if set(raw) == legacy_keys and raw.get("schema") == SCHEMA:
+            # ``session_admissions`` was added to the v1 registry as bounded coordination metadata.
+            # Older v1 authorities have no such pins, so the only safe migration is the exact old
+            # closed shape to an empty map.  Unknown or any other missing fields still fail closed.
+            raw["session_admissions"] = {}
+        parsed = _closed_mapping(raw, _TOP_KEYS, "registry")
         if parsed["schema"] != SCHEMA:
             raise RegistryCorruptError(
                 f"registry.schema must be {SCHEMA!r}; found {parsed['schema']!r}"
@@ -558,8 +613,13 @@ class Registry:
         next_sequence = _positive(parsed["next_fencing_sequence"], "next_fencing_sequence")
         fences_raw = parsed["resource_fences"]
         leases_raw = parsed["leases"]
+        admissions_raw = parsed["session_admissions"]
         if not isinstance(fences_raw, dict) or not isinstance(leases_raw, dict):
             raise RegistryCorruptError("resource_fences and leases must be objects")
+        if not isinstance(admissions_raw, dict):
+            raise RegistryCorruptError("session_admissions must be an object")
+        if len(admissions_raw) > _MAX_SESSION_ADMISSIONS:
+            raise RegistryCorruptError("session_admissions exceeds its bounded capacity")
         fences = {
             digest: ResourceFence.from_dict(digest, fence) for digest, fence in fences_raw.items()
         }
@@ -567,13 +627,17 @@ class Registry:
             lease_id: Lease.from_dict(lease_id, lease, epoch)
             for lease_id, lease in leases_raw.items()
         }
+        admissions = {
+            _bounded(session_id, "session_admissions key"): SessionAdmission.from_dict(admission)
+            for session_id, admission in admissions_raw.items()
+        }
         sequences = [lease.fencing_sequence for lease in leases.values()]
         sequences.extend(fence.fencing_sequence for fence in fences.values())
         if any(fence.broker_epoch != epoch for fence in fences.values()):
             raise RegistryCorruptError("resource fence broker_epoch must match registry epoch")
         if sequences and next_sequence <= max(sequences):
             raise RegistryCorruptError("next_fencing_sequence must exceed every issued sequence")
-        return cls(epoch, next_sequence, fences, leases)
+        return cls(epoch, next_sequence, fences, leases, admissions)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -584,6 +648,9 @@ class Registry:
                 key: value.to_dict() for key, value in sorted(self.resource_fences.items())
             },
             "leases": {key: value.to_dict() for key, value in sorted(self.leases.items())},
+            "session_admissions": {
+                key: value.to_dict() for key, value in sorted(self.session_admissions.items())
+            },
         }
 
     def issue_sequence(self) -> int:
@@ -728,6 +795,7 @@ class LeaseBroker:
         return Registry.from_dict(payload)
 
     def _write_registry(self, registry: Registry) -> None:
+        self._compact_closed_agent_fences(registry)
         # Round-trip validation before authority replacement catches programmer errors fail-closed.
         payload = registry.to_dict()
         Registry.from_dict(payload)
@@ -755,6 +823,22 @@ class LeaseBroker:
         finally:
             with contextlib.suppress(FileNotFoundError):
                 temp.unlink()
+
+    @staticmethod
+    def _compact_closed_agent_fences(registry: Registry) -> None:
+        """Bound closed agent tombstones without weakening failure-closed token checks."""
+
+        closed_agents = sorted(
+            (
+                (digest, fence)
+                for digest, fence in registry.resource_fences.items()
+                if fence.lease_id not in registry.leases
+                and set(fence.resource_ref) != _WORKTREE_RESOURCE_KEYS
+            ),
+            key=lambda item: item[1].fencing_sequence,
+        )
+        for digest, _fence in closed_agents[:-_MAX_CLOSED_AGENT_FENCES]:
+            del registry.resource_fences[digest]
 
     def _now(self) -> tuple[datetime, str, int, str]:
         wall = self.providers.wall_now()
@@ -805,6 +889,7 @@ class LeaseBroker:
         policy_sha256: str,
         session_limit: int,
         aggregate_limit: int,
+        mutation: MutationMode,
         count: int,
         wall: datetime,
         monotonic: int,
@@ -816,10 +901,20 @@ class LeaseBroker:
             if lease.pool == "agent"
         ]
         same_session = [lease for lease in live if lease.session_id == session_id]
-        digests = {lease.policy_sha256 for lease in same_session}
-        if digests and digests != {policy_sha256}:
+        expected = SessionAdmission(policy_sha256, session_limit, aggregate_limit, mutation)
+        configured = registry.session_admissions.get(session_id)
+        if configured is not None and configured != expected:
             raise PolicyMismatchError(
-                f"session {session_id!r} already has live leases under a different policy digest"
+                f"session {session_id!r} admission snapshot does not match its configured policy"
+            )
+        snapshots = {
+            (lease.policy_sha256, lease.session_limit, lease.aggregate_limit, lease.mutation)
+            for lease in same_session
+        }
+        candidate = (policy_sha256, session_limit, aggregate_limit, mutation)
+        if snapshots and snapshots != {candidate}:
+            raise PolicyMismatchError(
+                f"session {session_id!r} already has live leases under a different admission snapshot"
             )
         if len(same_session) + count > session_limit:
             raise CapacityExhaustedError(
@@ -855,6 +950,93 @@ class LeaseBroker:
                     live, wall=wall, monotonic=monotonic, boot_id=boot_id
                 ),
             )
+
+    @staticmethod
+    def _session_has_live_agents(
+        registry: Registry, session_id: str, *, monotonic: int, boot_id: str
+    ) -> bool:
+        return any(
+            lease.pool == "agent"
+            and lease.session_id == session_id
+            and not LeaseBroker._expired_static(lease, monotonic=monotonic, boot_id=boot_id)
+            for lease in registry.leases.values()
+        )
+
+    @staticmethod
+    def _expired_static(lease: Lease, *, monotonic: int, boot_id: str) -> bool:
+        return lease.boot_id != boot_id or monotonic >= (
+            lease.renewed_monotonic_ns + lease.ttl_seconds * 1_000_000_000
+        )
+
+    def configure_session_admission(
+        self,
+        session_id: str,
+        *,
+        policy_sha256: str,
+        session_limit: int,
+        aggregate_limit: int,
+        mutation: MutationMode,
+    ) -> SessionAdmission:
+        """Idempotently pin a resolved policy until the session's live leases drain."""
+
+        session = _bounded(session_id, "session_id")
+        admission = SessionAdmission(
+            _sha256_text(policy_sha256, "policy_sha256"),
+            _positive(session_limit, "session_limit"),
+            _positive(aggregate_limit, "aggregate_limit"),
+            mutation,
+        )
+        if admission.session_limit > admission.aggregate_limit:
+            raise LeaseBrokerError("session_limit must not exceed aggregate_limit")
+        if mutation not in ("read-write", "none"):
+            raise LeaseBrokerError("mutation must be read-write or none")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            _wall, _now_text, monotonic, boot_id = self._now()
+            existing = registry.session_admissions.get(session)
+            if existing is not None:
+                if existing != admission and self._session_has_live_agents(
+                    registry, session, monotonic=monotonic, boot_id=boot_id
+                ):
+                    raise PolicyMismatchError(
+                        f"session {session!r} cannot replace its live admission snapshot"
+                    )
+                if existing == admission:
+                    return existing
+            elif len(registry.session_admissions) >= _MAX_SESSION_ADMISSIONS:
+                raise CapacityExhaustedError(
+                    "session admission registry is full",
+                    earliest_expiry=None,
+                )
+            registry.session_admissions[session] = admission
+            self._write_registry(registry)
+            return admission
+
+    def get_session_admission(self, session_id: str) -> SessionAdmission | None:
+        """Read a pinned resolved policy without creating or modifying authority."""
+
+        session = _bounded(session_id, "session_id")
+        registry = self._read_registry(create=False)
+        return None if registry is None else registry.session_admissions.get(session)
+
+    def clear_session_admission(self, session_id: str) -> bool:
+        """Forget a policy pin only after every live agent lease for that session has drained."""
+
+        session = _bounded(session_id, "session_id")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            _wall, _now_text, monotonic, boot_id = self._now()
+            if self._session_has_live_agents(
+                registry, session, monotonic=monotonic, boot_id=boot_id
+            ):
+                raise LeaseOwnershipError(
+                    f"session {session!r} still has live agent leases; admission cannot be cleared"
+                )
+            if session not in registry.session_admissions:
+                return False
+            del registry.session_admissions[session]
+            self._write_registry(registry)
+            return True
 
     def _new_lease(
         self,
@@ -1015,6 +1197,7 @@ class LeaseBroker:
                 policy_sha256=digest,
                 session_limit=session_cap,
                 aggregate_limit=aggregate_cap,
+                mutation=mutation,
                 count=1,
                 wall=wall,
                 monotonic=monotonic,
@@ -1113,6 +1296,7 @@ class LeaseBroker:
                 policy_sha256=digest,
                 session_limit=session_cap,
                 aggregate_limit=aggregate_cap,
+                mutation=mutation,
                 count=amount,
                 wall=wall,
                 monotonic=monotonic,
@@ -1320,7 +1504,28 @@ class LeaseBroker:
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
             wall, now_text, monotonic, boot_id = self._now()
-            self._drop_superseded_resource_lease(registry, resource)
+            head = registry.resource_fences.get(resource_sha256(resource))
+            if head is not None:
+                existing = registry.leases.get(head.lease_id)
+                if existing is not None:
+                    exact_owner = (
+                        existing.pool == "worktree"
+                        and existing.owner_id == owner
+                        and existing.session_id == session
+                        and existing.owner_pid == pid
+                        and existing.owner_process_start == process_start
+                    )
+                    if exact_owner and not self._expired(
+                        existing, monotonic=monotonic, boot_id=boot_id
+                    ):
+                        return existing
+                    if self._expired(existing, monotonic=monotonic, boot_id=boot_id):
+                        raise LeaseExpiredError(
+                            "expired worktree ownership must be released or reaped before reacquisition"
+                        )
+                    raise LeaseOwnershipError(
+                        "worktree is already owned by a live coordinator; release or reap it first"
+                    )
             self._admit_worktree(registry, count=1, monotonic=monotonic, boot_id=boot_id, wall=wall)
             lease = self._new_lease(
                 registry,
@@ -1345,6 +1550,56 @@ class LeaseBroker:
             )
             self._write_registry(registry)
             return lease
+
+    def transfer_worktree(
+        self,
+        lease_id: str,
+        *,
+        token: FencingToken,
+        owner_id: str,
+        owner_pid: int | None = None,
+        owner_process_start: str | None = None,
+    ) -> Lease:
+        """Atomically bind the current coordinator and renew an exact worktree token.
+
+        The exact current token is the transfer authority, so an expired-but-current lease can be
+        recovered by the coordinator that retained it.  A superseded or released token cannot move
+        ownership.
+        """
+
+        selected_id = _bounded(lease_id, "lease_id")
+        owner = _bounded(owner_id, "owner_id")
+        pid = None if owner_pid is None else _positive(owner_pid, "owner_pid")
+        process_start = _optional_bounded(owner_process_start, "owner_process_start")
+        if pid is not None and process_start is None:
+            process_start = self.providers.process_identity(pid)
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            lease = registry.leases.get(selected_id)
+            if lease is None or lease.pool != "worktree" or lease.resource_ref is None:
+                raise LeaseNotFoundError(f"worktree lease {selected_id!r} does not exist")
+            _wall, now_text, monotonic, boot_id = self._now()
+            state, current = self._current_state(
+                registry, lease.resource_ref, token, monotonic=monotonic, boot_id=boot_id
+            )
+            if state == "superseded":
+                raise LeaseSupersededError("worktree transfer token has been superseded")
+            if state == "closed" or current is None or current.lease_id != selected_id:
+                raise LeaseClosedError("worktree transfer token has been released")
+            if token != lease.token:
+                raise LeaseOwnershipError("worktree transfer token does not match lease")
+            transferred = replace(
+                lease,
+                owner_id=owner,
+                owner_pid=pid,
+                owner_process_start=process_start,
+                renewed_at=now_text,
+                renewed_monotonic_ns=monotonic,
+                boot_id=boot_id,
+            )
+            registry.leases[selected_id] = transferred
+            self._write_registry(registry)
+            return transferred
 
     def _current_state(
         self,
@@ -1449,16 +1704,30 @@ class LeaseBroker:
         worktree = Path(worktree_raw)
         if not worktree.is_dir():
             raise MissingResourceError(f"leased worktree is missing: {worktree}")
+        try:
+            resolved_worktree = worktree.resolve(strict=True)
+        except OSError as exc:
+            raise MissingResourceError(f"leased worktree cannot be resolved: {worktree}") from exc
         if target is not None:
             candidate = Path(target)
             if not candidate.is_absolute():
                 candidate = worktree / candidate
             normalized = Path(os.path.abspath(candidate))
+            parent = normalized
+            while not parent.exists() and parent != parent.parent:
+                parent = parent.parent
             try:
-                normalized.relative_to(worktree)
+                resolved_parent = parent.resolve(strict=True)
+            except OSError as exc:
+                raise MissingResourceError(
+                    f"write target parent cannot be resolved: {parent}"
+                ) from exc
+            resolved = resolved_parent.joinpath(*normalized.relative_to(parent).parts)
+            try:
+                resolved.relative_to(resolved_worktree)
             except ValueError as exc:
                 raise MissingResourceError(
-                    f"write target {normalized} is outside leased worktree {worktree}"
+                    f"write target {normalized} is outside leased worktree {worktree} through a symlink"
                 ) from exc
         return lease
 
@@ -1520,6 +1789,12 @@ class LeaseBroker:
             if token is not None and token != lease.token:
                 raise LeaseOwnershipError("release token does not match lease")
             del registry.leases[selected_id]
+            if lease.pool == "agent":
+                _wall, _now_text, monotonic, boot_id = self._now()
+                if not self._session_has_live_agents(
+                    registry, lease.session_id, monotonic=monotonic, boot_id=boot_id
+                ):
+                    registry.session_admissions.pop(lease.session_id, None)
             self._write_registry(registry)
             return True
 
@@ -1531,11 +1806,19 @@ class LeaseBroker:
             selected = sorted(
                 lease_id
                 for lease_id, lease in registry.leases.items()
-                if lease.owner_id == owner and (session is None or lease.session_id == session)
+                if lease.owner_id == owner
+                and lease.batch_id is None
+                and (session is None or lease.session_id == session)
             )
             for lease_id in selected:
                 del registry.leases[lease_id]
             if selected:
+                if session is not None:
+                    _wall, _now_text, monotonic, boot_id = self._now()
+                    if not self._session_has_live_agents(
+                        registry, session, monotonic=monotonic, boot_id=boot_id
+                    ):
+                        registry.session_admissions.pop(session, None)
                 self._write_registry(registry)
             return tuple(selected)
 
@@ -1601,8 +1884,89 @@ class LeaseBroker:
             for lease_id in selected:
                 del registry.leases[lease_id]
             if selected:
+                _wall, _now_text, monotonic, boot_id = self._now()
+                if not self._session_has_live_agents(
+                    registry, session, monotonic=monotonic, boot_id=boot_id
+                ):
+                    registry.session_admissions.pop(session, None)
                 self._write_registry(registry)
             return tuple(selected)
+
+    def release_session_if_terminal(
+        self, session_id: str, *, terminal_agent_ids: Sequence[str]
+    ) -> tuple[str, ...]:
+        """Validate coordinator terminal evidence and release a session in one lock transaction."""
+
+        session = _bounded(session_id, "session_id")
+        terminal = {_bounded(agent_id, "terminal_agent_id") for agent_id in terminal_agent_ids}
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            selected = sorted(
+                (
+                    lease
+                    for lease in registry.leases.values()
+                    if lease.pool == "agent" and lease.session_id == session
+                ),
+                key=lambda lease: lease.lease_id,
+            )
+            unsafe = [
+                lease.lease_id
+                for lease in selected
+                if (
+                    lease.agent_id is not None
+                    and lease.child_terminal_at is None
+                    and lease.agent_id not in terminal
+                )
+                or (lease.agent_id is None and lease.tool_use_id is not None)
+            ]
+            if unsafe:
+                raise LeaseOwnershipError(
+                    f"session {session!r} has non-terminal agent leases: {', '.join(unsafe)}"
+                )
+            for lease in selected:
+                del registry.leases[lease.lease_id]
+            if selected or session in registry.session_admissions:
+                registry.session_admissions.pop(session, None)
+                self._write_registry(registry)
+            return tuple(lease.lease_id for lease in selected)
+
+    def settle_batch(self, batch_id: str, *, owner_id: str, session_id: str) -> tuple[str, ...]:
+        """Release only unused or fully two-signal-terminal Workflow slots atomically."""
+
+        batch = _bounded(batch_id, "batch_id")
+        owner = _bounded(owner_id, "owner_id")
+        session = _bounded(session_id, "session_id")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            selected = [
+                lease
+                for lease in registry.leases.values()
+                if lease.pool == "agent" and lease.batch_id == batch
+            ]
+            if not selected:
+                return ()
+            if any(lease.owner_id != owner or lease.session_id != session for lease in selected):
+                raise LeaseOwnershipError("workflow batch is not owned by this session")
+            released = sorted(
+                lease.lease_id
+                for lease in selected
+                if (lease.agent_id is None and lease.tool_use_id is None)
+                or (
+                    lease.agent_id is not None
+                    and lease.child_terminal_at is not None
+                    and lease.parent_completed_at is not None
+                )
+            )
+            for lease_id in released:
+                del registry.leases[lease_id]
+            if released:
+                _wall, _now_text, monotonic, boot_id = self._now()
+                if not self._session_has_live_agents(
+                    registry, session, monotonic=monotonic, boot_id=boot_id
+                ):
+                    registry.session_admissions.pop(session, None)
+                self._write_registry(registry)
+            return tuple(released)
 
     def renew_batch(self, batch_id: str, *, owner_id: str | None = None) -> tuple[Lease, ...]:
         """Renew every live slot in one named Workflow batch under one lock."""
@@ -1655,14 +2019,25 @@ class LeaseBroker:
                 )
             else:
                 registry.leases[lease.lease_id] = updated
+            if not self._session_has_live_agents(
+                registry, lease.session_id, monotonic=monotonic, boot_id=boot_id
+            ):
+                registry.session_admissions.pop(lease.session_id, None)
             self._write_registry(registry)
             return True
 
-    def record_parent_completed(self, tool_use_id: str) -> tuple[str, ...]:
+    def record_parent_completed(self, session_id: str, tool_use_id: str) -> tuple[str, ...]:
+        """Record a trusted parent result for exactly one runtime session and tool call."""
+
+        session = _bounded(session_id, "session_id")
         tool = _bounded(tool_use_id, "tool_use_id")
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
-            matches = [lease for lease in registry.leases.values() if lease.tool_use_id == tool]
+            matches = [
+                lease
+                for lease in registry.leases.values()
+                if lease.session_id == session and lease.tool_use_id == tool
+            ]
             if not matches:
                 return ()
             _wall, now_text, monotonic, boot_id = self._now()
@@ -1680,6 +2055,10 @@ class LeaseBroker:
                     removed.append(lease.lease_id)
                 else:
                     registry.leases[lease.lease_id] = updated
+                if not self._session_has_live_agents(
+                    registry, lease.session_id, monotonic=monotonic, boot_id=boot_id
+                ):
+                    registry.session_admissions.pop(lease.session_id, None)
             self._write_registry(registry)
             return tuple(sorted(removed))
 
@@ -1759,21 +2138,29 @@ class LeaseBroker:
         worktree_reaper: Callable[[ResourceRef], bool] | None = None,
         terminal_lease_ids: Sequence[str] = (),
     ) -> SweepResult:
-        """Release expired agent leases and safely reap provably-dead worktree leases."""
+        """Release expired agents and reap provably-dead worktrees under the authority lock.
+
+        ``worktree_reaper`` runs while this broker's global flock is held.  It must not call this
+        broker (or another handle rooted at the same authority), acquire a competing lease, or wait
+        for code that does.  That intentionally non-reentrant callback contract prevents a fresh
+        acquisition or ownership transfer from racing destructive reclamation.
+        """
 
         terminal = {_bounded(item, "terminal_lease_id") for item in terminal_lease_ids}
-        candidates: list[Lease] = []
         retained: dict[str, str] = {}
         released_agents: list[str] = []
+        reaped: list[str] = []
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
             _wall, _now_text, monotonic, boot_id = self._now()
+            released_sessions: set[str] = set()
             for lease in list(registry.leases.values()):
                 if not self._expired(lease, monotonic=monotonic, boot_id=boot_id):
                     continue
                 if lease.pool == "agent":
                     del registry.leases[lease.lease_id]
                     released_agents.append(lease.lease_id)
+                    released_sessions.add(lease.session_id)
                     continue
                 owner_state = "dead" if lease.lease_id in terminal else self._owner_state(lease)
                 if owner_state == "live":
@@ -1781,39 +2168,27 @@ class LeaseBroker:
                 elif owner_state == "unknown":
                     retained[lease.lease_id] = "expired-owner-unknown"
                 else:
-                    candidates.append(lease)
-            if released_agents:
+                    if worktree_reaper is None:
+                        retained[lease.lease_id] = "expired-no-reaper"
+                    elif lease.resource_ref is None:
+                        retained[lease.lease_id] = "expired-resource-missing"
+                    else:
+                        try:
+                            successful = bool(worktree_reaper(lease.resource_ref))
+                        except Exception:  # noqa: BLE001 - retain authority for an operator retry.
+                            successful = False
+                        if successful:
+                            del registry.leases[lease.lease_id]
+                            reaped.append(lease.lease_id)
+                        else:
+                            retained[lease.lease_id] = "reap-failed"
+            if released_agents or reaped:
+                for session in released_sessions:
+                    if not self._session_has_live_agents(
+                        registry, session, monotonic=monotonic, boot_id=boot_id
+                    ):
+                        registry.session_admissions.pop(session, None)
                 self._write_registry(registry)
-
-        reaped: list[str] = []
-        for candidate in candidates:
-            if worktree_reaper is None:
-                retained[candidate.lease_id] = "expired-no-reaper"
-                continue
-            if candidate.resource_ref is None:
-                retained[candidate.lease_id] = "expired-resource-missing"
-                continue
-            try:
-                successful = bool(worktree_reaper(candidate.resource_ref))
-            except Exception:  # noqa: BLE001 - preserve authority for an operator-visible retry.
-                successful = False
-            if not successful:
-                retained[candidate.lease_id] = "reap-failed"
-                continue
-            with self._locked():
-                registry = cast(Registry, self._read_registry(create=True))
-                current = registry.leases.get(candidate.lease_id)
-                if current is None:
-                    continue
-                _wall, _now_text, monotonic, boot_id = self._now()
-                if current.token != candidate.token or not self._expired(
-                    current, monotonic=monotonic, boot_id=boot_id
-                ):
-                    retained[candidate.lease_id] = "changed-during-reap"
-                    continue
-                del registry.leases[candidate.lease_id]
-                self._write_registry(registry)
-                reaped.append(candidate.lease_id)
         return SweepResult(
             released_agent_leases=tuple(sorted(released_agents)),
             reaped_worktree_leases=tuple(sorted(reaped)),

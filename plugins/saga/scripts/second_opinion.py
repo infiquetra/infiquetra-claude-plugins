@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import engine_dispatch  # noqa: E402
 import engine_recommend  # noqa: E402
 import engine_resolver  # noqa: E402
+import lease_broker as saga_leases  # noqa: E402
 import reconcile  # noqa: E402
 import run_ledger  # noqa: E402
 from engine_registry import Registry  # noqa: E402
@@ -171,6 +172,8 @@ class PreparedSecondOpinion:
     resolution: engine_resolver.Resolution | None
     egress_policy: str | None
     unavailable_reason: str | None
+    lease_session_id: str | None = None
+    lease_admission: engine_dispatch.LeaseAdmission | None = None
 
     @property
     def selected_identity(self) -> str | None:
@@ -840,6 +843,33 @@ def render_work_offer_line(target: str) -> str:
     )
 
 
+def lease_admission_for_session(
+    session_id: str,
+    *,
+    environment: Mapping[str, str] | None = None,
+    selected: Any | None = None,
+) -> engine_dispatch.LeaseAdmission:
+    """Map Saga's exact pinned session policy into the engine dispatch contract."""
+
+    _nonempty_string(session_id, "session_id")
+    env = os.environ if environment is None else environment
+    active = saga_leases.broker(env) if selected is None else selected
+    try:
+        policy_sha256, session_limit, aggregate_limit, mutation = (
+            saga_leases.session_admission_snapshot(session_id, env, selected=active)
+        )
+        admission = engine_dispatch.LeaseAdmission(
+            policy_sha256=policy_sha256,
+            session_limit=session_limit,
+            aggregate_limit=aggregate_limit,
+            mutation=cast(Literal["read-write", "none"], mutation),
+        )
+        admission.validate()
+    except (saga_leases.HookInputError, engine_dispatch.DispatchError) as exc:
+        raise SecondOpinionError(f"second-opinion lease admission is unavailable: {exc}") from exc
+    return admission
+
+
 def prepare_second_opinion(
     finding: FindingSnapshot,
     *,
@@ -851,6 +881,8 @@ def prepare_second_opinion(
     memo: engine_resolver.RunMemo | None = None,
     chaperone_model: str = "opus",
     chaperone_effort: str = "high",
+    lease_session_id: str | None = None,
+    lease_admission: engine_dispatch.LeaseAdmission | None = None,
 ) -> PreparedSecondOpinion:
     """Build a bounded second-opinion request without invoking any wrapper."""
     if requested_by not in {"human", "claude"}:
@@ -858,6 +890,14 @@ def prepare_second_opinion(
     _bounded_bytes(reason, MAX_REASON_BYTES, "reason")
     _nonempty_string(chaperone_model, "chaperone_model")
     _nonempty_string(chaperone_effort, "chaperone_effort")
+    if (lease_session_id is None) != (lease_admission is None):
+        raise SecondOpinionError("lease_session_id and lease_admission must be provided together")
+    if lease_session_id is not None:
+        _nonempty_string(lease_session_id, "lease_session_id")
+    if lease_admission is not None:
+        if not isinstance(lease_admission, engine_dispatch.LeaseAdmission):
+            raise SecondOpinionError("lease_admission must be an engine dispatch LeaseAdmission")
+        lease_admission.validate()
     context = _render_context(finding, reason)
     context_bytes = len(context.encode("utf-8"))
     if context_bytes > MAX_CONTEXT_BYTES:
@@ -926,6 +966,14 @@ def prepare_second_opinion(
 
     if resolution is not None and resolution.halt is not None:
         unavailable_reason = resolution.halt
+    if (
+        resolution is not None
+        and resolution.halt is None
+        and (lease_session_id is None or lease_admission is None)
+    ):
+        raise SecondOpinionError(
+            "resolved second-opinion dispatch requires the pinned Saga session lease binding"
+        )
     route = (
         f"{resolution.engine_id}/{resolution.variant}" if resolution is not None else "unavailable"
     )
@@ -936,6 +984,8 @@ def prepare_second_opinion(
                 "requested_by": requested_by,
                 "chaperone_tier": {"model": chaperone_model, "effort": chaperone_effort},
                 "route": route,
+                "lease_session_id": lease_session_id,
+                "lease_admission": (None if lease_admission is None else lease_admission.to_dict()),
             }
         )
     )
@@ -955,6 +1005,8 @@ def prepare_second_opinion(
         resolution=resolution,
         egress_policy=egress_policy,
         unavailable_reason=unavailable_reason,
+        lease_session_id=lease_session_id,
+        lease_admission=lease_admission,
     )
 
 
@@ -971,6 +1023,10 @@ def dispatch_second_opinion(
     """Claim then dispatch once; a resumed uncertain claim never replays the wrapper."""
     if prepared.unavailable_reason is not None or prepared.resolution is None:
         return _unavailable_evidence(prepared, prepared.unavailable_reason or "route unavailable")
+    if prepared.lease_session_id is None or prepared.lease_admission is None:
+        raise SecondOpinionError(
+            "prepared second-opinion dispatch requires the pinned Saga session lease binding"
+        )
     claim = claim_store.claim(prepared)
     if not claim.acquired:
         if claim.claim.state == "requested" and recover_pending:
@@ -990,9 +1046,12 @@ def dispatch_second_opinion(
             subplot_id=subplot_id,
             at=at,
             gated=False,
+            session_id=prepared.lease_session_id,
             execution_id=prepared.execution_id,
             intent="second-opinion",
             role_kind="advisory-reviewer",
+            lease_admission=prepared.lease_admission,
+            attempt_id=prepared.request_id,
         )
     except Exception:  # noqa: BLE001 - external runner failures must remain nonblocking advisory data.
         return _mark_unavailable_evidence(

@@ -29,6 +29,11 @@ For iteration 1..3:
         - Intended outcome (what success looks like)
         - Path to review-criteria.md for scoring rubrics
 
+        At this fan-out boundary, renew the trusted Claude session through
+        `scripts/lease_protocol.py renew`. Saga's `PreToolUse` lifecycle hook then reserves each
+        exact reviewer immediately before its Agent provider call. Do not create a second
+        team-execution reservation; see `lease-protocol.md`.
+
         Before any Agent call, the Team Lead runs the packaged `dispatch_settlement_adapter.py
         preflight`; it resolves independently installed Saga and fails loud before the first Agent
         call if unavailable. The adapter writes one canonical dispatch-settlement manifest for the

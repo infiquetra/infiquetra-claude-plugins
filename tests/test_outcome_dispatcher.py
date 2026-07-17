@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -118,6 +118,85 @@ def test_make_dispatcher_raises_halt_with_receipt() -> None:
         disp(_req("fork"))
     assert exc.value.receipt.backend == "fork"
     assert exc.value.receipt.subplot_id == "build"
+
+
+def test_make_dispatcher_holds_lease_across_backend_settlement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authority = D.fleet_commons_shim.load("lease_broker")
+    selected = authority.LeaseBroker(tmp_path / "authority")
+    original_dispatch = D.dispatch
+
+    def observing_dispatch(req: Any, *, available: Any) -> dict[str, Any]:
+        live = selected.inspect()["leases"]
+        assert len(live) == 1
+        assert live[0]["session_id"] == "outcome:ship-x"
+        assert live[0]["mutation"] == "none"
+        return cast(dict[str, Any], original_dispatch(req, available=available))
+
+    monkeypatch.setattr(D, "dispatch", observing_dispatch)
+    dispatcher = D.make_dispatcher(lease_authority=selected)
+
+    assert dispatcher(_req("inline")) == "leaf-ship-x-build"
+    assert selected.inspect()["leases"] == []
+
+
+def test_make_dispatcher_refuses_capacity_before_backend_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authority = D.fleet_commons_shim.load("lease_broker")
+    policy = D.fleet_commons_shim.load("concurrency_policy")
+    selected = authority.LeaseBroker(tmp_path / "authority")
+    limits = policy.AdmissionLimits()
+    for index in range(limits.max_concurrent):
+        selected.acquire_agent(
+            owner_id=f"owner-{index}",
+            session_id="outcome:ship-x",
+            policy_sha256=limits.policy_sha256(),
+            session_limit=limits.max_concurrent,
+            aggregate_limit=limits.aggregate_max_concurrent,
+            mutation="none",
+            resource_ref={"logical_unit_id": f"existing-{index}"},
+        )
+    monkeypatch.setattr(
+        D,
+        "dispatch",
+        lambda *_args, **_kwargs: pytest.fail("capacity denial must precede backend dispatch"),
+    )
+
+    with pytest.raises(D.DispatcherError, match="lease admission refused"):
+        D.make_dispatcher(lease_authority=selected)(_req("inline"))
+
+
+def test_make_dispatcher_preserves_primary_failure_when_release_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BrokenReleaseAuthority:
+        root_sha256 = "a" * 64
+
+        def acquire_agent(self, **_kwargs: Any) -> Any:
+            return SimpleNamespace(lease_id="lease-1", token=SimpleNamespace())
+
+        def release(self, *_args: Any, **_kwargs: Any) -> bool:
+            raise RuntimeError("cleanup exploded")
+
+    monkeypatch.setattr(
+        D,
+        "dispatch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("primary exploded")),
+    )
+
+    with pytest.raises(RuntimeError, match="primary exploded") as exc:
+        D.make_dispatcher(lease_authority=BrokenReleaseAuthority())(_req("inline"))
+    assert any(
+        "lease settlement refused: cleanup exploded" in note
+        for note in getattr(exc.value, "__notes__", ())
+    )
+
+
+def test_outcome_dispatch_rejects_lease_protocol_skew() -> None:
+    with pytest.raises(D.DispatcherError, match="install/update fleet-core"):
+        D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=99))
 
 
 # --------------------------------------------------------------------------- team_emitter wiring (R5)

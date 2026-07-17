@@ -10,22 +10,52 @@ from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import fleet_commons_shim
 
-DEFAULT_MAX_CONCURRENT = 3
-DEFAULT_READONLY_MAX_CONCURRENT = 4
-DEFAULT_AGGREGATE_MAX_CONCURRENT = 7
+_concurrency_policy = fleet_commons_shim.load("concurrency_policy")
+
+DEFAULT_MAX_CONCURRENT = _concurrency_policy.DEFAULT_MAX_CONCURRENT
+DEFAULT_READONLY_MAX_CONCURRENT = _concurrency_policy.DEFAULT_READONLY_MAX_CONCURRENT
+DEFAULT_AGGREGATE_MAX_CONCURRENT = _concurrency_policy.DEFAULT_AGGREGATE_MAX_CONCURRENT
 MAX_CONCURRENT_ENV = "SAGA_MAX_CONCURRENT"
 
 _cost_weights = fleet_commons_shim.load("cost_weights")
 _BASELINE_WEIGHT = int(_cost_weights.to_spend("sonnet", "high"))
-_POLICY_KEYS = frozenset({"max_concurrent", "readonly_max_concurrent", "aggregate_max_concurrent"})
+if TYPE_CHECKING:
 
+    class ConcurrencyPolicyError(ValueError):
+        """Static shape of fleet-core's runtime error class."""
 
-class ConcurrencyPolicyError(ValueError):
-    """A malformed or unsafe concurrency policy."""
+    class ConcurrencyPolicy:
+        """Static shape of fleet-core's runtime admission record."""
+
+        max_concurrent: int
+        readonly_max_concurrent: int
+        aggregate_max_concurrent: int
+
+        def __init__(
+            self,
+            max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+            readonly_max_concurrent: int = DEFAULT_READONLY_MAX_CONCURRENT,
+            aggregate_max_concurrent: int = DEFAULT_AGGREGATE_MAX_CONCURRENT,
+        ) -> None: ...
+
+        def validate(self, where: str = "concurrency") -> None: ...
+
+        @classmethod
+        def from_dict(
+            cls, data: Mapping[str, Any], where: str = "concurrency"
+        ) -> ConcurrencyPolicy: ...
+
+        def to_dict(self) -> dict[str, int]: ...
+
+        def policy_sha256(self) -> str: ...
+
+else:
+    ConcurrencyPolicyError = _concurrency_policy.AdmissionPolicyError
+    ConcurrencyPolicy = _concurrency_policy.AdmissionLimits
 
 
 class TierLike(Protocol):
@@ -53,54 +83,6 @@ class UnitLike(Protocol):
 
     @property
     def engine(self) -> str | None: ...
-
-
-@dataclass(frozen=True)
-class ConcurrencyPolicy:
-    """Closed serialized policy block for one execution specification."""
-
-    max_concurrent: int = DEFAULT_MAX_CONCURRENT
-    readonly_max_concurrent: int = DEFAULT_READONLY_MAX_CONCURRENT
-    aggregate_max_concurrent: int = DEFAULT_AGGREGATE_MAX_CONCURRENT
-
-    def validate(self, where: str = "concurrency") -> None:
-        for name, value in self.to_dict().items():
-            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ConcurrencyPolicyError(f"{where}.{name} must be a positive integer")
-        if self.max_concurrent > self.readonly_max_concurrent:
-            raise ConcurrencyPolicyError(
-                f"{where}: max_concurrent {self.max_concurrent} exceeds "
-                f"readonly_max_concurrent {self.readonly_max_concurrent}"
-            )
-        if self.readonly_max_concurrent > self.aggregate_max_concurrent:
-            raise ConcurrencyPolicyError(
-                f"{where}: readonly_max_concurrent {self.readonly_max_concurrent} exceeds "
-                f"aggregate_max_concurrent {self.aggregate_max_concurrent}"
-            )
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any], where: str = "concurrency") -> ConcurrencyPolicy:
-        unknown = sorted(set(data) - _POLICY_KEYS)
-        if unknown:
-            raise ConcurrencyPolicyError(f"{where}: unknown field(s): {', '.join(unknown)}")
-        values: dict[str, int] = {}
-        for key in _POLICY_KEYS:
-            if key not in data:
-                continue
-            value = data[key]
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ConcurrencyPolicyError(f"{where}.{key} must be a positive integer")
-            values[key] = value
-        policy = cls(**values)
-        policy.validate(where)
-        return policy
-
-    def to_dict(self) -> dict[str, int]:
-        return {
-            "max_concurrent": self.max_concurrent,
-            "readonly_max_concurrent": self.readonly_max_concurrent,
-            "aggregate_max_concurrent": self.aggregate_max_concurrent,
-        }
 
 
 @dataclass(frozen=True)

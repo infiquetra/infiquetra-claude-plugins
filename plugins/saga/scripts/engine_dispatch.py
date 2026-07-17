@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
 _LAZY_FLEET_MODULES = frozenset({"delegation_audit", "delegation_state", "audit_store"})
 
 _DELEGATION_AUDIT_UNAVAILABLE = "delegation-audit-unavailable"
+_REQUIRED_LEASE_PROTOCOL_VERSION = 1
 
 
 def _load_fleet_module(name: str) -> tuple[ModuleType | None, str]:
@@ -49,6 +51,15 @@ def _load_fleet_module(name: str) -> tuple[ModuleType | None, str]:
         return fleet_commons_shim.load(name), ""
     except Exception as exc:  # noqa: BLE001 - version skew degrades named, never crashes
         return None, f"{_DELEGATION_AUDIT_UNAVAILABLE}: {name}: {exc}"
+
+
+def _require_lease_protocol(module: ModuleType) -> None:
+    observed = getattr(module, "PROTOCOL_VERSION", None)
+    if observed != _REQUIRED_LEASE_PROTOCOL_VERSION:
+        raise DispatchError(
+            "engine dispatch requires fleet-core lease broker protocol "
+            f"{_REQUIRED_LEASE_PROTOCOL_VERSION} (found {observed!r}); install/update fleet-core"
+        )
 
 
 def __getattr__(name: str) -> ModuleType:
@@ -78,6 +89,46 @@ PanelForeman = Callable[[tuple[reconcile.PanelMemberEvidence, ...]], reconcile.R
 
 class DispatchError(ValueError):
     """A dispatch adapter result violates the external-engine contract."""
+
+
+@dataclass(frozen=True)
+class LeaseAdmission:
+    """Saga-resolved capacity authority required for a registered engine run.
+
+    This adapter deliberately accepts the closed result of Saga's concurrency resolver; it must
+    never reconstruct resolver defaults after an engine lane or run cap has been selected.
+    """
+
+    policy_sha256: str
+    session_limit: int
+    aggregate_limit: int
+    mutation: Literal["read-write", "none"]
+
+    def to_dict(self) -> dict[str, str | int]:
+        return {
+            "policy_sha256": self.policy_sha256,
+            "session_limit": self.session_limit,
+            "aggregate_limit": self.aggregate_limit,
+            "mutation": self.mutation,
+        }
+
+    def validate(self) -> None:
+        if (
+            not isinstance(self.policy_sha256, str)
+            or len(self.policy_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in self.policy_sha256)
+        ):
+            raise DispatchError("lease admission policy_sha256 must be a lowercase SHA-256 digest")
+        for field, value in (
+            ("session_limit", self.session_limit),
+            ("aggregate_limit", self.aggregate_limit),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise DispatchError(f"lease admission {field} must be a positive integer")
+        if self.session_limit > self.aggregate_limit:
+            raise DispatchError("lease admission session_limit must not exceed aggregate_limit")
+        if self.mutation not in {"read-write", "none"}:
+            raise DispatchError("lease admission mutation must be read-write or none")
 
 
 @dataclass(frozen=True)
@@ -349,7 +400,7 @@ def build_agy_envelope(
     return envelope
 
 
-def dispatch(
+def _dispatch_once(
     resolution: Resolution,
     *,
     runner: Runner,
@@ -368,6 +419,8 @@ def dispatch(
     execution_id: str = "",
     intent: str = "offload",
     role_kind: str = "worker",
+    deferred_fact_writes: list[tuple[dict[str, Any], AdvisoryEvidence, dict[str, Any]]]
+    | None = None,
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Run an external engine adapter and return advisory evidence only.
 
@@ -418,6 +471,21 @@ def dispatch(
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"dispatch intent is invalid: {exc}") from exc
     _validate_role_kind(role_kind)
+
+    def record_facts(evidence: AdvisoryEvidence, result: dict[str, Any]) -> None:
+        if deferred_fact_writes is not None:
+            deferred_fact_writes.append((invocation, evidence, result))
+            return
+        _record_advisory_facts(
+            ledger,
+            invocation,
+            evidence,
+            result,
+            subplot_id=subplot_id,
+            at=at,
+            resolution=resolution,
+        )
+
     if resolution.halt is not None:
         halted_provenance: dict[str, Any] = {
             "engine": resolution.engine_id,
@@ -597,15 +665,7 @@ def dispatch(
                     halt=reason,
                     runner_receipt=runner_receipt,
                 )
-                _record_advisory_facts(
-                    ledger,
-                    invocation,
-                    disputed,
-                    result,
-                    subplot_id=subplot_id,
-                    at=at,
-                    resolution=resolution,
-                )
+                record_facts(disputed, result)
                 return RequeueDisposition(reason=reason, attempt=attempt, evidence=disputed)
             # Advisory (non-gated) divergence: the existing downgrade_note mechanism with the
             # integrity reason attached -- NO re-queue loop (plan U5 edge scenario).
@@ -622,15 +682,7 @@ def dispatch(
                 halt=note,
                 runner_receipt=runner_receipt,
             )
-            _record_advisory_facts(
-                ledger,
-                invocation,
-                evidence,
-                result,
-                subplot_id=subplot_id,
-                at=at,
-                resolution=resolution,
-            )
+            record_facts(evidence, result)
             return evidence
         if gated:
             _clear_integrity_attempts(session_id, resolution.engine_id, workspace_root)
@@ -666,10 +718,213 @@ def dispatch(
             runner_receipt=runner_receipt,
         )
 
-    _record_advisory_facts(
-        ledger, invocation, evidence, result, subplot_id=subplot_id, at=at, resolution=resolution
-    )
+    record_facts(evidence, result)
     return evidence
+
+
+def dispatch(
+    resolution: Resolution,
+    *,
+    runner: Runner,
+    model: Any | None = None,
+    sandbox: Any = None,
+    write_set: list[str] | None = None,
+    ledger: run_ledger.RunLedger | None = None,
+    subplot_id: str = "",
+    at: str = "",
+    gated: bool = False,
+    session_id: str = "",
+    workspace_root: Path | str | None = None,
+    expected_identity: str | None = None,
+    chaperone: dict[str, Any] | None = None,
+    economics: dict[str, Any] | None = None,
+    execution_id: str = "",
+    intent: str = "offload",
+    role_kind: str = "worker",
+    lease_authority: Any | None = None,
+    lease_admission: LeaseAdmission | None = None,
+    attempt_id: str = "",
+) -> AdvisoryEvidence | RequeueDisposition:
+    """Dispatch through one lease-held adapter call when a trusted session is supplied.
+
+    The lease is acquired before the existing dispatch/runner path. Immediately after the runner
+    returns, a broker-held settlement context fences post-processing and durable fact writes, then
+    removes the lease with its exact owner and token. Omitting ``session_id`` preserves the
+    compatibility path for pure builders and tests; registered runtime consumers must provide their
+    trusted session id, an exact Saga-resolved admission snapshot, and bounded execution/attempt
+    identity. The latter becomes a stable broker resource reference so a retry supersedes stale
+    authority for that attempt.
+    """
+
+    if not session_id:
+        return _dispatch_once(
+            resolution,
+            runner=runner,
+            model=model,
+            sandbox=sandbox,
+            write_set=write_set,
+            ledger=ledger,
+            subplot_id=subplot_id,
+            at=at,
+            gated=gated,
+            session_id=session_id,
+            workspace_root=workspace_root,
+            expected_identity=expected_identity,
+            chaperone=chaperone,
+            economics=economics,
+            execution_id=execution_id,
+            intent=intent,
+            role_kind=role_kind,
+        )
+
+    if lease_admission is None:
+        raise DispatchError(
+            "registered engine dispatch requires an explicit Saga-resolved lease admission snapshot"
+        )
+    if not isinstance(lease_admission, LeaseAdmission):
+        raise DispatchError("registered engine dispatch lease admission has an invalid type")
+    lease_admission.validate()
+    execution_identity = _bounded_lease_identity(execution_id, "execution_id")
+    attempt_identity = _bounded_lease_identity(attempt_id, "attempt_id")
+    lease_module, lease_degradation = _load_fleet_module("lease_broker")
+    if lease_module is None:
+        raise DispatchError(
+            "engine dispatch requires lease-capable fleet-core; install/update fleet-core: "
+            + lease_degradation
+        )
+    _require_lease_protocol(lease_module)
+    selected = lease_module.LeaseBroker() if lease_authority is None else lease_authority
+    owner_id = f"engine-dispatch:{session_id}"
+    resource_ref = _engine_resource_ref(execution_identity, attempt_identity)
+    try:
+        lease = selected.acquire_agent(
+            owner_id=owner_id,
+            owner_pid=os.getpid(),
+            session_id=session_id,
+            policy_sha256=lease_admission.policy_sha256,
+            session_limit=lease_admission.session_limit,
+            aggregate_limit=lease_admission.aggregate_limit,
+            mutation=lease_admission.mutation,
+            ttl_seconds=lease_module.DEFAULT_TTL_SECONDS,
+            resource_ref=resource_ref,
+            agent_type="external-engine",
+        )
+    except lease_module.LeaseBrokerError as exc:
+        raise DispatchError(f"engine dispatch lease admission refused: {exc}") from exc
+
+    primary_error: BaseException | None = None
+    settlement: Any | None = None
+    settlement_entered = False
+
+    def guarded_runner(invocation: dict[str, Any]) -> dict[str, Any]:
+        nonlocal settlement, settlement_entered
+        result = runner(invocation)
+        settlement = selected.agent_settlement(
+            lease.lease_id,
+            owner_id=owner_id,
+            token=lease.token,
+        )
+        try:
+            settlement.__enter__()
+        except lease_module.LeaseBrokerError as exc:
+            raise DispatchError(f"engine dispatch lease expired before settlement: {exc}") from exc
+        settlement_entered = True
+        return result
+
+    try:
+        deferred_fact_writes: list[tuple[dict[str, Any], AdvisoryEvidence, dict[str, Any]]] = []
+        evidence = _dispatch_once(
+            resolution,
+            runner=guarded_runner,
+            model=model,
+            sandbox=sandbox,
+            write_set=write_set,
+            ledger=ledger,
+            subplot_id=subplot_id,
+            at=at,
+            gated=gated,
+            session_id=session_id,
+            workspace_root=workspace_root,
+            expected_identity=expected_identity,
+            chaperone=chaperone,
+            economics=economics,
+            execution_id=execution_id,
+            intent=intent,
+            role_kind=role_kind,
+            deferred_fact_writes=deferred_fact_writes,
+        )
+        lease_receipt = {
+            "lease_id": lease.lease_id,
+            "root_sha256": selected.root_sha256,
+            "policy_sha256": lease_admission.policy_sha256,
+        }
+        if isinstance(evidence, RequeueDisposition):
+            evidence.evidence.provenance["lease"] = lease_receipt
+        else:
+            evidence.provenance["lease"] = lease_receipt
+        for invocation, fact_evidence, result in deferred_fact_writes:
+            _record_advisory_facts(
+                ledger,
+                invocation,
+                fact_evidence,
+                result,
+                subplot_id=subplot_id,
+                at=at,
+                resolution=resolution,
+            )
+        return evidence
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        if settlement_entered and settlement is not None:
+            try:
+                settlement.__exit__(
+                    None if primary_error is None else type(primary_error),
+                    primary_error,
+                    None if primary_error is None else primary_error.__traceback__,
+                )
+            except Exception as exc:  # noqa: BLE001 - preserve the post-run primary failure.
+                cleanup_error = DispatchError(f"engine dispatch lease settlement refused: {exc}")
+                if primary_error is not None:
+                    primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                else:
+                    raise cleanup_error from exc
+        else:
+            try:
+                released = selected.release(lease.lease_id, owner_id=owner_id, token=lease.token)
+            except Exception as exc:  # noqa: BLE001 - preserve the runner primary failure.
+                cleanup_error = DispatchError(f"engine dispatch lease settlement refused: {exc}")
+                if primary_error is not None:
+                    primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                else:
+                    raise cleanup_error from exc
+            else:
+                if not released:
+                    cleanup_error = DispatchError(
+                        "engine dispatch lease disappeared before authoritative settlement"
+                    )
+                    if primary_error is not None:
+                        primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                    else:
+                        raise cleanup_error
+
+
+def _bounded_lease_identity(value: str, field: str) -> str:
+    if not isinstance(value, str) or not value or len(value) > 256:
+        raise DispatchError(f"engine dispatch {field} must be a non-empty string <= 256 characters")
+    if any(ord(character) < 32 for character in value):
+        raise DispatchError(f"engine dispatch {field} must not contain control characters")
+    return value
+
+
+def _engine_resource_ref(execution_id: str, attempt_id: str) -> dict[str, str]:
+    """Return the bounded stable resource identity used to supersede retry authority."""
+
+    digest = hashlib.sha256(
+        f"{len(execution_id)}:{execution_id}{len(attempt_id)}:{attempt_id}".encode()
+    ).hexdigest()
+    return {"logical_unit_id": f"engine-dispatch:{digest}"}
 
 
 def dispatch_advisory_panel(
@@ -679,20 +934,24 @@ def dispatch_advisory_panel(
     runner: Runner,
     foreman: PanelForeman,
     execution_id: str,
+    session_id: str,
+    lease_admission: LeaseAdmission,
     intent: str,
     ledger: run_ledger.RunLedger,
     subplot_id: str,
     at: str,
     task_context: dict[str, Any] | None = None,
     memo: RunMemo | None = None,
+    lease_authority: Any | None = None,
 ) -> PanelDispatchResult:
     """Resolve, dispatch, and Claude-reconcile one bounded advisory jury.
 
     ``resolve_role`` validates the normalized role and member count before it performs any
     member preflight. All resolutions are then checked with ``panel_halt`` before the first
-    dispatch, so an unavailable member cannot create partial work. Member dispatches receive no
-    ledger: raw panel output is in-memory foreman input only. The validated typed foreman result
-    is the sole panel content appended to the run-fact ledger.
+    dispatch, so an unavailable member cannot create partial work. The caller supplies one trusted
+    session and exact admission snapshot; every member receives a stable lease attempt. Member
+    dispatches receive no ledger: raw panel output is in-memory foreman input only. The validated
+    typed foreman result is the sole panel content appended to the run-fact ledger.
     """
     if not isinstance(request, AdvisoryPanelRequest):
         raise DispatchError("advisory panel dispatch requires an AdvisoryPanelRequest")
@@ -705,6 +964,10 @@ def dispatch_advisory_panel(
         )
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"advisory panel execution metadata is invalid: {exc}") from exc
+    _bounded_lease_identity(session_id, "session_id")
+    if not isinstance(lease_admission, LeaseAdmission):
+        raise DispatchError("advisory panel lease admission has an invalid type")
+    lease_admission.validate()
     role_name = request.role
     try:
         resolutions = engine_resolver.resolve_role(
@@ -720,89 +983,175 @@ def dispatch_advisory_panel(
     if halt is not None:
         raise DispatchError(f"advisory panel halted before dispatch: {halt}")
 
-    member_evidence: list[AdvisoryEvidence] = []
-    total_output_bytes = 0
-    for resolution in resolutions:
-        dispatched = dispatch(
-            resolution,
-            runner=runner,
-            execution_id=execution_id,
-            intent=intent,
-            role_kind="panel",
+    lease_module, lease_degradation = _load_fleet_module("lease_broker")
+    if lease_module is None:
+        raise DispatchError(
+            "advisory panel requires lease-capable fleet-core; install/update fleet-core: "
+            + lease_degradation
         )
-        if isinstance(dispatched, RequeueDisposition):
-            raise DispatchError("advisory panel dispatch unexpectedly requested a gated requeue")
-        panel_evidence = dispatched
-        if panel_evidence.halt is not None:
+    _require_lease_protocol(lease_module)
+    selected = lease_module.LeaseBroker() if lease_authority is None else lease_authority
+    owner_id = f"engine-panel:{session_id}"
+    resource_ref = _engine_resource_ref(execution_id, "panel:aggregate")
+    try:
+        lease = selected.acquire_agent(
+            owner_id=owner_id,
+            owner_pid=os.getpid(),
+            session_id=session_id,
+            policy_sha256=lease_admission.policy_sha256,
+            session_limit=lease_admission.session_limit,
+            aggregate_limit=lease_admission.aggregate_limit,
+            mutation=lease_admission.mutation,
+            ttl_seconds=lease_module.DEFAULT_TTL_SECONDS,
+            resource_ref=resource_ref,
+            agent_type="external-engine-panel",
+        )
+    except lease_module.LeaseBrokerError as exc:
+        raise DispatchError(f"advisory panel lease admission refused: {exc}") from exc
+
+    settlement_started = False
+    primary_error: BaseException | None = None
+
+    def guarded_panel_runner(invocation: dict[str, Any]) -> dict[str, Any]:
+        try:
+            selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
+        except lease_module.LeaseBrokerError as exc:
             raise DispatchError(
-                "advisory panel member failed; no reconciliation fact was written: "
-                f"{panel_evidence.engine_id}/{panel_evidence.variant}: {panel_evidence.halt}"
-            )
-        output_bytes = len(panel_evidence.evidence.encode("utf-8"))
-        if output_bytes > PANEL_MEMBER_OUTPUT_BYTES_CAP:
+                f"advisory panel lease expired before member dispatch: {exc}"
+            ) from exc
+        result = runner(invocation)
+        try:
+            selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
+        except lease_module.LeaseBrokerError as exc:
             raise DispatchError(
-                "advisory panel member output exceeds "
-                f"PANEL_MEMBER_OUTPUT_BYTES_CAP={PANEL_MEMBER_OUTPUT_BYTES_CAP} bytes: "
-                f"{panel_evidence.engine_id}/{panel_evidence.variant} produced {output_bytes}"
-            )
-        total_output_bytes += output_bytes
-        if total_output_bytes > PANEL_TOTAL_OUTPUT_BYTES_CAP:
-            raise DispatchError(
-                "advisory panel cumulative output exceeds "
-                f"PANEL_TOTAL_OUTPUT_BYTES_CAP={PANEL_TOTAL_OUTPUT_BYTES_CAP} bytes: "
-                f"observed {total_output_bytes}"
-            )
-        member_evidence.append(panel_evidence)
+                f"advisory panel lease expired before member acceptance: {exc}"
+            ) from exc
+        return result
 
     try:
-        gathered = reconcile.gather_panel_evidence(
-            (
-                f"{evidence.engine_id}/{evidence.variant}",
-                evidence.source_findings,
+        member_evidence: list[AdvisoryEvidence] = []
+        total_output_bytes = 0
+        for resolution in resolutions:
+            panel_evidence = _dispatch_once(
+                resolution,
+                runner=guarded_panel_runner,
+                execution_id=execution_id,
+                session_id=session_id,
+                intent=intent,
+                role_kind="panel",
             )
-            for evidence in member_evidence
-        )
-        foreman_result = foreman(gathered)
-    except Exception as exc:  # noqa: BLE001 - foreman failure is a named no-append boundary
-        raise DispatchError(f"Claude panel foreman failed before ledger append: {exc}") from exc
-    try:
-        result = reconcile.validate_panel_reconciliation(
-            foreman_result,
-            execution_id=execution_id,
-            intent=intent,
-            evidence=gathered,
-        )
-    except reconcile.ReconciliationError as exc:
-        raise DispatchError(f"Claude panel foreman reconciliation failed: {exc}") from exc
+            if isinstance(panel_evidence, RequeueDisposition):
+                raise DispatchError(
+                    "advisory panel dispatch unexpectedly requested a gated requeue"
+                )
+            if panel_evidence.halt is not None:
+                raise DispatchError(
+                    "advisory panel member failed; no reconciliation fact was written: "
+                    f"{panel_evidence.engine_id}/{panel_evidence.variant}: {panel_evidence.halt}"
+                )
+            output_bytes = len(panel_evidence.evidence.encode("utf-8"))
+            if output_bytes > PANEL_MEMBER_OUTPUT_BYTES_CAP:
+                raise DispatchError(
+                    "advisory panel member output exceeds "
+                    f"PANEL_MEMBER_OUTPUT_BYTES_CAP={PANEL_MEMBER_OUTPUT_BYTES_CAP} bytes: "
+                    f"{panel_evidence.engine_id}/{panel_evidence.variant} produced {output_bytes}"
+                )
+            total_output_bytes += output_bytes
+            if total_output_bytes > PANEL_TOTAL_OUTPUT_BYTES_CAP:
+                raise DispatchError(
+                    "advisory panel cumulative output exceeds "
+                    f"PANEL_TOTAL_OUTPUT_BYTES_CAP={PANEL_TOTAL_OUTPUT_BYTES_CAP} bytes: "
+                    f"observed {total_output_bytes}"
+                )
+            member_evidence.append(panel_evidence)
 
-    # Panel-member attribution (#459 R4): which members produced each gathered finding, so the
-    # capability_elo reducer can derive head-to-head matches from this reconciliation. Metadata
-    # only — it never enters the canonical result hash and grants no authority.
-    member_index = {item.source_finding_id: list(item.member_ids) for item in gathered}
-    reconcile_fact = reconcile.append_reconciliation_fact(
-        ledger,
-        result,
-        action=reconcile.ReconciliationAction.RECONCILE,
-        subplot_id=subplot_id,
-        at=at,
-        member_index=member_index,
-    )
-    apply_fact = reconcile.append_reconciliation_fact(
-        ledger,
-        result,
-        action=reconcile.ReconciliationAction.APPLY,
-        subplot_id=subplot_id,
-        at=at,
-        member_index=member_index,
-    )
-    return PanelDispatchResult(
-        role_name=role_name,
-        member_evidence=tuple(member_evidence),
-        gathered_evidence=gathered,
-        reconciliation=result,
-        reconcile_fact=reconcile_fact,
-        apply_fact=apply_fact,
-    )
+        try:
+            gathered = reconcile.gather_panel_evidence(
+                (
+                    f"{evidence.engine_id}/{evidence.variant}",
+                    evidence.source_findings,
+                )
+                for evidence in member_evidence
+            )
+            foreman_result = foreman(gathered)
+        except Exception as exc:  # noqa: BLE001 - foreman failure is a named no-append boundary
+            raise DispatchError(f"Claude panel foreman failed before ledger append: {exc}") from exc
+        try:
+            result = reconcile.validate_panel_reconciliation(
+                foreman_result,
+                execution_id=execution_id,
+                intent=intent,
+                evidence=gathered,
+            )
+        except reconcile.ReconciliationError as exc:
+            raise DispatchError(f"Claude panel foreman reconciliation failed: {exc}") from exc
+
+        # Panel-member attribution (#459 R4): which members produced each gathered finding, so the
+        # capability_elo reducer can derive head-to-head matches from this reconciliation. Metadata
+        # only — it never enters the canonical result hash and grants no authority.
+        member_attribution = {item.source_finding_id: list(item.member_ids) for item in gathered}
+        try:
+            with selected.agent_settlement(
+                lease.lease_id,
+                owner_id=owner_id,
+                token=lease.token,
+            ):
+                settlement_started = True
+                lease_receipt = {
+                    "lease_id": lease.lease_id,
+                    "root_sha256": selected.root_sha256,
+                    "policy_sha256": lease_admission.policy_sha256,
+                }
+                for evidence in member_evidence:
+                    evidence.provenance["lease"] = lease_receipt
+                reconcile_fact = reconcile.append_reconciliation_fact(
+                    ledger,
+                    result,
+                    action=reconcile.ReconciliationAction.RECONCILE,
+                    subplot_id=subplot_id,
+                    at=at,
+                    member_index=member_attribution,
+                )
+                apply_fact = reconcile.append_reconciliation_fact(
+                    ledger,
+                    result,
+                    action=reconcile.ReconciliationAction.APPLY,
+                    subplot_id=subplot_id,
+                    at=at,
+                    member_index=member_attribution,
+                )
+        except lease_module.LeaseBrokerError as exc:
+            raise DispatchError(f"advisory panel lease expired before settlement: {exc}") from exc
+        return PanelDispatchResult(
+            role_name=role_name,
+            member_evidence=tuple(member_evidence),
+            gathered_evidence=gathered,
+            reconciliation=result,
+            reconcile_fact=reconcile_fact,
+            apply_fact=apply_fact,
+        )
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        if not settlement_started:
+            try:
+                released = selected.release(lease.lease_id, owner_id=owner_id, token=lease.token)
+            except Exception as exc:  # noqa: BLE001 - preserve the panel primary failure.
+                cleanup_error = DispatchError(f"advisory panel lease cleanup refused: {exc}")
+                if primary_error is not None:
+                    primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                else:
+                    raise cleanup_error from exc
+            else:
+                if not released:
+                    cleanup_error = DispatchError(
+                        "advisory panel lease disappeared before authoritative settlement"
+                    )
+                    if primary_error is not None:
+                        primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                    else:
+                        raise cleanup_error
 
 
 def _offload_economics_metadata(

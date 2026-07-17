@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.99.0] - 2026-07-16
+
+### Added - fleet-wide TTL lease admission and fencing (#356)
+
+- Installed Agent/Task lifecycle hooks that reserve capacity before provider launch, bind trusted
+  child identity on `SubagentStart`, require independent parent-return and child-terminal signals
+  before foreground release, and fence delegated Bash and file mutations against the current live
+  resource token.
+- Added atomic Workflow wave reservation, prelaunch attestation, cooperative renewal, and exact
+  owner release around the existing bounded concurrency policy. Generated leaves claim the named
+  batch through the same installed hooks; a partial reservation never launches.
+- Wrapped registered external-engine and production outcome dispatch paths in agent leases and
+  carried redacted lease provenance into evidence. Missing or protocol-skewed fleet-core installs
+  halt with install/update guidance instead of dispatching unleased.
+- Bound outcome-owned worktrees to durable worktree-pool receipts. Reconcile renews live owners,
+  adopts legacy live entries, reaps only expired dead or reboot-invalidated owners through Saga's
+  canonical reaper, and retains ambiguous, escaping, mismatched, or failed resources for retry.
+- Expanded the concurrency inventory into a machine-readable lease lifecycle map covering acquire,
+  bind, renewal, and release. Conformance now rejects newly injected executable spawn calls without
+  an inventory row and parses the installed hook metadata.
+- Registered advisory-panel members now consume the caller's exact session admission and stable
+  aggregate fence. A newer retry supersedes the entire stale panel before it can persist; both
+  reconciliation facts append inside exact-token settlement. Engine post-run validation, integrity
+  accounting, reconciliation, and fact persistence execute inside exact-token settlement; the CLI
+  requires fencing credentials for renew/release and owner teardown accepts no caller-authored
+  terminal assertion.
+- Bound advisory second-opinion dispatches to their originating Saga session as well as its pinned
+  admission policy, so per-session capacity remains authoritative across the external-engine path.
+- **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
+  unchanged; leases enforce runtime admission without redefining operator posture or revision eras.
+
 ## [0.98.0] - 2026-07-16
 
 ### Added - dispatch settlement and casualty reconciliation (#351)

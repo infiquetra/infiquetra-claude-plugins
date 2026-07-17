@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import importlib.util
 import json
 import shutil
 import sys
+import threading
+from datetime import UTC, datetime
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -1033,6 +1036,263 @@ def _valid_receipt(
 
 def _ok_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", "output": "external finding", "receipt": _valid_receipt()}
+
+
+def _lease_admission(
+    *, policy_sha256: str = "a" * 64, session_limit: int = 1, aggregate_limit: int = 1
+) -> Any:
+    return D.LeaseAdmission(
+        policy_sha256=policy_sha256,
+        session_limit=session_limit,
+        aggregate_limit=aggregate_limit,
+        mutation="none",
+    )
+
+
+def test_engine_runtime_lease_wraps_runner_and_exact_settlement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    original_loader = D._load_fleet_module
+    lifecycle: list[str] = []
+
+    def load(name: str) -> tuple[Any, str]:
+        if name == "delegation_state":
+            return (
+                SimpleNamespace(
+                    arm=lambda *_args, **_kwargs: SimpleNamespace(armed_at=1.0),
+                    disarm=lambda *_args, **_kwargs: lifecycle.append("disarmed"),
+                ),
+                "",
+            )
+        return cast(tuple[Any, str], original_loader(name))
+
+    monkeypatch.setattr(D, "_load_fleet_module", load)
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        live = selected.inspect()["leases"]
+        assert len(live) == 1
+        assert live[0]["session_id"] == "runtime-session"
+        assert live[0]["mutation"] == "none"
+        assert live[0]["session_limit"] == 1
+        assert live[0]["aggregate_limit"] == 1
+        lifecycle.append("runner")
+        return {"status": "ok", "output": "leased evidence"}
+
+    evidence = D.dispatch(
+        _resolution(),
+        runner=runner,
+        session_id="runtime-session",
+        execution_id="execution-1",
+        attempt_id="attempt-1",
+        lease_authority=selected,
+        lease_admission=_lease_admission(),
+    )
+
+    assert lifecycle == ["runner", "disarmed"]
+    assert selected.inspect()["leases"] == []
+    assert evidence.provenance["lease"]["root_sha256"] == selected.root_sha256
+    assert "token" not in evidence.provenance["lease"]
+
+
+def test_engine_runtime_dispatch_refuses_session_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    policy_module, _ = D._load_fleet_module("concurrency_policy")
+    assert lease_module is not None and policy_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    limits = policy_module.AdmissionLimits()
+    for index in range(limits.max_concurrent):
+        selected.acquire_agent(
+            owner_id=f"owner-{index}",
+            session_id="full-session",
+            policy_sha256=limits.policy_sha256(),
+            session_limit=limits.max_concurrent,
+            aggregate_limit=limits.aggregate_max_concurrent,
+            mutation="none",
+            resource_ref={"logical_unit_id": f"existing-{index}"},
+        )
+    monkeypatch.setattr(
+        D,
+        "_load_fleet_module",
+        lambda name: (
+            (lease_module if name == "lease_broker" else policy_module),
+            "",
+        ),
+    )
+
+    with pytest.raises(D.DispatchError, match="lease admission refused"):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: pytest.fail("capacity denial must precede runner"),
+            session_id="full-session",
+            execution_id="capacity-execution",
+            attempt_id="capacity-attempt",
+            lease_authority=selected,
+            lease_admission=_lease_admission(
+                policy_sha256=limits.policy_sha256(),
+                session_limit=limits.max_concurrent,
+                aggregate_limit=limits.aggregate_max_concurrent,
+            ),
+        )
+
+
+def test_engine_runtime_dispatch_rejects_lease_protocol_skew() -> None:
+    with pytest.raises(D.DispatchError, match="install/update fleet-core"):
+        D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=99))
+
+
+def test_registered_dispatch_requires_explicit_resolved_admission() -> None:
+    with pytest.raises(D.DispatchError, match="explicit Saga-resolved lease admission"):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: pytest.fail("admission rejection must precede runner"),
+            session_id="runtime-session",
+            execution_id="execution-1",
+            attempt_id="attempt-1",
+        )
+
+
+def test_engine_retry_uses_stable_resource_ref_and_supersedes_prior_authority(
+    tmp_path: Path,
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    acquired: list[Any] = []
+    original_acquire = selected.acquire_agent
+
+    def capture_acquire(**kwargs: Any) -> Any:
+        lease = original_acquire(**kwargs)
+        acquired.append(lease)
+        return lease
+
+    selected.acquire_agent = capture_acquire  # type: ignore[method-assign]
+    for _ in range(2):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: {"status": "ok", "output": "evidence"},
+            session_id="runtime-session",
+            execution_id="execution-1",
+            attempt_id="attempt-1",
+            lease_authority=selected,
+            lease_admission=_lease_admission(),
+        )
+
+    assert acquired[0].resource_ref == acquired[1].resource_ref
+    assert acquired[0].fencing_sequence < acquired[1].fencing_sequence
+    assert selected.classify_token(acquired[0].resource_ref, acquired[0].token) == "superseded"
+
+
+def test_expired_runner_output_does_not_write_advisory_fact(tmp_path: Path) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    monotonic = 0
+
+    def read_monotonic() -> int:
+        return monotonic
+
+    selected = lease_module.LeaseBroker(
+        tmp_path / "authority",
+        providers=lease_module.Providers(
+            wall_now=lambda: datetime(2026, 7, 16, tzinfo=UTC),
+            monotonic_ns=read_monotonic,
+            boot_id=lambda: "test-boot",
+        ),
+    )
+    ledger = D.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        nonlocal monotonic
+        monotonic = lease_module.DEFAULT_TTL_SECONDS * 1_000_000_000
+        return {"status": "ok", "output": "late evidence"}
+
+    with pytest.raises(D.DispatchError, match="expired before settlement"):
+        D.dispatch(
+            _resolution(),
+            runner=runner,
+            ledger=ledger,
+            subplot_id="leaf",
+            at="2026-07-16T00:00:00Z",
+            session_id="runtime-session",
+            execution_id="execution-1",
+            attempt_id="attempt-1",
+            lease_authority=selected,
+            lease_admission=_lease_admission(),
+        )
+
+    assert D.run_ledger.read_facts(ledger) == []
+
+
+def test_post_run_fact_write_occurs_inside_agent_settlement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    ledger = D.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
+    original_settlement = selected.agent_settlement
+    original_record = D._record_advisory_facts
+    settlement_active = False
+    fact_guard_states: list[bool] = []
+
+    @contextlib.contextmanager
+    def tracked_settlement(*args: Any, **kwargs: Any) -> Any:
+        nonlocal settlement_active
+        with original_settlement(*args, **kwargs) as lease:
+            settlement_active = True
+            try:
+                yield lease
+            finally:
+                settlement_active = False
+
+    def tracked_record(*args: Any, **kwargs: Any) -> Any:
+        fact_guard_states.append(settlement_active)
+        return original_record(*args, **kwargs)
+
+    selected.agent_settlement = tracked_settlement  # type: ignore[method-assign]
+    monkeypatch.setattr(D, "_record_advisory_facts", tracked_record)
+    D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: {"status": "ok", "output": "guarded evidence"},
+        ledger=ledger,
+        subplot_id="leaf",
+        at="2026-07-16T00:00:00Z",
+        session_id="runtime-session",
+        execution_id="execution-1",
+        attempt_id="attempt-1",
+        lease_authority=selected,
+        lease_admission=_lease_admission(),
+    )
+
+    assert fact_guard_states == [True]
+    assert selected.inspect()["leases"] == []
+
+
+def test_release_failure_preserves_primary_dispatch_error(tmp_path: Path) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+
+    def broken_release(*_args: Any, **_kwargs: Any) -> bool:
+        raise lease_module.LeaseBrokerError("release unavailable")
+
+    selected.release = broken_release  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="runner failed") as caught:
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: (_ for _ in ()).throw(RuntimeError("runner failed")),
+            session_id="runtime-session",
+            execution_id="execution-1",
+            attempt_id="attempt-1",
+            lease_authority=selected,
+            lease_admission=_lease_admission(),
+        )
+
+    assert any("secondary lease cleanup failure" in note for note in caught.value.__notes__)
 
 
 def _store(tmp_path: Path) -> Any:
@@ -2280,6 +2540,8 @@ def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
         ),
         foreman=foreman,
         execution_id="panel-execution",
+        session_id="panel-session",
+        lease_admission=_lease_admission(),
         intent="second-opinion",
         ledger=ledger,
         subplot_id="issue-393",
@@ -2299,6 +2561,118 @@ def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
     )
     with pytest.raises(D.DispatchError, match="advisory-only"):
         D.satisfy_gate(verified, reconciliation=_ready_reconciliation(verified))
+
+
+def test_advisory_panel_fences_stale_retry_through_both_fact_appends(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    foreman_started = threading.Event()
+    allow_foreman = threading.Event()
+    failures: list[BaseException] = []
+    settlement_depth = 0
+    append_depths: list[int] = []
+    original_settlement = selected.agent_settlement
+    original_append = D.reconcile.append_reconciliation_fact
+
+    @contextlib.contextmanager
+    def tracking_settlement(*args: Any, **kwargs: Any) -> Any:
+        nonlocal settlement_depth
+        with original_settlement(*args, **kwargs) as lease:
+            settlement_depth += 1
+            try:
+                yield lease
+            finally:
+                settlement_depth -= 1
+
+    def tracking_append(*args: Any, **kwargs: Any) -> Any:
+        append_depths.append(settlement_depth)
+        return original_append(*args, **kwargs)
+
+    monkeypatch.setattr(selected, "agent_settlement", tracking_settlement)
+    monkeypatch.setattr(D.reconcile, "append_reconciliation_fact", tracking_append)
+
+    def panel_result(evidence: tuple[Any, ...], reconciliation_id: str) -> Any:
+        return RC.build_panel_reconciliation_result(
+            reconciliation_id=reconciliation_id,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            evidence=evidence,
+            items=tuple(
+                RC.ReconciliationItem(
+                    item.source_finding_id,
+                    RC.ReconciliationStatus.RECONCILED,
+                    "claude/foreman",
+                    "Claude accounted for the panel evidence.",
+                )
+                for item in evidence
+            ),
+        )
+
+    def foreman(evidence: tuple[Any, ...]) -> Any:
+        foreman_started.set()
+        assert allow_foreman.wait(timeout=5)
+        return panel_result(evidence, "stale-panel-reconciliation")
+
+    def run_first() -> None:
+        try:
+            D.dispatch_advisory_panel(
+                D.AdvisoryPanelRequest("cross-family-review-panel"),
+                registry=object(),
+                runner=lambda _invocation: _review_payload("finding"),
+                foreman=foreman,
+                execution_id="panel-execution",
+                session_id="panel-session",
+                lease_admission=_lease_admission(),
+                lease_authority=selected,
+                intent="second-opinion",
+                ledger=ledger,
+                subplot_id="issue-393",
+                at="2026-07-09T00:00:00Z",
+            )
+        except BaseException as exc:  # pragma: no cover - asserted through failures
+            failures.append(exc)
+
+    first = threading.Thread(target=run_first)
+    first.start()
+    assert foreman_started.wait(timeout=5)
+    D.dispatch_advisory_panel(
+        D.AdvisoryPanelRequest("cross-family-review-panel"),
+        registry=object(),
+        runner=lambda _invocation: _review_payload("new finding"),
+        foreman=lambda evidence: panel_result(evidence, "current-panel-reconciliation"),
+        execution_id="panel-execution",
+        session_id="panel-session",
+        lease_admission=_lease_admission(),
+        lease_authority=selected,
+        intent="second-opinion",
+        ledger=ledger,
+        subplot_id="issue-393",
+        at="2026-07-09T00:00:00Z",
+    )
+    allow_foreman.set()
+    first.join(timeout=5)
+
+    assert first.is_alive() is False
+    assert len(failures) == 1
+    assert isinstance(failures[0], D.DispatchError)
+    assert "expired before settlement" in str(failures[0])
+    assert append_depths == [1, 1]
+    assert [fact["action"] for fact in RC.read_reconciliation_facts(ledger)] == [
+        "reconcile",
+        "apply",
+    ]
+    assert selected.inspect()["leases"] == []
 
 
 def test_advisory_panel_unavailable_member_blocks_all_dispatch_and_append(
@@ -2322,6 +2696,8 @@ def test_advisory_panel_unavailable_member_blocks_all_dispatch_and_append(
             runner=runner,
             foreman=lambda _evidence: None,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2359,6 +2735,8 @@ def test_failed_panel_foreman_writes_no_apply_fact(
             runner=lambda _invocation: _review_payload("finding"),
             foreman=failed_foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2409,6 +2787,8 @@ def test_panel_flattens_member_findings_and_omission_appends_no_facts(
             runner=lambda _invocation: _review_payload("finding one", "finding two"),
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2447,6 +2827,8 @@ def test_panel_rejects_hidden_raw_finding_before_foreman_or_ledger(
             },
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2522,6 +2904,8 @@ def test_panel_binding_mismatch_appends_neither_action(
             runner=runner,
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2590,6 +2974,8 @@ def test_invalid_panel_metadata_has_no_preflight_dispatch_or_fact(
             runner=runner,
             foreman=foreman,
             execution_id=execution_id,
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent=intent,
             ledger=ledger,
             subplot_id=subplot_id,
@@ -2599,6 +2985,38 @@ def test_invalid_panel_metadata_has_no_preflight_dispatch_or_fact(
     assert preflights == 0
     assert runner_calls == 0
     assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_invalid_panel_lease_contract_has_no_preflight_dispatch_or_fact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflights = 0
+
+    def resolve_role(*_args: object, **_kwargs: object) -> list[Any]:
+        nonlocal preflights
+        preflights += 1
+        return [_resolution(variant="must-not-resolve")]
+
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", resolve_role)
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="lease admission"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=_ok_runner,
+            foreman=lambda _evidence: None,
+            execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=cast(Any, object()),
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert preflights == 0
     assert RC.run_ledger.read_facts(ledger) == []
 
 
@@ -2641,6 +3059,8 @@ def test_later_panel_member_runtime_halt_skips_foreman_and_facts(
             runner=runner,
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2673,6 +3093,8 @@ def test_thrown_panel_foreman_exception_appends_neither_action(
             runner=lambda _invocation: _review_payload("finding"),
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2709,6 +3131,8 @@ def test_panel_member_utf8_output_overflow_fails_without_foreman_or_facts(
             runner=lambda _invocation: _review_payload(output),
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2742,6 +3166,8 @@ def test_panel_cumulative_output_overflow_fails_without_foreman_or_facts(
             runner=lambda _invocation: _review_payload(output),
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",

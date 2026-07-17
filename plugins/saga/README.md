@@ -30,6 +30,14 @@ The repository contains 23 command files and 22 routable commands. `/ceo-review`
 
 **Above a single work-thread:** `/outcome` is the **OutcomeOrchestrator** — a coordinator that drives a whole *outcome* as a durable DAG of leaf sagas. It runs a level-triggered reconcile loop that dispatches the ready frontier across the full backend menu (inline / fork / subagent / team-execution / cc-workflows-ultracode / `/goal` / manual), auto-merges clean leaves, and pages the operator only at gates, ambiguities, and failures — status is derived on read, completion is canonical on GitHub, and the realized cost rollup proves whether the DAG beat one long thread. Each fan-out is also balanced on the append-only run-fact ledger: the parent records expected units, pre-call spawns, and evidence-derived settlement, while dead-letter and leak reconciliation remain derived, read-only views. The native leaf verbs (`/work`, `/code-review`, `/qa`, `/resume`) are reused on a leaf, never shadowed.
 
+Every supported delegated runtime path is also lease-armed through fleet-core. Direct Agent/Task
+calls reserve in the installed hook before launch; generated Workflow waves reserve atomically;
+engine and outcome dispatch adapters hold a lease across settlement; advisory panels keep one
+aggregate fence through both reconciliation facts; and outcome-owned worktrees carry a separate
+resource lease. See
+[`concurrency-spawn-sites.md`](references/concurrency-spawn-sites.md) for the machine-checked
+lifecycle and operator recovery commands.
+
 ## Manual
 
 The manual pages are the maintained user-facing reference.
@@ -99,4 +107,5 @@ Core implementation contracts still live in canonical references:
 - [Saga spec](references/saga-spec.md)
 - [Dispatch table](skills/loop/references/dispatch-table.md)
 - [Operator choice](references/operator-choice.md)
+- [Concurrency and lease spawn sites](references/concurrency-spawn-sites.md)
 - [Formatting style](references/formatting-style.md)

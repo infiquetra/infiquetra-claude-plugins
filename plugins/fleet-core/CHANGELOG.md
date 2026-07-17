@@ -5,6 +5,28 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-07-16
+
+### Added
+- Added the process-locked `lease_broker.py` fleet authority with separate agent and outcome-
+  worktree pools, all-or-nothing batch reservation, trusted child binding, cooperative renewal,
+  two-signal foreground release, owner/session teardown, fencing-token supersession, and safe
+  dead-owner sweep. Registry writes are closed-schema, permission-checked, atomic, and rooted in a
+  runtime-neutral state directory.
+- Added closed concurrency admission records and shared defaults of three normal agents, four
+  read-only agents, and seven aggregate agents. The broker records the resolved policy digest and
+  refuses mixed live policy snapshots instead of re-resolving consumer policy.
+- Published lease broker protocol version 1 so armed consumers reject a missing or skewed
+  fleet-core installation before dispatch.
+- Hardened the authority boundary after whole-diff review: renew and single-lease release require
+  the exact fencing token, delegated parent validation and child grant share one transaction,
+  abandoned pre-spawn admission pins expire and remain inspectable, owner teardown trusts only
+  broker-recorded terminal evidence, and closed resource heads move to permission-checked cold
+  archives when the hot registry reaches its bound without losing closed/superseded classification.
+- Made the restricted-host boot identity fallback stable across processes and calls, so a denied
+  kernel boot-time query falls back to Darwin's persistent boot record instead of making a newly
+  acquired lease expire before its first renewal.
+
 ## [0.11.0] - 2026-07-14
 
 ### Added

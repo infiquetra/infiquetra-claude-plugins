@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import re
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -20,25 +22,172 @@ INVENTORY_PATH = SAGA_ROOT / "references/concurrency-spawn-sites.md"
 REL_SOURCE = SOURCE_PATH.relative_to(ROOT).as_posix()
 HELPER_NAME = "_emit_parallel_wave"
 ROW_RE = re.compile(
-    r"^\| `(?P<source>plugins/[^`]+)` \| `(?P<function>[A-Za-z_][A-Za-z0-9_]*)` "
-    r"\| (?P<form>[^|]+) \| `(?P<governor>[^`]+)` \|$"
+    r"^\| `(?P<source>plugins/[^`]+)` \| `(?P<function>[^`]+)` "
+    r"\| (?P<form>[^|]+) \| `(?P<governor>[^`]+)` \| `(?P<pool>agent|worktree)` "
+    r"\| `(?P<acquire>[^`]+)` \| `(?P<bind>[^`]+)` \| `(?P<renew>[^`]+)` "
+    r"\| `(?P<release>[^`]+)` \|$"
 )
 _JS_TRIVIA = r"(?:\s|/\*.*?\*/|//[^\r\n\u2028\u2029]*(?:\r\n?|\n|\u2028|\u2029))*"
 PARALLEL_OPEN_RE = re.compile(rf"\bparallel{_JS_TRIVIA}\({_JS_TRIVIA}\[", re.DOTALL)
 DYNAMIC_CALLEE_SUFFIX_RE = re.compile(rf"^{_JS_TRIVIA}\({_JS_TRIVIA}\[", re.DOTALL)
 FORMAT_CALLEE_RE = re.compile(rf"\{{[^}}]*\}}{_JS_TRIVIA}\({_JS_TRIVIA}\[", re.DOTALL)
 
-InventoryRow = tuple[str, str, str]
+InventoryRow = tuple[str, str, str, str, str, str, str, str]
+ConcurrencyRow = tuple[str, str, str]
 EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
     {
         (
             REL_SOURCE,
             "_emit_panel_reconciliation",
             "concurrency_governor.ordered_chunks",
+            "agent",
+            "workflow_emitter.reserve",
+            "lease_broker.claim_hook_agent",
+            "workflow_emitter.renew",
+            "workflow_emitter.release",
         ),
-        (REL_SOURCE, "emit_workflow_script", "concurrency_chunks"),
+        (
+            REL_SOURCE,
+            "emit_workflow_script",
+            "concurrency_chunks",
+            "agent",
+            "workflow_emitter.reserve",
+            "lease_broker.claim_hook_agent",
+            "workflow_emitter.renew",
+            "workflow_emitter.release",
+        ),
+        (
+            "plugins/saga/hooks/hooks.json",
+            "Agent|Task",
+            "concurrency_policy.AdmissionLimits",
+            "agent",
+            "lease_broker.reserve_hook_agent",
+            "lease_broker.claim_hook_agent",
+            "expiry-fence:no-cooperative-boundary",
+            "lease_broker.record_hook_terminal+record_hook_parent",
+        ),
+        (
+            "plugins/team-execution/skills/team-execution/scripts/lease_protocol.py",
+            "team-execution-fan-out",
+            "concurrency_policy.AdmissionLimits",
+            "agent",
+            "lease_broker.reserve_hook_agent",
+            "lease_broker.claim_hook_agent",
+            "lease_protocol.renew",
+            "lease_protocol.teardown",
+        ),
+        (
+            "plugins/saga/scripts/engine_dispatch.py",
+            "_dispatch_once",
+            "concurrency_policy.AdmissionLimits",
+            "agent",
+            "engine_dispatch.dispatch",
+            "not-applicable:in-process-adapter",
+            "LeaseBroker.agent_settlement",
+            "LeaseBroker.agent_settlement",
+        ),
+        (
+            "plugins/saga/scripts/engine_dispatch.py",
+            "guarded_runner",
+            "concurrency_policy.AdmissionLimits",
+            "agent",
+            "engine_dispatch.dispatch",
+            "not-applicable:in-process-adapter",
+            "LeaseBroker.agent_settlement",
+            "LeaseBroker.agent_settlement",
+        ),
+        (
+            "plugins/saga/scripts/engine_dispatch.py",
+            "guarded_panel_runner",
+            "concurrency_policy.AdmissionLimits",
+            "agent",
+            "engine_dispatch.dispatch_advisory_panel",
+            "not-applicable:in-process-adapter",
+            "LeaseBroker.renew",
+            "LeaseBroker.agent_settlement",
+        ),
+        (
+            "plugins/saga/scripts/outcome.py",
+            "_reconcile_once",
+            "concurrency_policy.AdmissionLimits",
+            "agent",
+            "outcome_dispatcher.make_dispatcher",
+            "not-applicable:in-process-adapter",
+            "LeaseBroker.renew",
+            "LeaseBroker.release",
+        ),
+        (
+            "plugins/saga/scripts/outcome_worktrees.py",
+            "ensure_worktree",
+            "WORKTREE_CAP",
+            "worktree",
+            "_arm_worktree",
+            "worktree_lease_receipt",
+            "reconcile_worktree_leases",
+            "reap_worktree",
+        ),
     }
 )
+EXPECTED_CONCURRENCY_ROWS: frozenset[ConcurrencyRow] = frozenset(
+    (source, function, governor)
+    for source, function, governor, _pool, _acquire, _bind, _renew, _release in EXPECTED_ROWS
+    if source == REL_SOURCE
+)
+EXPECTED_EXECUTABLE_SPAWNS = frozenset(
+    {
+        ("plugins/saga/scripts/engine_dispatch.py", "_dispatch_once", "runner"),
+        ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner", "runner"),
+        ("plugins/saga/scripts/engine_dispatch.py", "guarded_panel_runner", "runner"),
+        ("plugins/saga/scripts/outcome.py", "_reconcile_once", "dispatch"),
+        ("plugins/saga/scripts/outcome_worktrees.py", "ensure_worktree", "ops.add"),
+    }
+)
+EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
+    ("plugins/saga/scripts/engine_dispatch.py", "dispatch"): frozenset(
+        {
+            "selected.acquire_agent",
+            "selected.release",
+        }
+    ),
+    ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner"): frozenset(
+        {"selected.agent_settlement"}
+    ),
+    ("plugins/saga/scripts/engine_dispatch.py", "dispatch_advisory_panel"): frozenset(
+        {"selected.acquire_agent", "selected.agent_settlement", "selected.release"}
+    ),
+    ("plugins/saga/scripts/engine_dispatch.py", "guarded_panel_runner"): frozenset(
+        {"selected.renew"}
+    ),
+    ("plugins/saga/scripts/outcome_dispatcher.py", "_dispatch"): frozenset(
+        {"selected.acquire_agent", "selected.renew", "selected.release"}
+    ),
+    ("plugins/saga/scripts/workflow_emitter.py", "reserve"): frozenset({"selected.reserve_batch"}),
+    ("plugins/saga/scripts/workflow_emitter.py", "renew"): frozenset({"selected.renew_batch"}),
+    ("plugins/saga/scripts/workflow_emitter.py", "release"): frozenset({"selected.settle_batch"}),
+    ("plugins/saga/scripts/lease_broker.py", "reserve_hook_agent"): frozenset(
+        {"selected.prepare_batch_call", "selected.acquire_agent"}
+    ),
+    ("plugins/saga/scripts/lease_broker.py", "claim_hook_agent"): frozenset({"selected.claim"}),
+    ("plugins/saga/scripts/lease_broker.py", "record_hook_terminal"): frozenset(
+        {"selected.record_child_terminal"}
+    ),
+    ("plugins/saga/scripts/lease_broker.py", "record_hook_parent"): frozenset(
+        {"selected.record_parent_completed"}
+    ),
+    ("plugins/saga/scripts/outcome_worktrees.py", "ensure_worktree"): frozenset(
+        {"_arm_worktree", "ops.add"}
+    ),
+    ("plugins/saga/scripts/outcome_worktrees.py", "reconcile_worktree_leases"): frozenset(
+        {
+            "lease_authority.transfer_worktree",
+            "lease_authority.sweep",
+            "lease_authority.renew",
+        }
+    ),
+    ("plugins/saga/scripts/outcome_worktrees.py", "reap_worktree"): frozenset(
+        {"lease_authority.release"}
+    ),
+}
 SITE_CONTRACTS = {
     "_emit_panel_reconciliation": {
         "governor": "concurrency_governor.ordered_chunks",
@@ -83,7 +232,16 @@ def _sources() -> dict[str, str]:
 
 def _inventory_rows(inventory: str) -> frozenset[InventoryRow]:
     rows = [
-        (match["source"], match["function"], match["governor"])
+        (
+            match["source"],
+            match["function"],
+            match["governor"],
+            match["pool"],
+            match["acquire"],
+            match["bind"],
+            match["renew"],
+            match["release"],
+        )
         for line in inventory.splitlines()
         if (match := ROW_RE.match(line)) is not None
     ]
@@ -527,9 +685,118 @@ def _assert_site_contract(
     )
 
 
+def _assert_executable_spawn_inventory(
+    parsed: dict[str, tuple[ast.Module, dict[ast.AST, ast.AST]]],
+    rows: frozenset[InventoryRow],
+) -> None:
+    watched = {
+        "plugins/saga/scripts/engine_dispatch.py": {"runner"},
+        "plugins/saga/scripts/outcome.py": {"dispatch"},
+        "plugins/saga/scripts/outcome_worktrees.py": {"ops.add"},
+    }
+    discovered: set[tuple[str, str, str]] = set()
+    for source_path, callees in watched.items():
+        tree, parents = parsed[source_path]
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = _qualified_name(node.func)
+            if callee not in callees:
+                continue
+            owner = _enclosing_function(node, parents)
+            assert owner is not None, f"spawn call {source_path}:{node.lineno} has no owner"
+            discovered.add((source_path, owner.name, callee))
+    assert frozenset(discovered) == EXPECTED_EXECUTABLE_SPAWNS, (
+        "executable spawn-site inventory drift"
+    )
+
+    inventoried = {(row[0], row[1]) for row in rows}
+    for source_path, function, _callee in discovered:
+        assert (source_path, function) in inventoried, (
+            f"executable spawn lacks lease lifecycle row: {source_path}:{function}"
+        )
+
+
+def _assert_lease_lifecycle_calls(
+    parsed: dict[str, tuple[ast.Module, dict[ast.AST, ast.AST]]],
+) -> None:
+    for (source_path, function), expected in EXPECTED_LEASE_CALLS.items():
+        tree, parents = parsed[source_path]
+        actual = {
+            callee
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and (callee := _qualified_name(node.func)) is not None
+            and (owner := _enclosing_function(node, parents)) is not None
+            and owner.name == function
+        }
+        missing = sorted(expected - actual)
+        assert not missing, (
+            f"missing lease lifecycle call(s) in {source_path}:{function}: {', '.join(missing)}"
+        )
+
+
+def _hook_commands(entries: list[dict[str, Any]], matcher: str | None = None) -> list[str]:
+    commands: list[str] = []
+    for entry in entries:
+        if matcher is not None and entry.get("matcher") != matcher:
+            continue
+        commands.extend(
+            str(hook["command"])
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict) and "command" in hook
+        )
+    return commands
+
+
+def _assert_host_spawn_contracts() -> None:
+    hooks_path = ROOT / "plugins/saga/hooks/hooks.json"
+    events = json.loads(hooks_path.read_text(encoding="utf-8"))["hooks"]
+    assert any(
+        "lease_lifecycle_hook.py" in command
+        for command in _hook_commands(events["PreToolUse"], "Agent|Task")
+    )
+    assert any(
+        "lease_lifecycle_hook.py" in command for command in _hook_commands(events["SubagentStart"])
+    )
+    assert any(
+        "lease_lifecycle_hook.py" in command for command in _hook_commands(events["SubagentStop"])
+    )
+    for event in ("PostToolUse", "PostToolUseFailure"):
+        assert any(
+            "lease_lifecycle_hook.py" in command
+            for command in _hook_commands(events[event], "Agent|Task")
+        )
+
+    team_path = ROOT / "plugins/team-execution/skills/team-execution/scripts/lease_protocol.py"
+    team_tree = ast.parse(team_path.read_text(encoding="utf-8"), filename=str(team_path))
+    team_parents = _parents(team_tree)
+    team_functions = {
+        node.name
+        for node in ast.walk(team_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert {"preflight", "renew", "teardown"} <= team_functions
+    team_calls = {
+        (owner.name, callee)
+        for node in ast.walk(team_tree)
+        if isinstance(node, ast.Call)
+        and (callee := _qualified_name(node.func)) is not None
+        and (owner := _enclosing_function(node, team_parents)) is not None
+    }
+    for required in (
+        ("renew", "selected.renew_session"),
+        ("teardown", "selected.release_session_if_terminal"),
+        ("teardown", "selected.sweep"),
+    ):
+        assert required in team_calls, (
+            f"missing team-execution lease lifecycle call: {required[0]}:{required[1]}"
+        )
+
+
 def assert_conformance(sources: dict[str, str], inventory: str) -> None:
     rows = _inventory_rows(inventory)
-    assert rows == EXPECTED_ROWS, "concurrency inventory drift"
+    assert rows == EXPECTED_ROWS, "concurrency and lease inventory drift"
 
     parsed: dict[str, tuple[ast.Module, dict[ast.AST, ast.AST]]] = {}
     helper_defs: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
@@ -549,13 +816,17 @@ def assert_conformance(sources: dict[str, str], inventory: str) -> None:
         _assert_helper_references_are_direct(tree, parents, source_helper_calls)
         helper_calls.extend((source_path, call) for call in source_helper_calls)
 
+    _assert_executable_spawn_inventory(parsed, rows)
+    _assert_lease_lifecycle_calls(parsed)
+    _assert_host_spawn_contracts()
+
     assert len(helper_defs) == 1, f"expected one {HELPER_NAME} definition"
     helper_path, helper = helper_defs[0]
     assert helper_path == REL_SOURCE
     _assert_helper_contract(helper)
 
     assert len(helper_calls) == 2, f"expected exactly two {HELPER_NAME} call sites"
-    discovered: set[InventoryRow] = set()
+    discovered: set[ConcurrencyRow] = set()
     seen_owners: set[str] = set()
     for source_path, call in helper_calls:
         _tree, parents = parsed[source_path]
@@ -567,7 +838,7 @@ def assert_conformance(sources: dict[str, str], inventory: str) -> None:
         contract = SITE_CONTRACTS[owner.name]
         discovered.add((source_path, owner.name, contract["governor"]))
         _assert_site_contract(call, owner, parents)
-    assert frozenset(discovered) == rows, "helper call-site inventory drift"
+    assert frozenset(discovered) == EXPECTED_CONCURRENCY_ROWS, "helper call-site inventory drift"
 
 
 def _mutate_source(sources: dict[str, str], old: str, new: str) -> dict[str, str]:
@@ -706,12 +977,45 @@ def test_indirect_helper_reference_is_rejected() -> None:
         assert_conformance(sources, INVENTORY_PATH.read_text())
 
 
+def test_injected_unguarded_executable_spawn_is_rejected() -> None:
+    source_path = "plugins/saga/scripts/engine_dispatch.py"
+    sources = _sources()
+    sources[source_path] += "\n\ndef _rogue(runner):\n    return runner({})\n"
+
+    with pytest.raises(AssertionError, match="executable spawn-site inventory drift"):
+        assert_conformance(sources, INVENTORY_PATH.read_text())
+
+
+@pytest.mark.parametrize(
+    ("source_path", "call"),
+    [
+        ("plugins/saga/scripts/engine_dispatch.py", "selected.acquire_agent"),
+        ("plugins/saga/scripts/engine_dispatch.py", "selected.agent_settlement"),
+        ("plugins/saga/scripts/engine_dispatch.py", "selected.release"),
+        ("plugins/saga/scripts/outcome_dispatcher.py", "selected.acquire_agent"),
+        ("plugins/saga/scripts/outcome_dispatcher.py", "selected.renew"),
+        ("plugins/saga/scripts/outcome_dispatcher.py", "selected.release"),
+        ("plugins/saga/scripts/workflow_emitter.py", "selected.reserve_batch"),
+        ("plugins/saga/scripts/workflow_emitter.py", "selected.renew_batch"),
+        ("plugins/saga/scripts/workflow_emitter.py", "selected.settle_batch"),
+    ],
+)
+def test_removing_required_lease_lifecycle_call_is_rejected(source_path: str, call: str) -> None:
+    sources = _sources()
+    assert call in sources[source_path]
+    sources[source_path] = sources[source_path].replace(call, "selected.inspect", 1)
+    with pytest.raises(AssertionError, match="missing lease lifecycle call"):
+        assert_conformance(sources, INVENTORY_PATH.read_text())
+
+
 @pytest.mark.parametrize("drift", ["remove", "add"])
 def test_inventory_row_drift_is_rejected(drift: str) -> None:
     inventory = INVENTORY_PATH.read_text()
     row = (
         "| `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` "
-        "| verify-panel verdict agents | `concurrency_governor.ordered_chunks` |"
+        "| verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` "
+        "| `workflow_emitter.reserve` | `lease_broker.claim_hook_agent` "
+        "| `workflow_emitter.renew` | `workflow_emitter.release` |"
     )
     assert row in inventory
     if drift == "remove":
@@ -719,7 +1023,8 @@ def test_inventory_row_drift_is_rejected(drift: str) -> None:
     else:
         inventory += (
             "\n| `plugins/saga/scripts/execution_spec.py` | `_rogue` "
-            "| rogue agents | `concurrency_chunks` |\n"
+            "| rogue agents | `concurrency_chunks` | `agent` | `rogue.acquire` "
+            "| `rogue.bind` | `rogue.renew` | `rogue.release` |\n"
         )
     with pytest.raises(AssertionError, match="inventory drift"):
         assert_conformance(_sources(), inventory)

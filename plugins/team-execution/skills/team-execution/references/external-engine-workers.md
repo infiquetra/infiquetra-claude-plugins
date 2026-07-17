@@ -92,6 +92,13 @@ the complete returned list with `panel_halt()`, and only starts member dispatch 
 available. It must not call `resolve({role_kind: "panel"})`; that API remains the resolver's existing
 single-resolution role policy, not a fan-out request.
 
+The coordinator also supplies the trusted runtime `session_id` and the exact Saga-resolved
+`LeaseAdmission` before role resolution. Each ordered member gets a stable `panel:<index>` attempt
+inside that session. The fleet broker acquires before invoking the adapter, enters an exact-token
+settlement guard immediately after the adapter returns, holds that guard across evidence processing
+and durable fact writes, and atomically releases afterward. A retry cannot supersede a member while
+its accepted result is being persisted.
+
 Member findings stay in-memory advisory evidence. Each typed finding becomes a panel source; identical
 content at the same source ordinal is deduplicated while retaining all producing member identities,
 but duplicate content at distinct ordinals remains separately accountable. An empty response becomes
@@ -201,6 +208,7 @@ invocation = (
 )
 evidence = engine_dispatch.dispatch(
     resolution, runner=runner, model=model, sandbox=unit_sandbox, write_set=unit_files,
+    session_id=CLAUDE_CODE_SESSION_ID,
     execution_id=f"{worker_id}-{unit_id}", intent=unit_intent,
     expected_identity=(
         f"{plan_time_resolution_preview['engine_id']}/{plan_time_resolution_preview['variant']}"

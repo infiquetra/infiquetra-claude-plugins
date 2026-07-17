@@ -3267,6 +3267,76 @@ def workflow_settlement_metadata(
     return metadata
 
 
+def workflow_lease_metadata(
+    spec: ExecutionSpec,
+    *,
+    invocation_id: str | None = None,
+    validate: bool = True,
+    environment: Mapping[str, str] | None = None,
+    run_max_concurrent: int | None = None,
+    repo_root: Path | str | None = None,
+    routing_overlay: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_calibration: Any = _ROUTING_SNAPSHOT_UNSET,
+    routing_context: EmissionRoutingContext | None = None,
+) -> dict[str, Any]:
+    """Export the driver-owned, all-or-none Workflow reservation contract (#356)."""
+
+    if validate:
+        spec.validate()
+    if invocation_id is not None and (not isinstance(invocation_id, str) or not invocation_id):
+        raise SpecError("workflow invocation_id must be a non-empty string when supplied")
+    canonical = json.dumps(spec.to_dict(), sort_keys=True, separators=(",", ":"))
+    spec_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    invocation_digest = (
+        hashlib.sha256(invocation_id.encode("utf-8")).hexdigest()[:24]
+        if invocation_id is not None
+        else None
+    )
+    context = routing_context or _build_emission_routing_context(
+        spec,
+        repo_root=repo_root,
+        routing_overlay=routing_overlay,
+        routing_calibration=routing_calibration,
+    )
+    width = max_concurrent_agents(
+        spec,
+        environment=environment,
+        run_override=run_max_concurrent,
+        routing_context=context,
+    )
+    limits = _concurrency_policy(spec)
+    limits.validate()
+    mutation = (
+        "none"
+        if all(
+            unit.sandbox is not None and unit.sandbox.mutation_policy == "read-only"
+            for unit in spec.units
+        )
+        else "read-write"
+    )
+    batch_id = (
+        None if invocation_digest is None else f"workflow:{spec_digest[:24]}:{invocation_digest}"
+    )
+    return {
+        "schema": "workflow_lease_reservation.v1",
+        "batch_id": batch_id,
+        "owner_id": None if batch_id is None else f"driver:{batch_id}",
+        "invocation_id": invocation_id,
+        "spec_sha256": spec_digest,
+        "reservation_width": width,
+        "session_limit": width,
+        "aggregate_limit": limits.aggregate_max_concurrent,
+        "policy_sha256": limits.policy_sha256(),
+        "mutation": mutation,
+        "claim_ttl_seconds": 30,
+        "execution_ttl_seconds": 300,
+        "slots": [f"slot-{index:03d}" for index in range(1, width + 1)],
+        "workload_unit_ids": [unit.unit_id for unit in spec.units],
+        "requires_prelaunch_reservation": True,
+        "generated_runtime_filesystem_access": False,
+    }
+
+
 def emit_workflow_script(
     spec: ExecutionSpec,
     session_ceiling: Tier | None = None,
@@ -3327,6 +3397,14 @@ def emit_workflow_script(
         routing_calibration=routing_calibration,
     )
 
+    lease_metadata = workflow_lease_metadata(
+        spec,
+        validate=False,
+        environment=emission_environment,
+        run_max_concurrent=run_max_concurrent,
+        routing_context=routing_context,
+    )
+
     # #350 AC8: resolve and validate every layer/panel bound before emitting any workflow text.
     max_concurrent_agents(
         spec,
@@ -3367,6 +3445,14 @@ def emit_workflow_script(
         "export const settlement = "
         + json.dumps(
             settlement_metadata,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    lines.append(
+        "export const lease = "
+        + json.dumps(
+            lease_metadata,
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -3929,6 +4015,18 @@ def main(argv: list[str] | None = None) -> int:
         help="durable driver-owned invocation identity; reuse only to resume that Workflow run",
     )
 
+    p_lease = sub.add_parser(
+        "lease", help="emit the driver-owned prelaunch Workflow lease contract (#356)"
+    )
+    p_lease.add_argument("spec", type=Path)
+    p_lease.add_argument(
+        "--invocation-id",
+        required=True,
+        help="durable driver-owned invocation identity for the named lease batch",
+    )
+    p_lease.add_argument("--max-concurrent", type=int)
+    p_lease.add_argument("--repo-root", type=Path)
+
     args = parser.parse_args(argv)
     try:
         spec = _load_spec(args.spec)
@@ -3999,6 +4097,20 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 json.dumps(
                     workflow_settlement_metadata(spec, invocation_id=args.invocation_id),
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
+        if args.cmd == "lease":
+            print(
+                json.dumps(
+                    workflow_lease_metadata(
+                        spec,
+                        invocation_id=args.invocation_id,
+                        run_max_concurrent=args.max_concurrent,
+                        repo_root=args.repo_root,
+                    ),
                     indent=2,
                     sort_keys=True,
                 )

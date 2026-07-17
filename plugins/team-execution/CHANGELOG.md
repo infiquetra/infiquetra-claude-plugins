@@ -4,6 +4,21 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.18.0] - 2026-07-16
+
+### Added - lease-backed worker, reviewer, and validator lifecycles (#356)
+
+- Added a fleet-core lease preflight before the first Agent call, cooperative session renewal at
+  wave and result-collection boundaries, and Step B8 teardown that refuses to release unclaimed or
+  nonterminal children. Team execution reuses Saga's installed Agent lifecycle hooks rather than
+  maintaining a second counter or lease schema.
+- Added the operator lease protocol reference and protocol-version guard. A missing or skewed
+  fleet-core installation now halts with install/update guidance, and timeout or silence is never
+  treated as terminal proof for capacity release.
+- Clarified the external advisory-panel contract: the coordinator passes its trusted session and
+  exact resolved admission snapshot, and every member remains fenced through durable post-run
+  reconciliation and fact persistence.
+
 ## [2.17.0] - 2026-07-16
 
 ### Added - evidence-derived reviewer and validator settlement (#351)

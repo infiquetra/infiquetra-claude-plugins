@@ -23,7 +23,9 @@ What lives here (KTD15 — the primitives all three plan reviewers flagged as un
 * **Leases** (R13) — a lease-based ``coordinator.lock`` (one reconcile loop mutates at a time; a
   second ``advance`` no-ops on a held lease and reclaims a stale one — the reclaim is best-effort,
   with dispatch-lock + idempotency as defense-in-depth) and per-subplot dispatch locks (no duplicate
-  dispatch).
+  dispatch). These cache-local locks serialize outcome state; fleet worktree ownership is a separate
+  fenced authority. Its reaper must resolve this exact store through ``Store.for_outcome`` and
+  validate the structured registry entry before removing a worktree.
 * **Offline queue** (R34) — GitHub mutations queue under ``offline-queue/`` with a retry budget and
   **exponential backoff**; on reconnect **GitHub wins for completion** (a server-superseded queued
   write is dropped, not replayed) and retry exhaustion pages the operator rather than looping.

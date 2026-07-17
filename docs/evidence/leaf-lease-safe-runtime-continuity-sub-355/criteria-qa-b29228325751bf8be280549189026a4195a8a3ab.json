@@ -1,0 +1,1 @@
+{"blocking_threshold":"critical + high + medium block","in_scope":["behavior","security","api","config","docs","deployment"],"tier":"Standard"}

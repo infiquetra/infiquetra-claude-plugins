@@ -58,8 +58,15 @@ Reviewer delegation defaults to `no-write`. Coder delegation defaults to `mode=p
 `apply_policy=preserve-patch` unless the caller supplies an explicit repo-relative write-set and
 requests `mode=auto-if-clean` with `apply_policy=apply-if-clean` and required verification commands.
 
-`auto-if-clean` with an empty `write_set` is rejected before any subprocess launch or bundle
-creation.
+`auto-if-clean` with an empty `write_set` or without a trusted outer
+`--lease-resource-key-file <path>` is rejected before subprocess launch. The referenced key file
+must be an owner-private `0600` regular file. The raw key is read only in process, immediately
+reduced to a repository-scoped digest, and is neither an argv value nor an envelope, environment,
+task, or bundle field.
+After strict Git-root resolution, the wrapper derives immutable `agy.lease-admission.v1` in process,
+configures admission, and acquires the exact lease before clone or external launch. It renews during
+supervision and applies verified output only inside broker prepare/commit. Superseded output is
+metadata-only; expired or canonically closed output is quarantined and never applied.
 
 ## Bridge-Agent Contract
 

@@ -556,13 +556,25 @@ def _ok_runner_with_receipt(_invocation: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", "output": "external finding", "receipt": _valid_agy_receipt()}
 
 
-def _dispatch(tmp_path: Path, *, gated: bool, session_id: str = "", runner: Any = None) -> Any:
+def _dispatch(
+    tmp_path: Path,
+    *,
+    gated: bool,
+    session_id: str = "",
+    execution_id: str | None = None,
+    runner: Any = None,
+    predecessor_close: dict[str, Any] | None = None,
+) -> Any:
     lease_kwargs: dict[str, Any] = {}
     if session_id:
+        lease_module, degradation = _D._load_fleet_module("lease_broker")
+        assert lease_module is not None, degradation
         lease_kwargs = {
             "lease_admission": _D.LeaseAdmission("a" * 64, 1, 1, "none"),
-            "execution_id": f"tripwire:{session_id}",
+            "execution_id": execution_id or f"tripwire:{session_id}",
             "attempt_id": "attempt:1",
+            "predecessor_close": predecessor_close,
+            "lease_authority": lease_module.LeaseBroker(tmp_path / "fleet-state"),
         }
     return _D.dispatch(
         _resolution(),
@@ -573,6 +585,11 @@ def _dispatch(tmp_path: Path, *, gated: bool, session_id: str = "", runner: Any 
         workspace_root=tmp_path,
         **lease_kwargs,
     )
+
+
+def _settlement_close(result: Any) -> dict[str, Any]:
+    evidence = result.evidence if isinstance(result, _D.RequeueDisposition) else result
+    return dict(evidence.provenance["lease"]["settlement_close"])
 
 
 def _manifest_for(tmp_path: Path, evidence: Any, execution_id: str) -> Any:
@@ -618,17 +635,32 @@ class TestTwoSignalAcceptanceDoD:
 
         # Corroborating retry: the bundle now proves the launch -> accepted, counter reset.
         _write_bundle(tmp_path, "run-rq", payload={"status": "ok", "agy_launched": True})
-        retry = _dispatch(tmp_path, gated=True, session_id=session)
+        retry = _dispatch(
+            tmp_path,
+            gated=True,
+            session_id=session,
+            predecessor_close=_settlement_close(first),
+        )
         assert isinstance(retry, _D.AdvisoryEvidence)
         assert retry.provenance.get("observer_corroborated") is True
 
         # Two NEW consecutive divergences: requeue once, then HALT.
         _write_bundle(tmp_path, "run-rq", payload={"status": "ok", "agy_launched": False})
-        again = _dispatch(tmp_path, gated=True, session_id=session)
+        again = _dispatch(
+            tmp_path,
+            gated=True,
+            session_id=session,
+            predecessor_close=_settlement_close(retry),
+        )
         assert isinstance(again, _D.RequeueDisposition)
         assert again.attempt == 1  # counter was reset by the corroborated acceptance
         with pytest.raises(_D.DispatchError, match="HALT"):
-            _dispatch(tmp_path, gated=True, session_id=session)
+            _dispatch(
+                tmp_path,
+                gated=True,
+                session_id=session,
+                predecessor_close=_settlement_close(again),
+            )
         assert bundle.is_dir()
 
 
@@ -636,12 +668,35 @@ class TestTwoSignalAcceptanceMatrix:
     def test_both_signals_agree_ran_as_requested_and_gate_satisfiable(self, tmp_path: Path) -> None:
         _write_bundle(tmp_path, "run-ok", payload={"status": "ok", "agy_launched": True})
 
-        evidence = _dispatch(tmp_path, gated=True, session_id="sess-u5-agree")
+        evidence = _dispatch(
+            tmp_path,
+            gated=True,
+            session_id="sess-u5-agree",
+            execution_id="exec-agree",
+        )
         assert isinstance(evidence, _D.AdvisoryEvidence)
         assert evidence.halt is None
         assert evidence.provenance["observer_corroborated"] is True
 
-        manifest = _manifest_for(tmp_path, evidence, "exec-agree")
+        lease_module, degradation = _D._load_fleet_module("lease_broker")
+        assert lease_module is not None, degradation
+        authority = lease_module.LeaseBroker(tmp_path / "fleet-state")
+        store = _MS.Store(root=tmp_path / "manifests" / "exec-agree").ensure()
+        audit_store_root = tmp_path / "audit-store"
+        manifest_result = _D.record_dispatch_manifest(
+            store,
+            evidence,
+            execution_id="exec-agree",
+            saga_ref="saga-u5",
+            created_at="2026-07-07T00:00:00Z",
+            audit_store_root=audit_store_root,
+            predecessor_close=_settlement_close(evidence),
+            session_id="sess-u5-agree",
+            lease_admission=_D.LeaseAdmission("a" * 64, 1, 1, "read-write"),
+            lease_authority=authority,
+        )
+        assert isinstance(manifest_result, _D.ManifestSettlementResult)
+        manifest = manifest_result.manifest
         assert manifest.disposition is _PM.Disposition.RAN_AS_REQUESTED
 
         verified = _D.AdvisoryEvidence(
@@ -671,7 +726,18 @@ class TestTwoSignalAcceptanceMatrix:
                 for finding_id in verified.source_finding_ids
             ),
         )
-        assert _D.satisfy_gate(verified, reconciliation=reconciliation) is None
+        assert (
+            _D.satisfy_gate(
+                verified,
+                manifest,
+                reconciliation=reconciliation,
+                store=store,
+                audit_store_root=audit_store_root,
+                manifest_settlement_close=manifest_result.settlement_close,
+                lease_authority=authority,
+            )
+            is None
+        )
 
     def test_receipt_valid_but_launch_flag_missing_is_observer_no(self, tmp_path: Path) -> None:
         """Conservative observer: a result.json with NO launch flag at all is observer-no."""
@@ -686,12 +752,19 @@ class TestTwoSignalAcceptanceMatrix:
         attached; repeated calls never requeue and never HALT."""
         _write_bundle(tmp_path, "run-adv", payload={"status": "ok", "agy_launched": False})
 
+        predecessor_close = None
         for _ in range(3):  # no requeue loop, no HALT escalation
-            evidence = _dispatch(tmp_path, gated=False, session_id="sess-u5-advisory")
+            evidence = _dispatch(
+                tmp_path,
+                gated=False,
+                session_id="sess-u5-advisory",
+                predecessor_close=predecessor_close,
+            )
             assert isinstance(evidence, _D.AdvisoryEvidence)
             assert evidence.halt is not None
             assert "Downgraded external engine agy" in evidence.halt
             assert "delegation-integrity" in evidence.halt
+            predecessor_close = _settlement_close(evidence)
 
         manifest = _manifest_for(tmp_path, evidence, "exec-advisory")
         assert manifest.disposition is _PM.Disposition.DELEGATION_INTEGRITY
@@ -728,7 +801,7 @@ class TestTwoSignalAcceptanceMatrix:
             seen["entry"] = _delegation_state.active(session, root=tmp_path)
             return _ok_runner_with_receipt(_invocation)
 
-        _dispatch(tmp_path, gated=True, session_id=session, runner=observing_runner)
+        first = _dispatch(tmp_path, gated=True, session_id=session, runner=observing_runner)
         assert seen["entry"] is not None
         assert seen["entry"].engine == "agy"
         assert _delegation_state.active(session, root=tmp_path) is None
@@ -737,7 +810,13 @@ class TestTwoSignalAcceptanceMatrix:
             raise RuntimeError("adapter blew up")
 
         with pytest.raises(RuntimeError):
-            _dispatch(tmp_path, gated=True, session_id=session, runner=raising_runner)
+            _dispatch(
+                tmp_path,
+                gated=True,
+                session_id=session,
+                runner=raising_runner,
+                predecessor_close=_settlement_close(first),
+            )
         assert _delegation_state.active(session, root=tmp_path) is None
 
     def test_single_signal_callers_are_unchanged(self, tmp_path: Path) -> None:
@@ -770,7 +849,7 @@ class TestTwoSignalAcceptanceMatrix:
             saga_ref="saga-u5",
             created_at="2026-07-07T00:00:00Z",
         )
-        persisted = _MS.read_manifest(store, "exec-rt")
+        persisted = _MS.read_noncanonical_manifest(store, "exec-rt")
         assert persisted is not None
         assert persisted["disposition"] == "delegation-integrity"
         round_tripped = _PM.Manifest.from_dict(persisted)
@@ -841,14 +920,23 @@ def _http_receipt(
 
 
 def _http_dispatch(
-    tmp_path: Path, *, gated: bool = True, session_id: str = "", runner: Any = None
+    tmp_path: Path,
+    *,
+    gated: bool = True,
+    session_id: str = "",
+    runner: Any = None,
+    predecessor_close: dict[str, Any] | None = None,
 ) -> Any:
     lease_kwargs: dict[str, Any] = {}
     if session_id:
+        lease_module, degradation = _D._load_fleet_module("lease_broker")
+        assert lease_module is not None, degradation
         lease_kwargs = {
             "lease_admission": _D.LeaseAdmission("a" * 64, 1, 1, "none"),
             "execution_id": f"tripwire-http:{session_id}",
             "attempt_id": "attempt:1",
+            "predecessor_close": predecessor_close,
+            "lease_authority": lease_module.LeaseBroker(tmp_path / "fleet-state"),
         }
     return _D.dispatch(
         _http_resolution(),
@@ -918,7 +1006,12 @@ class TestHttpLaneReceiptCorroboration:
         assert first.evidence.provenance["integrity"] == _PM.Disposition.DELEGATION_INTEGRITY.value
 
         with pytest.raises(_D.DispatchError, match="HALT"):
-            _http_dispatch(tmp_path, session_id=session, runner=tampered_runner)
+            _http_dispatch(
+                tmp_path,
+                session_id=session,
+                runner=tampered_runner,
+                predecessor_close=_settlement_close(first),
+            )
 
     def test_missing_receipt_is_observer_no(self, tmp_path: Path) -> None:
         """An HTTP ok with no receipt at all has no observer artifact -- divergence."""
@@ -1121,7 +1214,9 @@ FLEET_CORE_ROOT = ROOT / "plugins" / "fleet-core"
 # process (its own `engine_dispatch` module, its own in-process dict), so the requeue-once-
 # then-HALT guarantee can only hold if the divergence count is read back from durable state.
 _XPROC_DRIVER = """\
+import json
 import sys
+from pathlib import Path
 
 SAGA_SCRIPTS = sys.argv[1]
 WORKSPACE = sys.argv[2]
@@ -1166,6 +1261,12 @@ def runner(_invocation):
     return {"status": "ok", "output": output, "receipt": receipt}
 
 
+predecessor_path = Path(WORKSPACE) / ".claude" / "delegation" / "predecessor-close.json"
+predecessor_close = None
+if predecessor_path.is_file():
+    predecessor_close = json.loads(predecessor_path.read_text(encoding="utf-8"))
+
+
 try:
     result = D.dispatch(
         resolution,
@@ -1177,11 +1278,16 @@ try:
         lease_admission=D.LeaseAdmission("a" * 64, 1, 1, "none"),
         execution_id="tripwire-xproc",
         attempt_id="attempt:1",
+        predecessor_close=predecessor_close,
     )
 except D.DispatchError as exc:
     print(f"halt:{exc}")
     sys.exit(3)
 if isinstance(result, D.RequeueDisposition):
+    predecessor_path.write_text(
+        json.dumps(result.evidence.provenance["lease"]["settlement_close"]),
+        encoding="utf-8",
+    )
     print(f"requeue:{result.attempt}")
     sys.exit(0)
 print(f"unexpected:{type(result).__name__}")
@@ -1201,6 +1307,7 @@ class TestDurableIntegrityCounter:
         driver.write_text(_XPROC_DRIVER, encoding="utf-8")
         env = dict(os.environ)
         env["FLEET_COMMONS_ROOT"] = str(FLEET_CORE_ROOT)
+        env["INFIQUETRA_FLEET_STATE_DIR"] = str(tmp_path / "fleet-state")
         cmd = [sys.executable, str(driver), str(SAGA_SCRIPTS), str(workspace)]
 
         first = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import itertools
 import sys
@@ -109,6 +110,67 @@ def _gate_manifest(key: str) -> Any:
     )
 
 
+def _canonical_gate_binding(
+    manifest: Any,
+    evidence: Any,
+    store: Any,
+    tmp_path: Path,
+) -> tuple[dict[str, Any], Any, Path]:
+    """Publish the exact broker, store, and audit proof required by the real gate."""
+
+    lease_module, degradation = D._load_fleet_module("lease_broker")
+    assert lease_module is not None, degradation
+    audit_store, degradation = D._load_fleet_module("audit_store")
+    assert audit_store is not None, degradation
+    resource_ref = D._engine_resource_ref(manifest.execution_id, "manifest-gate")
+    manifest_bytes = D._serialized_manifest_bytes(manifest)
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    audit_store_root = tmp_path / "audit-store"
+    authority = lease_module.LeaseBroker(tmp_path / "gate-authority")
+    lease = authority.acquire_agent(
+        owner_id="liveness-gate",
+        session_id="liveness-gate",
+        policy_sha256="a" * 64,
+        session_limit=1,
+        aggregate_limit=1,
+        mutation="read-write",
+        resource_ref=resource_ref,
+        agent_type="team-execution-manifest",
+    )
+    settlement = authority.prepare_agent_settlement(
+        lease.lease_id,
+        owner_id=lease.owner_id,
+        token=lease.token,
+        producer="team-execution",
+        run_id=manifest.execution_id,
+        expected_output_sha256=manifest_sha256,
+        protected_write_intent_sha256=D._manifest_write_intent_sha256(
+            manifest_sha256=manifest_sha256,
+            store=store,
+            audit_store_root=audit_store_root,
+            execution_id=manifest.execution_id,
+        ),
+    )
+
+    def publish(_lease: Any) -> list[str]:
+        manifest_path = MS.write_manifest(store, manifest.execution_id, manifest.to_dict())
+        mirror = audit_store.mirror_manifest(
+            audit_store.Store.for_root(audit_store_root).ensure(),
+            manifest.execution_id,
+            manifest.to_dict(),
+        )
+        return [f"manifest:{manifest_path}", f"audit:{mirror}"]
+
+    close = authority.commit_agent_settlement(
+        settlement.settlement_id,
+        owner_id=lease.owner_id,
+        token=lease.token,
+        write=publish,
+    )
+    evidence.provenance["manifest_gate_eligibility"] = "canonical"
+    return close, authority, audit_store_root
+
+
 def test_matching_launch_and_consumer_keys_pass() -> None:
     assert BS.liveness_errors({"run-1"}, {"run-1"}) == []
 
@@ -130,13 +192,20 @@ def test_real_ledger_manifest_liveness_join_passes(tmp_path: Path) -> None:
 
     assert D.bridge_liveness_errors(ledger, store) == []
     evidence = _gate_evidence()
+    manifest = _gate_manifest("run-1")
+    settlement_close, lease_authority, audit_store_root = _canonical_gate_binding(
+        manifest, evidence, store, tmp_path
+    )
     assert (
         D.satisfy_gate(
             evidence,
-            manifest=_gate_manifest("run-1"),
+            manifest=manifest,
             reconciliation=_gate_reconciliation(evidence),
             ledger=ledger,
             store=store,
+            audit_store_root=audit_store_root,
+            manifest_settlement_close=settlement_close,
+            lease_authority=lease_authority,
         )
         is None
     )
@@ -185,13 +254,20 @@ def test_liveness_gate_scopes_to_current_bridge_key(tmp_path: Path) -> None:
         "proof-integrity: launched-unconsumed unrelated-run"
     ]
     evidence = _gate_evidence()
+    manifest = _gate_manifest("run-1")
+    settlement_close, lease_authority, audit_store_root = _canonical_gate_binding(
+        manifest, evidence, store, tmp_path
+    )
     assert (
         D.satisfy_gate(
             evidence,
-            manifest=_gate_manifest("run-1"),
+            manifest=manifest,
             reconciliation=_gate_reconciliation(evidence),
             ledger=ledger,
             store=store,
+            audit_store_root=audit_store_root,
+            manifest_settlement_close=settlement_close,
+            lease_authority=lease_authority,
         )
         is None
     )
@@ -201,5 +277,5 @@ def test_gate_requires_both_liveness_halves(tmp_path: Path) -> None:
     ledger = RL.RunLedger(path=tmp_path / "run-facts.jsonl")
 
     evidence = _gate_evidence()
-    with pytest.raises(D.DispatchError, match="requires both"):
+    with pytest.raises(D.DispatchError, match="manifest store beside"):
         D.satisfy_gate(evidence, reconciliation=_gate_reconciliation(evidence), ledger=ledger)

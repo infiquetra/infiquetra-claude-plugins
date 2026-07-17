@@ -15,6 +15,7 @@ benign matrix reformatting without caring about path notation.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import importlib.util
 import re
@@ -123,6 +124,7 @@ EXTERNAL_ENGINE_WORKERS_MD = (
     / "references"
     / "external-engine-workers.md"
 )
+WORKER_MANIFEST_MD = EXTERNAL_ENGINE_WORKERS_MD.with_name("worker-manifest.md")
 
 
 def test_external_engine_workers_has_one_manifest_construction_path() -> None:
@@ -149,3 +151,52 @@ def test_external_engine_workers_has_one_manifest_construction_path() -> None:
         "provenance_manifest.Manifest directly — record_dispatch_manifest is the only "
         "manifest-construction path this contract documents (R5)."
     )
+
+
+def test_documented_chaperone_manifest_path_names_exact_broker_receipt_chain() -> None:
+    body = EXTERNAL_ENGINE_WORKERS_MD.read_text(encoding="utf-8")
+    for required in (
+        "lease_admission=lease_admission",
+        "lease_authority=lease_authority",
+        "attempt_id=attempt_id",
+        'predecessor_close=evidence.provenance["lease"]["settlement_close"]',
+        "claim_result.settlement_close",
+        "adjudicated = engine_dispatch.adjudicate_manifest(",
+        "predecessor_close=claim_result.settlement_close",
+        "manifest_settlement_close=adjudicated.settlement_close",
+        "stable by `execution_id`",
+    ):
+        assert required in body, f"canonical chaperone manifest contract is missing {required!r}"
+    stages = (
+        "evidence = engine_dispatch.dispatch(",
+        'predecessor_close=evidence.provenance["lease"]["settlement_close"]',
+        "adjudicated = engine_dispatch.adjudicate_manifest(",
+        "predecessor_close=claim_result.settlement_close",
+        "engine_dispatch.satisfy_gate(",
+        "manifest_settlement_close=adjudicated.settlement_close",
+    )
+    positions = [body.index(stage) for stage in stages[:4]] + [
+        body.rindex(stage) for stage in stages[4:]
+    ]
+    assert positions == sorted(positions), "canonical close receipt sequence must remain ordered"
+    assert "A stale predecessor or changed source cannot alter either byte sequence" in body
+
+
+def test_documented_raw_manifest_cli_is_explicitly_noncanonical() -> None:
+    body = WORKER_MANIFEST_MD.read_text(encoding="utf-8")
+    assert "manifest_store.py" in body
+    assert "explicitly noncanonical evidence" in body
+    assert "cannot\nsatisfy a gate" in body
+
+
+def test_canonical_manifest_writer_is_only_called_by_protected_dispatch() -> None:
+    production_calls: list[str] = []
+    for path in (REPO_ROOT / "plugins").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr == "write_manifest":
+                production_calls.append(path.relative_to(REPO_ROOT).as_posix())
+
+    assert production_calls == ["plugins/saga/scripts/engine_dispatch.py"]

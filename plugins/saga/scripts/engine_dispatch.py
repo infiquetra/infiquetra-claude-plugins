@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -38,7 +39,7 @@ _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
 _LAZY_FLEET_MODULES = frozenset({"delegation_audit", "delegation_state", "audit_store"})
 
 _DELEGATION_AUDIT_UNAVAILABLE = "delegation-audit-unavailable"
-_REQUIRED_LEASE_PROTOCOL_VERSION = 1
+_REQUIRED_LEASE_PROTOCOL_VERSION = 2
 
 
 def _load_fleet_module(name: str) -> tuple[ModuleType | None, str]:
@@ -247,6 +248,14 @@ class PanelDispatchResult:
     reconcile_fact: dict[str, Any]
     apply_fact: dict[str, Any]
     advisory: bool = True
+
+
+@dataclass(frozen=True)
+class ManifestSettlementResult:
+    """A canonical Team Execution manifest transition and its broker close receipt."""
+
+    manifest: pm.Manifest
+    settlement_close: dict[str, Any]
 
 
 # In-process FALLBACK for the consecutive gated-divergence attempt counter (KTD7
@@ -744,6 +753,7 @@ def dispatch(
     lease_authority: Any | None = None,
     lease_admission: LeaseAdmission | None = None,
     attempt_id: str = "",
+    predecessor_close: Mapping[str, Any] | None = None,
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Dispatch through one lease-held adapter call when a trusted session is supplied.
 
@@ -797,38 +807,70 @@ def dispatch(
     owner_id = f"engine-dispatch:{session_id}"
     resource_ref = _engine_resource_ref(execution_identity, attempt_identity)
     try:
-        lease = selected.acquire_agent(
-            owner_id=owner_id,
-            owner_pid=os.getpid(),
-            session_id=session_id,
-            policy_sha256=lease_admission.policy_sha256,
-            session_limit=lease_admission.session_limit,
-            aggregate_limit=lease_admission.aggregate_limit,
-            mutation=lease_admission.mutation,
-            ttl_seconds=lease_module.DEFAULT_TTL_SECONDS,
-            resource_ref=resource_ref,
-            agent_type="external-engine",
-        )
+        acquire = {
+            "owner_id": owner_id,
+            "owner_pid": os.getpid(),
+            "session_id": session_id,
+            "policy_sha256": lease_admission.policy_sha256,
+            "session_limit": lease_admission.session_limit,
+            "aggregate_limit": lease_admission.aggregate_limit,
+            "mutation": lease_admission.mutation,
+            "ttl_seconds": lease_module.DEFAULT_TTL_SECONDS,
+            "resource_ref": resource_ref,
+            "agent_type": "external-engine",
+        }
+        if predecessor_close is None:
+            lease = selected.acquire_agent(**acquire)
+        else:
+            close = dict(predecessor_close)
+            token_raw = close.get("token")
+            if close.get("resource_ref") != resource_ref or not isinstance(token_raw, Mapping):
+                raise DispatchError(
+                    "engine retry predecessor does not bind this execution resource"
+                )
+            lease = selected.acquire_successor(
+                **acquire,
+                predecessor_token=lease_module.FencingToken.from_dict(token_raw),
+                predecessor_receipt_sha256=close.get("receipt_sha256"),
+            )
     except lease_module.LeaseBrokerError as exc:
         raise DispatchError(f"engine dispatch lease admission refused: {exc}") from exc
 
     primary_error: BaseException | None = None
     settlement: Any | None = None
-    settlement_entered = False
+    settlement_close: dict[str, Any] | None = None
+    expected_output_sha256 = hashlib.sha256(
+        json.dumps(
+            {
+                "schema": "saga.expected-output.v1",
+                "execution_id": execution_identity,
+                "attempt_id": attempt_identity,
+                "intent": intent,
+                "role_kind": role_kind,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
 
     def guarded_runner(invocation: dict[str, Any]) -> dict[str, Any]:
-        nonlocal settlement, settlement_entered
+        nonlocal settlement
         result = runner(invocation)
-        settlement = selected.agent_settlement(
-            lease.lease_id,
-            owner_id=owner_id,
-            token=lease.token,
-        )
+        write_intent = hashlib.sha256(
+            json.dumps(result, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
         try:
-            settlement.__enter__()
+            settlement = selected.prepare_agent_settlement(
+                lease.lease_id,
+                owner_id=owner_id,
+                token=lease.token,
+                producer="saga",
+                run_id=execution_identity,
+                expected_output_sha256=expected_output_sha256,
+                protected_write_intent_sha256=write_intent,
+            )
         except lease_module.LeaseBrokerError as exc:
             raise DispatchError(f"engine dispatch lease expired before settlement: {exc}") from exc
-        settlement_entered = True
         return result
 
     try:
@@ -862,35 +904,51 @@ def dispatch(
             evidence.evidence.provenance["lease"] = lease_receipt
         else:
             evidence.provenance["lease"] = lease_receipt
-        for invocation, fact_evidence, result in deferred_fact_writes:
-            _record_advisory_facts(
-                ledger,
-                invocation,
-                fact_evidence,
-                result,
-                subplot_id=subplot_id,
-                at=at,
-                resolution=resolution,
-            )
+        if settlement is None:
+            raise DispatchError("engine dispatch runner returned without prepared settlement")
+
+        def commit_facts(_lease: Any) -> list[str]:
+            for invocation, fact_evidence, result in deferred_fact_writes:
+                _record_advisory_facts(
+                    ledger,
+                    invocation,
+                    fact_evidence,
+                    result,
+                    subplot_id=subplot_id,
+                    at=at,
+                    resolution=resolution,
+                )
+            return [f"saga-run-ledger:{execution_identity}"]
+
+        settlement_close = selected.commit_agent_settlement(
+            settlement.settlement_id,
+            owner_id=owner_id,
+            token=lease.token,
+            write=commit_facts,
+        )
+        lease_receipt["settlement_close"] = settlement_close
         return evidence
     except BaseException as exc:
         primary_error = exc
         raise
     finally:
-        if settlement_entered and settlement is not None:
+        if settlement is not None and settlement_close is None:
             try:
-                settlement.__exit__(
-                    None if primary_error is None else type(primary_error),
-                    primary_error,
-                    None if primary_error is None else primary_error.__traceback__,
+                selected.abort_agent_settlement(
+                    settlement.settlement_id,
+                    owner_id=owner_id,
+                    token=lease.token,
                 )
+            except lease_module.LeaseOwnershipError:
+                # A protected callback may have begun; committing/ambiguous authority is retained.
+                pass
             except Exception as exc:  # noqa: BLE001 - preserve the post-run primary failure.
                 cleanup_error = DispatchError(f"engine dispatch lease settlement refused: {exc}")
                 if primary_error is not None:
                     primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
                 else:
                     raise cleanup_error from exc
-        else:
+        elif settlement is None:
             try:
                 released = selected.release(lease.lease_id, owner_id=owner_id, token=lease.token)
             except Exception as exc:  # noqa: BLE001 - preserve the runner primary failure.
@@ -919,11 +977,10 @@ def _bounded_lease_identity(value: str, field: str) -> str:
 
 
 def _engine_resource_ref(execution_id: str, attempt_id: str) -> dict[str, str]:
-    """Return the bounded stable resource identity used to supersede retry authority."""
+    """Return execution-stable identity; attempt is evidence metadata, never a resource."""
 
-    digest = hashlib.sha256(
-        f"{len(execution_id)}:{execution_id}{len(attempt_id)}:{attempt_id}".encode()
-    ).hexdigest()
+    _bounded_lease_identity(attempt_id, "attempt_id")
+    digest = hashlib.sha256(f"{len(execution_id)}:{execution_id}".encode()).hexdigest()
     return {"logical_unit_id": f"engine-dispatch:{digest}"}
 
 
@@ -1009,7 +1066,8 @@ def dispatch_advisory_panel(
     except lease_module.LeaseBrokerError as exc:
         raise DispatchError(f"advisory panel lease admission refused: {exc}") from exc
 
-    settlement_started = False
+    settlement: Any | None = None
+    settlement_close: dict[str, Any] | None = None
     primary_error: BaseException | None = None
 
     def guarded_panel_runner(invocation: dict[str, Any]) -> dict[str, Any]:
@@ -1090,38 +1148,78 @@ def dispatch_advisory_panel(
         # capability_elo reducer can derive head-to-head matches from this reconciliation. Metadata
         # only — it never enters the canonical result hash and grants no authority.
         member_attribution = {item.source_finding_id: list(item.member_ids) for item in gathered}
+        expected_output_sha256 = hashlib.sha256(
+            json.dumps(result.to_dict(), sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        write_intent_sha256 = hashlib.sha256(
+            json.dumps(
+                {
+                    "actions": ["reconcile", "apply"],
+                    "at": at,
+                    "member_index": member_attribution,
+                    "subplot_id": subplot_id,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
         try:
-            with selected.agent_settlement(
+            settlement = selected.prepare_agent_settlement(
                 lease.lease_id,
                 owner_id=owner_id,
                 token=lease.token,
-            ):
-                settlement_started = True
-                lease_receipt = {
-                    "lease_id": lease.lease_id,
-                    "root_sha256": selected.root_sha256,
-                    "policy_sha256": lease_admission.policy_sha256,
-                }
-                for evidence in member_evidence:
-                    evidence.provenance["lease"] = lease_receipt
-                reconcile_fact = reconcile.append_reconciliation_fact(
-                    ledger,
-                    result,
-                    action=reconcile.ReconciliationAction.RECONCILE,
-                    subplot_id=subplot_id,
-                    at=at,
-                    member_index=member_attribution,
-                )
-                apply_fact = reconcile.append_reconciliation_fact(
-                    ledger,
-                    result,
-                    action=reconcile.ReconciliationAction.APPLY,
-                    subplot_id=subplot_id,
-                    at=at,
-                    member_index=member_attribution,
-                )
+                producer="saga",
+                run_id=execution_id,
+                expected_output_sha256=expected_output_sha256,
+                protected_write_intent_sha256=write_intent_sha256,
+            )
         except lease_module.LeaseBrokerError as exc:
             raise DispatchError(f"advisory panel lease expired before settlement: {exc}") from exc
+
+        lease_receipt = {
+            "lease_id": lease.lease_id,
+            "root_sha256": selected.root_sha256,
+            "policy_sha256": lease_admission.policy_sha256,
+        }
+        for evidence in member_evidence:
+            evidence.provenance["lease"] = lease_receipt
+
+        reconcile_fact: dict[str, Any] = {}
+        apply_fact: dict[str, Any] = {}
+
+        def commit_panel_facts(_lease: Any) -> list[str]:
+            nonlocal reconcile_fact, apply_fact
+            reconcile_fact = reconcile.append_reconciliation_fact(
+                ledger,
+                result,
+                action=reconcile.ReconciliationAction.RECONCILE,
+                subplot_id=subplot_id,
+                at=at,
+                member_index=member_attribution,
+            )
+            apply_fact = reconcile.append_reconciliation_fact(
+                ledger,
+                result,
+                action=reconcile.ReconciliationAction.APPLY,
+                subplot_id=subplot_id,
+                at=at,
+                member_index=member_attribution,
+            )
+            return [
+                f"saga-run-ledger:{execution_id}:reconcile",
+                f"saga-run-ledger:{execution_id}:apply",
+            ]
+
+        try:
+            settlement_close = selected.commit_agent_settlement(
+                settlement.settlement_id,
+                owner_id=owner_id,
+                token=lease.token,
+                write=commit_panel_facts,
+            )
+        except lease_module.LeaseBrokerError as exc:
+            raise DispatchError(f"advisory panel lease expired before settlement: {exc}") from exc
+        lease_receipt["settlement_close"] = settlement_close
         return PanelDispatchResult(
             role_name=role_name,
             member_evidence=tuple(member_evidence),
@@ -1134,7 +1232,23 @@ def dispatch_advisory_panel(
         primary_error = exc
         raise
     finally:
-        if not settlement_started:
+        if settlement is not None and settlement_close is None:
+            try:
+                selected.abort_agent_settlement(
+                    settlement.settlement_id,
+                    owner_id=owner_id,
+                    token=lease.token,
+                )
+            except lease_module.LeaseOwnershipError:
+                # A protected callback may have begun; committing/ambiguous authority is retained.
+                pass
+            except Exception as exc:  # noqa: BLE001 - preserve the panel primary failure.
+                cleanup_error = DispatchError(f"advisory panel lease cleanup refused: {exc}")
+                if primary_error is not None:
+                    primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                else:
+                    raise cleanup_error from exc
+        elif settlement is None:
             try:
                 released = selected.release(lease.lease_id, owner_id=owner_id, token=lease.token)
             except Exception as exc:  # noqa: BLE001 - preserve the panel primary failure.
@@ -1773,11 +1887,201 @@ def _mirror_manifest_to_audit_store(
         return
     try:
         store = audit_store.Store.for_root(audit_store_root).ensure()
-        audit_store.mirror_manifest(store, execution_id, manifest.to_dict())
+        audit_store.mirror_noncanonical_manifest(store, execution_id, manifest.to_dict())
         if evidence is not None and evidence.runner_receipt is not None:
             audit_store.mirror_receipt(store, execution_id, evidence.runner_receipt)
     except OSError:
         pass
+
+
+def _mirror_manifest_to_audit_store_strict(
+    audit_store_root: Path,
+    execution_id: str,
+    manifest: pm.Manifest,
+    evidence: AdvisoryEvidence | None,
+) -> list[str]:
+    audit_store, degradation = _load_fleet_module("audit_store")
+    if audit_store is None:
+        raise DispatchError(
+            f"canonical manifest mirror requires fleet-core audit_store: {degradation}"
+        )
+    store = audit_store.Store.for_root(audit_store_root).ensure()
+    manifest_path = audit_store.mirror_manifest(store, execution_id, manifest.to_dict())
+    refs = [f"manifest:{execution_id}", f"audit:{manifest_path}"]
+    if evidence is not None and evidence.runner_receipt is not None:
+        receipt_path = audit_store.mirror_receipt(store, execution_id, evidence.runner_receipt)
+        refs.append(f"audit:{receipt_path}")
+    return refs
+
+
+def _serialized_manifest_bytes(manifest: pm.Manifest) -> bytes:
+    """Return the exact bytes ``manifest_store.write_manifest`` publishes."""
+
+    return (json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n").encode()
+
+
+def _manifest_write_intent_sha256(
+    *,
+    manifest_sha256: str,
+    store: manifest_store.Store,
+    audit_store_root: Path,
+    execution_id: str,
+) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "audit_store_root": str(audit_store_root),
+                "execution_id": execution_id,
+                "manifest_store_root": str(store.root),
+                "manifest_sha256": manifest_sha256,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def _canonical_manifest_transition(
+    *,
+    manifest: pm.Manifest,
+    store: manifest_store.Store,
+    execution_id: str,
+    evidence: AdvisoryEvidence | None,
+    audit_store_root: Path,
+    predecessor_close: Mapping[str, Any],
+    session_id: str,
+    lease_admission: LeaseAdmission,
+    lease_authority: Any,
+    transition_kind: Literal["claim", "adjudication"],
+    expected_current_bytes: bytes | None = None,
+) -> ManifestSettlementResult:
+    """CAS one Team Execution manifest transition from an exact broker predecessor."""
+
+    lease_module, degradation = _load_fleet_module("lease_broker")
+    if lease_module is None:
+        raise DispatchError(f"canonical manifest transition requires fleet-core: {degradation}")
+    _require_lease_protocol(lease_module)
+    lease_admission.validate()
+    if lease_admission.mutation != "read-write":
+        raise DispatchError("canonical manifest transition requires read-write lease admission")
+    try:
+        close = lease_module.validate_settlement_close(predecessor_close)
+    except lease_module.LeaseBrokerError as exc:
+        raise DispatchError(f"canonical manifest predecessor receipt is invalid: {exc}") from exc
+    token_raw = close.get("token")
+    if not isinstance(token_raw, Mapping):
+        raise DispatchError("canonical manifest predecessor lacks a token")
+    try:
+        predecessor_token = lease_module.FencingToken.from_dict(token_raw)
+    except lease_module.LeaseBrokerError as exc:
+        raise DispatchError(f"canonical manifest predecessor token is invalid: {exc}") from exc
+    receipt_sha256 = close.get("receipt_sha256")
+    resource_ref = _engine_resource_ref(execution_id, "team-execution")
+    if close.get("resource_ref") != resource_ref or not isinstance(receipt_sha256, str):
+        raise DispatchError("canonical manifest predecessor does not bind this execution resource")
+    expected_predecessor = "saga" if transition_kind == "claim" else "team-execution"
+    if (
+        close.get("producer") != expected_predecessor
+        or close.get("run_id") != execution_id
+        or close.get("phase") != "closed"
+        or close.get("terminal") is not True
+    ):
+        raise DispatchError(
+            f"canonical manifest {transition_kind} requires an exact "
+            f"{expected_predecessor} predecessor close"
+        )
+    owner_id = f"team-execution-manifest:{_bounded_lease_identity(session_id, 'session_id')}"
+    try:
+        lease = lease_authority.acquire_successor(
+            owner_id=owner_id,
+            owner_pid=os.getpid(),
+            session_id=session_id,
+            policy_sha256=lease_admission.policy_sha256,
+            session_limit=lease_admission.session_limit,
+            aggregate_limit=lease_admission.aggregate_limit,
+            mutation=lease_admission.mutation,
+            ttl_seconds=lease_module.DEFAULT_TTL_SECONDS,
+            resource_ref=resource_ref,
+            predecessor_token=predecessor_token,
+            predecessor_receipt_sha256=receipt_sha256,
+            agent_type="team-execution-manifest",
+        )
+    except lease_module.LeaseBrokerError as exc:
+        raise DispatchError(f"canonical manifest successor admission refused: {exc}") from exc
+
+    manifest_bytes = _serialized_manifest_bytes(manifest)
+    expected_output_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    write_intent_sha256 = _manifest_write_intent_sha256(
+        manifest_sha256=expected_output_sha256,
+        store=store,
+        audit_store_root=audit_store_root,
+        execution_id=execution_id,
+    )
+    settlement: Any | None = None
+    settlement_close: dict[str, Any] | None = None
+    primary_error: BaseException | None = None
+    try:
+        settlement = lease_authority.prepare_agent_settlement(
+            lease.lease_id,
+            owner_id=owner_id,
+            token=lease.token,
+            producer="team-execution",
+            run_id=execution_id,
+            expected_output_sha256=expected_output_sha256,
+            protected_write_intent_sha256=write_intent_sha256,
+        )
+
+        def commit_manifest(_lease: Any) -> list[str]:
+            if expected_current_bytes is not None:
+                try:
+                    current_bytes = store.manifest_path(execution_id).read_bytes()
+                except OSError as exc:
+                    raise DispatchError(
+                        "manifest became unreadable before canonical adjudication commit"
+                    ) from exc
+                if current_bytes != expected_current_bytes:
+                    raise DispatchError("manifest changed before canonical adjudication commit")
+            manifest_path = manifest_store.write_manifest(store, execution_id, manifest.to_dict())
+            if hashlib.sha256(manifest_path.read_bytes()).hexdigest() != expected_output_sha256:
+                raise DispatchError("canonical manifest write does not match expected output bytes")
+            refs = _mirror_manifest_to_audit_store_strict(
+                audit_store_root, execution_id, manifest, evidence
+            )
+            return refs
+
+        settlement_close = lease_authority.commit_agent_settlement(
+            settlement.settlement_id,
+            owner_id=owner_id,
+            token=lease.token,
+            write=commit_manifest,
+        )
+        return ManifestSettlementResult(manifest=manifest, settlement_close=settlement_close)
+    except BaseException as exc:
+        primary_error = exc
+        if isinstance(exc, lease_module.LeaseBrokerError):
+            raise DispatchError(f"canonical manifest settlement refused: {exc}") from exc
+        raise
+    finally:
+        if settlement is not None and settlement_close is None:
+            try:
+                lease_authority.abort_agent_settlement(
+                    settlement.settlement_id, owner_id=owner_id, token=lease.token
+                )
+            except lease_module.LeaseOwnershipError:
+                pass
+            except Exception as exc:  # noqa: BLE001 - retain the primary transition failure.
+                if primary_error is not None:
+                    primary_error.add_note(f"secondary canonical manifest cleanup failure: {exc}")
+                else:
+                    raise
+        elif settlement is None:
+            try:
+                lease_authority.release(lease.lease_id, owner_id=owner_id, token=lease.token)
+            except Exception as exc:  # noqa: BLE001 - retain the primary transition failure.
+                if primary_error is not None:
+                    primary_error.add_note(f"secondary canonical manifest cleanup failure: {exc}")
+                else:
+                    raise
 
 
 def record_dispatch_manifest(
@@ -1792,8 +2096,12 @@ def record_dispatch_manifest(
     sandbox: str = "",
     claim_provenance: pm.ClaimProvenance | None = None,
     audit_store_root: Path | None = None,
-) -> pm.Manifest:
-    """Build and persist the typed manifest for one dispatch via ``manifest_store`` (KTD1)."""
+    predecessor_close: Mapping[str, Any] | None = None,
+    session_id: str | None = None,
+    lease_admission: LeaseAdmission | None = None,
+    lease_authority: Any | None = None,
+) -> pm.Manifest | ManifestSettlementResult:
+    """Persist evidence-only output or CAS a canonical Team Execution claim transition."""
     manifest = build_dispatch_manifest(
         evidence,
         execution_id=execution_id,
@@ -1804,7 +2112,39 @@ def record_dispatch_manifest(
         sandbox=sandbox,
         claim_provenance=claim_provenance,
     )
-    manifest_store.write_manifest(store, execution_id, manifest.to_dict())
+    canonical = (predecessor_close, session_id, lease_admission, lease_authority)
+    if any(value is not None for value in canonical):
+        if (
+            predecessor_close is None
+            or session_id is None
+            or lease_admission is None
+            or lease_authority is None
+            or audit_store_root is None
+        ):
+            raise DispatchError(
+                "canonical manifest claim requires predecessor_close, session_id, "
+                "lease_admission, lease_authority, and audit_store_root"
+            )
+        result = _canonical_manifest_transition(
+            manifest=manifest,
+            store=store,
+            execution_id=execution_id,
+            evidence=evidence,
+            audit_store_root=audit_store_root,
+            predecessor_close=predecessor_close,
+            session_id=session_id,
+            lease_admission=lease_admission,
+            lease_authority=lease_authority,
+            transition_kind="claim",
+        )
+        evidence.provenance["manifest_gate_eligibility"] = "canonical"
+        evidence.provenance["manifest_settlement_close"] = result.settlement_close
+        return result
+    evidence.provenance["manifest_gate_eligibility"] = "noncanonical"
+    evidence.provenance["manifest_gate_reason"] = (
+        "legacy manifest write has no broker-backed exact settlement"
+    )
+    manifest_store.write_noncanonical_manifest(store, execution_id, manifest.to_dict())
     _mirror_manifest_to_audit_store(audit_store_root, execution_id, manifest, evidence)
     return manifest
 
@@ -1815,7 +2155,11 @@ def adjudicate_manifest(
     adjudications: dict[tuple[str, str], tuple[pm.AdjudicatedStatus, pm.Adjudication]],
     *,
     audit_store_root: Path | None = None,
-) -> pm.Manifest:
+    predecessor_close: Mapping[str, Any] | None = None,
+    session_id: str | None = None,
+    lease_admission: LeaseAdmission | None = None,
+    lease_authority: Any | None = None,
+) -> pm.Manifest | ManifestSettlementResult:
     """Write Claude's adjudication layer onto a persisted claimed-only manifest (D5/R6).
 
     ``adjudications`` maps ``(claim text, source_ref)`` → (adjudicated status, attested
@@ -1825,41 +2169,95 @@ def adjudicate_manifest(
     adapter. Claims not named keep their claimed-only state (mismatch_reason
     ``not-adjudicated`` when read by the gate).
     """
-    raw = manifest_store.read_manifest(store, execution_id)
+
+    def build_adjudicated(manifest: pm.Manifest) -> pm.Manifest:
+        if manifest.claim_provenance is None:
+            raise DispatchError("manifest carries no claim_provenance to adjudicate")
+        updated_claims = []
+        for claim in manifest.claim_provenance.claims:
+            key = (claim.text, claim.source_ref)
+            if key in adjudications:
+                status, record = adjudications[key]
+                claim = pm.Claim(
+                    text=claim.text,
+                    claimed=claim.claimed,
+                    source_ref=claim.source_ref,
+                    source_revision=claim.source_revision,
+                    adjudicated=status,
+                    mismatch_reason=pm.mismatch_reason_for(claim.claimed, status),
+                    adjudication=record,
+                )
+            updated_claims.append(claim)
+        return pm.Manifest(
+            execution_id=manifest.execution_id,
+            saga_ref=manifest.saga_ref,
+            attribution=manifest.attribution,
+            disposition=manifest.disposition,
+            disposition_note=manifest.disposition_note,
+            created_at=manifest.created_at,
+            output_completeness=manifest.output_completeness,
+            claim_provenance=pm.ClaimProvenance(claims=tuple(updated_claims)),
+            economics=manifest.economics,
+            bridge_run_key=manifest.bridge_run_key,
+            tripwire_note=manifest.tripwire_note,
+        )
+
+    def read_canonical_source() -> tuple[pm.Manifest, bytes]:
+        """Capture and validate the exact source bytes for the adjudication CAS."""
+        try:
+            source_bytes = store.manifest_path(execution_id).read_bytes()
+        except FileNotFoundError as exc:
+            raise DispatchError(
+                f"no manifest to adjudicate for execution_id={execution_id!r}"
+            ) from exc
+        except OSError as exc:
+            raise DispatchError(
+                f"manifest is unreadable for execution_id={execution_id!r}"
+            ) from exc
+        try:
+            raw = json.loads(source_bytes)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise DispatchError(f"manifest is malformed for execution_id={execution_id!r}") from exc
+        if not isinstance(raw, dict):
+            raise DispatchError(f"manifest is malformed for execution_id={execution_id!r}")
+        return pm.Manifest.from_dict(raw), source_bytes
+
+    canonical = (predecessor_close, session_id, lease_admission, lease_authority)
+    if any(value is not None for value in canonical):
+        if (
+            predecessor_close is None
+            or session_id is None
+            or lease_admission is None
+            or lease_authority is None
+            or audit_store_root is None
+        ):
+            raise DispatchError(
+                "canonical manifest adjudication requires predecessor_close, session_id, "
+                "lease_admission, lease_authority, and audit_store_root"
+            )
+        # One source snapshot supplies both the derived output and the callback's byte-level CAS.
+        source_manifest, expected_current_bytes = read_canonical_source()
+        adjudicated = build_adjudicated(source_manifest)
+
+        result = _canonical_manifest_transition(
+            manifest=adjudicated,
+            store=store,
+            execution_id=execution_id,
+            evidence=None,
+            audit_store_root=audit_store_root,
+            predecessor_close=predecessor_close,
+            session_id=session_id,
+            lease_admission=lease_admission,
+            lease_authority=lease_authority,
+            transition_kind="adjudication",
+            expected_current_bytes=expected_current_bytes,
+        )
+        return result
+    raw = manifest_store.read_noncanonical_manifest(store, execution_id)
     if raw is None:
         raise DispatchError(f"no manifest to adjudicate for execution_id={execution_id!r}")
-    manifest = pm.Manifest.from_dict(raw)
-    if manifest.claim_provenance is None:
-        raise DispatchError("manifest carries no claim_provenance to adjudicate")
-    updated_claims = []
-    for claim in manifest.claim_provenance.claims:
-        key = (claim.text, claim.source_ref)
-        if key in adjudications:
-            status, record = adjudications[key]
-            claim = pm.Claim(
-                text=claim.text,
-                claimed=claim.claimed,
-                source_ref=claim.source_ref,
-                source_revision=claim.source_revision,
-                adjudicated=status,
-                mismatch_reason=pm.mismatch_reason_for(claim.claimed, status),
-                adjudication=record,
-            )
-        updated_claims.append(claim)
-    adjudicated = pm.Manifest(
-        execution_id=manifest.execution_id,
-        saga_ref=manifest.saga_ref,
-        attribution=manifest.attribution,
-        disposition=manifest.disposition,
-        disposition_note=manifest.disposition_note,
-        created_at=manifest.created_at,
-        output_completeness=manifest.output_completeness,
-        claim_provenance=pm.ClaimProvenance(claims=tuple(updated_claims)),
-        economics=manifest.economics,
-        bridge_run_key=manifest.bridge_run_key,
-        tripwire_note=manifest.tripwire_note,
-    )
-    manifest_store.write_manifest(store, execution_id, adjudicated.to_dict())
+    adjudicated = build_adjudicated(pm.Manifest.from_dict(raw))
+    manifest_store.write_noncanonical_manifest(store, execution_id, adjudicated.to_dict())
     _mirror_manifest_to_audit_store(audit_store_root, execution_id, adjudicated, evidence=None)
     return adjudicated
 
@@ -1871,6 +2269,9 @@ def satisfy_gate(
     reconciliation: reconcile.ReconciliationResult | None = None,
     ledger: run_ledger.RunLedger | None = None,
     store: manifest_store.Store | None = None,
+    audit_store_root: Path | None = None,
+    manifest_settlement_close: Mapping[str, Any] | None = None,
+    lease_authority: Any | None = None,
 ) -> None:
     """Require complete reconciliation and Claude verification before evidence satisfies a gate.
 
@@ -1982,9 +2383,9 @@ def satisfy_gate(
             f"manifest disposition is {manifest.disposition.value!r} -- "
             f"{manifest.disposition_note}"
         )
-    if (ledger is None) != (store is None):
+    if ledger is not None and store is None:
         raise DispatchError(
-            "bridge liveness gate requires both run ledger and manifest store (#388)"
+            "bridge liveness gate requires a manifest store beside the run ledger (#388)"
         )
     if ledger is not None and store is not None:
         liveness_errors = bridge_liveness_errors(
@@ -1994,15 +2395,81 @@ def satisfy_gate(
         )
         if liveness_errors:
             raise DispatchError("bridge liveness failure (#388): " + "; ".join(liveness_errors))
-    if manifest is None or manifest.claim_provenance is None:
+    if manifest is None:
+        if "manifest_gate_eligibility" in evidence.provenance:
+            raise DispatchError(
+                "recorded manifest evidence must be supplied to the gate with its canonical proof"
+            )
         _SATISFIED_RECONCILIATIONS.add(replay_key)
         return
-    for claim in manifest.claim_provenance.claims:
-        if claim.adjudicated is None or claim.adjudication is None:
-            raise DispatchError(
-                "gated verdict requires Claude-adjudicated claims (R11): "
-                f"claim {claim.text!r} is producer-claimed only"
-            )
+    if evidence.provenance.get("manifest_gate_eligibility") != "canonical":
+        raise DispatchError("noncanonical manifest evidence is explicitly unable to satisfy a gate")
+    if manifest.claim_provenance is not None:
+        for claim in manifest.claim_provenance.claims:
+            if claim.adjudicated is None or claim.adjudication is None:
+                raise DispatchError(
+                    "gated verdict requires Claude-adjudicated claims (R11): "
+                    f"claim {claim.text!r} is producer-claimed only"
+                )
+    if (
+        manifest_settlement_close is None
+        or lease_authority is None
+        or store is None
+        or audit_store_root is None
+    ):
+        raise DispatchError(
+            "canonical manifest gating requires its store, audit root, broker authority, "
+            "and terminal close receipt"
+        )
+    close = dict(manifest_settlement_close)
+    resource_ref = _engine_resource_ref(manifest.execution_id, "manifest-gate")
+    manifest_bytes = _serialized_manifest_bytes(manifest)
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    persisted_path = store.manifest_path(manifest.execution_id)
+    try:
+        persisted_bytes = persisted_path.read_bytes()
+    except OSError as exc:
+        raise DispatchError(f"canonical manifest output is unreadable: {exc}") from exc
+    if persisted_bytes != manifest_bytes:
+        raise DispatchError("canonical manifest store bytes do not match the gated manifest")
+    write_intent_sha256 = _manifest_write_intent_sha256(
+        manifest_sha256=manifest_sha256,
+        store=store,
+        audit_store_root=audit_store_root,
+        execution_id=manifest.execution_id,
+    )
+    if (
+        close.get("resource_ref") != resource_ref
+        or close.get("producer") != "team-execution"
+        or close.get("run_id") != manifest.execution_id
+        or close.get("phase") != "closed"
+        or close.get("terminal") is not True
+        or close.get("expected_output_sha256") != manifest_sha256
+        or close.get("protected_write_intent_sha256") != write_intent_sha256
+    ):
+        raise DispatchError(
+            "manifest broker close receipt does not bind the exact output and write intent"
+        )
+    lease_module, degradation = _load_fleet_module("lease_broker")
+    if lease_module is None:
+        raise DispatchError(f"manifest gate requires fleet-core lease authority: {degradation}")
+    inspected_authority = lease_authority.inspect()
+    digest = lease_module.resource_sha256(resource_ref)
+    head = inspected_authority.get("resource_fences", {}).get(digest)
+    if head is None:
+        head = inspected_authority.get("archived_resource_fences", {}).get(digest)
+    if not isinstance(head, dict) or head.get("close_receipt") != close:
+        raise DispatchError("manifest broker close receipt is not the canonical resource head")
+    audit_store, audit_degradation = _load_fleet_module("audit_store")
+    if audit_store is None:
+        raise DispatchError(
+            f"canonical manifest gate requires fleet-core audit_store: {audit_degradation}"
+        )
+    audit_manifest = audit_store.resolve_manifest(
+        audit_store.Store.for_root(audit_store_root), manifest.execution_id
+    )
+    if audit_manifest != manifest.to_dict():
+        raise DispatchError("canonical manifest audit mirror does not match the gated manifest")
     _SATISFIED_RECONCILIATIONS.add(replay_key)
 
 

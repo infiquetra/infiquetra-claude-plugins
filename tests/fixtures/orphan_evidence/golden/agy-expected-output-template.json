@@ -1,0 +1,12 @@
+{
+  "artifact_keys": [
+    "patch"
+  ],
+  "expected_output_template_sha256": "cc20f838f5ee779568511d4044f3ce7079683517664cda61ad80fdad3a4a92cc",
+  "required": true,
+  "schema": "agy.expected-output-template.v1",
+  "sha256": "43fadb1b5afdb41dd19b3def92bac5cace9fc1b276bd6c6531e914e79305e1cd",
+  "source_id": "fixture",
+  "target_count": 1,
+  "trusted_source": "agy-admission"
+}

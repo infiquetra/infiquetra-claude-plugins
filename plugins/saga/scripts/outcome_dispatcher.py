@@ -56,7 +56,7 @@ DEFAULT_AVAILABLE: tuple[str, ...] = ALWAYS_AVAILABLE
 # (fork/subagent/goal/manual) has no defined lower rung, so an unavailable one HALTs rather than
 # silently substituting (R5). Mirrors lifecycle_state.ORCHESTRATION_TIERS.
 DEGRADE_LADDER: tuple[str, ...] = ("cc-workflows-ultracode", "team-execution", "inline")
-_REQUIRED_LEASE_PROTOCOL_VERSION = 1
+_REQUIRED_LEASE_PROTOCOL_VERSION = 2
 
 
 class DispatcherError(ValueError):

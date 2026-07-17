@@ -18,7 +18,7 @@ import fleet_commons_shim  # noqa: E402
 
 authority = fleet_commons_shim.load("lease_broker")
 concurrency_policy = fleet_commons_shim.load("concurrency_policy")
-REQUIRED_PROTOCOL_VERSION = 1
+REQUIRED_PROTOCOL_VERSION = 2
 
 
 class LeaseProtocolError(RuntimeError):

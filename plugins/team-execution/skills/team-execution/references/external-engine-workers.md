@@ -195,7 +195,9 @@ governs how the resolver responds when nothing usable is available:
 
 ## 3. Dispatch — protocol forwarded verbatim (R11)
 
-When `resolution.halt` is `None` and the engine is not `"claude"`, the chaperone builds the
+When `resolution.halt` is `None` and the engine is not `"claude"`, the chaperone initializes one
+broker authority, one Saga-resolved **read-write** admission, one trusted session, and one bounded
+attempt identity for the entire dispatch → claim → adjudication → gate sequence. It builds the
 wrapper invocation from the resolution's own payload — never re-authored or paraphrased:
 
 ```python
@@ -208,7 +210,8 @@ invocation = (
 )
 evidence = engine_dispatch.dispatch(
     resolution, runner=runner, model=model, sandbox=unit_sandbox, write_set=unit_files,
-    session_id=CLAUDE_CODE_SESSION_ID,
+    session_id=session_id, lease_authority=lease_authority,
+    lease_admission=lease_admission, attempt_id=attempt_id,
     execution_id=f"{worker_id}-{unit_id}", intent=unit_intent,
     expected_identity=(
         f"{plan_time_resolution_preview['engine_id']}/{plan_time_resolution_preview['variant']}"
@@ -217,6 +220,12 @@ evidence = engine_dispatch.dispatch(
     ),
 )
 ```
+
+Here `lease_authority` is the single `lease_broker.LeaseBroker` selected for the worker run,
+`lease_admission` is the one resolved `LeaseAdmission(..., mutation="read-write")`,
+`session_id = CLAUDE_CODE_SESSION_ID`, and `attempt_id` is a non-empty, control-character-free
+identifier of at most 256 characters. Do not construct a second broker or admission snapshot for
+the later manifest transitions.
 
 `expected_identity` (`engine_dispatch.py:165`) is the §1 plan-time preview, forwarded verbatim
 so `dispatch()` stamps it onto the evidence's provenance. This is what lets the shared manifest
@@ -301,8 +310,7 @@ here.
    envelope. Only an unstructured `offload` may carry the synthesized opaque singleton. Claude builds one typed
    `ReconciliationItem` per source in source order (including explicit dropped/overridden outcomes),
    then builds a ready result with those exact bindings. Typed multi-finding evidence therefore needs
-   exact multi-item coverage. The caller records one transition per helper call, in order, and passes
-   that same result object to the gate:
+   exact multi-item coverage. The caller records one transition per helper call, in order:
    ```python
    result = reconcile.build_result(
        reconciliation_id=reconciliation_id,
@@ -316,13 +324,23 @@ here.
    reconcile.append_reconciliation_fact(
        ledger, result, action="reconcile", subplot_id=subplot_id, at=reconciled_at,
    )
+   ```
+   The gate is deliberately not called yet: the canonical claim/adjudication receipt chain in step
+   3 must exist first.
+3. **Create the canonical manifest chain and gate.** Execute the detailed manifest procedure below
+   before touching the working tree. After the claim and any required adjudication return their exact
+   settlement closes, call:
+   ```python
    engine_dispatch.satisfy_gate(
-       evidence, manifest, reconciliation=result, ledger=ledger, store=store,
+       evidence, adjudicated.manifest,
+       reconciliation=result, ledger=ledger, store=store,
+       audit_store_root=audit_store_root,
+       manifest_settlement_close=adjudicated.settlement_close,
+       lease_authority=lease_authority,
    )
    ```
-   `manifest` is passed whenever it exists, and the `ledger`/`store` liveness pair is passed
-   together.
-3. **Apply.** Only after the gate accepts the bound result does the chaperone apply the reviewed patch
+   A stale, missing, noncanonical, or mismatched close refuses before apply.
+4. **Apply.** Only after the gate accepts the bound result does the chaperone apply the reviewed patch
    — the engine never touches the working
    tree (KTD6/R23). The chaperone **owns the commit**, but the commit itself happens only after
    Test (step 4) and the empty-delivery check (step 4a) pass — apply and commit are distinct
@@ -337,8 +355,8 @@ here.
    Each append is independently lock-atomic, and `apply` requires exactly one matching prior
    `reconcile`. The fact records the chaperone-controlled apply event; it never claims that the
    external engine wrote the worktree.
-4. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
-4a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
+5. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
+5a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
    chaperone runs `check_empty_delivery.check_empty_delivery()` (or its CLI,
    `plugins/saga/scripts/check_empty_delivery.py --claims-delivery`) against the working tree. A
    unit whose evidence claims delivery but changed zero paths gets a HALT verdict — the chaperone
@@ -347,27 +365,57 @@ here.
    itself never commits and mints no new auto-commit machinery (none exists in this repo — `/optimize`
    deliberately shed its own). This is a distinct axis from `manifest_store.py`'s `missing-output`
    trip (`manifest_store.py:249-363`), which checks the returned-value axis, not file delivery.
-5. **Manifest and rejected-offload evidence.** One path, for every disposition —
+3a. **Manifest and rejected-offload evidence details.** One path, for every disposition —
    `ran-as-requested`, `fell-back-to-claude`, `substituted-engine`, and `rejected-offload` alike.
    The chaperone never branches into a second manifest constructor and never constructs
    `provenance_manifest.Manifest` directly; it always calls the existing builder, forwarding the
    same `expected_identity` it passed to `dispatch()` in §3:
    ```python
-   engine_dispatch.record_dispatch_manifest(
+   claim_result = engine_dispatch.record_dispatch_manifest(
        store, evidence,
        execution_id=f"{worker_id}-{unit_id}", saga_ref=saga_ref, created_at=created_at,
        effort=resolution.effort, protocol="\n".join(resolution.protocol),
        audit_store_root=fleet_commons_shim.load("audit_store").Store.for_root(None).root,
+       predecessor_close=evidence.provenance["lease"]["settlement_close"],
+       session_id=session_id, lease_admission=lease_admission,
+       lease_authority=lease_authority,
    )
+   manifest = claim_result.manifest
    ```
+   This is an exact receipt-chain transition, not an ordinary manifest overwrite. The resource is
+   stable by `execution_id`; `attempt_id` is evidence metadata only. The broker acquires a successor
+   from the registered dispatch's exact token and receipt hash, then commits the manifest and strict
+   audit mirror before publishing `claim_result.settlement_close`.
+
    `audit_store_root` (#396) mirrors the manifest — and the raw `bridge_receipt.v1` when
    `evidence.runner_receipt` carries one — to the durable delegation-audit store
    (`~/.claude/delegation-audit` by default), independent of `manifest_store`'s own git-common-dir
    cache. `engine_dispatch.py` carries no CLI layer of its own, so (KTD5) this is the one
    documented call site that resolves the real-world default explicitly — `record_dispatch_manifest`
    itself defaults `audit_store_root` to `None` (skip), so a direct unit-test caller never touches a
-   real developer's home directory unless it opts in. Pass the same resolved root to
-   `adjudicate_manifest(...)` so an adjudicated manifest re-mirrors the updated version.
+   real developer's home directory unless it opts in. Pass the same resolved root and
+   `claim_result.settlement_close` to `adjudicate_manifest(...)`, reusing the exact same
+   `session_id`, `lease_admission`, `lease_authority`, and `audit_store_root`:
+   ```python
+   adjudicated = engine_dispatch.adjudicate_manifest(
+       store, evidence.execution_id, adjudications,
+       audit_store_root=audit_store_root,
+       predecessor_close=claim_result.settlement_close,
+       session_id=session_id, lease_admission=lease_admission,
+       lease_authority=lease_authority,
+   )
+   engine_dispatch.satisfy_gate(
+       evidence, adjudicated.manifest,
+       reconciliation=result, ledger=ledger, store=store,
+       audit_store_root=audit_store_root,
+       manifest_settlement_close=adjudicated.settlement_close,
+       lease_authority=lease_authority,
+   )
+   ```
+   Adjudication compares the source bytes captured for its outgoing manifest against the callback's
+   current bytes, then commits the adjudication plus strict mirror and returns its own close receipt.
+   A stale predecessor or changed source cannot alter either byte sequence, and a gate receives only
+   the returned adjudication close.
    `build_dispatch_manifest` derives the disposition from the
    evidence alone: `evidence.halt is not None` → `FELL_BACK_TO_CLAUDE` (carrying the
    halt/downgrade note as `disposition_note`); otherwise, when the evidence's provenance carries

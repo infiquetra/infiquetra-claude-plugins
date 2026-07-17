@@ -194,9 +194,10 @@ def test_make_dispatcher_preserves_primary_failure_when_release_also_fails(
     )
 
 
-def test_outcome_dispatch_rejects_lease_protocol_skew() -> None:
+@pytest.mark.parametrize("version", [1, 99])
+def test_outcome_dispatch_rejects_lease_protocol_skew(version: int) -> None:
     with pytest.raises(D.DispatcherError, match="install/update fleet-core"):
-        D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=99))
+        D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=version))
 
 
 # --------------------------------------------------------------------------- team_emitter wiring (R5)

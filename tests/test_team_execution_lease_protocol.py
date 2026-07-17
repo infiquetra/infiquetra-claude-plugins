@@ -112,8 +112,11 @@ def test_preflight_and_renew_expose_no_authority_path() -> None:
     assert "root" not in renewed
 
 
-def test_preflight_rejects_lease_protocol_skew(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(PROTOCOL.authority, "PROTOCOL_VERSION", 99)
+@pytest.mark.parametrize("version", [1, 99])
+def test_preflight_rejects_lease_protocol_skew(
+    monkeypatch: pytest.MonkeyPatch, version: int
+) -> None:
+    monkeypatch.setattr(PROTOCOL.authority, "PROTOCOL_VERSION", version)
 
     with pytest.raises(PROTOCOL.LeaseProtocolError, match="install/update fleet-core"):
         PROTOCOL.preflight("session-1", selected=FakeBroker([]))

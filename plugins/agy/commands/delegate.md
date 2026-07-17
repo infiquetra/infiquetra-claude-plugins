@@ -1,7 +1,7 @@
 ---
 name: delegate
 description: Submit an Antigravity teammate delegation envelope through the guarded agy wrapper
-argument-hint: "role=<coder|reviewer> mode=<no-write|patch-only|auto-if-clean> evidence=<minimal|summary|full> write-set=<path> verification=<command>"
+argument-hint: "role=<coder|reviewer> mode=<no-write|patch-only|auto-if-clean> evidence=<minimal|summary|full> write-set=<path> lease-resource-key-file=<path> verification=<command>"
 ---
 
 Delegate one bounded task to an Antigravity-backed teammate through the guarded wrapper.
@@ -27,6 +27,10 @@ Delegate one bounded task to an Antigravity-backed teammate through the guarded 
   creating another agent.
 - `write-set=<repo-relative-path>` may be repeated. It is required when mutation may be imported,
   and `auto-if-clean` requires at least one explicit write-set path.
+- `lease-resource-key-file=<path>` is required for launched `auto-if-clean`. The file must be an
+  owner-private `0600` regular file. Pass only its path as wrapper CLI
+  `--lease-resource-key-file`; do not put the raw key on argv or copy it into the envelope,
+  environment, task text, or evidence bundle.
 - `verification=<command>` may be repeated. Required verification commands must be supplied by the
   operator or orchestrator, not invented by the delegate.
 - `verification-required=<true|false>` declares whether the wrapper must see successful checks.

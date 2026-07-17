@@ -78,14 +78,19 @@ The canonical guard call is:
 ```python
 satisfy_gate(
     evidence,
-    manifest,
+    adjudicated.manifest,
     reconciliation=result,
     ledger=ledger,
     store=store,
+    audit_store_root=audit_store_root,
+    manifest_settlement_close=adjudicated.settlement_close,
+    lease_authority=lease_authority,
 )
 ```
 
-`manifest` is optional only when no manifest exists; a caller that has one must pass it. `ledger` and
+This call happens only after the broker-backed claim and adjudication chain has produced
+`adjudicated.settlement_close`, and before any patch is applied. `manifest` is optional only when no
+manifest exists; a caller that has one must pass it. `ledger` and
 `store` are an optional pair for bridge-liveness checking: pass both or neither. The same exact
 in-memory `result` that Claude built and that the worker recorded is passed as `reconciliation`.
 

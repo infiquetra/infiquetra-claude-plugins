@@ -315,6 +315,15 @@ here in Phase B preflight.
 
 Workers execute approved tasks. Coordinate dependencies, keep work scoped to the plan, and run execution waves using the resident-worker residency protocol:
 
+- **Lease preflight and renewal (#356):** before the first direct `Agent` call, require
+  `CLAUDE_CODE_SESSION_ID` and run
+  `lease_protocol.py preflight --session-id "$CLAUDE_CODE_SESSION_ID"`. Saga's installed
+  `PreToolUse` hook reserves each exact worker,
+  reviewer, and validator call before provider dispatch; team-execution must not keep a parallel
+  counter or reserve a Workflow batch. At every wave or result-collection boundary run
+  `lease_protocol.py renew --session-id "$CLAUDE_CODE_SESSION_ID"`. A renewal refusal halts the
+  wave; it never creates replacement authority. See `references/lease-protocol.md`.
+
 - **Run-posture check (#380):** when the run carries a committed intent envelope (the plan's
   `ExecutionSpec.intent`, or an envelope file handed down by `/outcome`), resolve every spend
   decision — wave spawn at an escalated tier, a worker/reviewer-proposed tier or verify-depth
@@ -387,6 +396,48 @@ invariance, and the KTD7 capability-keyed fallback to inlined content).
 
 Run reviewers according to `consensus-protocol.md`.
 
+Renew the team session at this collection/fan-out boundary using `lease_protocol.py renew` before
+the reviewer manifest and Agent calls. The per-reviewer Saga lifecycle hook reservation remains the
+only admission authority.
+
+Before the first reviewer Agent call, create one `site=team-execution` dispatch manifest with every
+configured reviewer and its expected scored-review deliverable, then append that reviewer's `spawn`
+fact immediately before its Agent call. Use the packaged coordinator adapter, not a repository-relative
+Saga path: it resolves Saga from `SAGA_PLUGIN_ROOT`, an Infiquetra source checkout,
+`~/.claude/plugins/installed_plugins.json`, or the `CLAUDE_PLUGIN_ROOT` cache sibling. Its required
+preflight fails before any Agent call when no valid Saga plugin is installed.
+
+```bash
+TEAM_SETTLEMENT="${CLAUDE_PLUGIN_ROOT:-plugins/team-execution}/skills/team-execution/scripts/dispatch_settlement_adapter.py"
+python3 "$TEAM_SETTLEMENT" preflight
+python3 "$TEAM_SETTLEMENT" manifest --kind reviewer --repo-root "$REPO_ROOT" --subplot-id "$SAGA_ID" \
+  --dispatch-id "$DISPATCH_ID" --roster-json "$REVIEWER_ROSTER_JSON" --at "$NOW"
+python3 "$TEAM_SETTLEMENT" saga -- --repo-root "$REPO_ROOT" --subplot-id "$SAGA_ID" spawn \
+  --dispatch-id "$DISPATCH_ID" --unit-id "$REVIEWER" --attempt 1 \
+  --idempotency-key "team-execution:reviewer:$REVIEWER" --at "$NOW"
+```
+
+At collection, the coordinator stores the returned structured reviewer result in a JSON file and runs
+`settle --kind reviewer --source-json ... --receipt-path ...`. The adapter validates the real result,
+materializes a `dispatch.artifact.v1` file, and passes only its `{receipt_type, unit_id,
+evidence_path}` descriptor to Saga. Missing, incomplete, prose-only, or artifact-pointer-only output
+is settled as `silent-no-op`; trust flags, caller digests, and caller-selected outputs are never
+accepted. Source and receipt paths are relative to `--repo-root` by default. When team state lives
+under `~/.claude`, pass that state directory as `--evidence-root`; the adapter confines both paths to
+that root while validator-referenced evidence remains confined to `--repo-root`.
+
+```bash
+python3 "$TEAM_SETTLEMENT" settle --kind reviewer --repo-root "$REPO_ROOT" --subplot-id "$SAGA_ID" \
+  --dispatch-id "$DISPATCH_ID" --unit-id "$REVIEWER" --attempt 1 --at "$NOW" \
+  --source-json ".claude/team-execution/reviews/$REVIEWER.json" \
+  --receipt-path ".claude/team-execution/settlement/$DISPATCH_ID-$REVIEWER.json"
+python3 "$TEAM_SETTLEMENT" saga -- --repo-root "$REPO_ROOT" --subplot-id "$SAGA_ID" report \
+  --dispatch-id "$DISPATCH_ID"
+```
+
+HALT when `halt_required=true`. At the next review boundary, use `saga -- ... claim-retry` before new
+reviewer work; the idempotency key remains stable.
+
 - All confirmed reviewers score the implementation.
 - Consensus requires overall score >= 9.0/10 and no dimension < 7.0.
 - Security/auth/secrets dimension < 5.0 is a blocking stop.
@@ -398,6 +449,14 @@ Run reviewers according to `consensus-protocol.md`.
 ## Step B3: Scanners Run
 
 Run selected scanner validators only after reviewer consensus or explicit user override.
+
+Apply the same settlement sequence to the complete selected-validator roster: manifest before any
+Agent call, spawn immediately before each call, and settle from the validator's required state file.
+The state file's `evidence[]` entries must resolve to existing files inside `--repo-root`; the adapter
+then materializes the `dispatch.artifact.v1` receipt. A required validator with no state file,
+incomplete state, missing referenced evidence, success prose, or an artifact pointer is
+`silent-no-op`, enters the derived DLQ while attempts remain, and can never be counted as an implicit
+pass. The exact command is in `validator-evidence-state.md`.
 
 Scanners inspect local artifacts, code, dependency manifests, contracts, and infrastructure.
 Hard-fail scanner findings block auto-merge, nonprod deploy, and completion.
@@ -468,6 +527,17 @@ not a trip. See `references/validator-execution-order.md` (Required-Evidence Abs
 
 ---
 
+## Step B8: Stop and release resident leases
+
+Send an explicit stop to every named resident worker, reviewer, and validator. Wait for every handle
+to report terminal; silence, timeout, and a missing handle are not terminal evidence. Then run
+`lease_protocol.py teardown --session-id "$CLAUDE_CODE_SESSION_ID"`, passing each verified terminal
+agent id with `--terminal-agent-id`. The wrapper refuses unresolved children, releases only this
+session's agent leases, and sweeps expired agent debris. A crashed or ambiguous child retains its
+lease until TTL and a later sweep. Follow the exact protocol in `references/lease-protocol.md`.
+
+---
+
 # Quick Reference: File Paths
 
 ```text
@@ -479,6 +549,7 @@ team-execution/
 │       ├── SKILL.md
 │       └── references/
 │           ├── consensus-protocol.md
+│           ├── lease-protocol.md
 │           ├── review-criteria.md
 │           ├── reviewer-registry.md
 │           ├── validator-criteria.md

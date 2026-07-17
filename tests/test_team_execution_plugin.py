@@ -40,6 +40,7 @@ VALIDATOR_REFERENCES = {
 
 WORKER_REFERENCES = {
     "external-engine-workers.md",
+    "lease-protocol.md",
 }
 
 
@@ -61,9 +62,7 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
-    assert (
-        plugin_json["version"] == "2.16.0"
-    )  # andon-cord stop-the-line lane (#372), atop the Step B1 posture check (#380)
+    assert plugin_json["version"] == "2.18.0"  # fleet lease lifecycle protocol (#356)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()
@@ -137,6 +136,32 @@ def test_external_engine_batch_contract_preserves_per_unit_evidence() -> None:
         assert required in manifest_doc
 
 
+def test_reviewer_and_validator_protocols_wire_canonical_dispatch_settlement() -> None:
+    references_dir = PLUGIN_ROOT / "skills" / "team-execution" / "references"
+    docs = {
+        "skill": _read(PLUGIN_ROOT / "skills" / "team-execution" / "SKILL.md"),
+        "consensus": _read(references_dir / "consensus-protocol.md"),
+        "validator": _read(references_dir / "validator-evidence-state.md"),
+        "manifest": _read(references_dir / "worker-manifest.md"),
+    }
+    adapter = (
+        PLUGIN_ROOT / "skills" / "team-execution" / "scripts" / "dispatch_settlement_adapter.py"
+    )
+    assert adapter.exists()
+    assert "dispatch_settlement_adapter.py" in docs["skill"]
+    assert "SAGA_PLUGIN_ROOT" in docs["skill"]
+    assert "preflight" in docs["skill"]
+    assert "manifest before any\nAgent call" in docs["skill"]
+    assert "immediately before that\n        reviewer's Agent call" in docs["consensus"]
+    assert "success prose" in docs["consensus"]
+    assert "artifact pointer" in docs["consensus"]
+    assert "required validator with no state file" in docs["validator"]
+    assert "settles `silent-no-op`" in docs["validator"]
+    assert "dispatch.artifact.v1" in docs["validator"]
+    assert "valid contract-bearing worker-exit manifest is the delivery" in docs["manifest"]
+    assert "`artifact_pointer.py` snapshots are ignored for delivery" in docs["manifest"]
+
+
 def test_appsec_audit_skill_documents_url_trust_boundaries() -> None:
     skill_path = PLUGIN_ROOT / "skills" / "appsec-audit" / "SKILL.md"
     skill_doc = _read(skill_path).lower()
@@ -186,6 +211,9 @@ def test_skill_documents_validator_state_and_automation_gates() -> None:
         "github.com/infiquetra/*",
         "nonprod",
         "maximum 3 remediation loops",
+        "Step B8",
+        "CLAUDE_CODE_SESSION_ID",
+        "lease_protocol.py teardown",
     ):
         assert required in skill_doc
 

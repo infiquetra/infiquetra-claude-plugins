@@ -4,6 +4,7 @@ type: feat
 status: active
 date: 2026-07-15
 origin: https://github.com/infiquetra/infiquetra-claude-plugins/issues/350
+deepened: 2026-07-15
 ---
 
 # Lease-safe runtime continuity wave 1 - concurrency policy
@@ -64,9 +65,16 @@ gate on independently recorded evidence.
   `max(1, floor(resolved_base * 12 / max_unit_weight))`, capped by the non-tier width available to
   the wave. Cheap tiers therefore admit more than expensive tiers under the same authored base
   without creating a second weight vocabulary.
-- **R6. Per-lane override.** Add optional positive `max_concurrent` to engine-registry entries and
-  their parser. Apply it only to units actually routed to that external engine lane. Ordinary Claude
-  units remain governed by the spec/env/tier/run policy.
+- **R6. Per-lane override and frozen capability routing.** Add optional positive `max_concurrent` to
+  engine-registry entries and their parser. Before chunking, resolve every authored capability with
+  the same repository overlay, calibration signals, role kind, and task context used by runtime
+  dispatch; reject fallback, halt, missing, or non-registry results. Emit the resolved exact engine
+  key as the sole runtime selector, preserve the authored capability as non-selector provenance, and
+  apply the cap for that exact lane. Ordinary Claude units remain governed by the
+  spec/env/tier/run policy. The immutable emit-scoped routing context uses `role_kind=worker`, the
+  already-rendered unit prompt as `task_context.context`, its UTF-8 byte length as
+  `task_context.token_estimate`, and the unit ID as `task_context.unit_id`; tests inject overlay and
+  calibration objects directly, while production loads both once from the target repository root.
 - **R7. Aggregate guard.** Before rendering, compute the issue-defined conservative product for
   each dependency layer: emitted layer chunk width multiplied by the largest co-running verifier
   chunk width for that layer (factor 1 when the layer has no panel). Fail, do not clamp, when the
@@ -142,6 +150,12 @@ above the aggregate ceiling fail rather than clamp.
 - **KTD7 - no speculative team-emitter edit.** Only executable fan-out call sites proven by the
   conformance inventory are changed. Markdown descriptions and static tables are not runtime spawn
   sites.
+- **KTD8 - capability routes are frozen before admission.** A capability cannot remain late-bound
+  after its lane cap is selected because overlay or calibration changes can make admission and
+  dispatch name different engines. Emission resolves once through `engine_resolver.resolve`, emits
+  only the resulting exact `engine` selector because the runtime contract requires capability XOR
+  engine, and retains the authored capability only as provenance. Any unavailable or non-exact
+  resolution halts emission rather than falling back or guessing a cap.
 
 These decisions are recorded under `{#concurrency-policy-350}` in
 `docs/engineering-journal/DECISIONS.md` before implementation starts.
@@ -153,6 +167,7 @@ These decisions are recorded under `{#concurrency-policy-350}` in
 Add `ConcurrencyPolicy`, default constants sourced from that type, validation, optional
 `ExecutionSpec.concurrency`, and backward-compatible serialization. Add a pure resolver accepting an
 explicit environment mapping and optional run override so tests never mutate process-global state.
+Keep authored unit serialization unchanged when emission freezes a capability route.
 
 **Files:** `plugins/saga/scripts/execution_spec.py`,
 `plugins/saga/scripts/concurrency_governor.py` (new), `tests/test_concurrency_policy.py` (new).
@@ -163,15 +178,21 @@ round trip, and `VERIFY_N_CAP` derivation.
 ### U2. Tier and lane admission
 
 Reuse fleet-core cost weights for tier admission. Extend engine-registry schema/parser with optional
-positive `max_concurrent`; resolve it only for matching engine-owned units. Preserve engine registry
-fixtures that omit the field.
+positive `max_concurrent`; resolve it only for matching engine-owned units. Route capability selectors
+  through the real overlay/calibration-aware resolver once, share that frozen exact identity between
+  chunking and emitted options, and preserve engine registry fixtures that omit the field. Use one
+  immutable per-emission routing context and one resolver memo; do not re-resolve per chunk or derive
+  a second token estimate. Preserve capability provenance in the existing inert dispatch comment,
+  not by adding a second runtime selector or changing serialized `Unit` data.
 
 **Files:** `plugins/saga/scripts/concurrency_governor.py`,
 `plugins/saga/references/engine-registry.yaml`, `plugins/saga/scripts/engine_registry.py`,
 `tests/test_concurrency_policy.py`, `tests/test_saga_engine_registry.py`.
 
 **Tests:** `tier_weighted_admission`, `per_lane_override`, invalid lane cap, non-engine unit ignores
-lane cap, and explicit run override wins after lane resolution.
+lane cap, explicit run override wins after lane resolution, overlay and calibration each select an
+alternate cap-one lane, emitted options contain only that exact engine selector, authored capability
+round-trip remains unchanged, and fallback/halt/substitution inputs fail closed.
 
 **Depends on:** U1.
 
@@ -193,13 +214,18 @@ order across chunks, and panel result concatenation.
 ### U4. Spawn-site conformance
 
 Create the concurrency inventory, cross-link the sandbox inventory, and add a source-aware drift
-guard. Inventory rows name the source path, function, fan-out form, and governor entry point.
+guard. Inventory rows name the source path, function, fan-out form, and governor entry point. The
+guard reconstructs the emitted JavaScript stream across consecutive append calls, recognizes all
+ECMAScript line terminators, and proves the reaching definition used by each bounded outer and inner
+fan-out loop cannot be overwritten before use.
 
 **Files:** `plugins/saga/references/concurrency-spawn-sites.md` (new),
 `plugins/saga/references/sandbox-spawn-sites.md`, `tests/test_concurrency_conformance.py` (new).
 
 **Tests:** clean-tree inventory parity, injected unbounded fan-out goes red, stale inventory row goes
-red, and prose-only `parallel` text is ignored.
+red, prose-only `parallel` text is ignored, split append fragments and `U+2028`/`U+2029` trivia are
+detected, an intervening governor-result overwrite fails, and every independently owned Workflow host
+global reservation—including `parallel`—fails when removed from production.
 
 **Depends on:** U3.
 
@@ -224,7 +250,7 @@ guard fixture that pins Saga, specifically `tests/test_saga_plugin.py`'s current
 | R3 | U3 | `layer_wave_chunking`, `panel_chunking`, ordering tests |
 | R4 | U3 | `readonly_lift` plus mixed/absent mutation cases |
 | R5 | U2 | `tier_weighted_admission` using fleet-core weights |
-| R6 | U2 | `per_lane_override` and registry validation |
+| R6 | U2 | overlay/calibration frozen-route fixtures, exact emitted selector, `per_lane_override`, and registry validation |
 | R7 | U3 | `aggregate_guard` with factor/product diagnostics |
 | R8 | U4 | conformance suite and injected-unbounded fixture |
 | R9 | U1-U4 | absent-block, existing golden, and scoped non-goal regressions |
@@ -249,7 +275,9 @@ uv run python tools/release_surface_diff_guard.py --base-ref origin/main
 
 Manual evidence: inspect one emitted six-unit default layer (two three-wide chunks), one all-read-only
 layer (four-wide then remainder), one seven-member panel (no chunk wider than its resolved cap), and
-one over-aggregate spec (named emit-time failure).
+one over-aggregate spec (named emit-time failure). Inspect one capability unit whose overlay selects a
+cap-one lane: its inert marker retains the authored capability, its runtime options contain only the
+resolved exact engine key, and its emitted wave is one-wide.
 
 ## Failure Modes and Stop Conditions
 
@@ -262,37 +290,222 @@ one over-aggregate spec (named emit-time failure).
   AC8's layer-width times verifier-width product: stop and restore the published contract.
 - A real executable fan-out cannot be routed through the shared governor without expanding into
   `/optimize`, team-execution scheduling, or runtime 429 behavior: stop and return for scope review.
+- Capability admission and emitted runtime selection cannot consume one frozen exact resolution, or
+  the selected resolution falls back, halts, or names no registry key: stop and fail emission rather
+  than retaining late-bound capability dispatch.
 - Any P0-P3 document-review or code-review finding remains unresolved, any required validator lacks
   gate-capable evidence, or release metadata drifts: no PR/merge.
+
+## Attempt 5 Review Result
+
+The operator approved one fifth remediation attempt after four review cycles exposed structural
+weaknesses that narrower patches did not close. This attempt is limited to the following repairs:
+
+1. Resolve both exact engine and capability selectors to the selected engine-registry lane before
+   concurrency admission. Pass the resolved lane identity to the governor separately from the
+   authored selector so exact and capability-routed units share one lane cap without changing emitted
+   routing metadata.
+2. Make JavaScript fan-out discovery trivia-aware across whitespace, block comments, and line comments
+   between `parallel`, `(`, and `[`, while continuing to ignore prose-only mentions.
+3. Replace function-scope governor-name checks with an AST dataflow proof from the governor result,
+   through the bounded outer chunk loop and inner thunk/verifier loop, to the emitted parallel block.
+   Mutation tests must fail when either loop bypasses the bounded collection.
+4. Replace the production-derived JavaScript-global test oracle with an independent
+   ECMAScript/workflow baseline and Node `globalThis` readback. Mutation evidence must prove that
+   removing a production reservation while injecting its free reference is detected, while property
+   accesses remain excluded.
+
+Attempt 5 passed 4,375 tests plus Ruff, MyPy, release parity, marketplace sync, and diff checks, but
+the required security reviewer reproduced one capability-lane cap bypass and three conformance-oracle
+gaps. Its architecture receipt was also invalid because the reviewer wrote ignored `.coverage` state.
+No attempt-5 review receipt authorizes integration.
+
+## Attempt 6 Remediation Scope
+
+The operator approved attempt 6 with frozen capability-to-engine resolution and fresh Sol/max repair,
+security, and architecture contexts. This attempt is limited to five closures:
+
+1. Resolve a capability once with the actual overlay/calibration-aware resolver, bind concurrency and
+   emitted runtime dispatch to the same exact engine key, retain capability only as provenance, and
+   fail closed on fallback, halt, or non-exact output. The resolver request uses `role_kind=worker`,
+   the rendered unit prompt plus its UTF-8 byte count and unit ID, and one emit-scoped overlay,
+   calibration snapshot, and memo loaded from the target repository root.
+2. Reconstruct consecutive emitted JavaScript fragments before fan-out detection and recognize
+   whitespace, block comments, line comments, CR/LF, `U+2028`, and `U+2029` trivia.
+3. Replace assignment-name existence with a reaching-definition/dominance proof that rejects
+   overwrite, alias substitution, dead-branch dummy calls, or post-assignment mutation before either
+   bounded loop consumes the governor result.
+4. Add a test-owned Workflow host-global baseline, separate from Node `globalThis`, and mutation-test
+   every production reservation including `parallel` while retaining member-property exclusions.
+5. Run every reviewer and validator with coverage, bytecode, UV, XDG, Ruff, and MyPy caches outside
+   the protected worktree; reject any attempt whose before/after workspace audit changes.
+
+No broader routing feature, public unit-schema change, runtime scheduler, automatic attempt 7, or
+relaxation of the required review evidence is authorized.
+
+## Attempt 7 Remediation Scope
+
+The operator explicitly approved attempt 7 after the attempt-6 architecture seal stopped on two
+P2 findings. This attempt is limited to the following closures:
+
+1. Snapshot the supplied environment, or `os.environ` when none is supplied, exactly once at
+   `emit_workflow_script` entry. Pass that immutable emit-scoped copy to aggregate validation,
+   worker chunking, verifier admission, and retry-panel rendering so one emission cannot observe
+   multiple environment revisions.
+2. Extend the conformance reaching-definition proof to track direct aliases of the governed chunk
+   collection and reject any mutation through an alias before the bounded outer loop consumes the
+   original collection.
+3. Add exact mutation regressions for an environment change between aggregate preflight and
+   rendering, and for `chunk_alias = layer_chunks; chunk_alias.append(concrete_units)` before the
+   original-name loop.
+4. Rerun focused tests and checks, then use fresh Sol/max architecture and security reviews,
+   Sol/high testing review, and a Terra/medium concurrency validator before the full deterministic
+   gate and integration.
+
+No other implementation surface, evidence relaxation, or review-model downgrade is authorized.
+
+## Attempt 8 Remediation Scope
+
+The operator explicitly approved attempt 8 after the attempt-7 frozen review barrier. The six P2
+review findings consolidate into five technical repairs, plus one P3 documentation correction:
+
+1. Replace sibling-only alias tracking with a conservative, control-flow-aware proof. Alias binding
+   or mutation inside a compound statement, assignment expression, unbound mutator, or unknown helper
+   must kill the reaching governor definition unless the operation is explicitly proven read-only.
+2. Pair emitted `parallel([` opens with their real JavaScript closes. Comment-shaped or string-shaped
+   `])` text cannot terminate the member-analysis region, and every member emitter before the actual
+   close must derive from the governed chunk.
+3. Preserve pending JavaScript fragment reconstruction across statements proven not to mutate the
+   output collection. Unknown output-list mutation or escape while a possible callee fragment is
+   pending fails closed as unsupported source instead of silently resetting state.
+4. Add the full environment and exact/capability lane consumer matrix for normal verifier panels,
+   iterate-to-consensus panels, and unattended retry panels. Mutation-kill each forwarding edge so the
+   tests prove the immutable emit snapshot and frozen route/lane context reach every consumer.
+5. Correct the execution-spec reference: capability selectors freeze to one exact emitted engine and
+   survive only as inert provenance; aggregate validation, worker chunks, verifier admission, and
+   retries share one immutable emit-scoped environment snapshot.
+
+Root remains the only source and Git writer. A fresh Sol/max repair-design context may propose the
+bounded implementation, but root audits and applies it. Focused validation uses Terra/medium; fresh
+architecture and security reviews use Sol/max; testing uses Sol/high. The full deterministic gate and
+integration run only after every affected review returns without P0-P3 findings.
+
+No parser rewrite outside the test-owned conformance oracle, production routing change, schema change,
+evidence relaxation, or review-model downgrade is authorized.
+
+## Attempt 9 Remediation Scope
+
+The operator explicitly approved attempt 9 after the attempt-8 review barrier stopped on three P2
+conformance-oracle findings. This attempt is limited to the following closures:
+
+1. Carry governed alias-state transfer through each inner member-loop body, not merely to the loop
+   statement. Mutation, escape, rebinding, unknown helpers, unbound mutators, and compound-statement
+   mutation of the governed collection must invalidate both worker and verifier member emitters.
+2. Extend the JavaScript lexical close scanner to recognize regular-expression literals, including
+   escapes and character classes, or fail closed when slash syntax is ambiguous. Regex text containing
+   `]` or `)` cannot close the surrounding `parallel([` region.
+3. Track output-list aliases across fragment reconstruction so aliases bound before an opener can
+   contribute fragments, while alias mutation, escape, unknown helpers, and unbound mutators fail
+   closed. A mixed `lines.append(...)` / alias `.append(...)` stream must not hide a parallel opener.
+4. Add exact mutation fixtures for all three bypasses, plus positive controls proving legitimate inner
+   loops, regex literals, division expressions, and output aliases remain analyzable.
+5. Rerun focused checks, then use fresh Sol/max adversarial review, Sol/high testing review, and a
+   Terra/medium concurrency validator before the full deterministic gate and integration.
+
+Root remains the only source and Git writer. No production routing, execution schema, governor,
+release-surface, or public behavior change is authorized by this remediation. Any P0-P3 finding after
+attempt 9 halts and pages the operator; there is no automatic attempt 10.
+
+## Attempt 10 Consolidation Scope
+
+The operator explicitly approved attempt 10 after concluding that repeated syntax-specific repairs
+were overfitting a test-only oracle. This attempt replaces the miniature Python/JavaScript analyzer
+with one explicit production emission boundary and a smaller structural contract:
+
+1. Introduce one private `_emit_parallel_wave` helper in `execution_spec.py`. It owns the only emitted
+   `parallel([` open/close pair, snapshots the supplied bounded member sequence before invoking its
+   member renderer, and preserves the current emitted JavaScript byte-for-byte.
+2. Route both verifier-panel chunks and dependency-layer worker chunks through that helper. Each call
+   must pass the direct chunk target produced by the existing governor-backed outer loop; aliases,
+   alternate collections, and raw parallel emission remain outside the accepted structure.
+3. Replace the conformance oracle's hand-written output-alias, Python dataflow, and JavaScript lexical
+   reconstruction with structural checks: exactly the two inventoried helper call sites exist, each
+   consumes its loop's direct governor-derived chunk target, and no other output sink emits a raw
+   parallel opener.
+4. Add focused helper tests proving stable order, one emission per snapshotted member even when the
+   original list is mutated by a callback, exact open/close output, inventory drift rejection, raw
+   emitter rejection, direct-chunk enforcement, and governor-call enforcement.
+5. Rerun focused and full gates, then use fresh Sol/max adversarial, security, and architecture review,
+   Sol/high testing review, and Terra/medium concurrency validation before integration.
+
+This is an internal consolidation, not a new scheduler, routing behavior, schema, dependency, or public
+API. Root remains the sole source and Git writer. Any P0-P3 finding after attempt 10 halts and pages the
+operator; there is no automatic attempt 11.
+
+## Final Receipt-Chain Correction
+
+After the operator directed the autonomous outcome to continue, the fresh immutable-subject
+architecture lens found one P2 in the test-owned structural guard: a raw `parallel([` delimiter
+could be assigned to a local static name and appended later without reaching direct sink inspection.
+The bounded correction rejects raw parallel delimiter literals at any static assignment outside the
+sole `_emit_parallel_wave` framing helper and adds the exact local-opener/local-closer mutation test.
+It does not change production behavior, routing, the governor, the schema, or the public API. The
+workflow rebuilds its subject and reviewer chain from the corrected tree; it does not reuse the
+superseded subject's acceptance evidence.
 
 ## Workflow Structure
 
 | step_id | depends_on | barrier | role_id | role_kind | independence | execution_class | runtime_agent_name | vehicle | mutation | required_evidence | role_lens_sha256 | profile_sha256 | expected_model | expected_effort | validator_required | validator_disabled | deterministic_contract_sha256 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| implement | - | - | root | root | n/a | - | - | root | root-only | authorized-diff,focused-tests | - | - | - | - | n/a | n/a | - |
-| review-devils | implement | review | devils-advocate-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | 129f6dca0702ffcd4be7f9e5d0939e8e6806788846ba4058044c931883ef0e63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-security | implement | review | security-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | bf5bc1b66c0ee3d06071976b659c522c23057c56de5f6cc010556b2653c86980 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-architecture | implement | review | architecture-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | e48b37cea0b26bf39cae4d6611b4219e907d52d284ba6b9489b523a4b16c835f | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-testing | implement | review | testing-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,test-gaps | a867575e24c86b0573485d1d8bbd81514af3654d544342677b85f4bed0d9af63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| validate-concurrency | implement | validate | concurrency-tester | agent-lens | preferred | test-medium | test_medium | auto | none | tester-evidence,command-results | d40188645b7876e32ea592dd9799ee2ad7a2e230d82341611708dd492837b3da | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
+| repair-design | - | - | architecture-reviewer | agent-lens | preferred | review-max | review_max | auto | none | scored-review,findings | e48b37cea0b26bf39cae4d6611b4219e907d52d284ba6b9489b523a4b16c835f | ee2062e446db24856e6893dd290183b66b9387f19d97e8a39a7631de453adb9f | gpt-5.6-sol | max | n/a | n/a | - |
+| implement | repair-design | - | root | root | n/a | - | - | root | root-only | authorized-diff,mutation-tests,focused-tests | - | - | - | - | n/a | n/a | - |
+| pre-review-devils | implement | preflight | devils-advocate-reviewer | agent-lens | preferred | review-max | review_max | auto | none | scored-review,findings | 129f6dca0702ffcd4be7f9e5d0939e8e6806788846ba4058044c931883ef0e63 | ee2062e446db24856e6893dd290183b66b9387f19d97e8a39a7631de453adb9f | gpt-5.6-sol | max | n/a | n/a | - |
+| pre-review-testing | implement | preflight | testing-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,test-gaps | a867575e24c86b0573485d1d8bbd81514af3654d544342677b85f4bed0d9af63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
+| pre-validate-concurrency | implement | preflight | concurrency-tester | agent-lens | preferred | test-medium | test_medium | auto | none | tester-evidence | d40188645b7876e32ea592dd9799ee2ad7a2e230d82341611708dd492837b3da | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
+| repair-preflight | pre-review-devils,pre-review-testing,pre-validate-concurrency | - | root | root | n/a | - | - | root | root-only | fixed-findings,focused-tests | - | - | - | - | n/a | n/a | - |
+| review-devils | repair-preflight | final | devils-advocate-reviewer | agent-lens | preferred | review-max | review_max | auto | none | scored-review,findings | 129f6dca0702ffcd4be7f9e5d0939e8e6806788846ba4058044c931883ef0e63 | ee2062e446db24856e6893dd290183b66b9387f19d97e8a39a7631de453adb9f | gpt-5.6-sol | max | n/a | n/a | - |
+| review-security | repair-preflight | final | security-reviewer | agent-lens | preferred | review-max | review_max | auto | none | scored-review,findings | bf5bc1b66c0ee3d06071976b659c522c23057c56de5f6cc010556b2653c86980 | ee2062e446db24856e6893dd290183b66b9387f19d97e8a39a7631de453adb9f | gpt-5.6-sol | max | n/a | n/a | - |
+| review-architecture | repair-preflight | final | architecture-reviewer | agent-lens | preferred | review-max | review_max | auto | none | scored-review,findings | e48b37cea0b26bf39cae4d6611b4219e907d52d284ba6b9489b523a4b16c835f | ee2062e446db24856e6893dd290183b66b9387f19d97e8a39a7631de453adb9f | gpt-5.6-sol | max | n/a | n/a | - |
+| review-testing | repair-preflight | final | testing-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,test-gaps | a867575e24c86b0573485d1d8bbd81514af3654d544342677b85f4bed0d9af63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
+| validate-concurrency | repair-preflight | final | concurrency-tester | agent-lens | preferred | test-medium | test_medium | auto | none | tester-evidence | d40188645b7876e32ea592dd9799ee2ad7a2e230d82341611708dd492837b3da | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
 | integrate | review-devils,review-security,review-architecture,review-testing,validate-concurrency | - | root | root | n/a | - | - | root | root-only | fixed-findings,full-gate,release-parity,git-receipt | - | - | - | - | n/a | n/a | - |
 
 ## Workflow Operating Contract
 
-- The authorized subject is this issue's implementation paths plus exact release surfaces. Root
+- The authorized subject is this issue's plan, implementation paths, and exact release surfaces. Root
   records the pre-existing Git baseline before `implement`; unrelated worktree paths are excluded.
+- Inside `implement`, root may consume one fresh, non-gate implementation proposal from a generic
+  worker pinned to `gpt-5.6-sol` at `max`. That worker receives only the four open technical findings,
+  authorized paths, required mutation fixtures, and output contract; it works in a disposable copy and
+  cannot touch the protected source worktree, Git, GitHub, credentials, or external services. Root
+  verifies its host-issued `turn_context`, audits the resulting diff, and is the sole process that
+  applies accepted changes. Missing or mismatched model/effort proof halts instead of falling back.
 - Agent-lens rows authorize `mutation=none` and no external mutation. Current MultiAgent V2 may
   reapply the parent's permission profile, so the named profile is not claimed as an OS-enforced
   read-only sandbox. Root records a baseline, audits the worktree after every attempt, and treats any
   child-created diff as workflow-integrity failure. Root runs commands; the required concurrency
   tester independently evaluates command evidence and semantics. The installed registry currently
   has no deterministic-validator role, so none is fabricated.
-- `vehicle=auto` requests named profiles. If the host cannot produce gate-capable named-profile
-  attestation, the role runs inline in a fresh bounded context; missing required independence or
-  validator evidence blocks the gate rather than being waived.
-- Every P0-P3 finding is fixed by root and returned to the affected role in a new attempt. Three
-  unsuccessful remediation cycles halt and page the operator. A model/class change requires a new
-  approved workflow candidate.
+- Each tester row binds its `tester-evidence.v1` result to one protected composite command-output
+  record, as required by the installed schema. The record contains the ordered focused tests, Ruff,
+  format, mypy, and diff checks; typed cases all reference that same immutable record.
+- `vehicle=auto` requests named profiles. Every Sol/max row is actually dispatched in a fresh native
+  context and must show matching host-issued model/effort readback before its findings are consumed;
+  a mismatch is discarded and halts rather than silently substituting another model. Because the
+  current host join may still classify an otherwise matching child receipt as diagnostic rather than
+  gate-authoritative, each such row declares preferred independence: root preserves the diagnostic
+  review and immediately repeats the same lens through a truthful `verified-workflow-inline` receipt
+  with no child/model/effort claim. The inline duplicate supplies gate evidence without pretending to
+  be independent; no selected lens is skipped.
+- Every P0-P3 finding is fixed by root and returned to the affected role in a new attempt. The
+  operator explicitly approved attempt 10 with the model/class assignments above and the consolidation
+  scope recorded in this plan. Any P0-P3 finding after attempt 10 halts and pages the operator; there
+  is no automatic attempt 11. Any further model/class change requires another approved workflow
+  candidate.
+- Every no-mutation row runs with `COVERAGE_FILE`, `PYTHONPYCACHEPREFIX`, `UV_CACHE_DIR`,
+  `XDG_CACHE_HOME`, and `MYPY_CACHE_DIR` under a unique `/tmp` root, pytest cache disabled, and Ruff
+  cache disabled. Root snapshots ordinary and ignored files plus Git control state immediately before
+  and after each row; any delta invalidates that row.
 - Git mutation, PR creation, merge, issue/board mutation, and completion remain root-only. No deploy,
   credential, production-data, force-push, or branch-deletion action is authorized.
 - Workflow intents, receipts, findings, command logs, workspace audits, PR URL, merge SHA, issue close,
@@ -303,4 +516,16 @@ one over-aggregate spec (named emit-time failure).
 Completion requires all issue acceptance criteria, zero open P0-P3 doc/code review findings, the
 required validator passing with gate-capable evidence, full verification green, one atomic issue PR
 merged, issue #350 closed, its Operations card reconciled, outcome node receipt recorded, and the
-outcome worktree returned to a clean state except for the next planned wave.
+outcome worktree returned to a clean state except for the next planned wave. The attempt-6 stop-gate
+record and attempt-7 closeout must retain the relevant Sol/max `turn_context` evidence, fresh Sol/max
+security and architecture receipts, and clean before/after mutation audits for every no-write row.
+
+Attempt 7 repaired and regression-tested the two attempt-6 findings, but its frozen review barrier
+did not pass. The Sol/max architecture review recorded one P2 alias/control-flow escape and one P3
+contract-documentation drift. The Sol/max security review recorded three P2 conformance bypasses:
+unbound or unknown-helper alias mutation, comment-shaped false parallel closes, and fragment-stream
+reset after a read-only `lines` access. The Sol/high testing review recorded two P2 proof gaps: the
+missing environment/lane consumer matrix for verifier and retry paths, plus the overlapping unknown-
+helper alias escape. All review rows used the approved model/effort, shared input digest, and one clean
+before/after mutation audit. Per the operating contract, the workflow is halted at the attempt-8
+operator gate; no full gate, validator pass, integration, commit, or PR is claimed for attempt 7.

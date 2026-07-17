@@ -1,5 +1,105 @@
 # Changelog
 
+## [0.99.0] - 2026-07-16
+
+### Added - fleet-wide TTL lease admission and fencing (#356)
+
+- Installed Agent/Task lifecycle hooks that reserve capacity before provider launch, bind trusted
+  child identity on `SubagentStart`, require independent parent-return and child-terminal signals
+  before foreground release, and fence delegated Bash and file mutations against the current live
+  resource token.
+- Added atomic Workflow wave reservation, prelaunch attestation, cooperative renewal, and exact
+  owner release around the existing bounded concurrency policy. Generated leaves claim the named
+  batch through the same installed hooks; a partial reservation never launches.
+- Wrapped registered external-engine and production outcome dispatch paths in agent leases and
+  carried redacted lease provenance into evidence. Missing or protocol-skewed fleet-core installs
+  halt with install/update guidance instead of dispatching unleased.
+- Bound outcome-owned worktrees to durable worktree-pool receipts. Reconcile renews live owners,
+  adopts legacy live entries, reaps only expired dead or reboot-invalidated owners through Saga's
+  canonical reaper, and retains ambiguous, escaping, mismatched, or failed resources for retry.
+- Expanded the concurrency inventory into a machine-readable lease lifecycle map covering acquire,
+  bind, renewal, and release. Conformance now rejects newly injected executable spawn calls without
+  an inventory row and parses the installed hook metadata.
+- Registered advisory-panel members now consume the caller's exact session admission and stable
+  aggregate fence. A newer retry supersedes the entire stale panel before it can persist; both
+  reconciliation facts append inside exact-token settlement. Engine post-run validation, integrity
+  accounting, reconciliation, and fact persistence execute inside exact-token settlement; the CLI
+  requires fencing credentials for renew/release and owner teardown accepts no caller-authored
+  terminal assertion.
+- Bound advisory second-opinion dispatches to their originating Saga session as well as its pinned
+  admission policy, so per-session capacity remains authoritative across the external-engine path.
+- **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
+  unchanged; leases enforce runtime admission without redefining operator posture or revision eras.
+
+## [0.98.0] - 2026-07-16
+
+### Added - dispatch settlement and casualty reconciliation (#351)
+
+- Added a shared append-only settlement contract on the canonical run-fact ledger. Every dispatch
+  records a manifest, a durable pre-call spawn, and one evidence-derived terminal classification;
+  reports expose open positions and exact integer casualty thresholds without trusting agent
+  self-reports.
+- Added derived-on-read dead-letter and retry claims with stable idempotency keys. Retries increment
+  attempts atomically, late deliveries remain explicit facts, and reconciliation never reaps,
+  repairs, or mutates worktree state.
+- Wired outcome dispatch and canonical GitHub harvest evidence into settlement. Workflow emission
+  now publishes deterministic expected-unit metadata while the driving `/work` session remains the
+  only ledger writer; generated agents receive no ledger or filesystem capability.
+- Outcome settlement uses one complete ready-frontier cohort, binds every result to its exact
+  attempt, reconciles already-canonical completions after crashes, and blocks new cohorts while an
+  earlier cohort has missing evidence or unresolved casualties. Successful bounded retry clears the
+  live gate without erasing the earlier casualty history.
+- Added `dispatch_settlement.py` operations for manifests, spawns, settlements, late delivery,
+  reports, dead-letter inspection, retry claims, and leak reconciliation. The public `settle` verb
+  accepts only a descriptor for a persisted, schema-validated receipt, computes its digest from the
+  actual bytes, and derives classification. Team artifacts expose only closed reviewer-result and
+  validator-state payloads; Saga validates them and derives their deliverables instead of trusting a
+  caller-authored output list. Exact manifest replay is idempotent; terminal views also have
+  deterministic text output. This release does not change fan-out concurrency limits or introduce a
+  background reaper.
+- Retry thresholds use each attempt's own cohort, negative outcome terminals become retry-eligible,
+  runtime requests carry their stable dispatch identity, and pre-submit spawn appends are synced to
+  storage before the host call. Workflow drivers bind metadata to one persisted invocation identity
+  and safely map legacy result names into the settlement vocabulary.
+- **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
+  unchanged; settlement records the committed outcome dispatch without redefining operator posture.
+
+## [0.97.0] - 2026-07-15
+
+### Added - one bounded concurrency policy for Saga workflow fan-out (#350)
+
+- Added the optional, closed `ExecutionSpec.concurrency` policy with fleet defaults of three normal,
+  four explicit-read-only, and seven aggregate agents. Resolution now composes environment, shared
+  fleet tier weights, exact external-engine lane limits, and an explicit run override without
+  silently clamping invalid inputs.
+- Dependency layers and refute-N panels now share stable ordered chunking. Panel verdicts retain
+  their original order through concatenation, dependency barriers remain sequential, and emission
+  fails when the conservative worker-width times verifier-width product exceeds the aggregate
+  ceiling.
+- External-engine registry variants may declare an optional positive `max_concurrent` lane limit.
+  Exact-engine and capability selectors resolve to the selected registry lane before admission, so
+  both forms share that lane's cap while ordinary units keep their own limit. The new source-aware
+  concurrency inventory fails CI for unbounded executable fan-out sites or stale inventory rows
+  while ignoring documentation-only examples.
+- Workflow emission now rejects unsafe, reserved, generated-symbol-colliding, or runtime-global-
+  shadowing unit identifiers, including iterate-to-consensus loop locals, and renders free-form
+  comment text inert before producing executable JavaScript. The runtime-global boundary is
+  reserved independently of current harness syntax. Conformance tests normalize whitespace and
+  statically resolve constant f-string, concatenation, binding, and `.format()` fan-out emitters;
+  unresolved formatted callee slots fail closed. Static raw delimiter assignments outside the sole
+  framing helper also fail closed, so a local binding cannot hide an emitter from sink inspection.
+  JavaScript block and line comments cannot hide a fan-out call, and AST checks prove governor-result
+  dataflow through both chunk loops to emission. The runtime-global test oracle is independent of
+  production and cross-checks Node `globalThis`.
+- Unattended tier-climb retries now render the prompt contract for the climbed tier while retaining
+  the unit's frozen exact engine route. A cheap-to-non-cheap retry therefore drops the budget and
+  pull-cord riders and emits the non-cheap return schema expected by its gate.
+- **Compatibility:** capability-routed `recompile_for_tier(..., "cc-workflows-ultracode")` now
+  requires the authoritative `repo_root=` used for overlay and calibration loading. Exact-engine
+  workflow recompilation and non-workflow tiers retain the existing two-argument call.
+- **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
+  unchanged; bounded admission affects emitted workflow fan-out only.
+
 ## [0.96.0] - 2026-07-14
 
 ### Added - envelope-authorized merge: the `AUTONOMOUS_UNDER_ENVELOPE` write class (#449)

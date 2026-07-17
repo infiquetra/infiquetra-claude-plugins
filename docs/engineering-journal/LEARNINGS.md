@@ -25,6 +25,50 @@
 
 ---
 
+## 2026-07-16
+
+### A lease check protects a write only when the check and write share the exclusion window {#lease-settlement-window-356}
+
+**Context.** Issue #356 originally renewed and verified an external-engine token after the adapter
+returned, then released the broker lock before integrity counters and run-fact writes. Nested Agent
+admission similarly verified a parent in one transaction and granted its child in another.
+**Evidence.** Whole-diff security review reproduced both check-then-act windows. The repaired
+`LeaseBroker.agent_settlement()` holds the authority lock from post-run token validation through
+durable result writes and exact release; `acquire_agent()` and `prepare_batch_call()` validate the
+trusted parent inside the grant transaction. Focused tests block a competing retry behind settlement
+and assert advisory facts are written while the settlement guard is active. **Mechanism.** A current
+token is a point-in-time observation. Once its lock is released, another retry can supersede it before
+the protected side effect, making a successful check irrelevant. **Fix.** Move validation into the
+same locked transition as the grant or durable write, require exact fencing credentials for direct
+renew/release, expire abandoned admission pins, and keep exact closed heads in a cold archive outside
+the bounded hot registry. **Generalizable rule.** Treat lease validation as transaction scope, not a
+boolean precondition: every authority-dependent side effect must occur before the exclusion window
+closes, and preflight-only claims need an expiry and an operator-visible recovery path.
+
+**Refs.** Issue #356; DECISIONS `{#fleet-ttl-lease-broker-356}`; code review
+`docs/code-reviews/2026-07-16-issue-356-ttl-lease-broker-code-review.md`.
+
+---
+
+### Reporting an error is not a failure contract until the process status agrees {#board-move-fail-loud-609}
+
+**Context.** Mission-control `board move` processed several possible Projects
+memberships and printed useful errors for missing items, fields, options, and
+mutations, but the function returned `None` and the CLI exited zero. **Evidence.**
+Issue #609 reproduces the old behavior with an unavailable Status; focused tests
+in `plugins/mission-control/tests/test_board_move_exit.py` cover every failure
+class and a mixed multi-project result. **Mechanism.** Output accumulation and
+process success were independent: the loop preserved diagnostics, while the CLI
+had no aggregate failure signal. **Fix.** `board_move()` now returns whether all
+projects succeeded; `main()` exits 1 only after the accumulated output is
+emitted. **Validation.** The invalid-option test proves the set-field mutation
+is never called, and the mixed test proves a later project is still processed
+after an earlier failure. **Generalizable rule.** For batch-style CLIs, collect
+every result and derive one explicit terminal status; neither a printed error
+nor a caught exception can substitute for a nonzero process contract.
+
+**Refs.** #609; #584.
+
 ## 2026-07-14
 
 ### An authorization credential must bind content AND ordinal — either alone is forgeable by the system's own documented races {#token-era-binding-449}
@@ -3266,3 +3310,77 @@ atomic-write mechanisms from `{#unit-panels-vs-whole-diff-lenses-476}`'s sibling
 Same "receipt schema-valid ≠ receipt honest" family as #384's two-signal observer design; sibling gap
 in the same batch: #520 (tripwire hardening). Pre-merge review hardening on PR #575 narrowed the
 condition from `stdout_bytes + stderr_bytes == 0` to `stdout_bytes == 0` (finding F1).
+
+---
+
+### Parallel hooks require two independent release signals, and workflow batch identity cannot rely on hook environment inheritance {#parallel-hook-lease-lifecycle-356}
+
+**Evidence.** Issue #356's lease lifecycle wiring. Claude runs matching hooks independently;
+`SubagentStart` carries trusted child identity but no parent `tool_use_id`, while parent
+`PostToolUse`/`PostToolUseFailure` carries the tool id but not authoritative child termination.
+Also, environment exported by the `/work` driver is not a durable child-hook communication channel:
+the hook subprocess receives the Claude session id, but an explicit Workflow batch id is not
+guaranteed to persist into every later hook invocation.
+
+**Mechanism.** Releasing on either signal alone creates a live-child capacity hole. The broker
+therefore records `child_terminal_at` and `parent_completed_at` independently and removes a claimed
+foreground lease only after both exist. Workflow reservations are discovered from the canonical
+registry by trusted session when no explicit batch id is present; more than one live batch for the
+same session halts as ambiguous instead of selecting one. Cross-ordered claims may retain capacity
+until TTL, but they cannot release or authorize the wrong child.
+
+**Generalizable rule.** Treat hook callbacks as unordered, isolated observations, not one process or
+one inherited environment. Any lifecycle transition that destroys authority must require all
+independent trusted signals the host exposes, and any identity that must survive across callbacks
+belongs in the locked durable authority keyed by stable host identity. Ambiguity should retain
+authority and fail closed; it must never be resolved by oldest/latest guessing at release time.
+
+**Refs.** `plugins/saga/hooks/hooks.json`, `plugins/saga/scripts/lease_broker.py`,
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
+`plugins/saga/references/concurrency-spawn-sites.md`; decision
+`{#fleet-ttl-lease-broker-356}`.
+
+---
+
+### A durable resource cannot inherit the lifetime of the one-shot process that provisioned it {#durable-worktree-owner-transfer-356}
+
+**Evidence.** Issue #356 initially recorded the provisioning coordinator's PID/start identity on an
+outcome worktree lease. Outcome ticks are intentionally one-shot processes, while a dispatched child
+and its worktree persist across ticks. After TTL, the broker correctly proved that PID dead and the
+reaper could therefore delete a still-active child's real Git worktree.
+
+**Mechanism.** Process liveness answers whether one coordinator is alive, not whether an outcome-owned
+resource is abandoned. Reconciliation must first load durable child state, transfer the exact current
+fencing token to the new coordinator, and only then sweep. The broker lock spans both ownership
+transfer and the reaper callback, while `dispatched` is an independent destructive-action veto. Git
+provisioning similarly records registry and lease recovery authority before physical creation so a
+failed rollback cannot erase every route to later cleanup.
+
+**Generalizable rule.** Match authority lifetime to resource lifetime. For durable resources managed
+by ephemeral coordinators, persist an exact transferable token and require durable terminal/inactive
+state in addition to dead-process evidence before deletion. Persist recovery authority before the
+external side effect, and retain it whenever compensation is uncertain.
+
+**Refs.** `plugins/saga/scripts/outcome_worktrees.py`,
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
+`tests/test_outcome_worktrees.py`; decision `{#fleet-ttl-lease-broker-356}`.
+
+---
+
+### A lease boot identity fallback must be stable across cooperating processes {#restricted-boot-identity-356}
+
+**Evidence.** A restricted macOS runtime denied `sysctl kern.boottime`. The emergency fallback
+included the current PID and a fresh monotonic reading, so acquire and immediate renew calculated
+different boot identities and treated a new lease as reboot-expired.
+
+**Mechanism.** When `kern.boottime` is unavailable on Darwin, fleet-core reads the current
+`BOOT_TIME` record through libc's `utmpx` API. The record is shared across processes, changes on
+reboot, and remains independent of later wall-clock corrections. If every OS identity source is
+unavailable, the broker refuses authority instead of inventing process-local identity.
+
+**Generalizable rule.** A persisted authority marker cannot fall back to process-local or per-call
+identity. Exercise degraded platform probes through the full acquire-to-renew path, not only by
+asserting that the fallback returns a nonempty string.
+
+**Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` and
+`tests/test_fleet_lease_broker.py`; decision `{#fleet-ttl-lease-broker-356}`.

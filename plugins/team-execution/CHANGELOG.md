@@ -4,6 +4,38 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.18.0] - 2026-07-16
+
+### Added - lease-backed worker, reviewer, and validator lifecycles (#356)
+
+- Added a fleet-core lease preflight before the first Agent call, cooperative session renewal at
+  wave and result-collection boundaries, and Step B8 teardown that refuses to release unclaimed or
+  nonterminal children. Team execution reuses Saga's installed Agent lifecycle hooks rather than
+  maintaining a second counter or lease schema.
+- Added the operator lease protocol reference and protocol-version guard. A missing or skewed
+  fleet-core installation now halts with install/update guidance, and timeout or silence is never
+  treated as terminal proof for capacity release.
+- Clarified the external advisory-panel contract: the coordinator passes its trusted session and
+  exact resolved admission snapshot, and every member remains fenced through durable post-run
+  reconciliation and fact persistence.
+
+## [2.17.0] - 2026-07-16
+
+### Added - evidence-derived reviewer and validator settlement (#351)
+
+- Phase B now requires the coordinator to persist the expected reviewer/validator manifest and a
+  spawn fact immediately before every host call, then classify each unit from returned structured
+  evidence. Agent self-report and an artifact pointer alone are not delivery evidence.
+- Added an explicit casualty gate, derived dead-letter view, and stable-key retry protocol. Open or
+  casualty positions halt progression before downstream validators or completion; retries use a new
+  attempt without erasing the prior record.
+- The worker-manifest and validator-evidence contracts now name the canonical settlement CLI and
+  preserve the boundary that agents cannot write the parent ledger themselves. A packaged
+  coordinator adapter resolves the independently installed Saga plugin before any Agent call,
+  validates real reviewer/validator artifacts, materializes a closed kind-tagged receipt with no
+  caller-selected outputs, and invokes the canonical engine. Missing or incomplete evidence settles
+  fail-closed; corrupt or contradictory evidence halts instead of being guessed into a result.
+
 ## [2.16.0] - 2026-07-14
 
 ### Added - worker-raised andon-cord stop-the-line lane (#372)

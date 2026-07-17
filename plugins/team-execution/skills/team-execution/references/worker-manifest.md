@@ -88,6 +88,14 @@ changed/returned. A required, non-skipped, contract-bearing unit with no manifes
 a `missing-output` trip — consistent with `validator-evidence-state.md`'s Required-Evidence
 Absence rule for validators, applied here to workers.
 
+For dispatch settlement (#351), this valid contract-bearing worker-exit manifest is the delivery
+acknowledgment. The settlement adapter verifies the expected unit identity and required
+`output_completeness`, then binds the manifest digest as evidence. Missing or incomplete manifests
+settle `silent-no-op`; worker prose and `artifact_pointer.py` snapshots are ignored for delivery.
+Before every reviewer or validator Agent call, the coordinator has already appended that unit's stable
+spawn attempt through the packaged `dispatch_settlement_adapter.py` / resolved Saga CLI; the manifest
+cannot retroactively create a spawn or grant authority.
+
 **Claim provenance:** optional at v1. For a Claude-agent worker, output is code/diff, not a set of
 prose claims — leave `claim_provenance` absent (lightweight tier, KTD9) unless a future revision
 asks a worker to attest specific claims about its own diff. For a chaperone worker whose engine

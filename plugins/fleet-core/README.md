@@ -17,6 +17,7 @@ fleet-core/
 └── scripts/
     ├── fleet_commons_shim.py     # canonical shim — consumers vendor a byte-identical copy
     └── fleet_commons/            # the primitives, one stdlib-only module each
+        ├── lease_broker.py       # TTL admission, fencing, renewal, release, and safe sweep
         └── tier_palette.py       # MODELS / EFFORTS / CHEAP_MODELS / ENGINE_INTENTS + ranks
 ```
 
@@ -38,6 +39,22 @@ env override → repo-checkout walk-up → `~/.claude/plugins/installed_plugins.
 cache-sibling scan — and fails loud with an actionable message when none does. Set
 `FLEET_COMMONS_DEBUG=1` to print the resolution provenance
 (`fleet-commons: rung=<n> (<name>) root=<path>`) to stderr.
+
+## Lease authority
+
+`lease_broker.py` is protocol version 1 and owns one runtime-neutral registry for separate `agent`
+and `worktree` pools. Consumers reserve before spawn, bind provider identity after start, renew only
+at cooperative boundaries, and release with their stored owner/token evidence. The default root is
+`$INFIQUETRA_FLEET_STATE_DIR`, then an absolute safe XDG state root, then
+`~/.local/state/infiquetra/fleet-leases`; Claude, Codex, and plugin cache directories are not
+fallbacks.
+
+Operators inspect the redacted view through `plugins/saga/scripts/lease_broker.py inspect` and run
+the canonical dead-owner selection through `... sweep`. Do not hand-edit the registry or fabricate
+tokens. Live owners, ambiguous children, and failed worktree reaps remain retained for the owning
+coordinator. See Saga's
+[`concurrency-spawn-sites.md`](../saga/references/concurrency-spawn-sites.md) for the complete
+acquire, bind, renew, and release inventory.
 
 ## What belongs in commons — and what does not
 

@@ -9,10 +9,20 @@ embeds a `## Team Structure` plus validator plan into the approved plan.
 
 **Phase B** runs after plan approval. Workers complete the change, reviewers reach consensus,
 scanners validate the local result, CI and optional nonprod automation are coordinated, and
-testers/monitors validate the deployed nonprod result.
+testers/monitors validate the deployed nonprod result. The coordinator records every expected
+reviewer and validator, persists a spawn immediately before its host call, and derives settlement
+from returned structured evidence before opening the next gate. Casualties and open positions halt
+progression and remain visible through the derived dead-letter view until explicitly retried.
 
 Validators are available as a roster. They are selected by task context; they are not spawned
 all at once.
+
+Every worker, reviewer, and validator Agent call is admitted by Saga's installed fleet lease hook.
+Phase B runs the packaged lease preflight before the first call, renews the trusted session at wave
+and result-collection boundaries, and releases only after Step B8 has explicit terminal evidence for
+every child. Missing or protocol-skewed fleet-core installs halt; timeout and silence never free
+capacity. The complete operator contract is in
+[`lease-protocol.md`](skills/team-execution/references/lease-protocol.md).
 
 ---
 
@@ -145,6 +155,7 @@ remediation loops, and final gate status.
 - `team-execution/skills/team-execution/references/validator-evidence-state.md`
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
 - `team-execution/skills/team-execution/references/external-engine-workers.md`
+- `team-execution/skills/team-execution/references/lease-protocol.md`
 - `team-execution/skills/team-execution/references/artifact-pointers.md`
 - `team-execution/skills/team-execution/references/andon-cord.md`
 
@@ -160,6 +171,8 @@ team-execution/
 │   │   └── SKILL.md
 │   └── team-execution/
 │       ├── SKILL.md
+│       ├── scripts/
+│       │   └── dispatch_settlement_adapter.py
 │       └── references/
 │           ├── consensus-protocol.md
 │           ├── review-criteria.md
@@ -170,6 +183,7 @@ team-execution/
 │           ├── validator-registry.md
 │           ├── validator-spawn-quirks.md
 │           ├── external-engine-workers.md
+│           ├── lease-protocol.md
 │           └── artifact-pointers.md
 ├── agents/
 │   ├── devils-advocate-reviewer.md

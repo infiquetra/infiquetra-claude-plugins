@@ -113,8 +113,11 @@ valid trigger route and cannot change it from `second-opinion`. Do not write a p
 the operator declined one offer. No answer or unattended mode records `unattended`; decline records
 `declined`; both proceed through the existing work gates with zero runner calls.
 
-For explicit acceptance, first call `prepare_second_opinion`, then use `accept_work_offer` and atomically
-save the sidecar before invoking `dispatch_second_opinion`. The U1 claim store takes its own durable
+For explicit acceptance, derive `lease_admission_for_session` from the same configured Saga session
+snapshot used by direct Agent/Task hooks and pass both that exact value and its originating
+`lease_session_id` to `prepare_second_opinion`; missing or mismatched session-policy authority halts before
+the wrapper. Then use `accept_work_offer` and atomically save the sidecar before invoking
+`dispatch_second_opinion`. The U1 claim store takes its own durable
 `requested` reservation immediately before the wrapper; only that owner can call the runner. An unavailable,
 halted, timeout, empty, or malformed response calls `record_work_dispatch_outcome` and atomically saves
 `unavailable` before the current work verdict and next fix decision proceed unchanged. Never auto-dispatch.
@@ -285,18 +288,101 @@ sequential subagents as a substitute (that was the campps issue-38 failure: para
 dropped). It either runs the real Workflow tool or halts visibly.
 
 **Re-emit for freshness (KD3).** Read the saga's `orchestration_ref` to locate the canonical spec JSON
-the plan authored. Re-emit a fresh `.workflow.js` from it — any intermediate re-plan that changed the
-spec is reflected:
+the plan authored. Mint the logical invocation identity first, then re-emit a fresh `.workflow.js`
+and its driver-owned lease contract from the same spec — any intermediate re-plan that changed the
+spec is reflected. `CLAUDE_CODE_SESSION_ID` is host-provided to Bash and hook subprocesses and matches
+the hooks' trusted `session_id`; HALT if it is absent. Never substitute the saga id.
 
 ```bash
+test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is absent" >&2; exit 2; }
+export WORKFLOW_INVOCATION_ID="${WORKFLOW_INVOCATION_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
+export WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+mkdir -p .saga
 python3 plugins/saga/scripts/execution_spec.py emit <orchestration_ref_spec.json> \
   -o docs/plans/<topic>.workflow.js
+python3 plugins/saga/scripts/execution_spec.py lease <orchestration_ref_spec.json> \
+  --invocation-id "$WORKFLOW_INVOCATION_ID" > "$WORKFLOW_LEASE_METADATA"
+python3 plugins/saga/scripts/workflow_emitter.py reserve "$WORKFLOW_LEASE_METADATA" \
+  --session-id "$CLAUDE_CODE_SESSION_ID" > ".saga/workflow-lease-receipt-${WORKFLOW_INVOCATION_ID}.json"
+python3 plugins/saga/scripts/workflow_emitter.py attest "$WORKFLOW_LEASE_METADATA" \
+  --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
+
+The final `attest` is the launch gate: any refusal means **launch none and HALT**. The complete
+simultaneous width is reserved atomically. Hooks discover the one live batch from the locked broker
+by trusted session id; do not rely on a shell `export` persisting into a later Workflow tool call.
+`PreToolUse Agent|Task` assigns a slot, `SubagentStart` binds it, and each parent collection renews
+the batch. Generated JavaScript and children receive neither a registry path nor filesystem access.
 
 Then launch it:
 
+Before launch, render the driver-owned expected-unit metadata and persist the manifest plus one spawn
+attempt per unit in deterministic order. Generated agents still receive no filesystem or ledger-write
+permission; the driving `/work` session is the only writer. Mint `WORKFLOW_INVOCATION_ID` **once** for
+this logical Workflow launch, record it with the workflow handle in the saga tick, and reuse that exact
+value only after a crash or explicit resume. A later launch of the same unchanged spec must mint a new
+value. The following shell sequence is the complete driver-side pre-submit protocol; the `manifest`
+command is exact-replay idempotent. On resume, it replays that command and appends only spawn attempts
+that the ledger report proves are still absent:
+
+```bash
+export SAGA_ID=<saga-id>
+export SPEC=<orchestration_ref_spec.json>
+mkdir -p .saga
+export SETTLEMENT_METADATA=".saga/workflow-settlement-${WORKFLOW_INVOCATION_ID}.json"
+python3 plugins/saga/scripts/execution_spec.py settlement "$SPEC" \
+  --invocation-id "$WORKFLOW_INVOCATION_ID" > "$SETTLEMENT_METADATA"
+python3 - "$SETTLEMENT_METADATA" "$SAGA_ID" <<'PY'
+import datetime
+import json
+import subprocess
+import sys
+
+metadata_path, saga_id = sys.argv[1:]
+metadata = json.load(open(metadata_path, encoding="utf-8"))
+at = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+base = [
+    "python3", "plugins/saga/scripts/dispatch_settlement.py", "--repo-root", ".",
+    "--subplot-id", saga_id,
+]
+subprocess.run(base + [
+    "manifest", "--dispatch-id", metadata["dispatch_id"], "--site", metadata["site"],
+    "--units-json", json.dumps(metadata["units"]), "--at", at,
+], check=True)
+report = json.loads(subprocess.check_output(
+    base + ["report", "--dispatch-id", metadata["dispatch_id"]], text=True
+))
+spawned = {
+    entry["unit_id"] for entry in report["entries"]
+    if entry["attempt"] == 1 and entry["spawned"]
+}
+for unit in metadata["units"]:
+    if unit["unit_id"] in spawned:
+        continue
+    subprocess.run(base + [
+        "spawn", "--dispatch-id", metadata["dispatch_id"], "--unit-id", unit["unit_id"],
+        "--attempt", "1", "--idempotency-key", unit["idempotency_key"], "--at", at,
+    ], check=True)
+PY
+```
+
 ```
 Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })
+```
+
+After the Workflow returns, or after the host authoritatively confirms cancellation, release unused
+reservations and confirmed-terminal slots immediately. Do not release merely because a wait timed out
+or a `SubagentStop` hook was blocked:
+
+```bash
+python3 plugins/saga/scripts/workflow_emitter.py release "$WORKFLOW_LEASE_METADATA" \
+  --session-id "$CLAUDE_CODE_SESSION_ID"
+```
+
+For a long driver-side collection step, renew cooperatively at the boundary (there is no daemon):
+
+```bash
+python3 plugins/saga/scripts/workflow_emitter.py renew "$WORKFLOW_LEASE_METADATA"
 ```
 
 The Workflow tool owns execution from this point. `/work` records the returned workflow id as
@@ -337,26 +423,80 @@ the operator picks a backend, `/work` records exactly that pick via `--orchestra
 `orchestration_operator_choice` derives equal to it — no divergence), and a genuine capability degrade is
 recorded as `orchestration_downgrade` WITH the divergence (operator-choice §6).
 
-**Post-run manifest persistence (U4/KTD7).** A Workflow script has no filesystem access, so it cannot
-write its own provenance manifest — the *driving session* (this `/work` run) is the producer of record
-for `cc-workflows-ultracode` units. Once the Workflow returns, before moving on to Phase 2 wrap-up:
+**Post-run settlement (U4/KTD7).** A Workflow script has no filesystem access, so it cannot write its
+own receipts — the *driving session* is the producer of record. After Workflow returns, collect its
+structured results as a JSON object keyed by the original workflow `unit_id`, save it as
+`$WORKFLOW_RESULTS`, and run this exact adapter before moving on. `metadata.driver.units` maps the
+original result contract to its bounded settlement identity; do not rename result keys to make them
+ledger-safe.
 
-1. Collect the run's per-unit returned results into a JSON object mapping `unit_id -> result` (the same
-   shape each unit returned to the Workflow — a dict of the unit's `returns` keys, a fan-out list, or
-   `null`/absent for a prose-only leaf).
-2. Persist one manifest per spec-declared unit:
+```bash
+export WORKFLOW_RESULTS=<workflow-returned-results.json>
+export EVIDENCE_DIR=".saga/workflow-evidence-${WORKFLOW_INVOCATION_ID}"
+export SETTLE_DESCRIPTORS="$EVIDENCE_DIR/descriptors.jsonl"
+mkdir -p "$EVIDENCE_DIR"
+python3 - "$SETTLEMENT_METADATA" "$WORKFLOW_RESULTS" "$EVIDENCE_DIR" <<'PY' > "$SETTLE_DESCRIPTORS"
+import json
+import sys
+from pathlib import Path
 
-   ```bash
-   python3 plugins/saga/scripts/manifest_store.py --repo-root . --saga-id <saga-id> \
-     record-completeness --spec <orchestration_ref_spec.json> --results <results.json>
-   ```
+metadata = json.load(open(sys.argv[1], encoding="utf-8"))
+results = json.load(open(sys.argv[2], encoding="utf-8"))
+evidence_dir = Path(sys.argv[3])
+for binding in metadata["driver"]["units"]:
+    result = results.get(binding["workflow_unit_id"])
+    if not isinstance(result, dict):
+        print("null")  # Missing or prose-only result: settle as silent-no-op.
+        continue
+    evidence_path = evidence_dir / (binding["settlement_unit_id"] + ".json")
+    evidence_path.write_text(json.dumps({
+        "schema": "dispatch.workflow-result.v1",
+        "unit_id": binding["settlement_unit_id"],
+        "result": result,
+    }, sort_keys=True), encoding="utf-8")
+    print(json.dumps({
+        "receipt_type": "workflow-result",
+        "unit_id": binding["settlement_unit_id"],
+        "evidence_path": str(evidence_path),
+    }))
+PY
+python3 - "$SETTLEMENT_METADATA" "$SETTLE_DESCRIPTORS" "$SAGA_ID" <<'PY'
+import datetime
+import json
+import subprocess
+import sys
 
-3. A non-zero exit means at least one **contract-bearing** unit (a unit with a non-empty `returns` or an
-   enumerated fan-out) tripped `missing-output` (R10) — every manifest is still written (the trip is
-   reported, not silently dropped), so treat this like any other Phase 3 completeness finding: investigate
-   the named unit before treating the round as PR-ready.
-4. Team-execution runs follow the same CLI, called by the worker at exit per `references/*` in
-   `team-execution` (U5) — `/work` does not additionally persist those on the worker's behalf.
+metadata = json.load(open(sys.argv[1], encoding="utf-8"))
+descriptors = open(sys.argv[2], encoding="utf-8")
+base = [
+    "python3", "plugins/saga/scripts/dispatch_settlement.py", "--repo-root", ".",
+    "--subplot-id", sys.argv[3], "settle", "--dispatch-id", metadata["dispatch_id"],
+]
+for unit, descriptor in zip(metadata["units"], descriptors, strict=True):
+    at = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+    subprocess.run(base + [
+        "--unit-id", unit["unit_id"], "--attempt", "1", "--evidence-json", descriptor.strip(),
+        "--at", at,
+    ], check=True)
+PY
+export DISPATCH_ID="$(python3 - "$SETTLEMENT_METADATA" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["dispatch_id"])
+PY
+)"
+python3 plugins/saga/scripts/dispatch_settlement.py --repo-root . report --dispatch-id "$DISPATCH_ID"
+python3 plugins/saga/scripts/dispatch_settlement.py --repo-root . dlq --dispatch-id "$DISPATCH_ID"
+```
+
+The only accepted delivery receipt is the exact evidence file schema above plus its descriptor. Never
+pass agent prose or a self-report as evidence: it settles as `silent-no-op`, not success.
+A missing structured result is `silent-no-op`: the driver emits `null` and records the casualty. HALT on a
+settlement error or a report with `halt_required=true`. The `dlq` read is the retry derivation; at the next Workflow
+boundary claim each operator-approved entry with `claim-retry --dispatch-id <id> --unit-id <id> --at
+<iso-time>`, append its returned attempt's spawn before submission, and retain its metadata
+`idempotency_key`. This is at-least-once and preserves the stable idempotency key; it is never
+exactly-once delivery.
 
 ---
 
@@ -369,6 +509,30 @@ Workflow run returns.
 
 Execute **one meaningful phase at a time** per `references/execution-strategy.md` (for `inline` and
 `team-execution` modes, and for post-workflow Phase 2 wrap-up):
+
+Before the first direct `Agent` or `Task` call in an `inline` Saga phase, pin the exact admission
+snapshot already resolved by the approved plan/run. Do not reconstruct defaults at the hook:
+
+```bash
+test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is absent" >&2; exit 2; }
+python3 plugins/saga/scripts/lease_broker.py configure-session \
+  --session-id "$CLAUDE_CODE_SESSION_ID" \
+  --policy-sha256 "$RESOLVED_POLICY_SHA256" \
+  --session-limit "$RESOLVED_SESSION_LIMIT" \
+  --aggregate-limit "$RESOLVED_AGGREGATE_LIMIT" \
+  --mutation "$RESOLVED_MUTATION"
+```
+
+Those four values must come from the canonical execution-spec resolver or the approved Workflow
+metadata for this run, including lane/run overrides. Missing values HALT before spawning. For
+`team-execution`, its required lease preflight pins that backend's closed default snapshot instead.
+After every direct child is authoritatively terminal, clear the inline pin; the broker refuses while
+any live session lease remains:
+
+```bash
+python3 plugins/saga/scripts/lease_broker.py clear-session \
+  --session-id "$CLAUDE_CODE_SESSION_ID"
+```
 
 - **Execution strategy** — inline / serial subagents / parallel subagents, chosen from task count and
   dependency structure, gated by the **Parallel Safety Check** (file-to-unit overlap → worktree

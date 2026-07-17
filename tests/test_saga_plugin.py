@@ -46,14 +46,44 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.96.0"
-    )  # envelope-authorized merge: AUTONOMOUS_UNDER_ENVELOPE + tokens + ledger attribution (#449)
+        plugin_json["version"] == "0.99.0"
+    )  # dispatch settlement and casualty reconciliation (#351)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
     assert {"lifecycle", "strategy", "handoff", "doc-review", "code-review"} <= set(
         plugin_json["keywords"]
     )
+
+
+def test_fleet_lease_runtime_adapters_are_packaged() -> None:
+    assert (PLUGIN_ROOT / "scripts" / "lease_broker.py").is_file()
+    assert (PLUGIN_ROOT / "hooks" / "lease_lifecycle_hook.py").is_file()
+    assert (PLUGIN_ROOT / "hooks" / "lease_mutation_hook.py").is_file()
+
+
+def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
+    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    for required in (
+        "execution_spec.py settlement",
+        "execution_spec.py lease",
+        "workflow_emitter.py reserve",
+        "workflow_emitter.py attest",
+        "workflow_emitter.py release",
+        "lease_broker.py configure-session",
+        "lease_broker.py clear-session",
+        "CLAUDE_CODE_SESSION_ID",
+        "dispatch_settlement.py --repo-root .",
+        "Generated agents still receive no filesystem or ledger-write",
+        "A missing structured result is `silent-no-op`",
+        "This is at-least-once and preserves the stable idempotency key",
+    ):
+        assert required in work_skill
+    reserve = work_skill.index("workflow_emitter.py reserve")
+    attest = work_skill.index("workflow_emitter.py attest", reserve)
+    launch = work_skill.index('Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })', attest)
+    release = work_skill.index("workflow_emitter.py release", launch)
+    assert reserve < attest < launch < release
 
 
 def test_provider_onboarding_contract_is_packaged_and_documented() -> None:

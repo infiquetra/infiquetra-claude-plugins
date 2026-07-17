@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -35,6 +35,8 @@ D = _load("outcome_dispatcher")
 ES = _load("execution_spec")
 OUTCOME = _load("outcome")
 STORE = _load("outcome_store")
+SETTLEMENT = _load("dispatch_settlement")
+RUN_LEDGER = sys.modules["run_ledger"]
 
 
 def _req(backend: str, *, outcome_id: str = "ship-x", subplot_id: str = "build") -> Any:
@@ -60,6 +62,19 @@ def test_dispatch_team_execution_mints_leaf_with_return_channel() -> None:
 
 def test_dispatch_inline_is_available() -> None:
     assert D.dispatch(_req("inline"))["status"] == "dispatched"
+
+
+def test_dispatch_preserves_optional_settlement_identity() -> None:
+    req = _req("inline")
+    req.dispatch_id = "outcome:ship-x:frontier:build"
+    req.attempt = 2
+    req.idempotency_key = "outcome:ship-x:build"
+
+    result = D.dispatch(req)
+
+    assert result["dispatch_id"] == req.dispatch_id
+    assert result["attempt"] == 2
+    assert result["idempotency_key"] == req.idempotency_key
 
 
 @pytest.mark.parametrize(
@@ -103,6 +118,85 @@ def test_make_dispatcher_raises_halt_with_receipt() -> None:
         disp(_req("fork"))
     assert exc.value.receipt.backend == "fork"
     assert exc.value.receipt.subplot_id == "build"
+
+
+def test_make_dispatcher_holds_lease_across_backend_settlement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authority = D.fleet_commons_shim.load("lease_broker")
+    selected = authority.LeaseBroker(tmp_path / "authority")
+    original_dispatch = D.dispatch
+
+    def observing_dispatch(req: Any, *, available: Any) -> dict[str, Any]:
+        live = selected.inspect()["leases"]
+        assert len(live) == 1
+        assert live[0]["session_id"] == "outcome:ship-x"
+        assert live[0]["mutation"] == "none"
+        return cast(dict[str, Any], original_dispatch(req, available=available))
+
+    monkeypatch.setattr(D, "dispatch", observing_dispatch)
+    dispatcher = D.make_dispatcher(lease_authority=selected)
+
+    assert dispatcher(_req("inline")) == "leaf-ship-x-build"
+    assert selected.inspect()["leases"] == []
+
+
+def test_make_dispatcher_refuses_capacity_before_backend_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authority = D.fleet_commons_shim.load("lease_broker")
+    policy = D.fleet_commons_shim.load("concurrency_policy")
+    selected = authority.LeaseBroker(tmp_path / "authority")
+    limits = policy.AdmissionLimits()
+    for index in range(limits.max_concurrent):
+        selected.acquire_agent(
+            owner_id=f"owner-{index}",
+            session_id="outcome:ship-x",
+            policy_sha256=limits.policy_sha256(),
+            session_limit=limits.max_concurrent,
+            aggregate_limit=limits.aggregate_max_concurrent,
+            mutation="none",
+            resource_ref={"logical_unit_id": f"existing-{index}"},
+        )
+    monkeypatch.setattr(
+        D,
+        "dispatch",
+        lambda *_args, **_kwargs: pytest.fail("capacity denial must precede backend dispatch"),
+    )
+
+    with pytest.raises(D.DispatcherError, match="lease admission refused"):
+        D.make_dispatcher(lease_authority=selected)(_req("inline"))
+
+
+def test_make_dispatcher_preserves_primary_failure_when_release_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BrokenReleaseAuthority:
+        root_sha256 = "a" * 64
+
+        def acquire_agent(self, **_kwargs: Any) -> Any:
+            return SimpleNamespace(lease_id="lease-1", token=SimpleNamespace())
+
+        def release(self, *_args: Any, **_kwargs: Any) -> bool:
+            raise RuntimeError("cleanup exploded")
+
+    monkeypatch.setattr(
+        D,
+        "dispatch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("primary exploded")),
+    )
+
+    with pytest.raises(RuntimeError, match="primary exploded") as exc:
+        D.make_dispatcher(lease_authority=BrokenReleaseAuthority())(_req("inline"))
+    assert any(
+        "lease settlement refused: cleanup exploded" in note
+        for note in getattr(exc.value, "__notes__", ())
+    )
+
+
+def test_outcome_dispatch_rejects_lease_protocol_skew() -> None:
+    with pytest.raises(D.DispatcherError, match="install/update fleet-core"):
+        D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=99))
 
 
 # --------------------------------------------------------------------------- team_emitter wiring (R5)
@@ -157,6 +251,588 @@ def test_advance_dispatches_team_execution_node(repo: Path) -> None:
     result = OUTCOME.advance(repo, "ship-x", dispatcher=D.make_dispatcher())
     assert result.dispatched == ["build"]
     assert OUTCOME.attend(repo, "ship-x", "build") == "/resume leaf-ship-x-build"
+
+
+def test_settlement_manifest_and_spawn_precede_outcome_dispatch(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+
+    def _dispatcher(req: Any) -> str:
+        events = [
+            record["event"]
+            for record in RUN_LEDGER.read_facts(ledger)
+            if record.get("dispatch_id") == dispatch_id
+        ]
+        assert events == ["manifest", "spawn"]
+        return "leaf-ship-x-build"
+
+    result = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_dispatcher,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    assert result.dispatched == ["build"]
+    assert SETTLEMENT.open_positions(ledger)[0]["unit_id"] == "build"
+
+
+def test_unexpected_dispatcher_crash_leaves_one_open_settlement_position(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+
+    def _crash(_req: Any) -> str:
+        raise RuntimeError("unexpected dispatcher failure")
+
+    with pytest.raises(RuntimeError, match="unexpected dispatcher failure"):
+        OUTCOME.advance(
+            repo,
+            "ship-x",
+            dispatcher=_crash,
+            holder="crashed-dispatcher",
+            settlement_ledger=ledger,
+            now=lambda: 1_700_000_000.0,
+        )
+
+    records = [
+        record
+        for record in RUN_LEDGER.read_facts(ledger)
+        if record.get("dispatch_id") == dispatch_id
+    ]
+    assert [record["event"] for record in records] == ["manifest", "spawn"]
+    assert SETTLEMENT.open_positions(ledger) == [
+        {
+            "dispatch_id": dispatch_id,
+            "unit_id": "build",
+            "attempt": 1,
+            "idempotency_key": "outcome:ship-x:build",
+            "classification": "open",
+        }
+    ]
+
+
+def test_crash_replay_preserves_backend_settlement_identity(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+    seen: list[Any] = []
+
+    def _crash(req: Any) -> str:
+        seen.append(req)
+        raise RuntimeError("backend accepted launch before coordinator crash")
+
+    with pytest.raises(RuntimeError, match="accepted launch"):
+        OUTCOME.advance(
+            repo,
+            "ship-x",
+            dispatcher=_crash,
+            holder="replay-holder",
+            settlement_ledger=ledger,
+            now=lambda: 1_700_000_000.0,
+        )
+
+    def _replay(req: Any) -> str:
+        seen.append(req)
+        return "leaf-ship-x-build"
+
+    replay = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_replay,
+        holder="replay-holder",
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_001.0,
+    )
+
+    assert replay.dispatched == ["build"]
+    assert [(req.dispatch_id, req.attempt, req.idempotency_key) for req in seen] == [
+        (dispatch_id, 1, "outcome:ship-x:build"),
+        (dispatch_id, 1, "outcome:ship-x:build"),
+    ]
+    assert len(SETTLEMENT.open_positions(ledger)) == 1
+
+
+def test_outcome_writes_one_complete_manifest_for_the_ready_frontier(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {"subplot_id": "a", "title": "A", "backend": "team-execution"},
+            {"subplot_id": "b", "title": "B", "backend": "team-execution"},
+        ],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["a", "b"])
+    seen: list[str] = []
+
+    def _dispatcher(req: Any) -> str:
+        seen.append(req.subplot_id)
+        records = [
+            record
+            for record in RUN_LEDGER.read_facts(ledger)
+            if record.get("dispatch_id") == dispatch_id
+        ]
+        manifests = [record for record in records if record.get("event") == "manifest"]
+        assert len(manifests) == 1
+        assert [unit["unit_id"] for unit in manifests[0]["units"]] == ["a", "b"]
+        assert [record["unit_id"] for record in records if record.get("event") == "spawn"] == seen
+        return f"leaf-ship-x-{req.subplot_id}"
+
+    result = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_dispatcher,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+
+    assert result.dispatched == ["a", "b"]
+    assert {item["dispatch_id"] for item in SETTLEMENT.open_positions(ledger)} == {dispatch_id}
+
+
+def test_pre_feature_inflight_commit_is_not_added_to_a_settlement_cohort(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {"subplot_id": "legacy", "title": "Legacy", "backend": "team-execution"},
+            {
+                "subplot_id": "next",
+                "title": "Next",
+                "backend": "team-execution",
+                "depends_on": ["legacy"],
+            },
+        ],
+    )
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    STORE.append_ledger(
+        store,
+        {
+            "phase": "commit",
+            "kind": "dispatch",
+            "key": "dispatch:legacy",
+            "subplot_id": "legacy",
+            "leaf_saga_id": "leaf-ship-x-legacy",
+        },
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+
+    first = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=lambda _req: pytest.fail("legacy dispatch must not be repeated"),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    assert first.dispatched == []
+    assert RUN_LEDGER.read_facts(ledger) == []
+
+    STORE.write_completion_event(
+        store,
+        STORE.CompletionEvent(
+            subplot_id="legacy",
+            state="done",
+            idempotency_key="github-legacy",
+            payload={"canonical": True},
+        ),
+    )
+    second = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=lambda req: f"leaf-ship-x-{req.subplot_id}",
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_001.0,
+    )
+    assert second.dispatched == ["next"]
+    manifests = [
+        record for record in RUN_LEDGER.read_facts(ledger) if record.get("event") == "manifest"
+    ]
+    assert [[unit["unit_id"] for unit in record["units"]] for record in manifests] == [["next"]]
+
+
+def test_outcome_rate_limit_settles_then_next_advance_claims_retry(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+    first = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_rate_limited_dispatcher(),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    assert first.retriable == ["build"]
+    assert SETTLEMENT.dead_letters(ledger, dispatch_id)[0].next_attempt == 2
+
+    def _second(req: Any) -> str:
+        spawns = [
+            record
+            for record in RUN_LEDGER.read_facts(ledger)
+            if record.get("dispatch_id") == dispatch_id and record.get("event") == "spawn"
+        ]
+        assert [record["attempt"] for record in spawns] == [1, 2]
+        assert {record["idempotency_key"] for record in spawns} == {"outcome:ship-x:build"}
+        return "leaf-ship-x-build"
+
+    second = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_second,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_001.0,
+    )
+    assert second.dispatched == ["build"]
+    assert SETTLEMENT.open_positions(ledger)[0]["attempt"] == 2
+
+
+def test_outcome_casualty_blocks_new_cohort_but_allows_bound_retry(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {"subplot_id": "a", "title": "A", "backend": "team-execution"},
+            {"subplot_id": "b", "title": "B", "backend": "team-execution"},
+            {
+                "subplot_id": "c",
+                "title": "C",
+                "backend": "team-execution",
+                "depends_on": ["b"],
+            },
+        ],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["a", "b"])
+
+    def _first(req: Any) -> str:
+        if req.subplot_id == "a":
+            return str(_rate_limited_dispatcher()(req))
+        return "leaf-ship-x-b"
+
+    first = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_first,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    assert first.retriable == ["a"]
+    assert first.dispatched == ["b"]
+
+    SETTLEMENT.settle_attempt(
+        ledger,
+        subplot_id="b",
+        at="2023-11-14T22:13:21Z",
+        dispatch_id=dispatch_id,
+        unit_id="b",
+        attempt=1,
+        classification=SETTLEMENT.DELIVERED,
+        reason="canonical completion",
+        evidence_ref="github-completion",
+        evidence_sha256="b" * 64,
+    )
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    STORE.write_completion_event(
+        store,
+        STORE.CompletionEvent(
+            subplot_id="b",
+            state="done",
+            idempotency_key="github-b",
+            payload={"canonical": True},
+        ),
+    )
+
+    second_calls: list[str] = []
+
+    def _second(req: Any) -> str:
+        second_calls.append(req.subplot_id)
+        return f"leaf-ship-x-{req.subplot_id}"
+
+    second = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_second,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_001.0,
+    )
+    assert second_calls == ["a"]
+    assert second.dispatched == ["a"]
+    assert any(
+        item["kind"] == "settlement-halt" and item["subplot_id"] == "c" for item in second.halted
+    )
+
+    SETTLEMENT.settle_attempt(
+        ledger,
+        subplot_id="a",
+        at="2023-11-14T22:13:22Z",
+        dispatch_id=dispatch_id,
+        unit_id="a",
+        attempt=2,
+        classification=SETTLEMENT.DELIVERED,
+        reason="retry completed",
+        evidence_ref="github-completion",
+        evidence_sha256="a" * 64,
+    )
+    STORE.write_completion_event(
+        store,
+        STORE.CompletionEvent(
+            subplot_id="a",
+            state="done",
+            idempotency_key="github-a",
+            payload={"canonical": True},
+        ),
+    )
+    assert not SETTLEMENT.settlement_report(ledger, dispatch_id).halt_required
+
+    third = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=D.make_dispatcher(),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_002.0,
+    )
+    assert third.dispatched == ["c"]
+
+
+def test_outcome_retry_exhaustion_releases_lease_and_continues_independent_leaf(
+    repo: Path,
+) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {"subplot_id": "capped", "title": "Capped", "backend": "team-execution"},
+            {
+                "subplot_id": "independent",
+                "title": "Independent",
+                "backend": "team-execution",
+            },
+        ],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+
+    def only_capped(_spec: Any, _store: Any) -> Any:
+        return lambda sid: sid == "capped"
+
+    for tick in range(3):
+        result = OUTCOME.advance(
+            repo,
+            "ship-x",
+            dispatcher=_rate_limited_dispatcher(),
+            gate_factory=only_capped,
+            settlement_ledger=ledger,
+            now=lambda tick=tick: 1_700_000_000.0 + tick,
+        )
+        assert result.retriable == ["capped"]
+
+    calls: list[str] = []
+
+    def _independent(req: Any) -> str:
+        calls.append(req.subplot_id)
+        return f"leaf-ship-x-{req.subplot_id}"
+
+    result = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_independent,
+        gate_factory=lambda _spec, _store: lambda _sid: True,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_004.0,
+    )
+
+    assert calls == ["independent"]
+    assert result.dispatched == ["independent"]
+    assert any(
+        item["kind"] == "settlement-halt" and item["subplot_id"] == "capped"
+        for item in result.halted
+    )
+    assert (
+        STORE.read_lease(STORE.Store.for_outcome("ship-x", repo).ensure(), "dispatch-capped")
+        is None
+    )
+    intents_before = [
+        record
+        for record in STORE.read_ledger(STORE.Store.for_outcome("ship-x", repo).ensure())
+        if record.get("phase") == "intent" and record.get("subplot_id") == "capped"
+    ]
+
+    again = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=lambda _req: pytest.fail("an exhausted unit must not be dispatched"),
+        gate_factory=lambda _spec, _store: lambda _sid: True,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_005.0,
+    )
+    intents_after = [
+        record
+        for record in STORE.read_ledger(STORE.Store.for_outcome("ship-x", repo).ensure())
+        if record.get("phase") == "intent" and record.get("subplot_id") == "capped"
+    ]
+    assert len(intents_after) == len(intents_before)
+    assert any(item["subplot_id"] == "capped" for item in again.halted)
+
+
+def test_outcome_harvest_settles_open_attempt_from_canonical_evidence(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+    OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=D.make_dispatcher(),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    orchestrator = sys.modules.get("outcome_orchestrator") or _load("outcome_orchestrator")
+
+    def _harvest(_spec: Any, *, store: Any, **_kwargs: Any) -> list[str]:
+        STORE.write_completion_event(
+            store,
+            STORE.CompletionEvent(
+                subplot_id="build",
+                state="done",
+                idempotency_key="github-build",
+                payload={"canonical": True},
+            ),
+        )
+        return ["build"]
+
+    monkeypatch.setattr(orchestrator, "harvest", _harvest)
+    harvester = OUTCOME.production_harvester(
+        repo, settlement_ledger=ledger, now=lambda: 1_700_000_002.0
+    )
+    assert harvester(spec, STORE.Store.for_outcome("ship-x", repo).ensure()) == ["build"]
+    report = SETTLEMENT.settlement_report(ledger, dispatch_id)
+    assert report.entries[0].classification == "delivered"
+    assert report.entries[0].evidence_ref == "outcome-completion:done"
+    settlement = next(
+        record
+        for record in RUN_LEDGER.read_facts(ledger)
+        if record.get("dispatch_id") == dispatch_id and record.get("event") == "settle"
+    )
+    assert settlement["at"] == "2023-11-14T22:13:22Z"
+    completion = STORE.read_completion_events(STORE.Store.for_outcome("ship-x", repo), "build")[-1]
+    assert settlement["evidence_sha256"] == SETTLEMENT.evidence_digest(completion.to_dict())
+
+
+@pytest.mark.parametrize("state", ["failed", "rejected", "stalled"])
+def test_outcome_harvest_negative_terminal_settles_fail_closed_and_enters_dlq(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    spec = OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+    OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=D.make_dispatcher(),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    event = STORE.CompletionEvent(
+        subplot_id="build",
+        state=state,
+        idempotency_key=f"terminal:build:{state}",
+        payload={"reason": "terminal evidence"},
+    )
+    STORE.write_completion_event(store, event)
+    orchestrator = sys.modules.get("outcome_orchestrator") or _load("outcome_orchestrator")
+    monkeypatch.setattr(orchestrator, "harvest", lambda *args, **kwargs: [])
+
+    OUTCOME.production_harvester(repo, settlement_ledger=ledger, now=lambda: 1_700_000_002.0)(
+        spec, store
+    )
+
+    settlement = next(
+        record
+        for record in RUN_LEDGER.read_facts(ledger)
+        if record.get("dispatch_id") == dispatch_id and record.get("event") == "settle"
+    )
+    assert settlement["classification"] == SETTLEMENT.SILENT_NOOP
+    assert settlement["reason"] == f"outcome terminal completion fail-closed: {state}"
+    assert "evidence_ref" not in settlement
+    assert "evidence_sha256" not in settlement
+    assert SETTLEMENT.dead_letters(ledger, dispatch_id)[0].unit_id == "build"
+
+
+def test_outcome_harvest_reconciles_prior_completion_when_nothing_is_new(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+    OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=D.make_dispatcher(),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    STORE.write_completion_event(
+        store,
+        STORE.CompletionEvent(
+            subplot_id="build",
+            state="done",
+            idempotency_key="already-canonical",
+            payload={"canonical": True},
+        ),
+    )
+    orchestrator = sys.modules.get("outcome_orchestrator") or _load("outcome_orchestrator")
+    monkeypatch.setattr(orchestrator, "harvest", lambda *args, **kwargs: [])
+
+    harvester = OUTCOME.production_harvester(
+        repo, settlement_ledger=ledger, now=lambda: 1_700_000_002.0
+    )
+    assert harvester(spec, store) == []
+    assert (
+        SETTLEMENT.settlement_report(ledger, dispatch_id).entries[0].classification == "delivered"
+    )
+    assert len(STORE.read_completion_events(store, "build")) == 1
 
 
 def test_advance_halts_visibly_on_unavailable_backend_no_silent_substitute(repo: Path) -> None:

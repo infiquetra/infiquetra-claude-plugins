@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broker-recorded terminal evidence, and closed resource heads move to permission-checked cold
   archives when the hot registry reaches its bound without losing closed/superseded classification.
 - Made the restricted-host boot identity fallback stable across processes and calls, so a denied
-  kernel boot-time query cannot make a newly acquired lease expire before its first renewal.
+  kernel boot-time query falls back to Darwin's persistent boot record instead of making a newly
+  acquired lease expire before its first renewal.
 
 ## [0.11.0] - 2026-07-14
 

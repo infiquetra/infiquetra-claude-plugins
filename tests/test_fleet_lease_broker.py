@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import os
 import stat
+import subprocess
 import sys
 import threading
 import uuid
@@ -119,13 +120,14 @@ def _raw_registry(broker: Any) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(broker.registry_path.read_text(encoding="utf-8")))
 
 
-def test_boot_id_fallback_stays_stable_across_acquire_renew_and_verify(
+def test_boot_id_fallback_ignores_wall_jump_and_expires_on_reboot(
     tmp_path: Path,
     runtime: FakeRuntime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original_read_text = B.Path.read_text
     original_run = B.subprocess.run
+    boot = {"value": "darwin-utmpx:1781257565:89752"}
 
     def deny_linux_boot_id(path: Path, *args: Any, **kwargs: Any) -> str:
         if path == Path("/proc/sys/kernel/random/boot_id"):
@@ -139,8 +141,8 @@ def test_boot_id_fallback_stays_stable_across_acquire_renew_and_verify(
 
     monkeypatch.setattr(B.Path, "read_text", deny_linux_boot_id)
     monkeypatch.setattr(B.subprocess, "run", deny_darwin_boot_time)
-    monkeypatch.setattr(B.time, "monotonic_ns", lambda: runtime.monotonic)
-    monkeypatch.setattr(B.time, "time_ns", lambda: int(runtime.wall.timestamp() * 1_000_000_000))
+    monkeypatch.setattr(B.sys, "platform", "darwin")
+    monkeypatch.setattr(B, "_darwin_utmpx_boot_id", lambda: boot["value"])
     providers = B.Providers(
         wall_now=lambda: runtime.wall,
         monotonic_ns=lambda: runtime.monotonic,
@@ -152,11 +154,54 @@ def test_boot_id_fallback_stays_stable_across_acquire_renew_and_verify(
     selected = B.LeaseBroker(tmp_path / "fallback-authority", providers=providers)
 
     lease = _agent(selected, resource="fallback-boot-id")
-    runtime.advance(1)
+    runtime.advance(1, wall_seconds=3_600)
     renewed = selected.renew(lease.lease_id, owner_id=lease.owner_id, token=lease.token)
 
     assert renewed.boot_id == lease.boot_id
     assert selected.verify(lease.resource_ref, lease.token).lease_id == lease.lease_id
+
+    boot["value"] = "darwin-utmpx:1784265600:1"
+    runtime.advance(1)
+    with pytest.raises(B.LeaseExpiredError, match="expired"):
+        selected.renew(lease.lease_id, owner_id=lease.owner_id, token=lease.token)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin utmpx contract")
+def test_darwin_utmpx_boot_identity_is_stable_across_processes() -> None:
+    program = (
+        "import runpy; "
+        f"module = runpy.run_path({str(BROKER_PATH)!r}); "
+        "print(module['_darwin_utmpx_boot_id']())"
+    )
+    identities = [
+        subprocess.run(
+            [sys.executable, "-c", program],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        for _ in range(2)
+    ]
+
+    assert identities[0].startswith("darwin-utmpx:")
+    assert identities[0] == identities[1]
+
+
+def test_boot_id_fails_closed_when_every_os_identity_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        B.Path, "read_text", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())
+    )
+    monkeypatch.setattr(
+        B.subprocess, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())
+    )
+    monkeypatch.setattr(B.sys, "platform", "darwin")
+    monkeypatch.setattr(B, "_darwin_utmpx_boot_id", lambda: None)
+
+    with pytest.raises(B.UnsafeAuthorityError, match="boot identity is unavailable"):
+        B._default_boot_id()
 
 
 def _all_keys(value: Any) -> set[str]:

@@ -9,12 +9,14 @@ same-boot monotonic renewal timestamp; no mutable status or expiry bit is stored
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import fcntl
 import hashlib
 import json
 import os
 import stat
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -96,6 +98,7 @@ _MAX_ID = 256
 _MAX_PATH = 4096
 _MAX_SESSION_ADMISSIONS = 64
 _MAX_CLOSED_FENCES = 128
+_BOOT_ID_LOCK = threading.Lock()
 
 
 class LeaseBrokerError(RuntimeError):
@@ -308,20 +311,48 @@ def root_identity_sha256(root: Path | str) -> str:
     return _sha256(os.path.normpath(str(path)))
 
 
-def _fallback_boot_id() -> str:
-    """Derive a cross-process boot identity when kernel boot metadata is unavailable."""
+def _darwin_utmpx_boot_id() -> str | None:
+    """Read Darwin's current boot record without relying on sandboxed sysctl access."""
 
-    samples: list[tuple[int, int]] = []
-    for _ in range(3):
-        before = time.monotonic_ns()
-        wall = time.time_ns()
-        after = time.monotonic_ns()
-        samples.append((after - before, wall - ((before + after) // 2)))
-    _span, boot_epoch_ns = min(samples)
-    # A one-second quantum absorbs cross-process sampling jitter. A wall-clock correction changes
-    # the identity and therefore expires authority, which is the safe fallback behavior.
-    boot_epoch_second = (boot_epoch_ns + 500_000_000) // 1_000_000_000
-    return f"fallback:{boot_epoch_second}"
+    class Timeval(ctypes.Structure):
+        _fields_ = [("tv_sec", ctypes.c_long), ("tv_usec", ctypes.c_int)]
+
+    class Utmpx(ctypes.Structure):
+        _fields_ = [
+            ("ut_user", ctypes.c_char * 256),
+            ("ut_id", ctypes.c_char * 4),
+            ("ut_line", ctypes.c_char * 32),
+            ("ut_pid", ctypes.c_int),
+            ("ut_type", ctypes.c_short),
+            ("ut_tv", Timeval),
+            ("ut_host", ctypes.c_char * 256),
+            ("ut_pad", ctypes.c_uint32 * 16),
+        ]
+
+    try:
+        libc = ctypes.CDLL(None)
+        libc.getutxent.restype = ctypes.POINTER(Utmpx)
+    except (AttributeError, OSError):
+        return None
+    current: tuple[int, int] | None = None
+    with _BOOT_ID_LOCK:
+        try:
+            libc.setutxent()
+            while entry := libc.getutxent():
+                record = entry.contents
+                if record.ut_type != 2:  # Darwin BOOT_TIME from <utmpx.h>.
+                    continue
+                candidate = (int(record.ut_tv.tv_sec), int(record.ut_tv.tv_usec))
+                if candidate[0] > 0 and 0 <= candidate[1] < 1_000_000:
+                    current = candidate if current is None else max(current, candidate)
+        except (AttributeError, OSError, ValueError):
+            return None
+        finally:
+            with contextlib.suppress(AttributeError):
+                libc.endutxent()
+    if current is None:
+        return None
+    return f"darwin-utmpx:{current[0]}:{current[1]}"
 
 
 def _default_boot_id() -> str:
@@ -345,7 +376,13 @@ def _default_boot_id() -> str:
             return f"darwin:{_sha256(value)}"
     except (OSError, subprocess.SubprocessError):
         pass
-    return _fallback_boot_id()
+    if sys.platform == "darwin":
+        boot_id = _darwin_utmpx_boot_id()
+        if boot_id is not None:
+            return boot_id
+    raise UnsafeAuthorityError(
+        "operating system boot identity is unavailable; refusing lease authority"
+    )
 
 
 def _default_process_identity(pid: int) -> str | None:

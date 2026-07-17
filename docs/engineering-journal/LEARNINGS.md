@@ -3373,9 +3373,10 @@ external side effect, and retain it whenever compensation is uncertain.
 included the current PID and a fresh monotonic reading, so acquire and immediate renew calculated
 different boot identities and treated a new lease as reboot-expired.
 
-**Mechanism.** When kernel boot metadata is unavailable, fleet-core now derives a quantized boot
-epoch from paired wall and monotonic clocks. Cooperating processes on the same boot calculate the
-same value; a wall-clock correction changes the value and safely expires authority.
+**Mechanism.** When `kern.boottime` is unavailable on Darwin, fleet-core reads the current
+`BOOT_TIME` record through libc's `utmpx` API. The record is shared across processes, changes on
+reboot, and remains independent of later wall-clock corrections. If every OS identity source is
+unavailable, the broker refuses authority instead of inventing process-local identity.
 
 **Generalizable rule.** A persisted authority marker cannot fall back to process-local or per-call
 identity. Exercise degraded platform probes through the full acquire-to-renew path, not only by

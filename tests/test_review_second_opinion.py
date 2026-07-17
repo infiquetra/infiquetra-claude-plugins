@@ -93,6 +93,7 @@ def _prepared(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Any:
         registry=REG,
         requested_by="human",
         reason="Check whether the stated impact follows from the selected source.",
+        lease_session_id="review-session",
         lease_admission=_lease_admission(),
     )
 
@@ -156,6 +157,7 @@ def test_context_exact_caps_pass_and_plus_one_rejects(monkeypatch: pytest.Monkey
         registry=REG,
         requested_by="human",
         reason="reason",
+        lease_session_id="review-session",
         lease_admission=_lease_admission(),
     )
     assert prepared.token_estimate == SO.MAX_CONTEXT_BYTES
@@ -187,6 +189,7 @@ def test_excerpt_count_and_utf8_byte_caps_reject_before_resolution(
         registry=REG,
         requested_by="human",
         reason="reason",
+        lease_session_id="review-session",
         lease_admission=_lease_admission(),
     )
     assert called is True
@@ -229,9 +232,61 @@ def test_resolved_route_requires_and_maps_the_pinned_session_admission(
         registry=REG,
         requested_by="human",
         reason="reason",
+        lease_session_id="review-session",
         lease_admission=admission,
     )
+    assert prepared.lease_session_id == "review-session"
     assert prepared.lease_admission == D.LeaseAdmission("b" * 64, 2, 5, "none")
+
+
+def test_originating_session_capacity_refuses_second_opinion_before_runner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(SO.engine_resolver, "resolve", lambda *_args, **_kwargs: _resolution())
+    session_id = "review-session"
+    policy_sha256 = "c" * 64
+    selected = SO.saga_leases.broker()
+    SO.saga_leases.configure_session_admission(
+        session_id,
+        policy_sha256=policy_sha256,
+        session_limit=1,
+        aggregate_limit=2,
+        mutation="none",
+        selected=selected,
+    )
+    selected.acquire_agent(
+        owner_id="existing-review-worker",
+        session_id=session_id,
+        policy_sha256=policy_sha256,
+        session_limit=1,
+        aggregate_limit=2,
+        mutation="none",
+        resource_ref={"logical_unit_id": "existing-review-worker"},
+    )
+    prepared = SO.prepare_second_opinion(
+        _finding(),
+        registry=REG,
+        requested_by="human",
+        reason="reason",
+        lease_session_id=session_id,
+        lease_admission=SO.lease_admission_for_session(session_id, selected=selected),
+    )
+    runner_calls = 0
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, Any]:
+        nonlocal runner_calls
+        runner_calls += 1
+        return _runner(_invocation)
+
+    store = SO.SecondOpinionClaimStore(tmp_path / "capacity-claims.json")
+    evidence = SO.dispatch_second_opinion(prepared, runner=runner, claim_store=store)
+
+    assert runner_calls == 0
+    assert evidence.halt == SO.UNUSABLE_DISPATCH_NOTE
+    assert store.read(prepared.request_id).state == "unavailable"
+    live = selected.inspect()["leases"]
+    assert len(live) == 1
+    assert live[0]["session_id"] == session_id
 
 
 def test_sensitive_network_only_registry_is_unavailable_without_resolve_or_runner(

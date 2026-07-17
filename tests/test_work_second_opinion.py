@@ -107,6 +107,7 @@ def _prepared(monkeypatch: pytest.MonkeyPatch) -> Any:
         registry=REG,
         requested_by="human",
         reason="Check this finding before selecting another fix.",
+        lease_session_id="work-session",
         lease_admission=_lease_admission(),
     )
 

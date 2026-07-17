@@ -172,6 +172,7 @@ class PreparedSecondOpinion:
     resolution: engine_resolver.Resolution | None
     egress_policy: str | None
     unavailable_reason: str | None
+    lease_session_id: str | None = None
     lease_admission: engine_dispatch.LeaseAdmission | None = None
 
     @property
@@ -880,6 +881,7 @@ def prepare_second_opinion(
     memo: engine_resolver.RunMemo | None = None,
     chaperone_model: str = "opus",
     chaperone_effort: str = "high",
+    lease_session_id: str | None = None,
     lease_admission: engine_dispatch.LeaseAdmission | None = None,
 ) -> PreparedSecondOpinion:
     """Build a bounded second-opinion request without invoking any wrapper."""
@@ -888,6 +890,10 @@ def prepare_second_opinion(
     _bounded_bytes(reason, MAX_REASON_BYTES, "reason")
     _nonempty_string(chaperone_model, "chaperone_model")
     _nonempty_string(chaperone_effort, "chaperone_effort")
+    if (lease_session_id is None) != (lease_admission is None):
+        raise SecondOpinionError("lease_session_id and lease_admission must be provided together")
+    if lease_session_id is not None:
+        _nonempty_string(lease_session_id, "lease_session_id")
     if lease_admission is not None:
         if not isinstance(lease_admission, engine_dispatch.LeaseAdmission):
             raise SecondOpinionError("lease_admission must be an engine dispatch LeaseAdmission")
@@ -960,9 +966,13 @@ def prepare_second_opinion(
 
     if resolution is not None and resolution.halt is not None:
         unavailable_reason = resolution.halt
-    if resolution is not None and resolution.halt is None and lease_admission is None:
+    if (
+        resolution is not None
+        and resolution.halt is None
+        and (lease_session_id is None or lease_admission is None)
+    ):
         raise SecondOpinionError(
-            "resolved second-opinion dispatch requires the pinned Saga session lease admission"
+            "resolved second-opinion dispatch requires the pinned Saga session lease binding"
         )
     route = (
         f"{resolution.engine_id}/{resolution.variant}" if resolution is not None else "unavailable"
@@ -974,6 +984,7 @@ def prepare_second_opinion(
                 "requested_by": requested_by,
                 "chaperone_tier": {"model": chaperone_model, "effort": chaperone_effort},
                 "route": route,
+                "lease_session_id": lease_session_id,
                 "lease_admission": (None if lease_admission is None else lease_admission.to_dict()),
             }
         )
@@ -994,6 +1005,7 @@ def prepare_second_opinion(
         resolution=resolution,
         egress_policy=egress_policy,
         unavailable_reason=unavailable_reason,
+        lease_session_id=lease_session_id,
         lease_admission=lease_admission,
     )
 
@@ -1011,6 +1023,10 @@ def dispatch_second_opinion(
     """Claim then dispatch once; a resumed uncertain claim never replays the wrapper."""
     if prepared.unavailable_reason is not None or prepared.resolution is None:
         return _unavailable_evidence(prepared, prepared.unavailable_reason or "route unavailable")
+    if prepared.lease_session_id is None or prepared.lease_admission is None:
+        raise SecondOpinionError(
+            "prepared second-opinion dispatch requires the pinned Saga session lease binding"
+        )
     claim = claim_store.claim(prepared)
     if not claim.acquired:
         if claim.claim.state == "requested" and recover_pending:
@@ -1030,7 +1046,7 @@ def dispatch_second_opinion(
             subplot_id=subplot_id,
             at=at,
             gated=False,
-            session_id=prepared.execution_id,
+            session_id=prepared.lease_session_id,
             execution_id=prepared.execution_id,
             intent="second-opinion",
             role_kind="advisory-reviewer",

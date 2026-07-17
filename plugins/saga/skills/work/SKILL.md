@@ -114,9 +114,10 @@ the operator declined one offer. No answer or unattended mode records `unattende
 `declined`; both proceed through the existing work gates with zero runner calls.
 
 For explicit acceptance, derive `lease_admission_for_session` from the same configured Saga session
-snapshot used by direct Agent/Task hooks and pass that exact value to `prepare_second_opinion`; missing or
-mismatched admission halts before the wrapper. Then use `accept_work_offer` and atomically save the sidecar
-before invoking `dispatch_second_opinion`. The U1 claim store takes its own durable
+snapshot used by direct Agent/Task hooks and pass both that exact value and its originating
+`lease_session_id` to `prepare_second_opinion`; missing or mismatched session-policy authority halts before
+the wrapper. Then use `accept_work_offer` and atomically save the sidecar before invoking
+`dispatch_second_opinion`. The U1 claim store takes its own durable
 `requested` reservation immediately before the wrapper; only that owner can call the runner. An unavailable,
 halted, timeout, empty, or malformed response calls `record_work_dispatch_outcome` and atomically saves
 `unavailable` before the current work verdict and next fix decision proceed unchanged. Never auto-dispatch.

@@ -24,6 +24,8 @@
   per-member attempt identity. Engine post-run validation, integrity accounting, reconciliation, and
   fact persistence execute inside exact-token settlement; the CLI requires fencing credentials for
   renew/release and owner teardown accepts no caller-authored terminal assertion.
+- Bound advisory second-opinion dispatches to their originating Saga session as well as its pinned
+  admission policy, so per-session capacity remains authoritative across the external-engine path.
 - **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
   unchanged; leases enforce runtime admission without redefining operator posture or revision eras.
 

@@ -39,15 +39,23 @@ def broker() -> Any:
     return authority.LeaseBroker()
 
 
-def preflight(*, selected: Any | None = None) -> dict[str, Any]:
-    """Prove that the canonical broker and default closed admission policy are installed."""
+def preflight(session_id: str, *, selected: Any | None = None) -> dict[str, Any]:
+    """Prove installation and pin team-execution's closed default admission snapshot."""
 
     ensure_protocol()
     selected = broker() if selected is None else selected
     limits = concurrency_policy.AdmissionLimits()
+    selected.configure_session_admission(
+        session_id,
+        policy_sha256=limits.policy_sha256(),
+        session_limit=limits.max_concurrent,
+        aggregate_limit=limits.aggregate_max_concurrent,
+        mutation="read-write",
+    )
     return {
         "protocol": "team-execution-lease.v1",
         "status": "ready",
+        "session_id": session_id,
         "root_sha256": selected.root_sha256,
         "policy_sha256": limits.policy_sha256(),
         "limits": limits.to_dict(),
@@ -79,26 +87,13 @@ def teardown(
 
     ensure_protocol()
     selected = broker() if selected is None else selected
-    snapshot = selected.inspect()
-    session_leases = [
-        lease
-        for lease in snapshot.get("leases", [])
-        if lease.get("pool") == "agent" and lease.get("session_id") == session_id
-    ]
-    asserted = set(terminal_agent_ids)
-    unresolved: list[str] = []
-    for lease in session_leases:
-        agent_id = lease.get("agent_id")
-        if not isinstance(agent_id, str) or not agent_id:
-            unresolved.append(f"{lease['lease_id']}:unclaimed")
-        elif lease.get("child_terminal_at") is None and agent_id not in asserted:
-            unresolved.append(f"{lease['lease_id']}:{agent_id}")
-    if unresolved:
-        raise LeaseProtocolError(
-            "refusing teardown until every child is terminal: " + ", ".join(sorted(unresolved))
+    try:
+        released = selected.release_session_if_terminal(
+            session_id,
+            terminal_agent_ids=terminal_agent_ids,
         )
-
-    released = selected.release_session(session_id)
+    except authority.LeaseBrokerError as exc:
+        raise LeaseProtocolError(str(exc)) from exc
     swept = selected.sweep()
     return {
         "protocol": "team-execution-lease.v1",
@@ -122,7 +117,8 @@ def _die(message: str) -> NoReturn:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("preflight")
+    preflight_parser = commands.add_parser("preflight")
+    preflight_parser.add_argument("--session-id", required=True)
 
     renew_parser = commands.add_parser("renew")
     renew_parser.add_argument("--session-id", required=True)
@@ -137,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "preflight":
-            result = preflight()
+            result = preflight(args.session_id)
         elif args.command == "renew":
             result = renew(args.session_id)
         else:

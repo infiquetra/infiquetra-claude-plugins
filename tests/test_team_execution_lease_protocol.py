@@ -55,6 +55,10 @@ class FakeBroker:
     def inspect(self) -> dict[str, object]:
         return {"leases": list(self.leases)}
 
+    def configure_session_admission(self, session_id: str, **kwargs: object) -> None:
+        assert session_id == "session-1"
+        assert kwargs["mutation"] == "read-write"
+
     def renew_session(self, session_id: str) -> tuple[SimpleNamespace, ...]:
         assert session_id == "session-1"
         return (SimpleNamespace(lease_id="lease-1"),)
@@ -63,6 +67,23 @@ class FakeBroker:
         assert session_id == "session-1"
         self.released.append(session_id)
         return tuple(str(lease["lease_id"]) for lease in self.leases)
+
+    def release_session_if_terminal(
+        self, session_id: str, *, terminal_agent_ids: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        assert session_id == "session-1"
+        asserted = set(terminal_agent_ids)
+        unresolved = [
+            str(lease["lease_id"])
+            for lease in self.leases
+            if lease["agent_id"] is None
+            or (lease["child_terminal_at"] is None and lease["agent_id"] not in asserted)
+        ]
+        if unresolved:
+            raise PROTOCOL.authority.LeaseOwnershipError(
+                "refusing teardown until every child is terminal: " + ", ".join(unresolved)
+            )
+        return self.release_session(session_id)
 
     def sweep(self) -> FakeSweep:
         self.swept = True
@@ -81,7 +102,7 @@ def _lease(*, agent_id: str | None, child_terminal_at: str | None = None) -> dic
 
 def test_preflight_and_renew_expose_no_authority_path() -> None:
     selected = FakeBroker([])
-    ready = PROTOCOL.preflight(selected=selected)
+    ready = PROTOCOL.preflight("session-1", selected=selected)
     assert ready["status"] == "ready"
     assert ready["root_sha256"] == "a" * 64
     assert "root" not in ready
@@ -95,7 +116,7 @@ def test_preflight_rejects_lease_protocol_skew(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(PROTOCOL.authority, "PROTOCOL_VERSION", 99)
 
     with pytest.raises(PROTOCOL.LeaseProtocolError, match="install/update fleet-core"):
-        PROTOCOL.preflight(selected=FakeBroker([]))
+        PROTOCOL.preflight("session-1", selected=FakeBroker([]))
 
 
 def test_teardown_refuses_unclaimed_or_unconfirmed_child_without_releasing() -> None:

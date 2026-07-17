@@ -10,8 +10,12 @@ Before the first worker, reviewer, or validator `Agent` call, prove the broker i
 
 ```bash
 TEAM_LEASE="${CLAUDE_PLUGIN_ROOT:-plugins/team-execution}/skills/team-execution/scripts/lease_protocol.py"
-python3 "$TEAM_LEASE" preflight
+test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — missing Claude session id" >&2; exit 2; }
+python3 "$TEAM_LEASE" preflight --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
+
+Preflight pins team-execution's complete default admission snapshot in the shared authority. The
+Agent hook consumes that exact session record; it never reconstructs or widens policy from defaults.
 
 At a wave or result-collection boundary, renew all live agent leases for the trusted Claude session:
 

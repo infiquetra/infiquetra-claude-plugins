@@ -315,8 +315,10 @@ here in Phase B preflight.
 
 Workers execute approved tasks. Coordinate dependencies, keep work scoped to the plan, and run execution waves using the resident-worker residency protocol:
 
-- **Lease preflight and renewal (#356):** before the first direct `Agent` call, run
-  `lease_protocol.py preflight`. Saga's installed `PreToolUse` hook reserves each exact worker,
+- **Lease preflight and renewal (#356):** before the first direct `Agent` call, require
+  `CLAUDE_CODE_SESSION_ID` and run
+  `lease_protocol.py preflight --session-id "$CLAUDE_CODE_SESSION_ID"`. Saga's installed
+  `PreToolUse` hook reserves each exact worker,
   reviewer, and validator call before provider dispatch; team-execution must not keep a parallel
   counter or reserve a Workflow batch. At every wave or result-collection boundary run
   `lease_protocol.py renew --session-id "$CLAUDE_CODE_SESSION_ID"`. A renewal refusal halts the

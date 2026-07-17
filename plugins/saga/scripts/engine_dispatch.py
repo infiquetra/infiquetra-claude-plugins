@@ -747,12 +747,13 @@ def dispatch(
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Dispatch through one lease-held adapter call when a trusted session is supplied.
 
-    The lease is acquired before the existing dispatch/runner path, renewed only after that path
-    returns its authoritative evidence disposition, and released with the exact owner and fencing
-    token. Omitting ``session_id`` preserves the compatibility path for pure builders and tests;
-    registered runtime consumers must provide their trusted session id, an exact Saga-resolved
-    admission snapshot, and bounded execution/attempt identity. The latter is transformed into a
-    stable broker resource reference so a retry supersedes any stale authority for that attempt.
+    The lease is acquired before the existing dispatch/runner path. Immediately after the runner
+    returns, a broker-held settlement context fences post-processing and durable fact writes, then
+    removes the lease with its exact owner and token. Omitting ``session_id`` preserves the
+    compatibility path for pure builders and tests; registered runtime consumers must provide their
+    trusted session id, an exact Saga-resolved admission snapshot, and bounded execution/attempt
+    identity. The latter becomes a stable broker resource reference so a retry supersedes stale
+    authority for that attempt.
     """
 
     if not session_id:
@@ -812,11 +813,29 @@ def dispatch(
         raise DispatchError(f"engine dispatch lease admission refused: {exc}") from exc
 
     primary_error: BaseException | None = None
+    settlement: Any | None = None
+    settlement_entered = False
+
+    def guarded_runner(invocation: dict[str, Any]) -> dict[str, Any]:
+        nonlocal settlement, settlement_entered
+        result = runner(invocation)
+        settlement = selected.agent_settlement(
+            lease.lease_id,
+            owner_id=owner_id,
+            token=lease.token,
+        )
+        try:
+            settlement.__enter__()
+        except lease_module.LeaseBrokerError as exc:
+            raise DispatchError(f"engine dispatch lease expired before settlement: {exc}") from exc
+        settlement_entered = True
+        return result
+
     try:
         deferred_fact_writes: list[tuple[dict[str, Any], AdvisoryEvidence, dict[str, Any]]] = []
         evidence = _dispatch_once(
             resolution,
-            runner=runner,
+            runner=guarded_runner,
             model=model,
             sandbox=sandbox,
             write_set=write_set,
@@ -834,11 +853,6 @@ def dispatch(
             role_kind=role_kind,
             deferred_fact_writes=deferred_fact_writes,
         )
-        try:
-            selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
-            selected.verify(resource_ref, lease.token, owner_id=owner_id)
-        except lease_module.LeaseBrokerError as exc:
-            raise DispatchError(f"engine dispatch lease expired before settlement: {exc}") from exc
         lease_receipt = {
             "lease_id": lease.lease_id,
             "root_sha256": selected.root_sha256,
@@ -863,23 +877,37 @@ def dispatch(
         primary_error = exc
         raise
     finally:
-        try:
-            released = selected.release(lease.lease_id, owner_id=owner_id, token=lease.token)
-        except Exception as exc:  # noqa: BLE001 - cleanup must never mask the primary failure.
-            cleanup_error = DispatchError(f"engine dispatch lease settlement refused: {exc}")
-            if primary_error is not None:
-                primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
-            else:
-                raise cleanup_error from exc
-        else:
-            if not released:
-                cleanup_error = DispatchError(
-                    "engine dispatch lease disappeared before authoritative settlement"
+        if settlement_entered and settlement is not None:
+            try:
+                settlement.__exit__(
+                    None if primary_error is None else type(primary_error),
+                    primary_error,
+                    None if primary_error is None else primary_error.__traceback__,
                 )
+            except Exception as exc:  # noqa: BLE001 - preserve the post-run primary failure.
+                cleanup_error = DispatchError(f"engine dispatch lease settlement refused: {exc}")
                 if primary_error is not None:
                     primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
                 else:
-                    raise cleanup_error
+                    raise cleanup_error from exc
+        else:
+            try:
+                released = selected.release(lease.lease_id, owner_id=owner_id, token=lease.token)
+            except Exception as exc:  # noqa: BLE001 - preserve the runner primary failure.
+                cleanup_error = DispatchError(f"engine dispatch lease settlement refused: {exc}")
+                if primary_error is not None:
+                    primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                else:
+                    raise cleanup_error from exc
+            else:
+                if not released:
+                    cleanup_error = DispatchError(
+                        "engine dispatch lease disappeared before authoritative settlement"
+                    )
+                    if primary_error is not None:
+                        primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                    else:
+                        raise cleanup_error
 
 
 def _bounded_lease_identity(value: str, field: str) -> str:
@@ -906,20 +934,24 @@ def dispatch_advisory_panel(
     runner: Runner,
     foreman: PanelForeman,
     execution_id: str,
+    session_id: str,
+    lease_admission: LeaseAdmission,
     intent: str,
     ledger: run_ledger.RunLedger,
     subplot_id: str,
     at: str,
     task_context: dict[str, Any] | None = None,
     memo: RunMemo | None = None,
+    lease_authority: Any | None = None,
 ) -> PanelDispatchResult:
     """Resolve, dispatch, and Claude-reconcile one bounded advisory jury.
 
     ``resolve_role`` validates the normalized role and member count before it performs any
     member preflight. All resolutions are then checked with ``panel_halt`` before the first
-    dispatch, so an unavailable member cannot create partial work. Member dispatches receive no
-    ledger: raw panel output is in-memory foreman input only. The validated typed foreman result
-    is the sole panel content appended to the run-fact ledger.
+    dispatch, so an unavailable member cannot create partial work. The caller supplies one trusted
+    session and exact admission snapshot; every member receives a stable lease attempt. Member
+    dispatches receive no ledger: raw panel output is in-memory foreman input only. The validated
+    typed foreman result is the sole panel content appended to the run-fact ledger.
     """
     if not isinstance(request, AdvisoryPanelRequest):
         raise DispatchError("advisory panel dispatch requires an AdvisoryPanelRequest")
@@ -932,6 +964,10 @@ def dispatch_advisory_panel(
         )
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"advisory panel execution metadata is invalid: {exc}") from exc
+    _bounded_lease_identity(session_id, "session_id")
+    if not isinstance(lease_admission, LeaseAdmission):
+        raise DispatchError("advisory panel lease admission has an invalid type")
+    lease_admission.validate()
     role_name = request.role
     try:
         resolutions = engine_resolver.resolve_role(
@@ -949,11 +985,15 @@ def dispatch_advisory_panel(
 
     member_evidence: list[AdvisoryEvidence] = []
     total_output_bytes = 0
-    for resolution in resolutions:
+    for member_index, resolution in enumerate(resolutions):
         dispatched = dispatch(
             resolution,
             runner=runner,
             execution_id=execution_id,
+            session_id=session_id,
+            lease_admission=lease_admission,
+            lease_authority=lease_authority,
+            attempt_id=f"panel:{member_index}",
             intent=intent,
             role_kind="panel",
         )
@@ -1005,14 +1045,14 @@ def dispatch_advisory_panel(
     # Panel-member attribution (#459 R4): which members produced each gathered finding, so the
     # capability_elo reducer can derive head-to-head matches from this reconciliation. Metadata
     # only — it never enters the canonical result hash and grants no authority.
-    member_index = {item.source_finding_id: list(item.member_ids) for item in gathered}
+    member_attribution = {item.source_finding_id: list(item.member_ids) for item in gathered}
     reconcile_fact = reconcile.append_reconciliation_fact(
         ledger,
         result,
         action=reconcile.ReconciliationAction.RECONCILE,
         subplot_id=subplot_id,
         at=at,
-        member_index=member_index,
+        member_index=member_attribution,
     )
     apply_fact = reconcile.append_reconciliation_fact(
         ledger,
@@ -1020,7 +1060,7 @@ def dispatch_advisory_panel(
         action=reconcile.ReconciliationAction.APPLY,
         subplot_id=subplot_id,
         at=at,
-        member_index=member_index,
+        member_index=member_attribution,
     )
     return PanelDispatchResult(
         role_name=role_name,

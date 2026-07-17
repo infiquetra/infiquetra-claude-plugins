@@ -298,43 +298,41 @@ def reserve_hook_agent(
     parent_agent = _optional_text(payload, "agent_id")
     claim_ttl = _positive_env(env, CLAIM_TTL_SECONDS_ENV, authority.DEFAULT_CLAIM_TTL_SECONDS)
     selected = broker(env)
-    if parent_agent is not None:
-        try:
-            parent = selected.verify_agent(parent_agent)
-        except authority.LeaseBrokerError as exc:
-            raise HookInputError(
-                f"delegated parent {parent_agent!r} has no current spawn authority: {exc}"
-            ) from exc
-        if parent.session_id != session_id:
-            raise HookInputError(
-                f"delegated parent {parent_agent!r} belongs to a different session"
-            )
     batch_id = active_batch_id(payload, env)
-    if batch_id:
-        return selected.prepare_batch_call(
-            session_id=session_id,
-            batch_id=batch_id,
-            agent_type=_agent_type(payload),
-            tool_use_id=tool_use_id,
-            claim_ttl_seconds=claim_ttl,
+    try:
+        if batch_id:
+            return selected.prepare_batch_call(
+                session_id=session_id,
+                batch_id=batch_id,
+                agent_type=_agent_type(payload),
+                tool_use_id=tool_use_id,
+                claim_ttl_seconds=claim_ttl,
+                parent_agent_id=parent_agent,
+            )
+        policy_sha256, session_limit, aggregate_limit, mutation = session_admission_snapshot(
+            session_id,
+            env,
+            selected=selected,
         )
-    policy_sha256, session_limit, aggregate_limit, mutation = session_admission_snapshot(
-        session_id,
-        env,
-        selected=selected,
-    )
-    return selected.acquire_agent(
-        owner_id=parent_agent or f"session:{session_id}",
-        owner_pid=os.getppid(),
-        session_id=session_id,
-        policy_sha256=policy_sha256,
-        session_limit=session_limit,
-        aggregate_limit=aggregate_limit,
-        mutation=mutation,
-        ttl_seconds=claim_ttl,
-        tool_use_id=tool_use_id,
-        agent_type=_agent_type(payload),
-    )
+        return selected.acquire_agent(
+            owner_id=parent_agent or f"session:{session_id}",
+            owner_pid=os.getppid(),
+            session_id=session_id,
+            policy_sha256=policy_sha256,
+            session_limit=session_limit,
+            aggregate_limit=aggregate_limit,
+            mutation=mutation,
+            ttl_seconds=claim_ttl,
+            tool_use_id=tool_use_id,
+            agent_type=_agent_type(payload),
+            parent_agent_id=parent_agent,
+        )
+    except (authority.LeaseNotFoundError, authority.LeaseOwnershipError) as exc:
+        if parent_agent is None:
+            raise
+        raise HookInputError(
+            f"delegated parent {parent_agent!r} has no current spawn authority: {exc}"
+        ) from exc
 
 
 def claim_hook_agent(
@@ -429,14 +427,18 @@ def _build_parser() -> argparse.ArgumentParser:
     renew = subparsers.add_parser("renew")
     renew.add_argument("lease_id")
     renew.add_argument("--owner-id")
+    renew.add_argument("--broker-epoch", required=True)
+    renew.add_argument("--fencing-sequence", type=int, required=True)
 
     release = subparsers.add_parser("release")
     release.add_argument("lease_id")
     release.add_argument("--owner-id")
+    release.add_argument("--broker-epoch", required=True)
+    release.add_argument("--fencing-sequence", type=int, required=True)
 
     release_owner = subparsers.add_parser("release-owner")
     release_owner.add_argument("owner_id")
-    release_owner.add_argument("--session-id")
+    release_owner.add_argument("--session-id", required=True)
 
     configure = subparsers.add_parser("configure-session")
     configure.add_argument("--session-id", required=True)
@@ -468,11 +470,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "inspect":
             _json_print(selected.inspect())
         elif args.command == "renew":
-            _json_print(_lease_payload(selected.renew(args.lease_id, owner_id=args.owner_id)))
+            token = authority.FencingToken(args.broker_epoch, args.fencing_sequence)
+            _json_print(
+                _lease_payload(selected.renew(args.lease_id, owner_id=args.owner_id, token=token))
+            )
         elif args.command == "release":
-            _json_print({"released": selected.release(args.lease_id, owner_id=args.owner_id)})
+            token = authority.FencingToken(args.broker_epoch, args.fencing_sequence)
+            _json_print(
+                {"released": selected.release(args.lease_id, owner_id=args.owner_id, token=token)}
+            )
         elif args.command == "release-owner":
-            released = selected.release_owner(args.owner_id, session_id=args.session_id)
+            released = selected.release_owner(
+                args.owner_id,
+                session_id=args.session_id,
+            )
             _json_print({"released_lease_ids": list(released)})
         elif args.command == "configure-session":
             configured = configure_session_admission(

@@ -15,6 +15,9 @@ All notable changes to this plugin are documented here.
 - Added the operator lease protocol reference and protocol-version guard. A missing or skewed
   fleet-core installation now halts with install/update guidance, and timeout or silence is never
   treated as terminal proof for capacity release.
+- Clarified the external advisory-panel contract: the coordinator passes its trusted session and
+  exact resolved admission snapshot, and every member remains fenced through durable post-run
+  reconciliation and fact persistence.
 
 ## [2.17.0] - 2026-07-16
 

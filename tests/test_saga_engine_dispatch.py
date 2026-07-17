@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import importlib.util
 import json
@@ -1223,6 +1224,51 @@ def test_expired_runner_output_does_not_write_advisory_fact(tmp_path: Path) -> N
         )
 
     assert D.run_ledger.read_facts(ledger) == []
+
+
+def test_post_run_fact_write_occurs_inside_agent_settlement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    ledger = D.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
+    original_settlement = selected.agent_settlement
+    original_record = D._record_advisory_facts
+    settlement_active = False
+    fact_guard_states: list[bool] = []
+
+    @contextlib.contextmanager
+    def tracked_settlement(*args: Any, **kwargs: Any) -> Any:
+        nonlocal settlement_active
+        with original_settlement(*args, **kwargs) as lease:
+            settlement_active = True
+            try:
+                yield lease
+            finally:
+                settlement_active = False
+
+    def tracked_record(*args: Any, **kwargs: Any) -> Any:
+        fact_guard_states.append(settlement_active)
+        return original_record(*args, **kwargs)
+
+    selected.agent_settlement = tracked_settlement  # type: ignore[method-assign]
+    monkeypatch.setattr(D, "_record_advisory_facts", tracked_record)
+    D.dispatch(
+        _resolution(),
+        runner=lambda _invocation: {"status": "ok", "output": "guarded evidence"},
+        ledger=ledger,
+        subplot_id="leaf",
+        at="2026-07-16T00:00:00Z",
+        session_id="runtime-session",
+        execution_id="execution-1",
+        attempt_id="attempt-1",
+        lease_authority=selected,
+        lease_admission=_lease_admission(),
+    )
+
+    assert fact_guard_states == [True]
+    assert selected.inspect()["leases"] == []
 
 
 def test_release_failure_preserves_primary_dispatch_error(tmp_path: Path) -> None:
@@ -2493,6 +2539,8 @@ def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
         ),
         foreman=foreman,
         execution_id="panel-execution",
+        session_id="panel-session",
+        lease_admission=_lease_admission(),
         intent="second-opinion",
         ledger=ledger,
         subplot_id="issue-393",
@@ -2535,6 +2583,8 @@ def test_advisory_panel_unavailable_member_blocks_all_dispatch_and_append(
             runner=runner,
             foreman=lambda _evidence: None,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2572,6 +2622,8 @@ def test_failed_panel_foreman_writes_no_apply_fact(
             runner=lambda _invocation: _review_payload("finding"),
             foreman=failed_foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2622,6 +2674,8 @@ def test_panel_flattens_member_findings_and_omission_appends_no_facts(
             runner=lambda _invocation: _review_payload("finding one", "finding two"),
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2660,6 +2714,8 @@ def test_panel_rejects_hidden_raw_finding_before_foreman_or_ledger(
             },
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2735,6 +2791,8 @@ def test_panel_binding_mismatch_appends_neither_action(
             runner=runner,
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2803,6 +2861,8 @@ def test_invalid_panel_metadata_has_no_preflight_dispatch_or_fact(
             runner=runner,
             foreman=foreman,
             execution_id=execution_id,
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent=intent,
             ledger=ledger,
             subplot_id=subplot_id,
@@ -2812,6 +2872,38 @@ def test_invalid_panel_metadata_has_no_preflight_dispatch_or_fact(
     assert preflights == 0
     assert runner_calls == 0
     assert foreman_calls == 0
+    assert RC.run_ledger.read_facts(ledger) == []
+
+
+def test_invalid_panel_lease_contract_has_no_preflight_dispatch_or_fact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflights = 0
+
+    def resolve_role(*_args: object, **_kwargs: object) -> list[Any]:
+        nonlocal preflights
+        preflights += 1
+        return [_resolution(variant="must-not-resolve")]
+
+    monkeypatch.setattr(D.engine_resolver, "resolve_role", resolve_role)
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    with pytest.raises(D.DispatchError, match="lease admission"):
+        D.dispatch_advisory_panel(
+            D.AdvisoryPanelRequest("cross-family-review-panel"),
+            registry=object(),
+            runner=_ok_runner,
+            foreman=lambda _evidence: None,
+            execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=cast(Any, object()),
+            intent="second-opinion",
+            ledger=ledger,
+            subplot_id="issue-393",
+            at="2026-07-09T00:00:00Z",
+        )
+
+    assert preflights == 0
     assert RC.run_ledger.read_facts(ledger) == []
 
 
@@ -2854,6 +2946,8 @@ def test_later_panel_member_runtime_halt_skips_foreman_and_facts(
             runner=runner,
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2886,6 +2980,8 @@ def test_thrown_panel_foreman_exception_appends_neither_action(
             runner=lambda _invocation: _review_payload("finding"),
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2922,6 +3018,8 @@ def test_panel_member_utf8_output_overflow_fails_without_foreman_or_facts(
             runner=lambda _invocation: _review_payload(output),
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -2955,6 +3053,8 @@ def test_panel_cumulative_output_overflow_fails_without_foreman_or_facts(
             runner=lambda _invocation: _review_payload(output),
             foreman=foreman,
             execution_id="panel-execution",
+            session_id="panel-session",
+            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",

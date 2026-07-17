@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses mixed live policy snapshots instead of re-resolving consumer policy.
 - Published lease broker protocol version 1 so armed consumers reject a missing or skewed
   fleet-core installation before dispatch.
+- Hardened the authority boundary after whole-diff review: renew and single-lease release require
+  the exact fencing token, delegated parent validation and child grant share one transaction,
+  abandoned pre-spawn admission pins expire and remain inspectable, owner teardown trusts only
+  broker-recorded terminal evidence, and closed resource heads move to permission-checked cold
+  archives when the hot registry reaches its bound without losing closed/superseded classification.
 
 ## [0.11.0] - 2026-07-14
 

@@ -20,6 +20,10 @@
 - Expanded the concurrency inventory into a machine-readable lease lifecycle map covering acquire,
   bind, renewal, and release. Conformance now rejects newly injected executable spawn calls without
   an inventory row and parses the installed hook metadata.
+- Registered advisory-panel members now consume the caller's exact session admission and stable
+  per-member attempt identity. Engine post-run validation, integrity accounting, reconciliation, and
+  fact persistence execute inside exact-token settlement; the CLI requires fencing credentials for
+  renew/release and owner teardown accepts no caller-authored terminal assertion.
 - **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
   unchanged; leases enforce runtime admission without redefining operator posture or revision eras.
 

@@ -83,8 +83,18 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "agent",
             "engine_dispatch.dispatch",
             "not-applicable:in-process-adapter",
-            "LeaseBroker.renew",
-            "LeaseBroker.release",
+            "LeaseBroker.agent_settlement",
+            "LeaseBroker.agent_settlement",
+        ),
+        (
+            "plugins/saga/scripts/engine_dispatch.py",
+            "guarded_runner",
+            "concurrency_policy.AdmissionLimits",
+            "agent",
+            "engine_dispatch.dispatch",
+            "not-applicable:in-process-adapter",
+            "LeaseBroker.agent_settlement",
+            "LeaseBroker.agent_settlement",
         ),
         (
             "plugins/saga/scripts/outcome.py",
@@ -116,6 +126,7 @@ EXPECTED_CONCURRENCY_ROWS: frozenset[ConcurrencyRow] = frozenset(
 EXPECTED_EXECUTABLE_SPAWNS = frozenset(
     {
         ("plugins/saga/scripts/engine_dispatch.py", "_dispatch_once", "runner"),
+        ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner", "runner"),
         ("plugins/saga/scripts/outcome.py", "_reconcile_once", "dispatch"),
         ("plugins/saga/scripts/outcome_worktrees.py", "ensure_worktree", "ops.add"),
     }
@@ -124,10 +135,11 @@ EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
     ("plugins/saga/scripts/engine_dispatch.py", "dispatch"): frozenset(
         {
             "selected.acquire_agent",
-            "selected.renew",
-            "selected.verify",
             "selected.release",
         }
+    ),
+    ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner"): frozenset(
+        {"selected.agent_settlement"}
     ),
     ("plugins/saga/scripts/outcome_dispatcher.py", "_dispatch"): frozenset(
         {"selected.acquire_agent", "selected.renew", "selected.release"}
@@ -136,7 +148,7 @@ EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
     ("plugins/saga/scripts/workflow_emitter.py", "renew"): frozenset({"selected.renew_batch"}),
     ("plugins/saga/scripts/workflow_emitter.py", "release"): frozenset({"selected.settle_batch"}),
     ("plugins/saga/scripts/lease_broker.py", "reserve_hook_agent"): frozenset(
-        {"selected.verify_agent", "selected.prepare_batch_call", "selected.acquire_agent"}
+        {"selected.prepare_batch_call", "selected.acquire_agent"}
     ),
     ("plugins/saga/scripts/lease_broker.py", "claim_hook_agent"): frozenset({"selected.claim"}),
     ("plugins/saga/scripts/lease_broker.py", "record_hook_terminal"): frozenset(
@@ -961,7 +973,7 @@ def test_injected_unguarded_executable_spawn_is_rejected() -> None:
     ("source_path", "call"),
     [
         ("plugins/saga/scripts/engine_dispatch.py", "selected.acquire_agent"),
-        ("plugins/saga/scripts/engine_dispatch.py", "selected.renew"),
+        ("plugins/saga/scripts/engine_dispatch.py", "selected.agent_settlement"),
         ("plugins/saga/scripts/engine_dispatch.py", "selected.release"),
         ("plugins/saga/scripts/outcome_dispatcher.py", "selected.acquire_agent"),
         ("plugins/saga/scripts/outcome_dispatcher.py", "selected.renew"),

@@ -199,8 +199,8 @@ def test_exact_legacy_v1_registry_shape_migrates_to_empty_session_admissions(
 
 def test_session_and_minimum_live_aggregate_limits(broker: Any) -> None:
     session_two = _limits(max_concurrent=2, readonly_max_concurrent=4, aggregate_max_concurrent=5)
-    _agent(broker, session="same", limits=session_two)
-    _agent(broker, session="same", limits=session_two)
+    first = _agent(broker, session="same", limits=session_two)
+    second = _agent(broker, session="same", limits=session_two)
     with pytest.raises(B.CapacityExhaustedError) as captured:
         _agent(broker, session="same", limits=session_two)
     assert captured.value.earliest_expiry is not None
@@ -212,7 +212,8 @@ def test_session_and_minimum_live_aggregate_limits(broker: Any) -> None:
     with pytest.raises(B.PolicyMismatchError):
         _agent(other, session="same", limits=aggregate_three)
 
-    broker.release_owner("owner", session_id="same")
+    assert broker.release(first.lease_id, token=first.token)
+    assert broker.release(second.lease_id, token=second.token)
     _agent(broker, owner="a", session="a", limits=aggregate_three)
     _agent(broker, owner="b", session="b", limits=aggregate_three)
     _agent(broker, owner="c", session="c", limits=aggregate_three)
@@ -226,7 +227,7 @@ def test_session_can_rearm_with_new_policy_after_drain(broker: Any) -> None:
     changed = _limits(max_concurrent=2, readonly_max_concurrent=4, aggregate_max_concurrent=6)
     with pytest.raises(B.PolicyMismatchError):
         _agent(broker, limits=changed)
-    assert broker.release(original.lease_id)
+    assert broker.release(original.lease_id, token=original.token)
     assert _agent(broker, limits=changed).policy_sha256 == changed.policy_sha256()
 
 
@@ -278,6 +279,45 @@ def test_session_admission_is_exact_live_snapshot_and_compact(broker: Any) -> No
         broker.clear_session_admission("session")
     broker.release_session("session")
     assert broker.get_session_admission("session") is None
+
+
+def test_orphan_session_admissions_expire_remain_visible_and_recover_capacity(
+    broker: Any, runtime: FakeRuntime
+) -> None:
+    for index in range(B._MAX_SESSION_ADMISSIONS):
+        broker.configure_session_admission(
+            f"session-{index}",
+            policy_sha256="a" * 64,
+            session_limit=1,
+            aggregate_limit=1,
+            mutation="none",
+        )
+
+    inspected = broker.inspect()["session_admissions"]
+    assert len(inspected) == B._MAX_SESSION_ADMISSIONS
+    assert {item["derived_state"] for item in inspected.values()} == {"armed"}
+    with pytest.raises(B.CapacityExhaustedError, match="registry is full"):
+        broker.configure_session_admission(
+            "overflow",
+            policy_sha256="a" * 64,
+            session_limit=1,
+            aggregate_limit=1,
+            mutation="none",
+        )
+
+    runtime.advance(B.DEFAULT_TTL_SECONDS)
+    broker.configure_session_admission(
+        "recovered",
+        policy_sha256="a" * 64,
+        session_limit=1,
+        aggregate_limit=1,
+        mutation="none",
+    )
+    assert set(broker.inspect()["session_admissions"]) == {"recovered"}
+
+    runtime.advance(B.DEFAULT_TTL_SECONDS)
+    broker.sweep()
+    assert broker.inspect()["session_admissions"] == {}
 
 
 def test_batch_reservation_is_atomic_and_claim_is_single_use(broker: Any) -> None:
@@ -413,6 +453,25 @@ def test_batch_settlement_and_terminal_session_release_are_atomic(broker: Any) -
         persisted.lease_id,
     )
 
+    _agent(broker, owner="owner-release", session="owner-release", tool="owner-tool")
+    owner_bound = broker.claim(
+        session_id="owner-release",
+        agent_type="worker",
+        agent_id="owner-child",
+        resource_ref={"logical_unit_id": "owner-unit"},
+    )
+    with pytest.raises(B.LeaseOwnershipError, match="non-terminal"):
+        broker.release_owner("owner-release", session_id="owner-release")
+    assert broker.record_child_terminal("owner-child")
+    assert broker.release_owner("owner-release", session_id="owner-release") == (
+        owner_bound.lease_id,
+    )
+
+    unbound = _agent(broker, owner="direct-owner", session="direct-session", resource="direct")
+    with pytest.raises(B.LeaseOwnershipError, match="non-terminal"):
+        broker.release_owner("direct-owner", session_id="direct-session")
+    assert broker.release(unbound.lease_id, token=unbound.token)
+
 
 def test_session_renewal_is_atomic_and_release_is_agent_pool_scoped(
     broker: Any, runtime: FakeRuntime, tmp_path: Path
@@ -464,7 +523,7 @@ def test_monotonic_expiry_ignores_wall_jump_and_renew_prevents_expiry(
     runtime.advance(1)
     assert broker.classify_token(renewed.resource_ref, renewed.token) == "expired"
     with pytest.raises(B.LeaseExpiredError):
-        broker.renew(lease.lease_id)
+        broker.renew(lease.lease_id, token=lease.token)
 
 
 def test_boot_change_invalidates_process_authority(broker: Any, runtime: FakeRuntime) -> None:
@@ -491,16 +550,45 @@ def test_resource_head_persists_and_token_states_are_distinct(
     assert next(iter(raw["resource_fences"].values()))["lease_id"] == retry.lease_id
 
 
-def test_closed_agent_resource_heads_are_bounded_but_old_tokens_fail_closed(broker: Any) -> None:
+def test_closed_resource_heads_are_archived_without_losing_exact_state(
+    broker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(B, "_MAX_CLOSED_FENCES", 4)
     issued = []
-    for index in range(B._MAX_CLOSED_AGENT_FENCES + 2):
+    for index in range(B._MAX_CLOSED_FENCES + 2):
         lease = _agent(broker, resource=f"unit-{index}")
         issued.append(lease)
         assert broker.release(lease.lease_id, token=lease.token)
     raw = _raw_registry(broker)
-    assert len(raw["resource_fences"]) == B._MAX_CLOSED_AGENT_FENCES
-    assert broker.classify_token(issued[0].resource_ref, issued[0].token) == "superseded"
+    assert len(raw["resource_fences"]) == B._MAX_CLOSED_FENCES
+    assert len(list(broker.closed_fences_dir.glob("*.json"))) == 2
+    assert broker.classify_token(issued[0].resource_ref, issued[0].token) == "closed"
     assert broker.classify_token(issued[-1].resource_ref, issued[-1].token) == "closed"
+
+    worktrees = []
+    for index in range(B._MAX_CLOSED_FENCES + 2):
+        lease = broker.acquire_worktree(
+            owner_id="worktree",
+            session_id="worktree",
+            resource_ref=_worktree_resource(tmp_path, index),
+        )
+        worktrees.append(lease)
+        assert broker.release(lease.lease_id, token=lease.token)
+    raw = _raw_registry(broker)
+    assert len(raw["resource_fences"]) == B._MAX_CLOSED_FENCES
+    assert (
+        broker.classify_token(worktrees[0].resource_ref, worktrees[0].token, pool="worktree")
+        == "closed"
+    )
+    assert (
+        broker.classify_token(worktrees[-1].resource_ref, worktrees[-1].token, pool="worktree")
+        == "closed"
+    )
+    archived = broker.closed_fences_dir / f"{B.resource_sha256(issued[0].resource_ref)}.json"
+    assert archived.is_file()
+    archived.chmod(0o644)
+    with pytest.raises(B.UnsafeAuthorityError, match="closed fence"):
+        broker.classify_token(issued[0].resource_ref, issued[0].token)
 
 
 def test_retry_supersedes_at_full_capacity(broker: Any) -> None:
@@ -709,7 +797,7 @@ def test_wrong_owner_token_and_stale_token_refusals_leave_authority_unchanged(
     first = _agent(broker, owner="first", resource="unit")
     before = broker.registry_path.read_bytes()
     with pytest.raises(B.LeaseOwnershipError):
-        broker.release(first.lease_id, owner_id="second")
+        broker.release(first.lease_id, owner_id="second", token=first.token)
     with pytest.raises(B.LeaseOwnershipError):
         broker.renew(first.lease_id, token=B.FencingToken(first.token.broker_epoch, 999))
     assert broker.registry_path.read_bytes() == before
@@ -734,6 +822,97 @@ def test_wrong_owner_token_and_stale_token_refusals_leave_authority_unchanged(
             owner_id="other",
         )
     assert broker.registry_path.read_bytes() == before
+
+
+def test_parent_validation_and_child_grant_share_one_authority_transaction(broker: Any) -> None:
+    limits = _limits(max_concurrent=3, readonly_max_concurrent=3, aggregate_max_concurrent=3)
+    parent = broker.acquire_agent(
+        owner_id="parent-owner",
+        session_id="session",
+        policy_sha256=limits.policy_sha256(),
+        session_limit=limits.max_concurrent,
+        aggregate_limit=limits.aggregate_max_concurrent,
+        mutation="read-write",
+        resource_ref={"logical_unit_id": "parent"},
+        agent_id="parent-agent",
+    )
+    child = broker.acquire_agent(
+        owner_id="child-owner",
+        session_id="session",
+        policy_sha256=limits.policy_sha256(),
+        session_limit=limits.max_concurrent,
+        aggregate_limit=limits.aggregate_max_concurrent,
+        mutation="read-write",
+        resource_ref={"logical_unit_id": "child"},
+        parent_agent_id="parent-agent",
+    )
+    assert child.session_id == parent.session_id
+
+    with pytest.raises(B.LeaseOwnershipError, match="different session"):
+        broker.acquire_agent(
+            owner_id="other-child",
+            session_id="other-session",
+            policy_sha256=limits.policy_sha256(),
+            session_limit=limits.max_concurrent,
+            aggregate_limit=limits.aggregate_max_concurrent,
+            mutation="read-write",
+            resource_ref={"logical_unit_id": "other-child"},
+            parent_agent_id="parent-agent",
+        )
+
+    assert broker.release(parent.lease_id, token=parent.token)
+    with pytest.raises(B.LeaseNotFoundError, match="current parent lease"):
+        broker.acquire_agent(
+            owner_id="stale-child",
+            session_id="session",
+            policy_sha256=limits.policy_sha256(),
+            session_limit=limits.max_concurrent,
+            aggregate_limit=limits.aggregate_max_concurrent,
+            mutation="read-write",
+            resource_ref={"logical_unit_id": "stale-child"},
+            parent_agent_id="parent-agent",
+        )
+    assert broker.release(child.lease_id, token=child.token)
+
+
+def test_agent_settlement_fences_post_run_writes_from_competing_retry(
+    broker: Any, runtime: FakeRuntime
+) -> None:
+    lease = _agent(broker, resource="settlement")
+    runtime.advance(1)
+    settlement_entered = threading.Event()
+    allow_settlement = threading.Event()
+    retry_finished = threading.Event()
+    retried: list[Any] = []
+    persisted_renewals: list[int] = []
+
+    def settle() -> None:
+        with broker.agent_settlement(lease.lease_id, owner_id=lease.owner_id, token=lease.token):
+            persisted_renewals.append(
+                _raw_registry(broker)["leases"][lease.lease_id]["renewed_monotonic_ns"]
+            )
+            settlement_entered.set()
+            assert allow_settlement.wait(timeout=5)
+
+    def retry() -> None:
+        retried.append(_agent(broker, owner="retry", resource="settlement"))
+        retry_finished.set()
+
+    settlement_thread = threading.Thread(target=settle)
+    settlement_thread.start()
+    assert settlement_entered.wait(timeout=5)
+    retry_thread = threading.Thread(target=retry)
+    retry_thread.start()
+    assert not retry_finished.wait(timeout=0.1)
+    allow_settlement.set()
+    settlement_thread.join(timeout=5)
+    retry_thread.join(timeout=5)
+    assert not settlement_thread.is_alive()
+    assert not retry_thread.is_alive()
+    assert retry_finished.is_set()
+    assert persisted_renewals == [runtime.monotonic]
+    assert broker.classify_token(lease.resource_ref, lease.token) == "superseded"
+    assert broker.release(retried[0].lease_id, token=retried[0].token)
 
 
 def test_write_fence_rejects_existing_and_nonexistent_symlink_escape(

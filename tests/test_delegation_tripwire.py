@@ -557,6 +557,13 @@ def _ok_runner_with_receipt(_invocation: dict[str, Any]) -> dict[str, Any]:
 
 
 def _dispatch(tmp_path: Path, *, gated: bool, session_id: str = "", runner: Any = None) -> Any:
+    lease_kwargs: dict[str, Any] = {}
+    if session_id:
+        lease_kwargs = {
+            "lease_admission": _D.LeaseAdmission("a" * 64, 1, 1, "none"),
+            "execution_id": f"tripwire:{session_id}",
+            "attempt_id": "attempt:1",
+        }
     return _D.dispatch(
         _resolution(),
         runner=runner or _ok_runner_with_receipt,
@@ -564,6 +571,7 @@ def _dispatch(tmp_path: Path, *, gated: bool, session_id: str = "", runner: Any 
         gated=gated,
         session_id=session_id,
         workspace_root=tmp_path,
+        **lease_kwargs,
     )
 
 
@@ -835,6 +843,13 @@ def _http_receipt(
 def _http_dispatch(
     tmp_path: Path, *, gated: bool = True, session_id: str = "", runner: Any = None
 ) -> Any:
+    lease_kwargs: dict[str, Any] = {}
+    if session_id:
+        lease_kwargs = {
+            "lease_admission": _D.LeaseAdmission("a" * 64, 1, 1, "none"),
+            "execution_id": f"tripwire-http:{session_id}",
+            "attempt_id": "attempt:1",
+        }
     return _D.dispatch(
         _http_resolution(),
         runner=runner,
@@ -842,6 +857,7 @@ def _http_dispatch(
         gated=gated,
         session_id=session_id,
         workspace_root=tmp_path,
+        **lease_kwargs,
     )
 
 
@@ -1158,6 +1174,9 @@ try:
         gated=True,
         session_id="sess-xproc",
         workspace_root=WORKSPACE,
+        lease_admission=D.LeaseAdmission("a" * 64, 1, 1, "none"),
+        execution_id="tripwire-xproc",
+        attempt_id="attempt:1",
     )
 except D.DispatchError as exc:
     print(f"halt:{exc}")
